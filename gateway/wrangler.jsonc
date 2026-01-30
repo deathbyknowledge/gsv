@@ -7,12 +7,15 @@
 	"name": "gateway",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-01-28",
+	"compatibility_flags": ["nodejs_compat"],
 	"migrations": [
 		{
-			"new_sqlite_classes": [
-				"Gateway"
-			],
+			"new_sqlite_classes": ["Gateway"],
 			"tag": "v1"
+		},
+		{
+			"new_sqlite_classes": ["Session"],
+			"tag": "v2"
 		}
 	],
 	"durable_objects": {
@@ -20,12 +23,22 @@
 			{
 				"class_name": "Gateway",
 				"name": "GATEWAY"
+			},
+			{
+				"class_name": "Session",
+				"name": "SESSION"
 			}
 		]
 	},
 	"observability": {
 		"enabled": true
-	}
+	},
+	"r2_buckets": [
+		{
+			"binding": "STORAGE",
+			"bucket_name": "gsv-storage"
+		}
+	]
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

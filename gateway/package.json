@@ -11,5 +11,8 @@
 	"devDependencies": {
 		"typescript": "^5.5.2",
 		"wrangler": "^4.61.1"
+	},
+	"dependencies": {
+		"@mariozechner/pi-ai": "^0.50.5"
 	}
 }
