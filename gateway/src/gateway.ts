@@ -207,7 +207,7 @@ export class Gateway extends DurableObject<Env> {
     }
 
     // Check auth token if configured
-    const authToken = this.configStore["auth.token"] as string | undefined;
+    const authToken = this.getConfigPath("auth.token") as string | undefined;
     if (authToken) {
       const providedToken = params?.auth?.token;
       if (!providedToken || !timingSafeEqual(providedToken, authToken)) {
@@ -852,9 +852,14 @@ export class Gateway extends DurableObject<Env> {
     const apiKeys = Object.fromEntries(
       Object.entries(full.apiKeys).map(([key, value]) => [key, value ? "***" : undefined]),
     );
+    const auth = {
+      ...full.auth,
+      token: full.auth.token ? "***" : undefined,
+    };
     return {
       ...full,
       apiKeys,
+      auth,
     };
   }
 
