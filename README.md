@@ -27,13 +27,13 @@ Unlike traditional AI assistants that exist only as stateless API calls, GSV age
                               │   │    (singleton Mind core)        │   │
                               │   │                                 │   │
                               │   │  • Routes messages              │   │
-                              │   │  • Manages tool registry        │   │
+                              │   │  • Tool registry (namespaced)   │   │
                               │   │  • Coordinates channels         │   │
                               │   └──────────────┬──────────────────┘   │
                               │                  │                      │
                               │     ┌────────────┼────────────┐         │
                               │     ▼            ▼            ▼         │
-                              │ ┌────────┐  ┌────────┐  ┌────────┐     │
+                              │ ┌────────┐  ┌───────��┐  ┌────────┐     │
                               │ │Session │  │Session │  │Session │     │
                               │ │  DO    │  │  DO    │  │  DO    │     │
                               │ │        │  │        │  │        │     │
@@ -51,13 +51,83 @@ Unlike traditional AI assistants that exist only as stateless API calls, GSV age
             │   Channel    │           │    Node      │           │    Node      │
             │  (WhatsApp)  │           │  (macbook)   │           │   (server)   │
             │              │           │              │           │              │
-            │ Cloudflare   │           │    Rust      │           │    Rust      │
-            │ Worker + DO  │           │    CLI       │           │    CLI       │
+            │ Cloudflare   │           │  macbook:*   │           │  server:*    │
+            │ Worker + DO  │           │    tools     │           │    tools     │
             └──────────────┘           └──────────────┘           └──────────────┘
                     │                          │                          │
                     ▼                          ▼                          ▼
               WhatsApp API              Your Laptop               Your Server
                                         (bash, files)            (docker, APIs)
+```
+
+## Quick Start
+
+### Install
+
+```bash
+curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | sh
+```
+
+This installs the CLI and optionally deploys the gateway to your Cloudflare account.
+
+### Connect a Node
+
+```bash
+# Run a node (tools are namespaced by node ID)
+gsv node --id macbook --workspace ~/projects
+
+# The gateway sees tools as: macbook:Bash, macbook:Read, macbook:Write, etc.
+```
+
+### Chat
+
+```bash
+gsv client "Hello, what can you help me with?"
+```
+
+### Configure
+
+```bash
+# Initialize config file
+gsv init
+
+# Set gateway connection
+gsv local-config set gateway.url "wss://your-gateway.workers.dev/ws"
+gsv local-config set gateway.token "your-secret-token"
+
+# Configure LLM API keys (stored in gateway)
+gsv config set apiKeys.anthropic "sk-ant-..."
+gsv config set model.provider "anthropic"
+gsv config set model.id "claude-sonnet-4-20250514"
+```
+
+## Tool Namespacing
+
+Tools are namespaced by node ID, allowing multiple nodes with different capabilities:
+
+```bash
+# On your laptop
+gsv node --id laptop --workspace ~/code
+
+# On a server
+gsv node --id server --workspace /var/app
+
+# The LLM sees:
+#   laptop:Bash, laptop:Read, laptop:Write, laptop:Edit, laptop:Glob, laptop:Grep
+#   server:Bash, server:Read, server:Write, server:Edit, server:Glob, server:Grep
+
+# And can reason: "I'll check the logs on the server" → uses server:Bash
+```
+
+### Test Tools Directly
+
+```bash
+# List available tools
+gsv tools list
+
+# Call a tool directly
+gsv tools call "macbook:Bash" '{"command": "ls -la"}'
+gsv tools call "macbook:Read" '{"path": "/etc/hosts"}'
 ```
 
 ## Components
@@ -68,7 +138,7 @@ The central nervous system. A Cloudflare Worker with Durable Objects that:
 
 - Accepts WebSocket connections from nodes, channels, and clients
 - Routes messages between all components
-- Maintains a registry of available tools across connected nodes
+- Maintains a registry of available tools (namespaced by node)
 - Manages configuration and authentication
 - Stores media in R2
 
@@ -86,18 +156,12 @@ Each conversation exists as its own Durable Object with:
 A Rust CLI that connects your devices to the GSV:
 
 ```bash
-# Connect your laptop as a node
-gsv node --id macbook
-
-# Send a message
+gsv node --id macbook                    # Use hostname as ID, cwd as workspace
+gsv node --id macbook --workspace ~/dev  # Custom workspace
 gsv client "What files are on my desktop?"
-
-# Manage sessions
 gsv session list
 gsv session preview my-session
 ```
-
-Nodes provide tools (bash, file operations, etc.) that the AI can use.
 
 ### Channels (`channels/`)
 
@@ -108,82 +172,9 @@ Bridges to external messaging platforms:
 
 Each channel runs as a separate Cloudflare Worker, maintaining its own connection state and routing messages through the Gateway.
 
-## Quick Start
-
-### Prerequisites
-
-- [Cloudflare account](https://dash.cloudflare.com) with Workers paid plan
-- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
-- [Rust](https://rustup.rs/) (for the CLI)
-
-### Deploy the Gateway
-
-```bash
-cd gateway
-npm install
-npm run deploy
-```
-
-### Build the CLI
-
-```bash
-cd cli
-cargo build --release
-```
-
-### Connect a Node
-
-```bash
-./target/release/gsv node --id my-laptop \
-  --url wss://your-gateway.workers.dev/ws \
-  --token YOUR_AUTH_TOKEN
-```
-
-### Configure
-
-Set your API keys and auth token via the CLI:
-
-```bash
-# Set auth token (required for all operations)
-gsv config set auth.token "your-secret-token"
-
-# Set LLM API keys
-gsv config set apiKeys.anthropic "sk-ant-..."
-gsv config set apiKeys.openai "sk-..."  # optional
-
-# Set default model
-gsv config set model.provider "anthropic"
-gsv config set model.id "claude-sonnet-4-20250514"
-```
-
-Configuration is stored in the Gateway's Durable Object storage - no Worker secrets needed.
-
-### Chat
-
-```bash
-./target/release/gsv client "Hello, what can you help me with?"
-```
-
-## Protocol
-
-GSV uses a simple JSON-RPC-like protocol over WebSocket:
-
-```typescript
-// Request
-{ "type": "req", "id": "uuid", "method": "chat.send", "params": { "message": "..." } }
-
-// Response  
-{ "type": "res", "id": "uuid", "ok": true, "payload": { ... } }
-
-// Event (streaming)
-{ "type": "evt", "event": "chat", "payload": { "state": "partial", "message": "..." } }
-```
-
-See [SPEC.md](./SPEC.md) for full protocol documentation.
-
 ## Agent Workspace
 
-GSV agents have persistent identity through workspace files stored in R2. The workspace contains:
+GSV agents have persistent identity through workspace files stored in R2:
 
 ```
 agents/{agentId}/
@@ -191,6 +182,7 @@ agents/{agentId}/
 ├── USER.md         # Information about the human
 ├── AGENTS.md       # Operating instructions
 ├── MEMORY.md       # Long-term curated memory (main sessions only)
+├── HEARTBEAT.md    # Proactive check-in configuration
 ├── TOOLS.md        # Tool-specific notes
 ├── memory/         # Daily memory files
 │   └── YYYY-MM-DD.md
@@ -201,73 +193,48 @@ agents/{agentId}/
 
 These files are loaded into the system prompt at session start, giving the agent persistent context across conversations.
 
-### Local Workspace Mount (R2 FUSE)
+### R2 Mount (Optional)
 
-For CLI nodes, you can mount the R2 workspace locally so the agent can read/write files naturally:
+Mount the R2 bucket locally to edit agent config files with your favorite editor:
 
 ```bash
-# 1. Install rclone (FUSE filesystem tool)
-brew install rclone         # macOS
-# or: curl https://rclone.org/install.sh | sudo bash  # Linux
+# Configure R2 credentials
+gsv local-config set r2.account_id "your-account-id"
+gsv local-config set r2.access_key_id "your-access-key"
+gsv local-config set r2.secret_access_key "your-secret"
+gsv local-config set r2.bucket "gsv-storage"
 
-# 2. Create R2 API token in Cloudflare Dashboard:
-#    - Go to R2 > Manage R2 API Tokens
-#    - Create token with "Object Read & Write" permissions
-#    - Note: Account ID, Access Key ID, Secret Access Key
-
-# 3. Configure the mount
-gsv mount setup \
-  --account-id YOUR_CF_ACCOUNT_ID \
-  --access-key-id YOUR_R2_ACCESS_KEY \
-  --secret-access-key YOUR_R2_SECRET
-
-# 4. Start the mount
+# Setup and start mount
+gsv mount setup
 gsv mount start
 
-# 5. Verify
-ls ~/gsv/  # Should show SOUL.md, USER.md, etc.
+# Edit files locally - changes sync to R2
+vim ~/.gsv/r2/agents/main/SOUL.md
 ```
 
-Now when the agent uses file tools (Read, Write, Edit), it operates on your local filesystem which syncs transparently to R2. Other channels (WhatsApp, etc.) see the same files.
-
-### Environment Variables
+## CLI Reference
 
 ```bash
-export GSV_WORKSPACE=~/gsv           # Workspace path (default: ~/gsv)
-export GSV_TOKEN=your-auth-token     # Gateway auth token
-export CF_ACCOUNT_ID=your-account    # For R2 mount
-export R2_ACCESS_KEY_ID=your-key     # For R2 mount  
-export R2_SECRET_ACCESS_KEY=secret   # For R2 mount
+gsv init                              # Create config file
+gsv node [--id ID] [--workspace DIR]  # Run as tool-providing node
+gsv client [MESSAGE]                  # Chat (interactive if no message)
+gsv tools list                        # List available tools
+gsv tools call TOOL [ARGS]            # Call a tool directly
+gsv session list                      # List sessions
+gsv session preview KEY               # Preview session messages
+gsv session reset KEY                 # Clear session history
+gsv config get [PATH]                 # Get gateway config
+gsv config set PATH VALUE             # Set gateway config
+gsv local-config get KEY              # Get local config
+gsv local-config set KEY VALUE        # Set local config
+gsv mount setup                       # Configure R2 mount
+gsv mount start                       # Start R2 FUSE mount
+gsv mount stop                        # Stop mount
+gsv mount status                      # Check mount status
+gsv heartbeat status                  # Check heartbeat scheduler
+gsv pair list                         # List pending pairing requests
+gsv pair approve CHANNEL SENDER       # Approve a sender
 ```
-
-## Skills
-
-Skills are on-demand capabilities defined in markdown files. The agent sees a list of available skills and reads the full instructions when needed.
-
-Example skill (`agents/main/skills/memory-update/SKILL.md`):
-
-```markdown
----
-name: memory-update
-description: Update long-term memory with important information
-always: false
----
-
-# Memory Update
-
-Use this skill when the user asks you to remember something...
-
-## How to Use
-1. Read existing MEMORY.md
-2. Append new information to appropriate section
-3. Confirm to user what you remembered
-```
-
-Skills are loaded from:
-1. Agent workspace: `agents/{agentId}/skills/*/SKILL.md`
-2. Global skills: `skills/*/SKILL.md`
-
-Agent-specific skills take precedence over global skills with the same name.
 
 ## Project Status
 
@@ -277,25 +244,29 @@ GSV is under active development. Current capabilities:
 - [x] Multi-provider LLM support (Anthropic, OpenAI, Google)
 - [x] Rust CLI (node mode, client mode)
 - [x] Tool execution across nodes (Bash, Read, Write, Edit, Glob, Grep)
+- [x] Tool namespacing by node ID
 - [x] Session management (list, preview, reset, archive)
 - [x] WhatsApp channel with media support
 - [x] Voice message transcription (Workers AI)
 - [x] R2 media storage
 - [x] Agent workspace (SOUL.md, USER.md, AGENTS.md, MEMORY.md)
 - [x] Skills system (on-demand capability loading)
-- [x] R2 FUSE mount for local workspace sync
+- [x] R2 FUSE mount for local config editing
+- [x] Heartbeat/proactive behavior
+- [x] Typing indicators
 - [ ] Web client
 - [ ] Telegram channel
 - [ ] Memory/vector search
 - [ ] Multi-agent coordination
-- [ ] Heartbeat/proactive behavior
+- [ ] Node daemon mode
 
 ## Development
 
 ```bash
 # Gateway
 cd gateway
-npm run dev          # Local development
+npm install
+npm run dev          # Local development with wrangler
 npm run deploy       # Deploy to Cloudflare
 
 # CLI
@@ -305,11 +276,10 @@ cargo test
 
 # WhatsApp Channel
 cd channels/whatsapp
+npm install
 npm run dev
 npm run deploy
 ```
-
-See [AGENTS.md](./AGENTS.md) for detailed development guidelines.
 
 ## Philosophy
 
