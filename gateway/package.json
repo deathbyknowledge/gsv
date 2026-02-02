@@ -12,7 +12,7 @@
 		"cf-typegen": "wrangler types",
 		"test": "vitest",
 		"test:run": "vitest run",
-		"test:e2e": "npx tsx --test alchemy/e2e/*.test.ts"
+		"test:e2e": "bun test alchemy/e2e/"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.34",
@@ -23,6 +23,7 @@
 		"wrangler": "^4.61.1"
 	},
 	"dependencies": {
-		"@mariozechner/pi-ai": "^0.50.5"
+		"@mariozechner/pi-ai": "^0.50.5",
+		"ws": "^8.19.0"
 	}
 }

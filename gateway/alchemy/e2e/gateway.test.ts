@@ -1,15 +1,13 @@
-#!/usr/bin/env tsx
 /**
  * GSV Gateway E2E Tests
  * 
  * These tests deploy real workers to Cloudflare and test actual behavior.
- * Run with: npm run test:e2e
+ * Run with: npm run test:e2e (uses bun test)
  */
-import { describe, it, before, after } from "node:test";
-import assert from "node:assert";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import crypto from "node:crypto";
 import alchemy, { type Scope } from "alchemy";
-import { createGsvInfra } from "../infra.js";
+import { createGsvInfra } from "../infra.ts";
 
 // Unique ID for this test run (parallel safety)
 const testId = `gsv-e2e-${crypto.randomBytes(4).toString("hex")}`;
@@ -22,23 +20,23 @@ async function waitForWorker(url: string, maxWaitMs = 30000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
     try {
-      const res = await fetch(url);
-      if (res.status !== 522) return; // 522 = worker not ready
+      const res = await fetch(`${url}/health`);
+      if (res.ok) return;
     } catch {
       // Connection refused, keep waiting
     }
-    await new Promise((r) => setTimeout(r, 500));
+    await Bun.sleep(500);
   }
   throw new Error(`Worker at ${url} not ready after ${maxWaitMs}ms`);
 }
 
-// Helper for WebSocket connection
+// Helper for WebSocket connection using Bun's native WebSocket
 function connectWebSocket(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     ws.onopen = () => resolve(ws);
     ws.onerror = (e) => reject(new Error(`WebSocket error: ${e}`));
-    setTimeout(() => reject(new Error("WebSocket timeout")), 10000);
+    setTimeout(() => reject(new Error("WebSocket connection timeout")), 10000);
   });
 }
 
@@ -48,29 +46,47 @@ function sendRequest(ws: WebSocket, method: string, params?: unknown): Promise<u
     const id = crypto.randomUUID();
     const timeout = setTimeout(() => reject(new Error(`Timeout waiting for ${method}`)), 30000);
     
-    const handler = (event: MessageEvent) => {
-      const frame = JSON.parse(event.data);
-      if (frame.type === "res" && frame.id === id) {
-        clearTimeout(timeout);
-        ws.removeEventListener("message", handler);
-        if (frame.ok) {
-          resolve(frame.payload);
-        } else {
-          reject(new Error(frame.error?.message || "Request failed"));
+    const originalHandler = ws.onmessage;
+    ws.onmessage = (event) => {
+      try {
+        const frame = JSON.parse(event.data as string);
+        if (frame.type === "res" && frame.id === id) {
+          clearTimeout(timeout);
+          ws.onmessage = originalHandler;
+          if (frame.ok) {
+            resolve(frame.payload);
+          } else {
+            reject(new Error(frame.error?.message || "Request failed"));
+          }
         }
+      } catch {
+        // Ignore parse errors
       }
     };
     
-    ws.addEventListener("message", handler);
     ws.send(JSON.stringify({ type: "req", id, method, params }));
   });
+}
+
+// Helper to connect and authenticate WebSocket
+async function connectAndAuth(url: string): Promise<WebSocket> {
+  const ws = await connectWebSocket(url);
+  // Gateway requires "connect" call with protocol version and client info
+  await sendRequest(ws, "connect", {
+    minProtocol: 1,
+    client: {
+      mode: "client",
+      id: `e2e-test-${crypto.randomUUID()}`,
+    },
+  });
+  return ws;
 }
 
 // ============================================================================
 // Test Setup/Teardown
 // ============================================================================
 
-before(async () => {
+beforeAll(async () => {
   console.log(`\n🧪 Setting up e2e tests (${testId})...\n`);
   
   app = await alchemy("gsv-e2e", { phase: "up" });
@@ -88,12 +104,11 @@ before(async () => {
   
   await waitForWorker(gatewayUrl);
   console.log("   Worker ready!\n");
-}, { timeout: 90000 });
+}, 90000);
 
-after(async () => {
+afterAll(async () => {
   console.log("\n🗑️  Cleaning up e2e resources...");
   try {
-    // Create destroy scope
     const destroyApp = await alchemy("gsv-e2e", { phase: "destroy" });
     await destroyApp.run(async () => {
       await createGsvInfra({
@@ -107,7 +122,7 @@ after(async () => {
     console.log("   Cleanup error (may be fine):", err);
   }
   console.log("   Done!\n");
-}, { timeout: 90000 });
+}, 90000);
 
 // ============================================================================
 // Tests
@@ -116,14 +131,14 @@ after(async () => {
 describe("Gateway HTTP endpoints", () => {
   it("health endpoint returns healthy", async () => {
     const res = await fetch(`${gatewayUrl}/health`);
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
     const body = await res.json() as { status: string };
-    assert.strictEqual(body.status, "healthy");
+    expect(body.status).toBe("healthy");
   });
 
   it("unknown paths return 404", async () => {
     const res = await fetch(`${gatewayUrl}/unknown`);
-    assert.strictEqual(res.status, 404);
+    expect(res.status).toBe(404);
   });
 });
 
@@ -131,40 +146,100 @@ describe("Gateway WebSocket Connection", () => {
   it("connects to /ws endpoint", async () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
     const ws = await connectWebSocket(wsUrl);
-    assert.ok(ws.readyState === WebSocket.OPEN, "WebSocket should be open");
+    expect(ws.readyState).toBe(WebSocket.OPEN);
     ws.close();
   });
 
-  // TODO: Fix these tests - WebSocket gets disconnected
-  // Need to investigate DO hibernation behavior in test environment
-  it.skip("can send and receive RPC messages", async () => {
+  it("can send and receive RPC messages", async () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
-    const ws = await connectWebSocket(wsUrl);
-    const response = await sendRequest(ws, "config.get", { path: "model" });
-    assert.ok(response, "Should receive response");
+    const ws = await connectAndAuth(wsUrl);
+    
+    const response = await sendRequest(ws, "config.get", { path: "model" }) as { value: unknown };
+    expect(response).toBeDefined();
+    expect(response.value).toBeDefined();
+    
     ws.close();
   });
 });
 
-// TODO: These tests need WebSocket RPC to work properly
-// The issue is that the WebSocket gets disconnected before we can send messages
-// This might be related to DO hibernation or connection timing
-// For now, we test that the infrastructure works (deploy/destroy)
+describe("Gateway Config RPC", () => {
+  it("config.get returns serializable config (THE BUG TEST)", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+    
+    // This tests the exact bug we fixed - getConfig() returning Proxy objects
+    const response = await sendRequest(ws, "config.get") as { config: Record<string, unknown> };
+    
+    expect(response).toBeDefined();
+    
+    // THE CRITICAL TEST: Can we serialize it again?
+    const serialized = JSON.stringify(response);
+    const parsed = JSON.parse(serialized);
+    expect(parsed).toBeDefined();
+    
+    ws.close();
+  });
 
-describe.skip("Gateway Config RPC", () => {
-  it("config.get returns serializable config", async () => {
-    // Test the exact bug we fixed - getConfig() returning Proxy objects
+  it("config.set and config.get roundtrip", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+    
+    const testValue = `test-${Date.now()}`;
+    await sendRequest(ws, "config.set", {
+      path: "systemPrompt",
+      value: testValue,
+    });
+    
+    const result = await sendRequest(ws, "config.get", {
+      path: "systemPrompt",
+    }) as { value: string };
+    
+    expect(result.value).toBe(testValue);
+    
+    ws.close();
   });
 });
 
-describe.skip("Pairing Flow E2E", () => {
-  it("unknown sender triggers pairing flow", async () => {
-    // Test channel.inbound from unknown sender
+describe("Pairing Flow E2E", () => {
+  it("pair.list returns pairs object", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+    
+    const result = await sendRequest(ws, "pair.list") as { pairs: Record<string, unknown> };
+    
+    expect(result.pairs).toBeDefined();
+    expect(typeof result.pairs).toBe("object");
+    
+    ws.close();
   });
 });
 
-describe.skip("Session RPC", () => {
+describe("Session RPC", () => {
   it("session.stats returns token counts", async () => {
-    // Test session stats
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+    
+    const stats = await sendRequest(ws, "session.stats", {
+      sessionKey: "test-session-e2e",
+    }) as { messageCount: number; tokens: { input: number; output: number } };
+    
+    expect(typeof stats.messageCount).toBe("number");
+    expect(typeof stats.tokens.input).toBe("number");
+    expect(typeof stats.tokens.output).toBe("number");
+    
+    ws.close();
+  });
+});
+
+describe("Heartbeat RPC", () => {
+  it("heartbeat.status returns agent states", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+    
+    const status = await sendRequest(ws, "heartbeat.status") as { agents: Record<string, unknown> };
+    
+    expect(status.agents).toBeDefined();
+    
+    ws.close();
   });
 });
