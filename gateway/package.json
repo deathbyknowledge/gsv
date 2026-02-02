@@ -2,16 +2,22 @@
 	"name": "gateway",
 	"version": "0.0.0",
 	"private": true,
+	"type": "module",
 	"scripts": {
 		"deploy": "wrangler deploy",
+		"deploy:alchemy": "npx tsx alchemy/deploy.ts",
+		"destroy": "npx tsx alchemy/destroy.ts",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"cf-typegen": "wrangler types",
 		"test": "vitest",
-		"test:run": "vitest run"
+		"test:run": "vitest run",
+		"test:e2e": "npx tsx --test alchemy/e2e/*.test.ts"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.34",
+		"alchemy": "^0.83.1",
+		"tsx": "^4.19.0",
 		"typescript": "^5.5.2",
 		"vitest": "^3.1.4",
 		"wrangler": "^4.61.1"
