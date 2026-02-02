@@ -15,7 +15,11 @@ use std::sync::Arc;
 use tools::{all_tools_with_workspace, Tool};
 
 #[derive(Parser)]
-#[command(name = "gsv", version, about = "GSV CLI - Client and Node for GSV Gateway")]
+#[command(
+    name = "gsv",
+    version,
+    about = "GSV CLI - Client and Node for GSV Gateway"
+)]
 struct Cli {
     /// Gateway URL (overrides config file)
     #[arg(short, long, env = "GSV_URL")]
