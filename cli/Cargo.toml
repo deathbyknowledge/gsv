@@ -13,3 +13,8 @@ clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v4"] }
 hostname = "0.4.2"
 chrono = "0.4"
+dirs = "5"
+glob = "0.3"
+walkdir = "2"
+regex = "1"
+toml = "0.8"

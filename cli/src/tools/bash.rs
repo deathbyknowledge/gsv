@@ -2,9 +2,27 @@ use crate::protocol::ToolDefinition;
 use crate::tools::Tool;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::process::Command;
 
-pub struct BashTool;
+pub struct BashTool {
+    workspace: PathBuf,
+}
+
+impl BashTool {
+    pub fn new(workspace: PathBuf) -> Self {
+        Self { workspace }
+    }
+
+    fn resolve_path(&self, path: &str) -> PathBuf {
+        let path = PathBuf::from(path);
+        if path.is_absolute() {
+            path
+        } else {
+            self.workspace.join(path)
+        }
+    }
+}
 
 #[derive(Deserialize)]
 struct BashArgs {
@@ -19,7 +37,8 @@ impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "Bash".to_string(),
-            description: "Execute a shell command".to_string(),
+            description: "Execute a shell command. Working directory defaults to the workspace."
+                .to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -29,7 +48,7 @@ impl Tool for BashTool {
                     },
                     "workdir": {
                         "type": "string",
-                        "description": "Working directory (optional)"
+                        "description": "Working directory (default: workspace)"
                     },
                     "timeout": {
                         "type": "number",
@@ -48,9 +67,12 @@ impl Tool for BashTool {
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg(&args.command);
 
-        if let Some(workdir) = &args.workdir {
-            cmd.current_dir(workdir);
-        }
+        // Use provided workdir, or fall back to workspace
+        let workdir = args
+            .workdir
+            .map(|w| self.resolve_path(&w))
+            .unwrap_or_else(|| self.workspace.clone());
+        cmd.current_dir(&workdir);
 
         // TODO: implement timeout
 
@@ -64,7 +86,8 @@ impl Tool for BashTool {
         Ok(json!({
             "exitCode": output.status.code().unwrap_or(-1),
             "stdout": stdout,
-            "stderr": stderr
+            "stderr": stderr,
+            "workdir": workdir.display().to_string()
         }))
     }
 }
