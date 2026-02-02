@@ -44,6 +44,9 @@ export type HeartbeatResult = {
   
   // Deduplication
   isDuplicate?: boolean;
+  
+  // Error
+  error?: string;
 };
 
 /**

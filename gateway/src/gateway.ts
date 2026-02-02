@@ -30,7 +30,9 @@ import {
   shouldDeliverResponse,
   DEFAULT_HEARTBEAT_PROMPT,
   HEARTBEAT_OK_TOKEN,
+  HeartbeatResult,
 } from "./heartbeat";
+import { loadHeartbeatFile, isHeartbeatFileEmpty } from "./workspace";
 import { parseCommand, HELP_TEXT, normalizeThinkLevel, resolveModelAlias, listModelAliases } from "./commands";
 import { parseDirectives, isDirectiveOnly, formatDirectiveAck } from "./directives";
 import { processMediaWithTranscription } from "./transcription";
@@ -1780,14 +1782,56 @@ export class Gateway extends DurableObject<Env> {
     agentId: string,
     config: HeartbeatConfig,
     reason: "interval" | "manual" | "cron",
-  ): Promise<void> {
+  ): Promise<HeartbeatResult> {
     console.log(`[Gateway] Running heartbeat for agent ${agentId} (reason: ${reason})`);
+    
+    const result: HeartbeatResult = {
+      agentId,
+      sessionKey: "",
+      reason,
+      timestamp: Date.now(),
+    };
+    
+    // Skip check 1: Outside active hours (unless manual trigger)
+    if (reason !== "manual" && config.activeHours) {
+      const now = new Date();
+      if (!isWithinActiveHours(config.activeHours, now)) {
+        console.log(`[Gateway] Skipping heartbeat for ${agentId}: outside active hours`);
+        result.skipped = true;
+        result.skipReason = "outside_active_hours";
+        return result;
+      }
+    }
+    
+    // Skip check 2: Empty HEARTBEAT.md file (unless manual trigger)
+    if (reason !== "manual") {
+      const heartbeatFile = await loadHeartbeatFile(this.env.STORAGE, agentId);
+      if (!heartbeatFile.exists || isHeartbeatFileEmpty(heartbeatFile.content)) {
+        console.log(`[Gateway] Skipping heartbeat for ${agentId}: HEARTBEAT.md is empty or missing`);
+        result.skipped = true;
+        result.skipReason = heartbeatFile.exists ? "empty_heartbeat_file" : "no_heartbeat_file";
+        return result;
+      }
+    }
+    
+    // Skip check 3: Session is busy (has messages in queue)
+    // Get the target session and check if it's processing
+    const lastActive = this.lastActiveContext[agentId];
+    if (reason !== "manual" && lastActive) {
+      const sessionStub = this.env.SESSION.get(
+        this.env.SESSION.idFromName(lastActive.sessionKey),
+      );
+      const stats = await sessionStub.stats();
+      if (stats.isProcessing || stats.queueSize > 0) {
+        console.log(`[Gateway] Skipping heartbeat for ${agentId}: session is busy (queue: ${stats.queueSize})`);
+        result.skipped = true;
+        result.skipReason = "session_busy";
+        return result;
+      }
+    }
     
     // Resolve delivery target from config
     const target = config.target ?? "last";
-    
-    // Get last active context for this agent
-    const lastActive = this.lastActiveContext[agentId];
     
     // Determine session and delivery context
     let sessionKey: string;
@@ -1828,6 +1872,9 @@ export class Gateway extends DurableObject<Env> {
       console.log(`[Gateway] Heartbeat: no last active context, running silently`);
     }
     
+    // Set sessionKey in result
+    result.sessionKey = sessionKey;
+    
     // Get the session DO
     const session = this.env.SESSION.get(
       this.env.SESSION.idFromName(sessionKey),
@@ -1850,23 +1897,39 @@ export class Gateway extends DurableObject<Env> {
       console.log(`[Gateway] Heartbeat sent to session ${sessionKey}`);
     } catch (e) {
       console.error(`[Gateway] Heartbeat failed for ${agentId}:`, e);
+      result.error = e instanceof Error ? e.message : String(e);
       // Clean up pending context on failure
       if (deliveryContext) {
         delete this.pendingChannelResponses[sessionKey];
       }
     }
+    
+    return result;
   }
 
   /**
    * Manually trigger a heartbeat for an agent
    */
-  async triggerHeartbeat(agentId: string): Promise<{ ok: boolean; message: string }> {
+  async triggerHeartbeat(agentId: string): Promise<{ ok: boolean; message: string; skipped?: boolean; skipReason?: string }> {
     const config = await this.getConfig();
     const heartbeatConfig = getHeartbeatConfig(config, agentId);
     
-    await this.runHeartbeat(agentId, heartbeatConfig, "manual");
+    const result = await this.runHeartbeat(agentId, heartbeatConfig, "manual");
     
-    return { ok: true, message: `Heartbeat triggered for agent ${agentId}` };
+    if (result.skipped) {
+      return { 
+        ok: true, 
+        message: `Heartbeat skipped for agent ${agentId}: ${result.skipReason}`,
+        skipped: true,
+        skipReason: result.skipReason,
+      };
+    }
+    
+    if (result.error) {
+      return { ok: false, message: `Heartbeat failed for agent ${agentId}: ${result.error}` };
+    }
+    
+    return { ok: true, message: `Heartbeat triggered for agent ${agentId} (session: ${result.sessionKey})` };
   }
 
   /**

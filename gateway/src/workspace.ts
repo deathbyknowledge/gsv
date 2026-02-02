@@ -52,6 +52,48 @@ async function loadR2File(
 }
 
 /**
+ * Load HEARTBEAT.md for an agent
+ */
+export async function loadHeartbeatFile(
+  bucket: R2Bucket,
+  agentId: string,
+): Promise<WorkspaceFile> {
+  const path = `agents/${agentId}/HEARTBEAT.md`;
+  return loadR2File(bucket, path);
+}
+
+/**
+ * Check if a heartbeat file has meaningful content
+ * Returns false if file is empty or only contains comments/headers
+ */
+export function isHeartbeatFileEmpty(content: string): boolean {
+  if (!content || content.trim().length === 0) {
+    return true;
+  }
+  
+  // Remove markdown comments (HTML-style)
+  let cleaned = content.replace(/<!--[\s\S]*?-->/g, "");
+  
+  // Remove lines that are only headers, whitespace, or dashes
+  const lines = cleaned.split("\n");
+  const meaningfulLines = lines.filter(line => {
+    const trimmed = line.trim();
+    // Skip empty lines
+    if (trimmed.length === 0) return false;
+    // Skip markdown headers
+    if (/^#+\s*$/.test(trimmed)) return false;
+    // Skip lines that are only dashes/equals (header underlines)
+    if (/^[-=]+$/.test(trimmed)) return false;
+    // Skip lines starting with # that have no content after
+    if (/^#+\s*[-—–]+\s*$/.test(trimmed)) return false;
+    // This line has content
+    return true;
+  });
+  
+  return meaningfulLines.length === 0;
+}
+
+/**
  * Parse YAML frontmatter from markdown content
  */
 function parseFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string } {
