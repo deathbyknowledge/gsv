@@ -85,35 +85,22 @@ gsv config set channels.whatsapp.allowFrom '["+31628552611"]'
 
 ---
 
-#### 1b. Pairing Flow (Enhancement)
-**Priority:** Medium - Nice-to-have for easier onboarding
+#### 1b. Pairing Flow (Enhancement) ✅ DONE
+**Status:** Implemented
 
-**Problem:** Currently you must manually add phone numbers to allowFrom. A pairing flow would let unknown senders request access, which the owner can approve via CLI.
+- Added `dmPolicy: "pairing"` option (default)
+- Pending pairing requests stored in `PersistedObject<Record<string, PendingPair>>`
+- Unknown senders get "awaiting approval" message
+- CLI commands: `gsv pair list`, `gsv pair approve`, `gsv pair reject`
+- On approval: adds to `allowFrom`, sends confirmation message to user
+- Fixed WhatsApp LID JID handling: uses original JID for replies, senderPn for allowlist
 
-**Implementation:**
-1. Add `dmPolicy: "pairing"` option
-2. Track pending pairing requests in `PersistedObject<Record<string, PendingPair>>`
-   ```typescript
-   pendingPairs: {
-     "whatsapp:+1234567890": {
-       channel: "whatsapp",
-       senderId: "+1234567890",
-       senderName: "John Doe",
-       requestedAt: 1234567890,
-       message: "Hi, can I chat?"  // First message they sent
-     }
-   }
-   ```
-3. When unknown sender messages with `dmPolicy: "pairing"`:
-   - Store in pendingPairs
-   - Optionally send them "Request pending approval" message
-4. CLI command: `gsv pair list` / `gsv pair approve whatsapp +1234567890`
-5. On approval: add to `allowFrom`, remove from pending, optionally notify user
-
-**Files to modify:**
-- `gateway/src/config.ts` - Add "pairing" to DmPolicy
-- `gateway/src/gateway.ts` - Add pendingPairs state, pairing logic
-- `cli/src/main.rs` - Add `pair` subcommand
+**Usage:**
+```bash
+gsv config set channels.whatsapp.dmPolicy pairing
+gsv pair list
+gsv pair approve whatsapp +31649988417
+```
 
 ---
 
@@ -432,9 +419,9 @@ See section 5b above for detailed implementation plan.
 1. [x] **Allowlist filtering** - Security first! Stop random people from using the bot
 2. [x] **Last active tracking** - Track where user last messaged from
 3. [x] **Fix heartbeat delivery** - Route responses to last active channel
+4. [x] **Pairing flow** - Let unknown senders request access, approve via CLI
 
 ### High Priority
-4. [ ] **Pairing flow** - Let unknown senders request access, approve via CLI
 5. [ ] **Identity links** - Route multiple channel identities to single session
 6. [ ] **Heartbeat skip optimizations** - Empty file, active hours
 7. [ ] **Message queue** - Prevent race conditions
