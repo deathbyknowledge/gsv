@@ -91,6 +91,12 @@ enum Commands {
         #[command(subcommand)]
         action: HeartbeatAction,
     },
+    
+    /// Manage pairing requests (approve/reject new senders)
+    Pair {
+        #[command(subcommand)]
+        action: PairAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -106,6 +112,30 @@ enum HeartbeatAction {
         /// Agent ID (default: main)
         #[arg(default_value = "main")]
         agent_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum PairAction {
+    /// List pending pairing requests
+    List,
+    
+    /// Approve a pairing request
+    Approve {
+        /// Channel name (e.g., "whatsapp")
+        channel: String,
+        
+        /// Sender ID (e.g., "+1234567890")
+        sender_id: String,
+    },
+    
+    /// Reject a pairing request
+    Reject {
+        /// Channel name (e.g., "whatsapp")
+        channel: String,
+        
+        /// Sender ID (e.g., "+1234567890")
+        sender_id: String,
     },
 }
 
@@ -270,6 +300,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Tools => run_tools(&url, token).await,
         Commands::Mount { action } => run_mount(action, workspace, &cfg).await,
         Commands::Heartbeat { action } => run_heartbeat(&url, token, action).await,
+        Commands::Pair { action } => run_pair(&url, token, action).await,
     }
 }
 
@@ -613,6 +644,87 @@ async fn run_heartbeat(url: &str, token: Option<String>, action: HeartbeatAction
                         println!("{}", msg);
                     }
                 }
+            } else if let Some(err) = res.error {
+                eprintln!("Error: {}", err.message);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_pair(url: &str, token: Option<String>, action: PairAction) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = Connection::connect_with_options(url, "client", None, |_| {}, None, token).await?;
+
+    match action {
+        PairAction::List => {
+            let res = conn.request("pair.list", None).await?;
+            
+            if res.ok {
+                if let Some(payload) = res.payload {
+                    if let Some(pairs) = payload.get("pairs").and_then(|p| p.as_object()) {
+                        if pairs.is_empty() {
+                            println!("No pending pairing requests");
+                        } else {
+                            println!("Pending pairing requests ({}):\n", pairs.len());
+                            for (key, pair) in pairs {
+                                let sender_id = pair.get("senderId").and_then(|s| s.as_str()).unwrap_or("unknown");
+                                let sender_name = pair.get("senderName").and_then(|s| s.as_str()).unwrap_or("unknown");
+                                let channel = pair.get("channel").and_then(|s| s.as_str()).unwrap_or("unknown");
+                                let first_msg = pair.get("firstMessage").and_then(|s| s.as_str()).unwrap_or("");
+                                
+                                if let Some(requested_at) = pair.get("requestedAt").and_then(|t| t.as_i64()) {
+                                    let dt = chrono::DateTime::from_timestamp_millis(requested_at);
+                                    if let Some(dt) = dt {
+                                        println!("  {} ({}) via {}", sender_name, sender_id, channel);
+                                        println!("    Requested: {}", dt.format("%Y-%m-%d %H:%M:%S"));
+                                        if !first_msg.is_empty() {
+                                            println!("    Message: \"{}\"", first_msg);
+                                        }
+                                        println!();
+                                    }
+                                } else {
+                                    println!("  {}: {} ({})", key, sender_name, sender_id);
+                                }
+                            }
+                            println!("To approve: gsv pair approve <channel> <sender_id>");
+                            println!("To reject:  gsv pair reject <channel> <sender_id>");
+                        }
+                    }
+                }
+            } else if let Some(err) = res.error {
+                eprintln!("Error: {}", err.message);
+            }
+        }
+        
+        PairAction::Approve { channel, sender_id } => {
+            let res = conn
+                .request("pair.approve", Some(json!({ "channel": channel, "senderId": sender_id })))
+                .await?;
+            
+            if res.ok {
+                if let Some(payload) = res.payload {
+                    let approved_id = payload.get("senderId").and_then(|s| s.as_str()).unwrap_or(&sender_id);
+                    let sender_name = payload.get("senderName").and_then(|s| s.as_str());
+                    
+                    if let Some(name) = sender_name {
+                        println!("Approved {} ({}) - they can now message the bot", name, approved_id);
+                    } else {
+                        println!("Approved {} - they can now message the bot", approved_id);
+                    }
+                }
+            } else if let Some(err) = res.error {
+                eprintln!("Error: {}", err.message);
+            }
+        }
+        
+        PairAction::Reject { channel, sender_id } => {
+            let res = conn
+                .request("pair.reject", Some(json!({ "channel": channel, "senderId": sender_id })))
+                .await?;
+            
+            if res.ok {
+                println!("Rejected {} - their request has been removed", sender_id);
             } else if let Some(err) = res.error {
                 eprintln!("Error: {}", err.message);
             }

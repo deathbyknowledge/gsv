@@ -21,7 +21,7 @@ import {
   PeerInfo,
 } from "./types";
 import { isWebSocketRequest, validateFrame, isWsConnected } from "./utils";
-import { GsvConfig, DEFAULT_CONFIG, mergeConfig, resolveAgentIdFromBinding, getAgentConfig, parseDuration, HeartbeatConfig, isAllowedSender } from "./config";
+import { GsvConfig, DEFAULT_CONFIG, mergeConfig, resolveAgentIdFromBinding, getAgentConfig, parseDuration, HeartbeatConfig, isAllowedSender, PendingPair, normalizeE164 } from "./config";
 import { 
   HeartbeatState, 
   getHeartbeatConfig, 
@@ -107,6 +107,12 @@ export class Gateway extends DurableObject<Env> {
   }>>(
     this.ctx.storage.kv,
     { prefix: "lastActiveContext:" },
+  );
+
+  // Pending pairing requests (key: "channel:senderId")
+  pendingPairs = PersistedObject<Record<string, PendingPair>>(
+    this.ctx.storage.kv,
+    { prefix: "pendingPairs:" },
   );
 
   constructor(state: DurableObjectState, env: Env) {
@@ -232,6 +238,12 @@ export class Gateway extends DurableObject<Env> {
         return this.handleHeartbeatStatus(ws, frame);
       case "heartbeat.start":
         return this.handleHeartbeatStart(ws, frame);
+      case "pair.list":
+        return this.handlePairList(ws, frame);
+      case "pair.approve":
+        return this.handlePairApprove(ws, frame);
+      case "pair.reject":
+        return this.handlePairReject(ws, frame);
       default:
         this.sendError(ws, frame.id, 404, `Unknown method: ${frame.method}`);
     }
@@ -953,9 +965,44 @@ export class Gateway extends DurableObject<Env> {
     // Check allowlist before processing
     // For DMs, check the peer ID; for groups, check the sender (if provided)
     const senderId = params.sender?.id ?? params.peer.id;
+    const senderName = params.sender?.name ?? params.peer.name;
     const allowCheck = isAllowedSender(config, params.channel, senderId, params.peer.id);
     
     if (!allowCheck.allowed) {
+      if (allowCheck.needsPairing) {
+        // Pairing mode: store pending request
+        const pairKey = `${params.channel}:${normalizeE164(senderId)}`;
+        
+        // Only store if not already pending
+        if (!this.pendingPairs[pairKey]) {
+          this.pendingPairs[pairKey] = {
+            channel: params.channel,
+            senderId: normalizeE164(senderId),
+            senderName: senderName,
+            requestedAt: Date.now(),
+            firstMessage: params.message.text?.slice(0, 200), // Store preview
+          };
+          console.log(`[Gateway] New pairing request from ${senderId} (${senderName})`);
+          
+          // Optionally send "pending approval" message back
+          this.sendChannelResponse(
+            params.channel,
+            params.accountId,
+            params.peer,
+            params.message.id,
+            "Your message has been received. Awaiting approval from the owner.",
+          );
+        } else {
+          console.log(`[Gateway] Pairing already pending for ${senderId}`);
+        }
+        
+        this.sendOk(ws, frame.id, { 
+          status: "pending_pairing",
+          senderId: normalizeE164(senderId),
+        });
+        return;
+      }
+      
       console.log(`[Gateway] Blocked message from ${senderId}: ${allowCheck.reason}`);
       // Silently acknowledge but don't process
       this.sendOk(ws, frame.id, { 
@@ -1318,6 +1365,18 @@ export class Gateway extends DurableObject<Env> {
     return `agent:${agentId}:${channel}:${peer.kind}:${sanitizedPeerId}`;
   }
 
+  /**
+   * Find a connected channel WebSocket for a given channel type
+   */
+  private findChannelForMessage(channel: string): string | null {
+    for (const [channelKey, ws] of this.channels.entries()) {
+      if (channelKey.startsWith(`${channel}:`) && ws.readyState === WebSocket.OPEN) {
+        return channelKey;
+      }
+    }
+    return null;
+  }
+
   handleChannelsList(ws: WebSocket, frame: RequestFrame) {
     const channels = Object.values(this.channelRegistry);
     this.sendOk(ws, frame.id, { 
@@ -1347,6 +1406,92 @@ export class Gateway extends DurableObject<Env> {
     this.sendOk(ws, frame.id, { 
       message: "Heartbeat scheduler started",
       agents: status,
+    });
+  }
+
+  // ---- Pairing System ----
+
+  handlePairList(ws: WebSocket, frame: RequestFrame) {
+    const pairs = { ...this.pendingPairs };
+    this.sendOk(ws, frame.id, { pairs });
+  }
+
+  async handlePairApprove(ws: WebSocket, frame: RequestFrame) {
+    const params = frame.params as { channel: string; senderId: string } | undefined;
+    
+    if (!params?.channel || !params?.senderId) {
+      this.sendError(ws, frame.id, 400, "channel and senderId required");
+      return;
+    }
+    
+    const normalizedId = normalizeE164(params.senderId);
+    const pairKey = `${params.channel}:${normalizedId}`;
+    
+    const pending = this.pendingPairs[pairKey];
+    if (!pending) {
+      this.sendError(ws, frame.id, 404, `No pending pairing for ${pairKey}`);
+      return;
+    }
+    
+    // Add to allowFrom
+    const config = this.getFullConfig();
+    const currentAllowFrom = config.channels?.whatsapp?.allowFrom ?? [];
+    
+    if (!currentAllowFrom.includes(normalizedId)) {
+      const newAllowFrom = [...currentAllowFrom, normalizedId];
+      this.setConfigPath("channels.whatsapp.allowFrom", newAllowFrom);
+    }
+    
+    // Remove from pending
+    delete this.pendingPairs[pairKey];
+    
+    console.log(`[Gateway] Approved pairing for ${normalizedId}`);
+    
+    // Send confirmation message back to the channel
+    // Find a connected channel to send through
+    const channelKey = this.findChannelForMessage(params.channel);
+    if (channelKey) {
+      const [channel, accountId] = channelKey.split(":");
+      this.sendChannelResponse(
+        params.channel as ChannelId,
+        accountId,
+        { kind: "dm", id: normalizedId }, // peer
+        "", // no replyToId
+        `You're now connected! Feel free to send me a message.`,
+      );
+    }
+    
+    this.sendOk(ws, frame.id, { 
+      approved: true,
+      senderId: normalizedId,
+      senderName: pending.senderName,
+    });
+  }
+
+  handlePairReject(ws: WebSocket, frame: RequestFrame) {
+    const params = frame.params as { channel: string; senderId: string } | undefined;
+    
+    if (!params?.channel || !params?.senderId) {
+      this.sendError(ws, frame.id, 400, "channel and senderId required");
+      return;
+    }
+    
+    const normalizedId = normalizeE164(params.senderId);
+    const pairKey = `${params.channel}:${normalizedId}`;
+    
+    if (!this.pendingPairs[pairKey]) {
+      this.sendError(ws, frame.id, 404, `No pending pairing for ${pairKey}`);
+      return;
+    }
+    
+    // Remove from pending
+    delete this.pendingPairs[pairKey];
+    
+    console.log(`[Gateway] Rejected pairing for ${normalizedId}`);
+    
+    this.sendOk(ws, frame.id, { 
+      rejected: true,
+      senderId: normalizedId,
     });
   }
 
@@ -1424,7 +1569,8 @@ export class Gateway extends DurableObject<Env> {
   }
 
   getConfig(): GsvConfig {
-    return this.getFullConfig();
+    // Deep clone to avoid returning Proxy objects that can't be serialized in RPC
+    return JSON.parse(JSON.stringify(this.getFullConfig()));
   }
 
   broadcastToSession(sessionKey: string, payload: ChatEventPayload): void {

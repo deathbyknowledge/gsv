@@ -388,10 +388,26 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
       const remoteJid = msg.key.remoteJid!;
       const isGroup = remoteJid.endsWith("@g.us");
+      const isLid = remoteJid.endsWith("@lid");
+      
+      // For LID-based JIDs, we need to:
+      // 1. Use the original remoteJid (LID) for sending replies (WhatsApp requires this)
+      // 2. Extract the real phone number from senderPn for allowlist/display purposes
+      // The peer.id must be the JID we send replies to, but we pass the E.164 number
+      // separately for the gateway to use in allowlist checks.
+      let senderId: string | undefined;
+      if (isLid && msg.key.senderPn) {
+        const senderPn = msg.key.senderPn as string;
+        const match = senderPn.match(/^(\d+)@/);
+        if (match) {
+          senderId = `+${match[1]}`;  // E.164 format for allowlist
+        }
+        console.log(`[WA] LID: ${senderId}`);
+      }
       
       const peer: PeerInfo = {
         kind: isGroup ? "group" : "dm",
-        id: remoteJid,
+        id: remoteJid,  // Keep original JID for replies (including LID)
         name: msg.pushName ?? undefined,
       };
 
@@ -412,6 +428,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
       console.log(`[WA] ${remoteJid}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"${media.length > 0 ? ` +${media.length} media` : ''}`);
 
       // Build inbound params
+      // For LID-based DMs, we pass the E.164 number in sender.id for allowlist checking
+      // The peer.id contains the actual JID to reply to (which may be a LID)
       const inbound: ChannelInboundParams = {
         channel: "whatsapp",
         accountId: this.state.selfE164 || this.state.accountId,
@@ -419,7 +437,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
         sender: isGroup ? {
           id: msg.key.participant!,
           name: msg.pushName ?? undefined,
-        } : undefined,
+        } : (senderId ? {
+          id: senderId,  // E.164 number for allowlist
+          name: msg.pushName ?? undefined,
+        } : undefined),
         message: {
           id: msg.key.id!,
           text: text || (media.length > 0 ? "[Media]" : ""),
@@ -570,7 +591,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private async handleOutbound(payload: ChannelOutboundPayload): Promise<void> {
     if (!this.sock || !this.state.connected) return;
 
-    const jid = payload.peer.id;
+    // Convert peer ID to WhatsApp JID format
+    // E.164 format (+31649988417) -> WhatsApp JID (31649988417@s.whatsapp.net)
+    let jid = payload.peer.id;
+    if (jid.startsWith("+") && !jid.includes("@")) {
+      jid = `${jid.slice(1)}@s.whatsapp.net`;
+    }
+    
     const text = payload.message.text;
 
     try {

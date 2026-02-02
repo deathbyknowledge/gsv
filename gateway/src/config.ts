@@ -55,17 +55,27 @@ export interface TranscriptionConfig {
 }
 
 // DM access policy for channels
-export type DmPolicy = "open" | "allowlist";
+export type DmPolicy = "open" | "allowlist" | "pairing";
 
 export interface WhatsAppChannelConfig {
   // DM access policy
+  // - "pairing": Unknown senders trigger pairing flow, approve via CLI (recommended)
   // - "allowlist": Only numbers in allowFrom can message (secure)
   // - "open": Anyone can message (use with caution!)
   dmPolicy?: DmPolicy;
   
   // Allowed sender IDs (E.164 numbers like "+1234567890" or JIDs like "123@g.us")
-  // Only used when dmPolicy is "allowlist"
+  // Used by "allowlist" and "pairing" modes
   allowFrom?: string[];
+}
+
+// Pending pairing request
+export interface PendingPair {
+  channel: string;
+  senderId: string;
+  senderName?: string;
+  requestedAt: number;
+  firstMessage?: string;
 }
 
 export interface ChannelsConfig {
@@ -226,35 +236,27 @@ export function normalizeE164(raw: string): string {
 
 /**
  * Check if a sender is allowed based on channel config
+ * Returns: { allowed, needsPairing, reason }
  */
 export function isAllowedSender(
   config: GsvConfig,
   channel: string,
   senderId: string,
   peerId?: string,
-): { allowed: boolean; reason?: string } {
+): { allowed: boolean; needsPairing?: boolean; reason?: string } {
   if (channel !== "whatsapp") {
     // For now, only WhatsApp has allowlist support
     return { allowed: true };
   }
   
   const waConfig = config.channels?.whatsapp;
-  const policy = waConfig?.dmPolicy ?? "allowlist"; // Default to secure
+  const policy = waConfig?.dmPolicy ?? "pairing"; // Default to pairing (safest)
   
   if (policy === "open") {
     return { allowed: true };
   }
   
-  // Policy is "allowlist"
   const allowFrom = waConfig?.allowFrom ?? [];
-  
-  if (allowFrom.length === 0) {
-    // No allowlist configured - block by default for security
-    return { 
-      allowed: false, 
-      reason: "No allowFrom configured. Add phone numbers to channels.whatsapp.allowFrom or set dmPolicy to 'open'." 
-    };
-  }
   
   // Check for wildcard
   if (allowFrom.includes("*")) {
@@ -277,6 +279,17 @@ export function isAllowedSender(
     }
   }
   
+  // Sender not in allowlist
+  if (policy === "pairing") {
+    // Pairing mode: mark as needing pairing approval
+    return { 
+      allowed: false, 
+      needsPairing: true,
+      reason: `Sender ${normalizedSender} needs pairing approval` 
+    };
+  }
+  
+  // Allowlist mode: just block
   return { 
     allowed: false, 
     reason: `Sender ${normalizedSender} not in allowFrom list` 
