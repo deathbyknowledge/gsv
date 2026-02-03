@@ -1,1 +1,5 @@
 .alchemy/
+.env.local
+.env*.local
+.env.test.local
+.dev.vars

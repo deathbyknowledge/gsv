@@ -3,6 +3,9 @@
  * 
  * These tests deploy real workers to Cloudflare and test actual behavior.
  * Run with: npm run test:e2e (uses bun test)
+ * 
+ * For LLM tests, create gateway/.env.test.local with:
+ *   GSV_TEST_OPENAI_KEY=sk-...
  */
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import crypto from "node:crypto";
@@ -15,19 +18,49 @@ const testId = `gsv-e2e-${crypto.randomBytes(4).toString("hex")}`;
 let app: Scope;
 let gatewayUrl: string;
 
-// Helper to wait for worker to be ready
-async function waitForWorker(url: string, maxWaitMs = 30000) {
+// Helper to wait for worker to be ready (including WebSocket)
+async function waitForWorker(url: string, maxWaitMs = 60000) {
   const start = Date.now();
+  
+  // First wait for HTTP health
   while (Date.now() - start < maxWaitMs) {
     try {
       const res = await fetch(`${url}/health`);
-      if (res.ok) return;
+      if (res.ok) break;
     } catch {
       // Connection refused, keep waiting
     }
     await Bun.sleep(500);
   }
-  throw new Error(`Worker at ${url} not ready after ${maxWaitMs}ms`);
+  
+  // Then wait for WebSocket to be ready (edge propagation)
+  const wsUrl = url.replace("https://", "wss://") + "/ws";
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const ws = new WebSocket(wsUrl);
+      const result = await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => {
+          ws.close();
+          resolve(false);
+        }, 5000);
+        ws.onopen = () => {
+          clearTimeout(timeout);
+          ws.close();
+          resolve(true);
+        };
+        ws.onerror = () => {
+          clearTimeout(timeout);
+          ws.close();
+          resolve(false);
+        };
+      });
+      if (result) return;
+    } catch {
+      // Keep trying
+    }
+    await Bun.sleep(1000);
+  }
+  throw new Error(`Worker at ${url} WebSocket not ready after ${maxWaitMs}ms`);
 }
 
 // Helper for WebSocket connection using Bun's native WebSocket
@@ -142,7 +175,7 @@ describe("Gateway WebSocket Connection", () => {
     const ws = await connectWebSocket(wsUrl);
     expect(ws.readyState).toBe(WebSocket.OPEN);
     ws.close();
-  });
+  }, 15000); // First WS connection may need DO cold start
 
   it("can send and receive RPC messages", async () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
@@ -358,7 +391,7 @@ describe("Slash Commands", () => {
     expect(result.response).toBe("No run in progress.");
     
     ws.close();
-  });
+  }, 15000); // Extra time for potential DO cold start
 });
 
 // ============================================================================
