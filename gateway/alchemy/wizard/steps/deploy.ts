@@ -72,6 +72,7 @@ export async function deployStep(
       withWhatsApp: state.channels.whatsapp,
       withDiscord: state.channels.discord,
       withTemplates: state.deployTemplates,
+      withUI: state.deployUI,
       secrets: {
         authToken: state.authToken,
         discordBotToken: state.channels.discordBotToken,

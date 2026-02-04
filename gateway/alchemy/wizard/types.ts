@@ -37,6 +37,9 @@ export interface WizardState {
   /** Deploy workspace templates */
   deployTemplates: boolean;
   
+  /** Deploy web UI */
+  deployUI: boolean;
+  
   /** Deployment results */
   deployment?: {
     gatewayUrl?: string;
@@ -59,6 +62,7 @@ export const DEFAULT_STATE: WizardState = {
     discord: false,
   },
   deployTemplates: true,
+  deployUI: true,
 };
 
 export const PROVIDER_MODELS: Record<LLMProvider, { id: string; name: string }[]> = {

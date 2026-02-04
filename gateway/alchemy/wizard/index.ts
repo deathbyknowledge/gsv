@@ -96,6 +96,18 @@ export async function runWizard(options: WizardOptions = {}): Promise<WizardStat
     
     state.deployTemplates = deployTemplates;
 
+    // Web UI
+    const deployUI = await p.confirm({
+      message: "Deploy web UI?",
+      initialValue: true,
+    });
+    
+    if (isCancelled(deployUI)) {
+      handleCancel();
+    }
+    
+    state.deployUI = deployUI;
+
     // Stack name
     const stackName = await p.text({
       message: "Deployment name",
@@ -123,6 +135,7 @@ export async function runWizard(options: WizardOptions = {}): Promise<WizardStat
       state.channels.whatsapp && "WhatsApp",
       state.channels.discord && "Discord",
     ].filter(Boolean).join(", ") || "None"}\n` +
+    `${pc.bold("Web UI:")}   ${state.deployUI ? "Yes" : "No"}\n` +
     `${pc.bold("Templates:")} ${state.deployTemplates ? "Yes" : "No"}`,
     "Configuration Summary"
   );
@@ -210,6 +223,7 @@ export async function runWizard(options: WizardOptions = {}): Promise<WizardStat
   // Build status lines
   const statusLines = [
     `${pc.bold("Gateway URL:")} ${state.deployment.gatewayUrl}`,
+    state.deployUI ? `${pc.bold("Web UI:")}     ${state.deployment.gatewayUrl}` : null,
     state.deployment.whatsappUrl ? `${pc.bold("WhatsApp:")}   ${state.deployment.whatsappUrl}` : null,
     state.deployment.discordUrl ? `${pc.bold("Discord:")}    ${state.deployment.discordUrl}` : null,
     ``,
