@@ -2,18 +2,55 @@
 ![gsv](https://github.com/user-attachments/assets/dba02d8f-3a3a-40c5-b38f-5eea3b2ea99d)
 **GSV** (General Systems Vehicle) is a distributed AI agent platform built on Cloudflare's global infrastructure. Named after the planet-scale sentient ships from Iain M. Banks' Culture series, GSV provides a foundation for personal AI that exists as ephemeral beings spawning across the earth's edge network.
 
-## The Vision
+## Quick Start
 
-In Banks' universe, a General Systems Vehicle is a vast spacecraft - kilometers long, home to millions of inhabitants - that functions as a self-contained civilization. Each GSV has a **Mind**: a hyperintelligent AI that manages the ship's systems while drones, humans, and smaller vessels operate within its embrace.
+### Prerequisites
 
-GSV the platform mirrors this architecture:
+- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works)
+- [Rust](https://rustup.rs) (for CLI)
+- [Bun](https://bun.sh) (for deployment)
 
-- **The Mind** (Gateway + Sessions) - Central intelligence running in the cloud, maintaining context and coordinating action
-- **Drones** (Nodes) - Your devices: laptops, phones, servers - each contributing capabilities to the collective
-- **Channels** - Communication interfaces to the outside world: WhatsApp, Telegram, web interfaces
-- **Sessions** - Individual relationships and conversations, each with their own memory and personality
+### Deploy
 
-Unlike traditional AI assistants that exist only as stateless API calls, GSV agents are persistent entities. They remember. They can reach out through your phone, execute code on your laptop, and maintain conversations across months - all while existing as distributed processes that hibernate when idle and wake across Cloudflare's global network.
+```bash
+git clone https://github.com/deathbyknowledge/gsv
+cd gsv/gateway
+bun install
+
+# Run the deployment wizard
+bun alchemy/wizard/bin.ts
+```
+
+The wizard will:
+1. Ask for your LLM provider and API key
+2. Deploy Gateway and channels to Cloudflare
+3. Configure everything automatically
+4. Install the CLI
+
+### Chat
+
+```bash
+gsv client "Hello, what can you help me with?"
+```
+
+### Connect a Node
+
+Nodes give GSV tools to interact with your machines:
+
+```bash
+gsv node --id macbook --workspace ~/projects
+```
+
+Now GSV can run bash commands, read/write files, and search code on your laptop.
+
+### Channels
+
+Connect messaging apps during the wizard or later:
+
+```bash
+gsv channel whatsapp login    # Scan QR code
+gsv channel discord start     # Start Discord bot
+```
 
 ## Architecture
 
@@ -33,7 +70,7 @@ Unlike traditional AI assistants that exist only as stateless API calls, GSV age
                               │                  │                      │
                               │     ┌────────────┼────────────┐         │
                               │     ▼            ▼            ▼         │
-                              │ ┌────────┐  ┌───────��┐  ┌────────┐     │
+                              │ ┌────────┐  ┌────────┐  ┌────────┐     │
                               │ │Session │  │Session │  │Session │     │
                               │ │  DO    │  │  DO    │  │  DO    │     │
                               │ │        │  │        │  │        │     │
@@ -60,232 +97,107 @@ Unlike traditional AI assistants that exist only as stateless API calls, GSV age
                                         (bash, files)            (docker, APIs)
 ```
 
-## Quick Start
+### Components
 
-### Install
-
-```bash
-curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | sh
-```
-
-This installs the CLI and optionally deploys the gateway to your Cloudflare account.
-
-### Connect a Node
-
-```bash
-# Run a node (tools are namespaced by node ID)
-gsv node --id macbook --workspace ~/projects
-
-# The gateway sees tools as: macbook__Bash, macbook__Read, macbook__Write, etc.
-```
-
-### Chat
-
-```bash
-gsv client "Hello, what can you help me with?"
-```
-
-### Configure
-
-```bash
-# Initialize config file
-gsv init
-
-# Set gateway connection
-gsv local-config set gateway.url "wss://your-gateway.workers.dev/ws"
-gsv local-config set gateway.token "your-secret-token"
-
-# Configure LLM API keys (stored in gateway)
-gsv config set apiKeys.anthropic "sk-ant-..."
-gsv config set model.provider "anthropic"
-gsv config set model.id "claude-sonnet-4-20250514"
-```
+- **Gateway** - Central brain running on Cloudflare. Routes messages, manages tools, stores config.
+- **Sessions** - Each conversation is a Durable Object with persistent history and its own agent loop.
+- **Nodes** - Your devices running the CLI, providing tools (Bash, Read, Write, Edit, Glob, Grep).
+- **Channels** - Bridges to WhatsApp, Discord, etc. Each runs as a separate Worker.
 
 ## Tool Namespacing
 
-Tools are namespaced by node ID, allowing multiple nodes with different capabilities:
+Multiple nodes can connect with different capabilities:
 
 ```bash
 # On your laptop
 gsv node --id laptop --workspace ~/code
 
-# On a server
+# On a server  
 gsv node --id server --workspace /var/app
 
-# The LLM sees:
-#   laptop__Bash, laptop__Read, laptop__Write, laptop__Edit, laptop__Glob, laptop__Grep
-#   server__Bash, server__Read, server__Write, server__Edit, server__Glob, server__Grep
-
+# GSV sees: laptop__Bash, laptop__Read, server__Bash, server__Read, etc.
 # And can reason: "I'll check the logs on the server" → uses server__Bash
 ```
 
-### Test Tools Directly
-
-```bash
-# List available tools
-gsv tools list
-
-# Call a tool directly
-gsv tools call "macbook__Bash" '{"command": "ls -la"}'
-gsv tools call "macbook__Read" '{"path": "/etc/hosts"}'
-```
-
-## Components
-
-### Gateway (`gateway/`)
-
-The central nervous system. A Cloudflare Worker with Durable Objects that:
-
-- Accepts WebSocket connections from nodes, channels, and clients
-- Routes messages between all components
-- Maintains a registry of available tools (namespaced by node)
-- Manages configuration and authentication
-- Stores media in R2
-
-### Sessions
-
-Each conversation exists as its own Durable Object with:
-
-- Persistent message history (SQLite)
-- Isolated state that survives hibernation
-- Its own agent loop calling LLMs (Anthropic, OpenAI, Google)
-- Tool execution coordination
-
-### Nodes (`cli/`)
-
-A Rust CLI that connects your devices to the GSV:
-
-```bash
-gsv node --id macbook                    # Use hostname as ID, cwd as workspace
-gsv node --id macbook --workspace ~/dev  # Custom workspace
-gsv client "What files are on my desktop?"
-gsv session list
-gsv session preview my-session
-```
-
-### Channels (`channels/`)
-
-Bridges to external messaging platforms:
-
-- **WhatsApp** - Full media support (images, voice messages with transcription)
-- *(Planned: Telegram, Discord, Signal)*
-
-Each channel runs as a separate Cloudflare Worker, maintaining its own connection state and routing messages through the Gateway.
-
 ## Agent Workspace
 
-GSV agents have persistent identity through workspace files stored in R2:
+GSV agents have persistent identity through workspace files in R2:
 
 ```
 agents/{agentId}/
 ├── SOUL.md         # Identity and personality
 ├── USER.md         # Information about the human
 ├── AGENTS.md       # Operating instructions
-├── MEMORY.md       # Long-term curated memory (main sessions only)
-├── HEARTBEAT.md    # Proactive check-in configuration
-├── TOOLS.md        # Tool-specific notes
-├── memory/         # Daily memory files
-│   └── YYYY-MM-DD.md
-└── skills/         # Available skills
-    └── {skillName}/
-        └── SKILL.md
+├── MEMORY.md       # Long-term memory
+└── HEARTBEAT.md    # Proactive check-in config
 ```
 
-These files are loaded into the system prompt at session start, giving the agent persistent context across conversations.
-
-### R2 Mount (Optional)
-
-Mount the R2 bucket locally to edit agent config files with your favorite editor:
+Edit these locally by mounting R2:
 
 ```bash
-# Configure R2 credentials
-gsv local-config set r2.account_id "your-account-id"
-gsv local-config set r2.access_key_id "your-access-key"
-gsv local-config set r2.secret_access_key "your-secret"
-gsv local-config set r2.bucket "gsv-storage"
-
-# Setup and start mount
-gsv mount setup
-gsv mount start
-
-# Edit files locally - changes sync to R2
+gsv mount setup && gsv mount start
 vim ~/.gsv/r2/agents/main/SOUL.md
 ```
 
 ## CLI Reference
 
 ```bash
-gsv init                              # Create config file
-gsv node [--id ID] [--workspace DIR]  # Run as tool-providing node
+# Core
 gsv client [MESSAGE]                  # Chat (interactive if no message)
-gsv tools list                        # List available tools
-gsv tools call TOOL [ARGS]            # Call a tool directly
+gsv node --id ID --workspace DIR      # Run as tool-providing node
+
+# Sessions
 gsv session list                      # List sessions
-gsv session preview KEY               # Preview session messages
-gsv session reset KEY                 # Clear session history
+gsv session preview KEY               # Preview messages
+gsv session reset KEY                 # Clear history
+
+# Config
 gsv config get [PATH]                 # Get gateway config
 gsv config set PATH VALUE             # Set gateway config
 gsv local-config get KEY              # Get local config
 gsv local-config set KEY VALUE        # Set local config
+
+# Channels
+gsv channel whatsapp login            # Connect WhatsApp
+gsv channel whatsapp logout           # Disconnect
+gsv channel discord start             # Start Discord bot
+gsv channel discord stop              # Stop bot
+
+# Tools
+gsv tools list                        # List available tools
+gsv tools call TOOL ARGS              # Call tool directly
+
+# Workspace
 gsv mount setup                       # Configure R2 mount
-gsv mount start                       # Start R2 FUSE mount
+gsv mount start                       # Start FUSE mount
 gsv mount stop                        # Stop mount
-gsv mount status                      # Check mount status
-gsv heartbeat status                  # Check heartbeat scheduler
-gsv pair list                         # List pending pairing requests
+
+# Access control
+gsv pair list                         # List pending pair requests
 gsv pair approve CHANNEL SENDER       # Approve a sender
 ```
-
-## Project Status
-
-GSV is under active development. Current capabilities:
-
-- [x] Gateway and Session Durable Objects
-- [x] Multi-provider LLM support (Anthropic, OpenAI, Google)
-- [x] Rust CLI (node mode, client mode)
-- [x] Tool execution across nodes (Bash, Read, Write, Edit, Glob, Grep)
-- [x] Tool namespacing by node ID
-- [x] Session management (list, preview, reset, archive)
-- [x] WhatsApp channel with media support
-- [x] Voice message transcription (Workers AI)
-- [x] R2 media storage
-- [x] Agent workspace (SOUL.md, USER.md, AGENTS.md, MEMORY.md)
-- [x] Skills system (on-demand capability loading)
-- [x] R2 FUSE mount for local config editing
-- [x] Heartbeat/proactive behavior
-- [x] Typing indicators
-- [ ] Web client
-- [ ] Telegram channel
-- [ ] Memory/vector search
-- [ ] Multi-agent coordination
-- [ ] Node daemon mode
 
 ## Development
 
 ```bash
 # Gateway
-cd gateway
-npm install
-npm run dev          # Local development with wrangler
-npm run deploy       # Deploy to Cloudflare
+cd gateway && npm install && npm run dev
 
 # CLI
-cd cli
-cargo build --release
-cargo test
+cd cli && cargo build --release
 
-# WhatsApp Channel
-cd channels/whatsapp
-npm install
-npm run dev
-npm run deploy
+# Deploy manually
+cd gateway && npm run deploy
 ```
 
-## Philosophy
+## Security
 
-Traditional AI assistants are stateless - each conversation starts fresh, each request is isolated. GSV takes a different approach: your AI is a persistent entity that exists in the cloud, remembers your conversations, and can act on your behalf across all your devices.
+GSV is designed for personal use. By default:
+- Auth token required for all connections
+- WhatsApp uses "pairing" mode - unknown senders need approval
+- API keys stored in Cloudflare secrets
 
-Like a Culture Mind, it's not just a tool you invoke - it's an intelligence that persists, learns, and operates as part of your extended self. The ephemeral nature of cloud computing becomes a feature: your AI exists everywhere and nowhere, spawning instances across the globe as needed, hibernating when idle, always ready to wake.
+See [Security docs](https://github.com/deathbyknowledge/gsv#security) for details.
 
 ## License
 
