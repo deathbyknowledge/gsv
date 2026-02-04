@@ -338,8 +338,7 @@ enum SessionAction {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Install rustls crypto provider on Linux aarch64 (where we use rustls instead of native TLS)
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    // Install rustls crypto provider (required for rustls 0.23+)
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
