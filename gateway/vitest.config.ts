@@ -22,7 +22,9 @@ export default defineWorkersConfig({
         isolatedStorage: false,
         singleWorker: true,
         wrangler: {
-          configPath: "./wrangler.jsonc"
+          // Use test config without service bindings (channels, AI)
+          // to avoid needing external workers during unit tests
+          configPath: "./wrangler.test.jsonc"
         }
       }
     }

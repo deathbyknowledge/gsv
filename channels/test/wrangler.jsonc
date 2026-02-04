@@ -2,17 +2,18 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gsv-channel-test",
   "main": "src/index.ts",
-  "compatibility_date": "2026-01-28",
+  "compatibility_date": "2025-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true
   },
-  // Service binding to Gateway for RPC
-  "services": [
-    {
-      "binding": "GATEWAY",
-      "service": "gateway",
-      "entrypoint": "GatewayEntrypoint"
-    }
-  ]
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TEST_CHANNEL_STATE",
+        "class_name": "TestChannelState"
+      }
+    ]
+  }
+  // Note: GATEWAY_QUEUE binding is provided by alchemy/infra.ts during deployment
 }

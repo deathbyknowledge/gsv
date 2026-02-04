@@ -1,14 +1,17 @@
 /**
  * Test Channel Worker
  * 
- * A minimal channel implementation for e2e testing the Service Binding RPC flow.
+ * A minimal channel implementation for e2e testing the Channel ↔ Gateway communication.
  * This channel doesn't connect to any external service - it's purely for testing
- * the Gateway ↔ Channel communication pattern.
+ * the Gateway channel architecture.
+ * 
+ * Uses a Durable Object to maintain state across requests (important because Gateway
+ * calls send() via Service Binding which may be a different worker invocation).
  */
-import { WorkerEntrypoint } from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 
 // ============================================================================
-// Types (minimal subset for testing)
+// Types
 // ============================================================================
 
 type ChannelPeer = {
@@ -36,6 +39,9 @@ type ChannelInboundMessage = {
   text: string;
   media?: ChannelMedia[];
   timestamp?: number;
+  replyToId?: string;
+  replyToText?: string;
+  wasMentioned?: boolean;
 };
 
 type ChannelOutboundMessage = {
@@ -66,34 +72,74 @@ type StartResult = { ok: true } | { ok: false; error: string };
 type StopResult = { ok: true } | { ok: false; error: string };
 type SendResult = { ok: true; messageId?: string } | { ok: false; error: string };
 
-// Gateway RPC interface
-interface GatewayRpc {
-  channelInbound(
-    channelId: string,
-    accountId: string,
-    message: ChannelInboundMessage,
-  ): Promise<{ ok: boolean; sessionKey?: string; error?: string }>;
-  
-  channelStatusChanged(
-    channelId: string,
-    accountId: string,
-    status: ChannelAccountStatus,
-  ): Promise<void>;
-}
+type ChannelQueueMessage = 
+  | { type: "inbound"; channelId: string; accountId: string; message: ChannelInboundMessage }
+  | { type: "status"; channelId: string; accountId: string; status: ChannelAccountStatus };
+
+type RecordedMessage = { direction: "in" | "out"; message: ChannelOutboundMessage | ChannelInboundMessage; timestamp: number };
 
 interface Env {
-  GATEWAY: Fetcher & GatewayRpc;
+  GATEWAY_QUEUE: Queue<ChannelQueueMessage>;
+  TEST_CHANNEL_STATE: DurableObjectNamespace;
 }
 
 // ============================================================================
-// Test Channel State (in-memory for simplicity)
+// Test Channel State Durable Object
 // ============================================================================
 
-// Track "accounts" and their state
-const accounts = new Map<string, {
-  connected: boolean;
-  messages: Array<{ direction: "in" | "out"; message: ChannelOutboundMessage | ChannelInboundMessage }>;
-}>();
+export class TestChannelState extends DurableObject<Env> {
+  private connected = false;
+  private messages: RecordedMessage[] = [];
+  
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // Load state from storage
+    this.ctx.blockConcurrencyWhile(async () => {
+      this.connected = (await this.ctx.storage.get<boolean>("connected")) ?? false;
+      this.messages = (await this.ctx.storage.get<RecordedMessage[]>("messages")) ?? [];
+    });
+  }
+  
+  async start(): Promise<void> {
+    this.connected = true;
+    await this.ctx.storage.put("connected", true);
+  }
+  
+  async stop(): Promise<void> {
+    this.connected = false;
+    await this.ctx.storage.put("connected", false);
+  }
+  
+  async isConnected(): Promise<boolean> {
+    return this.connected;
+  }
+  
+  async recordMessage(direction: "in" | "out", message: ChannelOutboundMessage | ChannelInboundMessage): Promise<void> {
+    this.messages.push({ direction, message, timestamp: Date.now() });
+    await this.ctx.storage.put("messages", this.messages);
+  }
+  
+  async getMessages(): Promise<RecordedMessage[]> {
+    return this.messages;
+  }
+  
+  async getOutboundMessages(): Promise<ChannelOutboundMessage[]> {
+    return this.messages
+      .filter(m => m.direction === "out")
+      .map(m => m.message as ChannelOutboundMessage);
+  }
+  
+  async clearMessages(): Promise<void> {
+    this.messages = [];
+    await this.ctx.storage.put("messages", []);
+  }
+  
+  async reset(): Promise<void> {
+    this.connected = false;
+    this.messages = [];
+    await this.ctx.storage.deleteAll();
+  }
+}
 
 // ============================================================================
 // Test Channel WorkerEntrypoint
@@ -112,152 +158,274 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     deletion: false,
   };
 
-  /**
-   * Start the test channel for an account.
-   */
+  private getStateDO(accountId: string): DurableObjectStub<TestChannelState> {
+    const id = this.env.TEST_CHANNEL_STATE.idFromName(accountId);
+    return this.env.TEST_CHANNEL_STATE.get(id) as DurableObjectStub<TestChannelState>;
+  }
+
   async start(accountId: string, _config: Record<string, unknown>): Promise<StartResult> {
-    accounts.set(accountId, { connected: true, messages: [] });
+    const state = this.getStateDO(accountId);
+    await state.start();
     
-    // Notify Gateway
-    await this.env.GATEWAY.channelStatusChanged("test", accountId, {
+    // Notify Gateway via queue
+    await this.env.GATEWAY_QUEUE.send({
+      type: "status",
+      channelId: "test",
       accountId,
-      connected: true,
-      authenticated: true,
-      mode: "test",
+      status: {
+        accountId,
+        connected: true,
+        authenticated: true,
+        mode: "test",
+      },
     });
     
     return { ok: true };
   }
 
-  /**
-   * Stop the test channel for an account.
-   */
   async stop(accountId: string): Promise<StopResult> {
-    const account = accounts.get(accountId);
-    if (account) {
-      account.connected = false;
-    }
+    const state = this.getStateDO(accountId);
+    await state.stop();
     
-    await this.env.GATEWAY.channelStatusChanged("test", accountId, {
+    await this.env.GATEWAY_QUEUE.send({
+      type: "status",
+      channelId: "test",
       accountId,
-      connected: false,
-      authenticated: false,
+      status: {
+        accountId,
+        connected: false,
+        authenticated: false,
+      },
     });
     
     return { ok: true };
   }
 
-  /**
-   * Get status for accounts.
-   */
   async status(accountId?: string): Promise<ChannelAccountStatus[]> {
     if (accountId) {
-      const account = accounts.get(accountId);
+      const state = this.getStateDO(accountId);
+      const connected = await state.isConnected();
       return [{
         accountId,
-        connected: account?.connected ?? false,
-        authenticated: account?.connected ?? false,
+        connected,
+        authenticated: connected,
         mode: "test",
       }];
     }
-    
-    return Array.from(accounts.entries()).map(([id, acc]) => ({
-      accountId: id,
-      connected: acc.connected,
-      authenticated: acc.connected,
-      mode: "test",
-    }));
+    // Can't list all accounts without a DO per-account tracking
+    return [];
   }
 
   /**
    * Send a message (Gateway → Channel).
-   * For testing, we just record it.
+   * Records it in the account's Durable Object.
    */
   async send(accountId: string, message: ChannelOutboundMessage): Promise<SendResult> {
-    const account = accounts.get(accountId);
-    if (!account?.connected) {
-      return { ok: false, error: "Account not connected" };
-    }
-    
-    account.messages.push({ direction: "out", message });
+    const state = this.getStateDO(accountId);
+    await state.recordMessage("out", message);
     
     const messageId = `test-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    console.log(`[TestChannel] Sent to ${message.peer.id}: ${message.text}`);
+    console.log(`[TestChannel] Sent to ${accountId}/${message.peer.id}: ${message.text.slice(0, 50)}...`);
     
     return { ok: true, messageId };
   }
 
-  /**
-   * Typing indicator (no-op for test).
-   */
   async setTyping(_accountId: string, _peer: ChannelPeer, _typing: boolean): Promise<void> {
     // No-op
   }
 
   // =========================================================================
-  // Test-only methods (for e2e tests to simulate inbound messages)
+  // Test-only methods
   // =========================================================================
 
-  /**
-   * Simulate an inbound message from a "user" to test the full flow.
-   * This is called by tests to trigger Gateway processing.
-   */
   async simulateInbound(
     accountId: string,
     peer: ChannelPeer,
     text: string,
-    options?: { sender?: ChannelSender; media?: ChannelMedia[] }
-  ): Promise<{ ok: boolean; sessionKey?: string; error?: string }> {
-    const account = accounts.get(accountId);
-    if (!account?.connected) {
-      return { ok: false, error: "Account not connected" };
+    options?: { sender?: ChannelSender; media?: ChannelMedia[]; replyToId?: string; replyToText?: string }
+  ): Promise<{ ok: boolean; messageId: string; error?: string }> {
+    const state = this.getStateDO(accountId);
+    const connected = await state.isConnected();
+    if (!connected) {
+      return { ok: false, messageId: "", error: "Account not connected" };
     }
 
+    const messageId = `test-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
     const message: ChannelInboundMessage = {
-      messageId: `test-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      messageId,
       peer,
       sender: options?.sender,
       text,
       media: options?.media,
+      replyToId: options?.replyToId,
+      replyToText: options?.replyToText,
       timestamp: Date.now(),
     };
 
-    account.messages.push({ direction: "in", message });
+    await state.recordMessage("in", message);
 
-    // Send to Gateway via Service Binding RPC
     console.log(`[TestChannel] Simulating inbound from ${peer.id}: ${text}`);
-    return await this.env.GATEWAY.channelInbound("test", accountId, message);
+
+    try {
+      await this.env.GATEWAY_QUEUE.send({
+        type: "inbound",
+        channelId: "test",
+        accountId,
+        message,
+      });
+      return { ok: true, messageId };
+    } catch (e) {
+      console.error(`[TestChannel] Queue send failed:`, e);
+      return { ok: false, messageId, error: String(e) };
+    }
   }
 
-  /**
-   * Get recorded messages for an account (for test assertions).
-   */
-  async getMessages(accountId: string): Promise<Array<{ direction: "in" | "out"; message: unknown }>> {
-    return accounts.get(accountId)?.messages ?? [];
+  async getMessages(accountId: string): Promise<RecordedMessage[]> {
+    const state = this.getStateDO(accountId);
+    return await state.getMessages();
   }
 
-  /**
-   * Clear all state (for test cleanup).
-   */
-  async reset(): Promise<void> {
-    accounts.clear();
+  async getOutboundMessages(accountId: string): Promise<ChannelOutboundMessage[]> {
+    const state = this.getStateDO(accountId);
+    return await state.getOutboundMessages();
+  }
+
+  async clearMessages(accountId: string): Promise<void> {
+    const state = this.getStateDO(accountId);
+    await state.clearMessages();
+  }
+
+  async reset(accountId: string): Promise<void> {
+    const state = this.getStateDO(accountId);
+    await state.reset();
   }
 }
 
 // ============================================================================
-// HTTP Handler (for health checks)
+// HTTP Handler
 // ============================================================================
 
 export default {
-  async fetch(request: Request, _env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     
     if (url.pathname === "/" || url.pathname === "/health") {
       return Response.json({
         service: "gsv-channel-test",
         status: "ok",
-        accounts: Array.from(accounts.keys()),
       });
+    }
+
+    // Helper to get DO stub
+    const getState = (accountId: string) => {
+      const id = env.TEST_CHANNEL_STATE.idFromName(accountId);
+      return env.TEST_CHANNEL_STATE.get(id) as DurableObjectStub<TestChannelState>;
+    };
+
+    // POST /test/start?accountId=xxx
+    if (url.pathname === "/test/start" && request.method === "POST") {
+      const accountId = url.searchParams.get("accountId") || "default";
+      const state = getState(accountId);
+      await state.start();
+      
+      await env.GATEWAY_QUEUE.send({
+        type: "status",
+        channelId: "test",
+        accountId,
+        status: { accountId, connected: true, authenticated: true, mode: "test" },
+      });
+      
+      return Response.json({ ok: true, accountId });
+    }
+
+    // POST /test/stop?accountId=xxx
+    if (url.pathname === "/test/stop" && request.method === "POST") {
+      const accountId = url.searchParams.get("accountId") || "default";
+      const state = getState(accountId);
+      await state.stop();
+      
+      await env.GATEWAY_QUEUE.send({
+        type: "status",
+        channelId: "test",
+        accountId,
+        status: { accountId, connected: false, authenticated: false },
+      });
+      
+      return Response.json({ ok: true, accountId });
+    }
+
+    // POST /test/inbound
+    if (url.pathname === "/test/inbound" && request.method === "POST") {
+      const body = await request.json() as {
+        accountId: string;
+        peer: ChannelPeer;
+        text: string;
+        sender?: ChannelSender;
+        media?: ChannelMedia[];
+      };
+      
+      const state = getState(body.accountId);
+      const connected = await state.isConnected();
+      if (!connected) {
+        return Response.json({ ok: false, error: "Account not connected" }, { status: 400 });
+      }
+
+      const messageId = `test-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      
+      const message: ChannelInboundMessage = {
+        messageId,
+        peer: body.peer,
+        sender: body.sender,
+        text: body.text,
+        media: body.media,
+        timestamp: Date.now(),
+      };
+
+      await state.recordMessage("in", message);
+
+      await env.GATEWAY_QUEUE.send({
+        type: "inbound",
+        channelId: "test",
+        accountId: body.accountId,
+        message,
+      });
+
+      return Response.json({ ok: true, messageId });
+    }
+
+    // GET /test/messages?accountId=xxx
+    if (url.pathname === "/test/messages" && request.method === "GET") {
+      const accountId = url.searchParams.get("accountId") || "default";
+      const state = getState(accountId);
+      const messages = await state.getMessages();
+      return Response.json({ accountId, messages });
+    }
+
+    // GET /test/outbound?accountId=xxx
+    if (url.pathname === "/test/outbound" && request.method === "GET") {
+      const accountId = url.searchParams.get("accountId") || "default";
+      const state = getState(accountId);
+      const messages = await state.getOutboundMessages();
+      return Response.json({ accountId, messages });
+    }
+
+    // POST /test/clear?accountId=xxx
+    if (url.pathname === "/test/clear" && request.method === "POST") {
+      const accountId = url.searchParams.get("accountId") || "default";
+      const state = getState(accountId);
+      await state.clearMessages();
+      return Response.json({ ok: true, accountId });
+    }
+
+    // POST /test/reset?accountId=xxx
+    if (url.pathname === "/test/reset" && request.method === "POST") {
+      const accountId = url.searchParams.get("accountId");
+      if (accountId) {
+        const state = getState(accountId);
+        await state.reset();
+      }
+      return Response.json({ ok: true });
     }
     
     return new Response("Not Found", { status: 404 });

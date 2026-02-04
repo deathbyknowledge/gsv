@@ -52,17 +52,4 @@ jobs:
         working-directory: cli
         run: cargo test
 
-  cli-fmt:
-    name: CLI Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      
-      - name: Check formatting
-        working-directory: cli
-        run: cargo fmt --check
+

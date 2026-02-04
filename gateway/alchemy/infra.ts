@@ -62,12 +62,6 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
     await uploadWorkspaceTemplates(storage);
   }
 
-  // Use WorkerStub for circular service binding dependencies
-  // Gateway references WhatsApp, WhatsApp references Gateway's queue
-  const whatsappStub = withWhatsApp
-    ? await WorkerStub(`${name}-whatsapp-stub`, { name: `${name}-channel-whatsapp` })
-    : undefined;
-
   // Channel inbound queue - all channels send inbound messages here
   // Gateway consumes from this queue to process messages
   // Settings optimized for minimal latency
@@ -79,47 +73,31 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
     },
   });
 
-  // Main gateway worker - consumes from channel inbound queue
-  const gateway = await Worker(`${name}-worker`, {
-    name,
-    entrypoint,
-    adopt: true,
-    bindings: {
-      GATEWAY: DurableObjectNamespace("gateway", {
-        className: "Gateway",
-        sqlite: true,
-      }),
-      SESSION: DurableObjectNamespace("session", {
-        className: "Session",
-        sqlite: true,
-      }),
-      STORAGE: storage,
-      // Service bindings to channels (for outbound messages)
-      // Points to WhatsAppChannelEntrypoint for RPC methods (send, setTyping, etc.)
-      ...(withWhatsApp ? { 
-        CHANNEL_WHATSAPP: {
-          type: "service" as const,
-          service: `${name}-channel-whatsapp`,
-          __entrypoint__: "WhatsAppChannelEntrypoint",
-        }
-      } : {}),
-      // Secrets
-      ...(secrets.authToken ? { AUTH_TOKEN: alchemy.secret(secrets.authToken) } : {}),
-      ...(secrets.anthropicApiKey ? { ANTHROPIC_API_KEY: alchemy.secret(secrets.anthropicApiKey) } : {}),
-    },
-    // Queue consumer: process inbound messages from channels
-    eventSources: [{
-      queue: channelInboundQueue,
-      settings: {
-        batchSize: 1,        // Process one message at a time for minimal latency
-        maxRetries: 3,
-        maxWaitTimeMs: 0,    // Don't wait to batch, process immediately
+  // =========================================================================
+  // Deploy channels FIRST (Gateway references them via service bindings)
+  // =========================================================================
+
+  // Optional test channel for e2e testing
+  let testChannel: Awaited<ReturnType<typeof Worker>> | undefined;
+  
+  if (withTestChannel) {
+    testChannel = await Worker(`${name}-test-channel`, {
+      name: `${name}-test-channel`,
+      entrypoint: "../channels/test/src/index.ts",
+      adopt: true,
+      bindings: {
+        // Queue for sending inbound messages to Gateway (producer binding)
+        GATEWAY_QUEUE: channelInboundQueue,
+        // Durable Object for maintaining test state across requests
+        TEST_CHANNEL_STATE: DurableObjectNamespace("test-channel-state", {
+          className: "TestChannelState",
+        }),
       },
-    }],
-    url,
-    compatibilityDate: "2026-01-28",
-    compatibilityFlags: ["nodejs_compat"],
-  });
+      url: true,
+      compatibilityDate: "2025-09-01",
+      compatibilityFlags: ["nodejs_compat"],
+    });
+  }
 
   // Deploy WhatsApp channel
   let whatsappChannel: Awaited<ReturnType<typeof Worker>> | undefined;
@@ -150,27 +128,58 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
     });
   }
 
-  // Optional test channel for e2e testing
-  let testChannel: Awaited<ReturnType<typeof Worker>> | undefined;
-  
-  if (withTestChannel) {
-    testChannel = await Worker(`${name}-test-channel`, {
-      name: `${name}-test-channel`,
-      entrypoint: "../channels/test/src/index.ts",
-      adopt: true,
-      bindings: {
-        // Service binding to Gateway's entrypoint
-        GATEWAY: {
+  // =========================================================================
+  // Deploy Gateway AFTER channels (so service bindings can resolve)
+  // =========================================================================
+
+  // Main gateway worker - consumes from channel inbound queue
+  const gateway = await Worker(`${name}-worker`, {
+    name,
+    entrypoint,
+    adopt: true,
+    bindings: {
+      GATEWAY: DurableObjectNamespace("gateway", {
+        className: "Gateway",
+        sqlite: true,
+      }),
+      SESSION: DurableObjectNamespace("session", {
+        className: "Session",
+        sqlite: true,
+      }),
+      STORAGE: storage,
+      // Service bindings to channels (for outbound messages)
+      // Points to channel WorkerEntrypoints for RPC methods (send, setTyping, etc.)
+      ...(withWhatsApp ? { 
+        CHANNEL_WHATSAPP: {
           type: "service" as const,
-          service: name,
-          __entrypoint__: "GatewayEntrypoint",
-        },
+          service: `${name}-channel-whatsapp`,
+          __entrypoint__: "WhatsAppChannelEntrypoint",
+        }
+      } : {}),
+      ...(withTestChannel ? {
+        CHANNEL_TEST: {
+          type: "service" as const,
+          service: `${name}-test-channel`,
+          __entrypoint__: "TestChannel",
+        }
+      } : {}),
+      // Secrets
+      ...(secrets.authToken ? { AUTH_TOKEN: alchemy.secret(secrets.authToken) } : {}),
+      ...(secrets.anthropicApiKey ? { ANTHROPIC_API_KEY: alchemy.secret(secrets.anthropicApiKey) } : {}),
+    },
+    // Queue consumer: process inbound messages from channels
+    eventSources: [{
+      queue: channelInboundQueue,
+      settings: {
+        batchSize: 1,        // Process one message at a time for minimal latency
+        maxRetries: 3,
+        maxWaitTimeMs: 0,    // Don't wait to batch, process immediately
       },
-      url: true,
-      compatibilityDate: "2026-01-28",
-      compatibilityFlags: ["nodejs_compat"],
-    });
-  }
+    }],
+    url,
+    compatibilityDate: "2025-09-01",
+    compatibilityFlags: ["nodejs_compat"],
+  });
 
   return { gateway, storage, whatsappChannel, testChannel };
 }

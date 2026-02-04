@@ -1,0 +1,47 @@
+/**
+ * Wrangler configuration for unit tests.
+ * 
+ * This is a stripped-down version of wrangler.jsonc that doesn't include
+ * service bindings (which would require external workers to be running).
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "gateway-test",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-09-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"migrations": [
+		{
+			"new_sqlite_classes": ["Gateway"],
+			"tag": "v1"
+		},
+		{
+			"new_sqlite_classes": ["Session"],
+			"tag": "v2"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "Gateway",
+				"name": "GATEWAY"
+			},
+			{
+				"class_name": "Session",
+				"name": "SESSION"
+			}
+		]
+	},
+	"observability": {
+		"enabled": true
+	},
+	// Use in-memory R2 bucket for tests
+	"r2_buckets": [
+		{
+			"binding": "STORAGE",
+			"bucket_name": "gsv-storage-test"
+		}
+	]
+	// Note: No AI binding, no service bindings for channels
+	// Tests should mock these dependencies
+}

@@ -104,7 +104,11 @@ detect_platform() {
     case "$OS" in
         linux) OS="linux" ;;
         darwin) OS="darwin" ;;
-        msys*|mingw*|cygwin*) OS="windows" ;;
+        msys*|mingw*|cygwin*) 
+            error "Windows is not currently supported."
+            error "Please use WSL2 (Windows Subsystem for Linux) instead."
+            exit 1 
+            ;;
         *) error "Unsupported OS: $OS"; exit 1 ;;
     esac
 
@@ -115,7 +119,6 @@ detect_platform() {
     esac
 
     BINARY_NAME="gsv-${OS}-${ARCH}"
-    [ "$OS" = "windows" ] && BINARY_NAME="${BINARY_NAME}.exe"
 }
 
 check_bun() {
