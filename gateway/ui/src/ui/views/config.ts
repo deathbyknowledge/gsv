@@ -154,7 +154,13 @@ function renderConnectionSection(app: GsvApp) {
 
 function renderModelSection(app: GsvApp, config: GsvConfig) {
   const currentModel = config.model || { provider: "anthropic", id: "claude-sonnet-4-20250514" };
-  const currentValue = `${currentModel.provider}/${currentModel.id}`;
+  
+  // Helper to save model (validates before saving)
+  const saveModel = (provider: string, id: string) => {
+    if (provider && id) {
+      app.saveConfig("model", { provider: provider.trim(), id: id.trim() });
+    }
+  };
   
   return html`
     <div class="card" style="margin-bottom: var(--space-4)">
@@ -162,58 +168,66 @@ function renderModelSection(app: GsvApp, config: GsvConfig) {
         <h3 class="card-title">🤖 Model</h3>
       </div>
       <div class="card-body">
+        <!-- Quick select from common models -->
         <div class="form-group">
-          <label class="form-label">Default Model</label>
+          <label class="form-label">Quick Select</label>
           <select 
             class="form-select"
-            .value=${currentValue}
             @change=${(e: Event) => {
               const val = (e.target as HTMLSelectElement).value;
-              const [provider, id] = val.split("/");
-              app.saveConfig("model", { provider, id });
+              if (val) {
+                const [provider, id] = val.split("/");
+                saveModel(provider, id);
+              }
             }}
           >
+            <option value="">-- Select a model --</option>
             ${MODEL_OPTIONS.map(m => html`
-              <option value="${m.provider}/${m.id}" ?selected=${currentValue === `${m.provider}/${m.id}`}>
+              <option value="${m.provider}/${m.id}">
                 ${m.label} (${m.provider})
               </option>
             `)}
           </select>
-          <p class="form-hint">The default model used for conversations</p>
+          <p class="form-hint">Choose from common models, or use the fields below for any model</p>
         </div>
         
+        <!-- Provider (editable) -->
         <div class="form-group">
-          <label class="form-label">Custom Model ID</label>
-          <div style="display: flex; gap: var(--space-2)">
-            <select 
-              class="form-select" 
-              style="width: 150px"
-              id="custom-model-provider"
-            >
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-              <option value="google">Google</option>
-            </select>
-            <input 
-              type="text" 
-              class="form-input mono"
-              id="custom-model-id"
-              placeholder="model-id"
-            />
-            <button 
-              class="btn btn-secondary btn-sm"
-              @click=${() => {
-                const provider = (document.getElementById("custom-model-provider") as HTMLSelectElement).value;
-                const id = (document.getElementById("custom-model-id") as HTMLInputElement).value;
-                if (id) {
-                  app.saveConfig("model", { provider, id });
-                }
-              }}
-            >
-              Set
-            </button>
-          </div>
-          <p class="form-hint">Use a specific model ID not in the dropdown</p>
+          <label class="form-label">Provider</label>
+          <input 
+            type="text" 
+            class="form-input mono"
+            list="provider-suggestions"
+            .value=${currentModel.provider}
+            @change=${(e: Event) => {
+              const provider = (e.target as HTMLInputElement).value;
+              saveModel(provider, currentModel.id);
+            }}
+          />
+          <datalist id="provider-suggestions">
+            <option value="anthropic">
+            <option value="openai">
+            <option value="google">
+            <option value="openrouter">
+            <option value="together">
+            <option value="groq">
+          </datalist>
+          <p class="form-hint">Current: <code>${currentModel.provider}</code></p>
+        </div>
+        
+        <!-- Model ID (editable) -->
+        <div class="form-group">
+          <label class="form-label">Model ID</label>
+          <input 
+            type="text" 
+            class="form-input mono"
+            .value=${currentModel.id}
+            @change=${(e: Event) => {
+              const id = (e.target as HTMLInputElement).value;
+              saveModel(currentModel.provider, id);
+            }}
+          />
+          <p class="form-hint">Current: <code>${currentModel.id}</code></p>
         </div>
       </div>
     </div>

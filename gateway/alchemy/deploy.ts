@@ -3,10 +3,11 @@
  * Deploy GSV Gateway using Alchemy
  * 
  * Usage: 
- *   bun run deploy:alchemy              # Deploy gateway only
+ *   bun run deploy:alchemy              # Deploy gateway with UI
  *   bun run deploy:alchemy --whatsapp   # Deploy gateway + WhatsApp channel
  *   bun run deploy:alchemy --discord    # Deploy gateway + Discord channel
  *   bun run deploy:alchemy --templates  # Deploy + upload workspace templates
+ *   bun run deploy:alchemy --no-ui      # Deploy without web UI
  *   bun run deploy:alchemy --destroy    # Tear down resources
  * 
  * Environment variables:
@@ -26,6 +27,7 @@ const WORKER_NAME = "gateway";
 const withWhatsApp = process.argv.includes("--whatsapp");
 const withDiscord = process.argv.includes("--discord");
 const withTemplates = process.argv.includes("--templates");
+const withUI = !process.argv.includes("--no-ui"); // UI included by default
 const isDestroy = process.argv.includes("--destroy");
 
 // Generate AUTH_TOKEN if not provided
@@ -34,6 +36,7 @@ const discordBotToken = process.env.DISCORD_BOT_TOKEN;
 
 console.log(`\n🚀 GSV Deployment`);
 console.log(`   Stack: ${STACK_NAME}`);
+console.log(`   Web UI: ${withUI ? "yes" : "no"}`);
 console.log(`   WhatsApp: ${withWhatsApp ? "yes" : "no"}`);
 console.log(`   Discord: ${withDiscord ? "yes" : "no"}`);
 console.log(`   Templates: ${withTemplates ? "yes" : "no"}`);
@@ -57,6 +60,7 @@ const { gateway, storage, whatsappChannel, discordChannel } = await createGsvInf
   withWhatsApp,
   withDiscord,
   withTemplates,
+  withUI,
   secrets: {
     authToken,
     discordBotToken,
@@ -66,6 +70,9 @@ const { gateway, storage, whatsappChannel, discordChannel } = await createGsvInf
 if (!isDestroy) {
   console.log("\n✅ Deployed successfully!\n");
   console.log(`   Gateway:  ${gateway.url}`);
+  if (withUI) {
+    console.log(`   Web UI:   ${gateway.url}`);
+  }
   console.log(`   Storage:  ${storage.name}`);
   
   if (whatsappChannel) {

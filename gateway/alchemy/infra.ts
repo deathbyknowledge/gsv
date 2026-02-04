@@ -12,6 +12,7 @@ import {
   R2Bucket,
   R2Object,
   Queue,
+  Assets,
 } from "alchemy/cloudflare";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -38,6 +39,8 @@ export type GsvInfraOptions = {
   withDiscord?: boolean;
   /** Upload workspace templates */
   withTemplates?: boolean;
+  /** Include web UI static assets */
+  withUI?: boolean;
   /** Secrets to configure */
   secrets?: {
     authToken?: string;
@@ -54,6 +57,7 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
     withWhatsApp = false,
     withDiscord = false,
     withTemplates = false,
+    withUI = false,
     secrets = {},
   } = opts;
 
@@ -67,6 +71,25 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
   if (withTemplates) {
     console.log("📁 Uploading workspace templates...");
     await uploadWorkspaceTemplates(storage);
+  }
+
+  // Build and create assets for web UI
+  let uiAssets: Awaited<ReturnType<typeof Assets>> | undefined;
+  if (withUI) {
+    console.log("🎨 Building web UI...");
+    const uiDir = path.join(GATEWAY_DIR, "ui");
+    const { execSync } = await import("node:child_process");
+    
+    // Install dependencies and build
+    execSync("npm install && npm run build", { 
+      cwd: uiDir, 
+      stdio: "inherit" 
+    });
+    
+    uiAssets = await Assets({
+      path: path.join(uiDir, "dist"),
+    });
+    console.log("   UI assets ready");
   }
 
   // Channel inbound queue - all channels send inbound messages here
@@ -177,6 +200,8 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
         sqlite: true,
       }),
       STORAGE: storage,
+      // Web UI static assets
+      ...(uiAssets ? { ASSETS: uiAssets } : {}),
       // Service bindings to channels (for outbound messages)
       // Points to channel WorkerEntrypoints for RPC methods (send, setTyping, etc.)
       ...(withWhatsApp ? { 
