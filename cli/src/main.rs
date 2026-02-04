@@ -462,6 +462,8 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                 "r2.secret_access_key" => cfg.r2.secret_access_key = Some(value.clone()),
                 "r2.bucket" => cfg.r2.bucket = Some(value.clone()),
                 "session.default_key" => cfg.session.default_key = Some(value.clone()),
+                "channels.whatsapp.url" => cfg.channels.whatsapp.url = Some(value.clone()),
+                "channels.whatsapp.token" => cfg.channels.whatsapp.token = Some(value.clone()),
                 _ => {
                     eprintln!("Unknown config key: {}", key);
                     return Ok(());

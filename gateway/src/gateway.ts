@@ -2191,6 +2191,15 @@ export class Gateway extends DurableObject<Env> {
             firstMessage: params.message.text?.slice(0, 200),
           };
           console.log(`[Gateway] New pairing request from ${senderId} (${senderName})`);
+          
+          // Send "pending approval" message back via channel
+          this.sendChannelResponse(
+            params.channel,
+            params.accountId,
+            params.peer,
+            params.message.id,
+            "Your message has been received. Awaiting approval from the owner.",
+          );
         }
         return { ok: true, status: "pending_pairing" };
       }

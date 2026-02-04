@@ -43,6 +43,9 @@ export class WebSocket extends EventEmitter {
       // But let's try anyway - the server might not strictly require it
       this.ws = new globalThis.WebSocket(urlString);
       
+      // Ensure binary messages are delivered as ArrayBuffer, not Blob
+      this.ws.binaryType = "arraybuffer";
+      
       this.ws.addEventListener("open", () => {
         console.log(`[ws-shim] Connection opened`);
         this.readyState = OPEN;
@@ -64,7 +67,8 @@ export class WebSocket extends EventEmitter {
         // Baileys expects Buffer/Uint8Array for binary messages
         try {
           if (event.data instanceof ArrayBuffer) {
-            console.log(`[ws-shim] Received ArrayBuffer: ${event.data.byteLength} bytes`);
+            const size = event.data.byteLength;
+            console.log(`[ws-shim] Received ${size} bytes`);
             this.emit("message", Buffer.from(event.data));
           } else if (event.data instanceof Blob) {
             // Convert Blob to ArrayBuffer

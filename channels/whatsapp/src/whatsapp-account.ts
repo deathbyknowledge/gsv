@@ -35,27 +35,26 @@ import type {
   ChannelOutboundMessage,
   ChannelPeer,
   ChannelAccountStatus,
+  ChannelQueueMessage,
 } from "./channel-types";
 
-// Gateway RPC interface (via Service Binding to GatewayEntrypoint)
-interface GatewayRpc {
-  channelInbound(
-    channelId: string,
-    accountId: string,
-    message: ChannelInboundMessage,
-  ): Promise<{ ok: boolean; sessionKey?: string; error?: string }>;
-  
-  channelStatusChanged(
-    channelId: string,
-    accountId: string,
-    status: ChannelAccountStatus,
-  ): Promise<void>;
+interface Env {
+  // Queue for sending inbound messages to Gateway
+  // Gateway consumes from this queue and processes messages
+  GATEWAY_QUEUE: Queue<ChannelQueueMessage>;
 }
 
-interface Env {
-  // Gateway service binding for RPC
-  GATEWAY: Fetcher & GatewayRpc;
-}
+// Quiet logger for Baileys - suppresses verbose output
+const noopLogger = {
+  level: "silent",
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  debug: () => {},
+  trace: () => {},
+  fatal: () => {},
+  child: () => noopLogger,
+} as any;
 
 export class WhatsAppAccount extends DurableObject<Env> {
   private sock: WASocket | null = null;
@@ -68,13 +67,28 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.state.accountId = ctx.id.toString();
+    // accountId is set from X-Account-Id header on first request
+    // and persisted in storage.kv for subsequent requests
+    const storedAccountId = this.ctx.storage.kv.get<string>("accountId");
+    this.state.accountId = storedAccountId || "";
   }
 
   /**
    * HTTP fetch handler - internal API for WhatsAppChannel entrypoint
    */
   async fetch(request: Request): Promise<Response> {
+    // Ensure accountId is set from header (required on all requests)
+    const headerAccountId = request.headers.get("X-Account-Id");
+    if (headerAccountId && !this.state.accountId) {
+      this.state.accountId = headerAccountId;
+      this.ctx.storage.kv.put("accountId", headerAccountId);
+      console.log(`[WA] Set accountId from header: ${headerAccountId}`);
+    }
+    
+    if (!this.state.accountId) {
+      return Response.json({ error: "Missing X-Account-Id header" }, { status: 400 });
+    }
+
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -116,24 +130,44 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private async handleLogin(url: URL, isPost: boolean): Promise<Response> {
+    const force = url.searchParams.get("force") === "true";
+    
     // If already connected, return success
     if (this.state.connected && this.sock) {
       return Response.json({ connected: true, message: "Already connected" });
     }
 
-    // Start the socket if not running
+    // Only clear auth if explicitly requested with force=true
+    // This prevents rate-limiting issues from repeated new device pairing attempts
+    const hasAuth = await hasAuthState(this.ctx.storage);
+    if (force && hasAuth) {
+      console.log(`[WA] Force login: clearing existing auth state`);
+      await clearAuthState(this.ctx.storage);
+    }
+
+    // Mark login as pending BEFORE starting socket
+    // This prevents alarm from interfering with the login flow
+    await this.ctx.storage.put("login_pending", Date.now());
+    
+    // Start the socket
     if (!this.sock) {
       await this.startSocket();
     }
 
-    // Wait for QR code or connection
+    // Wait for QR code to be generated (60s to allow time for scanning)
     const result = await this.waitForQrOrConnection(60000);
     
     if (result.connected) {
+      // Login succeeded - clear pending flag and schedule keep-alive
+      await this.ctx.storage.delete("login_pending");
+      this.ctx.storage.setAlarm(Date.now() + 10000);
       return Response.json({ connected: true, message: "Connected" });
     }
     
     if (result.qr) {
+      // Schedule alarm to keep DO alive during QR scan window
+      this.ctx.storage.setAlarm(Date.now() + 5000);
+      
       return Response.json({ 
         connected: false, 
         qr: result.qr,
@@ -141,6 +175,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
       });
     }
 
+    // Login failed - clear pending flag
+    await this.ctx.storage.delete("login_pending");
     return Response.json({ 
       connected: false, 
       message: "Failed to get QR code" 
@@ -148,18 +184,22 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private async handleLogout(): Promise<Response> {
+    console.log(`[WA] Logout requested`);
+    
     if (this.sock) {
       this.sock.end(undefined);
       this.sock = null;
     }
 
     await clearAuthState(this.ctx.storage);
+    await this.ctx.storage.delete("login_pending");
     
     this.state = {
       accountId: this.state.accountId,
       connected: false,
     };
 
+    console.log(`[WA] Logged out successfully`);
     return Response.json({ success: true, message: "Logged out" });
   }
 
@@ -266,29 +306,24 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const { state: authState, saveCreds } = await useDOAuthState(this.ctx.storage);
     const { version } = await fetchLatestBaileysVersion();
 
-    const noopLogger = { 
-      info: () => {}, warn: () => {}, error: () => {}, 
-      debug: () => {}, trace: () => {}, child: () => noopLogger 
-    } as any;
-    
     this.sock = makeWASocket({
       auth: {
         creds: authState.creds,
         keys: makeCacheableSignalKeyStore(authState.keys, noopLogger),
       },
       version,
+      logger: noopLogger,
       printQRInTerminal: false,
-      browser: ["GSV WhatsApp", "Channel", "2.0.0"],
+      browser: ["Chrome (Linux)", "Chrome", "122.0.0"],
       syncFullHistory: false,
       markOnlineOnConnect: false,
-      logger: noopLogger,
     });
 
     this.sock.ev.on("creds.update", saveCreds);
     this.sock.ev.on("connection.update", (update) => this.handleConnectionUpdate(update));
     this.sock.ev.on("messages.upsert", (m) => {
       this.handleMessagesUpsert(m).catch((e) => {
-        console.error(`[WA] handleMessagesUpsert error:`, e);
+        console.error(`[WA:${this.state.accountId}] Message handling error:`, e);
       });
     });
   }
@@ -316,25 +351,29 @@ export class WhatsAppAccount extends DurableObject<Env> {
         }
       }
       
-      // Notify Gateway of status change
-      this.notifyGatewayStatus().catch(console.error);
+      this.ctx.storage.delete("login_pending").catch(() => {});
+      console.log(`[WA:${this.state.accountId}] Connected as ${this.state.selfE164 || this.state.selfJid}`);
+      
+      this.notifyGatewayStatus().catch(() => {});
       this.scheduleKeepAlive();
     }
 
     if (connection === "close") {
       const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
       const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-      
-      console.log(`[WA] Connection closed. statusCode=${statusCode}, isLoggedOut=${isLoggedOut}`);
+      const isConnectionReplaced = statusCode === 515;
       
       this.state.connected = false;
       this.state.lastDisconnectedAt = Date.now();
+      this.sock = null;
 
-      // Notify Gateway
-      this.notifyGatewayStatus().catch(console.error);
+      this.notifyGatewayStatus().catch(() => {});
 
       if (isLoggedOut) {
         clearAuthState(this.ctx.storage);
+        this.ctx.storage.delete("login_pending").catch(() => {});
+      } else if (isConnectionReplaced) {
+        this.ctx.storage.delete("login_pending").catch(() => {});
       } else {
         this.ctx.storage.setAlarm(Date.now() + 5000);
       }
@@ -387,14 +426,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
           const attachment = await this.downloadMedia(msg);
           if (attachment) {
             media.push(attachment);
-            console.log(`[WA] Media: ${attachment.type} ${attachment.mimeType} ${Math.round((attachment.data?.length ?? 0) / 1024)}KB`);
           }
         } catch (e) {
-          console.error(`[WA] Media download failed:`, e);
+          console.error(`[WA:${this.state.accountId}] Media download failed:`, e);
         }
       }
-
-      console.log(`[WA] ${remoteJid}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"${media.length > 0 ? ` +${media.length} media` : ''}`);
 
       // Build inbound message for Gateway
       const inbound: ChannelInboundMessage = {
@@ -417,18 +453,19 @@ export class WhatsAppAccount extends DurableObject<Env> {
         timestamp: msg.messageTimestamp as number,
       };
 
-      // Send to Gateway via Service Binding RPC
-      // accountId must be the DO name (used for routing), NOT the phone number
+      // Send to Gateway via Queue (decoupled from DO context)
+      // See README.md for why we use a queue instead of direct RPC
       try {
-        const result = await this.env.GATEWAY.channelInbound("whatsapp", this.state.accountId, inbound);
-        
-        if (result.ok) {
-          this.state.lastMessageAt = Date.now();
-        } else {
-          console.error(`[WA] Gateway rejected message: ${result.error}`);
-        }
+        const queueMessage: ChannelQueueMessage = {
+          type: "inbound",
+          channelId: "whatsapp",
+          accountId: this.state.accountId,
+          message: inbound,
+        };
+        await this.env.GATEWAY_QUEUE.send(queueMessage);
+        this.state.lastMessageAt = Date.now();
       } catch (e) {
-        console.error(`[WA] Gateway RPC failed:`, e);
+        console.error(`[WA:${this.state.accountId}] Queue send failed:`, e);
       }
     }
   }
@@ -528,11 +565,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   /**
-   * Notify Gateway of status change via Service Binding
+   * Notify Gateway of status change via Queue
    */
   private async notifyGatewayStatus(): Promise<void> {
+    if (!this.state.accountId) return;
+    
     try {
-      // accountId must be the DO name (used for routing), NOT the phone number
       const status: ChannelAccountStatus = {
         accountId: this.state.accountId,
         connected: this.state.connected,
@@ -542,9 +580,16 @@ export class WhatsAppAccount extends DurableObject<Env> {
         extra: { selfJid: this.state.selfJid, selfE164: this.state.selfE164 },
       };
       
-      await this.env.GATEWAY.channelStatusChanged("whatsapp", this.state.accountId, status);
+      const queueMessage: ChannelQueueMessage = {
+        type: "status",
+        channelId: "whatsapp",
+        accountId: this.state.accountId,
+        status,
+      };
+      
+      await this.env.GATEWAY_QUEUE.send(queueMessage);
     } catch (e) {
-      console.error(`[WA] Failed to notify Gateway of status:`, e);
+      // Silently ignore - status updates are best-effort
     }
   }
 
@@ -577,23 +622,29 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   async alarm(): Promise<void> {
     const hasAuth = await hasAuthState(this.ctx.storage);
+    const loginPending = await this.ctx.storage.get<number>("login_pending");
+    
+    // Keep alive during login flow
+    if (loginPending && Date.now() - loginPending < 90000) {
+      this.ctx.storage.setAlarm(Date.now() + 5000);
+      return;
+    }
+    
+    if (loginPending) {
+      await this.ctx.storage.delete("login_pending");
+    }
+
     if (!hasAuth) return;
 
     this.scheduleKeepAlive();
 
+    // Reconnect if needed
     if (!this.sock) {
-      console.log(`[WA] Alarm: Reconnecting WhatsApp...`);
       try {
         await this.startSocket();
       } catch (e) {
-        console.error(`[WA] Alarm: Reconnect failed:`, e);
+        console.error(`[WA:${this.state.accountId}] Reconnect failed:`, e);
       }
-      return;
-    }
-
-    if (!this.state.connected) {
-      console.log(`[WA] Alarm: Socket exists but not connected, waiting...`);
-      return;
     }
   }
 }

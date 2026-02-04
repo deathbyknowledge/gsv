@@ -11,6 +11,7 @@ import {
   DurableObjectNamespace,
   R2Bucket,
   R2Object,
+  Queue,
 } from "alchemy/cloudflare";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -62,14 +63,23 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
   }
 
   // Use WorkerStub for circular service binding dependencies
-  // Gateway references WhatsApp, WhatsApp references Gateway
-  // Note: gatewayStub needs to point to GatewayEntrypoint for RPC methods
-  const gatewayStub = await WorkerStub(`${name}-gateway-stub`, { name });
+  // Gateway references WhatsApp, WhatsApp references Gateway's queue
   const whatsappStub = withWhatsApp
     ? await WorkerStub(`${name}-whatsapp-stub`, { name: `${name}-channel-whatsapp` })
     : undefined;
 
-  // Main gateway worker
+  // Channel inbound queue - all channels send inbound messages here
+  // Gateway consumes from this queue to process messages
+  // Settings optimized for minimal latency
+  const channelInboundQueue = await Queue(`${name}-channel-inbound`, {
+    name: `${name}-channel-inbound`,
+    adopt: true,
+    settings: {
+      deliveryDelay: 0, // No delay before delivery
+    },
+  });
+
+  // Main gateway worker - consumes from channel inbound queue
   const gateway = await Worker(`${name}-worker`, {
     name,
     entrypoint,
@@ -84,17 +94,34 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
         sqlite: true,
       }),
       STORAGE: storage,
-      ...(withWhatsApp && whatsappStub ? { CHANNEL_WHATSAPP: whatsappStub } : {}),
+      // Service bindings to channels (for outbound messages)
+      // Points to WhatsAppChannelEntrypoint for RPC methods (send, setTyping, etc.)
+      ...(withWhatsApp ? { 
+        CHANNEL_WHATSAPP: {
+          type: "service" as const,
+          service: `${name}-channel-whatsapp`,
+          __entrypoint__: "WhatsAppChannelEntrypoint",
+        }
+      } : {}),
       // Secrets
       ...(secrets.authToken ? { AUTH_TOKEN: alchemy.secret(secrets.authToken) } : {}),
       ...(secrets.anthropicApiKey ? { ANTHROPIC_API_KEY: alchemy.secret(secrets.anthropicApiKey) } : {}),
     },
+    // Queue consumer: process inbound messages from channels
+    eventSources: [{
+      queue: channelInboundQueue,
+      settings: {
+        batchSize: 1,        // Process one message at a time for minimal latency
+        maxRetries: 3,
+        maxWaitTimeMs: 0,    // Don't wait to batch, process immediately
+      },
+    }],
     url,
     compatibilityDate: "2026-01-28",
     compatibilityFlags: ["nodejs_compat"],
   });
 
-  // Deploy WhatsApp channel - references Gateway via stub
+  // Deploy WhatsApp channel
   let whatsappChannel: Awaited<ReturnType<typeof Worker>> | undefined;
   
   if (withWhatsApp) {
@@ -107,13 +134,8 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
           className: "WhatsAppAccount",
           sqlite: true,
         }),
-        // Service binding to Gateway's GatewayEntrypoint for RPC
-        GATEWAY: {
-          type: "service" as const,
-          service: name,
-          __entrypoint__: "GatewayEntrypoint",
-        },
-        // WhatsApp channel uses same auth token
+        // Queue for sending inbound messages to Gateway (producer binding)
+        GATEWAY_QUEUE: channelInboundQueue,
         ...(secrets.authToken ? { AUTH_TOKEN: alchemy.secret(secrets.authToken) } : {}),
       },
       url: true,

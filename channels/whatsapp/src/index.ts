@@ -1,13 +1,15 @@
 /**
  * GSV WhatsApp Channel Worker
  * 
- * Implements ChannelWorkerInterface for Service Binding RPC with Gateway.
- * Each WhatsApp account is managed by a separate Durable Object instance.
+ * This worker manages WhatsApp accounts as channel connections to GSV Gateway.
+ * Each WhatsApp account is a separate Durable Object instance.
  */
-import { WorkerEntrypoint } from "cloudflare:workers";
 
 // Polyfill for Node.js timer methods not available in Workers
 // Baileys uses setInterval(...).unref() which doesn't exist in workerd
+// In workerd, timers return numbers, but Node.js returns objects with unref/ref methods
+
+// Wrap timer IDs in objects with unref/ref methods
 class TimerRef {
   constructor(public id: number) {}
   unref() { return this; }
@@ -15,6 +17,7 @@ class TimerRef {
   [Symbol.toPrimitive]() { return this.id; }
 }
 
+// Store originals before patching
 const _setInterval = globalThis.setInterval;
 const _setTimeout = globalThis.setTimeout;
 const _clearInterval = globalThis.clearInterval;
@@ -40,14 +43,17 @@ const _clearTimeout = globalThis.clearTimeout;
   return _clearTimeout(actualId as any);
 };
 
-export { WhatsAppAccount } from "./whatsapp-account";
+// The 'ws' package used by Baileys isn't compatible with Workers.
+// We need to patch Baileys to use native WebSocket instead.
+// This is done via wrangler.jsonc alias configuration.
 
+import { WorkerEntrypoint } from "cloudflare:workers";
 import type {
   ChannelWorkerInterface,
   ChannelCapabilities,
-  ChannelAccountStatus,
   ChannelOutboundMessage,
   ChannelPeer,
+  ChannelAccountStatus,
   StartResult,
   StopResult,
   SendResult,
@@ -55,39 +61,19 @@ import type {
   LogoutResult,
 } from "./channel-types";
 
-// Re-export types
-export type * from "./channel-types";
-
-// Gateway RPC interface (via Service Binding to GatewayEntrypoint)
-interface GatewayRpc {
-  channelInbound(
-    channelId: string,
-    accountId: string,
-    message: import("./channel-types").ChannelInboundMessage,
-  ): Promise<{ ok: boolean; sessionKey?: string; error?: string }>;
-  
-  channelStatusChanged(
-    channelId: string,
-    accountId: string,
-    status: ChannelAccountStatus,
-  ): Promise<void>;
-}
+export { WhatsAppAccount } from "./whatsapp-account";
 
 interface Env {
   WHATSAPP_ACCOUNT: DurableObjectNamespace;
-  // Gateway service binding for RPC (typed as Fetcher with RPC methods)
-  GATEWAY: Fetcher & GatewayRpc;
-  AUTH_TOKEN?: string;
 }
 
 /**
- * WhatsApp Channel WorkerEntrypoint
+ * WhatsApp Channel Entrypoint for Service Binding RPC
  * 
- * Gateway calls these methods via Service Binding RPC.
+ * Gateway calls these methods via Service Bindings to send outbound messages.
  */
-export class WhatsAppChannel extends WorkerEntrypoint<Env> implements ChannelWorkerInterface {
+export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements ChannelWorkerInterface {
   readonly channelId = "whatsapp";
-  
   readonly capabilities: ChannelCapabilities = {
     chatTypes: ["dm", "group"],
     media: true,
@@ -99,219 +85,121 @@ export class WhatsAppChannel extends WorkerEntrypoint<Env> implements ChannelWor
     qrLogin: true,
   };
 
-  /**
-   * Start WhatsApp connection for an account.
-   * This wakes the DO and initiates connection if auth exists.
-   */
   async start(accountId: string, _config: Record<string, unknown>): Promise<StartResult> {
     try {
-      const stub = this.getAccountStub(accountId);
-      const response = await stub.fetch(new Request("http://internal/wake", { method: "POST" }));
-      const result = await response.json() as { success: boolean; message?: string };
-      
-      if (result.success) {
-        return { ok: true };
-      }
-      return { ok: false, error: result.message || "Failed to start" };
+      const res = await this.doFetch(accountId, "/wake", { method: "POST" });
+      const data = await res.json() as { success?: boolean; error?: string };
+      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to start" };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return { ok: false, error: String(e) };
     }
   }
 
-  /**
-   * Stop WhatsApp connection for an account.
-   */
   async stop(accountId: string): Promise<StopResult> {
     try {
-      const stub = this.getAccountStub(accountId);
-      const response = await stub.fetch(new Request("http://internal/stop", { method: "POST" }));
-      const result = await response.json() as { success: boolean; message?: string };
-      
-      if (result.success) {
-        return { ok: true };
-      }
-      return { ok: false, error: result.message || "Failed to stop" };
+      const res = await this.doFetch(accountId, "/stop", { method: "POST" });
+      const data = await res.json() as { success?: boolean; error?: string };
+      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to stop" };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return { ok: false, error: String(e) };
     }
   }
 
-  /**
-   * Get status for one or all accounts.
-   */
   async status(accountId?: string): Promise<ChannelAccountStatus[]> {
-    if (accountId) {
-      try {
-        const stub = this.getAccountStub(accountId);
-        const response = await stub.fetch(new Request("http://internal/status"));
-        const status = await response.json() as {
-          accountId: string;
-          connected: boolean;
-          selfJid?: string;
-          gatewayConnected?: boolean;
-        };
-        
-        return [{
-          accountId: status.accountId,
-          connected: status.connected,
-          authenticated: !!status.selfJid,
-          mode: "websocket",
-          extra: { selfJid: status.selfJid },
-        }];
-      } catch (e) {
-        return [{
-          accountId,
-          connected: false,
-          authenticated: false,
-          error: e instanceof Error ? e.message : String(e),
-        }];
-      }
+    if (!accountId) {
+      // TODO: List all accounts
+      return [];
     }
-    
-    // Can't list all accounts without tracking - return empty
-    return [];
+    try {
+      const res = await this.doFetch(accountId, "/status");
+      const data = await res.json() as any;
+      return [{
+        accountId,
+        connected: data.connected || false,
+        authenticated: !!data.selfJid,
+        mode: "websocket",
+        lastActivity: data.lastMessageAt,
+        extra: { selfJid: data.selfJid, selfE164: data.selfE164 },
+      }];
+    } catch (e) {
+      return [{
+        accountId: accountId || "unknown",
+        connected: false,
+        authenticated: false,
+        error: String(e),
+      }];
+    }
   }
 
-  /**
-   * Send a message via WhatsApp.
-   */
   async send(accountId: string, message: ChannelOutboundMessage): Promise<SendResult> {
     try {
-      const stub = this.getAccountStub(accountId);
-      const response = await stub.fetch(new Request("http://internal/send", {
+      console.log(`[WhatsAppEntrypoint] send() called for ${accountId} to ${message.peer.id}`);
+      const res = await this.doFetch(accountId, "/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(message),
-      }));
-      
-      if (!response.ok) {
-        const error = await response.text();
-        return { ok: false, error };
+      });
+      const data = await res.json() as { success?: boolean; messageId?: string; error?: string };
+      if (data.success) {
+        return { ok: true, messageId: data.messageId };
       }
-      
-      const result = await response.json() as { messageId?: string };
-      return { ok: true, messageId: result.messageId };
+      return { ok: false, error: data.error || "Failed to send" };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      console.error(`[WhatsAppEntrypoint] send() error:`, e);
+      return { ok: false, error: String(e) };
     }
   }
 
-  /**
-   * Send typing indicator.
-   */
   async setTyping(accountId: string, peer: ChannelPeer, typing: boolean): Promise<void> {
     try {
-      const stub = this.getAccountStub(accountId);
-      await stub.fetch(new Request("http://internal/typing", {
+      await this.doFetch(accountId, "/typing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ peer, typing }),
-      }));
-    } catch {
-      // Typing indicators are best-effort
+      });
+    } catch (e) {
+      console.error(`[WhatsAppEntrypoint] setTyping() error:`, e);
     }
   }
 
-  /**
-   * Start login flow - returns QR code if needed.
-   */
   async login(accountId: string, options?: { force?: boolean }): Promise<LoginResult> {
     try {
-      const stub = this.getAccountStub(accountId);
-      const url = new URL("http://internal/login");
-      if (options?.force) url.searchParams.set("force", "true");
-      
-      const response = await stub.fetch(new Request(url.toString(), { method: "POST" }));
-      const result = await response.json() as {
-        connected?: boolean;
-        qr?: string;
-        message?: string;
-      };
-      
-      if (result.connected) {
-        return { ok: true, message: "Already connected" };
+      const path = options?.force ? "/login?force=true" : "/login";
+      const res = await this.doFetch(accountId, path, { method: "POST" });
+      const data = await res.json() as { connected?: boolean; qr?: string; message?: string; error?: string };
+      if (data.connected) {
+        return { ok: true, message: data.message || "Connected" };
       }
-      
-      if (result.qr) {
-        // Convert QR string to data URL
-        const QRCode = await import("qrcode");
-        const qrDataUrl = await QRCode.toDataURL(result.qr, { width: 300 });
-        return { ok: true, qrDataUrl, message: "Scan QR code with WhatsApp" };
+      if (data.qr) {
+        return { ok: true, qrDataUrl: data.qr, message: data.message || "Scan QR code" };
       }
-      
-      return { ok: false, error: result.message || "Failed to get QR code" };
+      return { ok: false, error: data.error || "Login failed" };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return { ok: false, error: String(e) };
     }
   }
 
-  /**
-   * Logout and clear credentials.
-   */
   async logout(accountId: string): Promise<LogoutResult> {
     try {
-      const stub = this.getAccountStub(accountId);
-      const response = await stub.fetch(new Request("http://internal/logout", { method: "POST" }));
-      const result = await response.json() as { success: boolean; message?: string };
-      
-      if (result.success) {
-        return { ok: true };
-      }
-      return { ok: false, error: result.message || "Failed to logout" };
+      const res = await this.doFetch(accountId, "/logout", { method: "POST" });
+      const data = await res.json() as { success?: boolean; error?: string };
+      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to logout" };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return { ok: false, error: String(e) };
     }
   }
 
-  /**
-   * Get DO stub for an account.
-   */
-  private getAccountStub(accountId: string) {
+  private getDO(accountId: string) {
     const id = this.env.WHATSAPP_ACCOUNT.idFromName(accountId);
     return this.env.WHATSAPP_ACCOUNT.get(id);
   }
-}
 
-// ============================================================================
-// HTTP Handler (for management API / backwards compatibility)
-// ============================================================================
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  const encoder = new TextEncoder();
-  const bufA = encoder.encode(a);
-  const bufB = encoder.encode(b);
-  let result = 0;
-  for (let i = 0; i < bufA.length; i++) {
-    result |= bufA[i] ^ bufB[i];
+  private doFetch(accountId: string, path: string, init?: RequestInit): Promise<Response> {
+    const stub = this.getDO(accountId);
+    const headers = new Headers(init?.headers);
+    headers.set("X-Account-Id", accountId);
+    return stub.fetch(new Request(`http://do${path}`, { ...init, headers }));
   }
-  return result === 0;
-}
-
-function checkAuth(request: Request, env: Env): Response | null {
-  if (!env.AUTH_TOKEN) return null;
-
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader) {
-    return Response.json(
-      { error: "Missing Authorization header" },
-      { status: 401, headers: { "WWW-Authenticate": "Bearer" } }
-    );
-  }
-
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (!match) {
-    return Response.json(
-      { error: "Invalid Authorization header format" },
-      { status: 401, headers: { "WWW-Authenticate": "Bearer" } }
-    );
-  }
-
-  if (!timingSafeEqual(match[1], env.AUTH_TOKEN)) {
-    return Response.json({ error: "Invalid token" }, { status: 403 });
-  }
-
-  return null;
 }
 
 export default {
@@ -319,44 +207,50 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Health check
-    if (path === "/" || path === "/health") {
-      return Response.json({
-        service: "gsv-channel-whatsapp",
-        status: "ok",
-        version: "2.0.0",
-        interface: "ChannelWorkerInterface",
-      });
-    }
-
-    // Auth required for all other routes
-    const authError = checkAuth(request, env);
-    if (authError) return authError;
-
     // Route: /account/:accountId/...
-    // Only expose management endpoints, not internal RPC endpoints
     const accountMatch = path.match(/^\/account\/([^\/]+)(\/.*)?$/);
     if (accountMatch) {
       const accountId = accountMatch[1];
       const subPath = accountMatch[2] || "/status";
       
-      // Block internal-only endpoints from external access
-      // These are only callable via Service Binding RPC through the WorkerEntrypoint
-      const internalOnly = ["/send", "/typing"];
-      if (internalOnly.includes(subPath)) {
-        return Response.json(
-          { error: "This endpoint is internal-only. Use Service Binding RPC." },
-          { status: 403 }
-        );
-      }
-      
+      // Get or create the DO for this account
       const id = env.WHATSAPP_ACCOUNT.idFromName(accountId);
       const stub = env.WHATSAPP_ACCOUNT.get(id);
       
+      // Forward request to DO with adjusted path and X-Account-Id header
       const doUrl = new URL(request.url);
       doUrl.pathname = subPath;
+      const headers = new Headers(request.headers);
+      headers.set("X-Account-Id", accountId);
       
-      return stub.fetch(new Request(doUrl.toString(), request));
+      return stub.fetch(new Request(doUrl.toString(), {
+        method: request.method,
+        headers,
+        body: request.body,
+      }));
+    }
+
+    // List accounts (would need separate tracking)
+    if (path === "/accounts") {
+      return Response.json({
+        message: "Account listing not yet implemented. Use /account/:accountId/status to check a specific account.",
+      });
+    }
+
+    // Health check
+    if (path === "/" || path === "/health") {
+      return Response.json({
+        service: "gsv-channel-whatsapp",
+        status: "ok",
+        usage: {
+          login: "POST /account/:accountId/login",
+          logout: "POST /account/:accountId/logout",
+          start: "POST /account/:accountId/start",
+          stop: "POST /account/:accountId/stop",
+          wake: "POST /account/:accountId/wake",
+          status: "GET /account/:accountId/status",
+        },
+      });
     }
 
     return new Response("Not Found", { status: 404 });

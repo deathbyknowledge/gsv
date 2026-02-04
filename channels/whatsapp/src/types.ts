@@ -18,29 +18,6 @@ export type SenderInfo = {
   handle?: string;
 };
 
-/**
- * Media attachment for channel messages
- * Can be provided as base64 data or URL
- */
-export type MediaAttachment = {
-  /** Media type: image, audio, video, document */
-  type: "image" | "audio" | "video" | "document";
-  /** MIME type (e.g., image/jpeg, audio/ogg) */
-  mimeType: string;
-  /** Base64-encoded data (preferred for LLM) */
-  data?: string;
-  /** URL to media (fallback, requires fetch) */
-  url?: string;
-  /** Original filename */
-  filename?: string;
-  /** File size in bytes */
-  size?: number;
-  /** Duration in seconds (for audio/video) */
-  duration?: number;
-  /** Transcription (for audio, populated by channel or gateway) */
-  transcription?: string;
-};
-
 export type ChannelInboundParams = {
   channel: ChannelId;
   accountId: string;
@@ -52,11 +29,7 @@ export type ChannelInboundParams = {
     timestamp?: number;
     replyToId?: string;
     replyToText?: string;
-    /** Media attachments (images, audio, video, documents) */
-    media?: MediaAttachment[];
-    /** Legacy single media URL (deprecated, use media array) */
     mediaUrl?: string;
-    /** Legacy single media type (deprecated, use media array) */
     mediaType?: string;
     location?: { lat: number; lon: number; name?: string };
   };
@@ -74,15 +47,6 @@ export type ChannelOutboundPayload = {
     replyToId?: string;
     mediaUrl?: string;
   };
-};
-
-export type ChannelTypingPayload = {
-  channel: ChannelId;
-  accountId: string;
-  peer: PeerInfo;
-  sessionKey: string;
-  /** true = start typing indicator, false = stop */
-  typing: boolean;
 };
 
 // Protocol frame types (matching gateway)
@@ -118,4 +82,15 @@ export type WhatsAppAccountState = {
   lastConnectedAt?: number;
   lastDisconnectedAt?: number;
   lastMessageAt?: number;
+};
+
+// Media attachment for inbound messages
+export type MediaAttachment = {
+  type: "image" | "audio" | "video" | "document";
+  mimeType: string;
+  data?: string; // base64 encoded
+  url?: string;
+  filename?: string;
+  size?: number;
+  duration?: number;
 };
