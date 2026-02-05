@@ -125,6 +125,12 @@ export class Gateway extends DurableObject<Env> {
     { prefix: "pendingPairs:" },
   );
 
+  // Heartbeat scheduler state (persisted to survive DO eviction)
+  heartbeatScheduler = PersistedObject<{ initialized: boolean }>(
+    this.ctx.storage.kv,
+    { prefix: "heartbeatScheduler:", defaults: { initialized: false } },
+  );
+
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
 
@@ -341,6 +347,16 @@ export class Gateway extends DurableObject<Env> {
         events: ["chat", "tool.invoke", "tool.result", "channel.outbound"],
       },
     });
+
+    // Auto-start heartbeat scheduler on first connection (if not already initialized)
+    if (!this.heartbeatScheduler.initialized) {
+      this.scheduleHeartbeat().then(() => {
+        this.heartbeatScheduler.initialized = true;
+        console.log(`[Gateway] Heartbeat scheduler auto-initialized on first connection`);
+      }).catch(e => {
+        console.error(`[Gateway] Failed to auto-initialize heartbeat scheduler:`, e);
+      });
+    }
   }
 
   handleToolsList(ws: WebSocket, frame: RequestFrame) {
@@ -1543,6 +1559,7 @@ export class Gateway extends DurableObject<Env> {
     accountId: string;
     peer: PeerInfo;
     inboundMessageId: string;
+    agentId?: string; // For heartbeat deduplication
   }>>(this.ctx.storage.kv, { prefix: "pendingChannelResponses:" });
 
   private buildSessionKeyFromChannel(
@@ -2005,6 +2022,7 @@ export class Gateway extends DurableObject<Env> {
       accountId: string;
       peer: PeerInfo;
       inboundMessageId: string;
+      agentId?: string;
     },
     payload: ChatEventPayload,
   ): void {
@@ -2044,6 +2062,34 @@ export class Gateway extends DurableObject<Env> {
       
       // Use cleaned text (HEARTBEAT_OK stripped)
       text = cleanedText || text;
+
+      // Deduplication: Skip if same text was sent within 24 hours
+      const agentId = context.agentId;
+      if (agentId) {
+        const state = this.heartbeatState[agentId];
+        const now = Date.now();
+        const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+        
+        if (
+          state?.lastHeartbeatText &&
+          state?.lastHeartbeatSentAt &&
+          state.lastHeartbeatText.trim() === text.trim() &&
+          (now - state.lastHeartbeatSentAt) < DEDUP_WINDOW_MS
+        ) {
+          console.log(`[Gateway] Heartbeat response deduplicated for ${agentId} (same text within 24h)`);
+          return;
+        }
+        
+        // Update state with this response (will be delivered)
+        this.heartbeatState[agentId] = {
+          ...state,
+          agentId,
+          lastHeartbeatText: text.trim(),
+          lastHeartbeatSentAt: now,
+          nextHeartbeatAt: state?.nextHeartbeatAt ?? null,
+          lastHeartbeatAt: state?.lastHeartbeatAt ?? null,
+        };
+      }
     }
 
     const replyToId = isHeartbeat ? undefined : context.inboundMessageId;
@@ -2294,6 +2340,7 @@ export class Gateway extends DurableObject<Env> {
       this.pendingChannelResponses[sessionKey] = {
         ...deliveryContext,
         inboundMessageId: `heartbeat:${reason}:${Date.now()}`,
+        agentId, // For deduplication lookup
       };
     }
     
