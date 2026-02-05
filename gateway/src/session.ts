@@ -669,7 +669,16 @@ export class Session extends DurableObject<Env> {
           args: toolCall.arguments,
         });
       }
-      // Set alarm for tool timeout
+      
+      // Check if all tools already resolved (workspace tools complete synchronously)
+      if (this.allToolsResolved()) {
+        console.log(`[Session] All ${toolCalls.length} tools already resolved (workspace tools), continuing immediately`);
+        // Continue the loop immediately - no need to wait
+        await this.continueAgentLoop();
+        return;
+      }
+      
+      // Some tools still pending (node tools) - set alarm and wait
       this.ctx.storage.setAlarm(Date.now() + 60_000);
       // DO can now hibernate - will wake on toolResult() or alarm()
       console.log(`[Session] Waiting for ${toolCalls.length} tool results, run ${this.currentRun?.runId}`);
@@ -1122,6 +1131,7 @@ export class Session extends DurableObject<Env> {
         toolCall.error = result.error || "Workspace tool failed";
       }
       this.pendingToolCalls[toolCall.id] = toolCall;
+      console.log(`[Session] Workspace tool ${toolCall.name} completed`);
       return;
     }
 
