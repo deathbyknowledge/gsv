@@ -1184,8 +1184,10 @@ export class Gateway extends DurableObject<Env> {
       this.env.SESSION.idFromName(sessionKey),
     );
 
+    // Generate runId before try block so it's accessible in catch for cleanup
+    const runId = crypto.randomUUID();
+
     try {
-      const runId = crypto.randomUUID();
 
       // Apply directive overrides for this message
       const messageOverrides: {
@@ -1224,9 +1226,9 @@ export class Gateway extends DurableObject<Env> {
         );
       }
 
-      // Store channel context BEFORE calling chatSend to avoid race condition
-      // (chatSend may trigger broadcastToSession before returning)
-      this.pendingChannelResponses[sessionKey] = {
+      // Store channel context by runId (not sessionKey) to handle queued messages correctly.
+      // Each message gets its own runId, so responses route back to the correct context.
+      this.pendingChannelResponses[runId] = {
         channel: params.channel,
         accountId: params.accountId,
         peer: params.peer,
@@ -1280,8 +1282,8 @@ export class Gateway extends DurableObject<Env> {
         sessionKey,
         false,
       );
-      // Clean up pending channel response
-      delete this.pendingChannelResponses[sessionKey];
+      // Clean up pending channel response (keyed by runId)
+      delete this.pendingChannelResponses[runId];
       this.sendError(ws, frame.id, 500, String(e));
     }
   }
@@ -1981,37 +1983,45 @@ export class Gateway extends DurableObject<Env> {
       }
     }
 
-    // Handle partial state: route text to channel but keep context for final response
-    if (payload.state === "partial" && payload.message) {
-      const channelContext = this.pendingChannelResponses[sessionKey];
-      if (channelContext) {
-        // Route partial text to channel (e.g., "Let me check..." before tool execution)
-        this.routeToChannel(sessionKey, channelContext, payload);
-        // Don't delete context - we'll need it for the final response
-      }
+    // Look up channel context by runId (each message has unique runId)
+    const runId = payload.runId;
+    if (!runId) {
+      // No runId means this is a WebSocket-only client, not a channel
+      return;
     }
 
-    // Handle final state: route to channel and stop typing indicator
-    if (payload.state === "final" || payload.state === "error") {
-      const channelContext = this.pendingChannelResponses[sessionKey];
-      if (channelContext) {
-        // Stop typing indicator
-        this.sendTypingToChannel(
-          channelContext.channel,
-          channelContext.accountId,
-          channelContext.peer,
-          sessionKey,
-          false, // typing = false
-        );
+    const channelContext = this.pendingChannelResponses[runId];
+    if (!channelContext) {
+      // No channel context - either WebSocket client or context already cleaned up
+      return;
+    }
 
-        // Route the response to the channel
-        if (payload.state === "final" && payload.message) {
-          this.routeToChannel(sessionKey, channelContext, payload);
-        }
-        delete this.pendingChannelResponses[sessionKey];
-      } else {
-        console.log(`[Gateway] No pending channel context for session ${sessionKey}`);
+    // Handle partial state: route text to channel but keep context for final response
+    if (payload.state === "partial" && payload.message) {
+      // Route partial text to channel (e.g., "Let me check..." before tool execution)
+      this.routeToChannel(sessionKey, channelContext, payload);
+      // Don't delete context - we'll need it for the final response
+      return;
+    }
+
+    // Handle final/error state: route to channel, stop typing, and clean up
+    if (payload.state === "final" || payload.state === "error") {
+      // Stop typing indicator
+      this.sendTypingToChannel(
+        channelContext.channel,
+        channelContext.accountId,
+        channelContext.peer,
+        sessionKey,
+        false, // typing = false
+      );
+
+      // Route the response to the channel
+      if (payload.state === "final" && payload.message) {
+        this.routeToChannel(sessionKey, channelContext, payload);
       }
+
+      // Clean up context for this runId
+      delete this.pendingChannelResponses[runId];
     }
   }
 
@@ -2335,17 +2345,17 @@ export class Gateway extends DurableObject<Env> {
       this.env.SESSION.idFromName(sessionKey),
     );
     
-    // Set up delivery context if we have one
+    // Send heartbeat prompt
+    const runId = crypto.randomUUID();
+    
+    // Set up delivery context if we have one (keyed by runId for correct routing)
     if (deliveryContext) {
-      this.pendingChannelResponses[sessionKey] = {
+      this.pendingChannelResponses[runId] = {
         ...deliveryContext,
         inboundMessageId: `heartbeat:${reason}:${Date.now()}`,
         agentId, // For deduplication lookup
       };
     }
-    
-    // Send heartbeat prompt
-    const runId = crypto.randomUUID();
     const prompt = config.prompt ?? DEFAULT_HEARTBEAT_PROMPT;
     
     try {
@@ -2354,9 +2364,9 @@ export class Gateway extends DurableObject<Env> {
     } catch (e) {
       console.error(`[Gateway] Heartbeat failed for ${agentId}:`, e);
       result.error = e instanceof Error ? e.message : String(e);
-      // Clean up pending context on failure
+      // Clean up pending context on failure (keyed by runId)
       if (deliveryContext) {
-        delete this.pendingChannelResponses[sessionKey];
+        delete this.pendingChannelResponses[runId];
       }
     }
     
@@ -2552,8 +2562,10 @@ export class Gateway extends DurableObject<Env> {
 
     const sessionStub = this.env.SESSION.get(this.env.SESSION.idFromName(sessionKey));
 
+    // Generate runId before try block so it's accessible in catch for cleanup
+    const runId = crypto.randomUUID();
+
     try {
-      const runId = crypto.randomUUID();
       const messageOverrides: { thinkLevel?: string; model?: { provider: string; id: string } } = {};
       if (directives.thinkLevel) messageOverrides.thinkLevel = directives.thinkLevel;
       if (directives.model) messageOverrides.model = directives.model;
@@ -2573,8 +2585,8 @@ export class Gateway extends DurableObject<Env> {
         processedMedia = await processInboundMedia(processedMedia, this.env.STORAGE, sessionKey);
       }
 
-      // Store channel context
-      this.pendingChannelResponses[sessionKey] = {
+      // Store channel context by runId (not sessionKey) for correct routing with queued messages
+      this.pendingChannelResponses[runId] = {
         channel: params.channel,
         accountId: params.accountId,
         peer: params.peer,
@@ -2606,7 +2618,7 @@ export class Gateway extends DurableObject<Env> {
       return { ok: true, sessionKey, status: "started" };
     } catch (e) {
       this.sendTypingToChannel(params.channel, params.accountId, params.peer, sessionKey, false);
-      delete this.pendingChannelResponses[sessionKey];
+      delete this.pendingChannelResponses[runId];
       return { ok: false, sessionKey, error: e instanceof Error ? e.message : String(e) };
     }
   }
