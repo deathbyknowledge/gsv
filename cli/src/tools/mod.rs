@@ -13,12 +13,14 @@ pub use read::ReadTool;
 pub use write::WriteTool;
 
 use crate::protocol::ToolDefinition;
+use async_trait::async_trait;
 use serde_json::Value;
 use std::path::PathBuf;
 
+#[async_trait]
 pub trait Tool: Send + Sync {
     fn definition(&self) -> ToolDefinition;
-    fn execute(&self, args: Value) -> Result<Value, String>;
+    async fn execute(&self, args: Value) -> Result<Value, String>;
 }
 
 /// Create all tools with the given workspace

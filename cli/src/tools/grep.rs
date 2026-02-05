@@ -1,5 +1,6 @@
 use crate::protocol::ToolDefinition;
 use crate::tools::Tool;
+use async_trait::async_trait;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -42,6 +43,7 @@ struct GrepMatch {
     content: String,
 }
 
+#[async_trait]
 impl Tool for GrepTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -68,7 +70,7 @@ impl Tool for GrepTool {
         }
     }
 
-    fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<Value, String> {
         let args: GrepArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 

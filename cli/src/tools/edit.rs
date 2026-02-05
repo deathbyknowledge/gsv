@@ -1,5 +1,6 @@
 use crate::protocol::ToolDefinition;
 use crate::tools::Tool;
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs;
@@ -34,6 +35,7 @@ struct EditArgs {
     replace_all: bool,
 }
 
+#[async_trait]
 impl Tool for EditTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -64,7 +66,7 @@ impl Tool for EditTool {
         }
     }
 
-    fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<Value, String> {
         let args: EditArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
