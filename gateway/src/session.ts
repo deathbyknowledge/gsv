@@ -672,9 +672,10 @@ export class Session extends DurableObject<Env> {
       
       // Check if all tools already resolved (workspace tools complete synchronously)
       if (this.allToolsResolved()) {
-        console.log(`[Session] All ${toolCalls.length} tools already resolved (workspace tools), continuing immediately`);
-        // Continue the loop immediately - no need to wait
-        await this.continueAgentLoop();
+        console.log(`[Session] All ${toolCalls.length} tools already resolved (workspace tools), scheduling immediate continuation`);
+        // Schedule continuation via short alarm to reset DO timeouts/limits
+        // This prevents long-running agent loops from hitting Worker limits
+        this.ctx.storage.setAlarm(Date.now() + 100);
         return;
       }
       
@@ -1154,16 +1155,24 @@ export class Session extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    console.log(`[Session] Alarm fired - checking for timed out tools`);
+    // Check if any tools are still pending (not resolved)
+    let timedOutCount = 0;
     for (const callId of Object.keys(this.pendingToolCalls)) {
       const call = this.pendingToolCalls[callId];
       if (call.result === undefined && !call.error) {
         call.error = "Tool execution timed out";
         this.pendingToolCalls[callId] = call;
+        timedOutCount++;
         console.log(`[Session] Tool ${call.name} (${callId}) timed out`);
       }
     }
-    // Continue the loop with timeout errors
+    
+    if (timedOutCount > 0) {
+      console.log(`[Session] Alarm: ${timedOutCount} tools timed out, continuing with errors`);
+    } else {
+      console.log(`[Session] Alarm: all tools resolved, continuing agent loop`);
+    }
+    
     await this.continueAgentLoop();
   }
 
