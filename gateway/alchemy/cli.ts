@@ -66,12 +66,32 @@ interface DeployState {
   deployedAt?: string;
 }
 
-function getStateDir(stackName: string): string {
-  return join(process.cwd(), STATE_DIR);
+/**
+ * Find the alchemy state directory.
+ * Looks for the deploy-state.json file specifically, checking cwd then parent.
+ */
+function findStateDir(): string {
+  const cwdState = join(process.cwd(), STATE_DIR);
+  const cwdDeployState = join(cwdState, DEPLOY_STATE_FILE);
+  
+  // Check cwd first - if deploy-state.json exists there, use it
+  if (existsSync(cwdDeployState)) {
+    return cwdState;
+  }
+  
+  // Check parent directory (e.g., running from gateway/ when state is at repo root)
+  const parentState = join(process.cwd(), "..", STATE_DIR);
+  const parentDeployState = join(parentState, DEPLOY_STATE_FILE);
+  if (existsSync(parentDeployState)) {
+    return parentState;
+  }
+  
+  // Default to cwd (will be created)
+  return cwdState;
 }
 
 function getStatePath(stackName: string): string {
-  return join(getStateDir(stackName), DEPLOY_STATE_FILE);
+  return join(findStateDir(), DEPLOY_STATE_FILE);
 }
 
 function loadDeployState(stackName: string): DeployState | null {
@@ -85,11 +105,11 @@ function loadDeployState(stackName: string): DeployState | null {
 }
 
 function saveDeployState(state: DeployState): void {
-  const dir = getStateDir(state.stackName);
+  const dir = findStateDir();
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(getStatePath(state.stackName), JSON.stringify(state, null, 2));
+  writeFileSync(join(dir, DEPLOY_STATE_FILE), JSON.stringify(state, null, 2));
 }
 
 function hashPassword(password: string): string {
@@ -186,7 +206,8 @@ async function commandUp(stackName: string): Promise<void> {
       message: "Enter your Alchemy password",
       validate: (value) => {
         if (!value) return "Password required";
-        if (hashPassword(value) !== state.passwordHash) {
+        // Skip hash check if no hash stored (migrated state)
+        if (state.passwordHash && hashPassword(value) !== state.passwordHash) {
           return "Password doesn't match previous deployment";
         }
       },
@@ -224,13 +245,17 @@ async function commandUp(stackName: string): Promise<void> {
     
     await app.finalize();
     
-    // Update state with new URLs
+    // Update state with new URLs and password hash
     state.urls = {
       gateway: await infra.gateway.url,
       whatsapp: infra.whatsappChannel ? await infra.whatsappChannel.url : undefined,
       discord: infra.discordChannel ? await infra.discordChannel.url : undefined,
     };
     state.deployedAt = new Date().toISOString();
+    // Store password hash for future verification (if not already set)
+    if (!state.passwordHash) {
+      state.passwordHash = hashPassword(password);
+    }
     saveDeployState(state);
     
     spinner.stop(pc.green("Deployed successfully!"));
