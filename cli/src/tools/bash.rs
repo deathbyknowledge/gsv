@@ -1,9 +1,12 @@
 use crate::protocol::ToolDefinition;
 use crate::tools::Tool;
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use std::process::Command;
+use std::time::Duration;
+use tokio::process::Command;
+use tokio::time::timeout;
 
 pub struct BashTool {
     workspace: PathBuf,
@@ -29,11 +32,11 @@ struct BashArgs {
     command: String,
     #[serde(default)]
     workdir: Option<String>,
-    #[allow(dead_code)] // TODO: implement timeout
     #[serde(default)]
     timeout: Option<u64>,
 }
 
+#[async_trait]
 impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -61,7 +64,7 @@ impl Tool for BashTool {
         }
     }
 
-    fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<Value, String> {
         let args: BashArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
@@ -75,11 +78,21 @@ impl Tool for BashTool {
             .unwrap_or_else(|| self.workspace.clone());
         cmd.current_dir(&workdir);
 
-        // TODO: implement timeout
+        // Default timeout: 5 minutes, can be overridden
+        let timeout_ms = args.timeout.unwrap_or(5 * 60 * 1000);
+        let timeout_duration = Duration::from_millis(timeout_ms);
 
-        let output = cmd
-            .output()
-            .map_err(|e| format!("Failed to execute: {}", e))?;
+        let output = match timeout(timeout_duration, cmd.output()).await {
+            Ok(result) => result.map_err(|e| format!("Failed to execute: {}", e))?,
+            Err(_) => {
+                return Ok(json!({
+                    "exitCode": -1,
+                    "stdout": "",
+                    "stderr": format!("Command timed out after {}ms", timeout_ms),
+                    "workdir": workdir.display().to_string()
+                }));
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();

@@ -1,5 +1,6 @@
 use crate::protocol::ToolDefinition;
 use crate::tools::Tool;
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -30,6 +31,7 @@ struct GlobArgs {
     path: Option<String>,
 }
 
+#[async_trait]
 impl Tool for GlobTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -52,7 +54,7 @@ impl Tool for GlobTool {
         }
     }
 
-    fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<Value, String> {
         let args: GlobArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 

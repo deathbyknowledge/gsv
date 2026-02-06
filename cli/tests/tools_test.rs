@@ -1,7 +1,7 @@
 // Integration tests for CLI tools
 
-#[test]
-fn test_bash_tool_execution() {
+#[tokio::test]
+async fn test_bash_tool_execution() {
     use gsv::tools::{BashTool, Tool};
     use serde_json::json;
 
@@ -17,14 +17,15 @@ fn test_bash_tool_execution() {
         .execute(json!({
             "command": "echo hello"
         }))
+        .await
         .unwrap();
 
     assert_eq!(result["exitCode"], 0);
     assert!(result["stdout"].as_str().unwrap().contains("hello"));
 }
 
-#[test]
-fn test_bash_tool_workdir() {
+#[tokio::test]
+async fn test_bash_tool_workdir() {
     use gsv::tools::{BashTool, Tool};
     use serde_json::json;
 
@@ -37,6 +38,7 @@ fn test_bash_tool_workdir() {
             "command": "pwd",
             "workdir": "/tmp"
         }))
+        .await
         .unwrap();
 
     assert_eq!(result["exitCode"], 0);
@@ -46,8 +48,8 @@ fn test_bash_tool_workdir() {
     ); // macOS
 }
 
-#[test]
-fn test_read_tool() {
+#[tokio::test]
+async fn test_read_tool() {
     use gsv::tools::{ReadTool, Tool};
     use serde_json::json;
     use std::io::Write;
@@ -69,6 +71,7 @@ fn test_read_tool() {
         .execute(json!({
             "path": test_file.to_str().unwrap()
         }))
+        .await
         .unwrap();
 
     let content = result["content"].as_str().unwrap();
@@ -80,8 +83,8 @@ fn test_read_tool() {
     std::fs::remove_file(&test_file).ok();
 }
 
-#[test]
-fn test_read_tool_with_offset_limit() {
+#[tokio::test]
+async fn test_read_tool_with_offset_limit() {
     use gsv::tools::{ReadTool, Tool};
     use serde_json::json;
     use std::io::Write;
@@ -105,6 +108,7 @@ fn test_read_tool_with_offset_limit() {
             "offset": 2,
             "limit": 3
         }))
+        .await
         .unwrap();
 
     let content = result["content"].as_str().unwrap();
@@ -119,8 +123,8 @@ fn test_read_tool_with_offset_limit() {
     std::fs::remove_file(&test_file).ok();
 }
 
-#[test]
-fn test_write_tool() {
+#[tokio::test]
+async fn test_write_tool() {
     use gsv::tools::{Tool, WriteTool};
     use serde_json::json;
 
@@ -135,6 +139,7 @@ fn test_write_tool() {
             "path": test_file.to_str().unwrap(),
             "content": "test content\nline 2"
         }))
+        .await
         .unwrap();
 
     assert_eq!(result["bytes"], 19); // "test content\nline 2" = 19 bytes
@@ -147,8 +152,8 @@ fn test_write_tool() {
     std::fs::remove_file(&test_file).ok();
 }
 
-#[test]
-fn test_edit_tool() {
+#[tokio::test]
+async fn test_edit_tool() {
     use gsv::tools::{EditTool, Tool};
     use serde_json::json;
     use std::io::Write;
@@ -171,6 +176,7 @@ fn test_edit_tool() {
             "oldString": "hello world",
             "newString": "goodbye world"
         }))
+        .await
         .unwrap();
 
     assert_eq!(result["replacements"], 1);
@@ -184,8 +190,8 @@ fn test_edit_tool() {
     std::fs::remove_file(&test_file).ok();
 }
 
-#[test]
-fn test_glob_tool() {
+#[tokio::test]
+async fn test_glob_tool() {
     use gsv::tools::{GlobTool, Tool};
     use serde_json::json;
 
@@ -205,6 +211,7 @@ fn test_glob_tool() {
             "pattern": "*.txt",
             "path": workspace.to_str().unwrap()
         }))
+        .await
         .unwrap();
 
     let matches = result["matches"].as_array().unwrap();
@@ -214,8 +221,8 @@ fn test_glob_tool() {
     std::fs::remove_dir_all(&workspace).ok();
 }
 
-#[test]
-fn test_grep_tool() {
+#[tokio::test]
+async fn test_grep_tool() {
     use gsv::tools::{GrepTool, Tool};
     use serde_json::json;
     use std::io::Write;
@@ -243,6 +250,7 @@ fn test_grep_tool() {
             "pattern": "hello",
             "path": workspace.to_str().unwrap()
         }))
+        .await
         .unwrap();
 
     let matches = result["matches"].as_array().unwrap();

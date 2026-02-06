@@ -1982,13 +1982,13 @@ async fn run_node(
                             {
                                 println!("Tool invoke: {} ({})", invoke.tool, invoke.call_id);
 
-                                let result = tools
+                                let result = match tools
                                     .iter()
                                     .find(|t| t.definition().name == invoke.tool)
-                                    .map(|t| t.execute(invoke.args.clone()))
-                                    .unwrap_or_else(|| {
-                                        Err(format!("Tool not found: {}", invoke.tool))
-                                    });
+                                {
+                                    Some(tool) => tool.execute(invoke.args.clone()).await,
+                                    None => Err(format!("Tool not found: {}", invoke.tool)),
+                                };
 
                                 let params = match result {
                                     Ok(res) => ToolResultParams {
