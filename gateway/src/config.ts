@@ -19,18 +19,18 @@ export interface AgentConfig {
 
 export interface HeartbeatConfig {
   // Interval between heartbeats (e.g., "30m", "1h", "0m" to disable)
-  every?: string;
+  every: string;
   
   // Custom prompt for heartbeat
-  prompt?: string;
+  prompt: string;
   
   // Delivery target: "last" (last channel), "none", or specific channel
-  target?: "last" | "none" | string;
+  target: "last" | "none" | string;
   
   // Active hours (skip heartbeat outside these hours)
-  activeHours?: {
+  activeHours: {
     start: string;  // "08:00"
-    end: string;    // "22:00"
+    end: string;    // "23:00"
     timezone?: string;  // "user", "local", or IANA zone
   };
 }
@@ -50,23 +50,20 @@ export interface AgentBinding {
 export type TranscriptionProvider = "workers-ai" | "openai";
 
 export interface TranscriptionConfig {
-  // Provider to use: "workers-ai" (free, default) or "openai"
   provider: TranscriptionProvider;
 }
 
-// DM access policy for channels
 export type DmPolicy = "open" | "allowlist" | "pairing";
 
-export interface WhatsAppChannelConfig {
+export interface ChannelConfig {
   // DM access policy
   // - "pairing": Unknown senders trigger pairing flow, approve via CLI (recommended)
   // - "allowlist": Only numbers in allowFrom can message (secure)
   // - "open": Anyone can message (use with caution!)
-  dmPolicy?: DmPolicy;
+  dmPolicy: DmPolicy;
   
-  // Allowed sender IDs (E.164 numbers like "+1234567890" or JIDs like "123@g.us")
-  // Used by "allowlist" and "pairing" modes
-  allowFrom?: string[];
+  // Allowed sender IDs
+  allowFrom: string[];
 }
 
 // Pending pairing request
@@ -78,26 +75,33 @@ export interface PendingPair {
   firstMessage?: string;
 }
 
-export interface ChannelsConfig {
-  whatsapp?: WhatsAppChannelConfig;
-  // Future: telegram, discord, etc.
-}
+export type ChannelsConfig = Record<string, ChannelConfig>;
 
 export interface SessionConfig {
   // Identity links: map multiple channel identities to a single session
   // Key is canonical name, value is array of channel:id strings
   // Example: { "steve": ["+31628552611", "telegram:123456789"] }
-  identityLinks?: Record<string, string[]>;
+  identityLinks: Record<string, string[]>;
+}
+
+export interface AgentsConfig {
+  // List of agent configurations
+  list: AgentConfig[];
+  
+  // Bindings map channels/chats to agents
+  bindings: AgentBinding[];
+  
+  // Default heartbeat config for all agents
+  defaultHeartbeat: HeartbeatConfig;
 }
 
 export interface GsvConfig {
-  // Model settings (default for all agents)
+  // Model settings 
   model: {
     provider: string;
     id: string;
   };
 
-  // API Keys (stored securely)
   apiKeys: {
     anthropic?: string;
     openai?: string;
@@ -117,29 +121,39 @@ export interface GsvConfig {
   };
 
   // Transcription settings (audio -> text)
-  transcription?: TranscriptionConfig;
+  transcription: TranscriptionConfig;
   
   // Channel-specific settings (allowlists, policies)
-  channels?: ChannelsConfig;
+  channels: ChannelsConfig;
 
   // System prompt (default for all agents)
   systemPrompt?: string;
   
   // Session configuration (identity links, scoping)
-  session?: SessionConfig;
+  session: SessionConfig;
   
   // Multi-agent configuration
-  agents?: {
-    // List of agent configurations
-    list?: AgentConfig[];
-    
-    // Bindings map channels/chats to agents
-    bindings?: AgentBinding[];
-    
-    // Default heartbeat config for all agents
-    defaultHeartbeat?: HeartbeatConfig;
-  };
+  agents: AgentsConfig;
 }
+
+/** Deep-partial input type for user overrides */
+export type GsvConfigInput = {
+  model?: Partial<GsvConfig["model"]>;
+  apiKeys?: Partial<GsvConfig["apiKeys"]>;
+  timeouts?: Partial<GsvConfig["timeouts"]>;
+  auth?: Partial<GsvConfig["auth"]>;
+  transcription?: Partial<TranscriptionConfig>;
+  channels?: Record<string, Partial<ChannelConfig>>;
+  systemPrompt?: string;
+  session?: {
+    identityLinks?: Record<string, string[]>;
+  };
+  agents?: {
+    list?: AgentConfig[];
+    bindings?: AgentBinding[];
+    defaultHeartbeat?: Partial<HeartbeatConfig>;
+  };
+};
 
 export const DEFAULT_CONFIG: GsvConfig = {
   model: {
@@ -155,30 +169,48 @@ export const DEFAULT_CONFIG: GsvConfig = {
   transcription: {
     provider: "workers-ai", // Free default
   },
+  channels: {
+    whatsapp: { dmPolicy: "pairing", allowFrom: [] },
+    discord: { dmPolicy: "open", allowFrom: [] },
+  },
+  session: {
+    identityLinks: {},
+  },
+  agents: {
+    list: [],
+    bindings: [],
+    defaultHeartbeat: {
+      every: "30m",
+      prompt: "Read HEARTBEAT.md if it exists in your workspace. Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
+      target: "last",
+      activeHours: { start: "08:00", end: "23:00" },
+    },
+  },
 };
 
-export function mergeConfig(base: GsvConfig, overrides: Partial<GsvConfig>): GsvConfig {
-  return {
-    model: { ...base.model, ...overrides.model },
-    apiKeys: { ...base.apiKeys, ...overrides.apiKeys },
-    timeouts: { ...base.timeouts, ...overrides.timeouts },
-    auth: { ...base.auth, ...overrides.auth },
-    transcription: {
-      provider: overrides.transcription?.provider ?? base.transcription?.provider ?? "workers-ai",
-    },
-    channels: overrides.channels ? {
-      whatsapp: { ...base.channels?.whatsapp, ...overrides.channels.whatsapp },
-    } : base.channels,
-    systemPrompt: overrides.systemPrompt ?? base.systemPrompt,
-    session: overrides.session ? {
-      identityLinks: { ...base.session?.identityLinks, ...overrides.session.identityLinks },
-    } : base.session,
-    agents: overrides.agents ? {
-      list: overrides.agents.list ?? base.agents?.list,
-      bindings: overrides.agents.bindings ?? base.agents?.bindings,
-      defaultHeartbeat: { ...base.agents?.defaultHeartbeat, ...overrides.agents.defaultHeartbeat },
-    } : base.agents,
-  };
+/** Deep merge where arrays and primitives are replaced, objects are recursively merged */
+function deepMerge<T>(base: T, overrides: any): T {
+  if (overrides === undefined || overrides === null) return base;
+  if (typeof base !== "object" || base === null) return overrides ?? base;
+  if (Array.isArray(base) || Array.isArray(overrides)) return overrides ?? base;
+
+  const result = { ...base } as any;
+  for (const key of Object.keys(overrides)) {
+    const baseVal = (base as any)[key];
+    const overVal = overrides[key];
+    if (overVal === undefined) continue;
+    if (baseVal !== undefined && typeof baseVal === "object" && !Array.isArray(baseVal)
+        && typeof overVal === "object" && !Array.isArray(overVal) && overVal !== null) {
+      result[key] = deepMerge(baseVal, overVal);
+    } else {
+      result[key] = overVal;
+    }
+  }
+  return result;
+}
+
+export function mergeConfig(base: GsvConfig, overrides: GsvConfigInput): GsvConfig {
+  return deepMerge(base, overrides);
 }
 
 /**
@@ -203,8 +235,7 @@ export function parseDuration(duration: string): number {
  * Get agent config by ID, with defaults merged
  */
 export function getAgentConfig(config: GsvConfig, agentId: string): AgentConfig {
-  const agentList = config.agents?.list ?? [];
-  const found = agentList.find(a => a.id === agentId);
+  const found = config.agents.list.find(a => a.id === agentId);
   
   if (found) {
     return found;
@@ -221,8 +252,7 @@ export function getAgentConfig(config: GsvConfig, agentId: string): AgentConfig 
  * Get the default agent ID
  */
 export function getDefaultAgentId(config: GsvConfig): string {
-  const agentList = config.agents?.list ?? [];
-  const defaultAgent = agentList.find(a => a.default);
+  const defaultAgent = config.agents.list.find(a => a.default);
   return defaultAgent?.id ?? "main";
 }
 
@@ -258,19 +288,18 @@ export function isAllowedSender(
   senderId: string,
   peerId?: string,
 ): { allowed: boolean; needsPairing?: boolean; reason?: string } {
-  if (channel !== "whatsapp") {
-    // For now, only WhatsApp has allowlist support
+  const channelConfig = config.channels[channel];
+  if (!channelConfig) { // allow on unset
     return { allowed: true };
   }
   
-  const waConfig = config.channels?.whatsapp;
-  const policy = waConfig?.dmPolicy ?? "pairing"; // Default to pairing (safest)
+  const policy = channelConfig.dmPolicy;
   
   if (policy === "open") {
     return { allowed: true };
   }
   
-  const allowFrom = waConfig?.allowFrom ?? [];
+  const allowFrom = channelConfig.allowFrom;
   
   // Check for wildcard
   if (allowFrom.includes("*")) {
@@ -319,7 +348,7 @@ export function resolveAgentIdFromBinding(
   accountId?: string,
   peer?: { kind: string; id: string },
 ): string {
-  const bindings = config.agents?.bindings ?? [];
+  const bindings = config.agents.bindings;
   
   for (const binding of bindings) {
     const match = binding.match;
@@ -371,8 +400,7 @@ export function resolveLinkedIdentity(
   channel: string,
   senderId: string,
 ): string | null {
-  const links = config.session?.identityLinks;
-  if (!links) return null;
+  const links = config.session.identityLinks;
   
   // Normalize sender ID for matching
   const normalizedSender = normalizeE164(senderId);

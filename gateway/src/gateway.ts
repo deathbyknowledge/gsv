@@ -28,15 +28,13 @@ import type {
   SendResult,
 } from "./channel-interface";
 import { isWebSocketRequest, validateFrame, isWsConnected } from "./utils";
-import { GsvConfig, DEFAULT_CONFIG, mergeConfig, resolveAgentIdFromBinding, getAgentConfig, parseDuration, HeartbeatConfig, isAllowedSender, PendingPair, normalizeE164, resolveLinkedIdentity } from "./config";
+import { GsvConfig, GsvConfigInput, DEFAULT_CONFIG, mergeConfig, resolveAgentIdFromBinding, getAgentConfig, parseDuration, HeartbeatConfig, isAllowedSender, PendingPair, normalizeE164, resolveLinkedIdentity } from "./config";
 import { 
   HeartbeatState, 
   getHeartbeatConfig, 
   getNextHeartbeatTime, 
   isWithinActiveHours,
   shouldDeliverResponse,
-  DEFAULT_HEARTBEAT_PROMPT,
-  HEARTBEAT_OK_TOKEN,
   HeartbeatResult,
 } from "./heartbeat";
 import { loadHeartbeatFile, isHeartbeatFileEmpty } from "./workspace";
@@ -75,19 +73,7 @@ export class Gateway extends DurableObject<Env> {
 
   private configStore = PersistedObject<Record<string, unknown>>(
     this.ctx.storage.kv,
-    {
-      prefix: "config:",
-      defaults: {
-        model: {
-          provider: DEFAULT_CONFIG.model.provider,
-          id: DEFAULT_CONFIG.model.id,
-        },
-        timeouts: {
-          llmMs: DEFAULT_CONFIG.timeouts.llmMs,
-          toolMs: DEFAULT_CONFIG.timeouts.toolMs,
-        },
-      },
-    },
+    { prefix: "config:" },
   );
 
   sessionRegistry = PersistedObject<Record<string, SessionRegistryEntry>>(
@@ -1213,7 +1199,7 @@ export class Gateway extends DurableObject<Env> {
         {
           workersAi: this.env.AI,
           openaiApiKey: config.apiKeys.openai,
-          preferredProvider: config.transcription?.provider,
+          preferredProvider: config.transcription.provider,
         },
       );
       
@@ -1831,11 +1817,12 @@ export class Gateway extends DurableObject<Env> {
     
     // Add to allowFrom
     const config = this.getFullConfig();
-    const currentAllowFrom = config.channels?.whatsapp?.allowFrom ?? [];
+    const channelConfig = config.channels[params.channel];
+    const currentAllowFrom = channelConfig?.allowFrom ?? [];
     
     if (!currentAllowFrom.includes(normalizedId)) {
       const newAllowFrom = [...currentAllowFrom, normalizedId];
-      this.setConfigPath("channels.whatsapp.allowFrom", newAllowFrom);
+      this.setConfigPath(`channels.${params.channel}.allowFrom`, newAllowFrom);
     }
     
     // Remove from pending
@@ -1945,7 +1932,7 @@ export class Gateway extends DurableObject<Env> {
   }
 
   private getFullConfig(): GsvConfig {
-    return mergeConfig(DEFAULT_CONFIG, { ...this.configStore } as Partial<GsvConfig>);
+    return mergeConfig(DEFAULT_CONFIG, { ...this.configStore } as GsvConfigInput);
   }
 
   private getSafeConfig(): GsvConfig {
@@ -2062,8 +2049,7 @@ export class Gateway extends DurableObject<Env> {
     const isHeartbeat = context.inboundMessageId.startsWith("heartbeat:");
     
     if (isHeartbeat) {
-      // Check if response should be suppressed (HEARTBEAT_OK with short content)
-      const { deliver, cleanedText } = shouldDeliverResponse(text, {});
+      const { deliver, cleanedText } = shouldDeliverResponse(text);
       
       if (!deliver) {
         console.log(`[Gateway] Heartbeat response suppressed (HEARTBEAT_OK or short ack)`);
@@ -2169,8 +2155,8 @@ export class Gateway extends DurableObject<Env> {
    * Schedule the next heartbeat alarm
    */
   private async scheduleHeartbeat(): Promise<void> {
-    const config = await this.getConfig();
-    const agents = config.agents?.list ?? [{ id: "main", default: true }];
+    const config = this.getConfig();
+    const agents = config.agents.list.length > 0 ? config.agents.list : [{ id: "main", default: true }];
     
     let nextAlarmTime: number | null = null;
     
@@ -2198,7 +2184,7 @@ export class Gateway extends DurableObject<Env> {
     }
     
     if (nextAlarmTime !== null) {
-      this.ctx.storage.setAlarm(nextAlarmTime);
+      await this.ctx.storage.setAlarm(nextAlarmTime);
       console.log(`[Gateway] Heartbeat alarm scheduled for ${new Date(nextAlarmTime).toISOString()}`);
     }
   }
@@ -2356,7 +2342,7 @@ export class Gateway extends DurableObject<Env> {
         agentId, // For deduplication lookup
       };
     }
-    const prompt = config.prompt ?? DEFAULT_HEARTBEAT_PROMPT;
+    const prompt = config.prompt;
     
     try {
       await session.chatSend(prompt, runId, [], sessionKey);
@@ -2577,7 +2563,7 @@ export class Gateway extends DurableObject<Env> {
         {
           workersAi: this.env.AI,
           openaiApiKey: fullConfig.apiKeys.openai,
-          preferredProvider: fullConfig.transcription?.provider,
+          preferredProvider: fullConfig.transcription.provider,
         },
       );
       

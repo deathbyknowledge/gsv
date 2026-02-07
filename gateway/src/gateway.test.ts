@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { PersistedObject } from "./stored";
-import { DEFAULT_CONFIG, mergeConfig, type GsvConfig } from "./config";
+import { DEFAULT_CONFIG, mergeConfig, type GsvConfig, type GsvConfigInput } from "./config";
 
 // Mock KV storage
 function createMockKv() {
@@ -41,7 +41,7 @@ describe("Gateway config serialization", () => {
 
       // Simulate getFullConfig() - merges defaults with stored config
       function getFullConfig(): GsvConfig {
-        const stored = { ...configStore } as Partial<GsvConfig>;
+        const stored = { ...configStore } as GsvConfigInput;
         return mergeConfig(DEFAULT_CONFIG, stored);
       }
 
@@ -55,8 +55,8 @@ describe("Gateway config serialization", () => {
 
       // Verify the config is usable
       expect(config.model.provider).toBe("anthropic");
-      expect(config.channels?.whatsapp?.dmPolicy).toBe("pairing");
-      expect(config.channels?.whatsapp?.allowFrom).toContain("+31628552611");
+      expect(config.channels.whatsapp.dmPolicy).toBe("pairing");
+      expect(config.channels.whatsapp.allowFrom).toContain("+31628552611");
 
       // THE CRITICAL TEST: Verify we can serialize again (RPC simulation)
       const serialized = JSON.stringify(config);
@@ -89,7 +89,7 @@ describe("Gateway config serialization", () => {
       configStore.timeouts = { llmMs: 300000, toolMs: 60000 };
 
       function getConfig(): GsvConfig {
-        const stored = { ...configStore } as Partial<GsvConfig>;
+        const stored = { ...configStore } as GsvConfigInput;
         return JSON.parse(JSON.stringify(mergeConfig(DEFAULT_CONFIG, stored)));
       }
 

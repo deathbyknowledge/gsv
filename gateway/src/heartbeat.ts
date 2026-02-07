@@ -7,16 +7,10 @@
  * - Process scheduled tasks
  */
 
-import { parseDuration, HeartbeatConfig, GsvConfig, getAgentConfig } from "./config";
-
-// Default heartbeat prompt
-export const DEFAULT_HEARTBEAT_PROMPT = `Read HEARTBEAT.md if it exists in your workspace. Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`;
+import { parseDuration, HeartbeatConfig, GsvConfig, DEFAULT_CONFIG, getAgentConfig } from "./config";
 
 // Token to indicate no action needed
 export const HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK";
-
-// Default interval (30 minutes)
-export const DEFAULT_HEARTBEAT_INTERVAL = "30m";
 
 // Max chars for OK suppression (don't deliver short acks)
 export const DEFAULT_ACK_MAX_CHARS = 300;
@@ -106,7 +100,6 @@ export function isWithinActiveHours(
  */
 export function shouldDeliverResponse(
   text: string,
-  config: HeartbeatConfig,
 ): { deliver: boolean; cleanedText: string } {
   // Strip HEARTBEAT_OK token from start/end
   let cleaned = text.trim();
@@ -138,14 +131,12 @@ export function getHeartbeatConfig(
   agentId: string,
 ): HeartbeatConfig {
   const agentConfig = getAgentConfig(globalConfig, agentId);
-  const defaultHeartbeat = globalConfig.agents?.defaultHeartbeat ?? {};
-  const agentHeartbeat = agentConfig.heartbeat ?? {};
-  
+  const base = globalConfig.agents.defaultHeartbeat;
+  const override = agentConfig.heartbeat;
+  if (!override) return base;
   return {
-    every: agentHeartbeat.every ?? defaultHeartbeat.every ?? DEFAULT_HEARTBEAT_INTERVAL,
-    prompt: agentHeartbeat.prompt ?? defaultHeartbeat.prompt ?? DEFAULT_HEARTBEAT_PROMPT,
-    target: agentHeartbeat.target ?? defaultHeartbeat.target ?? "last",
-    activeHours: agentHeartbeat.activeHours ?? defaultHeartbeat.activeHours,
+    ...base,
+    ...override,
   };
 }
 
@@ -153,7 +144,7 @@ export function getHeartbeatConfig(
  * Calculate next heartbeat time
  */
 export function getNextHeartbeatTime(config: HeartbeatConfig): number | null {
-  const interval = parseDuration(config.every ?? DEFAULT_HEARTBEAT_INTERVAL);
+  const interval = parseDuration(config.every);
   if (interval <= 0) return null; // Disabled
   
   return Date.now() + interval;
