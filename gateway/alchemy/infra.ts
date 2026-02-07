@@ -12,6 +12,7 @@ import {
   R2Object,
   Queue,
   Assets,
+  Ai,
 } from "alchemy/cloudflare";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -184,12 +185,16 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
   // Deploy Gateway AFTER channels (so service bindings can resolve)
   // =========================================================================
 
+  // Workers AI for audio transcription (free)
+  const ai = Ai();
+
   // Main gateway worker - consumes from channel inbound queue
   const gateway = await Worker(`${name}-worker`, {
     name,
     entrypoint,
     adopt: true,
     bindings: {
+      AI: ai,
       GATEWAY: DurableObjectNamespace("gateway", {
         className: "Gateway",
         sqlite: true,
