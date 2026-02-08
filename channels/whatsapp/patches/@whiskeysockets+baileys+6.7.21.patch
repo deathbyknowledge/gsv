@@ -1,14 +1,16 @@
 diff --git a/node_modules/@whiskeysockets/baileys/lib/Utils/crypto.js b/node_modules/@whiskeysockets/baileys/lib/Utils/crypto.js
-index dff7b44..2f3ee27 100644
+index 950c8c4..31ee71c 100644
 --- a/node_modules/@whiskeysockets/baileys/lib/Utils/crypto.js
 +++ b/node_modules/@whiskeysockets/baileys/lib/Utils/crypto.js
-@@ -41,10 +41,49 @@ const GCM_TAG_LENGTH = 128 >> 3;
+@@ -41,10 +41,48 @@ const GCM_TAG_LENGTH = 128 >> 3;
   * encrypt AES 256 GCM;
   * where the tag tag is suffixed to the ciphertext
   * */
 +function ensureBuffer(value, name) {
-+    if (Buffer.isBuffer(value)) return value;
-+    if (value instanceof Uint8Array) return Buffer.from(value);
++    if (Buffer.isBuffer(value))
++        return value;
++    if (value instanceof Uint8Array)
++        return Buffer.from(value);
 +    if (value && typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
 +        console.log(`[crypto] Converting ${name} from serialized Buffer object`);
 +        return Buffer.from(value.data);
@@ -33,7 +35,6 @@ index dff7b44..2f3ee27 100644
 +        if (additionalData) {
 +            additionalData = ensureBuffer(additionalData, 'additionalData');
 +        }
-+        
 +        const cipher = createCipheriv('aes-256-gcm', key, iv);
 +        // Only set AAD if non-empty (workerd bug workaround)
 +        if (additionalData && additionalData.length > 0) {
@@ -43,7 +44,8 @@ index dff7b44..2f3ee27 100644
 +        const final = cipher.final();
 +        const tag = cipher.getAuthTag();
 +        return Buffer.concat([update, final, tag]);
-+    } catch (e) {
++    }
++    catch (e) {
 +        console.error(`[crypto] aesEncryptGCM failed: ${e.message}`);
 +        console.error(`[crypto] plaintext type=${typeof plaintext}, isBuffer=${Buffer.isBuffer(plaintext)}`);
 +        console.error(`[crypto] key type=${typeof key}, iv type=${typeof iv}`);
