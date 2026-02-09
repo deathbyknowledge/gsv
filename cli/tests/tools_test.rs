@@ -286,7 +286,7 @@ fn test_config_load_default() {
     // Should return default config when file doesn't exist
     let cfg = CliConfig::load();
 
-    assert_eq!(cfg.default_session(), "main");
+    assert_eq!(cfg.default_session(), "agent:main:cli:dm:main");
     // Default URL is ws://localhost:8787/ws
     let url = cfg.gateway_url();
     assert!(url.starts_with("ws://") || url.starts_with("wss://"));
