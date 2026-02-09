@@ -1334,8 +1334,9 @@ export class Gateway extends DurableObject<Env> {
     // Resolve delivery target from config
     const target = config.target ?? "last";
 
-    // Determine session and delivery context
-    let sessionKey: string;
+    // Heartbeats always run in their own internal session.
+    // Delivery routing is independent and controlled by target/lastActive context.
+    const sessionKey = `agent:${agentId}:heartbeat:system:internal`;
     let deliveryContext: {
       channel: ChannelId;
       accountId: string;
@@ -1343,12 +1344,8 @@ export class Gateway extends DurableObject<Env> {
     } | null = null;
 
     if (target === "none") {
-      // Silent heartbeat - run in isolated session, no delivery
-      sessionKey = `agent:${agentId}:heartbeat:system:internal`;
-      console.log(`[Gateway] Heartbeat target=none, using isolated session`);
+      console.log(`[Gateway] Heartbeat target=none, running silently`);
     } else if (target === "last" && lastActive) {
-      // Use last active session and deliver to that channel
-      sessionKey = lastActive.sessionKey;
       // Clone to strip Proxy wrappers from PersistedObject before storing in another PersistedObject
       deliveryContext = JSON.parse(JSON.stringify({
         channel: lastActive.channel,
@@ -1358,11 +1355,14 @@ export class Gateway extends DurableObject<Env> {
       console.log(
         `[Gateway] Heartbeat target=last, delivering to ${lastActive.channel}:${lastActive.peer.id}`,
       );
+    } else if (target === "last") {
+      console.log(
+        `[Gateway] Heartbeat target=last, no last active context, running silently`,
+      );
     } else if (target !== "last" && target !== "none") {
       // Specific channel target (e.g., "whatsapp")
       // For now, use last active if channel matches
       if (lastActive && lastActive.channel === target) {
-        sessionKey = lastActive.sessionKey;
         // Clone to strip Proxy wrappers from PersistedObject before storing in another PersistedObject
         deliveryContext = JSON.parse(JSON.stringify({
           channel: lastActive.channel,
@@ -1373,18 +1373,10 @@ export class Gateway extends DurableObject<Env> {
           `[Gateway] Heartbeat target=${target}, matched last active`,
         );
       } else {
-        // No matching context, run silently
-        sessionKey = `agent:${agentId}:heartbeat:system:internal`;
         console.log(
           `[Gateway] Heartbeat target=${target}, no matching context, running silently`,
         );
       }
-    } else {
-      // No last active context, run in isolated session
-      sessionKey = `agent:${agentId}:heartbeat:system:internal`;
-      console.log(
-        `[Gateway] Heartbeat: no last active context, running silently`,
-      );
     }
 
     // Set sessionKey in result
@@ -1392,6 +1384,23 @@ export class Gateway extends DurableObject<Env> {
 
     // Get the session DO
     const session = this.env.SESSION.getByName(sessionKey);
+
+    // Ensure heartbeat session uses freshness-based resets (daily by default).
+    // Only initialize once to avoid touching updatedAt on every heartbeat.
+    try {
+      const info = await session.get();
+      if (!info.resetPolicy) {
+        await session.patch({ resetPolicy: { mode: "daily", atHour: 4 } });
+        console.log(
+          `[Gateway] Initialized heartbeat reset policy for ${sessionKey}`,
+        );
+      }
+    } catch (e) {
+      console.warn(
+        `[Gateway] Failed to check/set heartbeat reset policy for ${sessionKey}:`,
+        e,
+      );
+    }
 
     // Send heartbeat prompt
     const runId = crypto.randomUUID();
@@ -1405,9 +1414,10 @@ export class Gateway extends DurableObject<Env> {
       };
     }
     const prompt = config.prompt;
+    const tools = JSON.parse(JSON.stringify(this.getAllTools()));
 
     try {
-      await session.chatSend(prompt, runId, [], sessionKey);
+      await session.chatSend(prompt, runId, tools, sessionKey);
       console.log(`[Gateway] Heartbeat sent to session ${sessionKey}`);
     } catch (e) {
       console.error(`[Gateway] Heartbeat failed for ${agentId}:`, e);
