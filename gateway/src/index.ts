@@ -100,6 +100,7 @@ export default {
 
     // Serve media files from R2
     // /media/{uuid}.{ext}
+    // TODO: either remove or auth this
     const mediaMatch = url.pathname.match(
       /^\/media\/([a-f0-9-]+\.[a-z0-9]+)$/i,
     );

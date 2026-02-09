@@ -99,14 +99,13 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     throw new RpcError(404, "Unknown callId");
   }
 
-  delete gw.pendingToolCalls[params.callId];
-
   if (route.kind === "client") {
     const clientWs = gw.clients.get(route.clientId);
     if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
       console.log(
         `[Gateway] Dropping tool.result for disconnected client ${route.clientId} (callId=${params.callId})`,
       );
+      delete gw.pendingToolCalls[params.callId];
       return { ok: true, dropped: true };
     }
 
@@ -117,15 +116,21 @@ export const handleToolResult: Handler<"tool.result"> = async ({
         result: params.result,
       });
     }
+    delete gw.pendingToolCalls[params.callId];
     return { ok: true };
   }
 
   const sessionStub = env.SESSION.getByName(route.sessionKey);
-  await sessionStub.toolResult({
+  const result = await sessionStub.toolResult({
     callId: params.callId,
     result: params.result,
     error: params.error,
   });
+  if (!result.ok) {
+    delete gw.pendingToolCalls[params.callId];
+    throw new RpcError(404, `Unknown session tool call: ${params.callId}`);
+  }
+  delete gw.pendingToolCalls[params.callId];
 
   return { ok: true };
 };

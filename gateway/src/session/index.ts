@@ -73,6 +73,8 @@ export type QueuedMessage = {
   id: string;
   text: string;
   runId: string;
+  // Optional for backward compatibility with already-persisted queue entries.
+  tools?: ToolDefinition[];
   media?: MediaAttachment[];
   messageOverrides?: {
     thinkLevel?: string;
@@ -503,6 +505,7 @@ export class Session extends DurableObject<Env> {
         id: crypto.randomUUID(),
         text: message,
         runId,
+        tools: JSON.parse(JSON.stringify(tools)),
         media,
         messageOverrides,
         queuedAt: Date.now(),
@@ -759,7 +762,7 @@ export class Session extends DurableObject<Env> {
     this.startRun(
       next.text,
       next.runId,
-      (this.currentRun?.tools ?? next.messageOverrides) ? [] : [], // Reuse tools if available
+      next.tools ?? [],
       next.messageOverrides,
       next.media,
     );
@@ -1264,6 +1267,9 @@ export class Session extends DurableObject<Env> {
 
     // Clear current run
     this.currentRun = null;
+    // Clear queued messages and pending tool timeout alarm
+    this.messageQueue = [];
+    this.ctx.storage.deleteAlarm();
 
     // Update metadata
     const newSessionId = Session.generateSessionId();
