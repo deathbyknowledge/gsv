@@ -76,6 +76,13 @@ export interface PendingPair {
 export type ChannelsConfig = Record<string, ChannelConfig>;
 
 export interface SessionConfig {
+  // Default auto-reset policy for new sessions.
+  defaultResetPolicy: {
+    mode: "manual" | "daily" | "idle";
+    atHour?: number; // For daily mode (0-23)
+    idleMinutes?: number; // For idle mode
+  };
+
   // Identity links: map multiple channel identities to a single session
   // Key is canonical name, value is array of channel:id strings
   // Example: { "steve": ["+31628552611", "telegram:123456789"] }
@@ -170,6 +177,7 @@ export type GsvConfigInput = {
   channels?: Record<string, Partial<ChannelConfig>>;
   systemPrompt?: string;
   session?: {
+    defaultResetPolicy?: Partial<SessionConfig["defaultResetPolicy"]>;
     identityLinks?: Record<string, string[]>;
   };
   skills?: {

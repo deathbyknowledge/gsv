@@ -6,16 +6,22 @@
  * 
  * Supported directives:
  * - /think:level or /t:level - Set thinking level for this message
- * - /model:name - Use a specific model for this message
+ * - /model:model-id - Use current provider + model for this message
+ * - /model:provider/model-id - Use provider + model for this message
  * - /status - Include status info in response
  * 
  * Examples:
  * - "Hello /think:high" → thinking=high, message="Hello"
  * - "/t:low What's 2+2?" → thinking=low, message="What's 2+2?"
- * - "/model:opus Explain quantum physics" → model=opus, message="Explain quantum physics"
+ * - "/model:anthropic/claude-opus-4-6 Explain quantum physics"
  */
 
-import { normalizeThinkLevel, resolveModelAlias, type ThinkLevel } from "./commands";
+import {
+  MODEL_SELECTOR_HELP,
+  normalizeThinkLevel,
+  parseModelSelection,
+  type ThinkLevel,
+} from "./commands";
 
 export type ParsedDirectives = {
   /** Message with directives stripped */
@@ -45,9 +51,9 @@ function extractDirective(
   // Build pattern for all name variants
   const namePattern = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
   
-  // Match /name or /name:value (value can have letters, numbers, hyphens)
+  // Match /name or /name:value (value is any non-whitespace token)
   const regex = new RegExp(
-    `(?:^|\\s)\\/(?:${namePattern})(?::([\\w-]+))?(?=\\s|$)`,
+    `(?:^|\\s)\\/(?:${namePattern})(?::([^\\s]+))?(?=\\s|$)`,
     "gi"
   );
   
@@ -70,7 +76,10 @@ function extractDirective(
 /**
  * Parse all inline directives from a message
  */
-export function parseDirectives(text: string): ParsedDirectives {
+export function parseDirectives(
+  text: string,
+  fallbackModelProvider?: string,
+): ParsedDirectives {
   let current = text;
   
   // Extract /think directive
@@ -82,7 +91,7 @@ export function parseDirectives(text: string): ParsedDirectives {
   const model = extractDirective(current, ["model", "m"]);
   current = model.cleaned;
   const resolvedModel = model.hasDirective && model.value 
-    ? resolveModelAlias(model.value) 
+    ? parseModelSelection(model.value, fallbackModelProvider)
     : undefined;
   
   // Extract /status directive (no value)
@@ -123,7 +132,9 @@ export function formatDirectiveAck(directives: ParsedDirectives): string | undef
     if (directives.model) {
       parts.push(`Model: ${directives.model.provider}/${directives.model.id}`);
     } else if (directives.rawModelDirective) {
-      parts.push(`Unknown model: ${directives.rawModelDirective}`);
+      parts.push(
+        `Invalid model selector: ${directives.rawModelDirective} (${MODEL_SELECTOR_HELP})`,
+      );
     }
   }
   

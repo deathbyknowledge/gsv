@@ -33,8 +33,10 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
     }
   }
 
+  const fullConfig = gw.getFullConfig();
+
   // Parse inline directives
-  const directives = parseDirectives(messageText);
+  const directives = parseDirectives(messageText, fullConfig.model.provider);
 
   // If message is only directives, acknowledge and return
   if (isDirectiveOnly(messageText)) {

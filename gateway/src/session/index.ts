@@ -19,8 +19,6 @@ import type {
 import {
   completeSimple,
   getModel,
-  type Model,
-  type Api,
 } from "@mariozechner/pi-ai";
 import { archivePartialMessages, archiveSession } from "../storage/archive";
 import { fetchMediaFromR2, deleteSessionMedia } from "../storage/media";
@@ -159,7 +157,7 @@ export type ResetResult = {
 export type SessionPatchParams = {
   settings?: Partial<SessionSettings>;
   label?: string;
-  resetPolicy?: ResetPolicy;
+  resetPolicy?: Partial<ResetPolicy>;
 };
 
 export type AbortResult = {
@@ -243,6 +241,32 @@ export class Session extends DurableObject<Env> {
         `[Session] Failed to load runtime node inventory for prompt: ${error}`,
       );
       return undefined;
+    }
+  }
+
+  /**
+   * Initialize reset policy from global config when this session has none yet.
+   * This keeps policy defaults centralized in config and avoids per-caller special cases.
+   */
+  private async ensureResetPolicyInitialized(): Promise<void> {
+    if (this.meta.resetPolicy) return;
+
+    try {
+      const gateway = this.env.GATEWAY.get(this.env.GATEWAY.idFromName("singleton"));
+      const config: GsvConfig = await gateway.getConfig();
+      const policy = config.session?.defaultResetPolicy;
+      if (!policy?.mode) return;
+
+      this.meta.resetPolicy = {
+        mode: policy.mode,
+        atHour: policy.atHour,
+        idleMinutes: policy.idleMinutes,
+      };
+      console.log(
+        `[Session] Initialized reset policy for ${this.meta.sessionKey || "(unbound)"}: ${policy.mode}`,
+      );
+    } catch (error) {
+      console.warn(`[Session] Failed to initialize reset policy: ${error}`);
     }
   }
 
@@ -516,6 +540,8 @@ export class Session extends DurableObject<Env> {
     if (!this.meta.sessionKey) {
       this.meta.sessionKey = sessionKey;
     }
+
+    await this.ensureResetPolicyInitialized();
 
     // If currently processing, queue this message
     if (this.isProcessing) {
@@ -1043,48 +1069,15 @@ export class Session extends DurableObject<Env> {
       hydratedMessages.length,
     );
 
-    let model: Model<Api> | undefined;
     const provider = effectiveModel.provider;
     const modelId = effectiveModel.id;
-
-    if (provider === "anthropic") {
-      model = getModel(
-        "anthropic",
-        modelId as Parameters<typeof getModel<"anthropic", any>>[1],
-      );
-    } else if (provider === "openai") {
-      model = getModel(
-        "openai",
-        modelId as Parameters<typeof getModel<"openai", any>>[1],
-      );
-    } else if (provider === "google") {
-      model = getModel(
-        "google",
-        modelId as Parameters<typeof getModel<"google", any>>[1],
-      );
-    } else if (provider === "openrouter") {
-      model = getModel(
-        "openrouter",
-        modelId as Parameters<typeof getModel<"openrouter", any>>[1],
-      );
-    } else {
-      throw new Error(`Unsupported provider: ${provider}`);
-    }
+    const model = getModel(provider as any, modelId as any);
 
     if (!model) {
       throw new Error(`Model not found: ${provider}/${modelId}`);
     }
 
-    let apiKey: string | undefined;
-    if (provider === "anthropic") {
-      apiKey = config.apiKeys.anthropic;
-    } else if (provider === "openai") {
-      apiKey = config.apiKeys.openai;
-    } else if (provider === "google") {
-      apiKey = config.apiKeys.google;
-    } else if (provider === "openrouter") {
-      apiKey = config.apiKeys.openrouter;
-    }
+    const apiKey = (config.apiKeys as Record<string, string | undefined>)[provider];
 
     if (!apiKey) {
       throw new Error(`API key not configured for provider: ${provider}`);
@@ -1437,6 +1430,8 @@ export class Session extends DurableObject<Env> {
   }
 
   async get() {
+    await this.ensureResetPolicyInitialized();
+
     return {
       sessionId: this.meta.sessionId,
       sessionKey: this.meta.sessionKey,
@@ -1459,6 +1454,8 @@ export class Session extends DurableObject<Env> {
   }
 
   async stats(): Promise<SessionStats> {
+    await this.ensureResetPolicyInitialized();
+
     const now = Date.now();
     const queueStatus = this.getQueueStatus();
     return {
@@ -1480,13 +1477,33 @@ export class Session extends DurableObject<Env> {
 
   async patch(params: SessionPatchParams): Promise<{ ok: boolean }> {
     if (params.settings) {
-      this.meta.settings = { ...this.meta.settings, ...params.settings };
+      const mergedSettings: SessionSettings = {
+        ...this.meta.settings,
+        ...params.settings,
+      };
+
+      // Preserve unspecified model fields for partial patches like settings.model.id.
+      if (params.settings.model) {
+        mergedSettings.model = {
+          ...(this.meta.settings.model ?? {}),
+          ...params.settings.model,
+        } as SessionSettings["model"];
+      }
+
+      this.meta.settings = mergedSettings;
     }
     if (params.label !== undefined) {
       this.meta.label = params.label;
     }
     if (params.resetPolicy !== undefined) {
-      this.meta.resetPolicy = params.resetPolicy;
+      const mergedPolicy = {
+        ...(this.meta.resetPolicy ?? {}),
+        ...params.resetPolicy,
+      } as Partial<ResetPolicy>;
+      if (!mergedPolicy.mode) {
+        mergedPolicy.mode = "manual";
+      }
+      this.meta.resetPolicy = mergedPolicy as ResetPolicy;
     }
     this.meta.updatedAt = Date.now();
     return { ok: true };

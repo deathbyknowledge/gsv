@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { normalizeThinkLevel, parseCommand, type ThinkLevel } from "./commands";
+import {
+  normalizeThinkLevel,
+  parseCommand,
+  parseModelSelection,
+  type ThinkLevel,
+} from "./commands";
 import { parseDirectives } from "./directives";
 
 describe("normalizeThinkLevel", () => {
@@ -100,11 +105,58 @@ describe("parseDirectives - thinking level", () => {
   });
 
   it("handles multiple directives", () => {
-    const result = parseDirectives("/t:high /m:opus What is life?");
+    const result = parseDirectives(
+      "/t:high /m:claude-opus-4-6 What is life?",
+      "anthropic",
+    );
     expect(result.hasThinkDirective).toBe(true);
     expect(result.thinkLevel).toBe("high");
     expect(result.hasModelDirective).toBe(true);
+    expect(result.model).toEqual({
+      provider: "anthropic",
+      id: "claude-opus-4-6",
+    });
     expect(result.cleaned).toBe("What is life?");
+  });
+
+  it("parses provider/model directive values with slash", () => {
+    const result = parseDirectives(
+      "/m:anthropic/claude-opus-4-6 Explain quantum physics",
+    );
+    expect(result.hasModelDirective).toBe(true);
+    expect(result.model).toEqual({
+      provider: "anthropic",
+      id: "claude-opus-4-6",
+    });
+    expect(result.cleaned).toBe("Explain quantum physics");
+  });
+});
+
+describe("parseModelSelection", () => {
+  it("parses provider/model form", () => {
+    expect(
+      parseModelSelection("anthropic/claude-opus-4-6"),
+    ).toEqual({
+      provider: "anthropic",
+      id: "claude-opus-4-6",
+    });
+  });
+
+  it("parses model-id form with fallback provider", () => {
+    expect(
+      parseModelSelection("claude-opus-4-6", "anthropic"),
+    ).toEqual({
+      provider: "anthropic",
+      id: "claude-opus-4-6",
+    });
+  });
+
+  it("returns undefined for model-id without fallback provider", () => {
+    expect(parseModelSelection("claude-opus-4-6")).toBeUndefined();
+  });
+
+  it("returns undefined when selector contains whitespace", () => {
+    expect(parseModelSelection("anthropic/claude-opus-4-6 hello")).toBeUndefined();
   });
 });
 

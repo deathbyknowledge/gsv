@@ -14,7 +14,7 @@ export const handleSessionPatch: Handler<"session.patch"> = async ({
   return await sessionStub.patch({
     settings: params.settings,
     label: params.label,
-    resetPolicy: params.resetPolicy as any,
+    resetPolicy: params.resetPolicy,
   });
 };
 

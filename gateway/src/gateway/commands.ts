@@ -6,7 +6,7 @@
  * - /compact [N] - Compact session to last N messages (default 20)
  * - /stop - Stop the current run
  * - /status - Show session status
- * - /model [name] - Show or set model
+ * - /model [provider/model] - Show or set model
  * - /think [level] - Set thinking level
  * - /help - Show available commands
  */
@@ -103,12 +103,13 @@ export const HELP_TEXT = `**Available Commands**
 • \`/status\` - Show session info
 
 **Settings:**
-• \`/model [name]\` - Show or set model
+• \`/model [provider/model-id|model-id]\` - Show or set model
 • \`/think [level]\` - Set reasoning level (off, minimal, low, medium, high, xhigh)
 
 **Inline Directives:**
 • \`/t:high message\` - Use high reasoning for this message only
-• \`/m:opus message\` - Use specific model for this message only
+• \`/m:model-id message\` - Use current provider + model for this message
+• \`/m:provider/model-id message\` - Use provider + model for this message
 
 **Info:**
 • \`/help\` - Show this message`;
@@ -149,24 +150,40 @@ export function normalizeThinkLevel(raw?: string): ThinkLevel | undefined {
   }
 }
 
-// Model aliases
-const MODEL_ALIASES: Record<string, { provider: string; id: string }> = {
-  "sonnet": { provider: "anthropic", id: "claude-sonnet-4-20250514" },
-  "opus": { provider: "anthropic", id: "claude-opus-4-20250514" },
-  "haiku": { provider: "anthropic", id: "claude-3-5-haiku-20241022" },
-  "gpt-4o": { provider: "openai", id: "gpt-4o" },
-  "gpt-4": { provider: "openai", id: "gpt-4-turbo" },
-  "o1": { provider: "openai", id: "o1" },
-  "o3": { provider: "openai", id: "o3" },
-  "gemini": { provider: "google", id: "gemini-2.0-flash" },
-  "gemini-pro": { provider: "google", id: "gemini-1.5-pro" },
-};
+export type ModelSelection = { provider: string; id: string };
 
-export function resolveModelAlias(alias: string): { provider: string; id: string } | undefined {
-  const lower = alias.toLowerCase().trim();
-  return MODEL_ALIASES[lower];
-}
+export const MODEL_SELECTOR_HELP =
+  "Use provider/model-id, or model-id to keep the current provider.";
 
-export function listModelAliases(): string[] {
-  return Object.keys(MODEL_ALIASES);
+/**
+ * Parse model selector from slash commands/directives.
+ *
+ * Supported forms:
+ * - provider/model-id
+ * - model-id (uses fallbackProvider)
+ */
+export function parseModelSelection(
+  raw: string,
+  fallbackProvider?: string,
+): ModelSelection | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (/\s/.test(trimmed)) return undefined;
+
+  const slashIdx = trimmed.indexOf("/");
+  if (slashIdx === -1) {
+    if (!fallbackProvider) return undefined;
+    const provider = fallbackProvider.toLowerCase().trim();
+    if (!provider) return undefined;
+    return {
+      provider,
+      id: trimmed,
+    };
+  }
+
+  const provider = trimmed.slice(0, slashIdx).trim().toLowerCase();
+  const id = trimmed.slice(slashIdx + 1).trim();
+  if (!provider || !id) return undefined;
+
+  return { provider, id };
 }

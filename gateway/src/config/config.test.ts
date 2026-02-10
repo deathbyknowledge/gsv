@@ -142,6 +142,7 @@ describe("resolveLinkedIdentity", () => {
   const configWithLinks: GsvConfig = {
     ...DEFAULT_CONFIG,
     session: {
+      ...DEFAULT_CONFIG.session,
       identityLinks: {
         steve: ["+31628552611", "telegram:123456789", "whatsapp:+34675706329"],
         alice: ["+1555123456"],
@@ -260,5 +261,28 @@ describe("skills config", () => {
     expect(
       merged.skills.entries["search-skill"]?.requires?.capabilities,
     ).toEqual(["shell.exec"]);
+  });
+});
+
+describe("session reset policy defaults", () => {
+  it("has a default daily reset policy", () => {
+    expect(DEFAULT_CONFIG.session.defaultResetPolicy).toEqual({
+      mode: "daily",
+      atHour: 4,
+    });
+  });
+
+  it("merges default reset policy overrides", () => {
+    const merged = mergeConfig(DEFAULT_CONFIG, {
+      session: {
+        defaultResetPolicy: {
+          mode: "idle",
+          idleMinutes: 180,
+        },
+      },
+    });
+
+    expect(merged.session.defaultResetPolicy.mode).toBe("idle");
+    expect(merged.session.defaultResetPolicy.idleMinutes).toBe(180);
   });
 });

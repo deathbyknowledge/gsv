@@ -45,8 +45,8 @@ import {
   parseCommand,
   HELP_TEXT,
   normalizeThinkLevel,
-  resolveModelAlias,
-  listModelAliases,
+  MODEL_SELECTOR_HELP,
+  parseModelSelection,
 } from "./commands";
 import {
   parseDirectives,
@@ -354,23 +354,25 @@ export class Gateway extends DurableObject<Env> {
         }
 
         case "model": {
+          const info = await sessionStub.get();
+          const config = this.getFullConfig();
+          const effectiveModel = info.settings.model || config.model;
+
           if (!command.args) {
-            const info = await sessionStub.get();
-            const config = this.getFullConfig();
-            const effectiveModel = info.settings.model || config.model;
-            const aliases = listModelAliases().join(", ");
             return {
               handled: true,
-              response: `Current model: ${effectiveModel.provider}/${effectiveModel.id}\nAliases: ${aliases}`,
+              response: `Current model: ${effectiveModel.provider}/${effectiveModel.id}\n${MODEL_SELECTOR_HELP}`,
             };
           }
 
-          const resolved = resolveModelAlias(command.args);
+          const resolved = parseModelSelection(
+            command.args,
+            effectiveModel.provider,
+          );
           if (!resolved) {
-            const aliases = listModelAliases().join(", ");
             return {
               handled: true,
-              error: `Unknown model: ${command.args}\nAvailable: ${aliases}`,
+              error: `Invalid model selector: ${command.args}\n${MODEL_SELECTOR_HELP}`,
             };
           }
 
@@ -700,25 +702,25 @@ export class Gateway extends DurableObject<Env> {
         }
 
         case "model": {
+          const info = await sessionStub.get();
+          const config = this.getFullConfig();
+          const effectiveModel = info.settings.model || config.model;
+
           if (!command.args) {
-            // Show current model
-            const info = await sessionStub.get();
-            const config = this.getFullConfig();
-            const effectiveModel = info.settings.model || config.model;
-            const aliases = listModelAliases().join(", ");
             return {
               handled: true,
-              response: `Current model: ${effectiveModel.provider}/${effectiveModel.id}\n\nAliases: ${aliases}`,
+              response: `Current model: ${effectiveModel.provider}/${effectiveModel.id}\n\n${MODEL_SELECTOR_HELP}`,
             };
           }
 
-          // Set model
-          const resolved = resolveModelAlias(command.args);
+          const resolved = parseModelSelection(
+            command.args,
+            effectiveModel.provider,
+          );
           if (!resolved) {
-            const aliases = listModelAliases().join(", ");
             return {
               handled: true,
-              error: `Unknown model: ${command.args}\n\nAvailable: ${aliases}`,
+              error: `Invalid model selector: ${command.args}\n\n${MODEL_SELECTOR_HELP}`,
             };
           }
 
@@ -1461,23 +1463,6 @@ export class Gateway extends DurableObject<Env> {
     // Get the session DO
     const session = this.env.SESSION.getByName(sessionKey);
 
-    // Ensure heartbeat session uses freshness-based resets (daily by default).
-    // Only initialize once to avoid touching updatedAt on every heartbeat.
-    try {
-      const info = await session.get();
-      if (!info.resetPolicy) {
-        await session.patch({ resetPolicy: { mode: "daily", atHour: 4 } });
-        console.log(
-          `[Gateway] Initialized heartbeat reset policy for ${sessionKey}`,
-        );
-      }
-    } catch (e) {
-      console.warn(
-        `[Gateway] Failed to check/set heartbeat reset policy for ${sessionKey}:`,
-        e,
-      );
-    }
-
     // Send heartbeat prompt
     const runId = crypto.randomUUID();
 
@@ -1749,8 +1734,10 @@ export class Gateway extends DurableObject<Env> {
       }
     }
 
+    const fullConfig = this.getFullConfig();
+
     // Parse directives
-    const directives = parseDirectives(messageText);
+    const directives = parseDirectives(messageText, fullConfig.model.provider);
 
     if (isDirectiveOnly(messageText)) {
       const ack = formatDirectiveAck(directives);
@@ -1801,7 +1788,6 @@ export class Gateway extends DurableObject<Env> {
       if (directives.model) messageOverrides.model = directives.model;
 
       // Process media
-      const fullConfig = this.getFullConfig();
       let processedMedia = await processMediaWithTranscription(
         params.message.media,
         {

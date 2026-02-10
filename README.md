@@ -9,16 +9,18 @@
 - [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works)
 - [Rust](https://rustup.rs) (for CLI)
 - [Bun](https://bun.sh) (for deployment)
+- [Node.js + npm](https://nodejs.org) (for package installation)
 
 ### Deploy
 
 ```bash
 git clone https://github.com/deathbyknowledge/gsv
-cd gsv/gateway
-bun install
+cd gsv
+./scripts/setup-deps.sh
 
-# Run the deployment wizard
-bun alchemy/wizard/bin.ts
+# Run the deployment wizard (from gateway/)
+cd gateway
+bun alchemy/cli.ts wizard
 ```
 
 The wizard will:
@@ -26,6 +28,14 @@ The wizard will:
 2. Deploy Gateway and channels to Cloudflare
 3. Configure everything automatically
 4. Install the CLI
+
+If you want to configure a different machine after deployment:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
+gsv local-config set gateway.url wss://<your-gateway>.workers.dev/ws
+gsv local-config set gateway.token <your-auth-token>
+```
 
 ### Chat
 
@@ -180,8 +190,11 @@ gsv pair approve CHANNEL SENDER       # Approve a sender
 ## Development
 
 ```bash
-# Gateway
-cd gateway && npm install && npm run dev
+# Install JS deps across gateway + channels
+./scripts/setup-deps.sh
+
+# Gateway dev
+cd gateway && npm run dev
 
 # CLI
 cd cli && cargo build --release

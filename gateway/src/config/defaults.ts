@@ -19,6 +19,10 @@ export const DEFAULT_CONFIG: GsvConfig = {
     discord: { dmPolicy: "open", allowFrom: [] },
   },
   session: {
+    defaultResetPolicy: {
+      mode: "daily",
+      atHour: 4,
+    },
     identityLinks: {},
   },
   skills: {
