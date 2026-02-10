@@ -772,7 +772,7 @@ describe("Node Runtime Validation & Routing", () => {
     }
   });
 
-  it("routes unnamespaced shared tools to execution host", async () => {
+  it("rejects unnamespaced shared tools", async () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
     const sharedTool = "shared_route_tool";
     const executionNodeId = `exec-node-${crypto.randomUUID().slice(0, 8)}`;
@@ -830,25 +830,21 @@ describe("Node Runtime Validation & Routing", () => {
     const specializedInvokePromise = waitForToolInvoke(specializedNodeWs, 2500);
 
     const clientWs = await connectAndAuth(wsUrl);
-    const invokePromise = sendRequest(clientWs, "tool.invoke", {
-      tool: sharedTool,
-      args: { source: "e2e" },
-    }) as Promise<{ result: string }>;
+    try {
+      await sendRequest(clientWs, "tool.invoke", {
+        tool: sharedTool,
+        args: { source: "e2e" },
+      });
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("No node provides tool");
+    }
 
     const executionInvoke = await executionInvokePromise;
     const specializedInvoke = await specializedInvokePromise;
 
-    expect(executionInvoke).toBeDefined();
-    expect(executionInvoke?.tool).toBe(sharedTool);
+    expect(executionInvoke).toBeNull();
     expect(specializedInvoke).toBeNull();
-
-    await sendRequest(executionNodeWs, "tool.result", {
-      callId: executionInvoke?.callId,
-      result: "execution-routed",
-    });
-
-    const invokeResult = await invokePromise;
-    expect(invokeResult.result).toBe("execution-routed");
 
     executionNodeWs.close();
     specializedNodeWs.close();

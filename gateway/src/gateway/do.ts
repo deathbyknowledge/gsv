@@ -522,27 +522,9 @@ export class Gateway extends DurableObject<Env> {
     namespacedTool: string,
   ): { nodeId: string; toolName: string } | null {
     const separatorIndex = namespacedTool.indexOf("__");
-    if (separatorIndex === -1) {
-      const nodeIds = Array.from(this.nodes.keys()).filter((nodeId) =>
-        this.toolRegistry[nodeId]?.some(
-          (t: ToolDefinition) => t.name === namespacedTool,
-        ),
-      );
-
-      if (nodeIds.length === 0) {
-        return null;
-      }
-
-      const executionHost = pickExecutionHostId({
-        nodeIds,
-        runtimes: this.nodeRuntimeRegistry,
-      });
-      if (executionHost) {
-        return { nodeId: executionHost, toolName: namespacedTool };
-      }
-
-      const fallback = [...nodeIds].sort()[0];
-      return { nodeId: fallback, toolName: namespacedTool };
+    if (separatorIndex <= 0 || separatorIndex === namespacedTool.length - 2) {
+      // Node tools must be explicitly namespaced: "<nodeId>__<toolName>"
+      return null;
     }
 
     const nodeId = namespacedTool.slice(0, separatorIndex);

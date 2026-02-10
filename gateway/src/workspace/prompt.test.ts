@@ -413,6 +413,20 @@ describe("buildSystemPromptFromWorkspace", () => {
           tools: ["Bash", "Read", "Write"],
         },
         {
+          nodeId: "exec-node-2",
+          hostRole: "execution",
+          hostCapabilities: [
+            "filesystem.list",
+            "filesystem.read",
+            "filesystem.write",
+            "shell.exec",
+          ],
+          toolCapabilities: {
+            Bash: ["shell.exec"],
+          },
+          tools: ["Bash"],
+        },
+        {
           nodeId: "iphone-node",
           hostRole: "specialized",
           hostCapabilities: ["text.search"],
@@ -451,7 +465,8 @@ describe("buildSystemPromptFromWorkspace", () => {
     expect(prompt).toContain("Agent: main");
     expect(prompt).toContain("Session: main");
     expect(prompt).toContain("Model: anthropic/claude");
-    expect(prompt).toContain("Execution host: exec-node-1");
+    expect(prompt).toContain("Primary execution host: exec-node-1");
+    expect(prompt).toContain("Execution hosts: exec-node-1, exec-node-2");
     expect(prompt).toContain("Specialized hosts: iphone-node");
     expect(prompt).toContain(
       "Capabilities are internal routing metadata. Do not call capability IDs as tools; call only listed tool names.",

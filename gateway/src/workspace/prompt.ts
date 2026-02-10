@@ -320,8 +320,23 @@ function buildRuntimeSection(runtime: PromptRuntimeInfo | undefined): string | u
   }
 
   if (runtime.nodes) {
+    const executionHosts = runtime.nodes.hosts
+      .filter((host) => host.hostRole === "execution")
+      .map((host) => host.nodeId)
+      .sort();
+    const selectedExecutionHost = runtime.nodes.executionHostId;
+    if (
+      selectedExecutionHost &&
+      !executionHosts.includes(selectedExecutionHost)
+    ) {
+      executionHosts.unshift(selectedExecutionHost);
+    }
+
     lines.push(
-      `Execution host: ${runtime.nodes.executionHostId ?? "none connected"}`,
+      `Primary execution host: ${selectedExecutionHost ?? "none selected"}`,
+    );
+    lines.push(
+      `Execution hosts: ${executionHosts.length > 0 ? executionHosts.join(", ") : "none"}`,
     );
     lines.push(
       `Specialized hosts: ${runtime.nodes.specializedHostIds.length > 0 ? runtime.nodes.specializedHostIds.join(", ") : "none"}`,
