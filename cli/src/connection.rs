@@ -1,5 +1,6 @@
 use crate::protocol::{
-    AuthParams, ClientInfo, ConnectParams, Frame, RequestFrame, ResponseFrame, ToolDefinition,
+    AuthParams, ClientInfo, ConnectParams, Frame, NodeRuntimeInfo, RequestFrame, ResponseFrame,
+    ToolDefinition,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -26,6 +27,7 @@ impl Connection {
         url: &str,
         mode: &str,
         tools: Option<Vec<ToolDefinition>>,
+        node_runtime: Option<NodeRuntimeInfo>,
         on_event: impl Fn(Frame) + Send + 'static + Sync,
         client_id: Option<String>,
         token: Option<String>,
@@ -81,7 +83,8 @@ impl Connection {
             event_handler,
             disconnected,
         };
-        conn.handshake(mode, tools, client_id, token).await?;
+        conn.handshake(mode, tools, node_runtime, client_id, token)
+            .await?;
         Ok(conn)
     }
 
@@ -98,6 +101,7 @@ impl Connection {
         &self,
         mode: &str,
         tools: Option<Vec<ToolDefinition>>,
+        node_runtime: Option<NodeRuntimeInfo>,
         client_id: Option<String>,
         token: Option<String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -125,6 +129,7 @@ impl Connection {
                 mode: mode.to_string(),
             },
             tools,
+            node_runtime,
             session_key: None,
             auth: token.map(|t| AuthParams { token: Some(t) }),
         };

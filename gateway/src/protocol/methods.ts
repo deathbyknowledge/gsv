@@ -23,6 +23,7 @@ import type {
 } from "./logs";
 import type {
   ToolDefinition,
+  NodeRuntimeInfo,
   ToolRequestParams,
   ToolResultParams,
 } from "./tools";
@@ -42,6 +43,7 @@ export type ConnectParams = {
     accountId?: string;
   };
   tools?: ToolDefinition[];
+  nodeRuntime?: NodeRuntimeInfo;
   auth?: {
     token?: string;
   };

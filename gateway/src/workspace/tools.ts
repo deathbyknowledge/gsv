@@ -17,20 +17,21 @@ export const WORKSPACE_TOOLS = {
   WRITE_FILE: `${WORKSPACE_TOOL_PREFIX}WriteFile`,
   DELETE_FILE: `${WORKSPACE_TOOL_PREFIX}DeleteFile`,
 };
+const VIRTUAL_SKILLS_ROOT = "skills";
 
 export function getWorkspaceToolDefinitions(): ToolDefinition[] {
   return [
     {
       name: WORKSPACE_TOOLS.LIST_FILES,
       description:
-        "List files and directories in your workspace. Your workspace persists across sessions and contains your identity files (SOUL.md, IDENTITY.md, etc.), memory files, and any other files you create.",
+        "List files and directories in your workspace. Your workspace persists across sessions and contains your identity files (SOUL.md, IDENTITY.md, etc.), memory files, and any other files you create. You can also list under skills/ to browse skill files (agent overrides + global fallback).",
       inputSchema: {
         type: "object",
         properties: {
           path: {
             type: "string",
             description:
-              "Directory path relative to workspace root (e.g., '/' for root, 'memory/' for memory directory). Defaults to '/'.",
+              "Directory path relative to workspace root (e.g., '/' for root, 'memory/' for memory directory, or 'skills/' for skill files). Defaults to '/'.",
           },
         },
         required: [],
@@ -39,14 +40,14 @@ export function getWorkspaceToolDefinitions(): ToolDefinition[] {
     {
       name: WORKSPACE_TOOLS.READ_FILE,
       description:
-        "Read a file from your workspace. Use this to read your identity files, memory files, or any files you've created.",
+        "Read a file from your workspace. Use this to read your identity files, memory files, or any files you've created. Reading skills/* first checks agent overrides under agents/{agentId}/skills/*, then falls back to global skills/*.",
       inputSchema: {
         type: "object",
         properties: {
           path: {
             type: "string",
             description:
-              "File path relative to workspace root (e.g., 'SOUL.md', 'memory/2024-01-15.md')",
+              "File path relative to workspace root (e.g., 'SOUL.md', 'memory/2024-01-15.md', or 'skills/summarize/SKILL.md')",
           },
         },
         required: ["path"],
@@ -152,12 +153,32 @@ function normalizePath(
   basePath: string,
   relativePath: string | undefined,
 ): string {
+  const path = normalizeRelativePath(relativePath, "");
+
+  // Construct full path
+  return path ? `${basePath}/${path}` : basePath;
+}
+
+function normalizeRelativePath(
+  relativePath: string | undefined,
+  defaultPath: string,
+): string {
   // Default to root
-  let path = (relativePath || "/").trim();
+  let path = (relativePath || defaultPath).trim();
+
+  // Keep "/" as root
+  if (path === "/") {
+    path = "";
+  }
 
   // Remove leading slash for R2 path construction
   if (path.startsWith("/")) {
-    path = path.slice(1);
+    path = path.replace(/^\/+/, "");
+  }
+
+  // Remove trailing slashes except for root
+  if (path.endsWith("/")) {
+    path = path.replace(/\/+$/, "");
   }
 
   // Prevent path traversal
@@ -165,8 +186,154 @@ function normalizePath(
     throw new Error("Path traversal not allowed");
   }
 
-  // Construct full path
-  return path ? `${basePath}/${path}` : basePath;
+  return path;
+}
+
+function isVirtualSkillsPath(path: string): boolean {
+  return path === VIRTUAL_SKILLS_ROOT || path.startsWith(`${VIRTUAL_SKILLS_ROOT}/`);
+}
+
+function toAgentSkillPath(basePath: string, skillPath: string): string {
+  const suffix = skillPath.slice(`${VIRTUAL_SKILLS_ROOT}/`.length);
+  return suffix ? `${basePath}/${VIRTUAL_SKILLS_ROOT}/${suffix}` : `${basePath}/${VIRTUAL_SKILLS_ROOT}`;
+}
+
+function toGlobalSkillPath(skillPath: string): string {
+  return skillPath;
+}
+
+type R2Listed = {
+  objects?: Array<{ key: string }>;
+  delimitedPrefixes?: string[];
+};
+
+function collectVirtualSkillEntries(listed: R2Listed, prefix: string): {
+  files: string[];
+  directories: string[];
+} {
+  const files: string[] = [];
+  const directories: string[] = [];
+
+  for (const obj of listed.objects || []) {
+    if (!obj.key.startsWith(prefix)) {
+      continue;
+    }
+    const suffix = obj.key.slice(prefix.length);
+    if (suffix) {
+      files.push(suffix);
+    }
+  }
+
+  for (const delimitedPrefix of listed.delimitedPrefixes || []) {
+    if (!delimitedPrefix.startsWith(prefix)) {
+      continue;
+    }
+    const suffix = delimitedPrefix.slice(prefix.length);
+    if (suffix) {
+      directories.push(suffix);
+    }
+  }
+
+  return { files, directories };
+}
+
+function materializeVirtualSkillEntries(
+  entries: { files: string[]; directories: string[] },
+  virtualPath: string,
+): { files: string[]; directories: string[] } {
+  const virtualBase = `${virtualPath}/`;
+  const files: string[] = [];
+  const directories: string[] = [];
+
+  for (const file of entries.files) {
+    files.push(`${virtualBase}${file}`);
+  }
+
+  for (const directory of entries.directories) {
+    directories.push(`${virtualBase}${directory}`);
+  }
+
+  return { files, directories };
+}
+
+async function listVirtualSkills(
+  bucket: R2Bucket,
+  basePath: string,
+  virtualPath: string,
+): Promise<{ files: string[]; directories: string[] }> {
+  const skillSuffix = virtualPath === VIRTUAL_SKILLS_ROOT ? "" : virtualPath.slice(`${VIRTUAL_SKILLS_ROOT}/`.length);
+  const agentPrefix = skillSuffix
+    ? `${basePath}/${VIRTUAL_SKILLS_ROOT}/${skillSuffix}/`
+    : `${basePath}/${VIRTUAL_SKILLS_ROOT}/`;
+  const globalPrefix = skillSuffix
+    ? `${VIRTUAL_SKILLS_ROOT}/${skillSuffix}/`
+    : `${VIRTUAL_SKILLS_ROOT}/`;
+
+  const [agentListed, globalListed] = await Promise.all([
+    bucket.list({
+      prefix: agentPrefix,
+      delimiter: "/",
+    }),
+    bucket.list({
+      prefix: globalPrefix,
+      delimiter: "/",
+    }),
+  ]);
+
+  const agentEntries = materializeVirtualSkillEntries(
+    collectVirtualSkillEntries(agentListed as R2Listed, agentPrefix),
+    virtualPath,
+  );
+  const globalEntries = materializeVirtualSkillEntries(
+    collectVirtualSkillEntries(globalListed as R2Listed, globalPrefix),
+    virtualPath,
+  );
+
+  // Agent skill files override global files with the same virtual path.
+  const files = Array.from(new Set([...agentEntries.files, ...globalEntries.files]));
+  const directories = Array.from(new Set([...agentEntries.directories, ...globalEntries.directories]));
+
+  return { files, directories };
+}
+
+async function readVirtualSkillFile(
+  bucket: R2Bucket,
+  basePath: string,
+  virtualPath: string,
+): Promise<
+  | { source: "agent"; resolvedPath: string; content: string; size: number; lastModified?: string }
+  | { source: "global"; resolvedPath: string; content: string; size: number; lastModified?: string }
+  | null
+> {
+  if (virtualPath === VIRTUAL_SKILLS_ROOT) {
+    return null;
+  }
+
+  const agentPath = toAgentSkillPath(basePath, virtualPath);
+  const agentObject = await bucket.get(agentPath);
+  if (agentObject) {
+    return {
+      source: "agent",
+      resolvedPath: agentPath,
+      content: await agentObject.text(),
+      size: agentObject.size,
+      lastModified: agentObject.uploaded?.toISOString(),
+    };
+  }
+
+  const globalPath = toGlobalSkillPath(virtualPath);
+  const globalObject = await bucket.get(globalPath);
+  if (globalObject) {
+    return {
+      source: "global",
+      resolvedPath: globalPath,
+      content: await globalObject.text(),
+      size: globalObject.size,
+      lastModified: globalObject.uploaded?.toISOString(),
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -177,7 +344,20 @@ async function listFiles(
   basePath: string,
   relativePath?: string,
 ): Promise<{ ok: boolean; result?: unknown; error?: string }> {
-  const fullPath = normalizePath(basePath, relativePath);
+  const normalizedPath = normalizeRelativePath(relativePath, "");
+  if (isVirtualSkillsPath(normalizedPath)) {
+    const listed = await listVirtualSkills(bucket, basePath, normalizedPath);
+    return {
+      ok: true,
+      result: {
+        path: relativePath || "/",
+        files: listed.files,
+        directories: listed.directories,
+      },
+    };
+  }
+
+  const fullPath = normalizePath(basePath, normalizedPath);
   const prefix = fullPath.endsWith("/") ? fullPath : `${fullPath}/`;
 
   // List objects with this prefix
@@ -229,7 +409,31 @@ async function readFile(
     return { ok: false, error: "path is required" };
   }
 
-  const fullPath = normalizePath(basePath, relativePath);
+  const normalizedPath = normalizeRelativePath(relativePath, "");
+  if (!normalizedPath) {
+    return { ok: false, error: "path is required" };
+  }
+
+  if (isVirtualSkillsPath(normalizedPath)) {
+    const resolved = await readVirtualSkillFile(bucket, basePath, normalizedPath);
+    if (!resolved) {
+      return { ok: false, error: `File not found: ${relativePath}` };
+    }
+
+    return {
+      ok: true,
+      result: {
+        path: relativePath,
+        content: resolved.content,
+        size: resolved.size,
+        lastModified: resolved.lastModified,
+        resolvedPath: resolved.resolvedPath,
+        resolvedSource: resolved.source,
+      },
+    };
+  }
+
+  const fullPath = normalizePath(basePath, normalizedPath);
   const object = await bucket.get(fullPath);
 
   if (!object) {

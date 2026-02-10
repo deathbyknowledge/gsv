@@ -39,6 +39,8 @@ export type GsvInfraOptions = {
   withDiscord?: boolean;
   /** Upload workspace templates */
   withTemplates?: boolean;
+  /** Upload global skill templates only (without workspace templates) */
+  withSkillTemplates?: boolean;
   /** Include web UI static assets */
   withUI?: boolean;
   /** Secrets to configure */
@@ -56,6 +58,7 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
     withWhatsApp = false,
     withDiscord = false,
     withTemplates = false,
+    withSkillTemplates = false,
     withUI = false,
     secrets = {},
   } = opts;
@@ -70,6 +73,10 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
   if (withTemplates) {
     console.log("📁 Uploading workspace templates...");
     await uploadWorkspaceTemplates(storage);
+  }
+
+  // Upload global skill templates if requested
+  if (withTemplates || withSkillTemplates) {
     console.log("📚 Uploading skill templates...");
     await uploadSkillTemplates(storage);
   }

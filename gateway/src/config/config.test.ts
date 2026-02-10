@@ -4,7 +4,7 @@ import {
   isAllowedSender,
   resolveLinkedIdentity,
 } from "./parsing";
-import { type GsvConfig } from ".";
+import { mergeConfig, type GsvConfig } from ".";
 import { DEFAULT_CONFIG } from "./defaults";
 
 describe("normalizeE164", () => {
@@ -230,5 +230,35 @@ describe("resolveLinkedIdentity", () => {
       "123456789",
     );
     expect(result).toBe("steve");
+  });
+});
+
+describe("skills config", () => {
+  it("has an empty skills entries map by default", () => {
+    expect(DEFAULT_CONFIG.skills.entries).toEqual({});
+  });
+
+  it("merges skills.entries overrides", () => {
+    const merged = mergeConfig(DEFAULT_CONFIG, {
+      skills: {
+        entries: {
+          "search-skill": {
+            enabled: false,
+            requires: {
+              hostRoles: ["execution"],
+              capabilities: ["shell.exec"],
+            },
+          },
+        },
+      },
+    });
+
+    expect(merged.skills.entries["search-skill"]?.enabled).toBe(false);
+    expect(merged.skills.entries["search-skill"]?.requires?.hostRoles).toEqual([
+      "execution",
+    ]);
+    expect(
+      merged.skills.entries["search-skill"]?.requires?.capabilities,
+    ).toEqual(["shell.exec"]);
   });
 });

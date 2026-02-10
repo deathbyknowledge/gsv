@@ -1,5 +1,6 @@
 import { RpcError, timingSafeEqualStr } from "../../shared/utils";
 import type { ConnectResult, Handler } from "../../protocol/methods";
+import { validateNodeRuntimeInfo } from "../capabilities";
 
 export const handleConnect: Handler<"connect"> = (ctx) => {
   const { ws, gw, params } = ctx;
@@ -37,6 +38,23 @@ export const handleConnect: Handler<"connect"> = (ctx) => {
     console.log(`[Gateway] Client connected: ${params.client.id}`);
   } else if (mode === "node") {
     const nodeId = params.client.id;
+    const nodeTools = params.tools ?? [];
+    if (nodeTools.length === 0) {
+      throw new RpcError(103, "Node mode requires tools");
+    }
+
+    let runtime;
+    try {
+      runtime = validateNodeRuntimeInfo({
+        nodeId,
+        tools: nodeTools,
+        runtime: params.nodeRuntime,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new RpcError(103, `Invalid nodeRuntime: ${message}`);
+    }
+
     const existingWs = gw.nodes.get(nodeId);
     if (existingWs && existingWs !== ws) {
       // Any in-flight logs.get requests targeted at the old socket cannot
@@ -61,9 +79,10 @@ export const handleConnect: Handler<"connect"> = (ctx) => {
     attachments.nodeId = nodeId;
     gw.nodes.set(nodeId, ws);
     // Store tools with their original names (namespacing happens in getAllTools)
-    gw.toolRegistry[nodeId] = params.tools ?? [];
+    gw.toolRegistry[nodeId] = nodeTools;
+    gw.nodeRuntimeRegistry[nodeId] = runtime;
     console.log(
-      `[Gateway] Node connected: ${nodeId}, tools: [${(params.tools ?? []).map((t) => `${nodeId}__${t.name}`).join(", ")}]`,
+      `[Gateway] Node connected: ${nodeId}, role=${runtime.hostRole}, tools: [${nodeTools.map((t) => `${nodeId}__${t.name}`).join(", ")}]`,
     );
   } else if (mode === "channel") {
     const channel = params.client.channel;

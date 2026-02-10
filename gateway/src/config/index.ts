@@ -82,6 +82,29 @@ export interface SessionConfig {
   identityLinks: Record<string, string[]>;
 }
 
+export interface SkillRequirementsConfig {
+  // Restrict to hosts with these roles.
+  hostRoles?: string[];
+  // Require all of these capabilities on the same host.
+  capabilities?: string[];
+  // Require at least one of these capabilities on the same host.
+  anyCapabilities?: string[];
+}
+
+export interface SkillEntryConfig {
+  // Hard toggle for the skill in prompt visibility.
+  enabled?: boolean;
+  // Overrides skill frontmatter always=true/false.
+  always?: boolean;
+  // Overrides skill frontmatter runtime requirements.
+  requires?: SkillRequirementsConfig;
+}
+
+export interface SkillsConfig {
+  // Per-skill policy entries keyed by skill name/path key.
+  entries: Record<string, SkillEntryConfig>;
+}
+
 export interface AgentsConfig {
   // List of agent configurations
   list: AgentConfig[];
@@ -129,6 +152,9 @@ export interface GsvConfig {
   
   // Session configuration (identity links, scoping)
   session: SessionConfig;
+
+  // Skill availability and runtime eligibility overrides
+  skills: SkillsConfig;
   
   // Multi-agent configuration
   agents: AgentsConfig;
@@ -145,6 +171,9 @@ export type GsvConfigInput = {
   systemPrompt?: string;
   session?: {
     identityLinks?: Record<string, string[]>;
+  };
+  skills?: {
+    entries?: Record<string, SkillEntryConfig>;
   };
   agents?: {
     list?: AgentConfig[];

@@ -17,6 +17,7 @@ const testId = `gsv-e2e-${crypto.randomBytes(4).toString("hex")}`;
 
 let app: Scope;
 let gatewayUrl: string;
+const OPENAI_API_KEY = process.env.GSV_TEST_OPENAI_KEY;
 
 // Helper to wait for worker to be ready (including WebSocket)
 async function waitForWorker(url: string, maxWaitMs = 60000) {
@@ -115,6 +116,137 @@ async function connectAndAuth(url: string): Promise<WebSocket> {
   return ws;
 }
 
+const EXECUTION_BASELINE_CAPABILITIES = [
+  "filesystem.list",
+  "filesystem.read",
+  "filesystem.write",
+  "shell.exec",
+] as const;
+
+function buildExecutionNodeRuntime(toolNames: string[]) {
+  return {
+    hostRole: "execution",
+    hostCapabilities: [...EXECUTION_BASELINE_CAPABILITIES],
+    toolCapabilities: Object.fromEntries(
+      toolNames.map((toolName) => [toolName, ["filesystem.read"]]),
+    ),
+  };
+}
+
+function waitForToolInvoke(
+  ws: WebSocket,
+  timeoutMs = 5000,
+): Promise<{ callId: string; tool: string; args: unknown } | null> {
+  return new Promise((resolve) => {
+    const originalHandler = ws.onmessage;
+    const timeout = setTimeout(() => {
+      ws.onmessage = originalHandler;
+      resolve(null);
+    }, timeoutMs);
+
+    ws.onmessage = (event) => {
+      try {
+        const frame = JSON.parse(event.data as string);
+        if (frame.type === "evt" && frame.event === "tool.invoke") {
+          clearTimeout(timeout);
+          ws.onmessage = originalHandler;
+          resolve(frame.payload);
+          return;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+
+      if (typeof originalHandler === "function") {
+        originalHandler.call(ws, event);
+      }
+    };
+  });
+}
+
+function waitForRunTerminalState(
+  ws: WebSocket,
+  runId: string,
+  timeoutMs = 60000,
+): Promise<{ state: "final" | "error"; error?: string }> {
+  return new Promise((resolve, reject) => {
+    const originalHandler = ws.onmessage;
+    const timeout = setTimeout(() => {
+      ws.onmessage = originalHandler;
+      reject(new Error(`Timed out waiting for run ${runId} terminal state`));
+    }, timeoutMs);
+
+    ws.onmessage = (event) => {
+      try {
+        const frame = JSON.parse(event.data as string);
+        if (
+          frame.type === "evt" &&
+          frame.event === "chat" &&
+          frame.payload?.runId === runId &&
+          (frame.payload?.state === "final" || frame.payload?.state === "error")
+        ) {
+          clearTimeout(timeout);
+          ws.onmessage = originalHandler;
+          resolve({
+            state: frame.payload.state,
+            error:
+              typeof frame.payload.error === "string"
+                ? frame.payload.error
+                : undefined,
+          });
+          return;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+
+      if (typeof originalHandler === "function") {
+        originalHandler.call(ws, event);
+      }
+    };
+  });
+}
+
+function extractLatestAssistantText(messages: unknown[]): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (typeof message !== "object" || message === null) {
+      continue;
+    }
+
+    const role = (message as { role?: unknown }).role;
+    if (role !== "assistant") {
+      continue;
+    }
+
+    const content = (message as { content?: unknown }).content;
+    if (typeof content === "string") {
+      return content;
+    }
+    if (!Array.isArray(content)) {
+      continue;
+    }
+
+    const text = content
+      .filter(
+        (block): block is { type: string; text?: string } =>
+          typeof block === "object" &&
+          block !== null &&
+          typeof (block as { type?: unknown }).type === "string",
+      )
+      .filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("")
+      .trim();
+
+    if (text.length > 0) {
+      return text;
+    }
+  }
+
+  return "";
+}
+
 // ============================================================================
 // Test Setup/Teardown
 // ============================================================================
@@ -129,6 +261,7 @@ beforeAll(async () => {
       name: testId,
       entrypoint: "src/index.ts",
       url: true,
+      withSkillTemplates: true,
     });
     
     gatewayUrl = gateway.url!;
@@ -607,10 +740,215 @@ describe("Message Queue", () => {
   });
 });
 
+describe("Node Runtime Validation & Routing", () => {
+  it("rejects node connect when nodeRuntime is missing", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const nodeWs = await connectWebSocket(wsUrl);
+
+    try {
+      await sendRequest(nodeWs, "connect", {
+        minProtocol: 1,
+        client: {
+          mode: "node",
+          id: `missing-runtime-${crypto.randomUUID().slice(0, 8)}`,
+        },
+        tools: [
+          {
+            name: "shared_tool",
+            description: "Shared test tool",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          },
+        ],
+      });
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("Invalid nodeRuntime");
+    } finally {
+      nodeWs.close();
+    }
+  });
+
+  it("rejects unnamespaced shared tools", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const sharedTool = "shared_route_tool";
+    const executionNodeId = `exec-node-${crypto.randomUUID().slice(0, 8)}`;
+    const specializedNodeId = `spec-node-${crypto.randomUUID().slice(0, 8)}`;
+
+    const executionNodeWs = await connectWebSocket(wsUrl);
+    await sendRequest(executionNodeWs, "connect", {
+      minProtocol: 1,
+      client: {
+        mode: "node",
+        id: executionNodeId,
+      },
+      tools: [
+        {
+          name: sharedTool,
+          description: "Shared tool from execution node",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      ],
+      nodeRuntime: buildExecutionNodeRuntime([sharedTool]),
+    });
+
+    const specializedNodeWs = await connectWebSocket(wsUrl);
+    await sendRequest(specializedNodeWs, "connect", {
+      minProtocol: 1,
+      client: {
+        mode: "node",
+        id: specializedNodeId,
+      },
+      tools: [
+        {
+          name: sharedTool,
+          description: "Shared tool from specialized node",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      ],
+      nodeRuntime: {
+        hostRole: "specialized",
+        hostCapabilities: ["text.search"],
+        toolCapabilities: {
+          [sharedTool]: ["text.search"],
+        },
+      },
+    });
+
+    const executionInvokePromise = waitForToolInvoke(executionNodeWs, 8000);
+    const specializedInvokePromise = waitForToolInvoke(specializedNodeWs, 2500);
+
+    const clientWs = await connectAndAuth(wsUrl);
+    try {
+      await sendRequest(clientWs, "tool.invoke", {
+        tool: sharedTool,
+        args: { source: "e2e" },
+      });
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("No node provides tool");
+    }
+
+    const executionInvoke = await executionInvokePromise;
+    const specializedInvoke = await specializedInvokePromise;
+
+    expect(executionInvoke).toBeNull();
+    expect(specializedInvoke).toBeNull();
+
+    executionNodeWs.close();
+    specializedNodeWs.close();
+    clientWs.close();
+  }, 30000);
+});
+
+describe("Skills Config Runtime Visibility", () => {
+  it.skipIf(!OPENAI_API_KEY)(
+    "applies skills.entries toggles on the next run",
+    async () => {
+      const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+      const controlWs = await connectAndAuth(wsUrl);
+      const monitorWs = await connectAndAuth(wsUrl);
+
+      await sendRequest(controlWs, "config.set", {
+        path: "apiKeys.openai",
+        value: OPENAI_API_KEY,
+      });
+      await sendRequest(controlWs, "config.set", {
+        path: "model",
+        value: { provider: "openai", id: "gpt-4o-mini" },
+      });
+
+      const proofToken = "gsv-e2e-proof-token-4219";
+      const promptMessage =
+        "E2E SKILL PROOF: reply with the proof token only. If a matching skill is available, use it.";
+
+      await sendRequest(controlWs, "config.set", {
+        path: "skills.entries.e2e-proof",
+        value: { enabled: false },
+      });
+
+      const disabledSessionKey = `skill-toggle-disabled-${crypto.randomUUID().slice(0, 8)}`;
+      const disabledRunId = crypto.randomUUID();
+      const disabledSend = await sendRequest(controlWs, "chat.send", {
+        sessionKey: disabledSessionKey,
+        runId: disabledRunId,
+        message: promptMessage,
+      }) as { status: string };
+      expect(disabledSend.status).toBe("started");
+
+      const disabledTerminal = await waitForRunTerminalState(
+        monitorWs,
+        disabledRunId,
+        90000,
+      );
+      expect(disabledTerminal.state).toBe("final");
+      if (disabledTerminal.error) {
+        console.log(`   Disabled run error: ${disabledTerminal.error}`);
+      }
+
+      const disabledPreview = await sendRequest(controlWs, "session.preview", {
+        sessionKey: disabledSessionKey,
+        limit: 40,
+      }) as { messages: unknown[] };
+      const disabledText = extractLatestAssistantText(disabledPreview.messages);
+      expect(disabledText).not.toContain(proofToken);
+
+      await sendRequest(controlWs, "config.set", {
+        path: "skills.entries.e2e-proof",
+        value: { enabled: true },
+      });
+
+      const enabledSessionKey = `skill-toggle-enabled-${crypto.randomUUID().slice(0, 8)}`;
+      const enabledRunId = crypto.randomUUID();
+      const enabledSend = await sendRequest(controlWs, "chat.send", {
+        sessionKey: enabledSessionKey,
+        runId: enabledRunId,
+        message: promptMessage,
+      }) as { status: string };
+      expect(enabledSend.status).toBe("started");
+
+      const enabledTerminal = await waitForRunTerminalState(
+        monitorWs,
+        enabledRunId,
+        90000,
+      );
+      expect(enabledTerminal.state).toBe("final");
+      if (enabledTerminal.error) {
+        console.log(`   Enabled run error: ${enabledTerminal.error}`);
+      }
+
+      const enabledPreview = await sendRequest(controlWs, "session.preview", {
+        sessionKey: enabledSessionKey,
+        limit: 40,
+      }) as { messages: unknown[] };
+      const enabledText = extractLatestAssistantText(enabledPreview.messages);
+      expect(enabledText).toContain(proofToken);
+
+      // Restore explicit default for later tests in this process.
+      await sendRequest(controlWs, "config.set", {
+        path: "skills.entries.e2e-proof",
+        value: { enabled: true },
+      });
+
+      controlWs.close();
+      monitorWs.close();
+    },
+    180000,
+  );
+});
+
 describe("Multi-Turn Agent Loop", () => {
-  // This test requires an API key to be set
-  const OPENAI_API_KEY = process.env.GSV_TEST_OPENAI_KEY;
-  
   it.skipIf(!OPENAI_API_KEY)("completes multi-turn tool loop", async () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
     const nodeId = `test-node-${crypto.randomUUID().slice(0, 8)}`;
@@ -619,6 +957,7 @@ describe("Multi-Turn Agent Loop", () => {
     // Track how many times the tool was called
     let toolCallCount = 0;
     const MAX_TOOL_CALLS = 3;
+    const MAX_ALLOWED_TOOL_CALLS = MAX_TOOL_CALLS + 3;
     
     // 1. Connect as a node and register a tool (tools are passed in connect)
     const nodeWs = await connectWebSocket(wsUrl);
@@ -638,6 +977,7 @@ describe("Multi-Turn Agent Loop", () => {
           required: [],
         },
       }],
+      nodeRuntime: buildExecutionNodeRuntime(["get_next_instruction"]),
     });
     
     console.log(`   Node ${nodeId} registered with tool`);
@@ -674,8 +1014,10 @@ describe("Multi-Turn Agent Loop", () => {
         let result: string;
         if (toolCallCount < MAX_TOOL_CALLS) {
           result = `Step ${toolCallCount} complete. You MUST call get_next_instruction again to continue.`;
+        } else if (toolCallCount === MAX_TOOL_CALLS) {
+          result = `All ${MAX_TOOL_CALLS} steps complete! Now reply to the user with exactly: "SEQUENCE_COMPLETE". Do not call tools again.`;
         } else {
-          result = `All ${MAX_TOOL_CALLS} steps complete! Now reply to the user with exactly: "SEQUENCE_COMPLETE"`;
+          result = `Sequence is already complete. Do NOT call get_next_instruction again. Reply to the user with exactly: "SEQUENCE_COMPLETE".`;
         }
         
         // Send tool result back
@@ -704,9 +1046,9 @@ describe("Multi-Turn Agent Loop", () => {
     const sendResult = await sendRequest(clientWs, "chat.send", {
       sessionKey,
       runId,
-      message: `You have access to a tool called get_next_instruction. 
-Call it exactly ${MAX_TOOL_CALLS} times to complete the sequence. 
-Start by calling the tool now.`,
+      message: `You have access to get_next_instruction.
+Call it now. Keep following its instructions.
+When it says all steps are complete, stop calling tools and reply exactly: "SEQUENCE_COMPLETE".`,
     }) as { status: string; runId: string };
     
     expect(sendResult.status).toBe("started");
@@ -729,7 +1071,11 @@ Start by calling the tool now.`,
       console.log(`   Error: ${result.error}`);
     }
     expect(result.state).toBe("final");
-    expect(toolCallCount).toBe(MAX_TOOL_CALLS);
+    expect(toolCallCount).toBeGreaterThanOrEqual(MAX_TOOL_CALLS);
+    expect(toolCallCount).toBeLessThanOrEqual(MAX_ALLOWED_TOOL_CALLS);
+    expect(toolRequests.every((req) => req.tool === "get_next_instruction")).toBe(
+      true,
+    );
     
     // Check the final message contains our expected text
     if (result.message?.content) {

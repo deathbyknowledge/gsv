@@ -1,10 +1,13 @@
 use clap::{Parser, Subcommand};
 use gsv::config::{self, CliConfig};
 use gsv::connection::Connection;
-use gsv::protocol::{Frame, LogsGetPayload, LogsResultParams, ToolInvokePayload, ToolResultParams};
+use gsv::protocol::{
+    Frame, LogsGetPayload, LogsResultParams, NodeRuntimeInfo, ToolDefinition, ToolInvokePayload,
+    ToolResultParams,
+};
 use gsv::tools::{all_tools_with_workspace, Tool};
 use serde_json::json;
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -1503,6 +1506,7 @@ async fn run_client(
         url,
         "client",
         None,
+        None,
         move |frame| {
             // Handle incoming events
             if let Frame::Evt(evt) = frame {
@@ -1626,7 +1630,8 @@ async fn run_heartbeat(
     token: Option<String>,
     action: HeartbeatAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect_with_options(url, "client", None, |_| {}, None, token).await?;
+    let conn =
+        Connection::connect_with_options(url, "client", None, None, |_| {}, None, token).await?;
 
     match action {
         HeartbeatAction::Status => {
@@ -1757,7 +1762,8 @@ async fn run_pair(
     token: Option<String>,
     action: PairAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect_with_options(url, "client", None, |_| {}, None, token).await?;
+    let conn =
+        Connection::connect_with_options(url, "client", None, None, |_| {}, None, token).await?;
 
     match action {
         PairAction::List => {
@@ -1886,7 +1892,8 @@ async fn run_channels_list(
     url: &str,
     token: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect_with_options(url, "client", None, |_| {}, None, token).await?;
+    let conn =
+        Connection::connect_with_options(url, "client", None, None, |_| {}, None, token).await?;
 
     let res = conn.request("channels.list", None).await?;
 
@@ -1934,7 +1941,8 @@ async fn run_whatsapp_via_gateway(
     token: Option<String>,
     action: WhatsAppAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect_with_options(url, "client", None, |_| {}, None, token).await?;
+    let conn =
+        Connection::connect_with_options(url, "client", None, None, |_| {}, None, token).await?;
 
     match action {
         WhatsAppAction::Login { account_id } => {
@@ -2088,7 +2096,8 @@ async fn run_discord_via_gateway(
     token: Option<String>,
     action: DiscordAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect_with_options(url, "client", None, |_| {}, None, token).await?;
+    let conn =
+        Connection::connect_with_options(url, "client", None, None, |_| {}, None, token).await?;
 
     match action {
         DiscordAction::Start { account_id } => {
@@ -2314,7 +2323,8 @@ async fn run_config(
     token: Option<String>,
     action: ConfigAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect_with_options(url, "client", None, |_| {}, None, token).await?;
+    let conn =
+        Connection::connect_with_options(url, "client", None, None, |_| {}, None, token).await?;
 
     match action {
         ConfigAction::Get { path } => {
@@ -2365,7 +2375,8 @@ async fn run_tools(
     token: Option<String>,
     action: ToolsAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect_with_options(url, "client", None, |_| {}, None, token).await?;
+    let conn =
+        Connection::connect_with_options(url, "client", None, None, |_| {}, None, token).await?;
 
     match action {
         ToolsAction::List => {
@@ -2445,7 +2456,8 @@ async fn run_session(
     token: Option<String>,
     action: SessionAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::connect_with_options(url, "client", None, |_| {}, None, token).await?;
+    let conn =
+        Connection::connect_with_options(url, "client", None, None, |_| {}, None, token).await?;
 
     match action {
         SessionAction::List { limit } => {
@@ -2908,6 +2920,68 @@ async fn run_session(
     Ok(())
 }
 
+fn capabilities_for_tool(tool_name: &str) -> Result<Vec<&'static str>, String> {
+    match tool_name {
+        "Read" => Ok(vec!["filesystem.read"]),
+        "Write" => Ok(vec!["filesystem.write"]),
+        "Edit" => Ok(vec![
+            "filesystem.edit",
+            "filesystem.read",
+            "filesystem.write",
+        ]),
+        "Glob" => Ok(vec!["filesystem.list"]),
+        "Grep" => Ok(vec!["text.search", "filesystem.read"]),
+        "Bash" => Ok(vec!["shell.exec"]),
+        _ => Err(format!("No capability mapping for tool '{}'", tool_name)),
+    }
+}
+
+fn build_execution_node_runtime(
+    tool_defs: &[ToolDefinition],
+) -> Result<NodeRuntimeInfo, Box<dyn std::error::Error>> {
+    let mut seen_tool_names = HashSet::new();
+    let mut host_capabilities = HashSet::new();
+    let mut tool_capabilities: HashMap<String, Vec<String>> = HashMap::new();
+
+    for tool in tool_defs {
+        if !seen_tool_names.insert(tool.name.clone()) {
+            return Err(format!("Duplicate tool name: {}", tool.name).into());
+        }
+
+        let capabilities = capabilities_for_tool(&tool.name)?;
+        for capability in &capabilities {
+            host_capabilities.insert((*capability).to_string());
+        }
+
+        let mut normalized_caps: Vec<String> = capabilities
+            .into_iter()
+            .map(|capability| capability.to_string())
+            .collect();
+        normalized_caps.sort();
+        normalized_caps.dedup();
+        tool_capabilities.insert(tool.name.clone(), normalized_caps);
+    }
+
+    // Ensure execution baseline exists for strict node runtime validation.
+    for capability in [
+        "filesystem.list",
+        "filesystem.read",
+        "filesystem.write",
+        "shell.exec",
+    ] {
+        host_capabilities.insert(capability.to_string());
+    }
+
+    let mut normalized_host_capabilities: Vec<String> = host_capabilities.into_iter().collect();
+    normalized_host_capabilities.sort();
+
+    Ok(NodeRuntimeInfo {
+        host_role: "execution".to_string(),
+        host_capabilities: normalized_host_capabilities,
+        tool_capabilities,
+    })
+}
+
 async fn run_node(
     url: &str,
     token: Option<String>,
@@ -2935,6 +3009,7 @@ async fn run_node(
         let tools = all_tools_with_workspace(workspace.clone());
         let tool_defs: Vec<_> = tools.iter().map(|t| t.definition()).collect();
         let tool_names: Vec<String> = tool_defs.iter().map(|t| t.name.clone()).collect();
+        let node_runtime = build_execution_node_runtime(&tool_defs)?;
 
         logger.info(
             "tools.register",
@@ -2951,6 +3026,7 @@ async fn run_node(
             url,
             "node",
             Some(tool_defs),
+            Some(node_runtime),
             |_frame| {},
             Some(node_id.clone()),
             token.clone(),

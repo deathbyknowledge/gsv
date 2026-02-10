@@ -21,6 +21,9 @@ export const DEFAULT_CONFIG: GsvConfig = {
   session: {
     identityLinks: {},
   },
+  skills: {
+    entries: {},
+  },
   agents: {
     list: [],
     bindings: [],

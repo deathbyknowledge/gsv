@@ -14,6 +14,7 @@ export type AgentWorkspace = {
   user?: WorkspaceFile; // USER.md
   memory?: WorkspaceFile; // MEMORY.md (only in main session)
   tools?: WorkspaceFile; // TOOLS.md
+  heartbeat?: WorkspaceFile; // HEARTBEAT.md
   bootstrap?: WorkspaceFile; // BOOTSTRAP.md (first-run commissioning)
   dailyMemory?: WorkspaceFile; // memory/YYYY-MM-DD.md
   yesterdayMemory?: WorkspaceFile; // memory/YYYY-MM-DD.md (yesterday)
@@ -101,14 +102,16 @@ export async function loadAgentWorkspace(
   const basePath = `agents/${agentId}`;
 
   // Load core files in parallel
-  const [agents, soul, identity, user, tools, bootstrap] = await Promise.all([
-    loadR2File(bucket, `${basePath}/AGENTS.md`),
-    loadR2File(bucket, `${basePath}/SOUL.md`),
-    loadR2File(bucket, `${basePath}/IDENTITY.md`),
-    loadR2File(bucket, `${basePath}/USER.md`),
-    loadR2File(bucket, `${basePath}/TOOLS.md`),
-    loadR2File(bucket, `${basePath}/BOOTSTRAP.md`),
-  ]);
+  const [agents, soul, identity, user, tools, heartbeat, bootstrap] =
+    await Promise.all([
+      loadR2File(bucket, `${basePath}/AGENTS.md`),
+      loadR2File(bucket, `${basePath}/SOUL.md`),
+      loadR2File(bucket, `${basePath}/IDENTITY.md`),
+      loadR2File(bucket, `${basePath}/USER.md`),
+      loadR2File(bucket, `${basePath}/TOOLS.md`),
+      loadR2File(bucket, `${basePath}/HEARTBEAT.md`),
+      loadR2File(bucket, `${basePath}/BOOTSTRAP.md`),
+    ]);
 
   const workspace: AgentWorkspace = {
     agentId,
@@ -117,6 +120,7 @@ export async function loadAgentWorkspace(
     identity: identity.exists ? identity : undefined,
     user: user.exists ? user : undefined,
     tools: tools.exists ? tools : undefined,
+    heartbeat: heartbeat.exists ? heartbeat : undefined,
     bootstrap: bootstrap.exists ? bootstrap : undefined,
   };
 

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -61,6 +62,8 @@ pub struct ConnectParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_runtime: Option<NodeRuntimeInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub session_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthParams>,
@@ -80,6 +83,14 @@ pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeRuntimeInfo {
+    pub host_role: String,
+    pub host_capabilities: Vec<String>,
+    pub tool_capabilities: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

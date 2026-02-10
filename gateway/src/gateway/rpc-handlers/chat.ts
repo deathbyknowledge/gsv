@@ -77,6 +77,7 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
     directives.cleaned, // Send cleaned message without directives
     params.runId ?? crypto.randomUUID(),
     JSON.parse(JSON.stringify(gw.getAllTools())),
+    JSON.parse(JSON.stringify(gw.getRuntimeNodeInventory())),
     params.sessionKey,
     messageOverrides,
   );

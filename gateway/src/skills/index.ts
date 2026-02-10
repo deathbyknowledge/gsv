@@ -5,6 +5,9 @@ export type CustomMetadata = {
     anyBins?: string[];
     env?: string[];
     config?: string[];
+    hostRoles?: string[];
+    capabilities?: string[];
+    anyCapabilities?: string[];
   };
   install?: Array<{
     id?: string;
@@ -35,6 +38,10 @@ export type SkillSummary = {
   description: string;
   location: string;
   always?: boolean;
+  metadata?: {
+    gsv?: CustomMetadata;
+    clawdbot?: CustomMetadata;
+  };
 };
 
 type Frontmatter = Record<string, unknown>;
@@ -177,6 +184,7 @@ async function loadSkillSummaryFromKey(
 
   const content = await object.text();
   const { frontmatter } = parseFrontmatter(content);
+  const metadata = readMetadataJson(frontmatter);
   return {
     skillName,
     summary: {
@@ -186,6 +194,7 @@ async function loadSkillSummaryFromKey(
         extractSkillDescription(content),
       location: key,
       always: readBoolean(frontmatter, "always"),
+      metadata,
     },
   };
 }

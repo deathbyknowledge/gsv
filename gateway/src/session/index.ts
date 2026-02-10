@@ -1,9 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
 import { PersistedObject } from "../shared/persisted-object";
 import type { ChatEventPayload } from "../protocol/chat";
-import type { ToolDefinition } from "../protocol/tools";
+import type { RuntimeNodeInventory, ToolDefinition } from "../protocol/tools";
 import type { MediaAttachment } from "../protocol/channel";
 import type { GsvConfig } from "../config";
+import type { SkillSummary } from "../skills";
 import type {
   Message,
   UserMessage,
@@ -75,6 +76,7 @@ export type QueuedMessage = {
   runId: string;
   // Optional for backward compatibility with already-persisted queue entries.
   tools?: ToolDefinition[];
+  runtimeNodes?: RuntimeNodeInventory;
   media?: MediaAttachment[];
   messageOverrides?: {
     thinkLevel?: string;
@@ -87,6 +89,8 @@ export type QueuedMessage = {
 export type CurrentRun = {
   runId: string;
   tools: ToolDefinition[];
+  runtimeNodes?: RuntimeNodeInventory;
+  skillsSnapshot?: SkillSummary[];
   messageOverrides?: {
     thinkLevel?: string;
     model?: { provider: string; id: string };
@@ -227,6 +231,19 @@ export class Session extends DurableObject<Env> {
     }
 
     return "main";
+  }
+
+  private async loadRuntimeNodeInventory(): Promise<RuntimeNodeInventory | undefined> {
+    try {
+      const gateway = this.env.GATEWAY.getByName("singleton");
+      const inventory = await gateway.getRuntimeNodeInventory();
+      return inventory as RuntimeNodeInventory;
+    } catch (error) {
+      console.warn(
+        `[Session] Failed to load runtime node inventory for prompt: ${error}`,
+      );
+      return undefined;
+    }
   }
 
   // Metadata (small, uses PersistedObject)
@@ -487,6 +504,7 @@ export class Session extends DurableObject<Env> {
     message: string,
     runId: string,
     tools: ToolDefinition[],
+    runtimeNodes: RuntimeNodeInventory | undefined,
     sessionKey: string,
     messageOverrides?: {
       thinkLevel?: string;
@@ -506,6 +524,9 @@ export class Session extends DurableObject<Env> {
         text: message,
         runId,
         tools: JSON.parse(JSON.stringify(tools)),
+        runtimeNodes: runtimeNodes
+          ? JSON.parse(JSON.stringify(runtimeNodes))
+          : undefined,
         media,
         messageOverrides,
         queuedAt: Date.now(),
@@ -525,7 +546,7 @@ export class Session extends DurableObject<Env> {
     }
 
     // Start processing this message (async - don't await!)
-    this.startRun(message, runId, tools, messageOverrides, media);
+    this.startRun(message, runId, tools, runtimeNodes, messageOverrides, media);
 
     return { ok: true, runId, started: true };
   }
@@ -538,6 +559,7 @@ export class Session extends DurableObject<Env> {
     message: string,
     runId: string,
     tools: ToolDefinition[],
+    runtimeNodes: RuntimeNodeInventory | undefined,
     messageOverrides?: {
       thinkLevel?: string;
       model?: { provider: string; id: string };
@@ -548,6 +570,9 @@ export class Session extends DurableObject<Env> {
     this.currentRun = {
       runId,
       tools,
+      runtimeNodes: runtimeNodes
+        ? JSON.parse(JSON.stringify(runtimeNodes))
+        : undefined,
       messageOverrides,
       startedAt: Date.now(),
     };
@@ -781,6 +806,7 @@ export class Session extends DurableObject<Env> {
       next.text,
       next.runId,
       next.tools ?? [],
+      next.runtimeNodes,
       next.messageOverrides,
       next.media,
     );
@@ -979,6 +1005,9 @@ export class Session extends DurableObject<Env> {
     const effectiveSystemPrompt = await this.buildEffectiveSystemPrompt(
       config,
       sessionSettings,
+      effectiveModel,
+      this.currentRun?.tools ?? [],
+      this.currentRun?.runtimeNodes,
     );
 
     if (messageOverrides.model) {
@@ -1112,6 +1141,9 @@ export class Session extends DurableObject<Env> {
   private async buildEffectiveSystemPrompt(
     config: GsvConfig,
     sessionSettings: SessionSettings,
+    effectiveModel: { provider: string; id: string },
+    runTools: ToolDefinition[],
+    runRuntimeNodes: RuntimeNodeInventory | undefined,
   ): Promise<string> {
     const agentId = this.getAgentId();
 
@@ -1129,6 +1161,16 @@ export class Session extends DurableObject<Env> {
       mainSession,
     );
 
+    if (this.currentRun?.skillsSnapshot) {
+      workspace.skills = JSON.parse(
+        JSON.stringify(this.currentRun.skillsSnapshot),
+      ) as SkillSummary[];
+    } else if (workspace.skills && this.currentRun) {
+      this.currentRun.skillsSnapshot = JSON.parse(
+        JSON.stringify(workspace.skills),
+      ) as SkillSummary[];
+    }
+
     // Log what was loaded
     const loaded = [
       workspace.agents?.exists && "AGENTS.md",
@@ -1137,6 +1179,7 @@ export class Session extends DurableObject<Env> {
       workspace.user?.exists && "USER.md",
       workspace.memory?.exists && "MEMORY.md",
       workspace.tools?.exists && "TOOLS.md",
+      workspace.heartbeat?.exists && "HEARTBEAT.md",
       workspace.bootstrap?.exists && "BOOTSTRAP.md",
       workspace.dailyMemory?.exists && "daily",
       workspace.yesterdayMemory?.exists && "yesterday",
@@ -1148,9 +1191,25 @@ export class Session extends DurableObject<Env> {
 
     // Get base prompt from settings or config
     const basePrompt = sessionSettings.systemPrompt || config.systemPrompt;
+    const agentConfig = config.agents.list.find((agent) => agent.id === agentId);
+    const heartbeatPrompt =
+      agentConfig?.heartbeat?.prompt || config.agents.defaultHeartbeat.prompt;
+    const runtimeNodes =
+      runRuntimeNodes ?? (await this.loadRuntimeNodeInventory());
 
     // Build combined prompt
-    return buildSystemPromptFromWorkspace(basePrompt, workspace);
+    return buildSystemPromptFromWorkspace(basePrompt, workspace, {
+      tools: runTools,
+      heartbeatPrompt,
+      skillEntries: config.skills.entries,
+      runtime: {
+        agentId,
+        sessionKey: this.meta.sessionKey,
+        isMainSession: mainSession,
+        model: effectiveModel,
+        nodes: runtimeNodes,
+      },
+    });
   }
 
   private async broadcastToClients(payload: ChatEventPayload): Promise<void> {
@@ -1344,10 +1403,7 @@ export class Session extends DurableObject<Env> {
     const pendingToolsCancelled = Object.keys(this.pendingToolCalls).length;
 
     // Mark the run as aborted
-    this.currentRun = {
-      ...this.currentRun,
-      aborted: true,
-    };
+    this.currentRun.aborted = true;
 
     // Clear pending tool calls
     for (const callId of Object.keys(this.pendingToolCalls)) {
