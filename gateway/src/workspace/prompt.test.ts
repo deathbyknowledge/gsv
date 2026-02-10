@@ -255,6 +255,144 @@ describe("buildSystemPromptFromWorkspace", () => {
     expect(prompt).not.toContain("Runtime filter:");
   });
 
+  it("fails closed for invalid frontmatter requirement identifiers", () => {
+    const tools: ToolDefinition[] = [
+      {
+        name: "gsv__ReadFile",
+        description: "Read files from workspace",
+        inputSchema: { type: "object" },
+      },
+    ];
+
+    const workspace: AgentWorkspace = {
+      agentId: "main",
+      skills: [
+        {
+          name: "invalid-skill",
+          description: "Has typo in capability id",
+          location: "skills/invalid-skill/SKILL.md",
+          metadata: {
+            gsv: {
+              requires: {
+                capabilities: ["shell.exe"],
+              },
+            },
+          },
+        },
+        {
+          name: "safe-skill",
+          description: "No requirements",
+          location: "skills/safe-skill/SKILL.md",
+        },
+      ],
+    };
+
+    const prompt = buildSystemPromptFromWorkspace("Base", workspace, {
+      tools,
+      runtime: {
+        agentId: "main",
+        isMainSession: true,
+        nodes: {
+          executionHostId: "exec-1",
+          specializedHostIds: [],
+          hosts: [
+            {
+              nodeId: "exec-1",
+              hostRole: "execution",
+              hostCapabilities: [
+                "filesystem.list",
+                "filesystem.read",
+                "filesystem.write",
+                "shell.exec",
+              ],
+              toolCapabilities: {},
+              tools: ["Bash"],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(prompt).not.toContain('<skill name="invalid-skill">');
+    expect(prompt).toContain('<skill name="safe-skill">');
+    expect(prompt).toContain(
+      "Requirement filter: 1 skill(s) hidden due invalid runtime requirement identifiers.",
+    );
+  });
+
+  it("fails closed for invalid config requirement overrides", () => {
+    const tools: ToolDefinition[] = [
+      {
+        name: "gsv__ReadFile",
+        description: "Read files from workspace",
+        inputSchema: { type: "object" },
+      },
+    ];
+
+    const workspace: AgentWorkspace = {
+      agentId: "main",
+      skills: [
+        {
+          name: "search-skill",
+          description: "Valid by frontmatter",
+          location: "skills/search-skill/SKILL.md",
+          metadata: {
+            gsv: {
+              requires: {
+                hostRoles: ["execution"],
+                capabilities: ["shell.exec"],
+              },
+            },
+          },
+        },
+        {
+          name: "safe-skill",
+          description: "No requirements",
+          location: "skills/safe-skill/SKILL.md",
+        },
+      ],
+    };
+
+    const prompt = buildSystemPromptFromWorkspace("Base", workspace, {
+      tools,
+      skillEntries: {
+        "search-skill": {
+          requires: {
+            capabilities: ["shell.exe"],
+          },
+        },
+      },
+      runtime: {
+        agentId: "main",
+        isMainSession: true,
+        nodes: {
+          executionHostId: "exec-1",
+          specializedHostIds: [],
+          hosts: [
+            {
+              nodeId: "exec-1",
+              hostRole: "execution",
+              hostCapabilities: [
+                "filesystem.list",
+                "filesystem.read",
+                "filesystem.write",
+                "shell.exec",
+              ],
+              toolCapabilities: {},
+              tools: ["Bash"],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(prompt).not.toContain('<skill name="search-skill">');
+    expect(prompt).toContain('<skill name="safe-skill">');
+    expect(prompt).toContain(
+      "Requirement filter: 1 skill(s) hidden due invalid runtime requirement identifiers.",
+    );
+  });
+
   it("includes heartbeat guidance from config and HEARTBEAT.md", () => {
     const nodes: RuntimeNodeInventory = {
       executionHostId: "exec-node-1",

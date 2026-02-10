@@ -384,7 +384,13 @@ type SkillRuntimeRequirements = {
 
 type EffectiveSkillPolicy = {
   always: boolean;
+  hasInvalidRequirements: boolean;
   requires?: SkillRuntimeRequirements;
+};
+
+type NormalizedRequirementList<T extends string> = {
+  values: T[];
+  hasInvalid: boolean;
 };
 
 function normalizeStringArray(value: unknown): string[] {
@@ -396,18 +402,74 @@ function normalizeStringArray(value: unknown): string[] {
     .filter((entry) => entry.length > 0);
 }
 
-function normalizeCapabilityRequirementList(value: unknown): CapabilityId[] {
-  const capabilities = normalizeStringArray(value).filter((entry) =>
-    CAPABILITY_SET.has(entry),
-  ) as CapabilityId[];
-  return Array.from(new Set(capabilities));
+function normalizeCapabilityRequirementList(
+  value: unknown,
+): NormalizedRequirementList<CapabilityId> {
+  if (value === undefined) {
+    return { values: [], hasInvalid: false };
+  }
+  if (!Array.isArray(value)) {
+    return { values: [], hasInvalid: true };
+  }
+
+  const values: CapabilityId[] = [];
+  let hasInvalid = false;
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      hasInvalid = true;
+      continue;
+    }
+
+    const normalized = entry.trim();
+    if (normalized.length === 0) {
+      hasInvalid = true;
+      continue;
+    }
+
+    if (!CAPABILITY_SET.has(normalized)) {
+      hasInvalid = true;
+      continue;
+    }
+
+    values.push(normalized as CapabilityId);
+  }
+
+  return { values: Array.from(new Set(values)), hasInvalid };
 }
 
-function normalizeHostRoleRequirementList(value: unknown): HostRole[] {
-  const roles = normalizeStringArray(value).filter((entry) =>
-    HOST_ROLE_SET.has(entry),
-  ) as HostRole[];
-  return Array.from(new Set(roles));
+function normalizeHostRoleRequirementList(
+  value: unknown,
+): NormalizedRequirementList<HostRole> {
+  if (value === undefined) {
+    return { values: [], hasInvalid: false };
+  }
+  if (!Array.isArray(value)) {
+    return { values: [], hasInvalid: true };
+  }
+
+  const values: HostRole[] = [];
+  let hasInvalid = false;
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      hasInvalid = true;
+      continue;
+    }
+
+    const normalized = entry.trim();
+    if (normalized.length === 0) {
+      hasInvalid = true;
+      continue;
+    }
+
+    if (!HOST_ROLE_SET.has(normalized)) {
+      hasInvalid = true;
+      continue;
+    }
+
+    values.push(normalized as HostRole);
+  }
+
+  return { values: Array.from(new Set(values)), hasInvalid };
 }
 
 function resolveSkillKeyFromLocation(location: string): string | undefined {
@@ -481,17 +543,22 @@ function resolveEffectiveSkillPolicy(
       ? entryConfig.always
       : skill.always === true;
   const hasRequirements =
-    requiredRoles.length > 0 ||
-    requiredCapabilities.length > 0 ||
-    requiredAnyCapabilities.length > 0;
+    requiredRoles.values.length > 0 ||
+    requiredCapabilities.values.length > 0 ||
+    requiredAnyCapabilities.values.length > 0;
+  const hasInvalidRequirements =
+    requiredRoles.hasInvalid ||
+    requiredCapabilities.hasInvalid ||
+    requiredAnyCapabilities.hasInvalid;
 
   return {
     always,
+    hasInvalidRequirements,
     requires: hasRequirements
       ? {
-          hostRoles: requiredRoles,
-          capabilities: requiredCapabilities,
-          anyCapabilities: requiredAnyCapabilities,
+          hostRoles: requiredRoles.values,
+          capabilities: requiredCapabilities.values,
+          anyCapabilities: requiredAnyCapabilities.values,
         }
       : undefined,
   };
@@ -503,6 +570,9 @@ function isSkillEligibleForRuntime(
 ): boolean {
   if (policy.always) {
     return true;
+  }
+  if (policy.hasInvalidRequirements) {
+    return false;
   }
 
   const requires = policy.requires;
@@ -592,7 +662,11 @@ function buildSkillsSection(
       } => entry.policy !== undefined,
     );
 
-  const eligibleSkills = configEligibleSkills.filter((entry) =>
+  const validRequirementSkills = configEligibleSkills.filter(
+    (entry) => !entry.policy.hasInvalidRequirements || entry.policy.always,
+  );
+
+  const eligibleSkills = validRequirementSkills.filter((entry) =>
     isSkillEligibleForRuntime(entry.policy, options.runtimeNodes),
   );
 
@@ -601,7 +675,9 @@ function buildSkillsSection(
   }
 
   const configFilteredCount = readableSkills.length - configEligibleSkills.length;
-  const runtimeFilteredCount = configEligibleSkills.length - eligibleSkills.length;
+  const invalidRequirementFilteredCount =
+    configEligibleSkills.length - validRequirementSkills.length;
+  const runtimeFilteredCount = validRequirementSkills.length - eligibleSkills.length;
 
   const lines = [
     "## Skills (Mandatory Scan)",
@@ -614,6 +690,11 @@ function buildSkillsSection(
     ...(configFilteredCount > 0
       ? [
           `Config filter: ${configFilteredCount} skill(s) hidden by skills.entries policy.`,
+        ]
+      : []),
+    ...(invalidRequirementFilteredCount > 0
+      ? [
+          `Requirement filter: ${invalidRequirementFilteredCount} skill(s) hidden due invalid runtime requirement identifiers.`,
         ]
       : []),
     ...(runtimeFilteredCount > 0
