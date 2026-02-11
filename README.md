@@ -6,22 +6,18 @@
 
 ### Prerequisites
 
-- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works)
-- [Rust](https://rustup.rs) (for CLI)
-- [Node.js + npm](https://nodejs.org) (for package installation)
+- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works :D)
 
 ### Deploy
 
 ```bash
-git clone https://github.com/deathbyknowledge/gsv
-cd gsv
+# Installs CLI
+curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
 
-# Build and install CLI
-cargo install --path cli --force
-
-# Configure Cloudflare credentials (or pass --api-token/--account-id each time)
+# Set CF_API_TOKEN with an "Edit Cloudflare Workers" API token
+export CF_API_TOKEN=<your-cloudflare-api-token>
+# or configure it in the CLI
 gsv local-config set cloudflare.api_token <your-cloudflare-api-token>
-gsv local-config set cloudflare.account_id <your-cloudflare-account-id>
 
 # First-time guided deploy
 gsv deploy up --wizard --all
@@ -78,49 +74,54 @@ gsv channel whatsapp login    # Scan QR code
 gsv channel discord start     # Start Discord bot
 ```
 
+> [!NOTE]
+> Both WhatsApp and Discord channels require an always-on Durable Object to run. While the Workers free tier fits 1 always-on DO, having multiple channels or multiple accounts in a single channel will require a paid plan (or you'll experience downtime).
+
+
 ## Architecture
 
 ```
-                              ┌─────────────────────────────────────────┐
-                              │              THE CLOUD                  │
-                              │         (Cloudflare Edge)               │
-                              │                                         │
-                              │   ┌─────────────────────────────────┐   │
-                              │   │         Gateway DO              │   │
-                              │   │    (singleton Mind core)        │   │
-                              │   │                                 │   │
-                              │   │  • Routes messages              │   │
-                              │   │  • Tool registry (namespaced)   │   │
-                              │   │  • Coordinates channels         │   │
-                              │   └──────────────┬──────────────────┘   │
-                              │                  │                      │
-                              │     ┌────────────┼────────────┐         │
-                              │     ▼            ▼            ▼         │
-                              │ ┌────────┐  ┌────────┐  ┌────────┐     │
-                              │ │Session │  │Session │  │Session │     │
-                              │ │  DO    │  │  DO    │  │  DO    │     │
-                              │ │        │  │        │  │        │     │
-                              │ │ wa:dm  │  │ tg:grp │  │ cli:me │     │
-                              │ └────────┘  └────────┘  └────────┘     │
-                              │                                         │
-                              │            R2 Storage                   │
-                              │     (media, archives, config)           │
-                              └────────────────┬────────────────────────┘
-                                               │
-                    ┌──────────────────────────┼──────────────────────────┐
-                    │                          │                          │
-                    ▼                          ▼                          ▼
-            ┌──────────────┐           ┌──────────────┐           ┌──────────────┐
-            │   Channel    │           │    Node      │           │    Node      │
-            │  (WhatsApp)  │           │  (macbook)   │           │   (server)   │
-            │              │           │              │           │              │
-            │ Cloudflare   │           │  macbook:*   │           │  server:*    │
-            │ Worker + DO  │           │    tools     │           │    tools     │
-            └──────────────┘           └──────────────┘           └──────────────┘
-                    │                          │                          │
-                    ▼                          ▼                          ▼
-              WhatsApp API              Your Laptop               Your Server
-                                        (bash, files)            (docker, APIs)
+                    ┌─────────────────────────────────────────┐
+                    │              THE CLOUD                  │
+                    │         (Cloudflare Edge)               │
+                    │                                         │
+                    │   ┌─────────────────────────────────┐   │
+                    │   │         Gateway DO              │   │
+                    │   │    (singleton Mind core)        │   │
+                    │   │                                 │   │
+                    │   │  • Routes messages              │   │
+                    │   │  • Tool registry (namespaced)   │   │
+                    │   │  • Coordinates channels         │   │
+                    │   │  • Spawns agents autonomously   │   │
+                    │   └──────────────┬──────────────────┘   │
+                    │                  │                      │
+                    │     ┌────────────┼────────────┐         │
+                    │     ▼            ▼            ▼         │
+                    │ ┌────────┐  ┌────────┐  ┌────────┐      │
+                    │ │Session │  │Session │  │Session │      │
+                    │ │  DO    │  │  DO    │  │  DO    │      │
+                    │ │        │  │        │  │        │      │
+                    │ │ wa:dm  │  │ tg:grp │  │ cli:me │      │
+                    │ └────────┘  └────────┘  └────────┘      │
+                    │                                         │
+                    │            R2 Storage                   │
+                    │     (media, archives, config)           │
+                    └────────────────┬────────────────────────┘
+                                     │
+          ┌──────────────────────────┼──────────────────────────┐
+          │                          │                          │
+          ▼                          ▼                          ▼
+  ┌──────────────┐           ┌──────────────┐           ┌──────────────┐
+  │   Channel    │           │    Node      │           │    Client    │
+  │  (WhatsApp)  │           │  (macbook)   │           │ (CLI/WebUI)  │
+  │              │           │              │           │              │
+  │ Cloudflare   │           │  macbook:*   │           │              │
+  │ Worker + DO  │           │    tools     │           │              │
+  └──────────────┘           └──────────────┘           └──────────────┘
+          │                          │                          │
+          ▼                          ▼                          ▼
+    WhatsApp API              Your Laptop             Send messages, configure
+                              (bash, files)            gateway, etc.
 ```
 
 ### Components
@@ -136,10 +137,10 @@ Multiple nodes can connect with different capabilities:
 
 ```bash
 # On your laptop
-gsv node --id laptop --workspace ~/code
+gsv node install --id laptop --workspace ~/code
 
 # On a server  
-gsv node --id server --workspace /var/app
+gsv node install --id server --workspace /var/app
 
 # GSV sees: laptop__Bash, laptop__Read, server__Bash, server__Read, etc.
 # And can reason: "I'll check the logs on the server" → uses server__Bash
@@ -156,13 +157,6 @@ agents/{agentId}/
 ├── AGENTS.md       # Operating instructions
 ├── MEMORY.md       # Long-term memory
 └── HEARTBEAT.md    # Proactive check-in config
-```
-
-Edit these locally by mounting R2:
-
-```bash
-gsv mount setup && gsv mount start
-vim ~/.gsv/r2/agents/main/SOUL.md
 ```
 
 ## CLI Reference
@@ -192,6 +186,10 @@ gsv channel whatsapp logout           # Disconnect
 gsv channel discord start             # Start Discord bot
 gsv channel discord stop              # Stop bot
 
+# Access control
+gsv pair list                         # List pending pair requests
+gsv pair approve CHANNEL SENDER       # Approve a sender
+
 # Tools
 gsv tools list                        # List available tools
 gsv tools call TOOL ARGS              # Call tool directly
@@ -200,13 +198,14 @@ gsv tools call TOOL ARGS              # Call tool directly
 gsv mount setup                       # Configure R2 mount
 gsv mount start                       # Start FUSE mount
 gsv mount stop                        # Stop mount
-
-# Access control
-gsv pair list                         # List pending pair requests
-gsv pair approve CHANNEL SENDER       # Approve a sender
 ```
 
 ## Development
+
+### Prerequisites
+
+- [Rust](https://rustup.rs) (for CLI)
+- [Node.js + npm](https://nodejs.org) (for package installation)
 
 ```bash
 # Install JS deps across gateway + channels
@@ -222,15 +221,6 @@ cd cli && cargo build --release
 ./scripts/build-cloudflare-bundles.sh
 gsv deploy up --bundle-dir ./release/local --version local-dev --all --force-fetch
 ```
-
-## Security
-
-GSV is designed for personal use. By default:
-- Auth token required for all connections
-- WhatsApp uses "pairing" mode - unknown senders need approval
-- API keys stored in Cloudflare secrets
-
-See [Security docs](https://github.com/deathbyknowledge/gsv#security) for details.
 
 ## License
 

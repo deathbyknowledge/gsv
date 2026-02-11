@@ -254,7 +254,7 @@ jobs:
             ## Installation
             
             ```bash
-            curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | sh
+            curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
             ```
             
             This will:

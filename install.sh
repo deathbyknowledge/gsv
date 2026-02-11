@@ -4,8 +4,8 @@
 # Installs the GSV CLI and optionally deploys the gateway.
 #
 # Usage:
-#   curl -sSL https://gsv.dev/install.sh | sh
-#   curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | sh
+#   curl -sSL https://gsv.dev/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
 #
 # Environment variables:
 #   GSV_INSTALL_DIR  - Where to install CLI (default: /usr/local/bin)
@@ -277,7 +277,7 @@ main() {
         echo ""
         if prompt_yn "Do you have an existing GSV deployment?"; then
             echo ""
-            GATEWAY_URL=$(prompt_input "Enter your gateway URL" "https://gsv-gateway.xxx.workers.dev")
+            GATEWAY_URL=$(prompt_input "Enter your gateway URL" "https://gsv.xxx.workers.dev")
         else
             echo ""
             info "Setting up a new GSV deployment..."

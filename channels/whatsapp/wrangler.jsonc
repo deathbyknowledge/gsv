@@ -26,13 +26,5 @@
       "tag": "v1",
       "new_sqlite_classes": ["WhatsAppAccount"]
     }
-  ],
-  // Service binding to Gateway for RPC
-  "services": [
-    {
-      "binding": "GATEWAY",
-      "service": "gateway",
-      "entrypoint": "GatewayEntrypoint"
-    }
   ]
 }
