@@ -19,6 +19,7 @@ regex = "1"
 async-trait = "0.1"
 toml = "0.8"
 qrcode = "0.14"
+cliclack = "0.3.8"
 
 # TLS backends - use native-tls by default (respects system certs)
 # CI builds for Linux use rustls feature to avoid OpenSSL dependency

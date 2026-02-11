@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use cliclack::{confirm, input, intro, log, multiselect, note, outro_cancel, select};
 use gsv::config::{self, CliConfig};
 use gsv::connection::Connection;
 use gsv::deploy;
@@ -405,7 +406,7 @@ enum DeployAction {
         #[arg(long, env = "GSV_GATEWAY_AUTH_TOKEN")]
         gateway_auth_token: Option<String>,
 
-        /// LLM provider to configure on gateway (`anthropic`, `openai`, `google`, `openrouter`)
+        /// LLM provider to configure on gateway (`anthropic`, `openai`, `google`, `openrouter`, or custom)
         #[arg(long)]
         llm_provider: Option<String>,
 
@@ -443,6 +444,10 @@ enum DeployAction {
         /// Purge all objects from the shared R2 bucket before deleting it (requires --delete-bucket)
         #[arg(long)]
         purge_bucket: bool,
+
+        /// Run interactive teardown wizard
+        #[arg(long)]
+        wizard: bool,
 
         /// Cloudflare API token (falls back to config `cloudflare.api_token`)
         #[arg(long, env = "CF_API_TOKEN")]
@@ -835,13 +840,16 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
 }
 
 fn normalize_llm_provider(provider: &str) -> Option<String> {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        "anthropic" => Some("anthropic".to_string()),
-        "openai" => Some("openai".to_string()),
-        "google" => Some("google".to_string()),
-        "openrouter" => Some("openrouter".to_string()),
-        _ => None,
+    let normalized = provider.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
     }
+}
+
+fn is_builtin_llm_provider(provider: &str) -> bool {
+    matches!(provider, "anthropic" | "openai" | "google" | "openrouter")
 }
 
 fn default_llm_model_for_provider(provider: &str) -> Option<&'static str> {
@@ -880,40 +888,20 @@ fn can_prompt_interactively() -> bool {
 }
 
 fn prompt_yes_no(prompt: &str, default_yes: bool) -> Result<bool, Box<dyn std::error::Error>> {
-    let suffix = if default_yes { "[Y/n]" } else { "[y/N]" };
-    print!("{} {}: ", prompt, suffix);
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim().to_ascii_lowercase();
-
-    if trimmed.is_empty() {
-        return Ok(default_yes);
-    }
-    if trimmed == "y" || trimmed == "yes" {
-        return Ok(true);
-    }
-    if trimmed == "n" || trimmed == "no" {
-        return Ok(false);
-    }
-
-    Ok(default_yes)
+    let mut prompt = confirm(prompt).initial_value(default_yes);
+    Ok(prompt.interact()?)
 }
 
 fn prompt_line(
     prompt: &str,
     default: Option<&str>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    match default {
-        Some(value) => print!("{} [{}]: ", prompt, value),
-        None => print!("{}: ", prompt),
+    let mut prompt = input(prompt).required(false);
+    if let Some(value) = default {
+        prompt = prompt.default_input(value);
     }
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim();
+    let value: String = prompt.interact()?;
+    let trimmed = value.trim();
 
     if trimmed.is_empty() {
         if let Some(value) = default {
@@ -932,6 +920,125 @@ fn prompt_secret(prompt: &str) -> Result<Option<String>, Box<dyn std::error::Err
         return Ok(None);
     }
     Ok(Some(trimmed.to_string()))
+}
+
+fn component_is_selected(components: &[String], component: &str) -> bool {
+    components.iter().any(|c| c == component)
+}
+
+fn prompt_up_components(
+    default_components: &[String],
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let default_all = default_components.is_empty();
+    let mut defaults = Vec::new();
+    if default_all || component_is_selected(default_components, "gateway") {
+        defaults.push("gateway".to_string());
+    }
+    if default_all || component_is_selected(default_components, "channel-whatsapp") {
+        defaults.push("channel-whatsapp".to_string());
+    }
+    if default_all || component_is_selected(default_components, "channel-discord") {
+        defaults.push("channel-discord".to_string());
+    }
+
+    let mut prompt = multiselect("Select components to deploy")
+        .item(
+            "gateway".to_string(),
+            "gateway",
+            "Core API + sessions + shared infra",
+        )
+        .item(
+            "channel-whatsapp".to_string(),
+            "channel-whatsapp",
+            "WhatsApp channel worker",
+        )
+        .item(
+            "channel-discord".to_string(),
+            "channel-discord",
+            "Discord channel worker",
+        )
+        .required(true);
+    if !defaults.is_empty() {
+        prompt = prompt.initial_values(defaults);
+    }
+
+    Ok(prompt.interact()?)
+}
+
+fn prompt_down_components(
+    default_components: &[String],
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut defaults = Vec::new();
+    if component_is_selected(default_components, "gateway") {
+        defaults.push("gateway".to_string());
+    }
+    if component_is_selected(default_components, "channel-whatsapp") {
+        defaults.push("channel-whatsapp".to_string());
+    }
+    if component_is_selected(default_components, "channel-discord") {
+        defaults.push("channel-discord".to_string());
+    }
+
+    let mut prompt = multiselect("Select components to tear down")
+        .item(
+            "gateway".to_string(),
+            "gateway",
+            "Core API + sessions worker",
+        )
+        .item(
+            "channel-whatsapp".to_string(),
+            "channel-whatsapp",
+            "WhatsApp channel worker",
+        )
+        .item(
+            "channel-discord".to_string(),
+            "channel-discord",
+            "Discord channel worker",
+        )
+        .required(true);
+    if !defaults.is_empty() {
+        prompt = prompt.initial_values(defaults);
+    }
+
+    Ok(prompt.interact()?)
+}
+
+fn prompt_llm_provider(
+    default_provider: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let normalized_default = default_provider.and_then(normalize_llm_provider);
+    let initial_value = match normalized_default.as_deref() {
+        Some(provider) if is_builtin_llm_provider(provider) => provider.to_string(),
+        Some(_) => "custom".to_string(),
+        None => "anthropic".to_string(),
+    };
+
+    let mut prompt = select("LLM provider")
+        .item("anthropic".to_string(), "anthropic", "Claude models")
+        .item("openai".to_string(), "openai", "GPT models")
+        .item("google".to_string(), "google", "Gemini models")
+        .item(
+            "openrouter".to_string(),
+            "openrouter",
+            "Routed provider access",
+        )
+        .item(
+            "custom".to_string(),
+            "custom",
+            "Type a provider id manually",
+        )
+        .initial_value(initial_value);
+    let selection = prompt.interact()?;
+    if selection == "custom" {
+        let custom_default = normalized_default
+            .as_deref()
+            .filter(|provider| !is_builtin_llm_provider(provider));
+        let custom =
+            prompt_line("Custom provider ID", custom_default)?.ok_or("Provider is required")?;
+        return normalize_llm_provider(&custom).ok_or("Provider is required".into());
+    }
+
+    Ok(selection)
 }
 
 fn gateway_http_url_to_ws_url(gateway_url: &str) -> String {
@@ -968,6 +1075,7 @@ async fn run_deploy(
     action: DeployAction,
     cfg: &CliConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    deploy::set_notification_output(false);
     match action {
         DeployAction::Up {
             version,
@@ -1000,7 +1108,23 @@ async fn run_deploy(
                     .await?;
             println!("Cloudflare account ID: {}", resolved_account_id);
 
-            let components = if all {
+            let interactive = can_prompt_interactively();
+            let wizard_mode = wizard;
+            let local_account_id_configured = cfg
+                .cloudflare
+                .account_id
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty());
+
+            if wizard_mode && !interactive {
+                return Err("--wizard requires an interactive terminal".into());
+            }
+            deploy::set_notification_output(wizard_mode && interactive);
+            if wizard_mode && interactive {
+                intro("GSV deploy wizard")?;
+            }
+
+            let mut components = if all {
                 deploy::available_components()
                     .iter()
                     .map(|c| (*c).to_string())
@@ -1009,24 +1133,58 @@ async fn run_deploy(
                 deploy::normalize_components(&component)?
             };
 
+            if wizard_mode && interactive && !all && component.is_empty() {
+                components = prompt_up_components(&components)?;
+                if components.is_empty() {
+                    return Err("No components selected for deployment.".into());
+                }
+            }
+
             let deploying_gateway = components.iter().any(|c| c == "gateway");
             let deploying_whatsapp = components.iter().any(|c| c == "channel-whatsapp");
             let deploying_discord = components.iter().any(|c| c == "channel-discord");
-            let interactive = can_prompt_interactively();
-            let wizard_mode = wizard;
 
-            if wizard_mode && !interactive {
-                return Err("--wizard requires an interactive terminal".into());
+            if wizard_mode && interactive {
+                note(
+                    "Target",
+                    format!(
+                        "Cloudflare account: {}\nComponents: {}",
+                        resolved_account_id,
+                        components.join(", ")
+                    ),
+                )?;
+                note(
+                    "Security notice",
+                    "GSV agents may execute shell commands and access external services.\nEnsure you trust the environment and connected channels/nodes.",
+                )?;
+                if !prompt_yes_no("I understand the risks and want to proceed", false)? {
+                    let _ = outro_cancel("Deployment cancelled.");
+                    return Err("Deployment cancelled.".into());
+                }
+            }
+
+            if !local_account_id_configured {
+                if wizard_mode
+                    && interactive
+                    && prompt_yes_no(
+                        "Save this Cloudflare account ID for future deploy commands?",
+                        true,
+                    )?
+                {
+                    if persist_cloudflare_account_id(&resolved_account_id)? {
+                        println!("Saved cloudflare.account_id to local config.");
+                    }
+                } else {
+                    println!(
+                        "Tip: persist it with `gsv local-config set cloudflare.account_id {}`",
+                        resolved_account_id
+                    );
+                }
             }
 
             let mut resolved_provider = match llm_provider {
                 Some(provider) => Some(
-                    normalize_llm_provider(&provider).ok_or_else(|| {
-                        format!(
-                            "Invalid --llm-provider '{}'. Valid values: anthropic, openai, google, openrouter",
-                            provider
-                        )
-                    })?,
+                    normalize_llm_provider(&provider).ok_or("--llm-provider must not be empty")?,
                 ),
                 None => None,
             };
@@ -1065,30 +1223,33 @@ async fn run_deploy(
                 && interactive
                 && prompt_yes_no("Configure gateway auth + LLM settings now?", true)?
             {
-                let provider = prompt_line(
-                    "LLM provider (anthropic/openai/google/openrouter)",
-                    Some("anthropic"),
-                )?
-                .ok_or("Provider is required")?;
-                resolved_provider = Some(
-                    normalize_llm_provider(&provider).ok_or_else(|| {
-                        format!(
-                            "Invalid provider '{}'. Valid values: anthropic, openai, google, openrouter",
-                            provider
-                        )
-                    })?,
-                );
+                resolved_provider = Some(prompt_llm_provider(Some("anthropic"))?);
             }
 
             if let Some(provider) = resolved_provider.as_deref() {
                 if resolved_llm_model.is_none() {
-                    let default_model = default_llm_model_for_provider(provider)
-                        .ok_or_else(|| format!("No default model for provider {}", provider))?;
-                    if interactive && wizard_mode {
-                        resolved_llm_model = prompt_line("LLM model", Some(default_model))?;
+                    if let Some(default_model) = default_llm_model_for_provider(provider) {
+                        if interactive && wizard_mode {
+                            resolved_llm_model = prompt_line("LLM model", Some(default_model))?;
+                        } else {
+                            resolved_llm_model = Some(default_model.to_string());
+                        }
+                    } else if interactive && wizard_mode {
+                        resolved_llm_model = prompt_line("LLM model", None)?;
                     } else {
-                        resolved_llm_model = Some(default_model.to_string());
+                        return Err(format!(
+                            "--llm-model is required for custom provider '{}'",
+                            provider
+                        )
+                        .into());
                     }
+                }
+                if resolved_llm_model
+                    .as_deref()
+                    .map(|model| model.trim().is_empty())
+                    .unwrap_or(true)
+                {
+                    return Err(format!("LLM model is required for provider '{}'", provider).into());
                 }
 
                 if resolved_llm_api_key.is_none() {
@@ -1111,12 +1272,49 @@ async fn run_deploy(
                 && wizard_mode
                 && interactive
             {
+                note(
+                    "Discord setup checklist",
+                    "1. https://discord.com/developers/applications -> New Application\n2. Bot tab -> Add Bot -> Reset Token\n3. Enable MESSAGE CONTENT INTENT in Bot tab\n4. Invite URL: https://discord.com/oauth2/authorize?client_id=<APP_ID>&permissions=101376&scope=bot",
+                )?;
                 if prompt_yes_no(
                     "Configure Discord bot token on deployed channel worker now?",
                     true,
                 )? {
                     resolved_discord_bot_token = prompt_secret("Discord bot token")?;
                 }
+            }
+
+            if wizard_mode && interactive {
+                let mut summary = format!(
+                    "Account: {}\nComponents: {}",
+                    resolved_account_id,
+                    components.join(", ")
+                );
+                if deploying_gateway {
+                    if let (Some(provider), Some(model)) =
+                        (resolved_provider.as_deref(), resolved_llm_model.as_deref())
+                    {
+                        summary.push_str(&format!("\nGateway model: {}/{}", provider, model));
+                    } else {
+                        summary.push_str("\nGateway model: unchanged");
+                    }
+                }
+                if deploying_discord {
+                    summary.push_str(&format!(
+                        "\nDiscord bot token: {}",
+                        if resolved_discord_bot_token.is_some() {
+                            "provided"
+                        } else {
+                            "not provided"
+                        }
+                    ));
+                }
+                note("Deployment summary", summary)?;
+                if !prompt_yes_no("Ready to deploy?", true)? {
+                    let _ = outro_cancel("Deployment cancelled.");
+                    return Err("Deployment cancelled.".into());
+                }
+                log::step("Starting deployment...")?;
             }
 
             let bundle_version = if bundle_dir.is_some() {
@@ -1214,12 +1412,21 @@ async fn run_deploy(
                         }
                     }
 
+                    let token_to_save = if bootstrap_applied {
+                        desired_gateway_auth_token.as_deref()
+                    } else {
+                        None
+                    };
+                    save_gateway_local_config(gateway_url, token_to_save)?;
                     if bootstrap_applied {
-                        save_gateway_local_config(
-                            gateway_url,
-                            desired_gateway_auth_token.as_deref(),
-                        )?;
                         println!("Saved gateway URL/token to local config.");
+                    } else {
+                        println!("Saved gateway URL to local config.");
+                        if should_bootstrap {
+                            println!(
+                                "Gateway token was not saved because runtime configuration did not complete."
+                            );
+                        }
                     }
                 } else {
                     println!(
@@ -1250,19 +1457,30 @@ async fn run_deploy(
             delete_queue,
             delete_bucket,
             purge_bucket,
+            wizard,
             api_token,
             account_id,
         } => {
             if all && !component.is_empty() {
                 return Err("Use either --all or one/more --component values, not both".into());
             }
-            if !all && component.is_empty() {
+            let interactive = can_prompt_interactively();
+            let wizard_mode = wizard;
+
+            if wizard_mode && !interactive {
+                return Err("--wizard requires an interactive terminal".into());
+            }
+            deploy::set_notification_output(wizard_mode && interactive);
+            if wizard_mode && interactive {
+                intro("GSV teardown wizard")?;
+            }
+            if !all && component.is_empty() && !wizard_mode {
                 return Err(
                     "Refusing to tear down without explicit targets. Use --all or at least one --component."
                         .into(),
                 );
             }
-            if purge_bucket && !delete_bucket {
+            if purge_bucket && !delete_bucket && !wizard_mode {
                 return Err("--purge-bucket requires --delete-bucket".into());
             }
 
@@ -1278,23 +1496,75 @@ async fn run_deploy(
                     .await?;
             println!("Cloudflare account ID: {}", resolved_account_id);
 
-            let components = if all {
+            let mut components = if all {
                 deploy::available_components()
                     .iter()
                     .map(|c| (*c).to_string())
                     .collect::<Vec<_>>()
+            } else if component.is_empty() {
+                Vec::new()
             } else {
                 deploy::normalize_components(&component)?
             };
+
+            if wizard_mode && interactive && !all && component.is_empty() {
+                note(
+                    "Target",
+                    format!("Cloudflare account: {}", resolved_account_id),
+                )?;
+                components = prompt_down_components(&components)?;
+            }
+
+            if components.is_empty() {
+                return Err("No components selected for teardown.".into());
+            }
+
+            let mut delete_queue_resource = delete_queue;
+            let mut delete_bucket_resource = delete_bucket;
+            let mut purge_bucket_resource = purge_bucket;
+
+            if wizard_mode && interactive {
+                delete_queue_resource = prompt_yes_no(
+                    "Also delete queue gsv-gateway-inbound?",
+                    delete_queue_resource,
+                )?;
+                delete_bucket_resource =
+                    prompt_yes_no("Also delete R2 bucket gsv-storage?", delete_bucket_resource)?;
+                if delete_bucket_resource {
+                    purge_bucket_resource = prompt_yes_no(
+                        "Purge bucket objects before deletion?",
+                        purge_bucket_resource,
+                    )?;
+                } else {
+                    purge_bucket_resource = false;
+                }
+
+                let summary = format!(
+                    "Account: {}\nComponents: {}\nDelete queue: {}\nDelete bucket: {}\nPurge bucket objects: {}",
+                    resolved_account_id,
+                    components.join(", "),
+                    if delete_queue_resource { "yes" } else { "no" },
+                    if delete_bucket_resource { "yes" } else { "no" },
+                    if purge_bucket_resource { "yes" } else { "no" }
+                );
+                note("Teardown summary", summary)?;
+                if !prompt_yes_no("Proceed with teardown?", false)? {
+                    let _ = outro_cancel("Teardown cancelled.");
+                    return Err("Teardown cancelled.".into());
+                }
+                log::step("Starting teardown...")?;
+            } else if purge_bucket_resource && !delete_bucket_resource {
+                return Err("--purge-bucket requires --delete-bucket".into());
+            }
 
             println!("Tearing down components: {}", components.join(", "));
             deploy::destroy_deploy(
                 &resolved_account_id,
                 &token,
                 &components,
-                delete_queue,
-                delete_bucket,
-                purge_bucket,
+                delete_queue_resource,
+                delete_bucket_resource,
+                purge_bucket_resource,
             )
             .await
         }
@@ -1739,6 +2009,22 @@ fn persist_gateway_overrides(
     }
 
     Ok(changed)
+}
+
+fn persist_cloudflare_account_id(account_id: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    let trimmed = account_id.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+
+    let mut local_cfg = CliConfig::load();
+    if local_cfg.cloudflare.account_id.as_deref() == Some(trimmed) {
+        return Ok(false);
+    }
+
+    local_cfg.cloudflare.account_id = Some(trimmed.to_string());
+    local_cfg.save()?;
+    Ok(true)
 }
 
 fn node_service_is_installed() -> Result<bool, Box<dyn std::error::Error>> {

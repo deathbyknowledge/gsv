@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::time::sleep;
 use walkdir::WalkDir;
@@ -38,6 +39,82 @@ const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
 const MAX_SOURCE_MAP_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
 const TEMPLATE_AGENT_ID: &str = "main";
+static DEPLOY_NOTIFICATION_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_notification_output(enabled: bool) {
+    DEPLOY_NOTIFICATION_MODE.store(enabled, Ordering::Relaxed);
+}
+
+fn emit_output_line(line: &str, is_error: bool) {
+    if !DEPLOY_NOTIFICATION_MODE.load(Ordering::Relaxed) {
+        if is_error {
+            ::std::eprintln!("{}", line);
+        } else {
+            ::std::println!("{}", line);
+        }
+        return;
+    }
+
+    for raw_line in line.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if is_error || line.starts_with("Error:") {
+            let message = line.strip_prefix("Error:").map(str::trim).unwrap_or(line);
+            let _ = cliclack::log::error(message);
+            continue;
+        }
+        if line.starts_with("Warning:") {
+            let message = line.strip_prefix("Warning:").map(str::trim).unwrap_or(line);
+            let _ = cliclack::log::warning(message);
+            continue;
+        }
+        if line.ends_with(':')
+            || line.starts_with("Deploying ")
+            || line.starts_with("Finalizing ")
+            || line.starts_with("Ensuring ")
+            || line.starts_with("Preparing ")
+            || line.starts_with("Fetching ")
+            || line.starts_with("Installing ")
+            || line.starts_with("Deleting ")
+            || line.starts_with("Tearing down ")
+            || line.starts_with("Applying ")
+        {
+            let _ = cliclack::log::step(line);
+            continue;
+        }
+        if line.starts_with("Created ")
+            || line.starts_with("Updated ")
+            || line.starts_with("Uploaded ")
+            || line.starts_with("Configured ")
+            || line.starts_with("Saved ")
+            || line.starts_with("Deleted ")
+            || line == "Deploy complete."
+            || line == "Teardown complete."
+            || line.ends_with(" complete.")
+        {
+            let _ = cliclack::log::success(line);
+            continue;
+        }
+
+        let _ = cliclack::log::info(line);
+    }
+}
+
+fn deploy_println(line: String) {
+    emit_output_line(&line, false);
+}
+
+macro_rules! println {
+    () => {{
+        deploy_println(String::new());
+    }};
+    ($($arg:tt)*) => {{
+        deploy_println(format!($($arg)*));
+    }};
+}
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
@@ -1017,6 +1094,15 @@ async fn fetch_account_workers_subdomain(
         .and_then(Value::as_str)
         .ok_or("Cloudflare workers subdomain is missing from API response")?;
     Ok(subdomain.to_string())
+}
+
+fn workers_dev_domain(subdomain: &str) -> String {
+    let trimmed = subdomain.trim().trim_end_matches('.');
+    if trimmed.ends_with(".workers.dev") {
+        trimmed.to_string()
+    } else {
+        format!("{}.workers.dev", trimmed)
+    }
 }
 
 async fn enable_workers_dev_for_script(
@@ -2767,9 +2853,10 @@ pub async fn apply_deploy(
         {
             Ok(()) => {
                 if let Some(subdomain) = account_subdomain.as_deref() {
+                    let workers_domain = workers_dev_domain(subdomain);
                     println!(
                         "workers.dev URL: https://{}.{}",
-                        bundle.script_name, subdomain
+                        bundle.script_name, workers_domain
                     );
                 } else {
                     println!("workers.dev enabled for {}", bundle.script_name);
@@ -2819,10 +2906,12 @@ pub async fn apply_deploy(
         println!("Updated bindings for {}", bundle.script_name);
     }
 
-    if let Some(gateway_bundle) = prepared
+    let gateway_script_name = prepared
         .iter()
         .find(|bundle| bundle.component == COMPONENT_GATEWAY)
-    {
+        .map(|bundle| bundle.script_name.clone());
+
+    if let Some(gateway_script_name) = gateway_script_name.as_deref() {
         if let Some(queue_id) = queue_ids.get(DEFAULT_GATEWAY_QUEUE_NAME) {
             upsert_queue_consumer(
                 &client,
@@ -2830,7 +2919,7 @@ pub async fn apply_deploy(
                 api_token,
                 queue_id,
                 DEFAULT_GATEWAY_QUEUE_NAME,
-                &gateway_bundle.script_name,
+                gateway_script_name,
             )
             .await?;
         } else {
@@ -2841,14 +2930,17 @@ pub async fn apply_deploy(
         }
     }
 
-    let gateway_url =
-        if selected_components.contains(COMPONENT_GATEWAY) && account_subdomain.is_some() {
-            account_subdomain
-                .as_deref()
-                .map(|subdomain| format!("https://{}.{}", SCRIPT_GATEWAY, subdomain))
-        } else {
-            None
-        };
+    let gateway_url = if selected_components.contains(COMPONENT_GATEWAY) {
+        match (gateway_script_name.as_deref(), account_subdomain.as_deref()) {
+            (Some(script_name), Some(subdomain)) => {
+                let workers_domain = workers_dev_domain(subdomain);
+                Some(format!("https://{}.{}", script_name, workers_domain))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     println!("\nDeploy complete.");
     Ok(DeployApplyResult {
@@ -3034,11 +3126,22 @@ pub async fn print_deploy_status(
 
     let client = reqwest::Client::new();
     let scripts = list_worker_scripts(&client, account_id, api_token).await?;
+    let gateway_script_name = if scripts.contains_key(SCRIPT_GATEWAY) {
+        Some(SCRIPT_GATEWAY.to_string())
+    } else if scripts.contains_key("gateway") {
+        Some("gateway".to_string())
+    } else {
+        None
+    };
 
     println!("\nWorkers:");
     for component in &component_order {
-        let script_name = component_to_script_name(component)
-            .ok_or_else(|| format!("Unsupported component '{}'", component))?;
+        let script_name = if component == COMPONENT_GATEWAY {
+            gateway_script_name.as_deref().unwrap_or(SCRIPT_GATEWAY)
+        } else {
+            component_to_script_name(component)
+                .ok_or_else(|| format!("Unsupported component '{}'", component))?
+        };
 
         if let Some(migration_tag) = scripts.get(script_name) {
             if let Some(tag) = migration_tag.as_deref() {
@@ -3063,18 +3166,19 @@ pub async fn print_deploy_status(
                 "  queue {:<30} exists ({})",
                 DEFAULT_GATEWAY_QUEUE_NAME, queue.queue_id
             );
+            let queue_consumer_script = gateway_script_name.as_deref().unwrap_or(SCRIPT_GATEWAY);
             let has_gateway_consumer = queue_has_consumer_for_script(
                 &client,
                 account_id,
                 api_token,
                 &queue.queue_id,
                 DEFAULT_GATEWAY_QUEUE_NAME,
-                SCRIPT_GATEWAY,
+                queue_consumer_script,
             )
             .await?;
             println!(
                 "  queue consumer {:<22} {}",
-                SCRIPT_GATEWAY,
+                queue_consumer_script,
                 if has_gateway_consumer {
                     "present"
                 } else {
@@ -3142,12 +3246,14 @@ async fn connect_gateway_with_retry(
         {
             Ok(conn) => return Ok(conn),
             Err(error) => {
+                let error_message = error.to_string();
                 last_error = Some(error);
                 if attempt < max_attempts {
                     println!(
-                        "Warning: failed to connect to gateway config endpoint (attempt {}/{}). Retrying in {}s...",
+                        "Warning: failed to connect to gateway config endpoint (attempt {}/{}): {}. Retrying in {}s...",
                         attempt,
                         max_attempts,
+                        error_message,
                         delay.as_secs()
                     );
                     sleep(delay).await;

@@ -1,7 +1,7 @@
 #!/bin/bash
 # GSV Installer
 # 
-# Installs the GSV CLI and optionally deploys the gateway.
+# Installs the GSV CLI.
 #
 # Usage:
 #   curl -sSL https://gsv.dev/install.sh | bash
@@ -10,10 +10,7 @@
 # Environment variables:
 #   GSV_INSTALL_DIR  - Where to install CLI (default: /usr/local/bin)
 #   GSV_VERSION      - CLI version to install (default: latest)
-#   GSV_SKIP_DEPLOY  - Skip deployment prompt (default: false)
-#   GSV_GATEWAY_URL  - Use this gateway URL (skips deployment)
-#   CF_API_TOKEN     - Cloudflare API token (optional; prompted if deploying)
-#   CF_ACCOUNT_ID    - Cloudflare account ID (optional; auto-detected if omitted)
+#   GSV_GATEWAY_URL  - Optional gateway URL to configure after install
 
 set -e
 
@@ -140,40 +137,6 @@ get_latest_version() {
 }
 
 # ============================================================================
-# Deployment (via gsv CLI)
-# ============================================================================
-
-deploy_with_cli() {
-    info "Deploying GSV to Cloudflare..."
-    echo ""
-
-    local cf_token="${CF_API_TOKEN:-}"
-    local cf_account="${CF_ACCOUNT_ID:-}"
-
-    if [ -z "$cf_token" ]; then
-        cf_token=$(prompt_input "Enter Cloudflare API token" "")
-    fi
-
-    if [ -z "$cf_token" ]; then
-        warn "No Cloudflare API token provided. Skipping deployment."
-        return 1
-    fi
-
-    if [ -z "$cf_account" ]; then
-        cf_account=$(prompt_input "Enter Cloudflare account ID (optional)" "")
-    fi
-
-    info "Running deploy wizard (gsv deploy up --wizard --all)..."
-    echo ""
-
-    if [ -n "$cf_account" ]; then
-        gsv deploy up --wizard --all --api-token "$cf_token" --account-id "$cf_account"
-    else
-        gsv deploy up --wizard --all --api-token "$cf_token"
-    fi
-}
-
-# ============================================================================
 # CLI Installation
 # ============================================================================
 
@@ -251,15 +214,11 @@ main() {
     
     echo -e "  Platform: ${BOLD}${OS}-${ARCH}${NC}"
     echo ""
-
-    WANT_DEPLOY="false"
-    DEPLOYED_WITH_CLI="false"
     
-    # Check for existing deployment via env var
+    # Optional preconfigured gateway via env var
     if [ -n "$GSV_GATEWAY_URL" ]; then
         GATEWAY_URL="$GSV_GATEWAY_URL"
         info "Using gateway URL from environment: ${GATEWAY_URL}"
-    # Check for existing config
     elif check_existing_config; then
         if prompt_yn "Existing config found. Reinstall CLI only?" "y"; then
             download_cli
@@ -272,70 +231,19 @@ main() {
         fi
     fi
     
-    # Ask about deployment
-    if [ -z "$GATEWAY_URL" ] && [ "$GSV_SKIP_DEPLOY" != "true" ]; then
-        echo ""
-        if prompt_yn "Do you have an existing GSV deployment?"; then
-            echo ""
-            GATEWAY_URL=$(prompt_input "Enter your gateway URL" "https://gsv.xxx.workers.dev")
-        else
-            echo ""
-            info "Setting up a new GSV deployment..."
-            echo ""
-            echo "  This will:"
-            echo "    1. Install the GSV CLI"
-            echo "    2. Run 'gsv deploy up --wizard --all'"
-            echo "    3. Configure Gateway and channels on Cloudflare"
-            echo ""
-            echo "  Requirements:"
-            echo "    - Cloudflare API token with Workers/R2/Queues permissions"
-            echo "    - Cloudflare account (free tier works!)"
-            echo ""
-            
-            if ! prompt_yn "Continue with deployment?"; then
-                echo ""
-                warn "Skipping deployment."
-                echo ""
-                echo "  To deploy manually later:"
-                echo "    gsv deploy up --wizard --all"
-                echo ""
-                
-                # Still offer to install CLI
-                if prompt_yn "Install CLI anyway?"; then
-                    download_cli
-                    echo ""
-                    echo "  Configure with:"
-                    echo "    gsv init"
-                    echo ""
-                fi
-                exit 0
-            fi
-
-            WANT_DEPLOY="true"
-        fi
-    fi
-    
     # Install CLI
     echo ""
     download_cli
-
-    if [ "$WANT_DEPLOY" = "true" ]; then
+    
+    # Configure if we have a URL, or optionally prompt for one
+    if [ -z "$GATEWAY_URL" ]; then
         echo ""
-        if deploy_with_cli; then
-            DEPLOYED_WITH_CLI="true"
-            local_gateway_ws=$(gsv local-config get gateway.url 2>/dev/null | tail -n 1 || true)
-            if [ -n "$local_gateway_ws" ]; then
-                GATEWAY_URL="${local_gateway_ws%/ws}"
-            fi
-        else
-            warn "Deployment failed, but you can try again later:"
-            echo "    gsv deploy up --wizard --all"
-            echo ""
+        if prompt_yn "Configure an existing gateway URL now?" "n"; then
+            GATEWAY_URL=$(prompt_input "Enter your gateway URL" "https://gsv.xxx.workers.dev")
         fi
     fi
-    
-    # Configure if we have a URL
-    if [ -n "$GATEWAY_URL" ] && [ "$DEPLOYED_WITH_CLI" != "true" ]; then
+
+    if [ -n "$GATEWAY_URL" ]; then
         echo ""
         configure_cli "$GATEWAY_URL"
     fi
@@ -353,11 +261,15 @@ main() {
         echo ""
         echo "  Next steps:"
         echo "    gsv client \"Hello!\"     # Start chatting"
+        echo "    gsv deploy up --wizard --all  # Deploy/update Cloudflare resources"
         echo "    gsv node install --id mypc --workspace ~/projects   # Run tool node daemon"
         echo ""
     else
-        echo "  CLI installed. Configure with:"
-        echo "    gsv init"
+        echo "  CLI installed."
+        echo "  Deploy and configure when ready:"
+        echo "    gsv deploy up --wizard --all"
+        echo "  Or set an existing gateway:"
+        echo "    gsv local-config set gateway.url wss://<your-gateway>.workers.dev/ws"
         echo ""
     fi
     
