@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PersistedObject } from "../shared/persisted-object";
+import { PersistedObject, snapshot } from "../shared/persisted-object";
 import { mergeConfig, type GsvConfig, type GsvConfigInput } from "../config";
 import { DEFAULT_CONFIG } from "../config/defaults";
 
@@ -81,6 +81,76 @@ describe("Gateway config serialization", () => {
 
       // The issue is that Cloudflare's RPC uses structured clone, not JSON
       // Proxies fail structured clone. Our fix ensures we return plain objects.
+    });
+
+    it("getFullConfig with snapshot() strips Proxy from channels (issue #13)", () => {
+      const kv = createMockKv();
+      const configStore = PersistedObject<Partial<GsvConfig>>(kv, { prefix: "config:" });
+
+      // Set channels config (the exact path that triggered issue #13)
+      configStore.channels = {
+        whatsapp: {
+          dmPolicy: "pairing",
+          allowFrom: ["+31628552611"],
+        },
+      };
+
+      // Simulate the fixed getFullConfig() using snapshot()
+      function getFullConfig(): GsvConfig {
+        return mergeConfig(DEFAULT_CONFIG, snapshot(configStore) as GsvConfigInput);
+      }
+
+      const config = getFullConfig();
+
+      // The channels path must be fully serializable (no Proxy wrappers)
+      const channelsSerialized = JSON.stringify(config.channels);
+      const channelsParsed = JSON.parse(channelsSerialized);
+      expect(channelsParsed.whatsapp.dmPolicy).toBe("pairing");
+      expect(channelsParsed.whatsapp.allowFrom).toContain("+31628552611");
+
+      // getSafeConfig simulation — spread must also be clean
+      const safeConfig = { ...config };
+      const safeSerialized = JSON.stringify(safeConfig);
+      const safeParsed = JSON.parse(safeSerialized);
+      expect(safeParsed.channels.whatsapp.allowFrom).toContain("+31628552611");
+    });
+
+    it("getConfigPath returns plain values after snapshot()", () => {
+      const kv = createMockKv();
+      const configStore = PersistedObject<Partial<GsvConfig>>(kv, { prefix: "config:" });
+      configStore.channels = {
+        whatsapp: {
+          dmPolicy: "open",
+          allowFrom: ["*"],
+        },
+      };
+
+      function getFullConfig(): GsvConfig {
+        return mergeConfig(DEFAULT_CONFIG, snapshot(configStore) as GsvConfigInput);
+      }
+
+      function getConfigPath(path: string): unknown {
+        const parts = path.split(".");
+        let current: unknown = getFullConfig();
+        for (const part of parts) {
+          if (current && typeof current === "object" && part in current) {
+            current = (current as Record<string, unknown>)[part];
+          } else {
+            return undefined;
+          }
+        }
+        return current;
+      }
+
+      // The exact path that triggered issue #13
+      const channels = getConfigPath("channels");
+      const serialized = JSON.stringify(channels);
+      const parsed = JSON.parse(serialized);
+      expect(parsed.whatsapp.dmPolicy).toBe("open");
+
+      // Nested path
+      const dmPolicy = getConfigPath("channels.whatsapp.dmPolicy");
+      expect(dmPolicy).toBe("open");
     });
 
     it("config can be passed to another function (simulating Session DO)", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { PersistedObject } from "./persisted-object";
+import { PersistedObject, snapshot } from "./persisted-object";
 
 // Mock KV storage that behaves like DO storage.kv
 function createMockKv() {
@@ -150,6 +150,42 @@ describe("PersistedObject", () => {
 
       expect(kv.get("user:name")).toBe("test");
       expect(kv.get("name")).toBeUndefined();
+    });
+  });
+
+  describe("snapshot()", () => {
+    it("returns a plain deep-cloned object", () => {
+      const obj = PersistedObject<{
+        config: { nested: { value: number }; items: string[] };
+      }>(kv);
+      obj.config = { nested: { value: 42 }, items: ["a", "b"] };
+
+      const plain = snapshot(obj);
+
+      expect(plain.config.nested.value).toBe(42);
+      expect(plain.config.items).toEqual(["a", "b"]);
+
+      // Mutations on the snapshot must NOT affect the original
+      plain.config.nested.value = 999;
+      plain.config.items.push("c");
+      expect(obj.config.nested.value).toBe(42);
+      expect(obj.config.items).toEqual(["a", "b"]);
+    });
+
+    it("snapshot is structuredClone-safe (no Proxy wrappers)", () => {
+      const obj = PersistedObject<{
+        channels: Record<string, { policy: string; allowFrom: string[] }>;
+      }>(kv);
+      obj.channels = {
+        whatsapp: { policy: "pairing", allowFrom: ["+31628552611"] },
+      };
+
+      const plain = snapshot(obj);
+
+      // Verify the snapshot can round-trip through JSON (proxy-free)
+      const roundTripped = JSON.parse(JSON.stringify(plain));
+      expect(roundTripped.channels.whatsapp.policy).toBe("pairing");
+      expect(roundTripped.channels.whatsapp.allowFrom).toContain("+31628552611");
     });
   });
 });

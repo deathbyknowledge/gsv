@@ -7,13 +7,30 @@ type Options<T extends Record<string, unknown>> = {
   defaults?: Partial<T>;
 };
 
+declare const __proxied: unique symbol;
+
+/**
+ * Branded wrapper for PersistedObject values.
+ * Use `snapshot(obj)` to obtain a deep-cloned plain `T` safe for
+ * RPC / structured clone boundaries.
+ */
+export type Proxied<T> = T & { [__proxied]: true };
+
+/**
+ * Deep-clone a Proxied object, stripping all Proxy wrappers.
+ * Returns a plain T safe for structured clone / RPC.
+ */
+export function snapshot<T extends Record<string, unknown>>(obj: Proxied<T>): T {
+  return JSON.parse(JSON.stringify(obj)) as T;
+}
+
 const INTERNAL = Symbol("kv-state:internal");
 const PERSISTED_REF = "__persistedRef__";
 
 export function PersistedObject<T extends Record<string, unknown>>(
   kv: SyncKvStorage,
   opts: Options<T> = {}
-): T {
+): Proxied<T> {
   const prefix = opts.prefix ?? "";
   const autoSave = opts.autoSave ?? true;
   const defaults = opts.defaults ?? ({} as Record<string, unknown>);
@@ -281,5 +298,5 @@ export function PersistedObject<T extends Record<string, unknown>>(
     }
   };
 
-  return new Proxy(target, handler) as T;
+  return new Proxy(target, handler) as Proxied<T>;
 }

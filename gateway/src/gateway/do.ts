@@ -1,5 +1,5 @@
 import { DurableObject, env } from "cloudflare:workers";
-import { PersistedObject } from "../shared/persisted-object";
+import { PersistedObject, snapshot } from "../shared/persisted-object";
 import type {
   Frame,
   EventFrame,
@@ -1475,9 +1475,9 @@ export class Gateway extends DurableObject<Env> {
   }
 
   getFullConfig(): GsvConfig {
-    return mergeConfig(DEFAULT_CONFIG, {
-      ...this.configStore,
-    } as GsvConfigInput);
+    return mergeConfig(DEFAULT_CONFIG,
+      snapshot(this.configStore) as GsvConfigInput,
+    );
   }
 
   getSafeConfig(): GsvConfig {
@@ -1500,8 +1500,7 @@ export class Gateway extends DurableObject<Env> {
   }
 
   getConfig(): GsvConfig {
-    // Deep clone to avoid returning Proxy objects that can't be serialized in RPC
-    return JSON.parse(JSON.stringify(this.getFullConfig()));
+    return this.getFullConfig();
   }
 
   broadcastToSession(sessionKey: string, payload: ChatEventPayload): void {
