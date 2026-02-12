@@ -1,5 +1,6 @@
 import { NATIVE_TOOLS } from "./constants";
 import type { ToolDefinition } from "../../protocol/tools";
+import type { NativeToolHandlerMap } from "./types";
 
 export const getGatewayToolDefinitions = (): ToolDefinition[] => [
   {
@@ -38,3 +39,49 @@ export const getGatewayToolDefinitions = (): ToolDefinition[] => [
     },
   },
 ];
+
+export const gatewayNativeToolHandlers: NativeToolHandlerMap = {
+  [NATIVE_TOOLS.CONFIG_GET]: async (context, args) => {
+    if (!context.gateway) {
+      return {
+        ok: false,
+        error: "ConfigGet tool unavailable: gateway context missing",
+      };
+    }
+
+    const path = typeof args.path === "string" ? args.path.trim() : undefined;
+    if (path) {
+      const value = await context.gateway.getConfigPath(path);
+      return {
+        ok: true,
+        result: { path, value },
+      };
+    }
+
+    return {
+      ok: true,
+      result: { config: await context.gateway.getSafeConfig() },
+    };
+  },
+  [NATIVE_TOOLS.LOGS_GET]: async (context, args) => {
+    if (!context.gateway) {
+      return {
+        ok: false,
+        error: "LogsGet tool unavailable: gateway context missing",
+      };
+    }
+
+    const nodeId =
+      typeof args.nodeId === "string" ? args.nodeId.trim() || undefined : undefined;
+    const lines =
+      typeof args.lines === "number" && Number.isFinite(args.lines)
+        ? args.lines
+        : undefined;
+
+    const payload = await context.gateway.getNodeLogs({ nodeId, lines });
+    return {
+      ok: true,
+      result: payload,
+    };
+  },
+};

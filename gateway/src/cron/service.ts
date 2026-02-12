@@ -283,9 +283,9 @@ export class CronService {
       job.state.lastError = meta?.error;
       job.state.lastDurationMs = durationMs;
 
-      const isOneShotSuccess = job.schedule.kind === "at" && status === "ok";
-      if (isOneShotSuccess) {
-        if (job.deleteAfterRun) {
+      const isOneShot = job.schedule.kind === "at";
+      if (isOneShot) {
+        if (status === "ok" && job.deleteAfterRun) {
           // Delete only the job row so run history remains queryable.
           this.deps.store.updateJob({
             ...job,

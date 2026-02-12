@@ -99,8 +99,10 @@ describe("workspace tools: global skills routing", () => {
     bucket.seed("skills/demo/SKILL.md", "global demo");
 
     const result = await executeNativeTool(
-      bucket as unknown as R2Bucket,
-      "main",
+      {
+        bucket: bucket as unknown as R2Bucket,
+        agentId: "main",
+      },
       NATIVE_TOOLS.READ_FILE,
       { path: "skills/demo/SKILL.md" },
     );
@@ -120,8 +122,10 @@ describe("workspace tools: global skills routing", () => {
     bucket.seed("agents/main/skills/demo/SKILL.md", "agent demo");
 
     const result = await executeNativeTool(
-      bucket as unknown as R2Bucket,
-      "main",
+      {
+        bucket: bucket as unknown as R2Bucket,
+        agentId: "main",
+      },
       NATIVE_TOOLS.READ_FILE,
       { path: "skills/demo/SKILL.md" },
     );
@@ -138,8 +142,10 @@ describe("workspace tools: global skills routing", () => {
     const bucket = new MockBucket();
 
     const result = await executeNativeTool(
-      bucket as unknown as R2Bucket,
-      "main",
+      {
+        bucket: bucket as unknown as R2Bucket,
+        agentId: "main",
+      },
       NATIVE_TOOLS.WRITE_FILE,
       { path: "skills/demo/NOTES.md", content: "note" },
     );
@@ -156,8 +162,10 @@ describe("workspace tools: global skills routing", () => {
     bucket.seed("skills/ops/SKILL.md", "global ops");
 
     const result = await executeNativeTool(
-      bucket as unknown as R2Bucket,
-      "main",
+      {
+        bucket: bucket as unknown as R2Bucket,
+        agentId: "main",
+      },
       NATIVE_TOOLS.LIST_FILES,
       { path: "skills/" },
     );
@@ -175,8 +183,10 @@ describe("workspace tools: global skills routing", () => {
     bucket.seed("skills/demo/SKILL.md", "global demo");
 
     const result = await executeNativeTool(
-      bucket as unknown as R2Bucket,
-      "main",
+      {
+        bucket: bucket as unknown as R2Bucket,
+        agentId: "main",
+      },
       NATIVE_TOOLS.LIST_FILES,
       { path: "skills/demo" },
     );

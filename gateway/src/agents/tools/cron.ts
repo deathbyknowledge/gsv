@@ -1,11 +1,12 @@
 import { NATIVE_TOOLS } from "./constants";
 import type { ToolDefinition } from "../../protocol/tools";
+import type { NativeToolHandlerMap } from "./types";
 
 export const getCronToolDefinitions = (): ToolDefinition[] => [
   {
     name: NATIVE_TOOLS.CRON,
     description:
-      "Manage scheduled cron jobs. Actions: status, list, add, update, remove, run, runs. Legacy: start, trigger.",
+      "Manage scheduled cron jobs. Actions: status, list, add, update, remove, run, runs.",
     inputSchema: {
       type: "object",
       properties: {
@@ -19,8 +20,6 @@ export const getCronToolDefinitions = (): ToolDefinition[] => [
             "remove",
             "run",
             "runs",
-            "start",
-            "trigger",
           ],
           description: "Cron action to execute.",
         },
@@ -67,3 +66,20 @@ export const getCronToolDefinitions = (): ToolDefinition[] => [
     },
   },
 ];
+
+export const cronNativeToolHandlers: NativeToolHandlerMap = {
+  [NATIVE_TOOLS.CRON]: async (context, args) => {
+    if (!context.gateway) {
+      return {
+        ok: false,
+        error: "Cron tool unavailable: gateway context missing",
+      };
+    }
+
+    const payload = await context.gateway.executeCronTool(args);
+    return {
+      ok: true,
+      result: payload,
+    };
+  },
+};

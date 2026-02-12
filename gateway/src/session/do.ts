@@ -1221,38 +1221,13 @@ export class Session extends DurableObject<Env> {
 
       const gateway = this.env.GATEWAY.getByName("singleton");
       const result = await executeNativeTool(
-        this.env.STORAGE,
-        agentId,
+        {
+          bucket: this.env.STORAGE,
+          agentId,
+          gateway,
+        },
         toolCall.name,
         toolCall.args,
-        {
-          executeCronTool: async (args) => {
-            return await gateway.executeCronTool(args);
-          },
-          executeConfigGet: async (args) => {
-            const path =
-              typeof args.path === "string" ? args.path.trim() : undefined;
-            if (path) {
-              const value = await gateway.getConfigPath(path);
-              return { path, value };
-            }
-            return { config: await gateway.getSafeConfig() };
-          },
-          executeLogsGet: async (args) => {
-            const nodeId =
-              typeof args.nodeId === "string"
-                ? args.nodeId.trim() || undefined
-                : undefined;
-            const lines =
-              typeof args.lines === "number" && Number.isFinite(args.lines)
-                ? args.lines
-                : undefined;
-            return await gateway.getNodeLogs({
-              nodeId,
-              lines,
-            });
-          },
-        },
       );
 
       if (result.ok) {

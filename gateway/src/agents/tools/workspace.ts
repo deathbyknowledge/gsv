@@ -10,6 +10,7 @@
 
 import { NATIVE_TOOLS } from "./constants";
 import type { ToolDefinition } from "../../protocol/tools";
+import type { NativeToolHandlerMap } from "./types";
 
 const VIRTUAL_SKILLS_ROOT = "skills";
 
@@ -499,3 +500,19 @@ export async function deleteFile(
     },
   };
 }
+
+export const workspaceNativeToolHandlers: NativeToolHandlerMap = {
+  [NATIVE_TOOLS.LIST_FILES]: async (context, args) =>
+    await listFiles(context.bucket, context.basePath, args.path as string | undefined),
+  [NATIVE_TOOLS.READ_FILE]: async (context, args) =>
+    await readFile(context.bucket, context.basePath, args.path as string),
+  [NATIVE_TOOLS.WRITE_FILE]: async (context, args) =>
+    await writeFile(
+      context.bucket,
+      context.basePath,
+      args.path as string,
+      args.content as string,
+    ),
+  [NATIVE_TOOLS.DELETE_FILE]: async (context, args) =>
+    await deleteFile(context.bucket, context.basePath, args.path as string),
+};
