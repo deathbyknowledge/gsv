@@ -1781,7 +1781,7 @@ async fn r2_object_exists(
         "/accounts/{}/r2/buckets/{}/objects/{}",
         account_id, bucket_name, object_key
     ));
-    let response = send_cloudflare_request_with_retry(
+    let head_response = send_cloudflare_request_with_retry(
         || {
             let mut request = client.head(&url).bearer_auth(api_token);
             if let Some(value) = jurisdiction {
@@ -1793,16 +1793,47 @@ async fn r2_object_exists(
     )
     .await?;
 
-    if response.status() == StatusCode::NOT_FOUND {
+    if head_response.status() == StatusCode::NOT_FOUND {
         return Ok(false);
     }
 
-    if response.status().is_success() {
+    if head_response.status().is_success() {
         return Ok(true);
     }
 
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    if head_response.status() == StatusCode::METHOD_NOT_ALLOWED {
+        let get_response = send_cloudflare_request_with_retry(
+            || {
+                let mut request = client.get(&url).bearer_auth(api_token);
+                if let Some(value) = jurisdiction {
+                    request = request.header("cf-r2-jurisdiction", value);
+                }
+                // Existence probe only; request minimal bytes where supported.
+                request = request.header("Range", "bytes=0-0");
+                request.send()
+            },
+            &format!("Check R2 object {} (GET fallback)", object_key),
+        )
+        .await?;
+
+        if get_response.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        if get_response.status().is_success() {
+            return Ok(true);
+        }
+
+        let status = get_response.status();
+        let body = get_response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Check R2 object {} failed after HEAD fallback ({}): {}",
+            object_key, status, body
+        )
+        .into());
+    }
+
+    let status = head_response.status();
+    let body = head_response.text().await.unwrap_or_default();
     Err(format!(
         "Check R2 object {} failed ({}): {}",
         object_key, status, body
