@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { PersistedObject } from "../shared/persisted-object";
 import type { ChatEventPayload } from "../protocol/chat";
 import type { RuntimeNodeInventory, ToolDefinition } from "../protocol/tools";
-import type { MediaAttachment } from "../protocol/channel";
+import type { MediaAttachment, SessionChannelContext } from "../protocol/channel";
 import type { GsvConfig } from "../config";
 import type { SkillSummary } from "../skills";
 import type {
@@ -118,6 +118,8 @@ export type SessionMeta = {
     channel?: string;
     clientId?: string;
   };
+
+  channelContext?: SessionChannelContext; // last known, updated on inbound
 };
 
 // Stored message row (SQLite)
@@ -536,10 +538,16 @@ export class Session extends DurableObject<Env> {
       model?: { provider: string; id: string };
     },
     media?: MediaAttachment[],
+    channelContext?: SessionChannelContext,
   ): Promise<ChatSendResult> {
     // Initialize session key if needed
     if (!this.meta.sessionKey) {
       this.meta.sessionKey = sessionKey;
+    }
+
+    // Update channel context if provided
+    if (channelContext) {
+      this.meta.channelContext = channelContext;
     }
 
     await this.ensureResetPolicyInitialized();
@@ -1018,6 +1026,7 @@ export class Session extends DurableObject<Env> {
       effectiveModel,
       this.currentRun?.tools ?? [],
       this.currentRun?.runtimeNodes,
+      this.meta.channelContext,
     );
 
     if (messageOverrides.model) {
@@ -1123,6 +1132,7 @@ export class Session extends DurableObject<Env> {
     effectiveModel: { provider: string; id: string },
     runTools: ToolDefinition[],
     runRuntimeNodes: RuntimeNodeInventory | undefined,
+    channelContext?: SessionChannelContext,
   ): Promise<string> {
     const agentId = this.getAgentId();
 
@@ -1193,6 +1203,7 @@ export class Session extends DurableObject<Env> {
         isMainSession: mainSession,
         model: effectiveModel,
         nodes: runtimeNodes,
+        channelContext,
       },
     });
   }

@@ -6,6 +6,14 @@ import {
   getGatewayToolDefinitions,
 } from "./gateway";
 import {
+  messageNativeToolHandlers,
+  getMessageToolDefinitions,
+} from "./message";
+import {
+  sessionsNativeToolHandlers,
+  getSessionsToolDefinitions,
+} from "./sessions";
+import {
   getWorkspaceToolDefinitions,
   workspaceNativeToolHandlers,
 } from "./workspace";
@@ -20,11 +28,15 @@ export * from "./types";
 export * from "./workspace";
 export * from "./cron";
 export * from "./gateway";
+export * from "./message";
+export * from "./sessions";
 
 const nativeToolHandlers: NativeToolHandlerMap = {
   ...workspaceNativeToolHandlers,
   ...gatewayNativeToolHandlers,
   ...cronNativeToolHandlers,
+  ...messageNativeToolHandlers,
+  ...sessionsNativeToolHandlers,
 };
 
 export function isNativeTool(toolName: string): boolean {
@@ -36,6 +48,8 @@ export function getNativeToolDefinitions(): ToolDefinition[] {
     ...getWorkspaceToolDefinitions(),
     ...getGatewayToolDefinitions(),
     ...getCronToolDefinitions(),
+    ...getMessageToolDefinitions(),
+    ...getSessionsToolDefinitions(),
   ];
 }
 

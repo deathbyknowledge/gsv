@@ -3,13 +3,25 @@ export type CronSchedule =
   | { kind: "every"; everyMs: number; anchorMs?: number }
   | { kind: "cron"; expr: string; tz?: string };
 
-export type CronSessionTarget = "main" | "isolated";
-export type CronWakeMode = "now" | "next-heartbeat";
-
-export type CronPayload =
-  | { kind: "systemEvent"; text: string }
+/**
+ * Cron job mode — determines how the job runs and how results are delivered.
+ *
+ * "systemEvent": Injects a text message into the agent's main session as a
+ *   user message. The agent processes it in the context of the existing
+ *   conversation and the response is delivered to the last active channel.
+ *   Good for simple reminders and notifications.
+ *
+ * "task": Runs a full agent turn in an isolated session
+ *   (agent:{agentId}:cron:{jobId}). Each run gets a clean conversation —
+ *   no carry-over from the user's main chat. Supports explicit delivery
+ *   control (channel, to) and model/thinking overrides.
+ *   Good for scheduled reports, time-sensitive reminders, and any job that
+ *   shouldn't pollute the main conversation.
+ */
+export type CronMode =
+  | { mode: "systemEvent"; text: string }
   | {
-      kind: "agentTurn";
+      mode: "task";
       message: string;
       model?: string;
       thinking?: string;
@@ -20,10 +32,14 @@ export type CronPayload =
       bestEffortDeliver?: boolean;
     };
 
-export type CronPayloadPatch =
-  | { kind: "systemEvent"; text?: string }
+/**
+ * Patch type for CronMode — same as CronMode but all fields except `mode`
+ * are optional (for partial updates).
+ */
+export type CronModePatch =
+  | { mode: "systemEvent"; text?: string }
   | {
-      kind: "agentTurn";
+      mode: "task";
       message?: string;
       model?: string;
       thinking?: string;
@@ -53,9 +69,7 @@ export type CronJob = {
   createdAtMs: number;
   updatedAtMs: number;
   schedule: CronSchedule;
-  sessionTarget: CronSessionTarget;
-  wakeMode: CronWakeMode;
-  payload: CronPayload;
+  spec: CronMode;
   state: CronJobState;
 };
 
@@ -77,9 +91,7 @@ export type CronJobCreate = {
   enabled?: boolean;
   deleteAfterRun?: boolean;
   schedule: CronSchedule;
-  sessionTarget?: CronSessionTarget;
-  wakeMode?: CronWakeMode;
-  payload: CronPayload;
+  spec: CronMode;
 };
 
 export type CronJobPatch = {
@@ -89,9 +101,7 @@ export type CronJobPatch = {
   enabled?: boolean;
   deleteAfterRun?: boolean;
   schedule?: CronSchedule;
-  sessionTarget?: CronSessionTarget;
-  wakeMode?: CronWakeMode;
-  payload?: CronPayloadPatch;
+  spec?: CronModePatch;
 };
 
 export type CronRunResult = {

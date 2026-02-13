@@ -884,24 +884,94 @@ export class Gateway extends DurableObject<Env> {
       maxRunsPerJobHistory,
       maxConcurrentRuns,
       mainKey: config.session.mainKey,
-      executeMainJob: async ({ job, text, sessionKey }) => {
-        return await this.executeCronMainJob({ job, text, sessionKey });
+      executeSystemEvent: async ({ job, text, sessionKey }) => {
+        return await this.executeCronJob({ job, text, sessionKey });
+      },
+      executeTask: async (params) => {
+        return await this.executeCronJob({
+          job: params.job,
+          text: params.message,
+          sessionKey: params.sessionKey,
+          deliver: params.deliver,
+          channel: params.channel,
+          to: params.to,
+          bestEffortDeliver: params.bestEffortDeliver,
+        });
       },
       logger: console,
     });
   }
 
-  private async executeCronMainJob(params: {
+  /**
+   * Execute a cron job by sending a message to a session with delivery wiring.
+   *
+   * For both systemEvent (main session) and task (isolated session) modes,
+   * this resolves a delivery target from the job's explicit channel/to or
+   * from lastActiveContext, and registers pendingChannelResponses so the
+   * session's response routes back to the originating channel.
+   */
+  private async executeCronJob(params: {
     job: CronJob;
     text: string;
     sessionKey: string;
+    deliver?: boolean;
+    channel?: string;
+    to?: string;
+    bestEffortDeliver?: boolean;
   }): Promise<{
     status: "ok" | "error" | "skipped";
     error?: string;
     summary?: string;
   }> {
     const runId = crypto.randomUUID();
+    const agentId = params.job.agentId;
     const session = this.env.SESSION.getByName(params.sessionKey);
+
+    // Resolve delivery target.
+    // If deliver is explicitly false, skip delivery setup.
+    // Otherwise, try explicit channel/to from the job spec, then fall back to lastActiveContext.
+    let deliveryContext: {
+      channel: ChannelId;
+      accountId: string;
+      peer: PeerInfo;
+    } | null = null;
+
+    const shouldDeliver = params.deliver !== false;
+    if (shouldDeliver) {
+      const lastActive = this.lastActiveContext[agentId];
+
+      if (params.channel && params.to && lastActive) {
+        // Explicit channel/to specified — use them with the lastActive accountId
+        deliveryContext = JSON.parse(JSON.stringify({
+          channel: params.channel,
+          accountId: lastActive.accountId,
+          peer: { kind: "dm" as const, id: params.to },
+        }));
+      } else if (params.to && lastActive) {
+        // Explicit "to" but no channel — use lastActive channel
+        deliveryContext = JSON.parse(JSON.stringify({
+          channel: lastActive.channel,
+          accountId: lastActive.accountId,
+          peer: { kind: "dm" as const, id: params.to },
+        }));
+      } else if (lastActive) {
+        // Fall back to last active context (same as heartbeat does)
+        deliveryContext = JSON.parse(JSON.stringify({
+          channel: lastActive.channel,
+          accountId: lastActive.accountId,
+          peer: lastActive.peer,
+        }));
+      }
+    }
+
+    // Register delivery context so broadcastToSession can route the response
+    if (deliveryContext) {
+      this.pendingChannelResponses[runId] = {
+        ...deliveryContext,
+        inboundMessageId: `cron:${params.job.id}:${Date.now()}`,
+        agentId,
+      };
+    }
 
     try {
       await session.chatSend(
@@ -910,12 +980,29 @@ export class Gateway extends DurableObject<Env> {
         JSON.parse(JSON.stringify(this.getAllTools())),
         JSON.parse(JSON.stringify(this.getRuntimeNodeInventory())),
         params.sessionKey,
+        undefined, // messageOverrides
+        undefined, // media
+        deliveryContext
+          ? {
+              channel: deliveryContext.channel,
+              accountId: deliveryContext.accountId,
+              peer: {
+                kind: deliveryContext.peer.kind,
+                id: deliveryContext.peer.id,
+                name: deliveryContext.peer.name,
+              },
+            }
+          : undefined,
       );
       return {
         status: "ok",
-        summary: `queued to ${params.sessionKey}`,
+        summary: `queued to ${params.sessionKey}${deliveryContext ? ` (delivering to ${deliveryContext.channel}:${deliveryContext.peer.id})` : ""}`,
       };
     } catch (error) {
+      // Clean up pending context on failure
+      if (deliveryContext) {
+        delete this.pendingChannelResponses[runId];
+      }
       return {
         status: "error",
         error: error instanceof Error ? error.message : String(error),
@@ -1003,8 +1090,8 @@ export class Gateway extends DurableObject<Env> {
           throw new Error("cron add requires a job object");
         }
         const ji = jobInput as Record<string, unknown>;
-        if (!ji.name || !ji.schedule || !ji.payload) {
-          throw new Error("cron add requires name, schedule, and payload");
+        if (!ji.name || !ji.schedule || !ji.spec) {
+          throw new Error("cron add requires name, schedule, and spec");
         }
         const job = await this.addCronJob(jobInput as unknown as CronJobCreate);
         return { ok: true, job };
@@ -1049,6 +1136,266 @@ export class Gateway extends DurableObject<Env> {
       default:
         throw new Error(`Unknown cron action: ${action}`);
     }
+  }
+
+  async executeMessageTool(
+    agentId: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const text = asString(args.text);
+    if (!text) {
+      throw new Error("text is required");
+    }
+
+    // Resolve defaults from last active channel context
+    const lastActive = this.lastActiveContext[agentId];
+
+    const channel = asString(args.channel) ?? lastActive?.channel;
+    if (!channel) {
+      throw new Error(
+        "channel is required (no current channel context available)",
+      );
+    }
+    const to = asString(args.to) ?? lastActive?.peer?.id;
+    if (!to) {
+      throw new Error(
+        "to (peer ID) is required (no current peer context available)",
+      );
+    }
+
+    const peerKind =
+      asString(args.peerKind) ?? lastActive?.peer?.kind ?? "dm";
+    if (!["dm", "group", "channel", "thread"].includes(peerKind)) {
+      throw new Error(
+        `Invalid peerKind: ${peerKind}. Must be dm, group, channel, or thread.`,
+      );
+    }
+    const accountId =
+      asString(args.accountId) ?? lastActive?.accountId ?? "default";
+    const replyToId = asString(args.replyToId);
+
+    const peer: ChannelPeer = {
+      kind: peerKind as ChannelPeer["kind"],
+      id: to,
+    };
+    const message: ChannelOutboundMessage = {
+      peer,
+      text,
+      replyToId,
+    };
+
+    // Try Service Binding RPC first
+    const channelBinding = this.getChannelBinding(channel);
+    if (channelBinding) {
+      const result = await channelBinding.send(accountId, message);
+      if (!result.ok) {
+        throw new Error(`Channel send failed: ${result.error}`);
+      }
+      return {
+        sent: true,
+        channel,
+        to,
+        peerKind,
+        accountId,
+        messageId: result.messageId,
+      };
+    }
+
+    // WebSocket fallback
+    const channelKey = `${channel}:${accountId}`;
+    const channelWs = this.channels.get(channelKey);
+    if (!channelWs || channelWs.readyState !== WebSocket.OPEN) {
+      throw new Error(
+        `Channel "${channel}" (account: ${accountId}) is not connected. ` +
+          `Make sure the channel is started and connected.`,
+      );
+    }
+
+    const outbound: ChannelOutboundPayload = {
+      channel,
+      accountId,
+      peer: { kind: peerKind as PeerInfo["kind"], id: to },
+      sessionKey: "",
+      message: { text, replyToId },
+    };
+    const evt: EventFrame<ChannelOutboundPayload> = {
+      type: "evt",
+      event: "channel.outbound",
+      payload: outbound,
+    };
+    channelWs.send(JSON.stringify(evt));
+
+    return {
+      sent: true,
+      channel,
+      to,
+      peerKind,
+      accountId,
+      via: "websocket",
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // gsv__SessionsList tool — list active sessions with metadata
+  // ---------------------------------------------------------------------------
+
+  async executeSessionsListTool(
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const limit = Math.min(Math.max(asNumber(args.limit) ?? 20, 1), 100);
+    const offset = Math.max(asNumber(args.offset) ?? 0, 0);
+    const messageLimit = Math.min(
+      Math.max(asNumber(args.messageLimit) ?? 0, 0),
+      20,
+    );
+
+    const allSessions = Object.values(this.sessionRegistry).sort(
+      (a, b) => b.lastActiveAt - a.lastActiveAt,
+    );
+
+    const page = allSessions.slice(offset, offset + limit);
+
+    // Build result rows, optionally including recent messages
+    const sessions: unknown[] = [];
+    for (const entry of page) {
+      const row: Record<string, unknown> = {
+        sessionKey: entry.sessionKey,
+        label: entry.label,
+        lastActiveAt: entry.lastActiveAt,
+        createdAt: entry.createdAt,
+      };
+
+      if (messageLimit > 0) {
+        try {
+          const sessionStub = env.SESSION.getByName(entry.sessionKey);
+          const preview = await sessionStub.preview(messageLimit);
+          row.messageCount = preview.messageCount;
+          row.messages = preview.messages;
+        } catch (e) {
+          row.messageCount = 0;
+          row.messages = [];
+          row.previewError = String(e);
+        }
+      }
+
+      sessions.push(row);
+    }
+
+    return {
+      sessions,
+      count: allSessions.length,
+      offset,
+      limit,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // gsv__SessionSend tool — send a message into another session
+  // ---------------------------------------------------------------------------
+
+  async executeSessionSendTool(
+    callerAgentId: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const rawSessionKey = asString(args.sessionKey);
+    if (!rawSessionKey) {
+      throw new Error("sessionKey is required");
+    }
+    const message = asString(args.message);
+    if (!message) {
+      throw new Error("message is required");
+    }
+    const waitSeconds = Math.min(
+      Math.max(asNumber(args.waitSeconds) ?? 30, 0),
+      120,
+    );
+
+    const sessionKey = this.canonicalizeSessionKey(rawSessionKey);
+    const runId = crypto.randomUUID();
+
+    // Verify the session exists in the registry (or allow creating new sessions)
+    const sessionStub = env.SESSION.getByName(sessionKey);
+
+    // Inject the message (same as chat.send but skipping directives/commands)
+    const tools = JSON.parse(JSON.stringify(this.getAllTools()));
+    const runtimeNodes = JSON.parse(
+      JSON.stringify(this.getRuntimeNodeInventory()),
+    );
+
+    const result = await sessionStub.chatSend(
+      message,
+      runId,
+      tools,
+      runtimeNodes,
+      sessionKey,
+    );
+
+    if (!result.ok) {
+      throw new Error("Failed to inject message into session");
+    }
+
+    // Fire-and-forget mode
+    if (waitSeconds === 0) {
+      return {
+        status: "accepted",
+        runId,
+        sessionKey,
+        queued: result.queued ?? false,
+      };
+    }
+
+    // Wait for the agent's reply by polling the session preview
+    const deadline = Date.now() + waitSeconds * 1000;
+    const pollIntervalMs = 500;
+
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+
+      try {
+        const preview = await sessionStub.preview(5);
+        // Look for the last assistant message after our injection
+        const messages = preview.messages as Array<{
+          role?: string;
+          content?: unknown;
+        }>;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (msg.role === "assistant" && msg.content) {
+            // Extract text from content
+            const content = msg.content;
+            let reply: string | undefined;
+            if (typeof content === "string") {
+              reply = content;
+            } else if (Array.isArray(content)) {
+              reply = content
+                .filter(
+                  (b: { type?: string }) =>
+                    b.type === "text",
+                )
+                .map((b: { text?: string }) => b.text ?? "")
+                .join("");
+            }
+            if (reply) {
+              return {
+                status: "ok",
+                runId,
+                sessionKey,
+                reply,
+              };
+            }
+          }
+        }
+      } catch {
+        // Session might not be ready yet, keep polling
+      }
+    }
+
+    return {
+      status: "timeout",
+      runId,
+      sessionKey,
+      waitedSeconds: waitSeconds,
+    };
   }
 
   /**
@@ -1984,7 +2331,22 @@ export class Gateway extends DurableObject<Env> {
     );
 
     try {
-      await session.chatSend(prompt, runId, tools, runtimeNodes, sessionKey);
+      await session.chatSend(
+        prompt,
+        runId,
+        tools,
+        runtimeNodes,
+        sessionKey,
+        undefined, // messageOverrides
+        undefined, // media
+        deliveryContext
+          ? {
+              channel: deliveryContext.channel,
+              accountId: deliveryContext.accountId,
+              peer: deliveryContext.peer,
+            }
+          : undefined,
+      );
       console.log(`[Gateway] Heartbeat sent to session ${sessionKey}`);
     } catch (e) {
       console.error(`[Gateway] Heartbeat failed for ${agentId}:`, e);
@@ -2205,6 +2567,18 @@ export class Gateway extends DurableObject<Env> {
       };
     }
 
+    // Update last active context for this agent.
+    // This must happen for ALL inbound messages (including slash commands and
+    // directives) so that cron/heartbeat delivery can find the user's channel.
+    this.lastActiveContext[agentId] = {
+      agentId,
+      channel: params.channel,
+      accountId: params.accountId,
+      peer: params.peer,
+      sessionKey,
+      timestamp: Date.now(),
+    };
+
     const messageText = params.message.text;
 
     // Check for slash commands
@@ -2337,16 +2711,6 @@ export class Gateway extends DurableObject<Env> {
         inboundMessageId: params.message.id,
       };
 
-      // Update last active context
-      this.lastActiveContext[agentId] = {
-        agentId,
-        channel: params.channel,
-        accountId: params.accountId,
-        peer: params.peer,
-        sessionKey,
-        timestamp: Date.now(),
-      };
-
       // Send typing indicator
       this.sendTypingToChannel(
         params.channel,
@@ -2364,6 +2728,15 @@ export class Gateway extends DurableObject<Env> {
         sessionKey,
         messageOverrides,
         processedMedia.length > 0 ? processedMedia : undefined,
+        {
+          channel: params.channel,
+          accountId: params.accountId,
+          peer: {
+            kind: params.peer.kind,
+            id: params.peer.id,
+            name: params.peer.name,
+          },
+        },
       );
 
       return {

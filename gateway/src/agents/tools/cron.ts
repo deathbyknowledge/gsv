@@ -73,20 +73,28 @@ export const getCronToolDefinitions = (): ToolDefinition[] => [
               },
               required: ["kind"],
             },
-            payload: {
+            spec: {
               type: "object",
               description:
-                'Payload object (required). Must have a "kind" discriminator: ' +
-                '{ kind: "systemEvent", text: "<message>" } or ' +
-                '{ kind: "agentTurn", message: "<message>", model?: string, ... }.',
+                'Job spec (required). Determines how the job runs and how results are delivered. ' +
+                'Two modes:\n' +
+                '  { mode: "systemEvent", text: "<message>" } — Injects text into the agent\'s ' +
+                'main session. The agent processes it in the existing conversation context and ' +
+                'the response is delivered to the last active channel. Good for simple reminders.\n' +
+                '  { mode: "task", message: "<message>", deliver?: boolean, channel?: string, ' +
+                'to?: string, model?: string, thinking?: string, timeoutSeconds?: number, ' +
+                'bestEffortDeliver?: boolean } — Runs a full agent turn in an isolated session ' +
+                '(clean conversation, no carry-over). Supports explicit delivery control. ' +
+                'Good for scheduled reports, time-sensitive reminders, and jobs that shouldn\'t ' +
+                'pollute the main conversation.',
               properties: {
-                kind: {
+                mode: {
                   type: "string",
-                  enum: ["systemEvent", "agentTurn"],
-                  description: "Payload type.",
+                  enum: ["systemEvent", "task"],
+                  description: "Spec mode.",
                 },
               },
-              required: ["kind"],
+              required: ["mode"],
             },
             agentId: {
               type: "string",
@@ -104,18 +112,8 @@ export const getCronToolDefinitions = (): ToolDefinition[] => [
               type: "boolean",
               description: "If true, delete the job after a successful one-shot run.",
             },
-            sessionTarget: {
-              type: "string",
-              enum: ["main", "isolated"],
-              description: 'Session target. Defaults to "main".',
-            },
-            wakeMode: {
-              type: "string",
-              enum: ["now", "next-heartbeat"],
-              description: 'Wake mode. Defaults to "now".',
-            },
           },
-          required: ["name", "schedule", "payload"],
+          required: ["name", "schedule", "spec"],
         },
         patch: {
           type: "object",

@@ -15,8 +15,8 @@ export const handleCronList: Handler<"cron.list"> = async ({ gw, params }) => {
 };
 
 export const handleCronAdd: Handler<"cron.add"> = async ({ gw, params }) => {
-  if (!params?.name || !params?.schedule || !params?.payload) {
-    throw new RpcError(400, "name, schedule, and payload are required");
+  if (!params?.name || !params?.schedule || !params?.spec) {
+    throw new RpcError(400, "name, schedule, and spec are required");
   }
 
   const job = await gw.addCronJob(params);

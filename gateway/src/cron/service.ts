@@ -5,8 +5,8 @@ import type {
   CronJob,
   CronJobCreate,
   CronJobPatch,
-  CronPayload,
-  CronPayloadPatch,
+  CronMode,
+  CronModePatch,
   CronRunResult,
 } from "./types";
 
@@ -18,11 +18,28 @@ export type CronServiceDeps = {
   maxConcurrentRuns: number;
   mainKey?: string;
   nowMs?: () => number;
-  executeMainJob: (params: {
+
+  /** injects text into the agent's main session. */
+  executeSystemEvent: (params: {
     job: CronJob;
     text: string;
     sessionKey: string;
   }) => Promise<{ status: "ok" | "error" | "skipped"; error?: string; summary?: string }>;
+
+  /** Runs in an isolated session with delivery support. */
+  executeTask: (params: {
+    job: CronJob;
+    message: string;
+    sessionKey: string;
+    deliver?: boolean;
+    channel?: string;
+    to?: string;
+    bestEffortDeliver?: boolean;
+    model?: string;
+    thinking?: string;
+    timeoutSeconds?: number;
+  }) => Promise<{ status: "ok" | "error" | "skipped"; error?: string; summary?: string }>;
+
   logger?: Pick<Console, "log" | "warn" | "error">;
 };
 
@@ -114,16 +131,8 @@ export class CronService {
       current.deleteAfterRun = patch.deleteAfterRun ? true : undefined;
     }
 
-    if (patch.sessionTarget !== undefined) {
-      current.sessionTarget = patch.sessionTarget;
-    }
-
-    if (patch.wakeMode !== undefined) {
-      current.wakeMode = patch.wakeMode;
-    }
-
-    if (patch.payload !== undefined) {
-      current.payload = mergePayload(current.payload, patch.payload);
+    if (patch.spec !== undefined) {
+      current.spec = mergeSpec(current.spec, patch.spec);
     }
 
     this.assertSupportedJobSpec(current);
@@ -209,9 +218,7 @@ export class CronService {
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
       schedule: input.schedule,
-      sessionTarget: input.sessionTarget ?? "main",
-      wakeMode: input.wakeMode ?? "now",
-      payload: input.payload,
+      spec: input.spec,
       state: {
         nextRunAtMs:
           input.enabled ?? true
@@ -245,17 +252,18 @@ export class CronService {
     return trimmed ? trimmed : undefined;
   }
 
-  private assertSupportedJobSpec(job: Pick<CronJob, "sessionTarget" | "payload">): void {
-    if (job.sessionTarget !== "main") {
-      throw new Error(
-        `cron sessionTarget=${job.sessionTarget} is not implemented yet (only main is supported)`,
-      );
-    }
-
-    if (job.payload.kind !== "systemEvent") {
-      throw new Error(
-        `cron payload.kind=${job.payload.kind} is not implemented yet (main requires systemEvent)`,
-      );
+  private assertSupportedJobSpec(job: Pick<CronJob, "spec">): void {
+    const { spec } = job;
+    if (spec.mode === "systemEvent") {
+      if (typeof spec.text !== "string" || !spec.text.trim()) {
+        throw new Error("systemEvent spec requires non-empty text");
+      }
+    } else if (spec.mode === "task") {
+      if (typeof spec.message !== "string" || !spec.message.trim()) {
+        throw new Error("task spec requires non-empty message");
+      }
+    } else {
+      throw new Error(`Unknown cron spec mode: ${(spec as { mode: string }).mode}`);
     }
   }
 
@@ -343,27 +351,54 @@ export class CronService {
       return finish("skipped", { error: "cron scheduler disabled" });
     }
 
-    if (job.payload.kind !== "systemEvent") {
-      return finish("skipped", {
-        error: "payload.kind agentTurn is not implemented yet",
-      });
-    }
-
-    const text = job.payload.text.trim();
-    if (!text) {
-      return finish("skipped", { error: "systemEvent payload text is empty" });
-    }
-
-    const sessionKey = resolveAgentMainSessionKey({
-      agentId: job.agentId,
-      mainKey: this.deps.mainKey,
-    });
-
     try {
-      const result = await this.deps.executeMainJob({ job, text, sessionKey });
-      return finish(result.status, {
-        error: result.error,
-        summary: result.summary,
+      if (job.spec.mode === "systemEvent") {
+        const text = job.spec.text.trim();
+        if (!text) {
+          return finish("skipped", { error: "systemEvent spec text is empty" });
+        }
+
+        const sessionKey = resolveAgentMainSessionKey({
+          agentId: job.agentId,
+          mainKey: this.deps.mainKey,
+        });
+
+        const result = await this.deps.executeSystemEvent({ job, text, sessionKey });
+        return finish(result.status, {
+          error: result.error,
+          summary: result.summary,
+        });
+      }
+
+      // Isolated
+      if (job.spec.mode === "task") {
+        const message = job.spec.message.trim();
+        if (!message) {
+          return finish("skipped", { error: "task spec message is empty" });
+        }
+
+        const sessionKey = `agent:${job.agentId}:cron:${job.id}`;
+
+        const result = await this.deps.executeTask({
+          job,
+          message,
+          sessionKey,
+          deliver: job.spec.deliver,
+          channel: job.spec.channel,
+          to: job.spec.to,
+          bestEffortDeliver: job.spec.bestEffortDeliver,
+          model: job.spec.model,
+          thinking: job.spec.thinking,
+          timeoutSeconds: job.spec.timeoutSeconds,
+        });
+        return finish(result.status, {
+          error: result.error,
+          summary: result.summary,
+        });
+      }
+
+      return finish("skipped", {
+        error: `Unknown spec mode: ${(job.spec as { mode: string }).mode}`,
       });
     } catch (error) {
       return finish("error", {
@@ -373,21 +408,21 @@ export class CronService {
   }
 }
 
-function mergePayload(current: CronPayload, patch: CronPayloadPatch): CronPayload {
-  if (patch.kind !== current.kind) {
-    return buildPayloadFromPatch(patch);
+function mergeSpec(current: CronMode, patch: CronModePatch): CronMode {
+  if (patch.mode !== current.mode) {
+    return buildSpecFromPatch(patch);
   }
 
-  if (patch.kind === "systemEvent" && current.kind === "systemEvent") {
+  if (patch.mode === "systemEvent" && current.mode === "systemEvent") {
     return {
-      kind: "systemEvent",
+      mode: "systemEvent",
       text: patch.text !== undefined ? patch.text : current.text,
     };
   }
 
-  if (patch.kind === "agentTurn" && current.kind === "agentTurn") {
+  if (patch.mode === "task" && current.mode === "task") {
     return {
-      kind: "agentTurn",
+      mode: "task",
       message: patch.message !== undefined ? patch.message : current.message,
       model: patch.model !== undefined ? patch.model : current.model,
       thinking: patch.thinking !== undefined ? patch.thinking : current.thinking,
@@ -405,26 +440,26 @@ function mergePayload(current: CronPayload, patch: CronPayloadPatch): CronPayloa
     };
   }
 
-  return buildPayloadFromPatch(patch);
+  return buildSpecFromPatch(patch);
 }
 
-function buildPayloadFromPatch(patch: CronPayloadPatch): CronPayload {
-  if (patch.kind === "systemEvent") {
+function buildSpecFromPatch(patch: CronModePatch): CronMode {
+  if (patch.mode === "systemEvent") {
     if (typeof patch.text !== "string") {
-      throw new Error('cron payload.kind="systemEvent" requires text');
+      throw new Error('cron spec mode="systemEvent" requires text');
     }
     return {
-      kind: "systemEvent",
+      mode: "systemEvent",
       text: patch.text,
     };
   }
 
   if (typeof patch.message !== "string") {
-    throw new Error('cron payload.kind="agentTurn" requires message');
+    throw new Error('cron spec mode="task" requires message');
   }
 
   return {
-    kind: "agentTurn",
+    mode: "task",
     message: patch.message,
     model: patch.model,
     thinking: patch.thinking,

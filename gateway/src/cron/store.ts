@@ -1,4 +1,4 @@
-import type { CronJob, CronRun } from "./types";
+import type { CronJob, CronMode, CronRun } from "./types";
 
 type JobRow = {
   id: string;
@@ -143,6 +143,7 @@ export class CronStore {
   }
 
   createJob(job: CronJob): void {
+    const { sessionTarget, payloadJson } = specToRow(job.spec);
     this.sql.exec(
       `
         INSERT INTO cron_jobs (
@@ -160,9 +161,9 @@ export class CronStore {
       job.enabled ? 1 : 0,
       job.deleteAfterRun ? 1 : 0,
       JSON.stringify(job.schedule),
-      JSON.stringify(job.payload),
-      job.sessionTarget,
-      job.wakeMode,
+      payloadJson,
+      sessionTarget,
+      "now", // wake_mode column kept for schema compat, always "now"
       job.createdAtMs,
       job.updatedAtMs,
       job.state.nextRunAtMs ?? null,
@@ -175,6 +176,7 @@ export class CronStore {
   }
 
   updateJob(job: CronJob): void {
+    const { sessionTarget, payloadJson } = specToRow(job.spec);
     this.sql.exec(
       `
         UPDATE cron_jobs
@@ -203,9 +205,9 @@ export class CronStore {
       job.enabled ? 1 : 0,
       job.deleteAfterRun ? 1 : 0,
       JSON.stringify(job.schedule),
-      JSON.stringify(job.payload),
-      job.sessionTarget,
-      job.wakeMode,
+      payloadJson,
+      sessionTarget,
+      "now",
       job.updatedAtMs,
       job.state.nextRunAtMs ?? null,
       job.state.runningAtMs ?? null,
@@ -408,6 +410,10 @@ export class CronStore {
     };
   }
 
+  /**
+   * Convert a SQL row to a CronJob, handling migration from old
+   * (sessionTarget + payload) format to new (spec) format.
+   */
   private rowToJob(row: JobRow): CronJob {
     return {
       id: row.id,
@@ -417,9 +423,7 @@ export class CronStore {
       enabled: row.enabled === 1,
       deleteAfterRun: row.delete_after_run === 1 ? true : undefined,
       schedule: JSON.parse(row.schedule_json),
-      payload: JSON.parse(row.payload_json),
-      sessionTarget: row.session_target as CronJob["sessionTarget"],
-      wakeMode: row.wake_mode as CronJob["wakeMode"],
+      spec: rowToSpec(row.session_target, row.payload_json),
       createdAtMs: row.created_at_ms,
       updatedAtMs: row.updated_at_ms,
       state: {
@@ -445,6 +449,68 @@ export class CronStore {
       nextRunAtMs: row.next_run_at_ms ?? undefined,
     };
   }
+}
+
+/**
+ * Convert a CronMode spec into the SQL row columns.
+ * Maps "systemEvent" → session_target="main" and "task" → session_target="isolated"
+ * for backward compatibility with the existing schema.
+ */
+function specToRow(spec: CronMode): { sessionTarget: string; payloadJson: string } {
+  if (spec.mode === "systemEvent") {
+    return {
+      sessionTarget: "main",
+      payloadJson: JSON.stringify({ kind: "systemEvent", text: spec.text }),
+    };
+  }
+
+  // mode === "task"
+  const payload: Record<string, unknown> = {
+    kind: "agentTurn",
+    message: spec.message,
+  };
+  if (spec.model !== undefined) payload.model = spec.model;
+  if (spec.thinking !== undefined) payload.thinking = spec.thinking;
+  if (spec.timeoutSeconds !== undefined) payload.timeoutSeconds = spec.timeoutSeconds;
+  if (spec.deliver !== undefined) payload.deliver = spec.deliver;
+  if (spec.channel !== undefined) payload.channel = spec.channel;
+  if (spec.to !== undefined) payload.to = spec.to;
+  if (spec.bestEffortDeliver !== undefined) payload.bestEffortDeliver = spec.bestEffortDeliver;
+  return {
+    sessionTarget: "isolated",
+    payloadJson: JSON.stringify(payload),
+  };
+}
+
+/**
+ * Convert SQL row columns back into a CronMode spec.
+ * Handles migration from old payload format (kind: "systemEvent"/"agentTurn")
+ * to new spec format (mode: "systemEvent"/"task").
+ */
+function rowToSpec(sessionTarget: string, payloadJson: string): CronMode {
+  const payload = JSON.parse(payloadJson);
+
+  // Old format used payload.kind; new format uses spec.mode.
+  // We normalize based on sessionTarget which is the authoritative column.
+  if (sessionTarget === "isolated" || payload.kind === "agentTurn") {
+    return {
+      mode: "task",
+      message: payload.message ?? payload.text ?? "",
+      model: payload.model,
+      thinking: payload.thinking,
+      timeoutSeconds: payload.timeoutSeconds,
+      deliver: payload.deliver,
+      channel: payload.channel,
+      to: payload.to,
+      bestEffortDeliver: payload.bestEffortDeliver,
+    };
+  }
+
+  // Default: systemEvent (sessionTarget === "main" or anything else)
+  return {
+    mode: "systemEvent",
+    text: payload.text ?? payload.message ?? "",
+  };
 }
 
 function clampInt(

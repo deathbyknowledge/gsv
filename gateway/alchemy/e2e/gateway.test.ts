@@ -1594,3 +1594,325 @@ describe("Queue Latency", () => {
     expect(latency).toBeLessThan(5000);
   }, 15000);
 });
+
+// ============================================================================
+// Cron Delivery E2E
+// ============================================================================
+
+describe("Cron Delivery", () => {
+  const accountId = `cron-delivery-${crypto.randomBytes(4).toString("hex")}`;
+  const peerId = `+1555${Date.now().toString().slice(-7)}`;
+
+  beforeAll(async () => {
+    // Configure test channel with open dmPolicy
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+    await sendRequest(ws, "config.set", {
+      path: "channels.test",
+      value: { dmPolicy: "open", allowFrom: [] },
+    });
+    ws.close();
+
+    // Start the test channel account
+    await fetch(`${testChannelUrl}/test/start?accountId=${accountId}`, { method: "POST" });
+    await Bun.sleep(500);
+  }, 30000);
+
+  it("cron CRUD works with new spec format", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+
+    // Add a systemEvent cron job
+    const addResult = await sendRequest(ws, "cron.add", {
+      name: "e2e-system-event-test",
+      schedule: { kind: "at", atMs: Date.now() + 86400000 },
+      spec: { mode: "systemEvent", text: "hello from cron" },
+      enabled: false,
+    }) as { ok: boolean; job: { id: string; spec: { mode: string } } };
+
+    expect(addResult.ok).toBe(true);
+    expect(addResult.job.spec.mode).toBe("systemEvent");
+    const jobId = addResult.job.id;
+
+    // Add a task cron job
+    const taskResult = await sendRequest(ws, "cron.add", {
+      name: "e2e-task-test",
+      schedule: { kind: "at", atMs: Date.now() + 86400000 },
+      spec: {
+        mode: "task",
+        message: "generate a report",
+        deliver: true,
+      },
+      enabled: false,
+    }) as { ok: boolean; job: { id: string; spec: { mode: string; deliver: boolean } } };
+
+    expect(taskResult.ok).toBe(true);
+    expect(taskResult.job.spec.mode).toBe("task");
+    expect(taskResult.job.spec.deliver).toBe(true);
+
+    // List should include both jobs
+    const listResult = await sendRequest(ws, "cron.list") as {
+      jobs: Array<{ id: string; name: string; spec: { mode: string } }>;
+      count: number;
+    };
+
+    const ourJobs = listResult.jobs.filter(
+      j => j.name === "e2e-system-event-test" || j.name === "e2e-task-test"
+    );
+    expect(ourJobs.length).toBe(2);
+
+    // Cleanup
+    await sendRequest(ws, "cron.remove", { id: jobId });
+    await sendRequest(ws, "cron.remove", { id: taskResult.job.id });
+
+    ws.close();
+  });
+
+  it.skipIf(!OPENAI_API_KEY)("systemEvent cron job fires on schedule and delivers to channel", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+
+    // Configure LLM for systemEvent (the cron text becomes a user message that needs an LLM response)
+    await sendRequest(ws, "config.set", {
+      path: "apiKeys.openai",
+      value: OPENAI_API_KEY,
+    });
+    await sendRequest(ws, "config.set", {
+      path: "model",
+      value: { provider: "openai", id: "gpt-4o-mini" },
+    });
+
+    // First, send an inbound message to establish lastActiveContext for the agent.
+    // This tells the Gateway "the user was last seen on the test channel at this peer".
+    await fetch(`${testChannelUrl}/test/clear?accountId=${accountId}`, { method: "POST" });
+    await fetch(`${testChannelUrl}/test/inbound`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        peer: { kind: "dm", id: peerId },
+        text: "/status",
+      }),
+    });
+
+    // Wait for the /status response to confirm the channel pipeline is working
+    await waitFor(
+      async () => {
+        const res = await fetch(`${testChannelUrl}/test/outbound?accountId=${accountId}`);
+        const body = await res.json() as { messages: Array<{ text: string }> };
+        return body.messages.find(m => m.text.includes("Session:"));
+      },
+      { timeout: 15000, description: "/status response" }
+    );
+
+    // Clear outbound messages so we only see the cron response
+    await fetch(`${testChannelUrl}/test/clear?accountId=${accountId}`, { method: "POST" });
+
+    // Schedule a one-shot cron job 1 second in the future.
+    // This tests the full DO alarm pipeline: addCronJob → scheduleGatewayAlarm
+    // → DO alarm fires at the scheduled time → runCronJobs("due") → delivery.
+    const fireAtMs = Date.now() + 1000;
+    const addResult = await sendRequest(ws, "cron.add", {
+      name: "e2e-scheduled-delivery",
+      schedule: { kind: "at", atMs: fireAtMs },
+      spec: { mode: "systemEvent", text: "E2E CRON DELIVERY TEST: reply with exactly CRON_DELIVERED" },
+      deleteAfterRun: true,
+    }) as { ok: boolean; job: { id: string } };
+
+    expect(addResult.ok).toBe(true);
+    console.log(`   Cron job scheduled for ${new Date(fireAtMs).toISOString()}, waiting for alarm to fire...`);
+
+    // Do NOT force-run. Wait for the DO alarm to fire on schedule and deliver.
+    const outbound = await waitFor(
+      async () => {
+        const res = await fetch(`${testChannelUrl}/test/outbound?accountId=${accountId}`);
+        const body = await res.json() as { messages: Array<{ text: string; peer: { id: string } }> };
+        return body.messages.find(m => m.peer?.id === peerId);
+      },
+      { timeout: 30000, interval: 500, description: "scheduled cron response delivery to channel" }
+    );
+
+    expect(outbound).toBeDefined();
+    console.log(`   Cron response delivered via alarm: ${outbound.text.slice(0, 80)}...`);
+
+    ws.close();
+  }, 60000);
+
+  it.skipIf(!OPENAI_API_KEY)("task cron job delivers response to channel via isolated session", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+
+    // Configure LLM for agent responses
+    await sendRequest(ws, "config.set", {
+      path: "apiKeys.openai",
+      value: OPENAI_API_KEY,
+    });
+    await sendRequest(ws, "config.set", {
+      path: "model",
+      value: { provider: "openai", id: "gpt-4o-mini" },
+    });
+
+    // Establish lastActiveContext
+    await fetch(`${testChannelUrl}/test/clear?accountId=${accountId}`, { method: "POST" });
+    await fetch(`${testChannelUrl}/test/inbound`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        peer: { kind: "dm", id: peerId },
+        text: "/status",
+      }),
+    });
+
+    await waitFor(
+      async () => {
+        const res = await fetch(`${testChannelUrl}/test/outbound?accountId=${accountId}`);
+        const body = await res.json() as { messages: Array<{ text: string }> };
+        return body.messages.find(m => m.text.includes("Session:"));
+      },
+      { timeout: 15000, description: "/status response for task test" }
+    );
+
+    await fetch(`${testChannelUrl}/test/clear?accountId=${accountId}`, { method: "POST" });
+
+    // Create a task cron job with deliver: true
+    const addResult = await sendRequest(ws, "cron.add", {
+      name: "e2e-task-delivery",
+      schedule: { kind: "at", atMs: Date.now() - 1000 },
+      spec: {
+        mode: "task",
+        message: "Reply with exactly: TASK_CRON_DELIVERED",
+        deliver: true,
+      },
+      deleteAfterRun: true,
+    }) as { ok: boolean; job: { id: string } };
+
+    expect(addResult.ok).toBe(true);
+
+    // Force-run it
+    const runResult = await sendRequest(ws, "cron.run", {
+      id: addResult.job.id,
+      mode: "force",
+    }) as { ok: boolean; ran: number; results: Array<{ status: string; summary?: string }> };
+
+    expect(runResult.ok).toBe(true);
+    expect(runResult.ran).toBe(1);
+    expect(runResult.results[0].status).toBe("ok");
+    // Task mode uses isolated session key
+    expect(runResult.results[0].summary).toContain("agent:main:cron:");
+
+    console.log(`   Task cron job executed, waiting for channel delivery...`);
+
+    const outbound = await waitFor(
+      async () => {
+        const res = await fetch(`${testChannelUrl}/test/outbound?accountId=${accountId}`);
+        const body = await res.json() as { messages: Array<{ text: string; peer: { id: string } }> };
+        return body.messages.find(m => m.peer?.id === peerId);
+      },
+      { timeout: 60000, interval: 500, description: "task cron response delivery to channel" }
+    );
+
+    expect(outbound).toBeDefined();
+    expect(outbound.text.toUpperCase()).toContain("TASK_CRON_DELIVERED");
+    console.log(`   Task cron response delivered: ${outbound.text.slice(0, 80)}...`);
+
+    ws.close();
+  }, 90000);
+});
+
+// ============================================================================
+// Message Tool E2E
+// ============================================================================
+
+describe("Message Tool", () => {
+  const accountId = `msg-tool-${crypto.randomBytes(4).toString("hex")}`;
+  const peerId = `+1555${Date.now().toString().slice(-7)}`;
+
+  beforeAll(async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+    await sendRequest(ws, "config.set", {
+      path: "channels.test",
+      value: { dmPolicy: "open", allowFrom: [] },
+    });
+    ws.close();
+
+    await fetch(`${testChannelUrl}/test/start?accountId=${accountId}`, { method: "POST" });
+    await Bun.sleep(500);
+  }, 30000);
+
+  it.skipIf(!OPENAI_API_KEY)("gsv__Message delivers to channel with implicit context defaulting", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+
+    // Configure LLM
+    await sendRequest(ws, "config.set", {
+      path: "apiKeys.openai",
+      value: OPENAI_API_KEY,
+    });
+    await sendRequest(ws, "config.set", {
+      path: "model",
+      value: { provider: "openai", id: "gpt-4o-mini" },
+    });
+
+    // Establish lastActiveContext via channel inbound (/status is fast, no LLM needed)
+    await fetch(`${testChannelUrl}/test/clear?accountId=${accountId}`, { method: "POST" });
+    await fetch(`${testChannelUrl}/test/inbound`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        peer: { kind: "dm", id: peerId },
+        text: "/status",
+      }),
+    });
+
+    await waitFor(
+      async () => {
+        const res = await fetch(`${testChannelUrl}/test/outbound?accountId=${accountId}`);
+        const body = await res.json() as { messages: Array<{ text: string }> };
+        return body.messages.find(m => m.text.includes("Session:"));
+      },
+      { timeout: 15000, description: "/status response for message tool test" }
+    );
+
+    // Clear outbound so we only see the tool-sent message
+    await fetch(`${testChannelUrl}/test/clear?accountId=${accountId}`, { method: "POST" });
+
+    // Send a message via channel asking the agent to use gsv__Message.
+    // The key: we tell it to only provide `text`, NOT channel or to.
+    // The tool should default those from lastActiveContext.
+    await fetch(`${testChannelUrl}/test/inbound`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        peer: { kind: "dm", id: peerId },
+        text: [
+          "Call the gsv__Message tool with ONLY the text parameter set to exactly: MSG_TOOL_E2E_PROOF",
+          "Do NOT set the channel, to, or any other parameters.",
+          "After calling the tool, reply with DONE.",
+        ].join("\n"),
+      }),
+    });
+
+    console.log(`   Waiting for gsv__Message delivery...`);
+
+    // Wait for an outbound message containing the proof token.
+    // The tool calls channelBinding.send() directly, so it appears as a separate outbound.
+    const outbound = await waitFor(
+      async () => {
+        const res = await fetch(`${testChannelUrl}/test/outbound?accountId=${accountId}`);
+        const body = await res.json() as { messages: Array<{ text: string; peer: { id: string } }> };
+        return body.messages.find(m => m.text.includes("MSG_TOOL_E2E_PROOF"));
+      },
+      { timeout: 60000, interval: 500, description: "gsv__Message delivery to channel" }
+    );
+
+    expect(outbound).toBeDefined();
+    expect(outbound.peer.id).toBe(peerId);
+    console.log(`   gsv__Message delivered: "${outbound.text}" to ${outbound.peer.id}`);
+
+    ws.close();
+  }, 90000);
+});

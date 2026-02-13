@@ -8,4 +8,7 @@ export const NATIVE_TOOLS = {
   CONFIG_GET: `${NATIVE_TOOL_PREFIX}ConfigGet`,
   LOGS_GET: `${NATIVE_TOOL_PREFIX}LogsGet`,
   CRON: `${NATIVE_TOOL_PREFIX}Cron`,
+  MESSAGE: `${NATIVE_TOOL_PREFIX}Message`,
+  SESSIONS_LIST: `${NATIVE_TOOL_PREFIX}SessionsList`,
+  SESSION_SEND: `${NATIVE_TOOL_PREFIX}SessionSend`,
 } as const;

@@ -74,3 +74,13 @@ export type ChannelRegistryEntry = {
   connectedAt: number;
   lastMessageAt?: number;
 };
+
+export type SessionChannelContext = {
+  channel: ChannelId;
+  accountId: string;
+  peer: {
+    kind: string;
+    id: string;
+    name?: string;
+  };
+};

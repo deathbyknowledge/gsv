@@ -11,6 +11,8 @@ import type { SkillSummary } from "../skills";
 import { isHeartbeatFileEmpty, type AgentWorkspace } from "./loader";
 import { NATIVE_TOOL_PREFIX } from "./tools/constants";
 
+import type { SessionChannelContext } from "../protocol/channel";
+
 export type PromptRuntimeInfo = {
   agentId: string;
   sessionKey?: string;
@@ -20,6 +22,7 @@ export type PromptRuntimeInfo = {
     id: string;
   };
   nodes?: RuntimeNodeInventory;
+  channelContext?: SessionChannelContext;
 };
 
 export type BuildPromptOptions = {
@@ -325,6 +328,15 @@ function buildRuntimeSection(
 
   if (runtime.model) {
     lines.push(`Model: ${runtime.model.provider}/${runtime.model.id}`);
+  }
+
+  if (runtime.channelContext) {
+    const ctx = runtime.channelContext;
+    const peerLabel = ctx.peer.name
+      ? `${ctx.peer.name} (${ctx.peer.id})`
+      : ctx.peer.id;
+    lines.push(`Channel: ${ctx.channel} (account: ${ctx.accountId})`);
+    lines.push(`Peer: ${peerLabel} (${ctx.peer.kind})`);
   }
 
   if (runtime.nodes) {
