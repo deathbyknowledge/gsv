@@ -9,7 +9,7 @@
 #
 # Environment variables:
 #   GSV_INSTALL_DIR  - Where to install CLI (default: /usr/local/bin)
-#   GSV_VERSION      - CLI version to install (default: latest)
+#   GSV_CHANNEL      - Release channel: stable or dev (default: stable)
 
 set -e
 
@@ -19,7 +19,7 @@ set -e
 
 REPO="deathbyknowledge/gsv"
 INSTALL_DIR="${GSV_INSTALL_DIR:-/usr/local/bin}"
-VERSION="${GSV_VERSION:-latest}"
+CHANNEL="${GSV_CHANNEL:-stable}"
 CONFIG_DIR="${HOME}/.config/gsv"
 
 # Colors
@@ -99,17 +99,11 @@ check_existing_config() {
     [ -f "${CONFIG_DIR}/config.toml" ]
 }
 
-get_latest_version() {
-    if [ "$VERSION" = "latest" ]; then
-        VERSION=$(curl -sSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | 
-            grep '"tag_name":' | 
-            sed -E 's/.*"([^"]+)".*/\1/' || echo "")
-        
-        if [ -z "$VERSION" ]; then
-            VERSION="v0.1.0"
-            warn "Could not fetch latest version, using ${VERSION}"
-        fi
-    fi
+validate_channel() {
+    case "$CHANNEL" in
+        stable|dev) ;;
+        *) error "Invalid channel: $CHANNEL (must be 'stable' or 'dev')"; exit 1 ;;
+    esac
 }
 
 # ============================================================================
@@ -117,13 +111,13 @@ get_latest_version() {
 # ============================================================================
 
 download_cli() {
-    get_latest_version
+    validate_channel
     
-    local url="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY_NAME}"
+    local url="https://github.com/${REPO}/releases/download/${CHANNEL}/${BINARY_NAME}"
     local tmp_dir=$(mktemp -d)
     local tmp_file="${tmp_dir}/gsv"
     
-    info "Downloading CLI ${VERSION} for ${OS}-${ARCH}..."
+    info "Downloading CLI (${CHANNEL}) for ${OS}-${ARCH}..."
     
     if command -v curl > /dev/null 2>&1; then
         HTTP_CODE=$(curl -sSL -w "%{http_code}" -o "$tmp_file" "$url" 2>/dev/null)
@@ -186,7 +180,7 @@ main() {
     print_banner
     detect_platform
     
-    echo -e "  Platform: ${BOLD}${OS}-${ARCH}${NC}"
+    echo -e "  Platform: ${BOLD}${OS}-${ARCH}${NC}  Channel: ${BOLD}${CHANNEL}${NC}"
     echo ""
     
     # Install CLI

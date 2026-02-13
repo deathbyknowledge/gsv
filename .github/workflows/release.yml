@@ -2,13 +2,16 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main, stable]
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Release tag (e.g., v0.1.0)'
+      channel:
+        description: 'Release channel'
         required: true
+        type: choice
+        options:
+          - dev
+          - stable
 
 permissions:
   contents: write
@@ -17,9 +20,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Resolve which channel we're building for
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.channel.outputs.channel }}
+    steps:
+      - name: Resolve channel
+        id: channel
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "channel=${{ inputs.channel }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref }}" = "refs/heads/stable" ]; then
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=dev" >> "$GITHUB_OUTPUT"
+          fi
+
   # Build CLI binaries for multiple platforms
   build-cli:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: [resolve]
     strategy:
       matrix:
         include:
@@ -75,6 +95,7 @@ jobs:
 
   # Build pre-bundled Cloudflare deployment artifacts.
   build-cloudflare-bundles:
+    needs: [resolve]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -197,9 +218,10 @@ jobs:
 
   # Create GitHub Release with all artifacts
   release:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    needs: [build-cli, build-cloudflare-bundles]
+    needs: [resolve, build-cli, build-cloudflare-bundles]
     runs-on: ubuntu-latest
+    env:
+      CHANNEL: ${{ needs.resolve.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
 
@@ -211,7 +233,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release
-          
+
           # CLI binaries
           cp artifacts/gsv-linux-x64/gsv-linux-x64 release/
           cp artifacts/gsv-linux-arm64/gsv-linux-arm64 release/
@@ -223,58 +245,66 @@ jobs:
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-whatsapp.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-discord.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/cloudflare-checksums.txt release/
-          
+
           # Make binaries executable
           chmod +x release/gsv-*
-          
+
           # Include install script
           cp install.sh release/
-          
+
           # Create checksums
           cd release && sha256sum * > checksums.txt
 
-      - name: Get tag name
-        id: tag
+      - name: Build release body
+        id: body
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          if [ "$CHANNEL" = "stable" ]; then
+            TITLE="GSV (stable)"
+            INSTALL_CMD='curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash'
           else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            TITLE="GSV (dev)"
+            INSTALL_CMD='GSV_CHANNEL=dev curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash'
           fi
 
-      - name: Create Release
+          cat > body.md <<BODY
+          ## ${TITLE}
+
+          **Commit:** \`${SHORT_SHA}\` · **Built:** ${TIMESTAMP}
+
+          ### Installation
+
+          \`\`\`bash
+          ${INSTALL_CMD}
+          \`\`\`
+
+          ### Cloudflare Bundles
+
+          Cloudflare artifacts are split by component:
+          - \`gsv-cloudflare-gateway.tar.gz\`
+          - \`gsv-cloudflare-channel-whatsapp.tar.gz\`
+          - \`gsv-cloudflare-channel-discord.tar.gz\`
+
+          ### Manual Installation
+
+          Download the binary for your platform:
+          - **macOS (Apple Silicon)**: \`gsv-darwin-arm64\`
+          - **macOS (Intel)**: \`gsv-darwin-x64\`
+          - **Linux (x64)**: \`gsv-linux-x64\`
+          - **Linux (ARM64)**: \`gsv-linux-arm64\`
+          BODY
+
+      - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: GSV ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ env.CHANNEL }}
+          name: GSV (${{ env.CHANNEL }})
           draft: false
-          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
-          generate_release_notes: true
-          body: |
-            ## Installation
-            
-            ```bash
-            curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
-            ```
-            
-            This will:
-            - Download and install the CLI binary
-            - Deploy to Cloudflare with `gsv deploy up --wizard --all`
-
-            ## Cloudflare Bundles
-
-            Cloudflare artifacts are split by component so users can download only what they need:
-            - `gsv-cloudflare-gateway.tar.gz`
-            - `gsv-cloudflare-channel-whatsapp.tar.gz`
-            - `gsv-cloudflare-channel-discord.tar.gz`
-            
-            ## Manual Installation
-            
-            Download the appropriate binary for your platform:
-            - **macOS (Apple Silicon)**: `gsv-darwin-arm64`
-            - **macOS (Intel)**: `gsv-darwin-x64`
-            - **Linux (x64)**: `gsv-linux-x64`
-            - **Linux (ARM64)**: `gsv-linux-arm64`
+          prerelease: ${{ env.CHANNEL == 'dev' }}
+          make_latest: ${{ env.CHANNEL == 'stable' }}
+          body_path: body.md
           files: |
             release/gsv-linux-x64
             release/gsv-linux-arm64
