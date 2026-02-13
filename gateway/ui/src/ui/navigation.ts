@@ -11,6 +11,9 @@ const TAB_PATHS: Record<Tab, string> = {
   channels: "/channels",
   nodes: "/nodes",
   workspace: "/workspace",
+  cron: "/cron",
+  logs: "/logs",
+  pairing: "/pairing",
   config: "/config",
   debug: "/debug",
 };

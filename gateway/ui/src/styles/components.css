@@ -310,3 +310,24 @@
 [data-tooltip]:hover::after {
   opacity: 1;
 }
+
+/* Logs Output */
+.logs-output {
+  margin: 0;
+  padding: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+/* Button large (used in connect screen) */
+.btn-lg {
+  padding: var(--space-3) var(--space-6);
+  font-size: var(--font-size-base);
+}

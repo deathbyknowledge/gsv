@@ -26,6 +26,9 @@ import { renderSessions } from "./views/sessions";
 import { renderChannels } from "./views/channels";
 import { renderNodes } from "./views/nodes";
 import { renderWorkspace } from "./views/workspace";
+import { renderCron } from "./views/cron";
+import { renderLogs } from "./views/logs";
+import { renderPairing } from "./views/pairing";
 import { renderConfig } from "./views/config";
 import { renderDebug } from "./views/debug";
 
@@ -78,6 +81,22 @@ export class GsvApp extends LitElement {
 
   // ---- Debug State ----
   @state() debugLog: { time: Date; type: string; data: unknown }[] = [];
+
+  // ---- Cron State ----
+  @state() cronStatus: Record<string, unknown> | null = null;
+  @state() cronJobs: unknown[] = [];
+  @state() cronRuns: unknown[] = [];
+  @state() cronLoading = false;
+  @state() cronTab = "jobs";
+
+  // ---- Logs State ----
+  @state() logsData: { nodeId: string; lines: string[]; count: number; truncated: boolean } | null = null;
+  @state() logsLoading = false;
+  @state() logsError: string | null = null;
+
+  // ---- Pairing State ----
+  @state() pairingRequests: unknown[] = [];
+  @state() pairingLoading = false;
 
   // ---- Lifecycle ----
 
@@ -200,6 +219,15 @@ export class GsvApp extends LitElement {
         break;
       case "config":
         await this.loadConfig();
+        break;
+      case "cron":
+        await this.loadCron();
+        break;
+      case "logs":
+        // Logs are loaded on demand via button
+        break;
+      case "pairing":
+        await this.loadPairing();
         break;
     }
   }
@@ -339,15 +367,14 @@ export class GsvApp extends LitElement {
 
   // ---- Workspace ----
 
-  private async loadWorkspace(path = "/") {
+  async loadWorkspace(path = "/") {
     if (!this.client) return;
     this.workspaceLoading = true;
     this.workspaceCurrentPath = path;
     try {
-      const res = await this.client.toolInvoke("gsv__ListFiles", { path });
+      const res = await this.client.workspaceList(path);
       if (res.ok && res.payload) {
-        const data = res.payload as { result: { path: string; files: string[]; directories: string[] } };
-        this.workspaceFiles = data.result;
+        this.workspaceFiles = res.payload as { path: string; files: string[]; directories: string[] };
       }
     } catch (e) {
       console.error("Failed to load workspace:", e);
@@ -359,10 +386,9 @@ export class GsvApp extends LitElement {
   async readWorkspaceFile(path: string) {
     if (!this.client) return;
     try {
-      const res = await this.client.toolInvoke("gsv__ReadFile", { path });
+      const res = await this.client.workspaceRead(path);
       if (res.ok && res.payload) {
-        const data = res.payload as { result: { path: string; content: string } };
-        this.workspaceFileContent = data.result;
+        this.workspaceFileContent = res.payload as { path: string; content: string };
       }
     } catch (e) {
       console.error("Failed to read file:", e);
@@ -372,7 +398,7 @@ export class GsvApp extends LitElement {
   async writeWorkspaceFile(path: string, content: string) {
     if (!this.client) return;
     try {
-      await this.client.toolInvoke("gsv__WriteFile", { path, content });
+      await this.client.workspaceWrite(path, content);
       this.workspaceFileContent = { path, content };
       await this.loadWorkspace(this.workspaceCurrentPath);
     } catch (e) {
@@ -405,6 +431,94 @@ export class GsvApp extends LitElement {
       await this.loadConfig();
     } catch (e) {
       console.error("Failed to save config:", e);
+    }
+  }
+
+  // ---- Cron ----
+
+  async loadCron() {
+    if (!this.client) return;
+    this.cronLoading = true;
+    try {
+      const [statusRes, listRes] = await Promise.all([
+        this.client.cronStatus(),
+        this.client.cronList({ includeDisabled: true }),
+      ]);
+      if (statusRes.ok && statusRes.payload) {
+        this.cronStatus = statusRes.payload as Record<string, unknown>;
+      }
+      if (listRes.ok && listRes.payload) {
+        const data = listRes.payload as { jobs: unknown[] };
+        this.cronJobs = data.jobs || [];
+      }
+    } catch (e) {
+      console.error("Failed to load cron:", e);
+    } finally {
+      this.cronLoading = false;
+    }
+  }
+
+  async loadCronRuns(jobId?: string) {
+    if (!this.client) return;
+    try {
+      const res = await this.client.cronRuns({ jobId, limit: 50 });
+      if (res.ok && res.payload) {
+        const data = res.payload as { runs: unknown[] };
+        this.cronRuns = data.runs || [];
+      }
+    } catch (e) {
+      console.error("Failed to load cron runs:", e);
+    }
+  }
+
+  // ---- Logs ----
+
+  async loadLogs() {
+    if (!this.client) return;
+    this.logsLoading = true;
+    this.logsError = null;
+    try {
+      const nodeId = (document.getElementById("logs-node-id") as HTMLSelectElement)?.value || undefined;
+      const lines = parseInt((document.getElementById("logs-lines") as HTMLInputElement)?.value || "200", 10);
+      const res = await this.client.logsGet({ nodeId, lines });
+      if (res.ok && res.payload) {
+        this.logsData = res.payload as { nodeId: string; lines: string[]; count: number; truncated: boolean };
+      } else {
+        this.logsError = res.error?.message || "Failed to fetch logs";
+      }
+    } catch (e) {
+      this.logsError = e instanceof Error ? e.message : String(e);
+    } finally {
+      this.logsLoading = false;
+    }
+  }
+
+  // ---- Pairing ----
+
+  async loadPairing() {
+    if (!this.client) return;
+    this.pairingLoading = true;
+    try {
+      const res = await this.client.pairList();
+      if (res.ok && res.payload) {
+        const data = res.payload as { pairs: Record<string, unknown> };
+        // Convert the pairs map to an array for display
+        const pairs = Object.entries(data.pairs || {}).map(([key, val]) => {
+          const pair = val as Record<string, unknown>;
+          return {
+            channel: pair.channel as string || key.split(":")[0] || "unknown",
+            senderId: pair.senderId as string || key,
+            senderName: pair.senderName as string | undefined,
+            requestedAt: pair.requestedAt as number || Date.now(),
+            message: pair.message as string | undefined,
+          };
+        });
+        this.pairingRequests = pairs;
+      }
+    } catch (e) {
+      console.error("Failed to load pairing requests:", e);
+    } finally {
+      this.pairingLoading = false;
     }
   }
 
@@ -598,6 +712,12 @@ export class GsvApp extends LitElement {
         return renderNodes(this);
       case "workspace":
         return renderWorkspace(this);
+      case "cron":
+        return renderCron(this);
+      case "logs":
+        return renderLogs(this);
+      case "pairing":
+        return renderPairing(this);
       case "config":
         return renderConfig(this);
       case "debug":

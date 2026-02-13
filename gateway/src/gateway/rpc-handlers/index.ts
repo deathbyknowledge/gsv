@@ -43,6 +43,12 @@ import {
 } from "./cron";
 import { handleConfigGet, handleConfigSet } from "./config";
 import { handleConnect } from "./connect";
+import {
+  handleWorkspaceList,
+  handleWorkspaceRead,
+  handleWorkspaceWrite,
+  handleWorkspaceDelete,
+} from "./workspace";
 
 export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
   return {
@@ -84,5 +90,9 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     "pair.reject": handlePairReject,
     "tool.request": handleToolRequest,
     "chat.send": handleChatSend,
+    "workspace.list": handleWorkspaceList,
+    "workspace.read": handleWorkspaceRead,
+    "workspace.write": handleWorkspaceWrite,
+    "workspace.delete": handleWorkspaceDelete,
   };
 }

@@ -5,7 +5,7 @@
  * Matches the protocol used by the Rust CLI.
  */
 
-import type { Frame, RequestFrame, ResponseFrame, EventFrame, ToolDefinition } from "./types";
+import type { Frame, RequestFrame, ResponseFrame, EventFrame } from "./types";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected";
 
@@ -28,6 +28,7 @@ export class GatewayClient {
   private pending = new Map<string, PendingRequest>();
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
   
   private _state: ConnectionState = "disconnected";
   private options: GatewayClientOptions;
@@ -50,13 +51,15 @@ export class GatewayClient {
    */
   start(): void {
     if (this.ws) return;
+    this.stopped = false;
     this.connect();
   }
 
   /**
-   * Stop connection
+   * Stop connection and prevent reconnection
    */
   stop(): void {
+    this.stopped = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -65,6 +68,7 @@ export class GatewayClient {
       this.ws.close();
       this.ws = null;
     }
+    this.rejectAllPending("Client stopped");
     this.setState("disconnected");
   }
 
@@ -87,6 +91,7 @@ export class GatewayClient {
       this.ws.onclose = () => {
         console.log("[GatewayClient] Disconnected");
         this.ws = null;
+        this.rejectAllPending("Connection closed");
         this.setState("disconnected");
         this.scheduleReconnect();
       };
@@ -102,8 +107,16 @@ export class GatewayClient {
     }
   }
 
+  private rejectAllPending(reason: string): void {
+    for (const [id, pending] of this.pending) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(reason));
+    }
+    this.pending.clear();
+  }
+
   private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
+    if (this.stopped || this.reconnectTimer) return;
     
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
     this.reconnectAttempts++;
@@ -258,5 +271,105 @@ export class GatewayClient {
 
   async channelStatus(channel: string, accountId = "default"): Promise<ResponseFrame> {
     return this.request("channel.status", { channel, accountId });
+  }
+
+  async channelLogin(channel: string, accountId = "default", force = false): Promise<ResponseFrame> {
+    return this.request("channel.login", { channel, accountId, force });
+  }
+
+  async channelLogout(channel: string, accountId = "default"): Promise<ResponseFrame> {
+    return this.request("channel.logout", { channel, accountId });
+  }
+
+  // ---- Session (extended) ----
+
+  async sessionPatch(sessionKey: string, patch: Record<string, unknown>): Promise<ResponseFrame> {
+    return this.request("session.patch", { sessionKey, ...patch });
+  }
+
+  async sessionHistory(sessionKey: string): Promise<ResponseFrame> {
+    return this.request("session.history", { sessionKey });
+  }
+
+  // ---- Logs ----
+
+  async logsGet(params?: { nodeId?: string; lines?: number }): Promise<ResponseFrame> {
+    return this.request("logs.get", params, 60000);
+  }
+
+  // ---- Heartbeat ----
+
+  async heartbeatStatus(): Promise<ResponseFrame> {
+    return this.request("heartbeat.status");
+  }
+
+  async heartbeatStart(): Promise<ResponseFrame> {
+    return this.request("heartbeat.start");
+  }
+
+  async heartbeatTrigger(agentId?: string): Promise<ResponseFrame> {
+    return this.request("heartbeat.trigger", agentId ? { agentId } : undefined);
+  }
+
+  // ---- Cron ----
+
+  async cronStatus(): Promise<ResponseFrame> {
+    return this.request("cron.status");
+  }
+
+  async cronList(params?: { agentId?: string; includeDisabled?: boolean; limit?: number; offset?: number }): Promise<ResponseFrame> {
+    return this.request("cron.list", params);
+  }
+
+  async cronAdd(job: Record<string, unknown>): Promise<ResponseFrame> {
+    return this.request("cron.add", job);
+  }
+
+  async cronUpdate(id: string, patch: Record<string, unknown>): Promise<ResponseFrame> {
+    return this.request("cron.update", { id, patch });
+  }
+
+  async cronRemove(id: string): Promise<ResponseFrame> {
+    return this.request("cron.remove", { id });
+  }
+
+  async cronRun(params?: { id?: string; mode?: "due" | "force" }): Promise<ResponseFrame> {
+    return this.request("cron.run", params);
+  }
+
+  async cronRuns(params?: { jobId?: string; limit?: number; offset?: number }): Promise<ResponseFrame> {
+    return this.request("cron.runs", params);
+  }
+
+  // ---- Workspace ----
+
+  async workspaceList(path?: string, agentId?: string): Promise<ResponseFrame> {
+    return this.request("workspace.list", { path, agentId });
+  }
+
+  async workspaceRead(path: string, agentId?: string): Promise<ResponseFrame> {
+    return this.request("workspace.read", { path, agentId });
+  }
+
+  async workspaceWrite(path: string, content: string, agentId?: string): Promise<ResponseFrame> {
+    return this.request("workspace.write", { path, content, agentId });
+  }
+
+  async workspaceDelete(path: string, agentId?: string): Promise<ResponseFrame> {
+    return this.request("workspace.delete", { path, agentId });
+  }
+
+  // ---- Pairing ----
+
+  async pairList(): Promise<ResponseFrame> {
+    return this.request("pair.list");
+  }
+
+  async pairApprove(channel: string, senderId: string): Promise<ResponseFrame> {
+    return this.request("pair.approve", { channel, senderId });
+  }
+
+  async pairReject(channel: string, senderId: string): Promise<ResponseFrame> {
+    return this.request("pair.reject", { channel, senderId });
   }
 }

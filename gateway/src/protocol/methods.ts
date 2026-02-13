@@ -360,6 +360,42 @@ export type RpcMethods = {
     result: { rejected: true; senderId: string };
   };
 
+  "workspace.list": {
+    params: { path?: string; agentId?: string };
+    result: {
+      path: string;
+      files: string[];
+      directories: string[];
+    };
+  };
+
+  "workspace.read": {
+    params: { path: string; agentId?: string };
+    result: {
+      path: string;
+      content: string;
+      size: number;
+      lastModified?: string;
+    };
+  };
+
+  "workspace.write": {
+    params: { path: string; content: string; agentId?: string };
+    result: {
+      path: string;
+      size: number;
+      written: true;
+    };
+  };
+
+  "workspace.delete": {
+    params: { path: string; agentId?: string };
+    result: {
+      path: string;
+      deleted: true;
+    };
+  };
+
   "tool.request": {
     params: ToolRequestParams;
     result: {

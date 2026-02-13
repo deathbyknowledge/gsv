@@ -158,25 +158,31 @@ export type Tab =
   | "channels"
   | "nodes"
   | "workspace"
+  | "cron"
+  | "logs"
+  | "pairing"
   | "config"
   | "debug";
 
 export const TAB_GROUPS: { label: string; tabs: Tab[] }[] = [
   { label: "Chat", tabs: ["chat"] },
   { label: "Control", tabs: ["overview", "sessions", "channels", "nodes"] },
-  { label: "Agent", tabs: ["workspace"] },
-  { label: "Settings", tabs: ["config", "debug"] },
+  { label: "Agent", tabs: ["workspace", "cron", "logs"] },
+  { label: "Settings", tabs: ["pairing", "config", "debug"] },
 ];
 
 export const TAB_ICONS: Record<Tab, string> = {
-  chat: "💬",
-  overview: "📊",
-  sessions: "📋",
-  channels: "📱",
-  nodes: "🖥️",
-  workspace: "📁",
-  config: "⚙️",
-  debug: "🔧",
+  chat: "\uD83D\uDCAC",
+  overview: "\uD83D\uDCCA",
+  sessions: "\uD83D\uDCCB",
+  channels: "\uD83D\uDCF1",
+  nodes: "\uD83D\uDDA5\uFE0F",
+  workspace: "\uD83D\uDCC1",
+  cron: "\u23F0",
+  logs: "\uD83D\uDCDC",
+  pairing: "\uD83E\uDD1D",
+  config: "\u2699\uFE0F",
+  debug: "\uD83D\uDD27",
 };
 
 export const TAB_LABELS: Record<Tab, string> = {
@@ -186,6 +192,9 @@ export const TAB_LABELS: Record<Tab, string> = {
   channels: "Channels",
   nodes: "Nodes",
   workspace: "Workspace",
+  cron: "Cron Jobs",
+  logs: "Logs",
+  pairing: "Pairing",
   config: "Config",
   debug: "Debug",
 };

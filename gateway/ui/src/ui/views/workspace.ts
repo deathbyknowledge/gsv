@@ -12,7 +12,7 @@ export function renderWorkspace(app: GsvApp) {
         <h2 class="section-title">Agent Workspace</h2>
         <button 
           class="btn btn-secondary btn-sm"
-          @click=${() => app["loadWorkspace"](app.workspaceCurrentPath)}
+          @click=${() => app.loadWorkspace(app.workspaceCurrentPath)}
           ?disabled=${app.workspaceLoading}
         >
           ${app.workspaceLoading ? html`<span class="spinner"></span>` : "Refresh"}
@@ -114,7 +114,7 @@ function renderFileBrowser(app: GsvApp) {
         class="nav-item"
         @click=${() => {
           const parentPath = path.split("/").slice(0, -1).join("/") || "/";
-          app["loadWorkspace"](parentPath);
+          app.loadWorkspace(parentPath);
         }}
         style="padding: var(--space-2); margin: 0 calc(var(--space-4) * -1)"
       >
@@ -127,7 +127,7 @@ function renderFileBrowser(app: GsvApp) {
     ${directories.map(dir => html`
       <div 
         class="nav-item"
-        @click=${() => app["loadWorkspace"](dir)}
+        @click=${() => app.loadWorkspace(dir)}
         style="padding: var(--space-2); margin: 0 calc(var(--space-4) * -1)"
       >
         <span>📁</span>
