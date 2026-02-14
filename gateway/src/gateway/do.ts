@@ -70,6 +70,8 @@ import { listHostsByRole, pickExecutionHostId } from "./capabilities";
 import {
   CronService,
   CronStore,
+  normalizeCronToolJobCreateInput,
+  normalizeCronToolJobPatchInput,
   type CronJob,
   type CronJobCreate,
   type CronJobPatch,
@@ -168,6 +170,43 @@ function asMode(value: unknown): "due" | "force" | undefined {
     return value;
   }
   return undefined;
+}
+
+function formatCronDuration(ms: number): string {
+  if (ms % 86_400_000 === 0) {
+    const days = ms / 86_400_000;
+    return days === 1 ? "1 day" : `${days} days`;
+  }
+  if (ms % 3_600_000 === 0) {
+    const hours = ms / 3_600_000;
+    return hours === 1 ? "1 hour" : `${hours} hours`;
+  }
+  if (ms % 60_000 === 0) {
+    const minutes = ms / 60_000;
+    return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+  }
+  if (ms % 1_000 === 0) {
+    const seconds = ms / 1_000;
+    return seconds === 1 ? "1 second" : `${seconds} seconds`;
+  }
+  return `${ms} ms`;
+}
+
+function describeCronSchedule(job: CronJob, timezone: string): string {
+  if (job.schedule.kind === "at") {
+    return `one-shot at ${formatTimeFull(new Date(job.schedule.atMs), timezone)}`;
+  }
+
+  if (job.schedule.kind === "every") {
+    const base = `every ${formatCronDuration(job.schedule.everyMs)}`;
+    if (job.schedule.anchorMs !== undefined) {
+      return `${base} (anchor ${formatTimeFull(new Date(job.schedule.anchorMs), timezone)})`;
+    }
+    return `${base} (starting from creation time)`;
+  }
+
+  const tz = job.schedule.tz || timezone;
+  return `cron "${job.schedule.expr}" (${tz})`;
 }
 
 export class Gateway extends DurableObject<Env> {
@@ -1121,8 +1160,8 @@ export class Gateway extends DurableObject<Env> {
           timezone: tz,
         };
       }
-      case "list":
-        return await this.listCronJobs({
+      case "list": {
+        const listed = await this.listCronJobs({
           agentId: asString(args.agentId),
           includeDisabled:
             typeof args.includeDisabled === "boolean"
@@ -1131,6 +1170,26 @@ export class Gateway extends DurableObject<Env> {
           limit: asNumber(args.limit),
           offset: asNumber(args.offset),
         });
+        const config = this.getFullConfig();
+        const timezone = resolveTimezone(config.userTimezone);
+        return {
+          ...listed,
+          timezone,
+          currentTime: formatTimeFull(new Date(), timezone),
+          jobs: listed.jobs.map((job) => ({
+            ...job,
+            scheduleHuman: describeCronSchedule(job, timezone),
+            nextRunHuman:
+              job.state.nextRunAtMs !== undefined
+                ? formatTimeFull(new Date(job.state.nextRunAtMs), timezone)
+                : undefined,
+            lastRunHuman:
+              job.state.lastRunAtMs !== undefined
+                ? formatTimeFull(new Date(job.state.lastRunAtMs), timezone)
+                : undefined,
+          })),
+        };
+      }
       case "add": {
         const jobInput = asObject(args.job) ?? args;
         if (!jobInput || typeof jobInput !== "object") {
@@ -1140,7 +1199,10 @@ export class Gateway extends DurableObject<Env> {
         if (!ji.name || !ji.schedule || !ji.spec) {
           throw new Error("cron add requires name, schedule, and spec");
         }
-        const job = await this.addCronJob(jobInput as unknown as CronJobCreate);
+        const config = this.getFullConfig();
+        const timezone = resolveTimezone(config.userTimezone);
+        const normalizedInput = normalizeCronToolJobCreateInput(ji, timezone);
+        const job = await this.addCronJob(normalizedInput);
         return { ok: true, job };
       }
       case "update": {
@@ -1152,10 +1214,10 @@ export class Gateway extends DurableObject<Env> {
         if (!patch) {
           throw new Error("cron update requires patch object");
         }
-        const job = await this.updateCronJob(
-          id,
-          patch as unknown as CronJobPatch,
-        );
+        const config = this.getFullConfig();
+        const timezone = resolveTimezone(config.userTimezone);
+        const normalizedPatch = normalizeCronToolJobPatchInput(patch, timezone);
+        const job = await this.updateCronJob(id, normalizedPatch);
         return { ok: true, job };
       }
       case "remove": {

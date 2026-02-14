@@ -314,7 +314,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       version,
       logger: noopLogger,
       printQRInTerminal: false,
-      browser: ["Chrome (Linux)", "Chrome", "122.0.0"],
+      browser: ["GSV Channel", "Desktop", "1.0.0"],
       syncFullHistory: false,
       markOnlineOnConnect: false,
     });

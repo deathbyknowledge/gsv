@@ -923,6 +923,72 @@ fn prompt_secret(prompt: &str) -> Result<Option<String>, Box<dyn std::error::Err
     Ok(Some(trimmed.to_string()))
 }
 
+fn prompt_cloudflare_account_selection(
+    accounts: &[deploy::CloudflareAccountSummary],
+) -> Result<String, Box<dyn std::error::Error>> {
+    if accounts.is_empty() {
+        return Err("API token has no accessible Cloudflare accounts".into());
+    }
+
+    let mut prompt = select("Select Cloudflare account");
+    for account in accounts {
+        let name = if account.name.trim().is_empty() {
+            "(unnamed account)"
+        } else {
+            account.name.as_str()
+        };
+        let label = format!("{} ({})", name, account.id);
+        prompt = prompt.item(account.id.clone(), label, "");
+    }
+
+    Ok(prompt.interact()?)
+}
+
+fn resolve_cloudflare_token_for_deploy(
+    cfg: &CliConfig,
+    api_token: Option<String>,
+    wizard_mode: bool,
+    interactive: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let token = api_token
+        .or_else(|| cfg.cloudflare.api_token.clone())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(token) = token {
+        return Ok(token);
+    }
+
+    if wizard_mode && interactive {
+        return prompt_secret("Cloudflare API token")?
+            .ok_or("Cloudflare API token is required for deploy wizard".into());
+    }
+
+    Err("Cloudflare API token missing. Set --api-token or `gsv local-config set cloudflare.api_token ...`".into())
+}
+
+async fn resolve_cloudflare_account_id_for_deploy(
+    token: &str,
+    configured_account_id: Option<String>,
+    wizard_mode: bool,
+    interactive: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(account_id) = configured_account_id.as_deref() {
+        return deploy::resolve_cloudflare_account_id(token, Some(account_id)).await;
+    }
+
+    if wizard_mode && interactive {
+        let accounts = deploy::list_cloudflare_accounts(token).await?;
+        return match accounts.len() {
+            0 => Err("API token has no accessible Cloudflare accounts".into()),
+            1 => Ok(accounts[0].id.clone()),
+            _ => prompt_cloudflare_account_selection(&accounts),
+        };
+    }
+
+    deploy::resolve_cloudflare_account_id(token, None).await
+}
+
 fn component_is_selected(components: &[String], component: &str) -> bool {
     components.iter().any(|c| c == component)
 }
@@ -1097,18 +1163,6 @@ async fn run_deploy(
                 return Err("Use either --all or one/more --component values, not both".into());
             }
 
-            let token = api_token
-                .or_else(|| cfg.cloudflare.api_token.clone())
-                .ok_or("Cloudflare API token missing. Set --api-token or `gsv local-config set cloudflare.api_token ...`")?;
-            let configured_account_id = account_id
-                .or_else(|| cfg.cloudflare.account_id.clone())
-                .filter(|v| !v.trim().is_empty());
-
-            let resolved_account_id =
-                deploy::resolve_cloudflare_account_id(&token, configured_account_id.as_deref())
-                    .await?;
-            println!("Cloudflare account ID: {}", resolved_account_id);
-
             let interactive = can_prompt_interactively();
             let wizard_mode = wizard;
             let local_account_id_configured = cfg
@@ -1124,6 +1178,21 @@ async fn run_deploy(
             if wizard_mode && interactive {
                 intro("GSV deploy wizard")?;
             }
+
+            let token =
+                resolve_cloudflare_token_for_deploy(cfg, api_token, wizard_mode, interactive)?;
+            let configured_account_id = account_id
+                .or_else(|| cfg.cloudflare.account_id.clone())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            let resolved_account_id = resolve_cloudflare_account_id_for_deploy(
+                &token,
+                configured_account_id,
+                wizard_mode,
+                interactive,
+            )
+            .await?;
+            println!("Cloudflare account ID: {}", resolved_account_id);
 
             let mut components = if all {
                 deploy::available_components()
@@ -1485,16 +1554,19 @@ async fn run_deploy(
                 return Err("--purge-bucket requires --delete-bucket".into());
             }
 
-            let token = api_token
-                .or_else(|| cfg.cloudflare.api_token.clone())
-                .ok_or("Cloudflare API token missing. Set --api-token or `gsv local-config set cloudflare.api_token ...`")?;
+            let token =
+                resolve_cloudflare_token_for_deploy(cfg, api_token, wizard_mode, interactive)?;
             let configured_account_id = account_id
                 .or_else(|| cfg.cloudflare.account_id.clone())
-                .filter(|v| !v.trim().is_empty());
-
-            let resolved_account_id =
-                deploy::resolve_cloudflare_account_id(&token, configured_account_id.as_deref())
-                    .await?;
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            let resolved_account_id = resolve_cloudflare_account_id_for_deploy(
+                &token,
+                configured_account_id,
+                wizard_mode,
+                interactive,
+            )
+            .await?;
             println!("Cloudflare account ID: {}", resolved_account_id);
 
             let mut components = if all {
