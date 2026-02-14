@@ -14,27 +14,16 @@
 # Installs CLI
 curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
 
-# Set CF_API_TOKEN with an "Edit Cloudflare Workers" API token
-export CF_API_TOKEN=<your-cloudflare-api-token>
-# or configure it in the CLI
-gsv local-config set cloudflare.api_token <your-cloudflare-api-token>
-
 # First-time guided deploy
-gsv deploy up --wizard --all
+gsv deploy up --wizard
 ```
-
-The wizard will:
-1. Ask for your LLM provider and API key
-2. Deploy Gateway and channels to Cloudflare
-3. Configure Gateway auth/model/API key automatically
-4. Optionally configure Discord bot token secret
 
 If you want to configure a different machine after deployment:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
-gsv local-config set gateway.url wss://<your-gateway>.workers.dev/ws
-gsv local-config set gateway.token <your-auth-token>
+gsv local-config set gateway.url wss://gsv.<your-domain>.workers.dev/ws
+gsv local-config set gateway.token <your-auth-token> # you can always get it with `gsv config get auth.token`
 ```
 
 ### Chat

@@ -68,6 +68,34 @@ export const getWorkspaceToolDefinitions = (): ToolDefinition[] => [
     },
   },
   {
+    name: NATIVE_TOOLS.EDIT_FILE,
+    description:
+      "Edit a file by replacing existing text. Use this for targeted changes without rewriting the whole file. By default exactly one match is required unless replaceAll=true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "File path relative to workspace root",
+        },
+        oldString: {
+          type: "string",
+          description: "Exact text to find",
+        },
+        newString: {
+          type: "string",
+          description: "Replacement text",
+        },
+        replaceAll: {
+          type: "boolean",
+          description:
+            "Replace all matches. Default false (requires oldString to match exactly once).",
+        },
+      },
+      required: ["path", "oldString", "newString"],
+    },
+  },
+  {
     name: NATIVE_TOOLS.DELETE_FILE,
     description:
       "Delete a file from your workspace. Use with caution - deleted files cannot be recovered.",
@@ -469,6 +497,108 @@ export async function writeFile(
 }
 
 /**
+ * Edit a file by replacing text
+ */
+export async function editFile(
+  bucket: R2Bucket,
+  basePath: string,
+  relativePath: string,
+  oldString: unknown,
+  newString: unknown,
+  replaceAll?: unknown,
+): Promise<{ ok: boolean; result?: unknown; error?: string }> {
+  if (!relativePath) {
+    return { ok: false, error: "path is required" };
+  }
+  if (typeof oldString !== "string") {
+    return { ok: false, error: "oldString is required" };
+  }
+  if (typeof newString !== "string") {
+    return { ok: false, error: "newString is required" };
+  }
+  if (oldString.length === 0) {
+    return { ok: false, error: "oldString must not be empty" };
+  }
+
+  const normalizedPath = normalizeRelativePath(relativePath, "");
+  if (!normalizedPath) {
+    return { ok: false, error: "path is required" };
+  }
+
+  let readPath = normalizePath(basePath, normalizedPath);
+  let content = "";
+  let source: "workspace" | "agent" | "global" = "workspace";
+
+  if (isVirtualSkillsPath(normalizedPath)) {
+    if (normalizedPath === VIRTUAL_SKILLS_ROOT) {
+      return { ok: false, error: "path must reference a file" };
+    }
+
+    const agentPath = toAgentSkillPath(basePath, normalizedPath);
+    const agentObject = await bucket.get(agentPath);
+    if (agentObject) {
+      readPath = agentPath;
+      source = "agent";
+      content = await agentObject.text();
+    } else {
+      const globalPath = toGlobalSkillPath(normalizedPath);
+      const globalObject = await bucket.get(globalPath);
+      if (!globalObject) {
+        return { ok: false, error: `File not found: ${relativePath}` };
+      }
+      readPath = globalPath;
+      source = "global";
+      content = await globalObject.text();
+    }
+  } else {
+    const object = await bucket.get(readPath);
+    if (!object) {
+      return { ok: false, error: `File not found: ${relativePath}` };
+    }
+    content = await object.text();
+  }
+
+  const replacementCount = content.split(oldString).length - 1;
+  if (replacementCount === 0) {
+    return { ok: false, error: `oldString not found in '${relativePath}'` };
+  }
+  if (replaceAll !== true && replacementCount > 1) {
+    return {
+      ok: false,
+      error:
+        `oldString found ${replacementCount} times in '${relativePath}'. ` +
+        "Use replaceAll: true or provide a more specific oldString.",
+    };
+  }
+
+  const updatedContent =
+    replaceAll === true
+      ? content.split(oldString).join(newString)
+      : content.replace(oldString, newString);
+
+  const writeResult = await writeFile(
+    bucket,
+    basePath,
+    normalizedPath,
+    updatedContent,
+  );
+  if (!writeResult.ok) {
+    return writeResult;
+  }
+
+  return {
+    ok: true,
+    result: {
+      path: relativePath,
+      replacements: replaceAll === true ? replacementCount : 1,
+      edited: true,
+      resolvedSource: source,
+      resolvedPath: readPath,
+    },
+  };
+}
+
+/**
  * Delete a file
  */
 export async function deleteFile(
@@ -512,6 +642,15 @@ export const workspaceNativeToolHandlers: NativeToolHandlerMap = {
       context.basePath,
       args.path as string,
       args.content as string,
+    ),
+  [NATIVE_TOOLS.EDIT_FILE]: async (context, args) =>
+    await editFile(
+      context.bucket,
+      context.basePath,
+      args.path as string,
+      args.oldString,
+      args.newString,
+      args.replaceAll,
     ),
   [NATIVE_TOOLS.DELETE_FILE]: async (context, args) =>
     await deleteFile(context.bucket, context.basePath, args.path as string),
