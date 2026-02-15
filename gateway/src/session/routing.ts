@@ -92,87 +92,50 @@ export function resolveAgentIdFromSessionKey(
   return normalizeAgentId(parts[1]);
 }
 
-export function canonicalizeMainSessionAlias(params: {
+/**
+ * Parse a structured session key into its constituent parts.
+ * Returns null for simple aliases or unparseable keys.
+ */
+export type ParsedSessionKey = {
   agentId: string;
-  sessionKey: string;
-  mainKey?: string | null;
-}): string {
-  const raw = params.sessionKey.trim();
-  if (!raw) {
-    return raw;
-  }
+  channel?: string;
+  accountId?: string;
+  peer: { kind: string; id: string };
+};
 
-  const agentId = normalizeAgentId(params.agentId);
-  const mainKey = normalizeMainKey(params.mainKey);
-  const canonical = resolveAgentMainSessionKey({ agentId, mainKey });
-  const canonicalAlias = resolveAgentMainSessionKey({
-    agentId,
-    mainKey: DEFAULT_MAIN_KEY,
-  });
+export function parseSessionKey(raw: string): ParsedSessionKey | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("agent:")) return null;
 
-  if (raw === DEFAULT_MAIN_KEY || raw === mainKey) {
-    return canonical;
-  }
+  const parts = trimmed.split(":");
+  if (parts.length < 4) return null; // need at least agent:{id}:{kind}:{peer}
 
-  if (raw === canonical || raw === canonicalAlias) {
-    return canonical;
-  }
-
-  if (raw.startsWith("agent:")) {
-    const parts = raw.split(":");
-    if (parts.length >= 3) {
-      const rawAgent = normalizeAgentId(parts[1]);
-      const rest = parts.slice(2).join(":").trim().toLowerCase();
-      if (rawAgent === agentId && (rest === DEFAULT_MAIN_KEY || rest === mainKey)) {
-        return canonical;
-      }
-    }
-  }
-
-  return raw;
-}
-
-export function isMainSessionKey(params: {
-  sessionKey: string;
-  mainKey?: string | null;
-  dmScope?: DmScope;
-}): boolean {
-  const raw = params.sessionKey.trim();
-  if (!raw) {
-    return false;
-  }
-
-  const mainKey = normalizeMainKey(params.mainKey);
-  if (raw === DEFAULT_MAIN_KEY || raw === mainKey) {
-    return true;
-  }
-
-  if (!raw.startsWith("agent:")) {
-    return false;
-  }
-
-  const parts = raw.split(":");
-  if (parts.length < 3) {
-    return false;
-  }
-
-  const agentId = normalizeAgentId(parts[1]);
+  const agentId = parts[1];
   const rest = parts.slice(2);
 
-  if (rest.length === 1) {
-    const key = rest[0].toLowerCase();
-    return key === mainKey || key === DEFAULT_MAIN_KEY;
+  // Find "dm" marker to detect DM keys at any position
+  const dmIdx = rest.indexOf("dm");
+  if (dmIdx >= 0 && dmIdx < rest.length - 1) {
+    const peerId = rest.slice(dmIdx + 1).join(":");
+    const before = rest.slice(0, dmIdx);
+    return {
+      agentId,
+      channel: before[0],
+      accountId: before[1],
+      peer: { kind: "dm", id: peerId },
+    };
   }
 
-  const peerKind = rest.length >= 2 ? rest[1] : "";
-
-  if (params.dmScope === "main" && peerKind === "dm") {
-    return true;
+  // Non-DM: agent:{id}:{channel}:{kind}:{peer...}
+  if (rest.length >= 3) {
+    return {
+      agentId,
+      channel: rest[0],
+      peer: { kind: rest[1], id: rest.slice(2).join(":") },
+    };
   }
 
-  const canonical = resolveAgentMainSessionKey({ agentId, mainKey });
-  const alias = resolveAgentMainSessionKey({ agentId, mainKey: DEFAULT_MAIN_KEY });
-  return raw === canonical || raw === alias;
+  return null;
 }
 
 export function buildAgentSessionKey(params: {
@@ -211,4 +174,77 @@ export function buildAgentSessionKey(params: {
   }
 
   return `agent:${agentId}:${channel}:${peerKind}:${peerId}`;
+}
+
+/**
+ * Canonicalize any session key by parsing it and rebuilding through
+ * buildAgentSessionKey. This applies dmScope collapsing, main key aliasing,
+ * and normalization in a single pass.
+ */
+export function canonicalizeSessionKey(
+  raw: string,
+  opts: {
+    mainKey?: string | null;
+    dmScope?: DmScope;
+    defaultAgentId?: string;
+  },
+): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+
+  const mainKey = normalizeMainKey(opts.mainKey);
+  const defaultAgentId = normalizeAgentId(opts.defaultAgentId);
+
+  // Simple alias: "main", "primary", etc.
+  if (!trimmed.startsWith("agent:")) {
+    if (trimmed.toLowerCase() === DEFAULT_MAIN_KEY || trimmed.toLowerCase() === mainKey) {
+      return resolveAgentMainSessionKey({ agentId: defaultAgentId, mainKey: opts.mainKey });
+    }
+    return trimmed;
+  }
+
+  // Structured key — parse and rebuild through the single source of truth
+  const parsed = parseSessionKey(trimmed);
+  if (parsed) {
+    return buildAgentSessionKey({
+      agentId: parsed.agentId,
+      channel: parsed.channel ?? "unknown",
+      accountId: parsed.accountId,
+      peer: parsed.peer,
+      dmScope: opts.dmScope,
+      mainKey: opts.mainKey,
+    });
+  }
+
+  // 3-part key (agent:{id}:{key}) — check if it's a main key alias
+  const agentId = resolveAgentIdFromSessionKey(trimmed, defaultAgentId);
+  const parts = trimmed.split(":");
+  if (parts.length === 3) {
+    const key = parts[2].toLowerCase();
+    if (key === mainKey || key === DEFAULT_MAIN_KEY) {
+      return resolveAgentMainSessionKey({ agentId, mainKey: opts.mainKey });
+    }
+  }
+
+  return trimmed;
+}
+
+/**
+ * Check if a session key resolves to the agent's main session
+ * under the current dmScope configuration.
+ */
+export function isMainSessionKey(params: {
+  sessionKey: string;
+  mainKey?: string | null;
+  dmScope?: DmScope;
+}): boolean {
+  const raw = params.sessionKey.trim();
+  if (!raw) return false;
+
+  const canonical = canonicalizeSessionKey(raw, {
+    mainKey: params.mainKey,
+    dmScope: params.dmScope,
+  });
+  const agentId = resolveAgentIdFromSessionKey(raw);
+  return canonical === resolveAgentMainSessionKey({ agentId, mainKey: params.mainKey });
 }

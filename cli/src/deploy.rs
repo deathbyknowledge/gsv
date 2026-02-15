@@ -39,6 +39,7 @@ const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
 const MAX_SOURCE_MAP_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
 const TEMPLATE_AGENT_ID: &str = "main";
+const TEMPLATE_SENTINEL_FILE: &str = "SOUL.md";
 static DEPLOY_NOTIFICATION_MODE: AtomicBool = AtomicBool::new(false);
 
 pub fn set_notification_output(enabled: bool) {
@@ -139,6 +140,12 @@ struct CloudflareApiResponse<T> {
 struct CloudflareAccount {
     id: String,
     name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CloudflareAccountSummary {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -749,31 +756,13 @@ pub async fn resolve_cloudflare_account_id(
         }
     }
 
-    let client = reqwest::Client::new();
-    let response = send_cloudflare_request_with_retry(
-        || {
-            client
-                .get("https://api.cloudflare.com/client/v4/accounts")
-                .header("Authorization", format!("Bearer {}", api_token))
-                .header("Content-Type", "application/json")
-                .send()
-        },
-        "Resolve Cloudflare account ID",
-    )
-    .await?;
-    let response: CloudflareApiResponse<Vec<CloudflareAccount>> =
-        response.error_for_status()?.json().await?;
-
-    if !response.success {
-        return Err("Cloudflare API returned success=false for accounts endpoint".into());
-    }
-
-    match response.result.len() {
+    let accounts = list_cloudflare_accounts(api_token).await?;
+    match accounts.len() {
         0 => Err("API token has no accessible Cloudflare accounts".into()),
-        1 => Ok(response.result[0].id.clone()),
+        1 => Ok(accounts[0].id.clone()),
         _ => {
             let mut details = String::new();
-            for account in &response.result {
+            for account in &accounts {
                 if !details.is_empty() {
                     details.push_str(", ");
                 }
@@ -786,6 +775,38 @@ pub async fn resolve_cloudflare_account_id(
             .into())
         }
     }
+}
+
+pub async fn list_cloudflare_accounts(
+    api_token: &str,
+) -> Result<Vec<CloudflareAccountSummary>, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let response = send_cloudflare_request_with_retry(
+        || {
+            client
+                .get("https://api.cloudflare.com/client/v4/accounts")
+                .header("Authorization", format!("Bearer {}", api_token))
+                .header("Content-Type", "application/json")
+                .send()
+        },
+        "List Cloudflare accounts",
+    )
+    .await?;
+    let response: CloudflareApiResponse<Vec<CloudflareAccount>> =
+        response.error_for_status()?.json().await?;
+
+    if !response.success {
+        return Err("Cloudflare API returned success=false for accounts endpoint".into());
+    }
+
+    Ok(response
+        .result
+        .into_iter()
+        .map(|account| CloudflareAccountSummary {
+            id: account.id,
+            name: account.name,
+        })
+        .collect())
 }
 
 fn cloudflare_api_url(path: &str) -> String {
@@ -2635,6 +2656,24 @@ async fn sync_templates_for_bundle(
         return Ok(());
     }
 
+    let sentinel_key = format!("agents/{}/{}", TEMPLATE_AGENT_ID, TEMPLATE_SENTINEL_FILE);
+    if r2_object_exists(
+        client,
+        account_id,
+        api_token,
+        &bucket_name,
+        jurisdiction.as_deref(),
+        &sentinel_key,
+    )
+    .await?
+    {
+        println!(
+            "Template sentinel {} already exists in {}. Skipping template sync for {}.",
+            sentinel_key, bucket_name, bundle.script_name
+        );
+        return Ok(());
+    }
+
     println!(
         "Syncing {} template object(s) to R2 bucket {} for {}.",
         uploads.len(),
@@ -2642,22 +2681,7 @@ async fn sync_templates_for_bundle(
         bundle.script_name
     );
     let mut uploaded_count = 0usize;
-    let mut skipped_existing_count = 0usize;
     for (key, path) in uploads {
-        if r2_object_exists(
-            client,
-            account_id,
-            api_token,
-            &bucket_name,
-            jurisdiction.as_deref(),
-            &key,
-        )
-        .await?
-        {
-            skipped_existing_count += 1;
-            continue;
-        }
-
         let body = fs::read(&path)?;
         let content_type = mime_guess::from_path(&path)
             .first_raw()
@@ -2679,12 +2703,6 @@ async fn sync_templates_for_bundle(
         println!(
             "Uploaded {} template object(s) for {}.",
             uploaded_count, bundle.script_name
-        );
-    }
-    if skipped_existing_count > 0 {
-        println!(
-            "Skipped {} existing template object(s) for {}.",
-            skipped_existing_count, bundle.script_name
         );
     }
 

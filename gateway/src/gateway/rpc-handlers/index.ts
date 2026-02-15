@@ -20,6 +20,8 @@ import {
 } from "./channel";
 import {
   handleToolsList,
+  handleNodeExecEvent,
+  handleNodeProbeResult,
   handleToolRequest,
   handleToolInvoke,
   handleToolResult,
@@ -43,6 +45,7 @@ import {
 } from "./cron";
 import { handleConfigGet, handleConfigSet } from "./config";
 import { handleConnect } from "./connect";
+import { handleSkillsStatus, handleSkillsUpdate } from "./skills";
 import {
   handleWorkspaceList,
   handleWorkspaceRead,
@@ -55,6 +58,8 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     connect: handleConnect,
     "tool.invoke": handleToolInvoke,
     "tool.result": handleToolResult,
+    "node.probe.result": handleNodeProbeResult,
+    "node.exec.event": handleNodeExecEvent,
     "tools.list": handleToolsList,
     "logs.get": handleLogsGet,
     "logs.result": handleLogsResult,
@@ -75,6 +80,8 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     "channel.logout": handleChannelLogout,
     "config.get": handleConfigGet,
     "config.set": handleConfigSet,
+    "skills.status": handleSkillsStatus,
+    "skills.update": handleSkillsUpdate,
     "heartbeat.trigger": handleHeartbeatTrigger,
     "heartbeat.status": handleHeartbeatStatus,
     "heartbeat.start": handleHeartbeatStart,

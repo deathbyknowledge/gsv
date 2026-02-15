@@ -85,6 +85,16 @@ gsv heartbeat start                 # Start the heartbeat scheduler
 gsv heartbeat trigger <agent>       # Manually trigger heartbeat (default: main)
 ```
 
+## Skills
+
+Inspect and refresh runtime skill eligibility:
+
+```bash
+gsv skills status [agent-id]                         # Show eligibility snapshot
+gsv skills update [agent-id]                         # Refresh node bin checks + show status
+gsv skills update [agent-id] --force --timeout-ms 20000
+```
+
 ## R2 Workspace Mount
 
 Mount your R2 workspace locally via rclone FUSE:

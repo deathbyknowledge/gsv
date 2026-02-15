@@ -150,6 +150,107 @@ describe("buildSystemPromptFromWorkspace", () => {
     );
   });
 
+  it("supports openclaw-style bins/env/config/os requirements", () => {
+    const tools: ToolDefinition[] = [
+      {
+        name: "gsv__ReadFile",
+        description: "Read files from workspace",
+        inputSchema: { type: "object" },
+      },
+    ];
+
+    const workspace: AgentWorkspace = {
+      agentId: "main",
+      skills: [
+        {
+          name: "github",
+          description: "GitHub CLI workflows",
+          location: "skills/github/SKILL.md",
+          metadata: {
+            openclaw: {
+              requires: {
+                bins: ["gh"],
+                env: ["GITHUB_TOKEN"],
+                config: ["apiKeys.openai"],
+                os: ["darwin"],
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const visiblePrompt = buildSystemPromptFromWorkspace("Base", workspace, {
+      tools,
+      configRoot: {
+        apiKeys: {
+          openai: "sk-test",
+        },
+      },
+      runtime: {
+        agentId: "main",
+        isMainSession: true,
+        nodes: {
+          executionHostId: "exec-1",
+          specializedHostIds: [],
+          hosts: [
+            {
+              nodeId: "exec-1",
+              hostRole: "execution",
+              hostCapabilities: [
+                "filesystem.list",
+                "filesystem.read",
+                "filesystem.write",
+                "shell.exec",
+              ],
+              toolCapabilities: {},
+              tools: ["Bash"],
+              hostOs: "darwin",
+              hostEnv: ["GITHUB_TOKEN"],
+              hostBinStatus: { gh: true },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(visiblePrompt).toContain('<skill name="github">');
+
+    const hiddenPrompt = buildSystemPromptFromWorkspace("Base", workspace, {
+      tools,
+      configRoot: {
+        apiKeys: {},
+      },
+      runtime: {
+        agentId: "main",
+        isMainSession: true,
+        nodes: {
+          executionHostId: "exec-1",
+          specializedHostIds: [],
+          hosts: [
+            {
+              nodeId: "exec-1",
+              hostRole: "execution",
+              hostCapabilities: [
+                "filesystem.list",
+                "filesystem.read",
+                "filesystem.write",
+                "shell.exec",
+              ],
+              toolCapabilities: {},
+              tools: ["Bash"],
+              hostOs: "darwin",
+              hostEnv: ["GITHUB_TOKEN"],
+              hostBinStatus: { gh: true },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(hiddenPrompt).not.toContain('<skill name="github">');
+  });
+
   it("filters skills by config entries policy", () => {
     const tools: ToolDefinition[] = [
       {
@@ -472,7 +573,7 @@ describe("buildSystemPromptFromWorkspace", () => {
       "Capabilities are internal routing metadata. Do not call capability IDs as tools; call only listed tool names.",
     );
     expect(prompt).toContain(
-      "- exec-node-1 (execution) capabilities=[filesystem.list, filesystem.read, filesystem.write, shell.exec] tools=[Bash, Read, Write]",
+      "- exec-node-1 (execution) envKeys=0 bins=0 capabilities=[filesystem.list, filesystem.read, filesystem.write, shell.exec] tools=[Bash, Read, Write]",
     );
   });
 });

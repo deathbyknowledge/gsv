@@ -7,6 +7,20 @@ import {
 import { RpcError } from "../../shared/utils";
 import type { ToolInvokePayload } from "../../protocol/tools";
 
+function extractRunningSessionId(result: unknown): string | undefined {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return undefined;
+  }
+  const record = result as Record<string, unknown>;
+  const status = typeof record.status === "string" ? record.status.trim() : "";
+  if (status !== "running") {
+    return undefined;
+  }
+  const sessionId =
+    typeof record.sessionId === "string" ? record.sessionId.trim() : "";
+  return sessionId || undefined;
+}
+
 export const handleToolsList: Handler<"tools.list"> = ({ gw }) => ({
   tools: gw.getAllTools(),
 });
@@ -87,6 +101,7 @@ export const handleToolInvoke: Handler<"tool.invoke"> = (ctx) => {
 };
 
 export const handleToolResult: Handler<"tool.result"> = async ({
+  ws,
   gw,
   params,
 }) => {
@@ -97,6 +112,14 @@ export const handleToolResult: Handler<"tool.result"> = async ({
   const route = gw.pendingToolCalls[params.callId];
   if (!route) {
     throw new RpcError(404, "Unknown callId");
+  }
+  if (
+    typeof route !== "object" ||
+    route === null ||
+    (route.kind !== "client" && route.kind !== "session")
+  ) {
+    delete gw.pendingToolCalls[params.callId];
+    return { ok: true, dropped: true };
   }
 
   if (route.kind === "client") {
@@ -130,7 +153,46 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     delete gw.pendingToolCalls[params.callId];
     throw new RpcError(404, `Unknown session tool call: ${params.callId}`);
   }
+
+  const nodeAttachment = ws.deserializeAttachment();
+  const nodeId = nodeAttachment.nodeId as string | undefined;
+  const runningSessionId = extractRunningSessionId(params.result);
+  if (nodeId && runningSessionId) {
+    gw.registerPendingAsyncExecSession({
+      nodeId,
+      sessionId: runningSessionId,
+      sessionKey: route.sessionKey,
+      callId: params.callId,
+    });
+  }
+
   delete gw.pendingToolCalls[params.callId];
 
   return { ok: true };
+};
+
+export const handleNodeProbeResult: Handler<"node.probe.result"> = async ({
+  ws,
+  gw,
+  params,
+}) => {
+  const attachment = ws.deserializeAttachment();
+  const nodeId = attachment.nodeId as string | undefined;
+  if (!nodeId) {
+    throw new RpcError(403, "Only node clients can submit probe results");
+  }
+  return await gw.handleNodeProbeResult(nodeId, params);
+};
+
+export const handleNodeExecEvent: Handler<"node.exec.event"> = async ({
+  ws,
+  gw,
+  params,
+}) => {
+  const attachment = ws.deserializeAttachment();
+  const nodeId = attachment.nodeId as string | undefined;
+  if (!nodeId) {
+    throw new RpcError(403, "Only node clients can submit exec events");
+  }
+  return await gw.handleNodeExecEvent(nodeId, params);
 };

@@ -21,9 +21,12 @@ import type {
   LogsGetResult,
   LogsResultParams,
 } from "./logs";
+import type { SkillsStatusResult, SkillsUpdateResult } from "./skills";
 import type {
   ToolDefinition,
   NodeRuntimeInfo,
+  NodeExecEventParams,
+  NodeProbeResultParams,
   ToolRequestParams,
   ToolResultParams,
 } from "./tools";
@@ -90,6 +93,16 @@ export type RpcMethods = {
     result: { ok: true; dropped?: true };
   };
 
+  "node.probe.result": {
+    params: NodeProbeResultParams;
+    result: { ok: true; dropped?: true };
+  };
+
+  "node.exec.event": {
+    params: NodeExecEventParams;
+    result: { ok: true; dropped?: true };
+  };
+
   "logs.get": {
     params: LogsGetParams | undefined;
     result: LogsGetResult;
@@ -147,6 +160,22 @@ export type RpcMethods = {
   "config.set": {
     params: { path: string; value: unknown };
     result: { ok: true; path: string };
+  };
+
+  "skills.status": {
+    params: { agentId?: string } | undefined;
+    result: SkillsStatusResult;
+  };
+
+  "skills.update": {
+    params:
+      | {
+          agentId?: string;
+          force?: boolean;
+          timeoutMs?: number;
+        }
+      | undefined;
+    result: SkillsUpdateResult;
   };
 
   "session.stats": {

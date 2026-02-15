@@ -61,14 +61,50 @@ export const getCronToolDefinitions = (): ToolDefinition[] => [
               type: "object",
               description:
                 'Schedule object (required). Must have a "kind" discriminator: ' +
-                '{ kind: "at", atMs: <epoch_ms> } for one-shot, ' +
-                '{ kind: "every", everyMs: <ms>, anchorMs?: <epoch_ms> } for interval, ' +
+                '{ kind: "at", at: "<datetime>" } for one-shot (recommended), ' +
+                '{ kind: "every", everyMinutes: <n>, anchor?: "<datetime>" } for interval, ' +
                 '{ kind: "cron", expr: "<5-field cron>", tz?: "<IANA timezone>" } for cron expression.',
               properties: {
                 kind: {
                   type: "string",
                   enum: ["at", "every", "cron"],
                   description: "Schedule type.",
+                },
+                at: {
+                  type: "string",
+                  description:
+                    'One-shot datetime. Supports ISO strings (e.g., "2026-02-14 09:30"), relative strings (e.g., "in 2 hours"), and "today/tomorrow" forms. Interpreted in user timezone when no timezone is specified.',
+                },
+                in: {
+                  type: "string",
+                  description:
+                    'Relative one-shot shorthand (e.g., "in 30 minutes", "in 2 hours").',
+                },
+                everyMinutes: {
+                  type: "number",
+                  description: "Interval duration in minutes.",
+                },
+                everyHours: {
+                  type: "number",
+                  description: "Interval duration in hours.",
+                },
+                everyDays: {
+                  type: "number",
+                  description: "Interval duration in days.",
+                },
+                anchor: {
+                  type: "string",
+                  description:
+                    'Optional interval anchor datetime string. If omitted, starts from now.',
+                },
+                expr: {
+                  type: "string",
+                  description: "5-field cron expression for kind=cron.",
+                },
+                tz: {
+                  type: "string",
+                  description:
+                    "IANA timezone for cron expressions. Defaults to user timezone.",
                 },
               },
               required: ["kind"],

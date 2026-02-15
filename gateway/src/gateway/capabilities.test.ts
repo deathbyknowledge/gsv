@@ -41,6 +41,29 @@ describe("validateNodeRuntimeInfo", () => {
     expect(runtime.toolCapabilities.Read).toEqual(["filesystem.read"]);
   });
 
+  it("accepts optional host skill facts", () => {
+    const runtime = validateNodeRuntimeInfo({
+      nodeId: "exec-1",
+      tools: [tool("Bash")],
+      runtime: {
+        hostRole: "execution",
+        hostCapabilities: EXECUTION_BASELINE_CAPABILITIES,
+        toolCapabilities: {
+          Bash: ["shell.exec"],
+        },
+        hostOs: "darwin",
+        hostEnv: ["GITHUB_TOKEN"],
+        hostBinStatus: { gh: true, jq: false },
+        hostBinStatusUpdatedAt: 1700000000000,
+      },
+    });
+
+    expect(runtime.hostOs).toBe("darwin");
+    expect(runtime.hostEnv).toEqual(["GITHUB_TOKEN"]);
+    expect(runtime.hostBinStatus).toEqual({ gh: true, jq: false });
+    expect(runtime.hostBinStatusUpdatedAt).toBe(1700000000000);
+  });
+
   it("rejects missing runtime payload", () => {
     expect(() =>
       validateNodeRuntimeInfo({
