@@ -98,8 +98,6 @@ async fn test_process_tool_poll_log_and_kill_background_session() {
 
     let session_id = start["sessionId"].as_str().unwrap().to_string();
 
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-
     let poll_running = process
         .execute(json!({
             "action": "poll",
@@ -109,17 +107,24 @@ async fn test_process_tool_poll_log_and_kill_background_session() {
         .unwrap();
     assert_eq!(poll_running["running"], true);
 
-    let log = process
-        .execute(json!({
-            "action": "log",
-            "sessionId": session_id.clone()
-        }))
-        .await
-        .unwrap();
-    assert!(log["log"]
-        .as_str()
-        .map(|output| output.contains("heartbeat"))
-        .unwrap_or(false));
+    let mut saw_heartbeat = false;
+    let mut last_log = String::new();
+    for _ in 0..80 {
+        let log = process
+            .execute(json!({
+                "action": "log",
+                "sessionId": session_id.clone()
+            }))
+            .await
+            .unwrap();
+        let output = log["log"].as_str().unwrap_or("");
+        last_log = output.to_string();
+        if output.contains("heartbeat") {
+            saw_heartbeat = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 
     let kill = process
         .execute(json!({
@@ -140,6 +145,10 @@ async fn test_process_tool_poll_log_and_kill_background_session() {
             .unwrap();
         if poll["running"] == false {
             assert_ne!(poll["status"], "running");
+            assert!(
+                saw_heartbeat,
+                "expected heartbeat in process log before kill, last log: {last_log}"
+            );
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
