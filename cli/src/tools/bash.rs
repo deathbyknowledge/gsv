@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -292,6 +292,36 @@ fn normalize_signal_name(status: &std::process::ExitStatus) -> Option<String> {
     None
 }
 
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return std::fs::metadata(path)
+            .map(|meta| (meta.permissions().mode() & 0o111) != 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn resolve_login_shell() -> String {
+    if let Ok(raw) = std::env::var("SHELL") {
+        let candidate = raw.trim();
+        if !candidate.is_empty() {
+            let path = Path::new(candidate);
+            if path.is_absolute() && is_executable_file(path) {
+                return candidate.to_string();
+            }
+        }
+    }
+    "/bin/sh".to_string()
+}
+
 async fn terminate_pid(pid: u32, force: bool) {
     #[cfg(unix)]
     {
@@ -372,8 +402,9 @@ async fn launch_managed_process(
     workdir: PathBuf,
     timeout_ms: u64,
 ) -> Result<ProcessHandle, String> {
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(&command);
+    let shell = resolve_login_shell();
+    let mut cmd = Command::new(&shell);
+    cmd.arg("-lc").arg(&command);
     cmd.current_dir(&workdir);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
