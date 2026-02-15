@@ -1588,6 +1588,7 @@ export class Gateway extends DurableObject<Env> {
         continue;
       }
       this.pendingNodeProbes[probeId] = this.clonePendingNodeProbe(probe, {
+        attempts: 0,
         sentAt: undefined,
         expiresAt: undefined,
       });
