@@ -6,7 +6,7 @@ Use `skills.entries` to control skill eligibility without editing `SKILL.md`.
 
 - `enabled`: hard enable/disable for a skill.
 - `always`: override the skill's `always` frontmatter.
-- `requires`: override runtime capability requirements used for skill visibility.
+- `requires`: override runtime requirements used for skill visibility.
 
 ## Config Shape
 
@@ -20,7 +20,12 @@ Use `skills.entries` to control skill eligibility without editing `SKILL.md`.
         "requires": {
           "hostRoles": ["execution"],
           "capabilities": ["shell.exec"],
-          "anyCapabilities": ["text.search"]
+          "anyCapabilities": ["text.search"],
+          "bins": ["gh"],
+          "anyBins": ["codex", "claude"],
+          "env": ["GITHUB_TOKEN"],
+          "config": ["apiKeys.openai"],
+          "os": ["darwin"]
         }
       }
     }
@@ -57,7 +62,9 @@ gsv config set skills.entries.gsv-cli '{
   "enabled": true,
   "requires": {
     "hostRoles": ["execution"],
-    "capabilities": ["shell.exec"]
+    "capabilities": ["shell.exec"],
+    "bins": ["gh"],
+    "env": ["GITHUB_TOKEN"]
   }
 }'
 ```
@@ -65,17 +72,17 @@ gsv config set skills.entries.gsv-cli '{
 Mark a skill always-eligible:
 
 ```bash
-gsv config set skills.entries.memory-update '{"always":true}'
+gsv config set skills.entries.coding-agent '{"always":true}'
 ```
 
 ## Runtime Requirement Values
 
-Current host roles:
+Host roles:
 
 - `execution`
 - `specialized`
 
-Current capabilities:
+Capabilities:
 
 - `filesystem.list`
 - `filesystem.read`
@@ -84,6 +91,13 @@ Current capabilities:
 - `text.search`
 - `shell.exec`
 
+Additional requirement keys:
+
+- `bins` / `anyBins` (binary presence on node, cached via `skills.update`)
+- `env` (environment variable names present on node)
+- `config` (dotted gateway config paths with non-empty values)
+- `os` (node OS identifiers like `darwin`, `linux`, `windows`)
+
 ## Notes
 
 - `skills.entries` is policy, not storage: skills still come from R2 (`agents/<id>/skills/*` and `skills/*`).
@@ -91,4 +105,4 @@ Current capabilities:
 - Skill visibility is computed per run from:
   1. skill frontmatter
   2. `skills.entries` overrides
-  3. connected runtime node capabilities
+  3. connected runtime node facts (roles/capabilities/os/env/bin cache) and config paths

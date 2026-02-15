@@ -4,15 +4,17 @@ use gsv::config::{self, CliConfig};
 use gsv::connection::Connection;
 use gsv::deploy;
 use gsv::protocol::{
-    Frame, LogsGetPayload, LogsResultParams, NodeRuntimeInfo, ToolDefinition, ToolInvokePayload,
-    ToolResultParams,
+    Frame, LogsGetPayload, LogsResultParams, NodeExecEventParams, NodeProbePayload,
+    NodeProbeResultParams, NodeRuntimeInfo, ToolDefinition, ToolInvokePayload, ToolResultParams,
 };
-use gsv::tools::{all_tools_with_workspace, Tool};
+use gsv::tools::{all_tools_with_workspace, subscribe_exec_events, Tool};
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
+use std::future::Future;
 use std::io::{self, BufRead, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -102,6 +104,12 @@ enum Commands {
     Tools {
         #[command(subcommand)]
         action: ToolsAction,
+    },
+
+    /// Inspect and refresh skill runtime eligibility
+    Skills {
+        #[command(subcommand)]
+        action: SkillsAction,
     },
 
     /// Mount R2 bucket to local workspace using rclone
@@ -327,6 +335,31 @@ enum ToolsAction {
         /// Arguments as JSON object (e.g., '{"command": "ls -la"}')
         #[arg(default_value = "{}")]
         args: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillsAction {
+    /// Show skill eligibility status for an agent
+    Status {
+        /// Agent ID (default: main)
+        #[arg(default_value = "main")]
+        agent_id: String,
+    },
+
+    /// Refresh node bin checks and show updated status
+    Update {
+        /// Agent ID (default: main)
+        #[arg(default_value = "main")]
+        agent_id: String,
+
+        /// Force re-probing even when cache is fresh
+        #[arg(long)]
+        force: bool,
+
+        /// Probe timeout in milliseconds
+        #[arg(long)]
+        timeout_ms: Option<u64>,
     },
 }
 
@@ -684,6 +717,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Deploy { action } => run_deploy(action, &cfg).await,
         Commands::Session { action } => run_session(&url, token, action).await,
         Commands::Tools { action } => run_tools(&url, token, action).await,
+        Commands::Skills { action } => run_skills(&url, token, action).await,
         Commands::Mount { action } => run_mount(action, &cfg).await,
         Commands::Heartbeat { action } => run_heartbeat(&url, token, action).await,
         Commands::Pair { action } => run_pair(&url, token, action).await,
@@ -721,6 +755,106 @@ fn run_init(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!("  gsv local-config set node.workspace /path/to/workspace");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_logger() -> NodeLogger {
+        let log_path =
+            std::env::temp_dir().join(format!("gsv-node-test-{}.log", uuid::Uuid::new_v4()));
+        let inner = NodeLoggerInner::open(&log_path, 1024 * 1024, 1).expect("create test logger");
+        NodeLogger {
+            inner: Arc::new(Mutex::new(inner)),
+            node_id: "test-node".to_string(),
+            workspace: "/tmp".to_string(),
+        }
+    }
+
+    fn test_exec_event(index: usize) -> NodeExecEventParams {
+        NodeExecEventParams {
+            event_id: format!("event-{index}"),
+            session_id: format!("session-{index}"),
+            event: "finished".to_string(),
+            call_id: Some(format!("call-{index}")),
+            exit_code: Some(0),
+            signal: None,
+            output_tail: Some("ok".to_string()),
+            started_at: Some(1),
+            ended_at: Some(2),
+        }
+    }
+
+    #[test]
+    fn test_normalize_host_env_keys_trims_and_dedups() {
+        let keys = vec![
+            OsString::from(" PATH "),
+            OsString::from("PATH"),
+            OsString::from("HOME"),
+            OsString::from(""),
+            OsString::from("   "),
+        ];
+
+        let normalized = normalize_host_env_keys(keys);
+        assert_eq!(normalized, vec!["HOME".to_string(), "PATH".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_normalize_host_env_keys_skips_non_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = OsString::from_vec(vec![0xff, 0xfe, 0xfd]);
+        let keys = vec![OsString::from("FOO"), invalid, OsString::from("BAR")];
+
+        let normalized = normalize_host_env_keys(keys);
+        assert_eq!(normalized, vec!["BAR".to_string(), "FOO".to_string()]);
+    }
+
+    #[test]
+    fn test_queue_exec_event_for_retry_drops_oldest_when_full() {
+        let logger = test_logger();
+        let outbox: Arc<Mutex<VecDeque<NodeExecEventParams>>> =
+            Arc::new(Mutex::new(VecDeque::new()));
+
+        for i in 0..=MAX_NODE_EXEC_EVENT_OUTBOX {
+            queue_exec_event_for_retry(&outbox, test_exec_event(i), &logger);
+        }
+
+        let queue = outbox.lock().expect("outbox lock");
+        assert_eq!(queue.len(), MAX_NODE_EXEC_EVENT_OUTBOX);
+        assert_eq!(
+            queue.front().map(|event| event.event_id.as_str()),
+            Some("event-1")
+        );
+        let expected_last = format!("event-{MAX_NODE_EXEC_EVENT_OUTBOX}");
+        assert_eq!(
+            queue.back().map(|event| event.event_id.as_str()),
+            Some(expected_last.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_flush_exec_event_outbox_retry_keeps_event_queued() {
+        let logger = test_logger();
+        let outbox: Arc<Mutex<VecDeque<NodeExecEventParams>>> =
+            Arc::new(Mutex::new(VecDeque::new()));
+        queue_exec_event_for_retry(&outbox, test_exec_event(1), &logger);
+
+        let sent = flush_exec_event_outbox_with_sender(&outbox, &logger, |_event| async {
+            ExecEventSendOutcome::Retry("simulated send failure".to_string())
+        })
+        .await;
+
+        assert_eq!(sent, 0);
+        let queue = outbox.lock().expect("outbox lock");
+        assert_eq!(queue.len(), 1);
+        assert_eq!(
+            queue.front().map(|event| event.event_id.as_str()),
+            Some("event-1")
+        );
+    }
 }
 
 fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error::Error>> {
@@ -1956,6 +2090,7 @@ fn node_logs_file(lines: usize, follow: bool) -> Result<(), Box<dyn std::error::
 
 const DEFAULT_NODE_LOG_GET_LINES: usize = 100;
 const MAX_NODE_LOG_GET_LINES: usize = 5000;
+const MAX_NODE_EXEC_EVENT_OUTBOX: usize = 2048;
 
 fn resolve_logs_get_line_limit(lines: Option<usize>) -> usize {
     lines
@@ -3573,6 +3708,149 @@ async fn run_tools(
     Ok(())
 }
 
+async fn run_skills(
+    url: &str,
+    token: Option<String>,
+    action: SkillsAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let conn =
+        Connection::connect_with_options(url, "client", None, None, |_| {}, None, token).await?;
+
+    let (method, params) = match action {
+        SkillsAction::Status { agent_id } => ("skills.status", json!({ "agentId": agent_id })),
+        SkillsAction::Update {
+            agent_id,
+            force,
+            timeout_ms,
+        } => (
+            "skills.update",
+            json!({
+                "agentId": agent_id,
+                "force": force,
+                "timeoutMs": timeout_ms,
+            }),
+        ),
+    };
+
+    let res = conn.request(method, Some(params)).await?;
+    if !res.ok {
+        if let Some(err) = res.error {
+            return Err(format!("Error: {}", err.message).into());
+        }
+        return Err("Unknown skills RPC error".into());
+    }
+
+    let payload = res.payload.unwrap_or_else(|| json!({}));
+    let agent_id = payload
+        .get("agentId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("main");
+    println!("Agent: {}", agent_id);
+
+    let required_bins = payload
+        .get("requiredBins")
+        .and_then(|v| v.as_array())
+        .map(|bins| {
+            bins.iter()
+                .filter_map(|entry| entry.as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    println!(
+        "Required bins: {}",
+        if required_bins.is_empty() {
+            "none".to_string()
+        } else {
+            required_bins.join(", ")
+        }
+    );
+
+    if method == "skills.update" {
+        let updated_nodes = payload
+            .get("updatedNodeCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        println!("Updated nodes: {}", updated_nodes);
+        if let Some(errors) = payload.get("errors").and_then(|v| v.as_array()) {
+            if !errors.is_empty() {
+                println!("Probe errors:");
+                for error in errors {
+                    if let Some(msg) = error.as_str() {
+                        println!("  - {}", msg);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(nodes) = payload.get("nodes").and_then(|v| v.as_array()) {
+        println!("\nNodes:");
+        if nodes.is_empty() {
+            println!("  (none connected)");
+        } else {
+            for node in nodes {
+                let node_id = node.get("nodeId").and_then(|v| v.as_str()).unwrap_or("?");
+                let role = node.get("hostRole").and_then(|v| v.as_str()).unwrap_or("?");
+                let os = node
+                    .get("hostOs")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let bins = node
+                    .get("hostBins")
+                    .and_then(|v| v.as_array())
+                    .map(|entries| entries.len())
+                    .unwrap_or(0);
+                let can_probe = node
+                    .get("canProbeBins")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                println!(
+                    "  - {} ({}) os={} bins={} probe={}",
+                    node_id,
+                    role,
+                    os,
+                    bins,
+                    if can_probe { "yes" } else { "no" }
+                );
+            }
+        }
+    }
+
+    if let Some(skills) = payload.get("skills").and_then(|v| v.as_array()) {
+        println!("\nSkills:");
+        if skills.is_empty() {
+            println!("  (none)");
+        } else {
+            for skill in skills {
+                let name = skill.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                let eligible = skill
+                    .get("eligible")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let reasons = skill
+                    .get("reasons")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|entry| entry.as_str())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                if eligible {
+                    println!("  - {}: eligible", name);
+                } else if reasons.is_empty() {
+                    println!("  - {}: ineligible", name);
+                } else {
+                    println!("  - {}: ineligible ({})", name, reasons.join("; "));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn run_session(
     url: &str,
     token: Option<String>,
@@ -4054,8 +4332,82 @@ fn capabilities_for_tool(tool_name: &str) -> Result<Vec<&'static str>, String> {
         "Glob" => Ok(vec!["filesystem.list"]),
         "Grep" => Ok(vec!["text.search", "filesystem.read"]),
         "Bash" => Ok(vec!["shell.exec"]),
+        "Process" => Ok(vec!["shell.exec"]),
         _ => Err(format!("No capability mapping for tool '{}'", tool_name)),
     }
+}
+
+fn is_valid_probe_bin(bin: &str) -> bool {
+    !bin.is_empty()
+        && bin
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '+' | '-'))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return fs::metadata(path)
+            .map(|meta| (meta.permissions().mode() & 0o111) != 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn is_bin_available(bin: &str) -> bool {
+    if bin.contains('/') || bin.contains('\\') {
+        return is_executable_file(Path::new(bin));
+    }
+
+    let path_var = std::env::var_os("PATH");
+    let Some(path_var) = path_var else {
+        return false;
+    };
+
+    for dir in std::env::split_paths(&path_var) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = dir.join(bin);
+        if is_executable_file(&candidate) {
+            return true;
+        }
+    }
+    false
+}
+
+fn probe_node_bins(bins: &[String]) -> HashMap<String, bool> {
+    let mut statuses = HashMap::new();
+    for raw_bin in bins {
+        let bin = raw_bin.trim();
+        if !is_valid_probe_bin(bin) {
+            continue;
+        }
+        statuses.insert(bin.to_string(), is_bin_available(bin));
+    }
+    statuses
+}
+
+fn normalize_host_env_keys<I>(keys: I) -> Vec<String>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut env_keys: Vec<String> = keys
+        .into_iter()
+        .filter_map(|key| key.into_string().ok())
+        .map(|key| key.trim().to_string())
+        .filter(|key| !key.is_empty())
+        .collect();
+    env_keys.sort();
+    env_keys.dedup();
+    env_keys
 }
 
 fn build_execution_node_runtime(
@@ -4097,11 +4449,159 @@ fn build_execution_node_runtime(
     let mut normalized_host_capabilities: Vec<String> = host_capabilities.into_iter().collect();
     normalized_host_capabilities.sort();
 
+    let host_env = normalize_host_env_keys(std::env::vars_os().map(|(key, _)| key));
+
     Ok(NodeRuntimeInfo {
         host_role: "execution".to_string(),
         host_capabilities: normalized_host_capabilities,
         tool_capabilities,
+        host_os: Some(std::env::consts::OS.to_string()),
+        host_env: Some(host_env),
+        host_bin_status: None,
+        host_bin_status_updated_at: None,
     })
+}
+
+fn exec_event_outbox_len(outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>) -> usize {
+    outbox.lock().map(|queue| queue.len()).unwrap_or(0)
+}
+
+enum ExecEventSendOutcome {
+    Sent,
+    Retry(String),
+    Drop(String),
+}
+
+fn queue_exec_event_for_retry(
+    outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>,
+    event: NodeExecEventParams,
+    logger: &NodeLogger,
+) {
+    let mut queue = match outbox.lock() {
+        Ok(queue) => queue,
+        Err(error) => {
+            logger.error(
+                "node.exec.event.outbox_lock_failed",
+                json!({
+                    "error": error.to_string(),
+                }),
+            );
+            return;
+        }
+    };
+
+    if queue.len() >= MAX_NODE_EXEC_EVENT_OUTBOX {
+        if let Some(dropped) = queue.pop_front() {
+            logger.warn(
+                "node.exec.event.outbox_drop_oldest",
+                json!({
+                    "eventId": dropped.event_id,
+                    "sessionId": dropped.session_id,
+                    "event": dropped.event,
+                    "maxOutbox": MAX_NODE_EXEC_EVENT_OUTBOX,
+                }),
+            );
+        }
+    }
+
+    queue.push_back(event);
+}
+
+async fn flush_exec_event_outbox_with_sender<F, Fut>(
+    outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>,
+    logger: &NodeLogger,
+    mut send_event: F,
+) -> usize
+where
+    F: FnMut(NodeExecEventParams) -> Fut,
+    Fut: Future<Output = ExecEventSendOutcome>,
+{
+    let mut sent = 0usize;
+
+    loop {
+        let next_event = match outbox.lock() {
+            Ok(queue) => queue.front().cloned(),
+            Err(error) => {
+                logger.error(
+                    "node.exec.event.outbox_lock_failed",
+                    json!({
+                        "error": error.to_string(),
+                    }),
+                );
+                return sent;
+            }
+        };
+
+        let Some(event) = next_event else {
+            return sent;
+        };
+
+        match send_event(event.clone()).await {
+            ExecEventSendOutcome::Sent => {
+                if let Ok(mut queue) = outbox.lock() {
+                    let _ = queue.pop_front();
+                }
+                sent += 1;
+            }
+            ExecEventSendOutcome::Drop(error) => {
+                logger.error(
+                    "node.exec.event.serialize_failed",
+                    json!({
+                        "eventId": event.event_id,
+                        "sessionId": event.session_id,
+                        "event": event.event,
+                        "error": error,
+                    }),
+                );
+                if let Ok(mut queue) = outbox.lock() {
+                    let _ = queue.pop_front();
+                }
+                continue;
+            }
+            ExecEventSendOutcome::Retry(error) => {
+                logger.warn(
+                    "node.exec.event.send_failed",
+                    json!({
+                        "eventId": event.event_id,
+                        "sessionId": event.session_id,
+                        "event": event.event,
+                        "error": error,
+                        "outboxDepth": exec_event_outbox_len(outbox),
+                    }),
+                );
+                return sent;
+            }
+        }
+    }
+}
+
+async fn flush_exec_event_outbox(
+    conn: &Arc<Connection>,
+    outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>,
+    logger: &NodeLogger,
+) -> usize {
+    flush_exec_event_outbox_with_sender(outbox, logger, |event| {
+        let conn = Arc::clone(conn);
+        async move {
+            let params = match serde_json::to_value(&event) {
+                Ok(value) => value,
+                Err(error) => return ExecEventSendOutcome::Drop(error.to_string()),
+            };
+
+            match conn.request("node.exec.event", Some(params)).await {
+                Ok(response) if response.ok => ExecEventSendOutcome::Sent,
+                Ok(response) => {
+                    let message = response
+                        .error
+                        .map(|error| error.message)
+                        .unwrap_or_else(|| "unknown response".to_string());
+                    ExecEventSendOutcome::Retry(message)
+                }
+                Err(error) => ExecEventSendOutcome::Retry(error.to_string()),
+            }
+        }
+    })
+    .await
 }
 
 async fn run_node(
@@ -4124,6 +4624,36 @@ async fn run_node(
 
     let shutdown = wait_for_shutdown_signal();
     tokio::pin!(shutdown);
+
+    let exec_event_outbox: Arc<Mutex<VecDeque<NodeExecEventParams>>> =
+        Arc::new(Mutex::new(VecDeque::new()));
+    let outbox_for_exec_events = exec_event_outbox.clone();
+    let logger_for_exec_events = logger.clone();
+    let mut exec_events = subscribe_exec_events();
+    let exec_event_collector = tokio::spawn(async move {
+        loop {
+            match exec_events.recv().await {
+                Ok(event) => {
+                    queue_exec_event_for_retry(
+                        &outbox_for_exec_events,
+                        event,
+                        &logger_for_exec_events,
+                    );
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    logger_for_exec_events.warn(
+                        "node.exec.event.lagged",
+                        json!({
+                            "skipped": skipped,
+                        }),
+                    );
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
 
     loop {
         logger.info("connect.attempt", json!({ "url": url }));
@@ -4345,11 +4875,83 @@ async fn run_node(
                                 );
                             }
                         }
+                    } else if evt.event == "node.probe" {
+                        if let Some(payload) = evt.payload {
+                            let request = match serde_json::from_value::<NodeProbePayload>(payload)
+                            {
+                                Ok(request) => request,
+                                Err(e) => {
+                                    logger.warn(
+                                        "node.probe.parse_failed",
+                                        json!({
+                                            "error": e.to_string(),
+                                        }),
+                                    );
+                                    return;
+                                }
+                            };
+
+                            logger.info(
+                                "node.probe",
+                                json!({
+                                    "probeId": request.probe_id.clone(),
+                                    "kind": request.kind.clone(),
+                                    "binsCount": request.bins.len(),
+                                }),
+                            );
+
+                            let response = if request.kind == "bins" {
+                                let statuses = probe_node_bins(&request.bins);
+                                NodeProbeResultParams {
+                                    probe_id: request.probe_id.clone(),
+                                    ok: true,
+                                    bins: Some(statuses),
+                                    error: None,
+                                }
+                            } else {
+                                NodeProbeResultParams {
+                                    probe_id: request.probe_id.clone(),
+                                    ok: false,
+                                    bins: None,
+                                    error: Some(format!(
+                                        "Unsupported probe kind: {}",
+                                        request.kind
+                                    )),
+                                }
+                            };
+
+                            if let Err(e) = conn
+                                .request(
+                                    "node.probe.result",
+                                    Some(serde_json::to_value(&response).unwrap()),
+                                )
+                                .await
+                            {
+                                logger.error(
+                                    "node.probe.result.send_failed",
+                                    json!({
+                                        "probeId": response.probe_id,
+                                        "error": e.to_string(),
+                                    }),
+                                );
+                            }
+                        }
                     }
                 }
             });
         })
         .await;
+
+        let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox, &logger).await;
+        if flushed > 0 {
+            logger.info(
+                "node.exec.event.flushed",
+                json!({
+                    "sent": flushed,
+                    "remaining": exec_event_outbox_len(&exec_event_outbox),
+                }),
+            );
+        }
 
         logger.info(
             "connect.ok",
@@ -4365,6 +4967,7 @@ async fn run_node(
         loop {
             tokio::select! {
                 signal = &mut shutdown => {
+                    exec_event_collector.abort();
                     logger.info("shutdown", json!({ "signal": signal }));
                     return Ok(());
                 }
@@ -4378,6 +4981,17 @@ async fn run_node(
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                         break; // Break inner loop to reconnect
+                    }
+
+                    let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox, &logger).await;
+                    if flushed > 0 {
+                        logger.info(
+                            "node.exec.event.flushed",
+                            json!({
+                                "sent": flushed,
+                                "remaining": exec_event_outbox_len(&exec_event_outbox),
+                            }),
+                        );
                     }
 
                     if tokio::time::Instant::now() >= next_keepalive_at {

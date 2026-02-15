@@ -20,8 +20,9 @@ async fn test_bash_tool_execution() {
         .await
         .unwrap();
 
+    assert_eq!(result["status"], "completed");
     assert_eq!(result["exitCode"], 0);
-    assert!(result["stdout"].as_str().unwrap().contains("hello"));
+    assert!(result["output"].as_str().unwrap().contains("hello"));
 }
 
 #[tokio::test]
@@ -41,11 +42,110 @@ async fn test_bash_tool_workdir() {
         .await
         .unwrap();
 
+    assert_eq!(result["status"], "completed");
     assert_eq!(result["exitCode"], 0);
     assert!(
-        result["stdout"].as_str().unwrap().contains("/tmp")
-            || result["stdout"].as_str().unwrap().contains("/private/tmp")
+        result["output"].as_str().unwrap().contains("/tmp")
+            || result["output"].as_str().unwrap().contains("/private/tmp")
     ); // macOS
+}
+
+#[tokio::test]
+async fn test_bash_background_returns_session_id() {
+    use gsv::tools::{BashTool, ProcessTool, Tool};
+    use serde_json::json;
+
+    let workspace = std::env::temp_dir();
+    let bash = BashTool::new(workspace.clone());
+    let process = ProcessTool::new();
+
+    let start = bash
+        .execute(json!({
+            "command": "sleep 1; echo async-finished",
+            "background": true
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(start["status"], "running");
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    assert!(!session_id.is_empty());
+
+    let listed = process.execute(json!({ "action": "list" })).await.unwrap();
+    let sessions = listed["sessions"].as_array().unwrap();
+    assert!(sessions
+        .iter()
+        .any(|entry| entry["sessionId"] == session_id));
+}
+
+#[tokio::test]
+async fn test_process_tool_poll_log_and_kill_background_session() {
+    use gsv::tools::{BashTool, ProcessTool, Tool};
+    use serde_json::json;
+
+    let workspace = std::env::temp_dir();
+    let bash = BashTool::new(workspace.clone());
+    let process = ProcessTool::new();
+
+    let start = bash
+        .execute(json!({
+            "command": "while true; do echo heartbeat; sleep 0.2; done",
+            "background": true
+        }))
+        .await
+        .unwrap();
+    assert_eq!(start["status"], "running");
+
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let poll_running = process
+        .execute(json!({
+            "action": "poll",
+            "sessionId": session_id.clone()
+        }))
+        .await
+        .unwrap();
+    assert_eq!(poll_running["running"], true);
+
+    let log = process
+        .execute(json!({
+            "action": "log",
+            "sessionId": session_id.clone()
+        }))
+        .await
+        .unwrap();
+    assert!(log["log"]
+        .as_str()
+        .map(|output| output.contains("heartbeat"))
+        .unwrap_or(false));
+
+    let kill = process
+        .execute(json!({
+            "action": "kill",
+            "sessionId": session_id.clone()
+        }))
+        .await
+        .unwrap();
+    assert_eq!(kill["status"], "running");
+
+    for _ in 0..80 {
+        let poll = process
+            .execute(json!({
+                "action": "poll",
+                "sessionId": session_id.clone()
+            }))
+            .await
+            .unwrap();
+        if poll["running"] == false {
+            assert_ne!(poll["status"], "running");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    panic!("background session did not exit after kill");
 }
 
 #[tokio::test]
@@ -267,11 +367,12 @@ fn test_all_tools_with_workspace() {
     let workspace = std::env::temp_dir();
     let tools = all_tools_with_workspace(workspace);
 
-    // Should have 6 tools: Bash, Read, Write, Edit, Glob, Grep
-    assert_eq!(tools.len(), 6);
+    // Should have 7 tools: Bash, Process, Read, Write, Edit, Glob, Grep
+    assert_eq!(tools.len(), 7);
 
     let names: Vec<_> = tools.iter().map(|t| t.definition().name).collect();
     assert!(names.contains(&"Bash".to_string()));
+    assert!(names.contains(&"Process".to_string()));
     assert!(names.contains(&"Read".to_string()));
     assert!(names.contains(&"Write".to_string()));
     assert!(names.contains(&"Edit".to_string()));

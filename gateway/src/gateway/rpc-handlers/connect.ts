@@ -2,7 +2,7 @@ import { RpcError, timingSafeEqualStr } from "../../shared/utils";
 import type { ConnectResult, Handler } from "../../protocol/methods";
 import { validateNodeRuntimeInfo } from "../capabilities";
 
-export const handleConnect: Handler<"connect"> = (ctx) => {
+export const handleConnect: Handler<"connect"> = async (ctx) => {
   const { ws, gw, params } = ctx;
   if (params?.minProtocol !== 1) {
     throw new RpcError(102, "Unsupported protocol version");
@@ -77,6 +77,10 @@ export const handleConnect: Handler<"connect"> = (ctx) => {
         nodeId,
         `Node replaced during log request: ${nodeId}`,
       );
+      gw.markPendingNodeProbesAsQueued(
+        nodeId,
+        `Node replaced during node probe: ${nodeId}`,
+      );
       existingWs.close(1000, "Replaced by newer node connection");
     }
 
@@ -85,6 +89,7 @@ export const handleConnect: Handler<"connect"> = (ctx) => {
     // Store tools with their original names (namespacing happens in getAllTools)
     gw.toolRegistry[nodeId] = nodeTools;
     gw.nodeRuntimeRegistry[nodeId] = runtime;
+    gw.onNodeConnected(nodeId);
     console.log(
       `[Gateway] Node connected: ${nodeId}, role=${runtime.hostRole}, tools: [${nodeTools.map((t) => `${nodeId}__${t.name}`).join(", ")}]`,
     );
@@ -125,6 +130,8 @@ export const handleConnect: Handler<"connect"> = (ctx) => {
         "chat.send",
         "config.get",
         "config.set",
+        "skills.status",
+        "skills.update",
         "session.get",
         "session.patch",
         "session.stats",
@@ -145,6 +152,8 @@ export const handleConnect: Handler<"connect"> = (ctx) => {
         "cron.runs",
         "tool.request",
         "tool.result",
+        "node.probe.result",
+        "node.exec.event",
         "logs.result",
         "channel.inbound",
         "channel.start",
@@ -158,6 +167,7 @@ export const handleConnect: Handler<"connect"> = (ctx) => {
         "chat",
         "tool.invoke",
         "tool.result",
+        "node.probe",
         "logs.get",
         "channel.outbound",
       ],

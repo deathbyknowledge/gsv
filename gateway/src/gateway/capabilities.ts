@@ -50,6 +50,65 @@ function normalizeCapabilityList(
   return Array.from(normalized).sort();
 }
 
+function normalizeOptionalStringList(
+  value: unknown,
+  fieldPath: string,
+): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldPath} must be an array when provided`);
+  }
+
+  const normalized = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") {
+      throw new Error(`${fieldPath} must contain only strings`);
+    }
+
+    const trimmed = item.trim();
+    if (trimmed.length === 0) {
+      throw new Error(`${fieldPath} must not contain empty strings`);
+    }
+
+    normalized.add(trimmed);
+  }
+
+  return normalized.size > 0 ? Array.from(normalized).sort() : undefined;
+}
+
+function normalizeOptionalBinStatus(
+  value: unknown,
+  fieldPath: string,
+): Record<string, boolean> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${fieldPath} must be an object when provided`);
+  }
+
+  const normalized = Object.entries(value)
+    .map(([rawBin, rawStatus]) => {
+      const bin = rawBin.trim();
+      if (bin.length === 0) {
+        throw new Error(`${fieldPath} contains an empty bin key`);
+      }
+      if (typeof rawStatus !== "boolean") {
+        throw new Error(`${fieldPath}.${bin} must be a boolean`);
+      }
+      return [bin, rawStatus] as const;
+    })
+    .sort(([left], [right]) => left.localeCompare(right));
+
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(normalized);
+}
+
 export function validateNodeRuntimeInfo(params: {
   nodeId: string;
   tools: ToolDefinition[];
@@ -133,10 +192,46 @@ export function validateNodeRuntimeInfo(params: {
     }
   }
 
+  const hostOsRaw = params.runtime.hostOs;
+  let hostOs: string | undefined;
+  if (hostOsRaw !== undefined) {
+    if (typeof hostOsRaw !== "string" || hostOsRaw.trim().length === 0) {
+      throw new Error(`${runtimePrefix}.hostOs must be a non-empty string`);
+    }
+    hostOs = hostOsRaw.trim().toLowerCase();
+  }
+
+  const hostEnv = normalizeOptionalStringList(
+    params.runtime.hostEnv,
+    `${runtimePrefix}.hostEnv`,
+  );
+  const hostBinStatus = normalizeOptionalBinStatus(
+    params.runtime.hostBinStatus,
+    `${runtimePrefix}.hostBinStatus`,
+  );
+
+  const hostBinStatusUpdatedAtRaw = params.runtime.hostBinStatusUpdatedAt;
+  let hostBinStatusUpdatedAt: number | undefined;
+  if (hostBinStatusUpdatedAtRaw !== undefined) {
+    if (
+      typeof hostBinStatusUpdatedAtRaw !== "number" ||
+      !Number.isFinite(hostBinStatusUpdatedAtRaw)
+    ) {
+      throw new Error(
+        `${runtimePrefix}.hostBinStatusUpdatedAt must be a number when provided`,
+      );
+    }
+    hostBinStatusUpdatedAt = Math.floor(hostBinStatusUpdatedAtRaw);
+  }
+
   return {
     hostRole,
     hostCapabilities,
     toolCapabilities,
+    hostOs,
+    hostEnv,
+    hostBinStatus,
+    hostBinStatusUpdatedAt,
   };
 }
 

@@ -7,7 +7,7 @@ import {
   ToolDefinition,
 } from "../protocol/tools";
 import type { SkillEntryConfig } from "../config";
-import type { SkillSummary } from "../skills";
+import type { CustomMetadata, SkillSummary } from "../skills";
 import { isHeartbeatFileEmpty, type AgentWorkspace } from "./loader";
 import { NATIVE_TOOL_PREFIX } from "./tools/constants";
 
@@ -30,6 +30,7 @@ export type BuildPromptOptions = {
   tools?: ToolDefinition[];
   heartbeatPrompt?: string;
   skillEntries?: Record<string, SkillEntryConfig>;
+  configRoot?: unknown;
   runtime?: PromptRuntimeInfo;
 };
 
@@ -176,6 +177,7 @@ export function buildSystemPromptFromWorkspace(
       agentId: workspace.agentId,
       readToolName,
       skillEntries: options?.skillEntries,
+      configRoot: options?.configRoot,
       runtimeNodes: options?.runtime?.nodes,
     });
     if (skillsSection) {
@@ -374,8 +376,11 @@ function buildRuntimeSection(
             : "none";
         const toolNames =
           host.tools.length > 0 ? host.tools.join(", ") : "none";
+        const os = host.hostOs ? ` os=${host.hostOs}` : "";
+        const envCount = host.hostEnv?.length ?? 0;
+        const binCount = host.hostBins?.length ?? 0;
         lines.push(
-          `- ${host.nodeId} (${host.hostRole}) capabilities=[${capabilities}] tools=[${toolNames}]`,
+          `- ${host.nodeId} (${host.hostRole})${os} envKeys=${envCount} bins=${binCount} capabilities=[${capabilities}] tools=[${toolNames}]`,
         );
       }
     }
@@ -419,13 +424,18 @@ function resolveSkillReadPath(
 
 const CAPABILITY_SET = new Set<string>(CAPABILITY_IDS);
 const HOST_ROLE_SET = new Set<string>(HOST_ROLES);
-type SkillRuntimeRequirements = {
+export type SkillRuntimeRequirements = {
   hostRoles: HostRole[];
   capabilities: CapabilityId[];
   anyCapabilities: CapabilityId[];
+  bins: string[];
+  anyBins: string[];
+  env: string[];
+  config: string[];
+  os: string[];
 };
 
-type EffectiveSkillPolicy = {
+export type EffectiveSkillPolicy = {
   always: boolean;
   hasInvalidRequirements: boolean;
   requires?: SkillRuntimeRequirements;
@@ -443,6 +453,36 @@ function normalizeStringArray(value: unknown): string[] {
   return value
     .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
     .filter((entry) => entry.length > 0);
+}
+
+function normalizeFreeformRequirementList(
+  value: unknown,
+): NormalizedRequirementList<string> {
+  if (value === undefined) {
+    return { values: [], hasInvalid: false };
+  }
+  if (!Array.isArray(value)) {
+    return { values: [], hasInvalid: true };
+  }
+
+  const values: string[] = [];
+  let hasInvalid = false;
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      hasInvalid = true;
+      continue;
+    }
+
+    const normalized = entry.trim();
+    if (normalized.length === 0) {
+      hasInvalid = true;
+      continue;
+    }
+
+    values.push(normalized);
+  }
+
+  return { values: Array.from(new Set(values)), hasInvalid };
 }
 
 function normalizeCapabilityRequirementList(
@@ -557,7 +597,13 @@ function resolveSkillEntryConfig(
   return undefined;
 }
 
-function resolveEffectiveSkillPolicy(
+function resolveSkillMetadataManifest(
+  skill: SkillSummary,
+): CustomMetadata | undefined {
+  return skill.metadata?.gsv ?? skill.metadata?.openclaw ?? skill.metadata?.clawdbot;
+}
+
+export function resolveEffectiveSkillPolicy(
   skill: SkillSummary,
   skillEntries: Record<string, SkillEntryConfig> | undefined,
 ): EffectiveSkillPolicy | undefined {
@@ -566,7 +612,7 @@ function resolveEffectiveSkillPolicy(
     return undefined;
   }
 
-  const rawRequires = skill.metadata?.gsv?.requires as
+  const rawRequires = resolveSkillMetadataManifest(skill)?.requires as
     | Record<string, unknown>
     | undefined;
   const configRequires = entryConfig?.requires as
@@ -581,6 +627,21 @@ function resolveEffectiveSkillPolicy(
   const requiredAnyCapabilities = normalizeCapabilityRequirementList(
     configRequires?.anyCapabilities ?? rawRequires?.anyCapabilities,
   );
+  const requiredBins = normalizeFreeformRequirementList(
+    configRequires?.bins ?? rawRequires?.bins,
+  );
+  const requiredAnyBins = normalizeFreeformRequirementList(
+    configRequires?.anyBins ?? rawRequires?.anyBins,
+  );
+  const requiredEnv = normalizeFreeformRequirementList(
+    configRequires?.env ?? rawRequires?.env,
+  );
+  const requiredConfig = normalizeFreeformRequirementList(
+    configRequires?.config ?? rawRequires?.config,
+  );
+  const requiredOs = normalizeFreeformRequirementList(
+    configRequires?.os ?? rawRequires?.os,
+  );
   const always =
     typeof entryConfig?.always === "boolean"
       ? entryConfig.always
@@ -588,79 +649,209 @@ function resolveEffectiveSkillPolicy(
   const hasRequirements =
     requiredRoles.values.length > 0 ||
     requiredCapabilities.values.length > 0 ||
-    requiredAnyCapabilities.values.length > 0;
+    requiredAnyCapabilities.values.length > 0 ||
+    requiredBins.values.length > 0 ||
+    requiredAnyBins.values.length > 0 ||
+    requiredEnv.values.length > 0 ||
+    requiredConfig.values.length > 0 ||
+    requiredOs.values.length > 0;
   const hasInvalidRequirements =
     requiredRoles.hasInvalid ||
     requiredCapabilities.hasInvalid ||
-    requiredAnyCapabilities.hasInvalid;
+    requiredAnyCapabilities.hasInvalid ||
+    requiredBins.hasInvalid ||
+    requiredAnyBins.hasInvalid ||
+    requiredEnv.hasInvalid ||
+    requiredConfig.hasInvalid ||
+    requiredOs.hasInvalid;
 
   return {
     always,
     hasInvalidRequirements,
     requires: hasRequirements
-      ? {
+        ? {
           hostRoles: requiredRoles.values,
           capabilities: requiredCapabilities.values,
           anyCapabilities: requiredAnyCapabilities.values,
+          bins: requiredBins.values,
+          anyBins: requiredAnyBins.values,
+          env: requiredEnv.values,
+          config: requiredConfig.values,
+          os: requiredOs.values.map((value) => value.toLowerCase()),
         }
       : undefined,
   };
 }
 
-function isSkillEligibleForRuntime(
+function getConfigValueByPath(configRoot: unknown, path: string): unknown {
+  if (!path.trim()) {
+    return undefined;
+  }
+
+  const parts = path.split(".");
+  let current: unknown = configRoot;
+  for (const part of parts) {
+    if (!part) {
+      return undefined;
+    }
+    if (
+      typeof current !== "object" ||
+      current === null ||
+      Array.isArray(current) ||
+      !(part in current)
+    ) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function isTruthyConfigValue(value: unknown): boolean {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>).length > 0;
+  }
+  return true;
+}
+
+export type SkillEligibilityEvaluation = {
+  eligible: boolean;
+  matchingHostIds: string[];
+  reasons: string[];
+};
+
+export function evaluateSkillEligibility(
   policy: EffectiveSkillPolicy,
   runtimeNodes: RuntimeNodeInventory | undefined,
-): boolean {
+  configRoot?: unknown,
+): SkillEligibilityEvaluation {
   if (policy.always) {
-    return true;
+    return { eligible: true, matchingHostIds: [], reasons: [] };
   }
   if (policy.hasInvalidRequirements) {
-    return false;
+    return {
+      eligible: false,
+      matchingHostIds: [],
+      reasons: ["invalid requirement identifiers"],
+    };
   }
 
   const requires = policy.requires;
   if (!requires) {
-    return true;
+    return { eligible: true, matchingHostIds: [], reasons: [] };
   }
 
   if (!runtimeNodes || runtimeNodes.hosts.length === 0) {
-    return false;
+    return {
+      eligible: false,
+      matchingHostIds: [],
+      reasons: ["no connected hosts"],
+    };
   }
 
+  const reasons: string[] = [];
   let candidateHosts = runtimeNodes.hosts;
   if (requires.hostRoles.length > 0) {
     candidateHosts = candidateHosts.filter((host) =>
       requires.hostRoles.includes(host.hostRole),
     );
-  }
-
-  if (candidateHosts.length === 0) {
-    return false;
+    if (candidateHosts.length === 0) {
+      reasons.push(`requires hostRoles: ${requires.hostRoles.join(", ")}`);
+    }
   }
 
   if (requires.capabilities.length > 0) {
-    const hasRequiredCapabilities = candidateHosts.some((host) =>
+    candidateHosts = candidateHosts.filter((host) =>
       requires.capabilities.every((capability) =>
         host.hostCapabilities.includes(capability),
       ),
     );
-    if (!hasRequiredCapabilities) {
-      return false;
+    if (candidateHosts.length === 0) {
+      reasons.push(`requires capabilities: ${requires.capabilities.join(", ")}`);
     }
   }
 
   if (requires.anyCapabilities.length > 0) {
-    const hasAnyCapability = candidateHosts.some((host) =>
+    candidateHosts = candidateHosts.filter((host) =>
       requires.anyCapabilities.some((capability) =>
         host.hostCapabilities.includes(capability),
       ),
     );
-    if (!hasAnyCapability) {
-      return false;
+    if (candidateHosts.length === 0) {
+      reasons.push(
+        `requires anyCapabilities: ${requires.anyCapabilities.join(", ")}`,
+      );
     }
   }
 
-  return true;
+  if (requires.os.length > 0) {
+    candidateHosts = candidateHosts.filter((host) => {
+      const os = host.hostOs?.trim().toLowerCase();
+      return os ? requires.os.includes(os) : false;
+    });
+    if (candidateHosts.length === 0) {
+      reasons.push(`requires os: ${requires.os.join(", ")}`);
+    }
+  }
+
+  if (requires.env.length > 0) {
+    candidateHosts = candidateHosts.filter((host) => {
+      const hostEnv = new Set((host.hostEnv ?? []).map((key) => key.trim()));
+      return requires.env.every((envKey) => hostEnv.has(envKey));
+    });
+    if (candidateHosts.length === 0) {
+      reasons.push(`requires env: ${requires.env.join(", ")}`);
+    }
+  }
+
+  if (requires.bins.length > 0) {
+    candidateHosts = candidateHosts.filter((host) => {
+      const status = host.hostBinStatus ?? {};
+      return requires.bins.every((bin) => status[bin] === true);
+    });
+    if (candidateHosts.length === 0) {
+      reasons.push(`requires bins: ${requires.bins.join(", ")}`);
+    }
+  }
+
+  if (requires.anyBins.length > 0) {
+    candidateHosts = candidateHosts.filter((host) => {
+      const status = host.hostBinStatus ?? {};
+      return requires.anyBins.some((bin) => status[bin] === true);
+    });
+    if (candidateHosts.length === 0) {
+      reasons.push(`requires anyBins: ${requires.anyBins.join(", ")}`);
+    }
+  }
+
+  if (requires.config.length > 0) {
+    const missingConfig = requires.config.filter((path) => {
+      const value = getConfigValueByPath(configRoot, path);
+      return !isTruthyConfigValue(value);
+    });
+    if (missingConfig.length > 0) {
+      reasons.push(`requires config: ${missingConfig.join(", ")}`);
+    }
+  }
+
+  const eligible = candidateHosts.length > 0 && reasons.length === 0;
+  return {
+    eligible,
+    matchingHostIds: candidateHosts.map((host) => host.nodeId).sort(),
+    reasons,
+  };
 }
 
 /**
@@ -673,6 +864,7 @@ function buildSkillsSection(
     agentId: string;
     readToolName: string;
     skillEntries?: Record<string, SkillEntryConfig>;
+    configRoot?: unknown;
     runtimeNodes?: RuntimeNodeInventory;
   },
 ): string {
@@ -709,8 +901,17 @@ function buildSkillsSection(
     (entry) => !entry.policy.hasInvalidRequirements || entry.policy.always,
   );
 
-  const eligibleSkills = validRequirementSkills.filter((entry) =>
-    isSkillEligibleForRuntime(entry.policy, options.runtimeNodes),
+  const runtimeEligibleSkills = validRequirementSkills.map((entry) => ({
+    ...entry,
+    evaluation: evaluateSkillEligibility(
+      entry.policy,
+      options.runtimeNodes,
+      options.configRoot,
+    ),
+  }));
+
+  const eligibleSkills = runtimeEligibleSkills.filter(
+    (entry) => entry.evaluation.eligible,
   );
 
   if (eligibleSkills.length === 0) {
@@ -722,7 +923,7 @@ function buildSkillsSection(
   const invalidRequirementFilteredCount =
     configEligibleSkills.length - validRequirementSkills.length;
   const runtimeFilteredCount =
-    validRequirementSkills.length - eligibleSkills.length;
+    runtimeEligibleSkills.length - eligibleSkills.length;
 
   const lines = [
     "## Skills (Mandatory Scan)",

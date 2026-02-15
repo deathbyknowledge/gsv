@@ -50,6 +50,25 @@ type ToolResultInput = {
   error?: string;
 };
 
+type AsyncExecCompletionInput = {
+  eventId: string;
+  nodeId: string;
+  sessionId: string;
+  callId?: string;
+  event: "finished" | "failed" | "timed_out";
+  exitCode?: number | null;
+  signal?: string;
+  outputTail?: string;
+  startedAt?: number;
+  endedAt?: number;
+  tools: ToolDefinition[];
+  runtimeNodes?: RuntimeNodeInventory;
+};
+
+type PendingAsyncExecCompletion = AsyncExecCompletionInput & {
+  receivedAt: number;
+};
+
 export type SessionSettings = {
   model?: { provider: string; id: string };
   thinkingLevel?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -169,6 +188,9 @@ export type AbortResult = {
 
 // LRU cache for fetched media (in-memory, survives within request but not hibernation)
 const MEDIA_CACHE_MAX_SIZE = 50 * 1024 * 1024; // 50MB budget
+const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
+const ASYNC_EXEC_EVENT_SEEN_TTL_MS = 24 * 60 * 60_000;
+const ASYNC_EXEC_EVENT_PENDING_MAX_AGE_MS = 24 * 60 * 60_000;
 
 class MediaCache {
   private cache = new Map<
@@ -292,6 +314,20 @@ export class Session extends DurableObject<Env> {
   pendingToolCalls = PersistedObject<Record<string, PendingToolCall>>(
     this.ctx.storage.kv,
     { prefix: "pendingToolCalls:" },
+  );
+
+  pendingAsyncExecCompletions = PersistedObject<
+    Record<string, PendingAsyncExecCompletion>
+  >(this.ctx.storage.kv, { prefix: "pendingAsyncExecCompletions:" });
+
+  seenAsyncExecEventIds = PersistedObject<Record<string, number>>(
+    this.ctx.storage.kv,
+    { prefix: "seenAsyncExecEventIds:" },
+  );
+
+  private asyncExecPumpState = PersistedObject<{ active: boolean }>(
+    this.ctx.storage.kv,
+    { prefix: "asyncExecPumpState:", defaults: { active: false } },
   );
 
   // Current run state (persisted for hibernation)
@@ -521,6 +557,232 @@ export class Session extends DurableObject<Env> {
    */
   private get isProcessing(): boolean {
     return this.currentRun !== null;
+  }
+
+  private hasPendingAsyncExecCompletions(): boolean {
+    let hasPending = false;
+    for (const [eventId, rawCompletion] of Object.entries(this.pendingAsyncExecCompletions)) {
+      const completion = this.asPendingAsyncExecCompletion(rawCompletion);
+      if (!completion) {
+        delete this.pendingAsyncExecCompletions[eventId];
+        continue;
+      }
+      hasPending = true;
+    }
+    return hasPending;
+  }
+
+  private asPendingAsyncExecCompletion(
+    value: unknown,
+  ): PendingAsyncExecCompletion | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    const eventId =
+      typeof record.eventId === "string" ? record.eventId.trim() : "";
+    const nodeId = typeof record.nodeId === "string" ? record.nodeId.trim() : "";
+    const sessionId =
+      typeof record.sessionId === "string" ? record.sessionId.trim() : "";
+    const event =
+      typeof record.event === "string" ? record.event.trim() : "";
+    const receivedAt =
+      typeof record.receivedAt === "number" && Number.isFinite(record.receivedAt)
+        ? record.receivedAt
+        : undefined;
+    if (!eventId || !nodeId || !sessionId || !event || receivedAt === undefined) {
+      return undefined;
+    }
+    return value as PendingAsyncExecCompletion;
+  }
+
+  private gcAsyncExecCompletionState(now = Date.now()): void {
+    for (const [eventId, expiresAt] of Object.entries(this.seenAsyncExecEventIds)) {
+      if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || expiresAt <= now) {
+        delete this.seenAsyncExecEventIds[eventId];
+      }
+    }
+
+    for (const [eventId, rawCompletion] of Object.entries(this.pendingAsyncExecCompletions)) {
+      const completion = this.asPendingAsyncExecCompletion(rawCompletion);
+      const receivedAt = completion?.receivedAt;
+      if (!receivedAt || receivedAt + ASYNC_EXEC_EVENT_PENDING_MAX_AGE_MS <= now) {
+        delete this.pendingAsyncExecCompletions[eventId];
+      }
+    }
+  }
+
+  private buildAsyncExecSystemEventMessage(
+    completion: PendingAsyncExecCompletion,
+  ): string {
+    const payload = {
+      eventId: completion.eventId,
+      nodeId: completion.nodeId,
+      sessionId: completion.sessionId,
+      callId: completion.callId,
+      event: completion.event,
+      exitCode: completion.exitCode,
+      signal: completion.signal,
+      outputTail: completion.outputTail,
+      startedAt: completion.startedAt,
+      endedAt: completion.endedAt,
+    };
+
+    return [
+      "System event: async_exec_completion",
+      JSON.stringify(payload),
+    ].join("\n");
+  }
+
+  private async pumpAsyncExecCompletions(): Promise<void> {
+    if (this.asyncExecPumpState.active) {
+      return;
+    }
+
+    this.asyncExecPumpState.active = true;
+
+    try {
+      this.gcAsyncExecCompletionState();
+      if (!this.hasPendingAsyncExecCompletions()) {
+        return;
+      }
+
+      if (this.isProcessing) {
+        return;
+      }
+
+      const next = Object.entries(this.pendingAsyncExecCompletions)
+        .map(([eventId, entry]) => {
+          const completion = this.asPendingAsyncExecCompletion(entry);
+          if (!completion) {
+            delete this.pendingAsyncExecCompletions[eventId];
+            return null;
+          }
+          return completion;
+        })
+        .filter((entry): entry is PendingAsyncExecCompletion => entry !== null)
+        .sort((left, right) => left.receivedAt - right.receivedAt)[0];
+
+      if (!next || !next.eventId) {
+        return;
+      }
+
+      const message = this.buildAsyncExecSystemEventMessage(next);
+      const runId = crypto.randomUUID();
+      const sessionKey = this.meta.sessionKey;
+      if (!sessionKey) {
+        console.warn(
+          `[Session] Dropping async exec completion ${next.eventId}: sessionKey missing`,
+        );
+        delete this.pendingAsyncExecCompletions[next.eventId];
+        this.seenAsyncExecEventIds[next.eventId] =
+          Date.now() + ASYNC_EXEC_EVENT_SEEN_TTL_MS;
+        return;
+      }
+
+      try {
+        await this.chatSend(
+          message,
+          runId,
+          JSON.parse(JSON.stringify(next.tools ?? [])),
+          next.runtimeNodes
+            ? JSON.parse(JSON.stringify(next.runtimeNodes))
+            : undefined,
+          sessionKey,
+        );
+      } catch (error) {
+        console.error(
+          `[Session] Failed to enqueue async exec completion ${next.eventId}:`,
+          error,
+        );
+        return;
+      }
+
+      delete this.pendingAsyncExecCompletions[next.eventId];
+      this.seenAsyncExecEventIds[next.eventId] =
+        Date.now() + ASYNC_EXEC_EVENT_SEEN_TTL_MS;
+    } finally {
+      this.asyncExecPumpState.active = false;
+      if (!this.isProcessing && this.hasPendingAsyncExecCompletions()) {
+        this.ctx.waitUntil(this.pumpAsyncExecCompletions());
+      }
+    }
+  }
+
+  async ingestAsyncExecCompletion(
+    input: AsyncExecCompletionInput,
+  ): Promise<{ ok: true; duplicate?: true }> {
+    const eventId =
+      typeof input.eventId === "string" ? input.eventId.trim() : "";
+    const nodeId = typeof input.nodeId === "string" ? input.nodeId.trim() : "";
+    const sessionId =
+      typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+    const event =
+      typeof input.event === "string" ? input.event.trim() : "";
+    if (!eventId || !nodeId || !sessionId) {
+      return { ok: true, duplicate: true };
+    }
+    if (!["finished", "failed", "timed_out"].includes(event)) {
+      return { ok: true, duplicate: true };
+    }
+
+    const now = Date.now();
+    this.gcAsyncExecCompletionState(now);
+
+    const seenUntil = this.seenAsyncExecEventIds[eventId];
+    if (typeof seenUntil === "number" && seenUntil > now) {
+      return { ok: true, duplicate: true };
+    }
+
+    for (const [pendingId, rawCompletion] of Object.entries(this.pendingAsyncExecCompletions)) {
+      const completion = this.asPendingAsyncExecCompletion(rawCompletion);
+      if (!completion) {
+        delete this.pendingAsyncExecCompletions[pendingId];
+        continue;
+      }
+      if (completion.eventId === eventId) {
+        return { ok: true, duplicate: true };
+      }
+    }
+
+    const completion: PendingAsyncExecCompletion = {
+      eventId,
+      nodeId,
+      sessionId,
+      callId:
+        typeof input.callId === "string" ? input.callId.trim() || undefined : undefined,
+      event: event as PendingAsyncExecCompletion["event"],
+      exitCode:
+        typeof input.exitCode === "number" && Number.isFinite(input.exitCode)
+          ? input.exitCode
+          : input.exitCode === null
+            ? null
+            : undefined,
+      signal:
+        typeof input.signal === "string" ? input.signal.trim() || undefined : undefined,
+      outputTail:
+        typeof input.outputTail === "string"
+          ? input.outputTail.trim() || undefined
+          : undefined,
+      startedAt:
+        typeof input.startedAt === "number" && Number.isFinite(input.startedAt)
+          ? input.startedAt
+          : undefined,
+      endedAt:
+        typeof input.endedAt === "number" && Number.isFinite(input.endedAt)
+          ? input.endedAt
+          : undefined,
+      tools: JSON.parse(JSON.stringify(input.tools ?? [])),
+      runtimeNodes: input.runtimeNodes
+        ? JSON.parse(JSON.stringify(input.runtimeNodes))
+        : undefined,
+      receivedAt: now,
+    };
+
+    this.pendingAsyncExecCompletions[eventId] = completion;
+    this.ctx.waitUntil(this.pumpAsyncExecCompletions());
+
+    return { ok: true };
   }
 
   /**
@@ -791,10 +1053,11 @@ export class Session extends DurableObject<Env> {
       }
 
       // Some tools still pending (node tools) - set alarm and wait
-      this.ctx.storage.setAlarm(Date.now() + 60_000);
+      const toolTimeoutMs = await this.resolveToolTimeoutMs();
+      this.ctx.storage.setAlarm(Date.now() + toolTimeoutMs);
       // DO can now hibernate - will wake on toolResult() or alarm()
       console.log(
-        `[Session] Waiting for ${toolCalls.length} tool results, run ${this.currentRun?.runId}`,
+        `[Session] Waiting for ${toolCalls.length} tool results (timeout=${toolTimeoutMs}ms), run ${this.currentRun?.runId}`,
       );
       return;
     }
@@ -816,6 +1079,11 @@ export class Session extends DurableObject<Env> {
     const runId = this.currentRun?.runId;
     this.currentRun = null;
     console.log(`[Session] Finished run ${runId}`);
+
+    if (this.hasPendingAsyncExecCompletions()) {
+      this.ctx.waitUntil(this.pumpAsyncExecCompletions());
+      return;
+    }
 
     // Process next queued message if any (async)
     if (this.messageQueue.length > 0) {
@@ -1007,6 +1275,23 @@ export class Session extends DurableObject<Env> {
     return true;
   }
 
+  private async resolveToolTimeoutMs(): Promise<number> {
+    try {
+      const gateway = this.env.GATEWAY.get(
+        this.env.GATEWAY.idFromName("singleton"),
+      );
+      const config: GsvConfig = await gateway.getConfig();
+      const value = config.timeouts?.toolMs;
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return Math.max(1000, Math.floor(value));
+      }
+    } catch (error) {
+      console.warn(`[Session] Failed to resolve tool timeout from config:`, error);
+    }
+
+    return DEFAULT_TOOL_TIMEOUT_MS;
+  }
+
   private async callLlm(): Promise<AssistantMessage> {
     const gateway = this.env.GATEWAY.get(
       this.env.GATEWAY.idFromName("singleton"),
@@ -1189,14 +1474,14 @@ export class Session extends DurableObject<Env> {
     );
     const heartbeatPrompt =
       agentConfig?.heartbeat?.prompt || config.agents.defaultHeartbeat.prompt;
-    const runtimeNodes =
-      runRuntimeNodes ?? (await this.loadRuntimeNodeInventory());
+    const runtimeNodes = runRuntimeNodes ?? (await this.loadRuntimeNodeInventory());
 
     // Build combined prompt
     return buildSystemPromptFromWorkspace(basePrompt, workspace, {
       tools: runTools,
       heartbeatPrompt,
       skillEntries: config.skills.entries,
+      configRoot: config,
       runtime: {
         agentId,
         sessionKey: this.meta.sessionKey,

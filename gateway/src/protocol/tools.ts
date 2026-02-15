@@ -21,6 +21,10 @@ export type NodeRuntimeInfo = {
   hostRole: HostRole;
   hostCapabilities: CapabilityId[];
   toolCapabilities: Record<string, CapabilityId[]>;
+  hostOs?: string;
+  hostEnv?: string[];
+  hostBinStatus?: Record<string, boolean>;
+  hostBinStatusUpdatedAt?: number;
 };
 
 export type RuntimeHostInventoryEntry = {
@@ -29,6 +33,11 @@ export type RuntimeHostInventoryEntry = {
   hostCapabilities: CapabilityId[];
   toolCapabilities: Record<string, CapabilityId[]>;
   tools: string[];
+  hostOs?: string;
+  hostEnv?: string[];
+  hostBins?: string[];
+  hostBinStatus?: Record<string, boolean>;
+  hostBinStatusUpdatedAt?: number;
 };
 
 export type RuntimeNodeInventory = {
@@ -54,4 +63,40 @@ export type ToolInvokePayload = {
   callId: string;
   tool: string;
   args: Record<string, unknown>;
+};
+
+export type NodeProbeKind = "bins";
+
+export type NodeProbePayload = {
+  probeId: string;
+  kind: NodeProbeKind;
+  bins: string[];
+  timeoutMs?: number;
+};
+
+export type NodeProbeResultParams = {
+  probeId: string;
+  ok: boolean;
+  bins?: Record<string, boolean>;
+  error?: string;
+};
+
+export const NODE_EXEC_EVENT_TYPES = [
+  "started",
+  "finished",
+  "failed",
+  "timed_out",
+] as const;
+export type NodeExecEventType = (typeof NODE_EXEC_EVENT_TYPES)[number];
+
+export type NodeExecEventParams = {
+  eventId: string;
+  sessionId: string;
+  event: NodeExecEventType;
+  callId?: string;
+  exitCode?: number | null;
+  signal?: string;
+  outputTail?: string;
+  startedAt?: number;
+  endedAt?: number;
 };

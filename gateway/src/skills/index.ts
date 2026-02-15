@@ -5,13 +5,14 @@ export type CustomMetadata = {
     anyBins?: string[];
     env?: string[];
     config?: string[];
+    os?: string[];
     hostRoles?: string[];
     capabilities?: string[];
     anyCapabilities?: string[];
   };
   install?: Array<{
     id?: string;
-    kind: "brew" | "node" | "go" | "uv" | "download";
+    kind: "brew" | "apt" | "node" | "go" | "uv" | "download";
     label?: string;
     bins?: string[];
     formula?: string;
@@ -24,6 +25,7 @@ export type SkillMetadata = {
   description: string;
   homepage?: string;
   gsv?: CustomMetadata;
+  openclaw?: CustomMetadata;
   clawdbot?: CustomMetadata;
 };
 
@@ -40,6 +42,7 @@ export type SkillSummary = {
   always?: boolean;
   metadata?: {
     gsv?: CustomMetadata;
+    openclaw?: CustomMetadata;
     clawdbot?: CustomMetadata;
   };
 };
@@ -49,28 +52,65 @@ type Frontmatter = Record<string, unknown>;
 export function parseFrontmatter(
   content: string,
 ): { frontmatter: Frontmatter; body: string } {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const match = normalized.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!match) {
     return { frontmatter: {}, body: content };
   }
 
   const frontmatter: Frontmatter = {};
-  const yamlLines = match[1].split("\n");
-  for (const line of yamlLines) {
+  const lines = match[1].split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const colonIdx = line.indexOf(":");
     if (colonIdx <= 0) continue;
 
     const key = line.slice(0, colonIdx).trim();
-    let value: unknown = line.slice(colonIdx + 1).trim();
-    if (value === "true") {
-      value = true;
-    } else if (value === "false") {
-      value = false;
+    if (!key) continue;
+
+    const inlineRawValue = line.slice(colonIdx + 1).trim();
+    let value: unknown;
+
+    if (
+      inlineRawValue.length === 0 &&
+      i + 1 < lines.length &&
+      (lines[i + 1].startsWith(" ") || lines[i + 1].startsWith("\t"))
+    ) {
+      const valueLines: string[] = [];
+      let j = i + 1;
+      while (
+        j < lines.length &&
+        (lines[j].startsWith(" ") || lines[j].startsWith("\t"))
+      ) {
+        valueLines.push(lines[j]);
+        j++;
+      }
+      i = j - 1;
+      value = valueLines.join("\n").trim();
+    } else {
+      value = stripOuterQuotes(inlineRawValue);
+      if (value === "true") {
+        value = true;
+      } else if (value === "false") {
+        value = false;
+      }
     }
+
     frontmatter[key] = value;
   }
 
   return { frontmatter, body: match[2] };
+}
+
+function stripOuterQuotes(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -97,27 +137,93 @@ function readBoolean(
 
 function readMetadataJson(
   frontmatter: Frontmatter,
-): { gsv?: CustomMetadata; clawdbot?: CustomMetadata } {
+): { gsv?: CustomMetadata; openclaw?: CustomMetadata; clawdbot?: CustomMetadata } {
   const raw = frontmatter.metadata;
-  if (typeof raw !== "string" || raw.length === 0) {
+  if (raw === undefined || raw === null) {
     return {};
+  }
+
+  const parsed =
+    typeof raw === "string" ? parseRelaxedJsonObject(raw) : raw;
+  if (!isRecord(parsed)) {
+    return {};
+  }
+
+  return {
+    gsv: isRecord(parsed.gsv) ? (parsed.gsv as CustomMetadata) : undefined,
+    openclaw: isRecord(parsed.openclaw)
+      ? (parsed.openclaw as CustomMetadata)
+      : undefined,
+    clawdbot: isRecord(parsed.clawdbot)
+      ? (parsed.clawdbot as CustomMetadata)
+      : undefined,
+  };
+}
+
+function parseRelaxedJsonObject(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return undefined;
   }
 
   try {
-    const parsed = JSON.parse(raw);
-    if (!isRecord(parsed)) {
-      return {};
+    return JSON.parse(trimmed);
+  } catch {
+    // Fall through to a lenient parse that tolerates trailing commas.
+  }
+
+  const withoutTrailingCommas = removeTrailingCommasOutsideStrings(trimmed);
+  try {
+    return JSON.parse(withoutTrailingCommas);
+  } catch {
+    return undefined;
+  }
+}
+
+function removeTrailingCommasOutsideStrings(input: string): string {
+  let result = "";
+  let inString = false;
+  let quoteChar = "";
+  let escaping = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+
+    if (inString) {
+      result += char;
+      if (escaping) {
+        escaping = false;
+      } else if (char === "\\") {
+        escaping = true;
+      } else if (char === quoteChar) {
+        inString = false;
+        quoteChar = "";
+      }
+      continue;
     }
 
-    return {
-      gsv: isRecord(parsed.gsv) ? (parsed.gsv as CustomMetadata) : undefined,
-      clawdbot: isRecord(parsed.clawdbot)
-        ? (parsed.clawdbot as CustomMetadata)
-        : undefined,
-    };
-  } catch {
-    return {};
+    if (char === '"' || char === "'") {
+      inString = true;
+      quoteChar = char;
+      result += char;
+      continue;
+    }
+
+    if (char === ",") {
+      let j = i + 1;
+      while (j < input.length && /\s/.test(input[j])) {
+        j++;
+      }
+
+      if (j < input.length && (input[j] === "}" || input[j] === "]")) {
+        continue;
+      }
+    }
+
+    result += char;
   }
+
+  return result;
 }
 
 export function parseSkillEntry(skillName: string, content: string): SkillEntry {
@@ -133,6 +239,7 @@ export function parseSkillEntry(skillName: string, content: string): SkillEntry 
       description: readString(frontmatter, "description") || "",
       homepage: readString(frontmatter, "homepage"),
       gsv: metadataJson.gsv,
+      openclaw: metadataJson.openclaw,
       clawdbot: metadataJson.clawdbot,
     },
   };
