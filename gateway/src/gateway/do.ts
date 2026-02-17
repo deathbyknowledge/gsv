@@ -16,6 +16,7 @@ import {
   isWebSocketRequest,
   validateFrame,
   isWsConnected,
+  trimLeadingBlankLines,
   toErrorShape,
 } from "../shared/utils";
 import { DEFAULT_CONFIG } from "../config/defaults";
@@ -2914,12 +2915,20 @@ export class Gateway extends DurableObject<Env> {
     replyToId: string,
     text: string,
   ): void {
+    const cleanedText = trimLeadingBlankLines(text);
+    if (!cleanedText.trim()) {
+      console.log(
+        `[Gateway] Skipping empty channel response for ${channel}:${accountId}`,
+      );
+      return;
+    }
+
     // Try Service Binding RPC first (fire-and-forget)
     const channelBinding = this.getChannelBinding(channel);
     if (channelBinding) {
       const message: ChannelOutboundMessage = {
         peer: peer as ChannelPeer,
-        text,
+        text: cleanedText,
         replyToId,
       };
       channelBinding
@@ -2953,7 +2962,7 @@ export class Gateway extends DurableObject<Env> {
       peer,
       sessionKey: "",
       message: {
-        text,
+        text: cleanedText,
         replyToId,
       },
     };
@@ -3264,7 +3273,8 @@ export class Gateway extends DurableObject<Env> {
       }
     }
 
-    if (!text) {
+    text = trimLeadingBlankLines(text);
+    if (!text.trim()) {
       console.log(`[Gateway] No text content in response for ${sessionKey}`);
       return;
     }

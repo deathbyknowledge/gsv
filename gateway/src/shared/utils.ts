@@ -13,6 +13,11 @@ export const isWsConnected = (ws: WebSocket) => {
   return !!connected;
 };
 
+export function trimLeadingBlankLines(text: string): string {
+  // Keep intentional indentation, but drop blank lines at the start.
+  return text.replace(/^(?:[ \t]*\r?\n)+/, "");
+}
+
 export function timingSafeEqualStr(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   const encoder = new TextEncoder();

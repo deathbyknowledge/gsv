@@ -76,6 +76,29 @@ export type ChannelRegistryEntry = {
   lastMessageAt?: number;
 };
 
+export type ChannelAccountStatus = {
+  accountId: string;
+  connected: boolean;
+  authenticated: boolean;
+  mode?: string;
+  lastActivity?: number;
+  error?: string;
+  extra?: Record<string, unknown>;
+};
+
+export type ChannelStatusResult = {
+  channel: string;
+  accounts: ChannelAccountStatus[];
+};
+
+export type ChannelLoginResult = {
+  ok: true;
+  channel: string;
+  accountId: string;
+  qrDataUrl?: string;
+  message: string;
+};
+
 // Chat types
 export type Message = UserMessage | AssistantMessage | ToolResultMessage;
 
@@ -119,6 +142,7 @@ export type ImageBlock = {
   data?: string;
   mimeType?: string;
   r2Key?: string;
+  url?: string;
 };
 
 export type ThinkingBlock = {

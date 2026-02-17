@@ -9,10 +9,10 @@
   font-size: var(--font-size-sm);
   font-weight: 500;
   line-height: 1.5;
-  border: 1px solid transparent;
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
 }
 
 .btn:disabled {
@@ -22,34 +22,43 @@
 
 .btn-primary {
   background: var(--accent-primary);
-  color: white;
+  border-color: var(--accent-primary);
+  color: var(--text-color-kumo-inverse);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-primary) 85%, white);
+  background: color-mix(in srgb, var(--accent-primary) 82%, black);
+  border-color: color-mix(in srgb, var(--accent-primary) 82%, black);
+  transform: translateY(-1px);
 }
 
 .btn-secondary {
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   border-color: var(--border-default);
   color: var(--text-primary);
 }
 
 .btn-secondary:hover:not(:disabled) {
   background: var(--bg-hover);
+  transform: translateY(-1px);
 }
 
 .btn-danger {
   background: var(--accent-danger);
+  border-color: var(--accent-danger);
   color: white;
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-danger) 85%, white);
+  background: color-mix(in srgb, var(--accent-danger) 86%, black);
+  border-color: color-mix(in srgb, var(--accent-danger) 86%, black);
+  transform: translateY(-1px);
 }
 
 .btn-ghost {
   background: transparent;
+  border-color: transparent;
   color: var(--text-secondary);
 }
 
@@ -69,10 +78,11 @@
 
 /* Cards */
 .card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-muted);
+  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .card-header {
@@ -119,10 +129,10 @@
   font-family: inherit;
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background: color-mix(in srgb, var(--bg-primary) 90%, var(--bg-secondary));
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .form-input:focus,
@@ -130,6 +140,7 @@
 .form-textarea:focus {
   outline: none;
   border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 20%, transparent);
 }
 
 .form-input::placeholder,
@@ -148,6 +159,34 @@
   margin-top: var(--space-1);
 }
 
+/* Kumo control spacing hardening */
+.ui-button-fix {
+  min-height: 2rem;
+  padding-inline: var(--space-3) !important;
+}
+
+.ui-badge-fix {
+  line-height: 1.25;
+  padding: var(--space-1) var(--space-2) !important;
+}
+
+.ui-input-fix {
+  min-height: 2.5rem;
+  border-radius: var(--radius-md) !important;
+  padding-inline: var(--space-3) !important;
+}
+
+textarea.ui-input-fix {
+  min-height: 6.5rem;
+  padding-block: var(--space-2) !important;
+}
+
+.ui-sensitive-fix {
+  min-height: 2.5rem;
+  border-radius: var(--radius-md) !important;
+  padding-inline: var(--space-3);
+}
+
 /* Pills / Badges */
 .pill {
   display: inline-flex;
@@ -159,6 +198,7 @@
   border-radius: 9999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
+  border: 1px solid var(--border-default);
 }
 
 .pill-success {
@@ -319,7 +359,7 @@
   font-size: var(--font-size-xs);
   line-height: 1.6;
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background: color-mix(in srgb, var(--bg-primary) 88%, var(--bg-tertiary));
   overflow-x: auto;
   white-space: pre;
   max-height: 600px;

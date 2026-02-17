@@ -1,33 +1,32 @@
 /* CSS Variables */
 :root {
-  /* Colors - Dark theme (default) */
-  --bg-primary: #0d1117;
-  --bg-secondary: #161b22;
-  --bg-tertiary: #21262d;
-  --bg-hover: #30363d;
-  
-  --text-primary: #e6edf3;
-  --text-secondary: #8b949e;
-  --text-muted: #6e7681;
-  
-  --border-default: #30363d;
-  --border-muted: #21262d;
-  
-  --accent-primary: #58a6ff;
-  --accent-success: #3fb950;
-  --accent-warning: #d29922;
-  --accent-danger: #f85149;
-  
+  --bg-primary: var(--color-kumo-base);
+  --bg-secondary: var(--color-kumo-elevated);
+  --bg-tertiary: var(--color-kumo-tint);
+  --bg-hover: var(--color-kumo-overlay);
+
+  --text-primary: var(--text-color-kumo-default);
+  --text-secondary: var(--text-color-kumo-strong);
+  --text-muted: var(--text-color-kumo-inactive);
+
+  --border-default: var(--color-kumo-line);
+  --border-muted: color-mix(in srgb, var(--color-kumo-line) 70%, transparent);
+
+  --accent-primary: var(--color-kumo-brand);
+  --accent-success: var(--text-color-kumo-success);
+  --accent-warning: var(--text-color-kumo-warning);
+  --accent-danger: var(--text-color-kumo-danger);
+
   /* Typography */
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  
+  --font-sans: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-base: 1rem;
   --font-size-lg: 1.125rem;
   --font-size-xl: 1.25rem;
-  
+
   /* Spacing */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -36,50 +35,29 @@
   --space-5: 1.25rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
-  
+
   /* Border radius */
   --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.3);
-  
-  /* Layout */
-  --nav-width: 220px;
-  --topbar-height: 56px;
-}
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
 
-/* Light theme */
-[data-theme="light"] {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f6f8fa;
-  --bg-tertiary: #eaeef2;
-  --bg-hover: #d0d7de;
-  
-  --text-primary: #1f2328;
-  --text-secondary: #656d76;
-  --text-muted: #8c959f;
-  
-  --border-default: #d0d7de;
-  --border-muted: #eaeef2;
-  
-  --accent-primary: #0969da;
-  --accent-success: #1a7f37;
-  --accent-warning: #9a6700;
-  --accent-danger: #cf222e;
-  
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  /* Shadows */
+  --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 16px 30px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.16);
+
+  /* Layout */
+  --nav-width: 248px;
+  --topbar-height: 56px;
 }
 
 /* Reset */
 *, *::before, *::after {
   box-sizing: border-box;
+}
+
+h1, h2, h3, h4, h5, h6, p, ul, ol {
   margin: 0;
   padding: 0;
 }
@@ -94,7 +72,10 @@ body {
   font-size: var(--font-size-base);
   line-height: 1.5;
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background:
+    radial-gradient(circle at 12% -8%, color-mix(in srgb, var(--accent-primary) 12%, transparent) 0%, transparent 44%),
+    radial-gradient(circle at 82% 4%, color-mix(in srgb, var(--accent-success) 9%, transparent) 0%, transparent 36%),
+    var(--bg-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -111,7 +92,7 @@ h3 { font-size: 1.125rem; }
 h4 { font-size: 1rem; }
 
 a {
-  color: var(--accent-primary);
+  color: var(--text-color-kumo-link);
   text-decoration: none;
 }
 
@@ -125,13 +106,13 @@ code, pre {
 }
 
 code {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--bg-tertiary) 80%, transparent);
   padding: 0.2em 0.4em;
   border-radius: var(--radius-sm);
 }
 
 pre {
-  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--bg-tertiary) 62%, transparent);
   padding: var(--space-4);
   border-radius: var(--radius-md);
   overflow-x: auto;

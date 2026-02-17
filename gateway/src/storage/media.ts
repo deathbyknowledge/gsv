@@ -13,6 +13,19 @@ import type { MediaAttachment } from "../protocol/channel";
 
 export const MAX_MEDIA_SIZE_BYTES = 25 * 1024 * 1024; // 25MB limit
 
+const BYTE_TO_BASE64_CHUNK_SIZE = 0x8000; // 32KB
+
+function uint8ArrayToBase64(data: Uint8Array): string {
+  if (data.length === 0) return "";
+
+  let binary = "";
+  for (let i = 0; i < data.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
+    const chunk = data.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
 export async function storeMediaInR2(
   attachment: MediaAttachment,
   bucket: R2Bucket,
@@ -58,7 +71,7 @@ export async function fetchMediaFromR2(
   }
 
   const arrayBuffer = await object.arrayBuffer();
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+  const base64 = uint8ArrayToBase64(new Uint8Array(arrayBuffer));
   const mimeType = object.httpMetadata?.contentType || "application/octet-stream";
 
   console.log(`[MediaStore] Fetched from R2: ${r2Key} (${arrayBuffer.byteLength} bytes)`);

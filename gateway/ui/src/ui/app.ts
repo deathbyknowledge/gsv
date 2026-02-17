@@ -2,11 +2,11 @@
  * GSV App - Main Application Component
  */
 
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { GatewayClient, type ConnectionState } from "./gateway-client";
 import { loadSettings, saveSettings, applyTheme, getGatewayUrl, type UiSettings } from "./storage";
-import { navigateTo, getCurrentTab, tabFromPath } from "./navigation";
+import { navigateTo, getCurrentTab } from "./navigation";
 import type {
   Tab,
   EventFrame,
@@ -16,6 +16,10 @@ import type {
   AssistantMessage,
   ToolDefinition,
   ChannelRegistryEntry,
+  ChannelAccountStatus,
+  ChannelStatusResult,
+  ChannelLoginResult,
+  ContentBlock,
 } from "./types";
 import { TAB_GROUPS, TAB_ICONS, TAB_LABELS } from "./types";
 
@@ -31,6 +35,10 @@ import { renderLogs } from "./views/logs";
 import { renderPairing } from "./views/pairing";
 import { renderConfig } from "./views/config";
 import { renderDebug } from "./views/debug";
+
+const DEFAULT_CHANNEL_ACCOUNT_ID = "default";
+const CHANNEL_AUTO_REFRESH_MS = 10_000;
+const DEFAULT_CHANNELS = ["whatsapp", "discord"];
 
 @customElement("gsv-app")
 export class GsvApp extends LitElement {
@@ -49,6 +57,8 @@ export class GsvApp extends LitElement {
 
   // ---- Navigation ----
   @state() tab: Tab = getCurrentTab();
+  @state() navDrawerOpen = false;
+  @state() isMobileLayout = false;
 
   // ---- Chat State ----
   @state() chatMessages: Message[] = [];
@@ -64,6 +74,11 @@ export class GsvApp extends LitElement {
   // ---- Channels State ----
   @state() channels: ChannelRegistryEntry[] = [];
   @state() channelsLoading = false;
+  @state() channelsError: string | null = null;
+  @state() channelStatuses: Record<string, ChannelAccountStatus | null> = {};
+  @state() channelActionLoading: Record<string, string | null> = {};
+  @state() channelMessages: Record<string, string> = {};
+  @state() channelQrData: Record<string, string | null> = {};
 
   // ---- Nodes State ----
   @state() tools: ToolDefinition[] = [];
@@ -98,11 +113,19 @@ export class GsvApp extends LitElement {
   @state() pairingRequests: unknown[] = [];
   @state() pairingLoading = false;
 
+  private chatAutoScrollRaf: number | null = null;
+  private chatStreamRunId: string | null = null;
+  private channelsRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  private mobileMediaQuery: MediaQueryList | null = null;
+
   // ---- Lifecycle ----
 
   connectedCallback() {
     super.connectedCallback();
     applyTheme(this.settings.theme);
+    this.mobileMediaQuery = window.matchMedia("(max-width: 960px)");
+    this.isMobileLayout = this.mobileMediaQuery.matches;
+    this.mobileMediaQuery.addEventListener("change", this.handleMobileMedia);
     
     // Only auto-connect if we have previously connected successfully
     // (token is set or user explicitly clicked connect)
@@ -115,15 +138,102 @@ export class GsvApp extends LitElement {
     window.addEventListener("popstate", this.handlePopState);
   }
 
+  protected updated(changed: PropertyValues<this>) {
+    if (changed.has("tab") || changed.has("connectionState")) {
+      this.syncChannelsAutoRefresh();
+    }
+
+    if (
+      this.tab === "chat" &&
+      (changed.has("tab") ||
+        changed.has("chatMessages") ||
+        changed.has("chatStream") ||
+        changed.has("chatLoading") ||
+        changed.has("chatSending"))
+    ) {
+      this.scheduleChatAutoScroll();
+    }
+  }
+
   disconnectedCallback() {
     super.disconnectedCallback();
+    if (this.chatAutoScrollRaf !== null) {
+      cancelAnimationFrame(this.chatAutoScrollRaf);
+      this.chatAutoScrollRaf = null;
+    }
+    this.stopChannelsAutoRefresh();
     this.client?.stop();
     window.removeEventListener("popstate", this.handlePopState);
+    this.mobileMediaQuery?.removeEventListener("change", this.handleMobileMedia);
+    this.mobileMediaQuery = null;
   }
 
   private handlePopState = () => {
     this.tab = getCurrentTab();
+    this.closeNavDrawer();
   };
+
+  private handleMobileMedia = (event: MediaQueryListEvent) => {
+    this.isMobileLayout = event.matches;
+    if (!event.matches) {
+      this.navDrawerOpen = false;
+    }
+  };
+
+  private toggleNavDrawer() {
+    if (!this.isMobileLayout) {
+      return;
+    }
+    this.navDrawerOpen = !this.navDrawerOpen;
+  }
+
+  private closeNavDrawer() {
+    if (!this.navDrawerOpen) {
+      return;
+    }
+    this.navDrawerOpen = false;
+  }
+
+  private scheduleChatAutoScroll() {
+    if (this.chatAutoScrollRaf !== null) {
+      cancelAnimationFrame(this.chatAutoScrollRaf);
+    }
+
+    this.chatAutoScrollRaf = requestAnimationFrame(() => {
+      this.chatAutoScrollRaf = null;
+      const container = this.querySelector(".chat-messages");
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    });
+  }
+
+  private syncChannelsAutoRefresh() {
+    const shouldRefresh =
+      this.tab === "channels" && this.connectionState === "connected";
+
+    if (!shouldRefresh) {
+      this.stopChannelsAutoRefresh();
+      return;
+    }
+
+    if (this.channelsRefreshTimer) {
+      return;
+    }
+
+    this.channelsRefreshTimer = setInterval(() => {
+      void this.loadChannels(false);
+    }, CHANNEL_AUTO_REFRESH_MS);
+  }
+
+  private stopChannelsAutoRefresh() {
+    if (!this.channelsRefreshTimer) {
+      return;
+    }
+
+    clearInterval(this.channelsRefreshTimer);
+    this.channelsRefreshTimer = null;
+  }
 
   // ---- Connection ----
 
@@ -163,6 +273,7 @@ export class GsvApp extends LitElement {
 
   /** Disconnect and show connect screen */
   disconnect() {
+    this.stopChannelsAutoRefresh();
     this.client?.stop();
     this.showConnectScreen = true;
     localStorage.removeItem("gsv-connected-once");
@@ -196,6 +307,7 @@ export class GsvApp extends LitElement {
       navigateTo(tab);
       this.loadTabData(tab);
     }
+    this.closeNavDrawer();
   }
 
   private async loadTabData(tab: Tab) {
@@ -255,6 +367,8 @@ export class GsvApp extends LitElement {
     
     this.chatSending = true;
     this.currentRunId = crypto.randomUUID();
+    this.chatStream = null;
+    this.chatStreamRunId = null;
     
     // Optimistic update
     this.chatMessages = [
@@ -267,24 +381,77 @@ export class GsvApp extends LitElement {
     } catch (e) {
       console.error("Failed to send:", e);
       this.chatSending = false;
+      this.currentRunId = null;
     }
+  }
+
+  private normalizeAssistantMessage(message: unknown): AssistantMessage | null {
+    if (!message || typeof message !== "object") {
+      return null;
+    }
+
+    const candidate = message as { content?: unknown; timestamp?: unknown };
+    if (!Array.isArray(candidate.content)) {
+      return null;
+    }
+
+    return {
+      role: "assistant",
+      content: candidate.content as ContentBlock[],
+      timestamp:
+        typeof candidate.timestamp === "number"
+          ? candidate.timestamp
+          : Date.now(),
+    };
   }
 
   private handleChatEvent(payload: ChatEventPayload) {
     if (payload.sessionKey !== this.settings.sessionKey) return;
+    const matchesCurrentRun =
+      !this.currentRunId || !payload.runId || payload.runId === this.currentRunId;
 
     if (payload.state === "partial" && payload.message) {
-      this.chatStream = payload.message;
+      const incoming = this.normalizeAssistantMessage(payload.message);
+      if (!incoming) {
+        return;
+      }
+
+      if (
+        this.chatStream &&
+        payload.runId &&
+        this.chatStreamRunId === payload.runId
+      ) {
+        this.chatStream = mergeAssistantMessages(this.chatStream, incoming);
+      } else {
+        this.chatStream = incoming;
+      }
+
+      this.chatStreamRunId = payload.runId ?? this.chatStreamRunId;
     } else if (payload.state === "final") {
+      const finalMessage = payload.message
+        ? this.normalizeAssistantMessage(payload.message)
+        : null;
+      if (finalMessage) {
+        this.chatMessages = [...this.chatMessages, finalMessage];
+      }
+
       this.chatStream = null;
-      this.chatSending = false;
-      this.currentRunId = null;
-      // Reload to get proper history
-      this.loadChatHistory();
+      this.chatStreamRunId = null;
+
+      if (matchesCurrentRun) {
+        this.chatSending = false;
+        this.currentRunId = null;
+      }
+
+      // Refresh from source of truth so toolResult messages are included.
+      void this.loadChatHistory();
     } else if (payload.state === "error") {
       this.chatStream = null;
-      this.chatSending = false;
-      this.currentRunId = null;
+      this.chatStreamRunId = null;
+      if (matchesCurrentRun) {
+        this.chatSending = false;
+        this.currentRunId = null;
+      }
       console.error("Chat error:", payload.error);
     }
   }
@@ -331,19 +498,300 @@ export class GsvApp extends LitElement {
 
   // ---- Channels ----
 
-  private async loadChannels() {
+  private channelKey(channel: string, accountId = DEFAULT_CHANNEL_ACCOUNT_ID): string {
+    return `${channel}:${accountId}`;
+  }
+
+  private setChannelActionState(
+    channel: string,
+    accountId: string,
+    action: string | null,
+  ) {
+    const key = this.channelKey(channel, accountId);
+    this.channelActionLoading = {
+      ...this.channelActionLoading,
+      [key]: action,
+    };
+  }
+
+  private setChannelMessage(channel: string, accountId: string, message: string | null) {
+    const key = this.channelKey(channel, accountId);
+    const next = { ...this.channelMessages };
+    if (message) {
+      next[key] = message;
+    } else {
+      delete next[key];
+    }
+    this.channelMessages = next;
+  }
+
+  private setChannelQrData(channel: string, accountId: string, qrDataUrl: string | null) {
+    const key = this.channelKey(channel, accountId);
+    this.channelQrData = {
+      ...this.channelQrData,
+      [key]: qrDataUrl,
+    };
+  }
+
+  channelStatus(channel: string, accountId = DEFAULT_CHANNEL_ACCOUNT_ID): ChannelAccountStatus | null {
+    return this.channelStatuses[this.channelKey(channel, accountId)] ?? null;
+  }
+
+  channelActionState(channel: string, accountId = DEFAULT_CHANNEL_ACCOUNT_ID): string | null {
+    return this.channelActionLoading[this.channelKey(channel, accountId)] ?? null;
+  }
+
+  channelMessage(channel: string, accountId = DEFAULT_CHANNEL_ACCOUNT_ID): string | null {
+    return this.channelMessages[this.channelKey(channel, accountId)] ?? null;
+  }
+
+  channelQrCode(channel: string, accountId = DEFAULT_CHANNEL_ACCOUNT_ID): string | null {
+    return this.channelQrData[this.channelKey(channel, accountId)] ?? null;
+  }
+
+  private getKnownChannels(): string[] {
+    const known = new Set<string>(DEFAULT_CHANNELS);
+    for (const entry of this.channels) {
+      known.add(entry.channel);
+    }
+    return Array.from(known);
+  }
+
+  private async loadChannelStatuses() {
+    if (!this.client) {
+      return;
+    }
+
+    const targets = new Map<string, { channel: string; accountId: string }>();
+    for (const channel of this.getKnownChannels()) {
+      const key = this.channelKey(channel, DEFAULT_CHANNEL_ACCOUNT_ID);
+      targets.set(key, { channel, accountId: DEFAULT_CHANNEL_ACCOUNT_ID });
+    }
+    for (const entry of this.channels) {
+      const key = this.channelKey(entry.channel, entry.accountId);
+      targets.set(key, { channel: entry.channel, accountId: entry.accountId });
+    }
+
+    const nextStatuses = { ...this.channelStatuses };
+
+    await Promise.all(Array.from(targets.entries()).map(async ([key, target]) => {
+      try {
+        const res = await this.client!.channelStatus(
+          target.channel,
+          target.accountId,
+        );
+        if (res.ok && res.payload) {
+          const data = res.payload as ChannelStatusResult;
+          nextStatuses[key] =
+            data.accounts.find((a) => a.accountId === target.accountId) ||
+            data.accounts[0] || {
+              accountId: target.accountId,
+              connected: false,
+              authenticated: false,
+            };
+        } else {
+          nextStatuses[key] = {
+            accountId: target.accountId,
+            connected: false,
+            authenticated: false,
+            error: res.error?.message || "Failed to load status",
+          };
+        }
+      } catch (e) {
+        nextStatuses[key] = {
+          accountId: target.accountId,
+          connected: false,
+          authenticated: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    }));
+
+    this.channelStatuses = nextStatuses;
+  }
+
+  async refreshChannels() {
+    await this.loadChannels();
+  }
+
+  private async loadChannels(showLoading = true) {
     if (!this.client) return;
-    this.channelsLoading = true;
+    if (showLoading) {
+      this.channelsLoading = true;
+    }
+    this.channelsError = null;
     try {
       const res = await this.client.channelsList();
       if (res.ok && res.payload) {
         const data = res.payload as { channels: ChannelRegistryEntry[] };
         this.channels = data.channels || [];
+      } else {
+        this.channelsError = res.error?.message || "Failed to load channels";
       }
+      await this.loadChannelStatuses();
     } catch (e) {
       console.error("Failed to load channels:", e);
+      this.channelsError = e instanceof Error ? e.message : String(e);
     } finally {
-      this.channelsLoading = false;
+      if (showLoading) {
+        this.channelsLoading = false;
+      }
+    }
+  }
+
+  async startChannel(channel: string, accountId = DEFAULT_CHANNEL_ACCOUNT_ID) {
+    if (!this.client) {
+      return;
+    }
+
+    const currentAction = this.channelActionState(channel, accountId);
+    if (currentAction) {
+      return;
+    }
+
+    this.setChannelActionState(channel, accountId, "start");
+    this.setChannelMessage(channel, accountId, null);
+
+    try {
+      const res = await this.client.channelStart(channel, accountId);
+      if (!res.ok) {
+        this.setChannelMessage(
+          channel,
+          accountId,
+          res.error?.message || "Failed to start channel",
+        );
+        return;
+      }
+
+      this.setChannelMessage(channel, accountId, "Channel started");
+      await this.loadChannels(false);
+    } catch (e) {
+      this.setChannelMessage(
+        channel,
+        accountId,
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      this.setChannelActionState(channel, accountId, null);
+    }
+  }
+
+  async stopChannel(channel: string, accountId = DEFAULT_CHANNEL_ACCOUNT_ID) {
+    if (!this.client) {
+      return;
+    }
+
+    const currentAction = this.channelActionState(channel, accountId);
+    if (currentAction) {
+      return;
+    }
+
+    this.setChannelActionState(channel, accountId, "stop");
+    this.setChannelMessage(channel, accountId, null);
+
+    try {
+      const res = await this.client.channelStop(channel, accountId);
+      if (!res.ok) {
+        this.setChannelMessage(
+          channel,
+          accountId,
+          res.error?.message || "Failed to stop channel",
+        );
+        return;
+      }
+
+      this.setChannelQrData(channel, accountId, null);
+      this.setChannelMessage(channel, accountId, "Channel stopped");
+      await this.loadChannels(false);
+    } catch (e) {
+      this.setChannelMessage(
+        channel,
+        accountId,
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      this.setChannelActionState(channel, accountId, null);
+    }
+  }
+
+  async loginChannel(
+    channel: string,
+    accountId = DEFAULT_CHANNEL_ACCOUNT_ID,
+    force = false,
+  ) {
+    if (!this.client) {
+      return;
+    }
+
+    const currentAction = this.channelActionState(channel, accountId);
+    if (currentAction) {
+      return;
+    }
+
+    this.setChannelActionState(channel, accountId, "login");
+    this.setChannelMessage(channel, accountId, null);
+
+    try {
+      const res = await this.client.channelLogin(channel, accountId, force);
+      if (!res.ok) {
+        this.setChannelMessage(
+          channel,
+          accountId,
+          res.error?.message || "Failed to login",
+        );
+        return;
+      }
+
+      const data = (res.payload as ChannelLoginResult | undefined) || null;
+      this.setChannelQrData(channel, accountId, data?.qrDataUrl || null);
+      this.setChannelMessage(channel, accountId, data?.message || "Login started");
+      await this.loadChannels(false);
+    } catch (e) {
+      this.setChannelMessage(
+        channel,
+        accountId,
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      this.setChannelActionState(channel, accountId, null);
+    }
+  }
+
+  async logoutChannel(channel: string, accountId = DEFAULT_CHANNEL_ACCOUNT_ID) {
+    if (!this.client) {
+      return;
+    }
+
+    const currentAction = this.channelActionState(channel, accountId);
+    if (currentAction) {
+      return;
+    }
+
+    this.setChannelActionState(channel, accountId, "logout");
+    this.setChannelMessage(channel, accountId, null);
+
+    try {
+      const res = await this.client.channelLogout(channel, accountId);
+      if (!res.ok) {
+        this.setChannelMessage(
+          channel,
+          accountId,
+          res.error?.message || "Failed to logout",
+        );
+        return;
+      }
+
+      this.setChannelQrData(channel, accountId, null);
+      this.setChannelMessage(channel, accountId, "Logged out");
+      await this.loadChannels(false);
+    } catch (e) {
+      this.setChannelMessage(
+        channel,
+        accountId,
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      this.setChannelActionState(channel, accountId, null);
     }
   }
 
@@ -367,14 +815,35 @@ export class GsvApp extends LitElement {
 
   // ---- Workspace ----
 
+  private normalizeWorkspacePath(path: string): string {
+    const trimmed = path.trim();
+    if (!trimmed || trimmed === "/") {
+      return "/";
+    }
+
+    const noLeadingSlash = trimmed.replace(/^\/+/, "");
+    const noTrailingSlash = noLeadingSlash.replace(/\/+$/, "");
+    return noTrailingSlash || "/";
+  }
+
   async loadWorkspace(path = "/") {
     if (!this.client) return;
+    const normalizedPath = this.normalizeWorkspacePath(path);
     this.workspaceLoading = true;
-    this.workspaceCurrentPath = path;
+    this.workspaceCurrentPath = normalizedPath;
     try {
-      const res = await this.client.workspaceList(path);
+      const res = await this.client.workspaceList(normalizedPath);
       if (res.ok && res.payload) {
-        this.workspaceFiles = res.payload as { path: string; files: string[]; directories: string[] };
+        const payload = res.payload as {
+          path: string;
+          files: string[];
+          directories: string[];
+        };
+        this.workspaceFiles = {
+          path: this.normalizeWorkspacePath(payload.path),
+          files: payload.files || [],
+          directories: payload.directories || [],
+        };
       }
     } catch (e) {
       console.error("Failed to load workspace:", e);
@@ -546,7 +1015,13 @@ export class GsvApp extends LitElement {
     }
 
     return html`
-      <div class="app-shell">
+      <div class="app-shell ${this.isMobileLayout ? "mobile" : ""} ${this.navDrawerOpen ? "nav-open" : ""}">
+        <button
+          type="button"
+          class="nav-backdrop ${this.navDrawerOpen ? "open" : ""}"
+          @click=${() => this.closeNavDrawer()}
+          aria-label="Close navigation menu"
+        ></button>
         ${this.renderNav()}
         <div class="main-content">
           ${this.renderTopbar()}
@@ -646,7 +1121,7 @@ export class GsvApp extends LitElement {
 
   private renderNav() {
     return html`
-      <nav class="nav-sidebar">
+      <nav class="nav-sidebar ${this.navDrawerOpen ? "open" : ""}">
         <div class="nav-header">
           <span class="nav-logo">🚀</span>
           <span class="nav-title">GSV</span>
@@ -684,7 +1159,17 @@ export class GsvApp extends LitElement {
   private renderTopbar() {
     return html`
       <header class="topbar">
-        <h1 class="topbar-title">${TAB_LABELS[this.tab]}</h1>
+        <div class="topbar-title-wrap">
+          <button
+            class="btn btn-ghost btn-icon topbar-menu-btn"
+            @click=${() => this.toggleNavDrawer()}
+            title="Toggle navigation"
+            aria-label="Toggle navigation menu"
+          >
+            ☰
+          </button>
+          <h1 class="topbar-title">${TAB_LABELS[this.tab]}</h1>
+        </div>
         <div class="topbar-actions">
           <button 
             class="btn btn-ghost btn-icon"
@@ -726,6 +1211,125 @@ export class GsvApp extends LitElement {
         return html`<div>Unknown view</div>`;
     }
   }
+}
+
+function mergeAssistantMessages(
+  current: AssistantMessage,
+  incoming: AssistantMessage,
+): AssistantMessage {
+  if (isContentSuperset(incoming.content, current.content)) {
+    return incoming;
+  }
+  if (isContentSuperset(current.content, incoming.content)) {
+    return current;
+  }
+
+  return {
+    role: "assistant",
+    timestamp: incoming.timestamp ?? current.timestamp ?? Date.now(),
+    content: mergeContentBlocks(current.content, incoming.content),
+  };
+}
+
+function isContentSuperset(
+  maybeSuperset: ContentBlock[],
+  maybeSubset: ContentBlock[],
+): boolean {
+  if (maybeSuperset.length < maybeSubset.length) {
+    return false;
+  }
+
+  for (let i = 0; i < maybeSubset.length; i++) {
+    if (!blockContains(maybeSuperset[i], maybeSubset[i])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function blockContains(
+  maybeSuperset: ContentBlock | undefined,
+  maybeSubset: ContentBlock | undefined,
+): boolean {
+  if (!maybeSuperset || !maybeSubset || maybeSuperset.type !== maybeSubset.type) {
+    return false;
+  }
+
+  if (maybeSuperset.type === "text" && maybeSubset.type === "text") {
+    return maybeSuperset.text.startsWith(maybeSubset.text);
+  }
+
+  if (maybeSuperset.type === "thinking" && maybeSubset.type === "thinking") {
+    return maybeSuperset.text.startsWith(maybeSubset.text);
+  }
+
+  if (maybeSuperset.type === "toolCall" && maybeSubset.type === "toolCall") {
+    return (
+      maybeSuperset.id === maybeSubset.id &&
+      maybeSuperset.name === maybeSubset.name
+    );
+  }
+
+  if (maybeSuperset.type === "image" && maybeSubset.type === "image") {
+    if (maybeSuperset.r2Key && maybeSubset.r2Key) {
+      return maybeSuperset.r2Key === maybeSubset.r2Key;
+    }
+    if (maybeSuperset.url && maybeSubset.url) {
+      return maybeSuperset.url === maybeSubset.url;
+    }
+    if (maybeSuperset.data && maybeSubset.data) {
+      return maybeSuperset.data === maybeSubset.data;
+    }
+    return false;
+  }
+
+  return false;
+}
+
+function mergeContentBlocks(
+  current: ContentBlock[],
+  incoming: ContentBlock[],
+): ContentBlock[] {
+  const merged = [...current];
+
+  for (const block of incoming) {
+    const last = merged[merged.length - 1];
+
+    if (last?.type === "text" && block.type === "text") {
+      if (block.text.startsWith(last.text)) {
+        merged[merged.length - 1] = block;
+      } else if (!last.text.endsWith(block.text)) {
+        merged[merged.length - 1] = {
+          ...last,
+          text: `${last.text}${block.text}`,
+        };
+      }
+      continue;
+    }
+
+    if (last?.type === "thinking" && block.type === "thinking") {
+      if (block.text.startsWith(last.text)) {
+        merged[merged.length - 1] = block;
+      } else if (!last.text.endsWith(block.text)) {
+        merged[merged.length - 1] = {
+          ...last,
+          text: `${last.text}${block.text}`,
+        };
+      }
+      continue;
+    }
+
+    const exists = merged.some(
+      (existing) =>
+        blockContains(existing, block) && blockContains(block, existing),
+    );
+    if (!exists) {
+      merged.push(block);
+    }
+  }
+
+  return merged;
 }
 
 declare global {

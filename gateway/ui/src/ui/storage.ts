@@ -62,4 +62,5 @@ export function applyTheme(theme: UiSettings["theme"]): void {
   const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
   const effectiveTheme = theme === "system" ? (prefersDark ? "dark" : "light") : theme;
   document.documentElement.setAttribute("data-theme", effectiveTheme);
+  document.documentElement.setAttribute("data-mode", effectiveTheme);
 }

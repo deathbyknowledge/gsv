@@ -56,6 +56,26 @@ const noopLogger = {
   child: () => noopLogger,
 } as any;
 
+const MEDIA_CONTENT_TYPES = new Set([
+  "imageMessage",
+  "videoMessage",
+  "audioMessage",
+  "documentMessage",
+]);
+
+const BYTE_TO_BASE64_CHUNK_SIZE = 0x8000; // 32KB
+
+function uint8ArrayToBase64(data: Uint8Array): string {
+  if (data.length === 0) return "";
+
+  let binary = "";
+  for (let i = 0; i < data.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
+    const chunk = data.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
 export class WhatsAppAccount extends DurableObject<Env> {
   private sock: WASocket | null = null;
   private state: WhatsAppAccountState = {
@@ -386,14 +406,20 @@ export class WhatsAppAccount extends DurableObject<Env> {
     for (const msg of m.messages) {
       if (msg.key.fromMe) continue;
 
-      const hasImage = !!msg.message?.imageMessage;
-      const hasVideo = !!msg.message?.videoMessage;
-      const hasAudio = !!msg.message?.audioMessage;
-      const hasDocument = !!msg.message?.documentMessage;
-      const hasMedia = hasImage || hasVideo || hasAudio || hasDocument;
+      const extracted = extractMessageContent(msg.message);
+      const contentType = extracted ? getContentType(extracted) : undefined;
+      const hasMedia = !!contentType && MEDIA_CONTENT_TYPES.has(contentType);
+
+      const extractedMedia = (hasMedia && extracted && contentType)
+        ? (extracted as Record<string, unknown>)[contentType] as
+            | { caption?: string; text?: string }
+            | undefined
+        : undefined;
 
       const text = msg.message?.conversation || 
                    msg.message?.extendedTextMessage?.text ||
+                   extractedMedia?.caption ||
+                   extractedMedia?.text ||
                    msg.message?.imageMessage?.caption ||
                    msg.message?.videoMessage?.caption ||
                    (hasMedia ? "" : undefined);
@@ -447,7 +473,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
           id: senderId,
           name: msg.pushName ?? undefined,
         } : undefined),
-        text: text || (media.length > 0 ? "[Media]" : ""),
+        text: text || (media.length > 0 ? "[Media]" : hasMedia ? "[Media unavailable]" : ""),
         media: media.length > 0 ? media : undefined,
         replyToId: msg.message?.extendedTextMessage?.contextInfo?.stanzaId ?? undefined,
         timestamp: msg.messageTimestamp as number,
@@ -487,35 +513,44 @@ export class WhatsAppAccount extends DurableObject<Env> {
     let filename: string | undefined;
     let baileysMediaType: string;
 
-    if (msg.message?.imageMessage) {
+    const mediaNode = (mContent as Record<string, unknown>)[contentType] as
+      | {
+          mimetype?: string;
+          caption?: string;
+          fileName?: string;
+          url?: string;
+          directPath?: string;
+          mediaKey?: Uint8Array | Buffer;
+          fileLength?: number;
+        }
+      | undefined;
+
+    if (!mediaNode || typeof mediaNode !== "object") return null;
+
+    if (contentType === "imageMessage") {
       mediaType = "image";
-      mimeType = msg.message.imageMessage.mimetype || "image/jpeg";
-      filename = msg.message.imageMessage.caption ?? undefined;
+      mimeType = mediaNode.mimetype || "image/jpeg";
+      filename = mediaNode.caption ?? undefined;
       baileysMediaType = "image";
-    } else if (msg.message?.videoMessage) {
+    } else if (contentType === "videoMessage") {
       mediaType = "video";
-      mimeType = msg.message.videoMessage.mimetype || "video/mp4";
-      filename = msg.message.videoMessage.caption ?? undefined;
+      mimeType = mediaNode.mimetype || "video/mp4";
+      filename = mediaNode.caption ?? undefined;
       baileysMediaType = "video";
-    } else if (msg.message?.audioMessage) {
+    } else if (contentType === "audioMessage") {
       mediaType = "audio";
-      mimeType = msg.message.audioMessage.mimetype || "audio/ogg";
+      mimeType = mediaNode.mimetype || "audio/ogg";
       baileysMediaType = "audio";
-    } else if (msg.message?.documentMessage) {
+    } else if (contentType === "documentMessage") {
       mediaType = "document";
-      mimeType = msg.message.documentMessage.mimetype || "application/octet-stream";
-      filename = msg.message.documentMessage.fileName ?? undefined;
+      mimeType = mediaNode.mimetype || "application/octet-stream";
+      filename = mediaNode.fileName ?? undefined;
       baileysMediaType = "document";
     } else {
       return null;
     }
 
-    const media = mContent[contentType] as {
-      url?: string;
-      directPath?: string;
-      mediaKey?: Uint8Array | Buffer;
-      fileLength?: number;
-    };
+    const media = mediaNode;
 
     if (!media || typeof media !== "object") return null;
     if (!media.url && !media.directPath) return null;
@@ -553,7 +588,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     );
 
     const decryptedArray = new Uint8Array(decrypted);
-    const base64 = btoa(String.fromCharCode(...decryptedArray));
+    const base64 = uint8ArrayToBase64(decryptedArray);
 
     return {
       type: mediaType,
