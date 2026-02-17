@@ -5,6 +5,40 @@
 import { html, nothing } from "lit";
 import type { GsvApp } from "../app";
 
+function normalizeWorkspacePath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed || trimmed === "/") {
+    return "/";
+  }
+
+  const noLeadingSlash = trimmed.replace(/^\/+/, "");
+  const noTrailingSlash = noLeadingSlash.replace(/\/+$/, "");
+  return noTrailingSlash || "/";
+}
+
+function getEntryLabel(path: string): string {
+  const normalizedPath = normalizeWorkspacePath(path);
+  if (normalizedPath === "/") {
+    return "/";
+  }
+  const parts = normalizedPath.split("/");
+  return parts[parts.length - 1] || normalizedPath;
+}
+
+function getParentPath(path: string): string {
+  const normalizedPath = normalizeWorkspacePath(path);
+  if (normalizedPath === "/") {
+    return "/";
+  }
+
+  const parts = normalizedPath.split("/");
+  if (parts.length <= 1) {
+    return "/";
+  }
+
+  return parts.slice(0, -1).join("/");
+}
+
 export function renderWorkspace(app: GsvApp) {
   return html`
     <div class="view-container">
@@ -101,20 +135,20 @@ function renderFileBrowser(app: GsvApp) {
   }
   
   const { path, files, directories } = app.workspaceFiles;
+  const normalizedPath = normalizeWorkspacePath(path);
   
   return html`
     <!-- Current path -->
     <div style="margin-bottom: var(--space-3); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border-muted)">
-      <code class="mono" style="font-size: var(--font-size-xs); color: var(--text-muted)">${path}</code>
+      <code class="mono" style="font-size: var(--font-size-xs); color: var(--text-muted)">${normalizedPath}</code>
     </div>
     
     <!-- Parent directory -->
-    ${path !== "/" ? html`
+    ${normalizedPath !== "/" ? html`
       <div 
         class="nav-item"
         @click=${() => {
-          const parentPath = path.split("/").slice(0, -1).join("/") || "/";
-          app.loadWorkspace(parentPath);
+          app.loadWorkspace(getParentPath(normalizedPath));
         }}
         style="padding: var(--space-2); margin: 0 calc(var(--space-4) * -1)"
       >
@@ -127,11 +161,11 @@ function renderFileBrowser(app: GsvApp) {
     ${directories.map(dir => html`
       <div 
         class="nav-item"
-        @click=${() => app.loadWorkspace(dir)}
+        @click=${() => app.loadWorkspace(normalizeWorkspacePath(dir))}
         style="padding: var(--space-2); margin: 0 calc(var(--space-4) * -1)"
       >
         <span>📁</span>
-        <span>${dir.split("/").pop()}</span>
+        <span>${getEntryLabel(dir)}</span>
       </div>
     `)}
     
@@ -146,7 +180,7 @@ function renderFileBrowser(app: GsvApp) {
           style="padding: var(--space-2); margin: 0 calc(var(--space-4) * -1)"
         >
           <span>${icon}</span>
-          <span>${file.split("/").pop()}</span>
+          <span>${getEntryLabel(file)}</span>
         </div>
       `;
     })}

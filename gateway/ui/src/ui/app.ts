@@ -784,14 +784,35 @@ export class GsvApp extends LitElement {
 
   // ---- Workspace ----
 
+  private normalizeWorkspacePath(path: string): string {
+    const trimmed = path.trim();
+    if (!trimmed || trimmed === "/") {
+      return "/";
+    }
+
+    const noLeadingSlash = trimmed.replace(/^\/+/, "");
+    const noTrailingSlash = noLeadingSlash.replace(/\/+$/, "");
+    return noTrailingSlash || "/";
+  }
+
   async loadWorkspace(path = "/") {
     if (!this.client) return;
+    const normalizedPath = this.normalizeWorkspacePath(path);
     this.workspaceLoading = true;
-    this.workspaceCurrentPath = path;
+    this.workspaceCurrentPath = normalizedPath;
     try {
-      const res = await this.client.workspaceList(path);
+      const res = await this.client.workspaceList(normalizedPath);
       if (res.ok && res.payload) {
-        this.workspaceFiles = res.payload as { path: string; files: string[]; directories: string[] };
+        const payload = res.payload as {
+          path: string;
+          files: string[];
+          directories: string[];
+        };
+        this.workspaceFiles = {
+          path: this.normalizeWorkspacePath(payload.path),
+          files: payload.files || [],
+          directories: payload.directories || [],
+        };
       }
     } catch (e) {
       console.error("Failed to load workspace:", e);

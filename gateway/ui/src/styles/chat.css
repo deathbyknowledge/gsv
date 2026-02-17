@@ -22,6 +22,7 @@
   display: flex;
   flex-direction: column;
   max-width: 85%;
+  min-width: 0;
 }
 
 .message.user {
@@ -36,6 +37,8 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
   line-height: 1.5;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .message.user .message-bubble {
@@ -68,6 +71,8 @@
   white-space: normal;
   font-size: var(--font-size-sm);
   margin-bottom: var(--space-2);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-content:last-child {
@@ -106,6 +111,7 @@
   border-radius: var(--radius-md);
   overflow-x: auto;
   padding: var(--space-3);
+  max-width: 100%;
 }
 
 .message-content code {
@@ -228,6 +234,64 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  min-width: 0;
+}
+
+.tool-result-json {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.tool-result-json code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.tool-result-json-details {
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.tool-result-json-details summary {
+  cursor: pointer;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  user-select: none;
+  list-style: none;
+}
+
+.tool-result-json-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-result-json-details .tool-result-json {
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--border-muted);
+  border-radius: 0;
+}
+
+.tool-result-json-toggle-open {
+  display: none;
+}
+
+.tool-result-json-details[open] .tool-result-json-toggle-open {
+  display: inline;
+}
+
+.tool-result-json-details[open] .tool-result-json-toggle-closed {
+  display: none;
 }
 
 /* Input Area */

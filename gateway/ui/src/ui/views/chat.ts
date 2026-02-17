@@ -16,6 +16,9 @@ import type {
   ThinkingBlock,
 } from "../types";
 
+const TOOL_RESULT_JSON_COLLAPSE_LINES = 24;
+const TOOL_RESULT_JSON_COLLAPSE_CHARS = 1800;
+
 export function renderChat(app: GsvApp) {
   return html`
     <div class="chat-container">
@@ -122,7 +125,7 @@ function renderToolResultMessage(msg: ToolResultMessage) {
           </span>
         </div>
         <div class="tool-result-body">
-          ${msg.content.map((block) => renderContentBlock(block))}
+          ${msg.content.map((block) => renderToolResultContentBlock(block))}
         </div>
       </div>
       ${msg.timestamp
@@ -134,6 +137,34 @@ function renderToolResultMessage(msg: ToolResultMessage) {
         : nothing}
     </div>
   `;
+}
+
+function renderToolResultContentBlock(block: ContentBlock) {
+  if (block.type !== "text") {
+    return renderContentBlock(block);
+  }
+
+  const jsonText = formatJsonIfPossible(block.text);
+  if (jsonText) {
+    if (shouldCollapseJson(jsonText)) {
+      const lineCount = countLines(jsonText);
+      return html`
+        <details class="tool-result-json-details">
+          <summary>
+            <span class="tool-result-json-toggle-closed">Show JSON result (${lineCount} lines)</span>
+            <span class="tool-result-json-toggle-open">Hide JSON result</span>
+          </summary>
+          <pre class="tool-result-json"><code>${jsonText}</code></pre>
+        </details>
+      `;
+    }
+
+    return html`
+      <pre class="tool-result-json"><code>${jsonText}</code></pre>
+    `;
+  }
+
+  return renderMarkdownContent(block.text);
 }
 
 function renderContentBlock(block: ContentBlock) {
@@ -273,4 +304,38 @@ function formatTime(ts: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatJsonIfPossible(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  // Quick guard: avoid JSON.parse for plain prose text.
+  const first = trimmed[0];
+  if (first !== "{" && first !== "[" && first !== "\"") {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return null;
+  }
+}
+
+function shouldCollapseJson(jsonText: string): boolean {
+  return (
+    jsonText.length > TOOL_RESULT_JSON_COLLAPSE_CHARS ||
+    countLines(jsonText) > TOOL_RESULT_JSON_COLLAPSE_LINES
+  );
+}
+
+function countLines(text: string): number {
+  if (!text) {
+    return 0;
+  }
+  return text.split("\n").length;
 }
