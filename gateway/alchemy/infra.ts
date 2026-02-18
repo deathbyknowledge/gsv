@@ -150,8 +150,12 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
           className: "WhatsAppAccount",
           sqlite: true,
         }),
-        // Queue for sending inbound messages to Gateway (producer binding)
-        GATEWAY_QUEUE: channelInboundQueue,
+        // Direct RPC binding for inbound/status delivery to Gateway.
+        GATEWAY: {
+          type: "service" as const,
+          service: name,
+          __entrypoint__: "GatewayEntrypoint",
+        },
       },
       url: true,
       compatibilityDate: "2025-09-21",

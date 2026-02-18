@@ -2061,8 +2061,7 @@ fn queue_producers_for_bundle(bundle: &PreparedBundle) -> Vec<WranglerQueueProdu
         .map(|queues| queues.producers.clone())
         .unwrap_or_default();
 
-    if (bundle.component == COMPONENT_CHANNEL_WHATSAPP
-        || bundle.component == COMPONENT_CHANNEL_TEST)
+    if bundle.component == COMPONENT_CHANNEL_TEST
         && !producers
             .iter()
             .any(|producer| producer.binding == "GATEWAY_QUEUE")
@@ -2083,6 +2082,19 @@ fn service_bindings_for_bundle(
     available_scripts: &HashSet<String>,
 ) -> Vec<WranglerServiceBinding> {
     let mut bindings = bundle.wrangler.services.clone();
+
+    if bundle.component == COMPONENT_CHANNEL_WHATSAPP
+        && !bindings.iter().any(|binding| binding.binding == "GATEWAY")
+        && (selected_components.contains(COMPONENT_GATEWAY)
+            || available_scripts.contains(SCRIPT_GATEWAY))
+    {
+        bindings.push(WranglerServiceBinding {
+            binding: "GATEWAY".to_string(),
+            service: SCRIPT_GATEWAY.to_string(),
+            environment: None,
+            entrypoint: Some("GatewayEntrypoint".to_string()),
+        });
+    }
 
     if bundle.component == COMPONENT_GATEWAY
         && selected_components.contains(COMPONENT_CHANNEL_TEST)

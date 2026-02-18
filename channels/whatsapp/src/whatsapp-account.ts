@@ -35,13 +35,24 @@ import type {
   ChannelOutboundMessage,
   ChannelPeer,
   ChannelAccountStatus,
-  ChannelQueueMessage,
 } from "./channel-types";
 
+type GatewayChannelBinding = Fetcher & {
+  channelInbound: (
+    channelId: string,
+    accountId: string,
+    message: ChannelInboundMessage,
+  ) => Promise<{ ok: boolean; sessionKey?: string; status?: string; error?: string }>;
+  channelStatusChanged: (
+    channelId: string,
+    accountId: string,
+    status: ChannelAccountStatus,
+  ) => Promise<void>;
+};
+
 interface Env {
-  // Queue for sending inbound messages to Gateway
-  // Gateway consumes from this queue and processes messages
-  GATEWAY_QUEUE: Queue<ChannelQueueMessage>;
+  // Direct service binding to Gateway entrypoint.
+  GATEWAY: GatewayChannelBinding;
 }
 
 // Quiet logger for Baileys - suppresses verbose output
@@ -63,17 +74,17 @@ const MEDIA_CONTENT_TYPES = new Set([
   "documentMessage",
 ]);
 
-const BYTE_TO_BASE64_CHUNK_SIZE = 0x8000; // 32KB
+const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000; // 4KB (avoids argument-list stack overflows)
 
 function uint8ArrayToBase64(data: Uint8Array): string {
   if (data.length === 0) return "";
 
-  let binary = "";
+  const chunks: string[] = [];
   for (let i = 0; i < data.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
     const chunk = data.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE);
-    binary += String.fromCharCode(...chunk);
+    chunks.push(String.fromCharCode(...chunk));
   }
-  return btoa(binary);
+  return btoa(chunks.join(""));
 }
 
 export class WhatsAppAccount extends DurableObject<Env> {
@@ -479,19 +490,21 @@ export class WhatsAppAccount extends DurableObject<Env> {
         timestamp: msg.messageTimestamp as number,
       };
 
-      // Send to Gateway via Queue (decoupled from DO context)
-      // See README.md for why we use a queue instead of direct RPC
       try {
-        const queueMessage: ChannelQueueMessage = {
-          type: "inbound",
-          channelId: "whatsapp",
-          accountId: this.state.accountId,
-          message: inbound,
-        };
-        await this.env.GATEWAY_QUEUE.send(queueMessage);
+        const result = await this.env.GATEWAY.channelInbound(
+          "whatsapp",
+          this.state.accountId,
+          inbound,
+        );
+        if (!result.ok) {
+          console.error(
+            `[WA:${this.state.accountId}] Gateway RPC inbound rejected: ${result.error || "unknown error"}`,
+          );
+          continue;
+        }
         this.state.lastMessageAt = Date.now();
       } catch (e) {
-        console.error(`[WA:${this.state.accountId}] Queue send failed:`, e);
+        console.error(`[WA:${this.state.accountId}] Gateway RPC inbound failed:`, e);
       }
     }
   }
@@ -600,7 +613,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   /**
-   * Notify Gateway of status change via Queue
+   * Notify Gateway of status change via Service Binding RPC.
    */
   private async notifyGatewayStatus(): Promise<void> {
     if (!this.state.accountId) return;
@@ -614,17 +627,15 @@ export class WhatsAppAccount extends DurableObject<Env> {
         lastActivity: this.state.lastMessageAt,
         extra: { selfJid: this.state.selfJid, selfE164: this.state.selfE164 },
       };
-      
-      const queueMessage: ChannelQueueMessage = {
-        type: "status",
-        channelId: "whatsapp",
-        accountId: this.state.accountId,
+
+      await this.env.GATEWAY.channelStatusChanged(
+        "whatsapp",
+        this.state.accountId,
         status,
-      };
-      
-      await this.env.GATEWAY_QUEUE.send(queueMessage);
+      );
     } catch (e) {
-      // Silently ignore - status updates are best-effort
+      // Status updates are best-effort.
+      console.error(`[WA:${this.state.accountId}] Gateway RPC status failed:`, e);
     }
   }
 
