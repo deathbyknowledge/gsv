@@ -2,7 +2,10 @@ import { DurableObject } from "cloudflare:workers";
 import { PersistedObject } from "../shared/persisted-object";
 import type { ChatEventPayload } from "../protocol/chat";
 import type { RuntimeNodeInventory, ToolDefinition } from "../protocol/tools";
-import type { MediaAttachment, SessionChannelContext } from "../protocol/channel";
+import type {
+  MediaAttachment,
+  SessionChannelContext,
+} from "../protocol/channel";
 import type { GsvConfig } from "../config";
 import type { SkillSummary } from "../skills";
 import type {
@@ -17,7 +20,15 @@ import type {
   ToolCall,
 } from "@mariozechner/pi-ai";
 import { completeSimple, getModel } from "@mariozechner/pi-ai";
+import { isContextOverflow } from "@mariozechner/pi-ai/dist/utils/overflow.js";
 import { archivePartialMessages, archiveSession } from "../storage/archive";
+import {
+  runCompaction,
+  extractMemoriesFromMessages,
+  type CompactionContext,
+} from "./compaction";
+import { shouldCompact } from "./tokens";
+import { estimateContextTokens, estimateStringTokens } from "./tokens";
 import { fetchMediaFromR2, deleteSessionMedia } from "../storage/media";
 import { loadAgentWorkspace } from "../agents/loader";
 import { isMainSessionKey } from "./routing";
@@ -112,6 +123,7 @@ export type CurrentRun = {
   };
   startedAt: number;
   aborted?: boolean;
+  compactionAttempted?: boolean;
 };
 
 // State stored in PersistedObject (small, no messages)
@@ -139,6 +151,9 @@ export type SessionMeta = {
   };
 
   channelContext?: SessionChannelContext; // last known, updated on inbound
+  compactionCount?: number;
+  lastCompactedAt?: number;
+  lastInputTokens?: number;
 };
 
 // Stored message row (SQLite)
@@ -561,7 +576,9 @@ export class Session extends DurableObject<Env> {
 
   private hasPendingAsyncExecCompletions(): boolean {
     let hasPending = false;
-    for (const [eventId, rawCompletion] of Object.entries(this.pendingAsyncExecCompletions)) {
+    for (const [eventId, rawCompletion] of Object.entries(
+      this.pendingAsyncExecCompletions,
+    )) {
       const completion = this.asPendingAsyncExecCompletion(rawCompletion);
       if (!completion) {
         delete this.pendingAsyncExecCompletions[eventId];
@@ -581,32 +598,50 @@ export class Session extends DurableObject<Env> {
     const record = value as Record<string, unknown>;
     const eventId =
       typeof record.eventId === "string" ? record.eventId.trim() : "";
-    const nodeId = typeof record.nodeId === "string" ? record.nodeId.trim() : "";
+    const nodeId =
+      typeof record.nodeId === "string" ? record.nodeId.trim() : "";
     const sessionId =
       typeof record.sessionId === "string" ? record.sessionId.trim() : "";
-    const event =
-      typeof record.event === "string" ? record.event.trim() : "";
+    const event = typeof record.event === "string" ? record.event.trim() : "";
     const receivedAt =
-      typeof record.receivedAt === "number" && Number.isFinite(record.receivedAt)
+      typeof record.receivedAt === "number" &&
+      Number.isFinite(record.receivedAt)
         ? record.receivedAt
         : undefined;
-    if (!eventId || !nodeId || !sessionId || !event || receivedAt === undefined) {
+    if (
+      !eventId ||
+      !nodeId ||
+      !sessionId ||
+      !event ||
+      receivedAt === undefined
+    ) {
       return undefined;
     }
     return value as PendingAsyncExecCompletion;
   }
 
   private gcAsyncExecCompletionState(now = Date.now()): void {
-    for (const [eventId, expiresAt] of Object.entries(this.seenAsyncExecEventIds)) {
-      if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || expiresAt <= now) {
+    for (const [eventId, expiresAt] of Object.entries(
+      this.seenAsyncExecEventIds,
+    )) {
+      if (
+        typeof expiresAt !== "number" ||
+        !Number.isFinite(expiresAt) ||
+        expiresAt <= now
+      ) {
         delete this.seenAsyncExecEventIds[eventId];
       }
     }
 
-    for (const [eventId, rawCompletion] of Object.entries(this.pendingAsyncExecCompletions)) {
+    for (const [eventId, rawCompletion] of Object.entries(
+      this.pendingAsyncExecCompletions,
+    )) {
       const completion = this.asPendingAsyncExecCompletion(rawCompletion);
       const receivedAt = completion?.receivedAt;
-      if (!receivedAt || receivedAt + ASYNC_EXEC_EVENT_PENDING_MAX_AGE_MS <= now) {
+      if (
+        !receivedAt ||
+        receivedAt + ASYNC_EXEC_EVENT_PENDING_MAX_AGE_MS <= now
+      ) {
         delete this.pendingAsyncExecCompletions[eventId];
       }
     }
@@ -717,8 +752,7 @@ export class Session extends DurableObject<Env> {
     const nodeId = typeof input.nodeId === "string" ? input.nodeId.trim() : "";
     const sessionId =
       typeof input.sessionId === "string" ? input.sessionId.trim() : "";
-    const event =
-      typeof input.event === "string" ? input.event.trim() : "";
+    const event = typeof input.event === "string" ? input.event.trim() : "";
     if (!eventId || !nodeId || !sessionId) {
       return { ok: true, duplicate: true };
     }
@@ -734,7 +768,9 @@ export class Session extends DurableObject<Env> {
       return { ok: true, duplicate: true };
     }
 
-    for (const [pendingId, rawCompletion] of Object.entries(this.pendingAsyncExecCompletions)) {
+    for (const [pendingId, rawCompletion] of Object.entries(
+      this.pendingAsyncExecCompletions,
+    )) {
       const completion = this.asPendingAsyncExecCompletion(rawCompletion);
       if (!completion) {
         delete this.pendingAsyncExecCompletions[pendingId];
@@ -750,7 +786,9 @@ export class Session extends DurableObject<Env> {
       nodeId,
       sessionId,
       callId:
-        typeof input.callId === "string" ? input.callId.trim() || undefined : undefined,
+        typeof input.callId === "string"
+          ? input.callId.trim() || undefined
+          : undefined,
       event: event as PendingAsyncExecCompletion["event"],
       exitCode:
         typeof input.exitCode === "number" && Number.isFinite(input.exitCode)
@@ -759,7 +797,9 @@ export class Session extends DurableObject<Env> {
             ? null
             : undefined,
       signal:
-        typeof input.signal === "string" ? input.signal.trim() || undefined : undefined,
+        typeof input.signal === "string"
+          ? input.signal.trim() || undefined
+          : undefined,
       outputTail:
         typeof input.outputTail === "string"
           ? input.outputTail.trim() || undefined
@@ -1286,10 +1326,159 @@ export class Session extends DurableObject<Env> {
         return Math.max(1000, Math.floor(value));
       }
     } catch (error) {
-      console.warn(`[Session] Failed to resolve tool timeout from config:`, error);
+      console.warn(
+        `[Session] Failed to resolve tool timeout from config:`,
+        error,
+      );
     }
 
     return DEFAULT_TOOL_TIMEOUT_MS;
+  }
+
+  /**
+   * Run automatic context compaction: summarize old messages, archive originals,
+   * extract memories to daily file, replace old messages with synthetic summary.
+   */
+  private async performCompaction(
+    config: GsvConfig,
+    effectiveModel: { provider: string; id: string },
+    contextWindow: number,
+  ): Promise<boolean> {
+    const messages = this.getMessages();
+
+    if (!shouldCompact(messages, contextWindow, config.compaction)) {
+      return false;
+    }
+
+    const provider = effectiveModel.provider;
+    const apiKey = (config.apiKeys as Record<string, string | undefined>)[
+      provider
+    ];
+    if (!apiKey) {
+      console.error(
+        `[Session] Cannot compact: no API key for provider ${provider}`,
+      );
+      return false;
+    }
+
+    // Load existing daily memory so the summarizer can see what's already
+    // recorded and avoid duplicating entries.
+    let existingMemory: string | undefined;
+    if (config.compaction.extractMemories) {
+      try {
+        const agentId = this.getAgentId();
+        const today = new Date().toISOString().split("T")[0];
+        const memoryObj = await this.env.STORAGE.get(
+          `agents/${agentId}/memory/${today}.md`,
+        );
+        if (memoryObj) {
+          const text = await memoryObj.text();
+          if (text.trim()) existingMemory = text;
+        }
+      } catch (e) {
+        console.warn(
+          `[Session] Failed to load existing daily memory for compaction: ${e}`,
+        );
+      }
+    }
+
+    const compactionCtx: CompactionContext = {
+      model: effectiveModel,
+      apiKey,
+      contextWindow,
+      config: config.compaction,
+      existingMemory,
+    };
+
+    console.log(
+      `[Session] Starting automatic compaction (${messages.length} messages, ~${estimateContextTokens(messages)} estimated tokens, window: ${contextWindow})`,
+    );
+
+    const result = await runCompaction(messages, compactionCtx);
+
+    if (!result.compacted || !result.summaryMessage) {
+      console.log(`[Session] Compaction decided nothing to compact`);
+      return false;
+    }
+
+    // Archive old messages to R2
+    if (result.archivedMessages && result.archivedMessages.length > 0) {
+      try {
+        const partNumber = Date.now();
+        const agentId = this.getAgentId();
+        const archiveKey = await archivePartialMessages(
+          this.env.STORAGE,
+          this.meta.sessionKey,
+          this.meta.sessionId,
+          result.archivedMessages,
+          partNumber,
+          agentId,
+        );
+        console.log(
+          `[Session] Compaction archived ${result.archivedMessages.length} messages to ${archiveKey}`,
+        );
+      } catch (e) {
+        console.error(`[Session] Failed to archive compacted messages: ${e}`);
+      }
+    }
+
+    // Append extracted memories to daily memory file in R2
+    if (result.memories && config.compaction.extractMemories) {
+      try {
+        await this.appendMemoriesToDailyFile(result.memories);
+      } catch (e) {
+        console.error(`[Session] Failed to append compaction memories: ${e}`);
+      }
+    }
+
+    // Replace messages in SQLite
+    this.clearMessages();
+    this.addMessage(result.summaryMessage);
+    if (result.keptMessages) {
+      for (const msg of result.keptMessages) {
+        this.addMessage(msg);
+      }
+    }
+
+    // Update compaction metadata
+    this.meta.compactionCount = (this.meta.compactionCount ?? 0) + 1;
+    this.meta.lastCompactedAt = Date.now();
+    this.meta.updatedAt = Date.now();
+
+    console.log(
+      `[Session] Compaction complete: tier=${result.tier}, summarizationCalls=${result.summarizationCalls}, messages: ${messages.length} → ${this.getMessageCount()}, compactionCount=${this.meta.compactionCount}`,
+    );
+
+    return true;
+  }
+
+  private async appendMemoriesToDailyFile(
+    memories: string,
+    dateOverride?: string,
+  ): Promise<void> {
+    const agentId = this.getAgentId();
+    const dateStr = dateOverride ?? new Date().toISOString().split("T")[0];
+    const path = `agents/${agentId}/memory/${dateStr}.md`;
+
+    // Load existing content
+    const existing = await this.env.STORAGE.get(path);
+    let content = "";
+    if (existing) {
+      content = await existing.text();
+    }
+
+    // Append memories with a compaction header
+    const timestamp = new Date().toISOString().split("T")[1].slice(0, 5);
+    const section = `\n\n### Extracted from context compaction (${timestamp})\n\n${memories}`;
+    content = content.trimEnd() + section + "\n";
+
+    await this.env.STORAGE.put(path, content, {
+      httpMetadata: { contentType: "text/markdown" },
+    });
+
+    console.log(
+      `[Session] Appended compaction memories to ${path} (${memories.length} chars)`,
+    );
   }
 
   private async callLlm(): Promise<AssistantMessage> {
@@ -1304,7 +1493,24 @@ export class Session extends DurableObject<Env> {
     const effectiveModel =
       messageOverrides.model || sessionSettings.model || config.model;
 
+    const provider = effectiveModel.provider;
+    const modelId = effectiveModel.id;
+    const model = getModel(provider as any, modelId as any);
+
+    if (!model) {
+      throw new Error(`Model not found: ${provider}/${modelId}`);
+    }
+
+    const apiKey = (config.apiKeys as Record<string, string | undefined>)[
+      provider
+    ];
+
+    if (!apiKey) {
+      throw new Error(`API key not configured for provider: ${provider}`);
+    }
+
     // Build system prompt from workspace files + config
+    // the compaction size check and the actual LLM call).
     const effectiveSystemPrompt = await this.buildEffectiveSystemPrompt(
       config,
       sessionSettings,
@@ -1313,6 +1519,39 @@ export class Session extends DurableObject<Env> {
       this.currentRun?.runtimeNodes,
       this.meta.channelContext,
     );
+
+    // Proactive compaction: estimate context size, compact if needed
+    const contextWindow = model.contextWindow;
+    if (config.compaction.enabled) {
+      const preCheckMessages = this.getMessages();
+      const lastKnownInputTokens = this.meta.lastInputTokens;
+      const systemPromptTokenEstimate = estimateStringTokens(
+        effectiveSystemPrompt,
+      );
+
+      if (
+        shouldCompact(
+          preCheckMessages,
+          contextWindow,
+          config.compaction,
+          lastKnownInputTokens,
+          systemPromptTokenEstimate,
+        )
+      ) {
+        const triggerSource = lastKnownInputTokens
+          ? `last known input tokens: ${lastKnownInputTokens}`
+          : `estimated tokens: ~${estimateContextTokens(preCheckMessages) + systemPromptTokenEstimate} (messages: ~${estimateContextTokens(preCheckMessages)}, system prompt: ~${systemPromptTokenEstimate})`;
+        console.log(
+          `[Session] Proactive compaction triggered (${triggerSource}, window: ${contextWindow})`,
+        );
+        try {
+          await this.performCompaction(config, effectiveModel, contextWindow);
+        } catch (e) {
+          console.error(`[Session] Proactive compaction failed: ${e}`);
+          // Continue with the LLM call
+        }
+      }
+    }
 
     if (messageOverrides.model) {
       console.log(
@@ -1331,38 +1570,6 @@ export class Session extends DurableObject<Env> {
       parameters: t.inputSchema as Tool["parameters"],
     }));
 
-    // Get messages and hydrate media references
-    const storedMessages = this.getMessages();
-    const hydratedMessages =
-      await this.hydrateMessagesWithMedia(storedMessages);
-
-    const context: Context = {
-      systemPrompt: effectiveSystemPrompt,
-      messages: hydratedMessages,
-      tools: tools.length > 0 ? tools : undefined,
-    };
-
-    console.log(
-      "[Session] Messages being sent to LLM:",
-      hydratedMessages.length,
-    );
-
-    const provider = effectiveModel.provider;
-    const modelId = effectiveModel.id;
-    const model = getModel(provider as any, modelId as any);
-
-    if (!model) {
-      throw new Error(`Model not found: ${provider}/${modelId}`);
-    }
-
-    const apiKey = (config.apiKeys as Record<string, string | undefined>)[
-      provider
-    ];
-
-    if (!apiKey) {
-      throw new Error(`API key not configured for provider: ${provider}`);
-    }
-
     const effectiveThinkLevel =
       messageOverrides.thinkLevel || sessionSettings.thinkingLevel;
 
@@ -1377,10 +1584,30 @@ export class Session extends DurableObject<Env> {
             | "xhigh")
         : undefined;
 
+    // Helper to build context from current stored messages
+    const buildContext = async (): Promise<Context> => {
+      const storedMessages = this.getMessages();
+      const hydratedMessages =
+        await this.hydrateMessagesWithMedia(storedMessages);
+
+      console.log(
+        "[Session] Messages being sent to LLM:",
+        hydratedMessages.length,
+      );
+
+      return {
+        systemPrompt: effectiveSystemPrompt,
+        messages: hydratedMessages,
+        tools: tools.length > 0 ? tools : undefined,
+      };
+    };
+
+    const context = await buildContext();
+
     console.log(
       `[Session] Calling LLM: ${provider}/${modelId}${reasoningLevel ? ` (reasoning: ${reasoningLevel})` : ""}`,
     );
-    const response = await completeSimple(model, context, {
+    let response = await completeSimple(model, context, {
       apiKey,
       reasoning: reasoningLevel,
     });
@@ -1393,11 +1620,73 @@ export class Session extends DurableObject<Env> {
       );
     }
 
+    // ── Reactive overflow recovery: detect overflow, compact, retry once ──
+    if (
+      isContextOverflow(response, contextWindow) &&
+      config.compaction.enabled &&
+      !this.currentRun?.compactionAttempted
+    ) {
+      console.warn(
+        `[Session] Context overflow detected, attempting reactive compaction`,
+      );
+      if (this.currentRun) {
+        this.currentRun.compactionAttempted = true;
+      }
+
+      try {
+        const didCompact = await this.performCompaction(
+          config,
+          effectiveModel,
+          contextWindow,
+        );
+
+        if (didCompact) {
+          // Retry the LLM call with compacted context
+          const retryContext = await buildContext();
+          console.log(`[Session] Retrying LLM call after reactive compaction`);
+          response = await completeSimple(model, retryContext, {
+            apiKey,
+            reasoning: reasoningLevel,
+          });
+          console.log(
+            `[Session] Retry response received, content blocks: ${response.content?.length ?? 0}, stopReason: ${response.stopReason}`,
+          );
+
+          // If still overflowing after compaction, give a meaningful error
+          if (isContextOverflow(response, contextWindow)) {
+            console.error(
+              `[Session] Context overflow persists after compaction`,
+            );
+            throw new Error(
+              "Context window exceeded even after compaction. Try resetting the session with /reset.",
+            );
+          }
+        }
+      } catch (e) {
+        if (
+          e instanceof Error &&
+          e.message.includes("Context window exceeded")
+        ) {
+          throw e;
+        }
+        console.error(`[Session] Reactive compaction failed: ${e}`);
+        throw new Error(
+          "Context window exceeded and automatic compaction failed. Try resetting the session with /reset.",
+        );
+      }
+    }
+
     if (response.usage) {
       const usage = response.usage;
       this.meta.inputTokens += usage.input || 0;
       this.meta.outputTokens += usage.output || 0;
       this.meta.totalTokens += usage.totalTokens || 0;
+
+      // Persist last per-call input token count for compaction trigger.
+      if (typeof usage.input === "number" && usage.input > 0) {
+        this.meta.lastInputTokens = usage.input;
+      }
+
       console.log(
         `[Session] Token usage: +${usage.input}/${usage.output} (total: ${this.meta.inputTokens}/${this.meta.outputTokens})`,
       );
@@ -1474,7 +1763,8 @@ export class Session extends DurableObject<Env> {
     );
     const heartbeatPrompt =
       agentConfig?.heartbeat?.prompt || config.agents.defaultHeartbeat.prompt;
-    const runtimeNodes = runRuntimeNodes ?? (await this.loadRuntimeNodeInventory());
+    const runtimeNodes =
+      runRuntimeNodes ?? (await this.loadRuntimeNodeInventory());
 
     // Build combined prompt
     return buildSystemPromptFromWorkspace(basePrompt, workspace, {
@@ -1615,6 +1905,78 @@ export class Session extends DurableObject<Env> {
       }
     }
 
+    // Pre-reset memory extraction: extract durable facts from the conversation
+    // before it's cleared. Memories are appended to the daily memory file so
+    // they survive into the next session via the workspace loader.
+    if (messageCount > 0) {
+      try {
+        const gateway = this.env.GATEWAY.get(
+          this.env.GATEWAY.idFromName("singleton"),
+        );
+        const config: GsvConfig = await gateway.getConfig();
+
+        if (config.compaction.enabled && config.compaction.extractMemories) {
+          const agentId = this.getAgentId();
+          const effectiveModel = this.meta.settings.model || config.model;
+          const provider = effectiveModel.provider;
+          const apiKey = (config.apiKeys as Record<string, string | undefined>)[
+            provider
+          ];
+
+          if (apiKey) {
+            const model = getModel(provider as any, effectiveModel.id as any);
+            if (model) {
+              // Load existing daily memory for dedup — use the conversation's
+              // last activity date, not today, since that's where we'll write.
+              let existingMemory: string | undefined;
+              const conversationDate = new Date(this.meta.updatedAt)
+                .toISOString()
+                .split("T")[0];
+              const memoryObj = await this.env.STORAGE.get(
+                `agents/${agentId}/memory/${conversationDate}.md`,
+              );
+              if (memoryObj) {
+                const text = await memoryObj.text();
+                if (text.trim()) existingMemory = text;
+              }
+
+              const messages = this.getMessages();
+              console.log(
+                `[Session] Pre-reset memory extraction (${messages.length} messages)`,
+              );
+
+              const memories = await extractMemoriesFromMessages(messages, {
+                model: effectiveModel,
+                apiKey,
+                contextWindow: model.contextWindow,
+                config: config.compaction,
+                existingMemory,
+              });
+
+              if (memories) {
+                // Write to the date the conversation last had activity, not
+                // today's date. A conversation active on the 24th that resets
+                // on the 25th should write to memory/2024-01-24.md.
+                const conversationDate = new Date(this.meta.updatedAt)
+                  .toISOString()
+                  .split("T")[0];
+                await this.appendMemoriesToDailyFile(
+                  memories,
+                  conversationDate,
+                );
+                console.log(
+                  `[Session] Pre-reset memory extraction complete (${memories.length} chars, date: ${conversationDate})`,
+                );
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[Session] Pre-reset memory extraction failed: ${e}`);
+        // Non-blocking — reset should still proceed
+      }
+    }
+
     // Delete media from R2
     if (sessionKey) {
       try {
@@ -1652,6 +2014,7 @@ export class Session extends DurableObject<Env> {
     this.meta.inputTokens = 0;
     this.meta.outputTokens = 0;
     this.meta.totalTokens = 0;
+    this.meta.lastInputTokens = undefined;
     this.meta.lastResetAt = Date.now();
     this.meta.updatedAt = Date.now();
 

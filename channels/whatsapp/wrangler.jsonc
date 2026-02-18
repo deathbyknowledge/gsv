@@ -21,6 +21,13 @@
       }
     ]
   },
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "gsv",
+      "entrypoint": "GatewayEntrypoint"
+    }
+  ],
   "migrations": [
     {
       "tag": "v1",

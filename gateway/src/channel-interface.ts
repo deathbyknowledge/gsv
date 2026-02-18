@@ -215,25 +215,4 @@ export interface GatewayChannelInterface {
   ): Promise<void>;
 }
 
-/**
- * Messages sent from channels to Gateway's inbound queue.
- *
- * Channels send to a queue instead of calling Gateway RPC directly.
- * This decouples the channel DO from the RPC call context, which avoids
- * issues with certain channel platforms (e.g., WhatsApp/Baileys).
- */
-export type ChannelQueueMessage =
-  | {
-      type: "inbound";
-      channelId: string;
-      accountId: string;
-      message: ChannelInboundMessage;
-    }
-  | {
-      type: "status";
-      channelId: string;
-      accountId: string;
-      status: ChannelAccountStatus;
-    };
-
 export type ChannelService = ChannelWorkerInterface;

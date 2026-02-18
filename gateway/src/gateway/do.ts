@@ -3328,7 +3328,7 @@ export class Gateway extends DurableObject<Env> {
 
     const replyToId = isHeartbeat ? undefined : context.inboundMessageId;
 
-    // Try Service Binding RPC first (preferred for queue-based channels like Discord)
+    // Try Service Binding RPC first for channel workers with direct RPC bindings.
     const channelBinding = this.getChannelBinding(context.channel);
 
     if (channelBinding) {

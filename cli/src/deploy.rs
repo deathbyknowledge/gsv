@@ -28,7 +28,6 @@ const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
 const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
 const BUNDLE_CHANNEL_TEST: &str = "gsv-cloudflare-channel-test.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
-const DEFAULT_GATEWAY_QUEUE_NAME: &str = "gsv-gateway-inbound";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
 const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
@@ -180,7 +179,6 @@ struct WranglerConfig {
     r2_buckets: Vec<WranglerR2BucketBinding>,
     #[serde(default)]
     services: Vec<WranglerServiceBinding>,
-    queues: Option<WranglerQueuesConfig>,
     ai: Option<WranglerAiBinding>,
     assets: Option<WranglerAssetsConfig>,
     observability: Option<Value>,
@@ -213,19 +211,6 @@ struct WranglerServiceBinding {
     service: String,
     environment: Option<String>,
     entrypoint: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize, Clone)]
-struct WranglerQueuesConfig {
-    #[serde(default)]
-    producers: Vec<WranglerQueueProducerBinding>,
-}
-
-#[derive(Debug, Deserialize, Clone, Eq, PartialEq, Hash)]
-struct WranglerQueueProducerBinding {
-    binding: String,
-    queue: String,
-    delivery_delay: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -277,32 +262,6 @@ pub struct GatewayBootstrapConfig {
 struct WorkerScriptSummary {
     id: String,
     migration_tag: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct QueueSummary {
-    queue_id: String,
-    queue_name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct QueueConsumerSummary {
-    consumer_id: String,
-    #[serde(rename = "type", default)]
-    consumer_type: String,
-    script: Option<String>,
-    service: Option<String>,
-    #[serde(alias = "script_name")]
-    script_name: Option<String>,
-    worker: Option<QueueConsumerWorkerRef>,
-}
-
-#[derive(Debug, Deserialize)]
-struct QueueConsumerWorkerRef {
-    script: Option<String>,
-    service: Option<String>,
-    #[serde(alias = "script_name")]
-    script_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -992,49 +951,6 @@ async fn list_worker_scripts(
     Ok(out)
 }
 
-async fn ensure_queue_exists(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-    queue_name: &str,
-) -> Result<(String, bool), Box<dyn std::error::Error>> {
-    let url = cloudflare_api_url(&format!("/accounts/{}/queues", account_id));
-    let list_response = send_cloudflare_request_with_retry(
-        || {
-            client
-                .get(&url)
-                .bearer_auth(api_token)
-                .query(&[("name", queue_name)])
-                .send()
-        },
-        &format!("List queues for {}", queue_name),
-    )
-    .await?;
-    let list_result: Value =
-        parse_cloudflare_response(list_response, &format!("List queues for {}", queue_name))
-            .await?;
-    let queues: Vec<QueueSummary> = decode_list_from_value(list_result, &["queues", "items"])?;
-
-    if let Some(existing) = queues.into_iter().find(|q| q.queue_name == queue_name) {
-        return Ok((existing.queue_id, false));
-    }
-
-    let create_response = send_cloudflare_request_with_retry(
-        || {
-            client
-                .post(&url)
-                .bearer_auth(api_token)
-                .json(&json!({ "queue_name": queue_name }))
-                .send()
-        },
-        &format!("Create queue {}", queue_name),
-    )
-    .await?;
-    let created: QueueSummary =
-        parse_cloudflare_response(create_response, &format!("Create queue {}", queue_name)).await?;
-    Ok((created.queue_id, true))
-}
-
 async fn ensure_r2_bucket_exists(
     client: &reqwest::Client,
     account_id: &str,
@@ -1219,279 +1135,6 @@ async fn upload_worker_script(
     let _: Value =
         parse_cloudflare_response(response, &format!("Upload script {}", script_name)).await?;
     Ok(())
-}
-
-async fn upsert_queue_consumer(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-    queue_id: &str,
-    queue_name: &str,
-    script_name: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let consumers_url = cloudflare_api_url(&format!(
-        "/accounts/{}/queues/{}/consumers",
-        account_id, queue_id
-    ));
-
-    let list_response = send_cloudflare_request_with_retry(
-        || {
-            client
-                .get(&consumers_url)
-                .bearer_auth(api_token)
-                .header("Content-Type", "application/json")
-                .send()
-        },
-        &format!("List queue consumers for {}", queue_name),
-    )
-    .await?;
-    let list_result: Value = parse_cloudflare_response(
-        list_response,
-        &format!("List queue consumers for {}", queue_name),
-    )
-    .await?;
-    let consumers: Vec<QueueConsumerSummary> =
-        decode_list_from_value(list_result, &["consumers", "items"])?;
-
-    let body = json!({
-        "type": "worker",
-        "script_name": script_name,
-        "settings": {
-            "batch_size": 1,
-            "max_retries": 3,
-            "max_wait_time_ms": 0
-        }
-    });
-
-    if let Some(existing) = consumers
-        .iter()
-        .find(|consumer| queue_consumer_targets_script(consumer, script_name))
-    {
-        let update_url = cloudflare_api_url(&format!(
-            "/accounts/{}/queues/{}/consumers/{}",
-            account_id, queue_id, existing.consumer_id
-        ));
-        let update_response = send_cloudflare_request_with_retry(
-            || {
-                client
-                    .put(&update_url)
-                    .bearer_auth(api_token)
-                    .json(&body)
-                    .send()
-            },
-            &format!(
-                "Update queue consumer for {} on {}",
-                script_name, queue_name
-            ),
-        )
-        .await?;
-        let _: Value = parse_cloudflare_response(
-            update_response,
-            &format!(
-                "Update queue consumer for {} on {}",
-                script_name, queue_name
-            ),
-        )
-        .await?;
-        println!(
-            "Updated queue consumer for {} on {}",
-            script_name, queue_name
-        );
-    } else {
-        let create_response = send_cloudflare_request_with_retry(
-            || {
-                client
-                    .post(&consumers_url)
-                    .bearer_auth(api_token)
-                    .json(&body)
-                    .send()
-            },
-            &format!(
-                "Create queue consumer for {} on {}",
-                script_name, queue_name
-            ),
-        )
-        .await?;
-        let _: Value = parse_cloudflare_response(
-            create_response,
-            &format!(
-                "Create queue consumer for {} on {}",
-                script_name, queue_name
-            ),
-        )
-        .await?;
-        println!(
-            "Created queue consumer for {} on {}",
-            script_name, queue_name
-        );
-    }
-
-    Ok(())
-}
-
-fn queue_consumer_targets_script(consumer: &QueueConsumerSummary, script_name: &str) -> bool {
-    let consumer_type = consumer.consumer_type.trim();
-    let is_worker_consumer = consumer_type.is_empty()
-        || consumer_type.eq_ignore_ascii_case("worker")
-        || consumer_type.eq_ignore_ascii_case("script");
-    if !is_worker_consumer {
-        return false;
-    }
-
-    let mut candidates = Vec::new();
-    if let Some(script) = consumer.script.as_deref() {
-        candidates.push(script);
-    }
-    if let Some(script) = consumer.service.as_deref() {
-        candidates.push(script);
-    }
-    if let Some(script) = consumer.script_name.as_deref() {
-        candidates.push(script);
-    }
-    if let Some(worker) = consumer.worker.as_ref() {
-        if let Some(script) = worker.script.as_deref() {
-            candidates.push(script);
-        }
-        if let Some(script) = worker.service.as_deref() {
-            candidates.push(script);
-        }
-        if let Some(script) = worker.script_name.as_deref() {
-            candidates.push(script);
-        }
-    }
-
-    candidates
-        .into_iter()
-        .any(|candidate| candidate.trim() == script_name)
-}
-
-async fn find_queue_by_name(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-    queue_name: &str,
-) -> Result<Option<QueueSummary>, Box<dyn std::error::Error>> {
-    let url = cloudflare_api_url(&format!("/accounts/{}/queues", account_id));
-    let response = send_cloudflare_request_with_retry(
-        || {
-            client
-                .get(&url)
-                .bearer_auth(api_token)
-                .query(&[("name", queue_name)])
-                .send()
-        },
-        &format!("List queues for {}", queue_name),
-    )
-    .await?;
-
-    if response.status() == StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
-
-    let result: Value =
-        parse_cloudflare_response(response, &format!("List queues for {}", queue_name)).await?;
-    let queues: Vec<QueueSummary> = decode_list_from_value(result, &["queues", "items"])?;
-    Ok(queues
-        .into_iter()
-        .find(|queue| queue.queue_name == queue_name))
-}
-
-async fn remove_queue_consumer_for_script(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-    queue_id: &str,
-    queue_name: &str,
-    script_name: &str,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let consumers_url = cloudflare_api_url(&format!(
-        "/accounts/{}/queues/{}/consumers",
-        account_id, queue_id
-    ));
-    let list_response = send_cloudflare_request_with_retry(
-        || {
-            client
-                .get(&consumers_url)
-                .bearer_auth(api_token)
-                .header("Content-Type", "application/json")
-                .send()
-        },
-        &format!("List queue consumers for {}", queue_name),
-    )
-    .await?;
-
-    if list_response.status() == StatusCode::NOT_FOUND {
-        return Ok(0);
-    }
-
-    let list_result: Value = parse_cloudflare_response(
-        list_response,
-        &format!("List queue consumers for {}", queue_name),
-    )
-    .await?;
-    let consumers: Vec<QueueConsumerSummary> =
-        decode_list_from_value(list_result, &["consumers", "items"])?;
-
-    let matching_ids: Vec<String> = consumers
-        .into_iter()
-        .filter(|consumer| queue_consumer_targets_script(consumer, script_name))
-        .map(|consumer| consumer.consumer_id)
-        .collect();
-
-    let mut removed = 0usize;
-    for consumer_id in matching_ids {
-        let delete_url = cloudflare_api_url(&format!(
-            "/accounts/{}/queues/{}/consumers/{}",
-            account_id, queue_id, consumer_id
-        ));
-        let response = send_cloudflare_request_with_retry(
-            || client.delete(&delete_url).bearer_auth(api_token).send(),
-            &format!(
-                "Delete queue consumer {} for {} on {}",
-                consumer_id, script_name, queue_name
-            ),
-        )
-        .await?;
-
-        if response.status() == StatusCode::NOT_FOUND {
-            continue;
-        }
-
-        let _: Value = parse_cloudflare_response(
-            response,
-            &format!(
-                "Delete queue consumer {} for {} on {}",
-                consumer_id, script_name, queue_name
-            ),
-        )
-        .await?;
-        removed += 1;
-    }
-
-    Ok(removed)
-}
-
-async fn delete_queue(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-    queue_id: &str,
-    queue_name: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let url = cloudflare_api_url(&format!("/accounts/{}/queues/{}", account_id, queue_id));
-    let response = send_cloudflare_request_with_retry(
-        || client.delete(&url).bearer_auth(api_token).send(),
-        &format!("Delete queue {}", queue_name),
-    )
-    .await?;
-
-    if response.status() == StatusCode::NOT_FOUND {
-        return Ok(false);
-    }
-
-    let _: Value =
-        parse_cloudflare_response(response, &format!("Delete queue {}", queue_name)).await?;
-    Ok(true)
 }
 
 async fn delete_worker_script(
@@ -1920,47 +1563,6 @@ async fn purge_r2_bucket_objects(
     Ok(total_deleted)
 }
 
-async fn queue_has_consumer_for_script(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-    queue_id: &str,
-    queue_name: &str,
-    script_name: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let consumers_url = cloudflare_api_url(&format!(
-        "/accounts/{}/queues/{}/consumers",
-        account_id, queue_id
-    ));
-    let list_response = send_cloudflare_request_with_retry(
-        || {
-            client
-                .get(&consumers_url)
-                .bearer_auth(api_token)
-                .header("Content-Type", "application/json")
-                .send()
-        },
-        &format!("List queue consumers for {}", queue_name),
-    )
-    .await?;
-
-    if list_response.status() == StatusCode::NOT_FOUND {
-        return Ok(false);
-    }
-
-    let list_result: Value = parse_cloudflare_response(
-        list_response,
-        &format!("List queue consumers for {}", queue_name),
-    )
-    .await?;
-    let consumers: Vec<QueueConsumerSummary> =
-        decode_list_from_value(list_result, &["consumers", "items"])?;
-
-    Ok(consumers
-        .into_iter()
-        .any(|consumer| queue_consumer_targets_script(&consumer, script_name)))
-}
-
 fn deploy_order(component: &str) -> usize {
     match component {
         COMPONENT_CHANNEL_WHATSAPP => 1,
@@ -2053,36 +1655,25 @@ fn load_prepared_bundle(
     })
 }
 
-fn queue_producers_for_bundle(bundle: &PreparedBundle) -> Vec<WranglerQueueProducerBinding> {
-    let mut producers = bundle
-        .wrangler
-        .queues
-        .as_ref()
-        .map(|queues| queues.producers.clone())
-        .unwrap_or_default();
-
-    if (bundle.component == COMPONENT_CHANNEL_WHATSAPP
-        || bundle.component == COMPONENT_CHANNEL_TEST)
-        && !producers
-            .iter()
-            .any(|producer| producer.binding == "GATEWAY_QUEUE")
-    {
-        producers.push(WranglerQueueProducerBinding {
-            binding: "GATEWAY_QUEUE".to_string(),
-            queue: DEFAULT_GATEWAY_QUEUE_NAME.to_string(),
-            delivery_delay: None,
-        });
-    }
-
-    producers
-}
-
 fn service_bindings_for_bundle(
     bundle: &PreparedBundle,
     selected_components: &HashSet<String>,
     available_scripts: &HashSet<String>,
 ) -> Vec<WranglerServiceBinding> {
     let mut bindings = bundle.wrangler.services.clone();
+
+    if bundle.component == COMPONENT_CHANNEL_WHATSAPP
+        && !bindings.iter().any(|binding| binding.binding == "GATEWAY")
+        && (selected_components.contains(COMPONENT_GATEWAY)
+            || available_scripts.contains(SCRIPT_GATEWAY))
+    {
+        bindings.push(WranglerServiceBinding {
+            binding: "GATEWAY".to_string(),
+            service: SCRIPT_GATEWAY.to_string(),
+            environment: None,
+            entrypoint: Some("GatewayEntrypoint".to_string()),
+        });
+    }
 
     if bundle.component == COMPONENT_GATEWAY
         && selected_components.contains(COMPONENT_CHANNEL_TEST)
@@ -2777,18 +2368,6 @@ fn build_upload_metadata(
         metadata_bindings.push(value);
     }
 
-    for producer in queue_producers_for_bundle(bundle) {
-        let mut value = json!({
-            "name": producer.binding,
-            "type": "queue",
-            "queue_name": producer.queue
-        });
-        if let Some(delivery_delay) = producer.delivery_delay {
-            value["delivery_delay"] = json!(delivery_delay);
-        }
-        metadata_bindings.push(value);
-    }
-
     if let Some(ai) = &bundle.wrangler.ai {
         let mut value = json!({
             "name": ai.binding,
@@ -2881,7 +2460,6 @@ pub async fn apply_deploy(
     let mut available_scripts = existing_scripts.clone();
 
     let mut required_buckets = HashSet::new();
-    let mut required_queues = HashSet::new();
 
     for bundle in &prepared {
         for bucket in &bundle.wrangler.r2_buckets {
@@ -2889,13 +2467,6 @@ pub async fn apply_deploy(
                 required_buckets.insert((bucket_name.clone(), bucket.jurisdiction.clone()));
             }
         }
-        for producer in queue_producers_for_bundle(bundle) {
-            required_queues.insert(producer.queue);
-        }
-    }
-
-    if selected_components.contains(COMPONENT_GATEWAY) {
-        required_queues.insert(DEFAULT_GATEWAY_QUEUE_NAME.to_string());
     }
 
     if !required_buckets.is_empty() {
@@ -2917,23 +2488,6 @@ pub async fn apply_deploy(
             } else {
                 println!("R2 bucket {} already exists", bucket_name);
             }
-        }
-    }
-
-    let mut queue_ids = HashMap::new();
-    if !required_queues.is_empty() {
-        println!("\nEnsuring queues:");
-        let mut sorted_queues: Vec<String> = required_queues.into_iter().collect();
-        sorted_queues.sort();
-        for queue_name in sorted_queues {
-            let (queue_id, created) =
-                ensure_queue_exists(&client, account_id, api_token, &queue_name).await?;
-            if created {
-                println!("Created queue {}", queue_name);
-            } else {
-                println!("Queue {} already exists", queue_name);
-            }
-            queue_ids.insert(queue_name, queue_id);
         }
     }
 
@@ -3069,25 +2623,6 @@ pub async fn apply_deploy(
         .find(|bundle| bundle.component == COMPONENT_GATEWAY)
         .map(|bundle| bundle.script_name.clone());
 
-    if let Some(gateway_script_name) = gateway_script_name.as_deref() {
-        if let Some(queue_id) = queue_ids.get(DEFAULT_GATEWAY_QUEUE_NAME) {
-            upsert_queue_consumer(
-                &client,
-                account_id,
-                api_token,
-                queue_id,
-                DEFAULT_GATEWAY_QUEUE_NAME,
-                gateway_script_name,
-            )
-            .await?;
-        } else {
-            println!(
-                "Warning: {} queue not found; gateway consumer was not configured.",
-                DEFAULT_GATEWAY_QUEUE_NAME
-            );
-        }
-    }
-
     let gateway_url = if selected_components.contains(COMPONENT_GATEWAY) {
         match (gateway_script_name.as_deref(), account_subdomain.as_deref()) {
             (Some(script_name), Some(subdomain)) => {
@@ -3111,7 +2646,6 @@ pub async fn destroy_deploy(
     account_id: &str,
     api_token: &str,
     components: &[String],
-    delete_queue_resource: bool,
     delete_bucket_resource: bool,
     purge_bucket_resource: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -3132,43 +2666,6 @@ pub async fn destroy_deploy(
     let selected_components: HashSet<String> = components.iter().cloned().collect();
     let client = reqwest::Client::new();
 
-    let mut gateway_queue: Option<QueueSummary> = None;
-    if selected_components.contains(COMPONENT_GATEWAY) || delete_queue_resource {
-        gateway_queue =
-            find_queue_by_name(&client, account_id, api_token, DEFAULT_GATEWAY_QUEUE_NAME).await?;
-        if let Some(queue) = &gateway_queue {
-            let mut removed = 0usize;
-            let mut scripts_to_check = vec![SCRIPT_GATEWAY.to_string()];
-            if SCRIPT_GATEWAY != "gateway" {
-                scripts_to_check.push("gateway".to_string());
-            }
-            for script_name in scripts_to_check {
-                removed += remove_queue_consumer_for_script(
-                    &client,
-                    account_id,
-                    api_token,
-                    &queue.queue_id,
-                    DEFAULT_GATEWAY_QUEUE_NAME,
-                    &script_name,
-                )
-                .await?;
-            }
-            if removed > 0 {
-                println!(
-                    "Removed {} queue consumer(s) for {} on {}",
-                    removed, SCRIPT_GATEWAY, DEFAULT_GATEWAY_QUEUE_NAME
-                );
-            } else {
-                println!(
-                    "No queue consumers found for {} on {}",
-                    SCRIPT_GATEWAY, DEFAULT_GATEWAY_QUEUE_NAME
-                );
-            }
-        } else {
-            println!("Queue {} not found", DEFAULT_GATEWAY_QUEUE_NAME);
-        }
-    }
-
     println!("\nDeleting workers:");
     for (component, script_name) in scripts_to_delete {
         let deleted =
@@ -3178,34 +2675,6 @@ pub async fn destroy_deploy(
         } else {
             println!("Skipped {} ({} not found)", component, script_name);
         }
-    }
-
-    if delete_queue_resource {
-        if let Some(queue) = &gateway_queue {
-            let deleted = delete_queue(
-                &client,
-                account_id,
-                api_token,
-                &queue.queue_id,
-                DEFAULT_GATEWAY_QUEUE_NAME,
-            )
-            .await?;
-            if deleted {
-                println!("Deleted queue {}", DEFAULT_GATEWAY_QUEUE_NAME);
-            } else {
-                println!("Queue {} was already absent", DEFAULT_GATEWAY_QUEUE_NAME);
-            }
-        } else {
-            println!(
-                "Queue {} was already absent (nothing to delete)",
-                DEFAULT_GATEWAY_QUEUE_NAME
-            );
-        }
-    } else {
-        println!(
-            "Queue {} retained (use --delete-queue to remove)",
-            DEFAULT_GATEWAY_QUEUE_NAME
-        );
     }
 
     if delete_bucket_resource {
@@ -3324,36 +2793,6 @@ pub async fn print_deploy_status(
 
     if component_order.iter().any(|c| c == COMPONENT_GATEWAY) {
         println!("\nShared infrastructure:");
-        let queue =
-            find_queue_by_name(&client, account_id, api_token, DEFAULT_GATEWAY_QUEUE_NAME).await?;
-        if let Some(queue) = queue {
-            println!(
-                "  queue {:<30} exists ({})",
-                DEFAULT_GATEWAY_QUEUE_NAME, queue.queue_id
-            );
-            let queue_consumer_script = gateway_script_name.as_deref().unwrap_or(SCRIPT_GATEWAY);
-            let has_gateway_consumer = queue_has_consumer_for_script(
-                &client,
-                account_id,
-                api_token,
-                &queue.queue_id,
-                DEFAULT_GATEWAY_QUEUE_NAME,
-                queue_consumer_script,
-            )
-            .await?;
-            println!(
-                "  queue consumer {:<22} {}",
-                queue_consumer_script,
-                if has_gateway_consumer {
-                    "present"
-                } else {
-                    "missing"
-                }
-            );
-        } else {
-            println!("  queue {:<30} missing", DEFAULT_GATEWAY_QUEUE_NAME);
-        }
-
         let bucket_exists = r2_bucket_exists(
             &client,
             account_id,

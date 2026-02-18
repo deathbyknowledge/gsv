@@ -145,6 +145,20 @@ export interface AgentsConfig {
   defaultHeartbeat: HeartbeatConfig;
 }
 
+export interface CompactionConfig {
+  // Whether automatic context compaction is enabled.
+  enabled: boolean;
+
+  // Token headroom reserved below the context window for the model's response + system prompt.
+  reserveTokens: number;
+
+  // Estimated token budget for recent messages to keep verbatim (not summarized).
+  keepRecentTokens: number;
+
+  // Whether to extract durable memories to the daily memory file during compaction.
+  extractMemories: boolean;
+}
+
 export interface CronConfig {
   enabled: boolean;
   maxJobs: number;
@@ -196,6 +210,9 @@ export interface GsvConfig {
   // Multi-agent configuration
   agents: AgentsConfig;
 
+  // Automatic context compaction settings
+  compaction: CompactionConfig;
+
   // Cron job scheduler configuration
   cron: CronConfig;
 
@@ -227,6 +244,7 @@ export type GsvConfigInput = {
     bindings?: AgentBinding[];
     defaultHeartbeat?: Partial<HeartbeatConfig>;
   };
+  compaction?: Partial<CompactionConfig>;
   cron?: Partial<CronConfig>;
   userTimezone?: string;
 };

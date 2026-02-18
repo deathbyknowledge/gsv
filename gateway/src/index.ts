@@ -4,7 +4,6 @@ import type {
   ChannelInboundMessage,
   ChannelAccountStatus,
   GatewayChannelInterface,
-  ChannelQueueMessage,
 } from "./channel-interface";
 
 export { Gateway } from "./gateway/do";
@@ -133,54 +132,5 @@ export default {
     }
 
     return new Response("Not Found", { status: 404 });
-  },
-
-  /**
-   * Queue handler: Process inbound messages from channels.
-   *
-   * Channels send messages to this queue instead of calling Gateway RPC directly.
-   * This decouples the channel's DO context from the RPC call, avoiding issues
-   * with certain platforms (e.g., WhatsApp/Baileys service binding conflicts).
-   */
-  async queue(batch, env: Env): Promise<void> {
-    const messages = batch.messages as Message<ChannelQueueMessage>[];
-    const gateway = env.GATEWAY.get(env.GATEWAY.idFromName("singleton"));
-
-    for (const msg of messages) {
-      const payload = msg.body;
-
-      try {
-        if (payload.type === "inbound") {
-          await gateway.handleChannelInboundRpc({
-            channel: payload.channelId,
-            accountId: payload.accountId,
-            peer: payload.message.peer,
-            sender: payload.message.sender,
-            message: {
-              id: payload.message.messageId,
-              text: payload.message.text,
-              timestamp: payload.message.timestamp,
-              replyToId: payload.message.replyToId,
-              replyToText: payload.message.replyToText,
-              media: payload.message.media,
-            },
-            wasMentioned: payload.message.wasMentioned,
-          });
-          msg.ack();
-        } else if (payload.type === "status") {
-          await gateway.handleChannelStatusChanged(
-            payload.channelId,
-            payload.accountId,
-            payload.status,
-          );
-          msg.ack();
-        } else {
-          msg.ack();
-        }
-      } catch (e) {
-        console.error(`[Gateway] Queue message failed:`, e);
-        msg.retry();
-      }
-    }
   },
 } satisfies ExportedHandler<Env>;

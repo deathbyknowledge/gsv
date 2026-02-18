@@ -72,14 +72,23 @@ type StartResult = { ok: true } | { ok: false; error: string };
 type StopResult = { ok: true } | { ok: false; error: string };
 type SendResult = { ok: true; messageId?: string } | { ok: false; error: string };
 
-type ChannelQueueMessage = 
-  | { type: "inbound"; channelId: string; accountId: string; message: ChannelInboundMessage }
-  | { type: "status"; channelId: string; accountId: string; status: ChannelAccountStatus };
+type GatewayChannelBinding = Fetcher & {
+  channelInbound: (
+    channelId: string,
+    accountId: string,
+    message: ChannelInboundMessage,
+  ) => Promise<{ ok: boolean; sessionKey?: string; status?: string; error?: string }>;
+  channelStatusChanged: (
+    channelId: string,
+    accountId: string,
+    status: ChannelAccountStatus,
+  ) => Promise<void>;
+};
 
 type RecordedMessage = { direction: "in" | "out"; message: ChannelOutboundMessage | ChannelInboundMessage; timestamp: number };
 
 interface Env {
-  GATEWAY_QUEUE: Queue<ChannelQueueMessage>;
+  GATEWAY: GatewayChannelBinding;
   TEST_CHANNEL_STATE: DurableObjectNamespace;
 }
 
@@ -167,17 +176,11 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     const state = this.getStateDO(accountId);
     await state.start();
     
-    // Notify Gateway via queue
-    await this.env.GATEWAY_QUEUE.send({
-      type: "status",
-      channelId: "test",
+    await this.env.GATEWAY.channelStatusChanged("test", accountId, {
       accountId,
-      status: {
-        accountId,
-        connected: true,
-        authenticated: true,
-        mode: "test",
-      },
+      connected: true,
+      authenticated: true,
+      mode: "test",
     });
     
     return { ok: true };
@@ -187,15 +190,10 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     const state = this.getStateDO(accountId);
     await state.stop();
     
-    await this.env.GATEWAY_QUEUE.send({
-      type: "status",
-      channelId: "test",
+    await this.env.GATEWAY.channelStatusChanged("test", accountId, {
       accountId,
-      status: {
-        accountId,
-        connected: false,
-        authenticated: false,
-      },
+      connected: false,
+      authenticated: false,
     });
     
     return { ok: true };
@@ -268,15 +266,13 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     console.log(`[TestChannel] Simulating inbound from ${peer.id}: ${text}`);
 
     try {
-      await this.env.GATEWAY_QUEUE.send({
-        type: "inbound",
-        channelId: "test",
-        accountId,
-        message,
-      });
+      const result = await this.env.GATEWAY.channelInbound("test", accountId, message);
+      if (!result.ok) {
+        return { ok: false, messageId, error: result.error || "Gateway rejected message" };
+      }
       return { ok: true, messageId };
     } catch (e) {
-      console.error(`[TestChannel] Queue send failed:`, e);
+      console.error(`[TestChannel] RPC send failed:`, e);
       return { ok: false, messageId, error: String(e) };
     }
   }
@@ -329,11 +325,11 @@ export default {
       const state = getState(accountId);
       await state.start();
       
-      await env.GATEWAY_QUEUE.send({
-        type: "status",
-        channelId: "test",
+      await env.GATEWAY.channelStatusChanged("test", accountId, {
         accountId,
-        status: { accountId, connected: true, authenticated: true, mode: "test" },
+        connected: true,
+        authenticated: true,
+        mode: "test",
       });
       
       return Response.json({ ok: true, accountId });
@@ -345,11 +341,10 @@ export default {
       const state = getState(accountId);
       await state.stop();
       
-      await env.GATEWAY_QUEUE.send({
-        type: "status",
-        channelId: "test",
+      await env.GATEWAY.channelStatusChanged("test", accountId, {
         accountId,
-        status: { accountId, connected: false, authenticated: false },
+        connected: false,
+        authenticated: false,
       });
       
       return Response.json({ ok: true, accountId });
@@ -384,12 +379,13 @@ export default {
 
       await state.recordMessage("in", message);
 
-      await env.GATEWAY_QUEUE.send({
-        type: "inbound",
-        channelId: "test",
-        accountId: body.accountId,
-        message,
-      });
+      const result = await env.GATEWAY.channelInbound("test", body.accountId, message);
+      if (!result.ok) {
+        return Response.json(
+          { ok: false, error: result.error || "Gateway rejected message", messageId },
+          { status: 500 },
+        );
+      }
 
       return Response.json({ ok: true, messageId });
     }

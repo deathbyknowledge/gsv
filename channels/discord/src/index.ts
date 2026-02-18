@@ -14,7 +14,6 @@ import type {
   ChannelAccountStatus,
   ChannelOutboundMessage,
   ChannelPeer,
-  ChannelQueueMessage,
   StartResult,
   StopResult,
   SendResult,
@@ -27,7 +26,6 @@ export type * from "./types";
 
 interface Env {
   DISCORD_GATEWAY: DurableObjectNamespace;
-  GATEWAY_QUEUE: Queue<ChannelQueueMessage>;
   // Secrets
   DISCORD_BOT_TOKEN?: string;
 }

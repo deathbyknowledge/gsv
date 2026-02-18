@@ -466,10 +466,6 @@ enum DeployAction {
         #[arg(long)]
         all: bool,
 
-        /// Also delete the gateway inbound queue
-        #[arg(long)]
-        delete_queue: bool,
-
         /// Also delete the shared R2 storage bucket
         #[arg(long)]
         delete_bucket: bool,
@@ -1658,7 +1654,6 @@ async fn run_deploy(
         DeployAction::Down {
             component,
             all,
-            delete_queue,
             delete_bucket,
             purge_bucket,
             wizard,
@@ -1726,15 +1721,10 @@ async fn run_deploy(
                 return Err("No components selected for teardown.".into());
             }
 
-            let mut delete_queue_resource = delete_queue;
             let mut delete_bucket_resource = delete_bucket;
             let mut purge_bucket_resource = purge_bucket;
 
             if wizard_mode && interactive {
-                delete_queue_resource = prompt_yes_no(
-                    "Also delete queue gsv-gateway-inbound?",
-                    delete_queue_resource,
-                )?;
                 delete_bucket_resource =
                     prompt_yes_no("Also delete R2 bucket gsv-storage?", delete_bucket_resource)?;
                 if delete_bucket_resource {
@@ -1747,10 +1737,9 @@ async fn run_deploy(
                 }
 
                 let summary = format!(
-                    "Account: {}\nComponents: {}\nDelete queue: {}\nDelete bucket: {}\nPurge bucket objects: {}",
+                    "Account: {}\nComponents: {}\nDelete bucket: {}\nPurge bucket objects: {}",
                     resolved_account_id,
                     components.join(", "),
-                    if delete_queue_resource { "yes" } else { "no" },
                     if delete_bucket_resource { "yes" } else { "no" },
                     if purge_bucket_resource { "yes" } else { "no" }
                 );
@@ -1769,7 +1758,6 @@ async fn run_deploy(
                 &resolved_account_id,
                 &token,
                 &components,
-                delete_queue_resource,
                 delete_bucket_resource,
                 purge_bucket_resource,
             )

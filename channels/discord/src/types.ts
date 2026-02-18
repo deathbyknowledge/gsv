@@ -104,13 +104,3 @@ export interface ChannelWorkerInterface {
   login?(accountId: string, options?: { force?: boolean }): Promise<LoginResult>;
   logout?(accountId: string): Promise<LogoutResult>;
 }
-
-/**
- * Queue message types for Channel → Gateway communication
- * 
- * Channels send messages to Gateway's inbound queue instead of calling RPC directly.
- * This decouples the channel DO from the RPC call context.
- */
-export type ChannelQueueMessage = 
-  | { type: "inbound"; channelId: string; accountId: string; message: ChannelInboundMessage }
-  | { type: "status"; channelId: string; accountId: string; status: ChannelAccountStatus };

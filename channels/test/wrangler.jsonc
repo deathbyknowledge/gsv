@@ -14,6 +14,12 @@
         "class_name": "TestChannelState"
       }
     ]
-  }
-  // Note: GATEWAY_QUEUE binding is provided by alchemy/infra.ts during deployment
+  },
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "gsv",
+      "entrypoint": "GatewayEntrypoint"
+    }
+  ]
 }

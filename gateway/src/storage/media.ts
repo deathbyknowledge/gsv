@@ -13,17 +13,17 @@ import type { MediaAttachment } from "../protocol/channel";
 
 export const MAX_MEDIA_SIZE_BYTES = 25 * 1024 * 1024; // 25MB limit
 
-const BYTE_TO_BASE64_CHUNK_SIZE = 0x8000; // 32KB
+const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000; // 4KB (avoids argument-list stack overflows)
 
 function uint8ArrayToBase64(data: Uint8Array): string {
   if (data.length === 0) return "";
 
-  let binary = "";
+  const chunks: string[] = [];
   for (let i = 0; i < data.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
     const chunk = data.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE);
-    binary += String.fromCharCode(...chunk);
+    chunks.push(String.fromCharCode(...chunk));
   }
-  return btoa(binary);
+  return btoa(chunks.join(""));
 }
 
 export async function storeMediaInR2(

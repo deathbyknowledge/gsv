@@ -41,6 +41,12 @@ export const DEFAULT_CONFIG: GsvConfig = {
       activeHours: { start: "08:00", end: "23:00" },
     },
   },
+  compaction: {
+    enabled: true,
+    reserveTokens: 20_000,
+    keepRecentTokens: 20_000,
+    extractMemories: true,
+  },
   cron: {
     enabled: true,
     maxJobs: 200,

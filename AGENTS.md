@@ -133,7 +133,7 @@ cargo run -- tools list
 
 - Gateway is the central control plane; Session DOs handle per-session agent state.
 - Channels are separate workers. Outbound calls are Service Binding RPC (`CHANNEL_WHATSAPP`, `CHANNEL_DISCORD`, optional test channel).
-- Inbound channel events flow through a shared queue (`GATEWAY_QUEUE` / `gsv-gateway-inbound`) and are consumed by the Gateway worker.
+- Inbound channel events are delivered to the Gateway via Service Binding RPC (`GatewayEntrypoint.channelInbound` / `channelStatusChanged`).
 - Worker serves:
   - `GET /health` for health checks
   - `GET /ws` for websocket clients/nodes
@@ -212,7 +212,7 @@ gsv-storage/
 - Examples:
   - `add channel status rpc handler`
   - `fix session reset archive metadata`
-  - `update deploy queue consumer wiring`
+  - `update deploy service binding wiring`
 
 ## Security Notes
 

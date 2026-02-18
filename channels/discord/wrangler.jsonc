@@ -21,14 +21,11 @@
       "new_sqlite_classes": ["DiscordGateway"]
     }
   ],
-  // Channel → Gateway: Use queue for inbound messages
-  // This decouples the DO context from gateway calls
-  "queues": {
-    "producers": [
-      {
-        "binding": "GATEWAY_QUEUE",
-        "queue": "gsv-gateway-inbound"
-      }
-    ]
-  }
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "gsv",
+      "entrypoint": "GatewayEntrypoint"
+    }
+  ]
 }

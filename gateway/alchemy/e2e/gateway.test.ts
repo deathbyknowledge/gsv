@@ -1879,7 +1879,7 @@ When it says all steps are complete, stop calling tools and reply exactly: "SEQU
 });
 
 // ============================================================================
-// Channel Worker (Queue-based communication)
+// Channel Worker (Service Binding RPC communication)
 // ============================================================================
 
 describe("Channel Worker Health", () => {
@@ -1901,7 +1901,7 @@ describe("Channel Worker Health", () => {
   });
 });
 
-describe("Queue-based Inbound Messages", () => {
+describe("Service Binding Inbound Messages", () => {
   const accountId = `test-account-${crypto.randomBytes(4).toString("hex")}`;
   
   it("can start test channel account via HTTP", async () => {
@@ -1915,7 +1915,7 @@ describe("Queue-based Inbound Messages", () => {
     expect(body.accountId).toBe(accountId);
   });
 
-  it("sends inbound message via queue to Gateway", async () => {
+  it("sends inbound message via service binding RPC to Gateway", async () => {
     // Send an inbound message via the test channel's HTTP endpoint
     const peerId = `+1555${Date.now().toString().slice(-7)}`;
     const messageText = `/status`; // Use a command that returns quickly
@@ -2061,7 +2061,7 @@ describe("Full Channel Flow with Gateway", () => {
     
     // Start account
     await fetch(`${testChannelUrl}/test/start?accountId=${accountId}`, { method: "POST" });
-    // Give queue time to deliver status message
+    // Give async status propagation a moment to settle
     await Bun.sleep(500);
   }, 60000);
 
@@ -2087,7 +2087,7 @@ describe("Full Channel Flow with Gateway", () => {
     
     // Wait for Gateway to process and send response back
     // The Gateway should call TestChannel.send() with the response
-    // This tests the full round-trip: Channel → Queue → Gateway → Channel
+    // This tests the full round-trip: Channel → Gateway RPC → Session → Channel RPC
     console.log(`   Waiting for outbound response to ${peerId}...`);
     const outbound = await waitFor(
       async () => {
@@ -2108,7 +2108,7 @@ describe("Full Channel Flow with Gateway", () => {
     console.log(`   Received response: ${outbound.text.slice(0, 50)}...`);
   }, 20000);
 
-  it("Gateway processes /help command through queue", async () => {
+  it("Gateway processes /help command through service binding RPC", async () => {
     // Clear messages
     await fetch(`${testChannelUrl}/test/clear?accountId=${accountId}`, { method: "POST" });
     
@@ -2139,7 +2139,7 @@ describe("Full Channel Flow with Gateway", () => {
   }, 20000);
 });
 
-describe("Queue Latency", () => {
+describe("Channel RPC Latency", () => {
   const accountId = `latency-test-${crypto.randomBytes(4).toString("hex")}`;
   const peerId = `+1555${Date.now().toString().slice(-7)}`;
   
@@ -2175,7 +2175,7 @@ describe("Queue Latency", () => {
     );
     
     const latency = Date.now() - startTime;
-    console.log(`   Queue round-trip latency: ${latency}ms`);
+    console.log(`   Channel round-trip latency: ${latency}ms`);
     
     // Queue latency should be reasonable (under 5 seconds for a command)
     expect(latency).toBeLessThan(5000);

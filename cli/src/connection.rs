@@ -1,11 +1,12 @@
 use crate::protocol::{
-    AuthParams, ClientInfo, ConnectParams, Frame, NodeRuntimeInfo, RequestFrame, ResponseFrame,
-    ToolDefinition,
+    AuthParams, ClientInfo, ConnectParams, ErrorShape, Frame, NodeRuntimeInfo, RequestFrame,
+    ResponseFrame, ToolDefinition,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -14,6 +15,30 @@ pub type EventHandler = Arc<RwLock<Option<Box<dyn Fn(Frame) + Send + Sync>>>>;
 pub type DisconnectFlag = Arc<AtomicBool>;
 
 use std::sync::atomic::{AtomicBool, Ordering};
+
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+
+async fn fail_all_pending_requests(pending: &PendingRequests, code: i32, message: &str) {
+    let mut pending = pending.lock().await;
+    if pending.is_empty() {
+        return;
+    }
+
+    let message = message.to_string();
+    for (id, sender) in pending.drain() {
+        let _ = sender.send(ResponseFrame {
+            id,
+            ok: false,
+            payload: None,
+            error: Some(ErrorShape {
+                code,
+                message: message.clone(),
+                details: None,
+                retryable: Some(true),
+            }),
+        });
+    }
+}
 
 pub struct Connection {
     tx: mpsc::Sender<Message>,
@@ -40,6 +65,8 @@ impl Connection {
         let event_handler: EventHandler = Arc::new(RwLock::new(Some(Box::new(on_event))));
         let disconnected: DisconnectFlag = Arc::new(AtomicBool::new(false));
 
+        let pending_for_write = pending.clone();
+        let disconnected_for_write = disconnected.clone();
         let pending_clone = pending.clone();
         let event_handler_clone = event_handler.clone();
         let disconnected_clone = disconnected.clone();
@@ -47,6 +74,13 @@ impl Connection {
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if write.send(msg).await.is_err() {
+                    disconnected_for_write.store(true, Ordering::SeqCst);
+                    fail_all_pending_requests(
+                        &pending_for_write,
+                        503,
+                        "Connection closed while sending request",
+                    )
+                    .await;
                     break;
                 }
             }
@@ -75,6 +109,12 @@ impl Connection {
             }
             // Read loop ended - connection is dead
             disconnected_clone.store(true, Ordering::SeqCst);
+            fail_all_pending_requests(
+                &pending_clone,
+                503,
+                "Connection closed while waiting for response",
+            )
+            .await;
         });
 
         let conn = Self {
@@ -135,7 +175,11 @@ impl Connection {
         };
 
         let res = self
-            .request("connect", Some(serde_json::to_value(params)?))
+            .request_with_timeout(
+                "connect",
+                Some(serde_json::to_value(params)?),
+                HANDSHAKE_TIMEOUT,
+            )
             .await?;
 
         if !res.ok {
@@ -149,25 +193,96 @@ impl Connection {
         Ok(())
     }
 
-    pub async fn request(
+    pub async fn request_with_timeout(
         &self,
         method: &str,
         params: Option<Value>,
+        timeout: Duration,
     ) -> Result<ResponseFrame, Box<dyn std::error::Error>> {
+        if self.is_disconnected() {
+            return Err("Connection is disconnected".into());
+        }
+
         let req = RequestFrame::new(method, params);
         let id = req.id.clone();
 
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().await;
-            pending.insert(id, tx);
+            pending.insert(id.clone(), tx);
         }
 
         let frame = Frame::Req(req);
         let msg = Message::Text(serde_json::to_string(&frame)?);
-        self.tx.send(msg).await?;
+        if let Err(error) = self.tx.send(msg).await {
+            let mut pending = self.pending.lock().await;
+            pending.remove(&id);
+            return Err(error.into());
+        }
 
-        let res = rx.await?;
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(res)) => Ok(res),
+            Ok(Err(_)) => Err("Connection closed while waiting for response".into()),
+            Err(_) => {
+                let mut pending = self.pending.lock().await;
+                pending.remove(&id);
+                Err(format!("Request timed out after {:?}: {}", timeout, method).into())
+            }
+        }
+    }
+
+    pub async fn request(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<ResponseFrame, Box<dyn std::error::Error>> {
+        if self.is_disconnected() {
+            return Err("Connection is disconnected".into());
+        }
+
+        let req = RequestFrame::new(method, params);
+        let id = req.id.clone();
+
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.pending.lock().await;
+            pending.insert(id.clone(), tx);
+        }
+
+        let frame = Frame::Req(req);
+        let msg = Message::Text(serde_json::to_string(&frame)?);
+        if let Err(error) = self.tx.send(msg).await {
+            let mut pending = self.pending.lock().await;
+            pending.remove(&id);
+            return Err(error.into());
+        }
+
+        let res = rx
+            .await
+            .map_err(|_| "Connection closed while waiting for response")?;
         Ok(res)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fail_all_pending_requests_resolves_waiters() {
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, rx) = oneshot::channel();
+        pending.lock().await.insert("req-1".to_string(), tx);
+
+        fail_all_pending_requests(&pending, 503, "Connection closed").await;
+
+        let response = rx.await.expect("response should be delivered");
+        assert!(!response.ok);
+        assert_eq!(response.id, "req-1");
+
+        let error = response.error.expect("error details should be present");
+        assert_eq!(error.code, 503);
+        assert_eq!(error.message, "Connection closed");
+        assert!(pending.lock().await.is_empty());
     }
 }

@@ -89,7 +89,11 @@ Discord Gateway API (wss://gateway.discord.gg)
 │  - Handles IDENTIFY, HEARTBEAT, RESUME  │
 │  - Dispatches MESSAGE_CREATE events     │
 └─────────────────────────────────────────┘
-        ↓ Queue (gsv-gateway-inbound)
+        ↓ Service Binding RPC
+┌─────────────────────────────────────────┐
+│  GatewayEntrypoint.channelInbound()     │
+└─────────────────────────────────────────┘
+        ↓ Gateway DO RPC
 ┌─────────────────────────────────────────┐
 │  GSV Gateway                            │
 │  - Routes to Session                    │
@@ -123,5 +127,5 @@ You can configure Gateway's `dmPolicy` to control this behavior.
 - Check for rate limiting (reconnect with exponential backoff)
 
 ### Messages not being processed
-- Check Gateway logs for queue processing errors
-- Verify `gsv-gateway-inbound` queue exists and is connected
+- Check Discord worker logs for RPC delivery failures
+- Check Gateway logs for `channelInbound` / `channelStatusChanged` errors

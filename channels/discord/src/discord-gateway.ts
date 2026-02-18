@@ -12,7 +12,6 @@ import type {
   ChannelAccountStatus,
   ChannelInboundMessage,
   ChannelMedia,
-  ChannelQueueMessage,
 } from "./types";
 
 const DISCORD_GATEWAY_URL = "https://discord.com/api/v10/gateway";
@@ -43,6 +42,20 @@ const INTENTS = {
 } as const;
 
 const MAX_INLINE_MEDIA_BYTES = 25 * 1024 * 1024; // 25MB
+const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000; // 4KB (avoids argument-list stack overflows)
+
+type GatewayChannelBinding = Fetcher & {
+  channelInbound: (
+    channelId: string,
+    accountId: string,
+    message: ChannelInboundMessage,
+  ) => Promise<{ ok: boolean; sessionKey?: string; status?: string; error?: string }>;
+  channelStatusChanged: (
+    channelId: string,
+    accountId: string,
+    status: ChannelAccountStatus,
+  ) => Promise<void>;
+};
 
 type DiscordAttachment = {
   id: string;
@@ -66,7 +79,7 @@ type GatewayState = {
 };
 
 interface Env {
-  GATEWAY_QUEUE: Queue<ChannelQueueMessage>;
+  GATEWAY: GatewayChannelBinding;
 }
 
 export class DiscordGateway extends DurableObject<Env> {
@@ -111,7 +124,7 @@ export class DiscordGateway extends DurableObject<Env> {
       return;
     }
 
-    // Store the accountId name (not the hex DO id) for consistent queue messages
+    // Store the accountId name (not the hex DO id) for consistent inbound routing.
     if (accountId) {
       this.state.accountId = accountId;
     }
@@ -304,19 +317,14 @@ export class DiscordGateway extends DurableObject<Env> {
         
         console.log(`[DiscordGateway] Connected as ${botUser?.username} (${botUser?.id})`);
         
-        // Notify Gateway of status change via queue
+        // Notify Gateway of status change via Service Binding RPC.
         const accountId = this.getAccountId();
-        await this.env.GATEWAY_QUEUE.send({
-          type: "status",
-          channelId: "discord",
+        await this.notifyGatewayStatus({
           accountId,
-          status: {
-            accountId,
-            connected: true,
-            authenticated: true,
-            mode: "gateway",
-            extra: { botUserId: botUser?.id, botUsername: botUser?.username },
-          },
+          connected: true,
+          authenticated: true,
+          mode: "gateway",
+          extra: { botUserId: botUser?.id, botUsername: botUser?.username },
         });
         
         await this.saveState();
@@ -384,17 +392,33 @@ export class DiscordGateway extends DurableObject<Env> {
       wasMentioned,
     };
 
-    // Forward to GSV Gateway via queue
+    // Forward to GSV Gateway via Service Binding RPC.
     try {
-      await this.env.GATEWAY_QUEUE.send({
-        type: "inbound",
-        channelId: "discord",
-        accountId: this.getAccountId(),
+      const result = await this.env.GATEWAY.channelInbound(
+        "discord",
+        this.getAccountId(),
         message,
-      });
-      console.log(`[DiscordGateway] Queued message ${messageId} from ${author?.username}`);
+      );
+      if (!result.ok) {
+        console.error(
+          `[DiscordGateway] Inbound rejected by gateway: ${result.error ?? "unknown error"}`,
+        );
+        return;
+      }
+      console.log(
+        `[DiscordGateway] Delivered message ${messageId} from ${author?.username}`,
+      );
     } catch (e) {
-      console.error("[DiscordGateway] Failed to queue message:", e);
+      console.error("[DiscordGateway] Failed to deliver inbound via RPC:", e);
+    }
+  }
+
+  private async notifyGatewayStatus(status: ChannelAccountStatus): Promise<void> {
+    const accountId = this.getAccountId();
+    try {
+      await this.env.GATEWAY.channelStatusChanged("discord", accountId, status);
+    } catch (e) {
+      console.error("[DiscordGateway] Failed to deliver status via RPC:", e);
     }
   }
 
@@ -551,12 +575,15 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   private bytesToBase64(bytes: Uint8Array): string {
-    let binary = "";
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    if (bytes.length === 0) return "";
+
+    const chunks: string[] = [];
+    for (let i = 0; i < bytes.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
+      chunks.push(
+        String.fromCharCode(...bytes.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE)),
+      );
     }
-    return btoa(binary);
+    return btoa(chunks.join(""));
   }
 
   private async identify() {
