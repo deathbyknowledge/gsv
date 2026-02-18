@@ -3576,9 +3576,11 @@ export class Gateway extends DurableObject<Env> {
       }
     }
 
+    // Load HEARTBEAT.md content (used for skip check and prompt injection)
+    const heartbeatFile = await loadHeartbeatFile(this.env.STORAGE, agentId);
+
     // Skip check 2: Empty HEARTBEAT.md file (unless manual trigger)
     if (reason !== "manual") {
-      const heartbeatFile = await loadHeartbeatFile(this.env.STORAGE, agentId);
       if (
         !heartbeatFile.exists ||
         isHeartbeatFileEmpty(heartbeatFile.content)
@@ -3681,7 +3683,12 @@ export class Gateway extends DurableObject<Env> {
         agentId, // For deduplication lookup
       };
     }
-    const prompt = config.prompt;
+    // Inject HEARTBEAT.md content directly into the prompt so the agent
+    // always sees the latest version, even in a persistent session.
+    let prompt = config.prompt;
+    if (heartbeatFile.exists && heartbeatFile.content.trim()) {
+      prompt += `\n\n---\nHEARTBEAT.md contents:\n${heartbeatFile.content.trim()}`;
+    }
     const tools = JSON.parse(JSON.stringify(this.getAllTools()));
     const runtimeNodes = JSON.parse(
       JSON.stringify(this.getRuntimeNodeInventory()),

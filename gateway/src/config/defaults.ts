@@ -36,7 +36,7 @@ export const DEFAULT_CONFIG: GsvConfig = {
     bindings: [],
     defaultHeartbeat: {
       every: "30m",
-      prompt: "Read HEARTBEAT.md if it exists in your workspace. Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
+      prompt: "Follow the HEARTBEAT.md instructions below. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
       target: "last",
       activeHours: { start: "08:00", end: "23:00" },
     },
