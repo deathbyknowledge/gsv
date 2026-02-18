@@ -263,10 +263,10 @@ jobs:
 
           if [ "$CHANNEL" = "stable" ]; then
             TITLE="GSV (stable)"
-            INSTALL_CMD='curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash'
+            INSTALL_CMD='curl -sSL https://install.gsv.space | bash'
           else
             TITLE="GSV (dev)"
-            INSTALL_CMD='GSV_CHANNEL=dev curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash'
+            INSTALL_CMD='GSV_CHANNEL=dev curl -sSL https://install.gsv.space | bash'
           fi
 
           cat > body.md <<BODY

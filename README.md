@@ -12,7 +12,7 @@
 
 ```bash
 # Installs CLI
-curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
+curl -sSL https://install.gsv.space | bash
 
 # https://dash.cloudflare.com/profile/api-tokens Use "Edit Cloudflare Workers" template
 # First-time guided deploy
@@ -22,7 +22,7 @@ gsv deploy up --wizard
 If you want to configure a different machine after deployment:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
+curl -sSL https://install.gsv.space | bash
 gsv local-config set gateway.url wss://gsv.<your-domain>.workers.dev/ws
 gsv local-config set gateway.token <your-auth-token> # you can always get it with `gsv config get auth.token`
 ```
