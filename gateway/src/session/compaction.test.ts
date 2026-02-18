@@ -5,12 +5,10 @@ import {
   estimateContextTokens,
   countImageBlocks,
   serializeMessagesForSummary,
-} from "./tokens";
-import {
   shouldCompact,
   splitOldAndRecent,
   chunkMessages,
-} from "./compaction";
+} from "./tokens";
 import type { CompactionConfig } from "../config";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -258,20 +256,28 @@ describe("shouldCompact", () => {
   });
 
   it("includes systemPromptTokenEstimate in estimation fallback", () => {
-    // Messages alone are under the threshold, but system prompt pushes over
+    // Messages alone are under the threshold, but system prompt pushes over.
+    // Use a config with small reserveTokens so the threshold is meaningful.
+    const smallReserveConfig: CompactionConfig = {
+      ...DEFAULT_COMPACTION_CONFIG,
+      reserveTokens: 100,
+    };
     const messages = [
       makeUserMsg("Hi"),
       makeAssistantMsg("Hello"),
       makeUserMsg("How are you?"),
     ];
-    // contextWindow 1000, reserve 20 → threshold 980
-    // Messages alone are small. Without system prompt estimate → no compact.
+    const msgTokens = estimateContextTokens(messages);
+    // contextWindow set so messages alone fit, but messages + system prompt don't.
+    // threshold = contextWindow - 100
+    const contextWindow = msgTokens + 500;
+    // Without system prompt estimate → messages fit under threshold → no compact.
     expect(
-      shouldCompact(messages, 1_000, DEFAULT_COMPACTION_CONFIG),
+      shouldCompact(messages, contextWindow, smallReserveConfig),
     ).toBe(false);
-    // With a large system prompt estimate (900 tokens) → pushes total over threshold
+    // With a system prompt estimate that pushes total over threshold → compact.
     expect(
-      shouldCompact(messages, 1_000, DEFAULT_COMPACTION_CONFIG, undefined, 900),
+      shouldCompact(messages, contextWindow, smallReserveConfig, undefined, 600),
     ).toBe(true);
   });
 

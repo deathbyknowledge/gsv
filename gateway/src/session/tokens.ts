@@ -1,4 +1,5 @@
 import type { Message } from "@mariozechner/pi-ai";
+import type { CompactionConfig } from "../config";
 
 /**
  * Rough token estimation using character-based heuristic.
@@ -91,4 +92,92 @@ export function serializeMessagesForSummary(messages: Message[]): string {
     }
   }
   return lines.join("\n");
+}
+
+export function splitOldAndRecent(
+  messages: Message[],
+  keepRecentTokens: number,
+): { old: Message[]; recent: Message[] } {
+  let recentTokens = 0;
+  let splitIdx = messages.length;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const tokens = estimateMessageTokens(messages[i]);
+    if (recentTokens + tokens > keepRecentTokens) {
+      break;
+    }
+    recentTokens += tokens;
+    splitIdx = i;
+  }
+
+  // Never compact *all* messages — keep at least the last one
+  if (splitIdx === 0) splitIdx = 1;
+
+  return {
+    old: messages.slice(0, splitIdx),
+    recent: messages.slice(splitIdx),
+  };
+}
+
+/**
+ * Chunk old messages by token budget.
+ * Each chunk <= chunkBudget tokens.
+ */
+export function chunkMessages(
+  messages: Message[],
+  chunkBudget: number,
+): Message[][] {
+  const chunks: Message[][] = [];
+  let current: Message[] = [];
+  let currentTokens = 0;
+
+  for (const msg of messages) {
+    const tokens = estimateMessageTokens(msg);
+
+    // If a single message exceeds the budget, it gets its own chunk
+    if (current.length > 0 && currentTokens + tokens > chunkBudget) {
+      chunks.push(current);
+      current = [];
+      currentTokens = 0;
+    }
+
+    current.push(msg);
+    currentTokens += tokens;
+  }
+
+  if (current.length > 0) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
+export function shouldCompact(
+  messages: Message[],
+  contextWindow: number,
+  config: CompactionConfig,
+  lastKnownInputTokens?: number,
+  systemPromptTokenEstimate?: number,
+): boolean {
+  if (!config.enabled) return false;
+  if (messages.length <= 2) return false; // Nothing meaningful to compact
+
+  const threshold = contextWindow - config.reserveTokens;
+
+  // Fast path: use real token count from the last LLM response if available.
+  // This already accounts for system prompt + all messages + tools as counted
+  // by the provider, so it's strictly more accurate than our character heuristic.
+  if (
+    typeof lastKnownInputTokens === "number" &&
+    lastKnownInputTokens > 0
+  ) {
+    return lastKnownInputTokens > threshold;
+  }
+
+  // Fallback: character-based estimation of messages + system prompt.
+  // The system prompt (workspace files, tool defs, skills, etc.) can be
+  // substantial, so we include it in the estimate to avoid underestimating.
+  const messageTokens = estimateContextTokens(messages);
+  const estimatedTokens = messageTokens + (systemPromptTokenEstimate ?? 0);
+  return estimatedTokens > threshold;
 }

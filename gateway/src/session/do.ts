@@ -2,7 +2,10 @@ import { DurableObject } from "cloudflare:workers";
 import { PersistedObject } from "../shared/persisted-object";
 import type { ChatEventPayload } from "../protocol/chat";
 import type { RuntimeNodeInventory, ToolDefinition } from "../protocol/tools";
-import type { MediaAttachment, SessionChannelContext } from "../protocol/channel";
+import type {
+  MediaAttachment,
+  SessionChannelContext,
+} from "../protocol/channel";
 import type { GsvConfig } from "../config";
 import type { SkillSummary } from "../skills";
 import type {
@@ -20,11 +23,11 @@ import { completeSimple, getModel } from "@mariozechner/pi-ai";
 import { isContextOverflow } from "@mariozechner/pi-ai/dist/utils/overflow.js";
 import { archivePartialMessages, archiveSession } from "../storage/archive";
 import {
-  shouldCompact,
   runCompaction,
   extractMemoriesFromMessages,
   type CompactionContext,
 } from "./compaction";
+import { shouldCompact } from "./tokens";
 import { estimateContextTokens, estimateStringTokens } from "./tokens";
 import { fetchMediaFromR2, deleteSessionMedia } from "../storage/media";
 import { loadAgentWorkspace } from "../agents/loader";
@@ -573,7 +576,9 @@ export class Session extends DurableObject<Env> {
 
   private hasPendingAsyncExecCompletions(): boolean {
     let hasPending = false;
-    for (const [eventId, rawCompletion] of Object.entries(this.pendingAsyncExecCompletions)) {
+    for (const [eventId, rawCompletion] of Object.entries(
+      this.pendingAsyncExecCompletions,
+    )) {
       const completion = this.asPendingAsyncExecCompletion(rawCompletion);
       if (!completion) {
         delete this.pendingAsyncExecCompletions[eventId];
@@ -593,32 +598,50 @@ export class Session extends DurableObject<Env> {
     const record = value as Record<string, unknown>;
     const eventId =
       typeof record.eventId === "string" ? record.eventId.trim() : "";
-    const nodeId = typeof record.nodeId === "string" ? record.nodeId.trim() : "";
+    const nodeId =
+      typeof record.nodeId === "string" ? record.nodeId.trim() : "";
     const sessionId =
       typeof record.sessionId === "string" ? record.sessionId.trim() : "";
-    const event =
-      typeof record.event === "string" ? record.event.trim() : "";
+    const event = typeof record.event === "string" ? record.event.trim() : "";
     const receivedAt =
-      typeof record.receivedAt === "number" && Number.isFinite(record.receivedAt)
+      typeof record.receivedAt === "number" &&
+      Number.isFinite(record.receivedAt)
         ? record.receivedAt
         : undefined;
-    if (!eventId || !nodeId || !sessionId || !event || receivedAt === undefined) {
+    if (
+      !eventId ||
+      !nodeId ||
+      !sessionId ||
+      !event ||
+      receivedAt === undefined
+    ) {
       return undefined;
     }
     return value as PendingAsyncExecCompletion;
   }
 
   private gcAsyncExecCompletionState(now = Date.now()): void {
-    for (const [eventId, expiresAt] of Object.entries(this.seenAsyncExecEventIds)) {
-      if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || expiresAt <= now) {
+    for (const [eventId, expiresAt] of Object.entries(
+      this.seenAsyncExecEventIds,
+    )) {
+      if (
+        typeof expiresAt !== "number" ||
+        !Number.isFinite(expiresAt) ||
+        expiresAt <= now
+      ) {
         delete this.seenAsyncExecEventIds[eventId];
       }
     }
 
-    for (const [eventId, rawCompletion] of Object.entries(this.pendingAsyncExecCompletions)) {
+    for (const [eventId, rawCompletion] of Object.entries(
+      this.pendingAsyncExecCompletions,
+    )) {
       const completion = this.asPendingAsyncExecCompletion(rawCompletion);
       const receivedAt = completion?.receivedAt;
-      if (!receivedAt || receivedAt + ASYNC_EXEC_EVENT_PENDING_MAX_AGE_MS <= now) {
+      if (
+        !receivedAt ||
+        receivedAt + ASYNC_EXEC_EVENT_PENDING_MAX_AGE_MS <= now
+      ) {
         delete this.pendingAsyncExecCompletions[eventId];
       }
     }
@@ -729,8 +752,7 @@ export class Session extends DurableObject<Env> {
     const nodeId = typeof input.nodeId === "string" ? input.nodeId.trim() : "";
     const sessionId =
       typeof input.sessionId === "string" ? input.sessionId.trim() : "";
-    const event =
-      typeof input.event === "string" ? input.event.trim() : "";
+    const event = typeof input.event === "string" ? input.event.trim() : "";
     if (!eventId || !nodeId || !sessionId) {
       return { ok: true, duplicate: true };
     }
@@ -746,7 +768,9 @@ export class Session extends DurableObject<Env> {
       return { ok: true, duplicate: true };
     }
 
-    for (const [pendingId, rawCompletion] of Object.entries(this.pendingAsyncExecCompletions)) {
+    for (const [pendingId, rawCompletion] of Object.entries(
+      this.pendingAsyncExecCompletions,
+    )) {
       const completion = this.asPendingAsyncExecCompletion(rawCompletion);
       if (!completion) {
         delete this.pendingAsyncExecCompletions[pendingId];
@@ -762,7 +786,9 @@ export class Session extends DurableObject<Env> {
       nodeId,
       sessionId,
       callId:
-        typeof input.callId === "string" ? input.callId.trim() || undefined : undefined,
+        typeof input.callId === "string"
+          ? input.callId.trim() || undefined
+          : undefined,
       event: event as PendingAsyncExecCompletion["event"],
       exitCode:
         typeof input.exitCode === "number" && Number.isFinite(input.exitCode)
@@ -771,7 +797,9 @@ export class Session extends DurableObject<Env> {
             ? null
             : undefined,
       signal:
-        typeof input.signal === "string" ? input.signal.trim() || undefined : undefined,
+        typeof input.signal === "string"
+          ? input.signal.trim() || undefined
+          : undefined,
       outputTail:
         typeof input.outputTail === "string"
           ? input.outputTail.trim() || undefined
@@ -1298,7 +1326,10 @@ export class Session extends DurableObject<Env> {
         return Math.max(1000, Math.floor(value));
       }
     } catch (error) {
-      console.warn(`[Session] Failed to resolve tool timeout from config:`, error);
+      console.warn(
+        `[Session] Failed to resolve tool timeout from config:`,
+        error,
+      );
     }
 
     return DEFAULT_TOOL_TIMEOUT_MS;
@@ -1396,9 +1427,7 @@ export class Session extends DurableObject<Env> {
       try {
         await this.appendMemoriesToDailyFile(result.memories);
       } catch (e) {
-        console.error(
-          `[Session] Failed to append compaction memories: ${e}`,
-        );
+        console.error(`[Session] Failed to append compaction memories: ${e}`);
       }
     }
 
@@ -1496,9 +1525,19 @@ export class Session extends DurableObject<Env> {
     if (config.compaction.enabled) {
       const preCheckMessages = this.getMessages();
       const lastKnownInputTokens = this.meta.lastInputTokens;
-      const systemPromptTokenEstimate = estimateStringTokens(effectiveSystemPrompt);
+      const systemPromptTokenEstimate = estimateStringTokens(
+        effectiveSystemPrompt,
+      );
 
-      if (shouldCompact(preCheckMessages, contextWindow, config.compaction, lastKnownInputTokens, systemPromptTokenEstimate)) {
+      if (
+        shouldCompact(
+          preCheckMessages,
+          contextWindow,
+          config.compaction,
+          lastKnownInputTokens,
+          systemPromptTokenEstimate,
+        )
+      ) {
         const triggerSource = lastKnownInputTokens
           ? `last known input tokens: ${lastKnownInputTokens}`
           : `estimated tokens: ~${estimateContextTokens(preCheckMessages) + systemPromptTokenEstimate} (messages: ~${estimateContextTokens(preCheckMessages)}, system prompt: ~${systemPromptTokenEstimate})`;
@@ -1604,9 +1643,7 @@ export class Session extends DurableObject<Env> {
         if (didCompact) {
           // Retry the LLM call with compacted context
           const retryContext = await buildContext();
-          console.log(
-            `[Session] Retrying LLM call after reactive compaction`,
-          );
+          console.log(`[Session] Retrying LLM call after reactive compaction`);
           response = await completeSimple(model, retryContext, {
             apiKey,
             reasoning: reasoningLevel,
@@ -1726,7 +1763,8 @@ export class Session extends DurableObject<Env> {
     );
     const heartbeatPrompt =
       agentConfig?.heartbeat?.prompt || config.agents.defaultHeartbeat.prompt;
-    const runtimeNodes = runRuntimeNodes ?? (await this.loadRuntimeNodeInventory());
+    const runtimeNodes =
+      runRuntimeNodes ?? (await this.loadRuntimeNodeInventory());
 
     // Build combined prompt
     return buildSystemPromptFromWorkspace(basePrompt, workspace, {
@@ -1881,9 +1919,9 @@ export class Session extends DurableObject<Env> {
           const agentId = this.getAgentId();
           const effectiveModel = this.meta.settings.model || config.model;
           const provider = effectiveModel.provider;
-          const apiKey = (
-            config.apiKeys as Record<string, string | undefined>
-          )[provider];
+          const apiKey = (config.apiKeys as Record<string, string | undefined>)[
+            provider
+          ];
 
           if (apiKey) {
             const model = getModel(provider as any, effectiveModel.id as any);
@@ -1922,7 +1960,10 @@ export class Session extends DurableObject<Env> {
                 const conversationDate = new Date(this.meta.updatedAt)
                   .toISOString()
                   .split("T")[0];
-                await this.appendMemoriesToDailyFile(memories, conversationDate);
+                await this.appendMemoriesToDailyFile(
+                  memories,
+                  conversationDate,
+                );
                 console.log(
                   `[Session] Pre-reset memory extraction complete (${memories.length} chars, date: ${conversationDate})`,
                 );

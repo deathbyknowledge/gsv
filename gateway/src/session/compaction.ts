@@ -6,10 +6,11 @@ import type {
 import { completeSimple, getModel } from "@mariozechner/pi-ai";
 import type { CompactionConfig } from "../config";
 import {
-  estimateMessageTokens,
   estimateContextTokens,
   countImageBlocks,
   serializeMessagesForSummary,
+  splitOldAndRecent,
+  chunkMessages,
 } from "./tokens";
 
 export type CompactionResult = {
@@ -52,7 +53,9 @@ function buildSummarizationUserPrompt(
   }
 
   if (existingMemory) {
-    parts.push(`<existing-memories>\nThese memories have already been recorded. Do not duplicate them — only add genuinely new information.\n\n${existingMemory}\n</existing-memories>`);
+    parts.push(
+      `<existing-memories>\nThese memories have already been recorded. Do not duplicate them — only add genuinely new information.\n\n${existingMemory}\n</existing-memories>`,
+    );
   }
 
   parts.push(`<conversation>\n${chunk}\n</conversation>`);
@@ -79,12 +82,8 @@ function parseSummarizationResponse(text: string): {
   summary: string;
   memories: string;
 } {
-  const summaryMatch = text.match(
-    /<summary>([\s\S]*?)<\/summary>/,
-  );
-  const memoriesMatch = text.match(
-    /<memories>([\s\S]*?)<\/memories>/,
-  );
+  const summaryMatch = text.match(/<summary>([\s\S]*?)<\/summary>/);
+  const memoriesMatch = text.match(/<memories>([\s\S]*?)<\/memories>/);
 
   return {
     summary: summaryMatch?.[1]?.trim() ?? text.trim(),
@@ -98,109 +97,6 @@ function extractTextFromResponse(response: AssistantMessage): string {
     .filter((b) => b.type === "text" && b.text)
     .map((b) => b.text!)
     .join("\n");
-}
-
-/**
- * Split messages into old (to summarize) and recent (to keep verbatim).
- *
- * Walks backwards from the end until the keepRecentTokens budget is filled.
- * Everything before the split point is "old".
- */
-export function splitOldAndRecent(
-  messages: Message[],
-  keepRecentTokens: number,
-): { old: Message[]; recent: Message[] } {
-  let recentTokens = 0;
-  let splitIdx = messages.length;
-
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const tokens = estimateMessageTokens(messages[i]);
-    if (recentTokens + tokens > keepRecentTokens) {
-      break;
-    }
-    recentTokens += tokens;
-    splitIdx = i;
-  }
-
-  // Never compact *all* messages — keep at least the last one
-  if (splitIdx === 0) splitIdx = 1;
-
-  return {
-    old: messages.slice(0, splitIdx),
-    recent: messages.slice(splitIdx),
-  };
-}
-
-/**
- * Chunk old messages by token budget.
- * Each chunk <= chunkBudget tokens.
- */
-export function chunkMessages(
-  messages: Message[],
-  chunkBudget: number,
-): Message[][] {
-  const chunks: Message[][] = [];
-  let current: Message[] = [];
-  let currentTokens = 0;
-
-  for (const msg of messages) {
-    const tokens = estimateMessageTokens(msg);
-
-    // If a single message exceeds the budget, it gets its own chunk
-    if (current.length > 0 && currentTokens + tokens > chunkBudget) {
-      chunks.push(current);
-      current = [];
-      currentTokens = 0;
-    }
-
-    current.push(msg);
-    currentTokens += tokens;
-  }
-
-  if (current.length > 0) {
-    chunks.push(current);
-  }
-
-  return chunks;
-}
-
-
-/**
- * Determine whether compaction should run before the next LLM call.
- *
- * Uses `lastKnownInputTokens` (real usage from the most recent LLM response)
- * as a fast-path check when available — it's more accurate than character-based
- * estimation. Falls back to estimation when usage data isn't available (first
- * message in a session, provider didn't report usage, etc.).
- *
- * When using `lastKnownInputTokens`, reserveTokens only needs to cover the
- * model's response budget (the provider count already includes system prompt
- * + tools). When falling back to estimation, reserveTokens must also cover
- * the system prompt and tool definitions — pass `systemPromptTokenEstimate`
- * to account for this.
- */
-export function shouldCompact(
-  messages: Message[],
-  contextWindow: number,
-  config: CompactionConfig,
-  lastKnownInputTokens?: number,
-  systemPromptTokenEstimate?: number,
-): boolean {
-  if (!config.enabled) return false;
-  if (messages.length <= 2) return false; // Nothing meaningful to compact
-
-  const threshold = contextWindow - config.reserveTokens;
-
-  if (
-    typeof lastKnownInputTokens === "number" &&
-    lastKnownInputTokens > 0
-  ) {
-    return lastKnownInputTokens > threshold;
-  }
-
-  const messageTokens = estimateContextTokens(messages);
-  const estimatedTokens = messageTokens + (systemPromptTokenEstimate ?? 0);
-  return estimatedTokens > threshold;
 }
 
 /**
@@ -230,9 +126,7 @@ async function summarizeChunk(
     model,
     {
       systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
-      messages: [
-        { role: "user", content: userPrompt, timestamp: Date.now() },
-      ],
+      messages: [{ role: "user", content: userPrompt, timestamp: Date.now() }],
     },
     { apiKey: ctx.apiKey },
   );
@@ -293,9 +187,7 @@ async function partialSummarization(
     if (chunkTokens > halfWindow) {
       // Skip oversized chunk — add a placeholder note
       const note = `[Large message block (~${Math.round(chunkTokens / 1000)}K tokens) omitted from summary]`;
-      rollingSummary = rollingSummary
-        ? `${rollingSummary}\n\n${note}`
-        : note;
+      rollingSummary = rollingSummary ? `${rollingSummary}\n\n${note}` : note;
       continue;
     }
 
@@ -327,8 +219,7 @@ function plaintextFallback(oldMessages: Message[]): {
   calls: number;
 } {
   const imageCount = countImageBlocks(oldMessages);
-  const imageNote =
-    imageCount > 0 ? ` Included ${imageCount} image(s).` : "";
+  const imageNote = imageCount > 0 ? ` Included ${imageCount} image(s).` : "";
   return {
     summary: `[Context contained ${oldMessages.length} messages that were compacted. Summary unavailable due to size limits.${imageNote}]`,
     memories: "",
@@ -421,7 +312,9 @@ function buildMemoryExtractionPrompt(
   const parts: string[] = [];
 
   if (existingMemory) {
-    parts.push(`<existing-memories>\nThese memories have already been recorded. Do not duplicate them.\n\n${existingMemory}\n</existing-memories>`);
+    parts.push(
+      `<existing-memories>\nThese memories have already been recorded. Do not duplicate them.\n\n${existingMemory}\n</existing-memories>`,
+    );
   }
 
   parts.push(`<conversation>\n${conversation}\n</conversation>`);
@@ -494,9 +387,7 @@ export async function extractMemoriesFromMessages(
 
       const text = extractTextFromResponse(response);
       if (text) {
-        const memoriesMatch = text.match(
-          /<memories>([\s\S]*?)<\/memories>/,
-        );
+        const memoriesMatch = text.match(/<memories>([\s\S]*?)<\/memories>/);
         const memories = memoriesMatch?.[1]?.trim() ?? text.trim();
         if (memories) {
           allMemories.push(memories);
