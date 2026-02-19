@@ -2914,17 +2914,21 @@ pub async fn bootstrap_gateway_config(
 
     if let Some(auth_token) = config.auth_token.as_deref() {
         gateway_config_set(&conn, "auth.token", json!(auth_token)).await?;
-        println!("Configured gateway auth token.");
+        println!("✓ Configured gateway auth token.");
     }
 
     if let Some(provider) = config.llm_provider.as_deref() {
         gateway_config_set(&conn, "model.provider", json!(provider)).await?;
-        println!("Configured LLM provider: {}", provider);
+        println!("✓ Configured LLM provider: {}", provider);
+    } else {
+        println!("⊘ Skipping model.provider (not provided)");
     }
 
     if let Some(model) = config.llm_model.as_deref() {
         gateway_config_set(&conn, "model.id", json!(model)).await?;
-        println!("Configured LLM model: {}", model);
+        println!("✓ Configured LLM model: {}", model);
+    } else {
+        println!("⊘ Skipping model.id (not provided)");
     }
 
     if let Some(api_key) = config.llm_api_key.as_deref() {
@@ -2933,7 +2937,9 @@ pub async fn bootstrap_gateway_config(
             .as_deref()
             .ok_or("LLM provider is required when setting llm_api_key")?;
         gateway_config_set(&conn, &format!("apiKeys.{}", provider), json!(api_key)).await?;
-        println!("Configured API key for provider: {}", provider);
+        println!("✓ Configured API key for provider: {} ({}...)", provider, &api_key[..api_key.len().min(8)]);
+    } else {
+        println!("⊘ Skipping API key (not provided)");
     }
 
     if config.set_whatsapp_pairing {
