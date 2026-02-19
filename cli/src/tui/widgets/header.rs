@@ -20,10 +20,10 @@ pub fn render(app: &AppState, width: u16) -> Paragraph<'static> {
         let idx = buf_id.index() + 1;
         let label = buf_id.label();
         let is_active = app.active_buffer == buf_id;
-        let unread = if buf_id == BufferId::System {
-            app.system_buffer.unread
-        } else {
-            0
+        let unread = match buf_id {
+            BufferId::System => app.system_buffer.unread,
+            BufferId::Logs => app.logs_buffer.unread,
+            _ => 0,
         };
 
         if is_active {

@@ -118,7 +118,7 @@ pub async fn run(
     // ── Welcome message ─────────────────────────────────────────────
     app.push_message(
         MessageRole::System,
-        "GSV TUI client. Type /help for controls. Alt+1/2 to switch buffers.",
+        "GSV TUI client. Type /help for controls. Alt+1/2/3 to switch buffers.",
     );
 
     // Initial system state poll
@@ -463,6 +463,23 @@ fn draw(
 
                 frame.render_widget(
                     widgets::system::render(
+                        lines,
+                        u16::try_from(clamped).unwrap_or(u16::MAX),
+                    ),
+                    chunks[1],
+                );
+            }
+            BufferId::Logs => {
+                let lines =
+                    widgets::logs::build_lines(&app.logs_buffer.messages, content_width);
+                let max_scroll = lines.len().saturating_sub(content_height);
+                if app.logs_buffer.auto_follow {
+                    app.logs_buffer.scroll = max_scroll;
+                }
+                let clamped = app.logs_buffer.scroll.min(max_scroll);
+
+                frame.render_widget(
+                    widgets::logs::render(
                         lines,
                         u16::try_from(clamped).unwrap_or(u16::MAX),
                     ),

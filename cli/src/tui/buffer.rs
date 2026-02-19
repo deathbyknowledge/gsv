@@ -6,6 +6,7 @@ use crate::tui::state::MessageLine;
 pub enum BufferId {
     Chat,
     System,
+    Logs,
 }
 
 impl BufferId {
@@ -13,6 +14,7 @@ impl BufferId {
         match self {
             Self::Chat => "chat",
             Self::System => "system",
+            Self::Logs => "logs",
         }
     }
 
@@ -20,6 +22,7 @@ impl BufferId {
         match self {
             Self::Chat => 0,
             Self::System => 1,
+            Self::Logs => 2,
         }
     }
 
@@ -27,11 +30,12 @@ impl BufferId {
         match index {
             0 => Some(Self::Chat),
             1 => Some(Self::System),
+            2 => Some(Self::Logs),
             _ => None,
         }
     }
 
-    pub const ALL: &[BufferId] = &[BufferId::Chat, BufferId::System];
+    pub const ALL: &[BufferId] = &[BufferId::Chat, BufferId::System, BufferId::Logs];
 }
 
 // ── Buffer ──────────────────────────────────────────────────────────────────

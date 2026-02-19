@@ -1,6 +1,7 @@
 use crate::gateway_client::GatewayClient;
+use crate::tui::buffer::BufferId;
 use crate::tui::state::{
-    self, AppState, MessageRole, ToolVerbosity,
+    self, AppState, MessageLine, MessageRole, ToolVerbosity,
 };
 
 /// Outcome of executing a slash command.
@@ -47,7 +48,7 @@ pub async fn execute(
         "/help" => {
             app.push_message(
                 MessageRole::System,
-                "Local: /help /clear /status /info /tools [quiet|normal|verbose|list] /channels /config [path] [value]\nSession: /sessions /session [key|list] /agent [id|list]\nServer: /reset /compact /model <name> /think <level> /stop\nNav: PageUp/PageDown Home/End  Exit: /quit (/q)",
+                "Local: /help /clear /status /info /tools [quiet|normal|verbose|list] /channels /logs [nodeId] [lines] /config [path] [value]\nSession: /sessions /session [key|list] /agent [id|list]\nServer: /reset /compact /model <name> /think <level> /stop\nNav: Alt+1 chat  Alt+2 system  Alt+3 logs  PageUp/PageDown  Exit: /quit (/q)",
             );
         }
 
@@ -124,6 +125,10 @@ pub async fn execute(
             let path = parts.get(1).copied();
             let value = parts.get(2).copied();
             exec_config(app, gateway, path, value).await;
+        }
+
+        "/logs" | "/log" => {
+            exec_logs(app, gateway, &parts).await;
         }
 
         "/agent" => {
@@ -378,6 +383,107 @@ fn format_token_count(count: i64) -> String {
         format!("{:.1}K", count as f64 / 1_000.0)
     } else {
         count.to_string()
+    }
+}
+
+// ── /logs ───────────────────────────────────────────────────────────────────
+
+async fn exec_logs(app: &mut AppState, gateway: &GatewayClient, parts: &[&str]) {
+    let first_arg = parts.get(1).copied().unwrap_or("");
+
+    // /logs refresh | /logs r — re-fetch with last params
+    let (node_id, lines) = if first_arg == "refresh" || first_arg == "r" {
+        (app.logs_last_node.clone(), Some(app.logs_last_lines))
+    } else {
+        let node_id = if first_arg.is_empty() {
+            None
+        } else {
+            Some(first_arg.to_string())
+        };
+        let lines = parts.get(2).and_then(|s| s.parse::<usize>().ok());
+        (node_id, lines)
+    };
+
+    // Store for refresh.
+    app.logs_last_node = node_id.clone();
+    if let Some(n) = lines {
+        app.logs_last_lines = n;
+    }
+
+    app.push_message(
+        MessageRole::System,
+        format!(
+            "Fetching logs{}...",
+            node_id
+                .as_deref()
+                .map(|n| format!(" from {}", n))
+                .unwrap_or_default()
+        ),
+    );
+
+    match gateway.logs_get(node_id.clone(), lines).await {
+        Ok(payload) => {
+            let node = payload
+                .get("nodeId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let count = payload
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let truncated = payload
+                .get("truncated")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let log_lines = payload
+                .get("lines")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            // Populate the logs buffer.
+            app.logs_buffer.clear();
+            let is_logs = app.active_buffer == BufferId::Logs;
+
+            // Header line.
+            let header = if truncated {
+                format!("── {} ({} lines, truncated) ──", node, count)
+            } else {
+                format!("── {} ({} lines) ──", node, count)
+            };
+            app.logs_buffer.push(
+                MessageLine {
+                    role: MessageRole::System,
+                    text: header,
+                },
+                is_logs,
+            );
+
+            // Log content.
+            for line in &log_lines {
+                let text = line.as_str().unwrap_or("").to_string();
+                app.logs_buffer.push(
+                    MessageLine {
+                        role: MessageRole::System,
+                        text,
+                    },
+                    is_logs,
+                );
+            }
+
+            // Switch to the logs buffer automatically.
+            app.switch_buffer(BufferId::Logs);
+            app.push_message(
+                MessageRole::System,
+                format!("Loaded {} log lines from {} (Alt+3 to view)", count, node),
+            );
+        }
+        Err(error) => {
+            app.push_message(
+                MessageRole::Error,
+                format!("Failed to fetch logs: {error}"),
+            );
+        }
     }
 }
 

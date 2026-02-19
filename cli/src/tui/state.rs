@@ -108,6 +108,11 @@ pub struct AppState {
     // System state (live node/channel/session info)
     pub system: SystemState,
 
+    // Logs
+    pub logs_buffer: Buffer,
+    pub logs_last_node: Option<String>,
+    pub logs_last_lines: usize,
+
     // Input
     pub input: String,
     pub input_history: Vec<String>,
@@ -142,6 +147,9 @@ impl AppState {
             active_buffer: BufferId::Chat,
             system_buffer: Buffer::new(BufferId::System),
             system: SystemState::new(),
+            logs_buffer: Buffer::new(BufferId::Logs),
+            logs_last_node: None,
+            logs_last_lines: 100,
             input: String::new(),
             input_history: Vec::new(),
             input_history_index: None,
@@ -162,8 +170,10 @@ impl AppState {
 
     pub fn switch_buffer(&mut self, id: BufferId) {
         self.active_buffer = id;
-        if id == BufferId::System {
-            self.system_buffer.mark_read();
+        match id {
+            BufferId::System => self.system_buffer.mark_read(),
+            BufferId::Logs => self.logs_buffer.mark_read(),
+            _ => {}
         }
     }
 

@@ -159,6 +159,25 @@ impl GatewayClient {
         self.request::<()>("nodes.list", None).await
     }
 
+    pub async fn logs_get(
+        &self,
+        node_id: Option<String>,
+        lines: Option<usize>,
+    ) -> GatewayResult<Value> {
+        let mut params = Map::new();
+        if let Some(node_id) = node_id {
+            params.insert("nodeId".to_string(), json!(node_id));
+        }
+        if let Some(lines) = lines {
+            params.insert("lines".to_string(), json!(lines));
+        }
+        if params.is_empty() {
+            self.request::<()>("logs.get", None).await
+        } else {
+            self.request("logs.get", Some(params)).await
+        }
+    }
+
     pub async fn tools_list(&self) -> GatewayResult<Value> {
         self.request::<()>("tools.list", None).await
     }

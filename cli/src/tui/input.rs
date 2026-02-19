@@ -1,7 +1,64 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 
 use crate::tui::buffer::BufferId;
+use crate::tui::state::AppState;
 use crate::tui::theme;
+
+// ── Buffer-aware scroll helpers ─────────────────────────────────────────────
+
+fn scroll_active_up(app: &mut AppState, lines: usize) {
+    match app.active_buffer {
+        BufferId::Chat => app.scroll_chat_up(lines),
+        BufferId::System => {
+            app.system_buffer.auto_follow = false;
+            app.system_buffer.scroll = app.system_buffer.scroll.saturating_sub(lines);
+        }
+        BufferId::Logs => {
+            app.logs_buffer.auto_follow = false;
+            app.logs_buffer.scroll = app.logs_buffer.scroll.saturating_sub(lines);
+        }
+    }
+}
+
+fn scroll_active_down(app: &mut AppState, lines: usize) {
+    match app.active_buffer {
+        BufferId::Chat => app.scroll_chat_down(lines),
+        BufferId::System => {
+            app.system_buffer.auto_follow = false;
+            app.system_buffer.scroll = app.system_buffer.scroll.saturating_add(lines);
+        }
+        BufferId::Logs => {
+            app.logs_buffer.auto_follow = false;
+            app.logs_buffer.scroll = app.logs_buffer.scroll.saturating_add(lines);
+        }
+    }
+}
+
+fn scroll_active_top(app: &mut AppState) {
+    match app.active_buffer {
+        BufferId::Chat => app.scroll_chat_to_top(),
+        BufferId::System => {
+            app.system_buffer.auto_follow = false;
+            app.system_buffer.scroll = 0;
+        }
+        BufferId::Logs => {
+            app.logs_buffer.auto_follow = false;
+            app.logs_buffer.scroll = 0;
+        }
+    }
+}
+
+fn scroll_active_bottom(app: &mut AppState) {
+    match app.active_buffer {
+        BufferId::Chat => app.scroll_chat_to_bottom(),
+        BufferId::System => {
+            app.system_buffer.auto_follow = true;
+        }
+        BufferId::Logs => {
+            app.logs_buffer.auto_follow = true;
+        }
+    }
+}
 
 /// Actions the main loop should take in response to keyboard input.
 pub enum KeyAction {
@@ -31,6 +88,10 @@ pub fn handle_key(
             }
             KeyCode::Char('2') => {
                 app.switch_buffer(BufferId::System);
+                KeyAction::Consumed
+            }
+            KeyCode::Char('3') => {
+                app.switch_buffer(BufferId::Logs);
                 KeyAction::Consumed
             }
             _ => KeyAction::Ignored,
@@ -72,19 +133,19 @@ pub fn handle_key(
             KeyAction::Consumed
         }
         KeyCode::PageUp => {
-            app.scroll_chat_up(theme::CHAT_SCROLL_PAGE_SIZE);
+            scroll_active_up(app, theme::CHAT_SCROLL_PAGE_SIZE);
             KeyAction::Consumed
         }
         KeyCode::PageDown => {
-            app.scroll_chat_down(theme::CHAT_SCROLL_PAGE_SIZE);
+            scroll_active_down(app, theme::CHAT_SCROLL_PAGE_SIZE);
             KeyAction::Consumed
         }
         KeyCode::Home => {
-            app.scroll_chat_to_top();
+            scroll_active_top(app);
             KeyAction::Consumed
         }
         KeyCode::End => {
-            app.scroll_chat_to_bottom();
+            scroll_active_bottom(app);
             KeyAction::Consumed
         }
         KeyCode::Char(ch) => {
