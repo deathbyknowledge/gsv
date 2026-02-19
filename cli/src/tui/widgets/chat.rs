@@ -4,6 +4,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
+use crate::tui::markdown;
 use crate::tui::state::{MessageLine, MessageRole};
 use crate::tui::theme;
 
@@ -36,26 +37,32 @@ pub fn build_lines(messages: &[MessageLine], max_width: usize) -> Vec<Line<'stat
             width = theme::NICK_WIDTH
         );
         let nick_style = message.role.style();
-        let text_style = text_style_for(message.role);
 
-        let wrapped = wrap_text(&message.text, text_width);
+        // Assistant messages get markdown rendering; everything else is plain.
+        let styled_lines: Vec<Vec<Span<'static>>> = if message.role == MessageRole::Assistant {
+            markdown::render_markdown(&message.text, text_width)
+        } else {
+            let text_style = text_style_for(message.role);
+            wrap_text(&message.text, text_width)
+                .into_iter()
+                .map(|s| vec![Span::styled(s, text_style)])
+                .collect()
+        };
 
-        for (i, line_text) in wrapped.iter().enumerate() {
-            if i == 0 {
-                // First line of message: nick │ text
-                lines.push(Line::from(vec![
+        for (i, text_spans) in styled_lines.iter().enumerate() {
+            let mut line_spans = if i == 0 {
+                vec![
                     Span::styled(nick.clone(), nick_style),
                     Span::styled(" │ ", sep_style),
-                    Span::styled(line_text.clone(), text_style),
-                ]));
+                ]
             } else {
-                // Continuation: spaces │ text
-                lines.push(Line::from(vec![
+                vec![
                     Span::raw(" ".repeat(theme::NICK_WIDTH)),
                     Span::styled(" │ ", sep_style),
-                    Span::styled(line_text.clone(), text_style),
-                ]));
-            }
+                ]
+            };
+            line_spans.extend(text_spans.iter().cloned());
+            lines.push(Line::from(line_spans));
         }
     }
 

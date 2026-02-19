@@ -53,6 +53,10 @@ pub const COLOR_TOOL: Color = Color::Yellow;
 pub const COLOR_DIM: Color = Color::DarkGray;
 pub const COLOR_SEPARATOR: Color = Color::DarkGray;
 
+// Markdown colors
+pub const COLOR_CODE: Color = Color::Cyan;
+pub const COLOR_HEADING: Color = Color::Magenta;
+
 // Bar colors (weechat-style colored background bars)
 pub const COLOR_BAR_FG: Color = Color::White;
 pub const COLOR_BAR_BG: Color = Color::Blue;
@@ -101,4 +105,25 @@ pub fn style_bar_accent() -> Style {
         .fg(COLOR_BAR_ACCENT)
         .bg(COLOR_BAR_BG)
         .add_modifier(Modifier::BOLD)
+}
+
+// ── Markdown styles ─────────────────────────────────────────────────────────
+
+pub fn style_md_code() -> Style {
+    Style::default().fg(COLOR_CODE)
+}
+
+pub fn style_md_heading(level: u8) -> Style {
+    match level {
+        1 | 2 => Style::default()
+            .fg(COLOR_HEADING)
+            .add_modifier(Modifier::BOLD),
+        _ => Style::default().add_modifier(Modifier::BOLD),
+    }
+}
+
+pub fn style_md_blockquote() -> Style {
+    Style::default()
+        .fg(COLOR_DIM)
+        .add_modifier(Modifier::ITALIC)
 }

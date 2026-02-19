@@ -3,6 +3,7 @@ pub mod buffer;
 pub mod commands;
 pub mod events;
 pub mod input;
+pub mod markdown;
 pub mod state;
 pub mod system;
 pub mod theme;
