@@ -991,6 +991,13 @@ export class Session extends DurableObject<Env> {
     if (pendingCallIds.length > 0) {
       for (const callId of pendingCallIds) {
         const call = this.pendingToolCalls[callId];
+        if (!call) {
+          console.warn(
+            `[Session] Missing pending tool call data for ${callId}, removing`,
+          );
+          delete this.pendingToolCalls[callId];
+          continue;
+        }
         const content = call.error
           ? `Error: ${call.error}`
           : typeof call.result === "string"
@@ -1310,6 +1317,13 @@ export class Session extends DurableObject<Env> {
   private allToolsResolved(): boolean {
     for (const callId of Object.keys(this.pendingToolCalls)) {
       const call = this.pendingToolCalls[callId];
+      if (!call) {
+        console.warn(
+          `[Session] Missing pending tool call data for ${callId}, removing`,
+        );
+        delete this.pendingToolCalls[callId];
+        continue;
+      }
       if (call.result === undefined && !call.error) return false;
     }
     return true;
@@ -1850,6 +1864,13 @@ export class Session extends DurableObject<Env> {
     let timedOutCount = 0;
     for (const callId of Object.keys(this.pendingToolCalls)) {
       const call = this.pendingToolCalls[callId];
+      if (!call) {
+        console.warn(
+          `[Session] Missing pending tool call data for ${callId}, removing`,
+        );
+        delete this.pendingToolCalls[callId];
+        continue;
+      }
       if (call.result === undefined && !call.error) {
         call.error = "Tool execution timed out";
         this.pendingToolCalls[callId] = call;
