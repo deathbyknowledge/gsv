@@ -45,6 +45,7 @@ import {
 } from "./cron";
 import { handleConfigGet, handleConfigSet } from "./config";
 import { handleConnect } from "./connect";
+import { handleNodesList } from "./nodes";
 import { handleSkillsStatus, handleSkillsUpdate } from "./skills";
 import {
   handleWorkspaceList,
@@ -60,6 +61,7 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     "tool.result": handleToolResult,
     "node.probe.result": handleNodeProbeResult,
     "node.exec.event": handleNodeExecEvent,
+    "nodes.list": handleNodesList,
     "tools.list": handleToolsList,
     "logs.get": handleLogsGet,
     "logs.result": handleLogsResult,

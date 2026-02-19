@@ -90,6 +90,14 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
     gw.toolRegistry[nodeId] = nodeTools;
     gw.nodeRuntimeRegistry[nodeId] = runtime;
     gw.onNodeConnected(nodeId);
+    gw.broadcastSystemEvent({
+      event: "system.node",
+      action: "connected",
+      nodeId,
+      toolCount: nodeTools.length,
+      hostOs: runtime.hostOs,
+      hostRole: runtime.hostRole,
+    });
     console.log(
       `[Gateway] Node connected: ${nodeId}, role=${runtime.hostRole}, tools: [${nodeTools.map((t) => `${nodeId}__${t.name}`).join(", ")}]`,
     );
@@ -115,6 +123,13 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
       accountId,
       connectedAt: Date.now(),
     };
+    gw.broadcastSystemEvent({
+      event: "system.channel",
+      action: "connected",
+      channel: channel as string,
+      accountId,
+      connected: true,
+    });
     console.log(`[Gateway] Channel connected: ${channelKey}`);
   }
 
@@ -125,6 +140,7 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
     server: { version: "0.0.1", connectionId: attachments.id },
     features: {
       methods: [
+        "nodes.list",
         "tools.list",
         "logs.get",
         "chat.send",
@@ -165,6 +181,7 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
       ],
       events: [
         "chat",
+        "system",
         "tool.invoke",
         "tool.result",
         "node.probe",

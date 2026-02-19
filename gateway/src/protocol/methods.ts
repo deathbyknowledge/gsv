@@ -30,6 +30,7 @@ import type {
   ToolRequestParams,
   ToolResultParams,
 } from "./tools";
+import type { RuntimeHostInventoryEntry } from "./tools";
 import type {
   CronJob,
   CronJobCreate,
@@ -111,6 +112,14 @@ export type RpcMethods = {
   "logs.result": {
     params: LogsResultParams;
     result: { ok: true; dropped?: true };
+  };
+
+  "nodes.list": {
+    params: undefined;
+    result: {
+      nodes: RuntimeHostInventoryEntry[];
+      count: number;
+    };
   };
 
   "tools.list": {

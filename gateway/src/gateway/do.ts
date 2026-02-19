@@ -85,6 +85,7 @@ import {
   type CronRunResult,
 } from "../cron";
 import type { ChatEventPayload } from "../protocol/chat";
+import type { SystemEvent } from "../protocol/system";
 import type {
   ChannelRegistryEntry,
   ChannelId,
@@ -694,6 +695,11 @@ export class Gateway extends DurableObject<Env> {
         `Node disconnected during node probe: ${nodeId}`,
       );
       delete this.nodeRuntimeRegistry[nodeId];
+      this.broadcastSystemEvent({
+        event: "system.node",
+        action: "disconnected",
+        nodeId,
+      });
       console.log(`[Gateway] Node ${nodeId} removed from registry`);
     } else if (mode === "channel" && channelKey) {
       // Ignore close events from stale sockets that were replaced by reconnect.
@@ -702,6 +708,14 @@ export class Gateway extends DurableObject<Env> {
         return;
       }
       this.channels.delete(channelKey);
+      const [channelId, accountId] = channelKey.split(":");
+      this.broadcastSystemEvent({
+        event: "system.channel",
+        action: "disconnected",
+        channel: channelId ?? channelKey,
+        accountId: accountId ?? "default",
+        connected: false,
+      });
       console.log(`[Gateway] Channel ${channelKey} disconnected`);
     }
   }
@@ -3242,6 +3256,20 @@ export class Gateway extends DurableObject<Env> {
     }
   }
 
+  broadcastSystemEvent(payload: SystemEvent): void {
+    const evt: EventFrame<SystemEvent> = {
+      type: "evt",
+      event: "system",
+      payload,
+    };
+    const message = JSON.stringify(evt);
+    for (const ws of this.clients.values()) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
+    }
+  }
+
   private routeToChannel(
     sessionKey: string,
     context: {
@@ -4164,5 +4192,15 @@ export class Gateway extends DurableObject<Env> {
         connectedAt: Date.now(),
       };
     }
+
+    this.broadcastSystemEvent({
+      event: "system.channel",
+      action: "status",
+      channel: channelId,
+      accountId,
+      connected: status.connected,
+      authenticated: status.authenticated,
+      error: status.error,
+    });
   }
 }

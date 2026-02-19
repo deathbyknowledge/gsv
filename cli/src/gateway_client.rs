@@ -155,6 +155,10 @@ impl GatewayClient {
         .await
     }
 
+    pub async fn nodes_list(&self) -> GatewayResult<Value> {
+        self.request::<()>("nodes.list", None).await
+    }
+
     pub async fn tools_list(&self) -> GatewayResult<Value> {
         self.request::<()>("tools.list", None).await
     }

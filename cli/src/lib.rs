@@ -4,3 +4,4 @@ pub mod deploy;
 pub mod gateway_client;
 pub mod protocol;
 pub mod tools;
+pub mod tui;

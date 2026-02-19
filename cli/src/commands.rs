@@ -1,6 +1,7 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gsv::config;
 use gsv::connection::Connection;
@@ -13,7 +14,38 @@ use crate::{
     SkillsAction, ToolsAction, WhatsAppAction,
 };
 
+// Re-use types from the tui module for the legacy client path.
+use gsv::tui::events::format_content;
+use gsv::tui::state::normalize_session_key_for_match;
+
+const CLIENT_CONNECTION_TIMEOUT_SECS: u64 = 120;
+
+// ── Client entry point ──────────────────────────────────────────────────────
+
 pub(crate) async fn run_client(
+    url: &str,
+    token: Option<String>,
+    message: Option<String>,
+    session_key: &str,
+    classic: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let session_key = normalize_session_key_for_match(session_key);
+    if message.is_some() || !io::stdin().is_terminal() || classic {
+        run_client_legacy(url, token, message, &session_key).await
+    } else {
+        match gsv::tui::run(url, token.clone(), &session_key).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                eprintln!("TUI client failed ({err}), falling back to legacy mode");
+                run_client_legacy(url, token, message, &session_key).await
+            }
+        }
+    }
+}
+
+// ── Legacy line-based client ────────────────────────────────────────────────
+
+async fn run_client_legacy(
     url: &str,
     token: Option<String>,
     message: Option<String>,
@@ -21,55 +53,61 @@ pub(crate) async fn run_client(
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to {}...", url);
 
-    // Flag to track when we've received a final/error response
     let response_received = Arc::new(AtomicBool::new(false));
     let response_received_clone = response_received.clone();
-    let session_key_owned = session_key.to_string();
+    let session_filter = normalize_session_key_for_match(session_key);
 
     let conn = Connection::connect_with_options(
         url,
         "client",
         None,
         None,
-        move |frame| {
-            // Handle incoming events
-            if let Frame::Evt(evt) = frame {
-                if evt.event == "chat" {
-                    if let Some(payload) = evt.payload {
-                        // Filter by sessionKey - ignore events for other sessions
-                        if let Some(event_session) =
-                            payload.get("sessionKey").and_then(|s| s.as_str())
-                        {
-                            if event_session != session_key_owned {
-                                return;
-                            }
-                        }
-
-                        if let Some(state) = payload.get("state").and_then(|s| s.as_str()) {
-                            match state {
-                                "delta" | "partial" => {
-                                    if let Some(text) = payload.get("text").and_then(|t| t.as_str())
-                                    {
-                                        print!("{}", text);
-                                        let _ = io::stdout().flush();
-                                    }
+        {
+            let session_filter = session_filter.clone();
+            move |frame| {
+                if let Frame::Evt(evt) = frame {
+                    if evt.event == "chat" {
+                        if let Some(payload) = evt.payload {
+                            if let Some(event_session) =
+                                payload.get("sessionKey").and_then(|s| s.as_str())
+                            {
+                                if normalize_session_key_for_match(event_session) != session_filter
+                                {
+                                    return;
                                 }
-                                "final" => {
-                                    if let Some(msg) = payload.get("message") {
-                                        if let Some(content) = msg.get("content") {
-                                            println!("\nAssistant: {}", format_content(content));
+                            }
+
+                            if let Some(state) = payload.get("state").and_then(|s| s.as_str()) {
+                                match state {
+                                    "delta" | "partial" => {
+                                        if let Some(text) =
+                                            payload.get("text").and_then(|t| t.as_str())
+                                        {
+                                            print!("{}", text);
+                                            let _ = io::stdout().flush();
                                         }
                                     }
-                                    response_received_clone.store(true, Ordering::SeqCst);
-                                }
-                                "error" => {
-                                    if let Some(err) = payload.get("error").and_then(|e| e.as_str())
-                                    {
-                                        eprintln!("\nError: {}", err);
+                                    "final" => {
+                                        if let Some(msg) = payload.get("message") {
+                                            if let Some(content) = msg.get("content") {
+                                                println!(
+                                                    "\nAssistant: {}",
+                                                    format_content(content)
+                                                );
+                                            }
+                                        }
+                                        response_received_clone.store(true, Ordering::SeqCst);
                                     }
-                                    response_received_clone.store(true, Ordering::SeqCst);
+                                    "error" => {
+                                        if let Some(err) =
+                                            payload.get("error").and_then(|e| e.as_str())
+                                        {
+                                            eprintln!("\nError: {}", err);
+                                        }
+                                        response_received_clone.store(true, Ordering::SeqCst);
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
                         }
                     }
@@ -82,26 +120,28 @@ pub(crate) async fn run_client(
     .await?;
     let gateway = GatewayClient::new(conn);
 
+    let timeout = Duration::from_secs(CLIENT_CONNECTION_TIMEOUT_SECS);
     if let Some(msg) = message {
-        // One-shot mode: send message and wait for response
-        let was_command = send_chat(&gateway, session_key, &msg).await?;
+        let result = send_chat(&gateway, session_key, &msg).await?;
 
-        // Only wait for chat event if this wasn't a command/directive
-        if !was_command {
-            // Wait for response (up to 120 seconds for LLM + tool execution)
-            let timeout = tokio::time::Duration::from_secs(120);
-            let start = tokio::time::Instant::now();
+        if let Some(response) = result.response {
+            println!("{response}");
+        }
+        if let Some(error) = result.error {
+            eprintln!("Error: {error}");
+        }
 
+        if !result.directive {
+            let start = Instant::now();
             while !response_received.load(Ordering::SeqCst) {
                 if start.elapsed() > timeout {
                     eprintln!("Timeout waiting for response");
                     break;
                 }
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
     } else {
-        // Interactive mode
         println!("Connected! Type your message and press Enter. Type 'quit' to exit.\n");
 
         let stdin = io::stdin();
@@ -122,23 +162,24 @@ pub(crate) async fn run_client(
                 continue;
             }
 
-            // Reset response flag
             response_received.store(false, Ordering::SeqCst);
 
-            let was_command = send_chat(&gateway, session_key, line).await?;
+            let result = send_chat(&gateway, session_key, line).await?;
+            if let Some(response) = result.response {
+                println!("{}", response);
+            }
+            if let Some(error) = result.error {
+                eprintln!("Error: {error}");
+            }
 
-            // Only wait for chat event if this wasn't a command/directive
-            if !was_command {
-                // Wait for response (up to 120 seconds)
-                let timeout = tokio::time::Duration::from_secs(120);
-                let start = tokio::time::Instant::now();
-
+            if !result.directive {
+                let start = Instant::now();
                 while !response_received.load(Ordering::SeqCst) {
                     if start.elapsed() > timeout {
                         eprintln!("Timeout waiting for response");
                         break;
                     }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
 
@@ -149,6 +190,36 @@ pub(crate) async fn run_client(
 
     Ok(())
 }
+
+// ── Legacy send helper (uses tui events module) ─────────────────────────────
+
+#[derive(Clone)]
+struct LegacySendResult {
+    directive: bool,
+    response: Option<String>,
+    error: Option<String>,
+}
+
+async fn send_chat(
+    client: &GatewayClient,
+    session_key: &str,
+    message: &str,
+) -> Result<LegacySendResult, Box<dyn std::error::Error>> {
+    let payload = client
+        .chat_send(session_key.to_string(), message.to_string())
+        .await?;
+
+    let full = gsv::tui::events::parse_send_result(&payload);
+    Ok(LegacySendResult {
+        directive: full.directive,
+        response: full.response,
+        error: full.error,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Non-TUI command handlers (unchanged)
+// ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) async fn run_heartbeat(
     url: &str,
@@ -270,7 +341,7 @@ pub(crate) async fn run_pair(
                     println!("No pending pairing requests");
                 } else {
                     println!("Pending pairing requests ({}):\n", pairs.len());
-                    for (key, pair) in pairs {
+                    for (_key, pair) in pairs {
                         let sender_id = pair
                             .get("senderId")
                             .and_then(|s| s.as_str())
@@ -300,7 +371,7 @@ pub(crate) async fn run_pair(
                                 println!();
                             }
                         } else {
-                            println!("  {}: {} ({})", key, sender_name, sender_id);
+                            println!("  {} ({})", sender_name, sender_id);
                         }
                     }
                     println!("To approve: gsv pair approve <channel> <sender_id>");
@@ -408,11 +479,7 @@ pub(crate) async fn run_whatsapp_via_gateway(
                 .await?;
 
             if let Some(qr_data_url) = payload.get("qrDataUrl").and_then(|q| q.as_str()) {
-                // qrDataUrl is a data URL, extract the QR data
                 println!("\nScan this QR code with WhatsApp:\n");
-
-                // The qrDataUrl from WhatsApp channel is actually the raw QR string
-                // Try to render it
                 render_qr_terminal(qr_data_url)?;
                 println!("\nQR code expires in ~20 seconds. Re-run command if needed.");
             } else if let Some(msg) = payload.get("message").and_then(|m| m.as_str()) {
@@ -585,7 +652,6 @@ pub(crate) async fn run_config(
             println!("{}", serde_json::to_string_pretty(&payload)?);
         }
         ConfigAction::Set { path, value } => {
-            // Try to parse value as JSON, fall back to string
             let parsed_value: serde_json::Value = serde_json::from_str(&value)
                 .unwrap_or_else(|_| serde_json::Value::String(value.clone()));
             client.config_set(path.clone(), parsed_value).await?;
@@ -626,7 +692,6 @@ pub(crate) async fn run_tools(
         }
 
         ToolsAction::Call { tool, args } => {
-            // Parse args as JSON
             let args: serde_json::Value = serde_json::from_str(&args).map_err(|e| {
                 format!(
                     "Invalid JSON args: {}. Expected format: '{{\"key\": \"value\"}}'",
@@ -641,7 +706,6 @@ pub(crate) async fn run_tools(
             let payload = client.tool_invoke(tool.clone(), args).await?;
             if let Some(result) = payload.get("result") {
                 println!("Result:");
-                // Try to print as pretty JSON, fall back to raw
                 if let Some(s) = result.as_str() {
                     println!("{}", s);
                 } else {
@@ -953,7 +1017,6 @@ pub(crate) async fn run_session(
             value,
         } => {
             let session_key = config::normalize_session_key(&session_key);
-            // Build the patch params based on the path
             let parsed_value: serde_json::Value = serde_json::from_str(&value)
                 .unwrap_or_else(|_| serde_json::Value::String(value.clone()));
 
@@ -968,14 +1031,12 @@ pub(crate) async fn run_session(
                     || p == "systemPrompt"
                     || p == "maxTokens" =>
                 {
-                    // Handle settings paths
                     let settings_path = if p.starts_with("settings.") {
-                        &p[9..] // Remove "settings." prefix
+                        &p[9..]
                     } else {
                         p
                     };
 
-                    // Build nested settings object
                     let mut settings = json!({});
                     let parts: Vec<&str> = settings_path.split('.').collect();
                     if parts.len() == 1 {
@@ -991,7 +1052,7 @@ pub(crate) async fn run_session(
                 }
                 p if p.starts_with("resetPolicy.") || p == "resetPolicy" => {
                     let policy_path = if p.starts_with("resetPolicy.") {
-                        &p[12..] // Remove "resetPolicy." prefix
+                        &p[12..]
                     } else {
                         "mode"
                     };
@@ -1136,7 +1197,6 @@ pub(crate) async fn run_session(
                             if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
                                 for block in content {
                                     if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                                        // Truncate long results
                                         if text.len() > 200 {
                                             println!("{}...", &text[..200]);
                                         } else {
@@ -1157,69 +1217,6 @@ pub(crate) async fn run_session(
     }
 
     Ok(())
-}
-
-async fn send_chat(
-    client: &GatewayClient,
-    session_key: &str,
-    message: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let payload = client
-        .chat_send(session_key.to_string(), message.to_string())
-        .await?;
-
-    if let Some(status) = payload.get("status").and_then(|s| s.as_str()) {
-        match status {
-            "command" => {
-                if let Some(response) = payload.get("response").and_then(|r| r.as_str()) {
-                    println!("{}", response);
-                }
-                if let Some(error) = payload.get("error").and_then(|e| e.as_str()) {
-                    eprintln!("Error: {}", error);
-                }
-                return Ok(true);
-            }
-            "directive-only" => {
-                if let Some(response) = payload.get("response").and_then(|r| r.as_str()) {
-                    println!("{}", response);
-                }
-                return Ok(true);
-            }
-            _ => {}
-        }
-    }
-
-    Ok(false) // Wait for chat event
-}
-
-fn format_content(content: &serde_json::Value) -> String {
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(arr) = content.as_array() {
-        let mut result = String::new();
-        for block in arr {
-            if let Some(block_type) = block.get("type").and_then(|t| t.as_str()) {
-                match block_type {
-                    "text" => {
-                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                            result.push_str(text);
-                        }
-                    }
-                    "toolCall" => {
-                        if let Some(name) = block.get("name").and_then(|n| n.as_str()) {
-                            result.push_str(&format!("[Tool: {}]", name));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        return result;
-    }
-
-    content.to_string()
 }
 
 fn render_qr_terminal(data: &str) -> Result<(), Box<dyn std::error::Error>> {

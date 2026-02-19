@@ -55,6 +55,10 @@ enum Commands {
         /// Session key (default from config or "agent:main:cli:dm:main")
         #[arg(short, long)]
         session: Option<String>,
+
+        /// Use legacy line-based client interface
+        #[arg(long)]
+        classic: bool,
     },
 
     /// Run as a tool-providing node
@@ -671,10 +675,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Init { force } => run_init(force),
-        Commands::Client { message, session } => {
+        Commands::Client {
+            message,
+            session,
+            classic,
+        } => {
             let session = session.unwrap_or_else(|| cfg.default_session());
             let session = config::normalize_session_key(&session);
-            commands::run_client(&url, token, message, &session).await
+            commands::run_client(&url, token, message, &session, classic).await
         }
         Commands::Node {
             foreground,
