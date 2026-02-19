@@ -1424,6 +1424,7 @@ async fn run_deploy(
                 && prompt_yes_no("Configure gateway auth + LLM settings now?", true)?
             {
                 resolved_provider = Some(prompt_llm_provider(Some("anthropic"))?);
+                println!("Selected provider: {:?}", resolved_provider);
             }
 
             if let Some(provider) = resolved_provider.as_deref() {
@@ -1434,6 +1435,7 @@ async fn run_deploy(
                         } else {
                             resolved_llm_model = Some(default_model.to_string());
                         }
+                        println!("Using model: {:?}", resolved_llm_model);
                     } else if interactive && wizard_mode {
                         resolved_llm_model = prompt_line("LLM model", None)?;
                     } else {
@@ -1457,6 +1459,9 @@ async fn run_deploy(
                 }
                 if resolved_llm_api_key.is_none() && interactive && wizard_mode {
                     resolved_llm_api_key = prompt_secret(&format!("{} API key", provider))?;
+                    if let Some(ref key) = resolved_llm_api_key {
+                        println!("Got API key: {}...", &key[..key.len().min(8)]);
+                    }
                 }
                 if resolved_llm_api_key.is_none() {
                     return Err(format!(
@@ -1566,6 +1571,13 @@ async fn run_deploy(
                         llm_api_key: resolved_llm_api_key.clone(),
                         set_whatsapp_pairing,
                     };
+
+                    println!("Gateway bootstrap config:");
+                    println!("  auth_token: {:?}", gateway_bootstrap.auth_token.as_ref().map(|t| format!("{}...", &t[..t.len().min(8)])));
+                    println!("  llm_provider: {:?}", gateway_bootstrap.llm_provider);
+                    println!("  llm_model: {:?}", gateway_bootstrap.llm_model);
+                    println!("  llm_api_key: {:?}", gateway_bootstrap.llm_api_key.as_ref().map(|k| format!("{}...", &k[..k.len().min(8)])));
+                    println!("  set_whatsapp_pairing: {:?}", gateway_bootstrap.set_whatsapp_pairing);
 
                     let should_bootstrap = gateway_bootstrap.auth_token.is_some()
                         || gateway_bootstrap.llm_provider.is_some()
