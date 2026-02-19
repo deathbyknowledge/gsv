@@ -122,5 +122,9 @@ export async function providerStep(
     handleCancel();
   }
 
+  p.log(`✓ Provider: ${provider}`);
+  p.log(`✓ Model: ${model}`);
+  p.log(`✓ API Key: ${apiKey.slice(0, 8)}${apiKey.length > 8 ? '...' : ''}`);
+
   return { provider, model, apiKey };
 }

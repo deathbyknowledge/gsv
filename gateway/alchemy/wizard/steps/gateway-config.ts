@@ -231,18 +231,22 @@ export async function configureGateway(
     // After this point, all connections must provide this token
     spinner.message("Setting auth token...");
     await client.configSet("auth.token", state.authToken);
+    p.log(`✓ Set auth.token`);
 
     // Set model provider
     spinner.message("Setting model provider...");
     await client.configSet("model.provider", state.llm.provider);
+    p.log(`✓ Set model.provider: ${state.llm.provider}`);
 
     // Set model ID
     spinner.message("Setting model...");
     await client.configSet("model.id", state.llm.model);
+    p.log(`✓ Set model.id: ${state.llm.model}`);
 
     // Set API key
     spinner.message("Setting API key...");
     await client.configSet(`apiKeys.${state.llm.provider}`, state.llm.apiKey);
+    p.log(`✓ Set apiKeys.${state.llm.provider}: ${state.llm.apiKey.slice(0, 8)}${state.llm.apiKey.length > 8 ? '...' : ''}`);
 
     // Set default channel configs
     if (state.channels.whatsapp) {
