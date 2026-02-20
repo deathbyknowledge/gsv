@@ -296,7 +296,7 @@ function describeCronSchedule(job: CronJob, timezone: string): string {
   return `cron "${job.schedule.expr}" (${tz})`;
 }
 
-type ActiveTransfer = {
+type TransferState = {
   transferId: number;
   callId: string;
   sessionKey: string;
@@ -305,11 +305,12 @@ type ActiveTransfer = {
   state: "init" | "meta-wait" | "accept-wait" | "streaming" | "completing";
   size?: number;
   mime?: string;
-  sourceWs?: WebSocket;
-  destWs?: WebSocket;
-  r2Writer?: WritableStreamDefaultWriter<Uint8Array>;
-  r2UploadPromise?: Promise<R2Object>;
   bytesTransferred: number;
+};
+
+type TransferR2 = {
+  writer: WritableStreamDefaultWriter<Uint8Array>;
+  uploadPromise: Promise<R2Object>;
 };
 
 export class Gateway extends DurableObject<Env> {
@@ -317,8 +318,11 @@ export class Gateway extends DurableObject<Env> {
   nodes: Map<string, WebSocket> = new Map();
   channels: Map<string, WebSocket> = new Map();
 
-  private activeTransfers = new Map<number, ActiveTransfer>();
-  private nextTransferId = 1;
+  readonly transfers = PersistedObject<Record<string, TransferState>>(
+    this.ctx.storage.kv,
+    { prefix: "transfers:" },
+  );
+  private transferR2 = new Map<number, TransferR2>();
 
   readonly toolRegistry = PersistedObject<Record<string, ToolDefinition[]>>(
     this.ctx.storage.kv,
@@ -1888,14 +1892,34 @@ export class Gateway extends DurableObject<Env> {
     return { ok: true };
   }
 
+  private nextTransferId(): number {
+    const keys = Object.keys(this.transfers);
+    if (keys.length === 0) return 1;
+    return Math.max(...keys.map(Number)) + 1;
+  }
+
+  private getTransferWs(nodeId: string): WebSocket | undefined {
+    if (nodeId === "gsv") return undefined;
+    const ws = this.nodes.get(nodeId);
+    return ws && ws.readyState === WebSocket.OPEN ? ws : undefined;
+  }
+
   async transferRequest(
     params: TransferRequestParams,
   ): Promise<{ ok: boolean; error?: string }> {
-    const transferId = this.nextTransferId++;
+    const transferId = this.nextTransferId();
     const sourceIsGsv = params.source.node === "gsv";
     const destIsGsv = params.destination.node === "gsv";
 
-    const transfer: ActiveTransfer = {
+    if (!sourceIsGsv && !this.getTransferWs(params.source.node)) {
+      return { ok: false, error: `Source node not connected: ${params.source.node}` };
+    }
+
+    if (!destIsGsv && !this.getTransferWs(params.destination.node)) {
+      return { ok: false, error: `Destination node not connected: ${params.destination.node}` };
+    }
+
+    const transfer: TransferState = {
       transferId,
       callId: params.callId,
       sessionKey: params.sessionKey,
@@ -1905,35 +1929,19 @@ export class Gateway extends DurableObject<Env> {
       bytesTransferred: 0,
     };
 
-    if (!sourceIsGsv) {
-      const sourceWs = this.nodes.get(params.source.node);
-      if (!sourceWs || sourceWs.readyState !== WebSocket.OPEN) {
-        return { ok: false, error: `Source node not connected: ${params.source.node}` };
-      }
-      transfer.sourceWs = sourceWs;
-    }
-
-    if (!destIsGsv) {
-      const destWs = this.nodes.get(params.destination.node);
-      if (!destWs || destWs.readyState !== WebSocket.OPEN) {
-        return { ok: false, error: `Destination node not connected: ${params.destination.node}` };
-      }
-      transfer.destWs = destWs;
-    }
-
-    this.activeTransfers.set(transferId, transfer);
+    this.transfers[String(transferId)] = transfer;
 
     if (sourceIsGsv) {
       const r2Object = await this.env.STORAGE.head(params.source.path);
       if (!r2Object) {
-        this.activeTransfers.delete(transferId);
+        delete this.transfers[String(transferId)];
         return { ok: false, error: `R2 object not found: ${params.source.path}` };
       }
       transfer.size = r2Object.size;
       transfer.mime = r2Object.httpMetadata?.contentType;
 
       if (destIsGsv) {
-        this.activeTransfers.delete(transferId);
+        delete this.transfers[String(transferId)];
         return { ok: false, error: "Cannot transfer from gsv to gsv" };
       }
 
@@ -1947,8 +1955,9 @@ export class Gateway extends DurableObject<Env> {
           mime: transfer.mime,
         },
       };
-      transfer.destWs!.send(JSON.stringify(receiveEvt));
+      this.getTransferWs(params.destination.node)!.send(JSON.stringify(receiveEvt));
       transfer.state = "accept-wait";
+      this.transfers[String(transferId)] = transfer;
     } else {
       const sendEvt: EventFrame<TransferSendPayload> = {
         type: "evt",
@@ -1958,15 +1967,16 @@ export class Gateway extends DurableObject<Env> {
           path: params.source.path,
         },
       };
-      transfer.sourceWs!.send(JSON.stringify(sendEvt));
+      this.getTransferWs(params.source.node)!.send(JSON.stringify(sendEvt));
       transfer.state = "meta-wait";
+      this.transfers[String(transferId)] = transfer;
     }
 
     return { ok: true };
   }
 
   handleTransferMeta(params: TransferMetaParams): void {
-    const transfer = this.activeTransfers.get(params.transferId);
+    const transfer = this.transfers[String(params.transferId)];
     if (!transfer) return;
 
     if (params.error) {
@@ -1980,10 +1990,9 @@ export class Gateway extends DurableObject<Env> {
     const destIsGsv = transfer.destination.node === "gsv";
 
     if (destIsGsv) {
-      const { readable, writable } = new TransformStream<Uint8Array>();
+      const { readable, writable } = new FixedLengthStream(params.size);
       const writer = writable.getWriter();
-      transfer.r2Writer = writer;
-      transfer.r2UploadPromise = this.env.STORAGE.put(
+      const uploadPromise = this.env.STORAGE.put(
         transfer.destination.path,
         readable,
         {
@@ -1992,15 +2001,27 @@ export class Gateway extends DurableObject<Env> {
             : undefined,
         },
       );
+      this.transferR2.set(params.transferId, { writer, uploadPromise });
 
+      const sourceWs = this.getTransferWs(transfer.source.node);
+      if (!sourceWs) {
+        this.failTransfer(transfer, `Source node disconnected: ${transfer.source.node}`);
+        return;
+      }
       const startEvt: EventFrame<TransferStartPayload> = {
         type: "evt",
         event: "transfer.start",
         payload: { transferId: params.transferId },
       };
-      transfer.sourceWs!.send(JSON.stringify(startEvt));
+      sourceWs.send(JSON.stringify(startEvt));
       transfer.state = "streaming";
+      this.transfers[String(params.transferId)] = transfer;
     } else {
+      const destWs = this.getTransferWs(transfer.destination.node);
+      if (!destWs) {
+        this.failTransfer(transfer, `Destination node disconnected: ${transfer.destination.node}`);
+        return;
+      }
       const receiveEvt: EventFrame<TransferReceivePayload> = {
         type: "evt",
         event: "transfer.receive",
@@ -2011,13 +2032,14 @@ export class Gateway extends DurableObject<Env> {
           mime: params.mime,
         },
       };
-      transfer.destWs!.send(JSON.stringify(receiveEvt));
+      destWs.send(JSON.stringify(receiveEvt));
       transfer.state = "accept-wait";
+      this.transfers[String(params.transferId)] = transfer;
     }
   }
 
   handleTransferAccept(params: TransferAcceptParams): void {
-    const transfer = this.activeTransfers.get(params.transferId);
+    const transfer = this.transfers[String(params.transferId)];
     if (!transfer) return;
 
     if (params.error) {
@@ -2029,20 +2051,27 @@ export class Gateway extends DurableObject<Env> {
 
     if (sourceIsGsv) {
       transfer.state = "streaming";
+      this.transfers[String(params.transferId)] = transfer;
       this.ctx.waitUntil(this.streamR2ToDest(transfer));
     } else {
+      const sourceWs = this.getTransferWs(transfer.source.node);
+      if (!sourceWs) {
+        this.failTransfer(transfer, `Source node disconnected: ${transfer.source.node}`);
+        return;
+      }
       const startEvt: EventFrame<TransferStartPayload> = {
         type: "evt",
         event: "transfer.start",
         payload: { transferId: params.transferId },
       };
-      transfer.sourceWs!.send(JSON.stringify(startEvt));
+      sourceWs.send(JSON.stringify(startEvt));
       transfer.state = "streaming";
+      this.transfers[String(params.transferId)] = transfer;
     }
   }
 
   handleTransferComplete(params: TransferCompleteParams): void {
-    const transfer = this.activeTransfers.get(params.transferId);
+    const transfer = this.transfers[String(params.transferId)];
     if (!transfer) return;
 
     const destIsGsv = transfer.destination.node === "gsv";
@@ -2050,18 +2079,24 @@ export class Gateway extends DurableObject<Env> {
     if (destIsGsv) {
       this.ctx.waitUntil(this.finalizeR2Upload(transfer));
     } else {
+      const destWs = this.getTransferWs(transfer.destination.node);
+      if (!destWs) {
+        this.failTransfer(transfer, `Destination node disconnected: ${transfer.destination.node}`);
+        return;
+      }
       const endEvt: EventFrame<TransferEndPayload> = {
         type: "evt",
         event: "transfer.end",
         payload: { transferId: params.transferId },
       };
-      transfer.destWs!.send(JSON.stringify(endEvt));
+      destWs.send(JSON.stringify(endEvt));
       transfer.state = "completing";
+      this.transfers[String(params.transferId)] = transfer;
     }
   }
 
   handleTransferDone(params: TransferDoneParams): void {
-    const transfer = this.activeTransfers.get(params.transferId);
+    const transfer = this.transfers[String(params.transferId)];
     if (!transfer) return;
 
     if (params.error) {
@@ -2074,29 +2109,40 @@ export class Gateway extends DurableObject<Env> {
 
   private handleTransferBinaryFrame(ws: WebSocket, data: ArrayBuffer): void {
     const { transferId, chunk } = parseTransferBinaryFrame(data);
-    const transfer = this.activeTransfers.get(transferId);
+    const transfer = this.transfers[String(transferId)];
     if (!transfer) return;
 
     transfer.bytesTransferred += chunk.byteLength;
+    this.transfers[String(transferId)] = transfer;
 
     const destIsGsv = transfer.destination.node === "gsv";
 
     if (destIsGsv) {
-      if (transfer.r2Writer) {
-        transfer.r2Writer.write(chunk).catch((err) => {
+      const r2 = this.transferR2.get(transferId);
+      if (r2) {
+        r2.writer.write(new Uint8Array(chunk)).catch((err) => {
           this.failTransfer(transfer, `R2 write error: ${err}`);
         });
       }
     } else {
-      transfer.destWs!.send(buildTransferBinaryFrame(transferId, chunk));
+      const destWs = this.getTransferWs(transfer.destination.node);
+      if (destWs) {
+        destWs.send(buildTransferBinaryFrame(transferId, chunk));
+      }
     }
   }
 
-  private async streamR2ToDest(transfer: ActiveTransfer): Promise<void> {
+  private async streamR2ToDest(transfer: TransferState): Promise<void> {
     try {
       const r2Object = await this.env.STORAGE.get(transfer.source.path);
       if (!r2Object) {
         this.failTransfer(transfer, `R2 object not found: ${transfer.source.path}`);
+        return;
+      }
+
+      const destWs = this.getTransferWs(transfer.destination.node);
+      if (!destWs) {
+        this.failTransfer(transfer, `Destination node disconnected: ${transfer.destination.node}`);
         return;
       }
 
@@ -2108,19 +2154,22 @@ export class Gateway extends DurableObject<Env> {
         done = result.done;
         if (result.value) {
           transfer.bytesTransferred += result.value.byteLength;
-          transfer.destWs!.send(
+          destWs.send(
             buildTransferBinaryFrame(transfer.transferId, result.value),
           );
         }
       }
+
+      this.transfers[String(transfer.transferId)] = transfer;
 
       const endEvt: EventFrame<TransferEndPayload> = {
         type: "evt",
         event: "transfer.end",
         payload: { transferId: transfer.transferId },
       };
-      transfer.destWs!.send(JSON.stringify(endEvt));
+      destWs.send(JSON.stringify(endEvt));
       transfer.state = "completing";
+      this.transfers[String(transfer.transferId)] = transfer;
     } catch (err) {
       this.failTransfer(
         transfer,
@@ -2129,14 +2178,16 @@ export class Gateway extends DurableObject<Env> {
     }
   }
 
-  private async finalizeR2Upload(transfer: ActiveTransfer): Promise<void> {
+  private async finalizeR2Upload(transfer: TransferState): Promise<void> {
     try {
-      if (transfer.r2Writer) {
-        await transfer.r2Writer.close();
+      const r2 = this.transferR2.get(transfer.transferId);
+      if (!r2) {
+        this.completeTransfer(transfer, transfer.bytesTransferred);
+        return;
       }
-      if (transfer.r2UploadPromise) {
-        await transfer.r2UploadPromise;
-      }
+
+      await r2.writer.close();
+      await r2.uploadPromise;
       this.completeTransfer(transfer, transfer.bytesTransferred);
     } catch (err) {
       this.failTransfer(
@@ -2147,7 +2198,7 @@ export class Gateway extends DurableObject<Env> {
   }
 
   private completeTransfer(
-    transfer: ActiveTransfer,
+    transfer: TransferState,
     bytesTransferred: number,
   ): void {
     const toolResult: TransferToolResult = {
@@ -2165,10 +2216,11 @@ export class Gateway extends DurableObject<Env> {
       }),
     );
 
-    this.activeTransfers.delete(transfer.transferId);
+    this.transferR2.delete(transfer.transferId);
+    delete this.transfers[String(transfer.transferId)];
   }
 
-  private failTransfer(transfer: ActiveTransfer, error: string): void {
+  private failTransfer(transfer: TransferState, error: string): void {
     const sessionStub = this.env.SESSION.getByName(transfer.sessionKey);
     this.ctx.waitUntil(
       sessionStub.toolResult({
@@ -2177,17 +2229,20 @@ export class Gateway extends DurableObject<Env> {
       }),
     );
 
-    if (transfer.r2Writer) {
+    const r2 = this.transferR2.get(transfer.transferId);
+    if (r2) {
       try {
-        transfer.r2Writer.close().catch(() => {});
+        r2.writer.close().catch(() => {});
       } catch {}
     }
 
-    this.activeTransfers.delete(transfer.transferId);
+    this.transferR2.delete(transfer.transferId);
+    delete this.transfers[String(transfer.transferId)];
   }
 
   private failTransfersForNode(nodeId: string): void {
-    for (const [, transfer] of this.activeTransfers) {
+    for (const key of Object.keys(this.transfers)) {
+      const transfer = this.transfers[key];
       if (
         transfer.source.node === nodeId ||
         transfer.destination.node === nodeId
