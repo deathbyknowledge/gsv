@@ -13,6 +13,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 pub type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<ResponseFrame>>>>;
 pub type EventHandler = Arc<RwLock<Option<Box<dyn Fn(Frame) + Send + Sync>>>>;
 pub type DisconnectFlag = Arc<AtomicBool>;
+pub type DisconnectReason = Arc<Mutex<Option<String>>>;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -45,6 +46,7 @@ pub struct Connection {
     pending: PendingRequests,
     event_handler: EventHandler,
     disconnected: DisconnectFlag,
+    disconnect_reason: DisconnectReason,
 }
 
 impl Connection {
@@ -64,17 +66,22 @@ impl Connection {
         let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
         let event_handler: EventHandler = Arc::new(RwLock::new(Some(Box::new(on_event))));
         let disconnected: DisconnectFlag = Arc::new(AtomicBool::new(false));
+        let disconnect_reason: DisconnectReason = Arc::new(Mutex::new(None));
 
         let pending_for_write = pending.clone();
         let disconnected_for_write = disconnected.clone();
+        let disconnect_reason_for_write = disconnect_reason.clone();
         let pending_clone = pending.clone();
         let event_handler_clone = event_handler.clone();
         let disconnected_clone = disconnected.clone();
+        let disconnect_reason_clone = disconnect_reason.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if write.send(msg).await.is_err() {
                     disconnected_for_write.store(true, Ordering::SeqCst);
+                    let mut reason = disconnect_reason_for_write.lock().await;
+                    *reason = Some("connection closed while sending request".to_string());
                     fail_all_pending_requests(
                         &pending_for_write,
                         503,
@@ -87,25 +94,47 @@ impl Connection {
         });
 
         tokio::spawn(async move {
-            while let Some(Ok(msg)) = read.next().await {
-                if let Message::Text(text) = msg {
-                    if let Ok(frame) = serde_json::from_str::<Frame>(&text) {
-                        match &frame {
-                            Frame::Res(res) => {
-                                let mut pending = pending_clone.lock().await;
-                                if let Some(sender) = pending.remove(&res.id) {
-                                    let _ = sender.send(res.clone());
-                                }
-                            }
-                            _ => {
-                                let handler = event_handler_clone.read().await;
-                                if let Some(ref h) = *handler {
-                                    h(frame);
+            while let Some(msg) = read.next().await {
+                match msg {
+                    Ok(msg) => match msg {
+                        Message::Text(text) => {
+                            if let Ok(frame) = serde_json::from_str::<Frame>(&text) {
+                                match &frame {
+                                    Frame::Res(res) => {
+                                        let mut pending = pending_clone.lock().await;
+                                        if let Some(sender) = pending.remove(&res.id) {
+                                            let _ = sender.send(res.clone());
+                                        }
+                                    }
+                                    _ => {
+                                        let handler = event_handler_clone.read().await;
+                                        if let Some(ref h) = *handler {
+                                            h(frame);
+                                        }
+                                    }
                                 }
                             }
                         }
+                        Message::Close(close) => {
+                            let mut reason = disconnect_reason_clone.lock().await;
+                            *reason = Some(match close {
+                                Some(close) => format!("close frame: {:?}", close),
+                                None => "close frame".to_string(),
+                            });
+                            break;
+                        }
+                        _ => {}
+                    },
+                    Err(error) => {
+                        let mut reason = disconnect_reason_clone.lock().await;
+                        *reason = Some(format!("read loop error: {}", error));
+                        break;
                     }
                 }
+            }
+            if disconnect_reason_clone.lock().await.is_none() {
+                let mut reason = disconnect_reason_clone.lock().await;
+                *reason = Some("connection closed while waiting for response".to_string());
             }
             // Read loop ended - connection is dead
             disconnected_clone.store(true, Ordering::SeqCst);
@@ -122,10 +151,15 @@ impl Connection {
             pending,
             event_handler,
             disconnected,
+            disconnect_reason,
         };
         conn.handshake(mode, tools, node_runtime, client_id, token)
             .await?;
         Ok(conn)
+    }
+
+    pub async fn disconnect_reason(&self) -> Option<String> {
+        self.disconnect_reason.lock().await.clone()
     }
 
     pub async fn set_event_handler(&self, handler: impl Fn(Frame) + Send + Sync + 'static) {
@@ -200,7 +234,13 @@ impl Connection {
         timeout: Duration,
     ) -> Result<ResponseFrame, Box<dyn std::error::Error>> {
         if self.is_disconnected() {
-            return Err("Connection is disconnected".into());
+            let reason = self
+                .disconnect_reason
+                .lock()
+                .await
+                .clone()
+                .unwrap_or_else(|| "connection is disconnected".to_string());
+            return Err(format!("Connection is disconnected: {}", reason).into());
         }
 
         let req = RequestFrame::new(method, params);
@@ -237,7 +277,13 @@ impl Connection {
         params: Option<Value>,
     ) -> Result<ResponseFrame, Box<dyn std::error::Error>> {
         if self.is_disconnected() {
-            return Err("Connection is disconnected".into());
+            let reason = self
+                .disconnect_reason
+                .lock()
+                .await
+                .clone()
+                .unwrap_or_else(|| "connection is disconnected".to_string());
+            return Err(format!("Connection is disconnected: {}", reason).into());
         }
 
         let req = RequestFrame::new(method, params);

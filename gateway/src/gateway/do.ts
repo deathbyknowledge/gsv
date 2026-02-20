@@ -636,11 +636,21 @@ export class Gateway extends DurableObject<Env> {
     }
   }
 
-  webSocketClose(ws: WebSocket) {
+  webSocketClose(
+    ws: WebSocket,
+    code?: number,
+    reason?: string,
+    wasClean?: boolean,
+  ) {
     const { mode, clientId, nodeId, channelKey } = ws.deserializeAttachment();
     console.log(
       `[Gateway] WebSocket closed: mode=${mode}, clientId=${clientId}, nodeId=${nodeId}, channelKey=${channelKey}`,
     );
+    if (code !== undefined || reason !== undefined || wasClean !== undefined) {
+      console.log(
+        `[Gateway] WebSocket close details: code=${code ?? "n/a"}, reason=${reason || "n/a"}, wasClean=${wasClean ?? false}`,
+      );
+    }
     if (mode === "client" && clientId) {
       // Ignore close events from stale sockets that were replaced by reconnect.
       if (this.clients.get(clientId) !== ws) {

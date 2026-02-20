@@ -5035,10 +5035,10 @@ async fn run_node(
         logger.info(
             "connect.ok",
             json!({
-                "keepaliveSeconds": 300,
+                "keepaliveSeconds": 240,
             }),
         );
-        let keepalive_interval = tokio::time::Duration::from_secs(60 * 5);
+        let keepalive_interval = tokio::time::Duration::from_secs(60 * 4);
         let keepalive_timeout = tokio::time::Duration::from_secs(10);
         let mut next_keepalive_at = tokio::time::Instant::now() + keepalive_interval;
 
@@ -5052,10 +5052,12 @@ async fn run_node(
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
                     if conn.is_disconnected() {
+                        let reason = conn.disconnect_reason().await;
                         logger.warn(
                             "connect.lost",
                             json!({
                                 "retrySeconds": 3,
+                                "reason": reason.unwrap_or_else(|| "unknown".to_string()),
                             }),
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;

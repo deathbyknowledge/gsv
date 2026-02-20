@@ -96,7 +96,7 @@ Node ID resolution order: `--id` flag > `node.id` in config > `node-<hostname>`.
 
 Workspace resolution order: `--workspace` flag > `node.workspace` in config > current working directory.
 
-Keepalive: the node sends a `tools.list` request every 5 minutes. If the keepalive fails or times out (10s), the node reconnects after 3 seconds.
+Keepalive: the node sends a `tools.list` request every 4 minutes. If the keepalive fails or times out (10s), the node reconnects after 3 seconds.
 
 Logs are written to `~/.gsv/logs/node.log` with rotation (default 10 MB max, 5 rotated files). Controlled by `GSV_NODE_LOG_MAX_BYTES` and `GSV_NODE_LOG_MAX_FILES` environment variables.
 
