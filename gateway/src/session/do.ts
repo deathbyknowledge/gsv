@@ -29,11 +29,20 @@ import {
 } from "./compaction";
 import { shouldCompact } from "./tokens";
 import { estimateContextTokens, estimateStringTokens } from "./tokens";
-import { fetchMediaFromR2, deleteSessionMedia } from "../storage/media";
+import {
+  fetchMediaFromR2,
+  deleteSessionMedia,
+  storeMediaInR2,
+} from "../storage/media";
 import { loadAgentWorkspace } from "../agents/loader";
 import { isMainSessionKey } from "./routing";
 import { buildSystemPromptFromWorkspace } from "../agents/prompt";
-import { executeNativeTool, isNativeTool } from "../agents/tools";
+import {
+  executeNativeTool,
+  isNativeTool,
+  parseTransferEndpoint,
+  TRANSFER_TOOL_NAME,
+} from "../agents/tools";
 import {
   shouldAutoResetByPolicy,
   type ResetPolicy as SessionResetPolicy,
@@ -206,6 +215,31 @@ const MEDIA_CACHE_MAX_SIZE = 50 * 1024 * 1024; // 50MB budget
 const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 const ASYNC_EXEC_EVENT_SEEN_TTL_MS = 24 * 60 * 60_000;
 const ASYNC_EXEC_EVENT_PENDING_MAX_AGE_MS = 24 * 60 * 60_000;
+
+function isStructuredToolResult(
+  result: unknown,
+): result is { content: Array<{ type: string } & Record<string, unknown>> } {
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    return false;
+  }
+  const obj = result as Record<string, unknown>;
+  if (!Array.isArray(obj.content) || obj.content.length === 0) {
+    return false;
+  }
+  return obj.content.every((block: unknown) => {
+    if (block === null || typeof block !== "object" || Array.isArray(block)) {
+      return false;
+    }
+    const b = block as Record<string, unknown>;
+    if (b.type === "text") {
+      return typeof b.text === "string";
+    }
+    if (b.type === "image") {
+      return typeof b.data === "string" && typeof b.mimeType === "string";
+    }
+    return false;
+  });
+}
 
 class MediaCache {
   private cache = new Map<
@@ -513,7 +547,10 @@ export class Session extends DurableObject<Env> {
     const hydrated: Message[] = [];
 
     for (const msg of messages) {
-      if (msg.role !== "user" || typeof msg.content === "string") {
+      if (
+        (msg.role !== "user" && msg.role !== "toolResult") ||
+        typeof msg.content === "string"
+      ) {
         hydrated.push(msg);
         continue;
       }
@@ -556,10 +593,17 @@ export class Session extends DurableObject<Env> {
         }
       }
 
-      hydrated.push({
-        ...msg,
-        content: hydratedContent,
-      } as UserMessage);
+      if (msg.role === "user") {
+        hydrated.push({
+          ...msg,
+          content: hydratedContent,
+        } as UserMessage);
+      } else {
+        hydrated.push({
+          ...msg,
+          content: hydratedContent,
+        } as ToolResultMessage);
+      }
     }
 
     return hydrated;
@@ -998,17 +1042,60 @@ export class Session extends DurableObject<Env> {
           delete this.pendingToolCalls[callId];
           continue;
         }
-        const content = call.error
-          ? `Error: ${call.error}`
-          : typeof call.result === "string"
-            ? call.result
-            : JSON.stringify(call.result);
+        let toolResultContent: (TextContent | ImageContent)[];
+
+        if (call.error) {
+          toolResultContent = [{ type: "text", text: `Error: ${call.error}` }];
+        } else if (isStructuredToolResult(call.result)) {
+          const processedBlocks: (TextContent | ImageContent)[] = [];
+          for (const block of call.result.content) {
+            if (block.type === "text") {
+              processedBlocks.push({
+                type: "text",
+                text: block.text as string,
+              });
+            } else if (block.type === "image") {
+              try {
+                const r2Key = await storeMediaInR2(
+                  {
+                    type: "image",
+                    mimeType: block.mimeType as string,
+                    data: block.data as string,
+                  },
+                  this.env.STORAGE,
+                  this.meta.sessionKey,
+                );
+                processedBlocks.push({
+                  type: "image",
+                  r2Key,
+                  mimeType: block.mimeType as string,
+                } as unknown as ImageContent);
+              } catch (storeError) {
+                console.error(
+                  `[Session] Failed to store tool result image in R2:`,
+                  storeError,
+                );
+                processedBlocks.push({
+                  type: "text",
+                  text: `[Image storage failed: ${block.mimeType}]`,
+                });
+              }
+            }
+          }
+          toolResultContent = processedBlocks;
+        } else {
+          const legacyContent =
+            typeof call.result === "string"
+              ? call.result
+              : JSON.stringify(call.result);
+          toolResultContent = [{ type: "text", text: legacyContent }];
+        }
 
         const toolResultMessage: ToolResultMessage = {
           role: "toolResult",
           toolCallId: call.id,
           toolName: call.name,
-          content: [{ type: "text", text: content }],
+          content: toolResultContent,
           isError: !!call.error,
           timestamp: Date.now(),
         };
@@ -1811,6 +1898,33 @@ export class Session extends DurableObject<Env> {
     }
 
     this.pendingToolCalls[toolCall.id] = toolCall;
+
+    if (toolCall.name === TRANSFER_TOOL_NAME) {
+      try {
+        const source = parseTransferEndpoint(toolCall.args.source as string);
+        const destination = parseTransferEndpoint(
+          toolCall.args.destination as string,
+        );
+
+        const gateway = this.env.GATEWAY.getByName("singleton");
+        const result = await gateway.transferRequest({
+          callId: toolCall.id,
+          sessionKey: this.meta.sessionKey,
+          source,
+          destination,
+        });
+
+        if (!result.ok) {
+          toolCall.error = result.error || "Transfer request failed";
+          this.pendingToolCalls[toolCall.id] = toolCall;
+        }
+      } catch (err) {
+        toolCall.error =
+          err instanceof Error ? err.message : String(err);
+        this.pendingToolCalls[toolCall.id] = toolCall;
+      }
+      return;
+    }
 
     // Native tools (gsv__*) are handled locally in Session.
     if (isNativeTool(toolCall.name)) {

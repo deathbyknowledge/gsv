@@ -35,8 +35,7 @@ For example:
 - `server__Read` - read files on the node named "server"
 
 Native workspace tools have the `gsv__` prefix:
-- `gsv__ListFiles` - list your workspace files
-- `gsv__ReadFile` - read from your workspace
+- `gsv__ReadFile` - read a file or list a directory in your workspace
 - `gsv__WriteFile` - write to your workspace
 - `gsv__EditFile` - edit a file by replacing specific text
 - `gsv__DeleteFile` - delete from your workspace

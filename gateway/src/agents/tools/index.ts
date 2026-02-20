@@ -17,6 +17,7 @@ import {
   getWorkspaceToolDefinitions,
   workspaceNativeToolHandlers,
 } from "./workspace";
+import { getTransferToolDefinitions } from "./transfer";
 import type {
   NativeToolExecutionContext,
   NativeToolHandlerMap,
@@ -30,6 +31,7 @@ export * from "./cron";
 export * from "./gateway";
 export * from "./message";
 export * from "./sessions";
+export * from "./transfer";
 
 const nativeToolHandlers: NativeToolHandlerMap = {
   ...workspaceNativeToolHandlers,
@@ -50,6 +52,7 @@ export function getNativeToolDefinitions(): ToolDefinition[] {
     ...getCronToolDefinitions(),
     ...getMessageToolDefinitions(),
     ...getSessionsToolDefinitions(),
+    ...getTransferToolDefinitions(),
   ];
 }
 

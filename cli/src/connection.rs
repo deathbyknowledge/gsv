@@ -12,6 +12,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 pub type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<ResponseFrame>>>>;
 pub type EventHandler = Arc<RwLock<Option<Box<dyn Fn(Frame) + Send + Sync>>>>;
+pub type BinaryHandler = Arc<RwLock<Option<Box<dyn Fn(Vec<u8>) + Send + Sync>>>>;
 pub type DisconnectFlag = Arc<AtomicBool>;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,6 +45,7 @@ pub struct Connection {
     tx: mpsc::Sender<Message>,
     pending: PendingRequests,
     event_handler: EventHandler,
+    binary_handler: BinaryHandler,
     disconnected: DisconnectFlag,
 }
 
@@ -63,12 +65,14 @@ impl Connection {
         let (tx, mut rx) = mpsc::channel::<Message>(32);
         let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
         let event_handler: EventHandler = Arc::new(RwLock::new(Some(Box::new(on_event))));
+        let binary_handler: BinaryHandler = Arc::new(RwLock::new(None));
         let disconnected: DisconnectFlag = Arc::new(AtomicBool::new(false));
 
         let pending_for_write = pending.clone();
         let disconnected_for_write = disconnected.clone();
         let pending_clone = pending.clone();
         let event_handler_clone = event_handler.clone();
+        let binary_handler_clone = binary_handler.clone();
         let disconnected_clone = disconnected.clone();
 
         tokio::spawn(async move {
@@ -105,6 +109,11 @@ impl Connection {
                             }
                         }
                     }
+                } else if let Message::Binary(data) = msg {
+                    let handler = binary_handler_clone.read().await;
+                    if let Some(ref h) = *handler {
+                        h(data);
+                    }
                 }
             }
             // Read loop ended - connection is dead
@@ -121,6 +130,7 @@ impl Connection {
             tx,
             pending,
             event_handler,
+            binary_handler,
             disconnected,
         };
         conn.handshake(mode, tools, node_runtime, client_id, token)
@@ -131,6 +141,16 @@ impl Connection {
     pub async fn set_event_handler(&self, handler: impl Fn(Frame) + Send + Sync + 'static) {
         let mut h = self.event_handler.write().await;
         *h = Some(Box::new(handler));
+    }
+
+    pub async fn set_binary_handler(&self, handler: impl Fn(Vec<u8>) + Send + Sync + 'static) {
+        let mut h = self.binary_handler.write().await;
+        *h = Some(Box::new(handler));
+    }
+
+    pub async fn send_binary(&self, data: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+        self.tx.send(Message::Binary(data)).await?;
+        Ok(())
     }
 
     pub fn is_disconnected(&self) -> bool {

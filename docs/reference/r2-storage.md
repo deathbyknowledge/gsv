@@ -273,9 +273,13 @@ See the Skills Frontmatter Reference for the `SKILL.md` file format.
 | Read | During LLM call (hydrated from r2Key references in messages) |
 | Deleted | On session reset |
 
-Media files (images, audio, video, documents) attached to inbound messages. Stored as raw binary with the original content type.
+Media files (images, audio, video, documents) attached to inbound messages or extracted from tool results. Stored as raw binary with the original content type.
 
 **Key construction**: `media/{sessionKey}/{uuid}.{ext}` where `{uuid}` is a `crypto.randomUUID()` and `{ext}` is derived from the MIME type.
+
+**Sources**: Media is stored from two paths:
+- **Inbound channel messages**: Images, audio, video, and documents attached to messages from channels (WhatsApp, Discord, etc.).
+- **Tool result images**: When a node Read tool returns a structured result containing an `ImageContent` block (e.g., reading an image file from a node's filesystem), the base64 image data is stored in R2 at this path and replaced with an `r2Key` reference, following the same lifecycle as channel media.
 
 **MIME type to extension mapping**:
 
@@ -317,7 +321,7 @@ Media files (images, audio, video, documents) attached to inbound messages. Stor
 | `uploadedAt` | `string` (epoch ms) | Upload timestamp |
 | `sessionKey` | `string` | Session routing key |
 
-**Lifecycle**: Media files are stored when an inbound message is processed. The base64 data is stripped from the in-memory message and replaced with an `r2Key` reference. During LLM calls, references are hydrated back to base64 via an in-memory LRU cache (50 MB budget). On session reset, all media under the `media/{sessionKey}/` prefix is deleted.
+**Lifecycle**: Media files are stored when an inbound message is processed or when a tool result contains image content. The base64 data is stripped from the in-memory message and replaced with an `r2Key` reference. During LLM calls, references are hydrated back to base64 via an in-memory LRU cache (50 MB budget). On session reset, all media under the `media/{sessionKey}/` prefix is deleted.
 
 ## Read/Write Summary
 
@@ -336,4 +340,4 @@ Media files (images, audio, video, documents) attached to inbound messages. Stor
 | `agents/{id}/sessions/{sid}-part{ts}.jsonl.gz` | Not read in normal operation | Compaction engine | One per compaction |
 | `agents/{id}/skills/{name}/SKILL.md` | Skill lister + agent on-demand | User/agent/deploy | Persistent |
 | `skills/{name}/SKILL.md` | Skill lister + agent on-demand | Deploy tooling | Persistent |
-| `media/{sessionKey}/{uuid}.{ext}` | LLM call (hydration) | Inbound media processor | Deleted on session reset |
+| `media/{sessionKey}/{uuid}.{ext}` | LLM call (hydration) | Inbound media processor, tool result image storage | Deleted on session reset |

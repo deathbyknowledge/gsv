@@ -131,17 +131,17 @@ Manage background Bash sessions. This tool is registered alongside `Bash` and pr
 
 ## Read
 
-Read file contents from the node's filesystem.
+Read file contents from the node's filesystem. Supports text files with line-numbered output and image files with structured content blocks.
 
 **Tool name:** `Read`
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `path` | `string` | Yes | — | Path to the file. Relative paths resolve against the node workspace. |
-| `offset` | `number` | No | `0` | Line number to start reading from (0-based). |
-| `limit` | `number` | No | Total line count | Maximum number of lines to read. |
+| `offset` | `number` | No | `0` | Line number to start reading from (0-based). Ignored for image files. |
+| `limit` | `number` | No | Total line count | Maximum number of lines to read. Ignored for image files. |
 
-### Output
+### Output (text files)
 
 ```json
 {
@@ -153,10 +153,39 @@ Read file contents from the node's filesystem.
 
 Content is returned with each line prefixed by a 1-based line number and tab separator (format: `{lineNum}\t{content}`). Line numbering starts at `offset + 1`.
 
+### Output (image files)
+
+When a file cannot be read as UTF-8 text, the tool reads raw bytes and detects the MIME type via magic-byte sniffing (using the `infer` crate). If the file is an image (`image/*`), the tool returns a structured content result:
+
+```json
+{
+  "content": [
+    { "type": "text", "text": "Image file: photo.png (image/png, 245760 bytes)" },
+    { "type": "image", "data": "<base64-encoded image data>", "mimeType": "image/png" }
+  ]
+}
+```
+
+The Session DO detects this structured format and passes the `ImageContent` block through to the LLM as part of the `ToolResultMessage`, allowing the model to see the actual image.
+
+Image file size is capped at 10 MB. Files larger than 10 MB return an error. The `offset` and `limit` parameters are ignored for image files — the full image is always returned.
+
+### Output (non-image binary files)
+
+Binary files that are not images return a descriptive error:
+
+```json
+{
+  "error": "Binary file: archive.tar.gz (application/gzip, 5242880 bytes) — not a text or image file"
+}
+```
+
 ### Error Conditions
 
 - File does not exist or is not readable.
 - Path resolves to a directory.
+- Image file exceeds the 10 MB size cap.
+- Binary file is not an image type.
 
 ---
 

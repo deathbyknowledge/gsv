@@ -16,39 +16,25 @@ All native tools return a result object with the shape:
 
 Workspace tools operate on the agent's R2 workspace at `agents/{agentId}/`. Paths are relative to the workspace root unless otherwise noted. Path traversal (`..`) is rejected. Virtual `skills/` paths resolve agent-local overrides first, then fall back to global skills.
 
-### gsv__ListFiles
-
-List files and directories in the agent's workspace.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `path` | `string` | No | Directory path relative to workspace root. `"/"` or omitted for root. `"memory/"` for memory directory. `"skills/"` for skill files. |
-
-**Output:** `{ path, files: string[], directories: string[] }`
-
-**Side effects:** None. Read-only.
-
-**Behavior:** Lists objects and common prefixes in R2 under the resolved path. For `skills/` paths, results are merged from agent-level (`agents/{agentId}/skills/`) and global (`skills/`) locations, with agent files taking precedence for deduplication.
-
----
-
 ### gsv__ReadFile
 
-Read a file from the agent's workspace.
+Read a file or list a directory in the agent's workspace.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `path` | `string` | Yes | File path relative to workspace root. Examples: `"SOUL.md"`, `"memory/2024-01-15.md"`, `"skills/summarize/SKILL.md"`. |
+| `path` | `string` | No | Path relative to workspace root. Omit or use `"/"` to list the root. Examples: `"SOUL.md"`, `"memory/"`, `"skills/summarize/SKILL.md"`. |
 
-**Output:** `{ path, content: string, size: number, lastModified?: string }`
+**File output:** `{ path, content: string, size: number, lastModified?: string }`
 
 For `skills/*` paths, the output additionally includes:
 - `resolvedPath`: The actual R2 key that was read.
 - `resolvedSource`: `"agent"` or `"global"`, indicating which copy was found.
 
+**Directory output:** `{ path, files: string[], directories: string[] }`
+
 **Side effects:** None. Read-only.
 
-**Behavior:** For `skills/*` paths, checks agent-local override at `agents/{agentId}/skills/*` first, then falls back to the global `skills/*` path. Returns an error if the file is not found.
+**Behavior:** If path is omitted, lists the workspace root. If path points to a file, returns its content. If path points to a directory (or a file is not found at that path but objects exist under it as a prefix), returns a directory listing. For `skills/` paths, results are merged from agent-level and global locations, with agent files taking precedence for deduplication.
 
 ---
 
@@ -260,3 +246,44 @@ Send a message into another session.
 **Side effects:** Injects a user message into the target session and triggers an agent turn.
 
 **Behavior:** Requires Gateway context.
+
+---
+
+## Transfer Tools
+
+### gsv__Transfer
+
+Transfer a file between connected nodes and/or the R2 workspace. The tool stays pending until the transfer completes end-to-end.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `source` | `string` | Yes | Source endpoint. Format: `{nodeId}:/path/to/file` for a node filesystem path, or `gsv:workspace/path` for an R2 workspace path. |
+| `destination` | `string` | Yes | Destination endpoint. Same format as `source`. |
+
+**Output:** `{ source, destination, bytesTransferred, mime? }`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | `string` | Echoed source endpoint. |
+| `destination` | `string` | Echoed destination endpoint. |
+| `bytesTransferred` | `number` | Total bytes transferred. |
+| `mime` | `string` | Detected MIME type of the transferred file (when available). |
+
+**Side effects:** Reads the file from the source endpoint and writes it to the destination endpoint. Creates parent directories on node destinations if needed.
+
+**Behavior:** The Gateway orchestrates the transfer using one of three modes depending on the endpoint types:
+
+| Mode | Source | Destination | Description |
+|------|--------|-------------|-------------|
+| Node-to-Node | `{nodeId}:/path` | `{nodeId}:/path` | Binary relay through the Gateway. Data flows as binary WebSocket frames from source node to Gateway to destination node. |
+| Node-to-R2 | `{nodeId}:/path` | `gsv:workspace/path` | Streaming upload. Source node sends binary frames; Gateway streams into `R2Bucket.put()` via a `TransformStream`. |
+| R2-to-Node | `gsv:workspace/path` | `{nodeId}:/path` | Streaming download. Gateway reads from R2 and sends binary frames to the destination node. |
+
+Data transfer uses binary WebSocket frames (not JSON text frames). See the [WebSocket Protocol Reference](./websocket-protocol.md#binary-frames) for the binary frame format.
+
+**Error conditions:**
+- Source or destination endpoint is malformed.
+- Referenced node is not connected.
+- Source file does not exist or is not readable.
+- Destination write fails (permissions, disk full).
+- Transfer timeout.

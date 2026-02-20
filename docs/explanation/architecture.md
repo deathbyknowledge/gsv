@@ -16,6 +16,8 @@ GSV's architecture rests on three distinct component types, each with a clear ro
 
 This separation is deliberate. The brain doesn't need to know how WhatsApp authentication works, and the hands don't need to know which channel a message came from. Each pillar has a single responsibility, and the interfaces between them are narrow and well-defined.
 
+The Gateway also serves as a relay for file transfers between nodes. The `gsv__Transfer` tool moves files between any combination of node filesystems and R2 workspace storage. Data flows as binary WebSocket frames alongside the normal JSON text frames, using a 4-byte transfer ID prefix for demultiplexing. This allows the agent to coordinate work across machines — pulling build artifacts from a CI server to a development laptop, or archiving files from a node into the R2 workspace.
+
 ## Why Cloudflare Workers and Durable Objects?
 
 This is probably the most important architectural decision in GSV, and it's worth understanding why.

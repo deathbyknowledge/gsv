@@ -60,11 +60,19 @@ When the LLM responds with tool calls, the Session doesn't wait for them all to 
 
 This loop continues until the LLM produces a response with no tool calls. In practice, a complex task might involve 5-10 iterations: the agent reads a file, edits it, runs tests, reads the output, makes another edit, runs tests again.
 
+### Structured Tool Results
+
+Tool results are typically plain strings or JSON objects that get stringified into the `ToolResultMessage`. However, some tools return structured content blocks — arrays containing a mix of `TextContent` and `ImageContent` entries. The Session DO detects structured tool results (via `isStructuredToolResult()`) and preserves the content blocks rather than stringifying them.
+
+The primary use case is the node Read tool reading image files. When an image file is read, the tool returns structured content with a text description and an `ImageContent` block containing the base64-encoded image. The Session stores the image data in R2 (at the same `media/{sessionKey}/` path used for channel media) and replaces it with an `r2Key` reference. Before each LLM call, these references are hydrated back to base64, and the `ImageContent` block is passed through to the LLM provider as part of the tool result. All supported providers (Anthropic, OpenAI, Google, Bedrock) handle `ImageContent` in tool results via the pi-ai library.
+
+This enables the model to "see" image files read from nodes — instead of getting a UTF-8 decode error, the model receives the actual image and can reason about its contents.
+
 ### Native vs. Node Tools
 
 Tool dispatch has a critical fork: is this tool handled inside the Gateway, or does it need to reach a node?
 
-**Native tools** (prefixed with `gsv__`) execute within the Gateway Worker itself. These include workspace file operations — `gsv__ReadFile`, `gsv__WriteFile`, `gsv__ListFiles`, `gsv__DeleteFile`. They operate on R2 storage, so they're always available even with no nodes connected. The agent can always read and write its own workspace files. Native tools complete synchronously within the Session DO's execution context.
+**Native tools** (prefixed with `gsv__`) execute within the Gateway Worker itself. These include workspace file operations — `gsv__ReadFile`, `gsv__WriteFile`, `gsv__EditFile`, `gsv__DeleteFile`. They operate on R2 storage, so they're always available even with no nodes connected. The agent can always read and write its own workspace files. Native tools complete synchronously within the Session DO's execution context.
 
 **Node tools** are namespaced as `{nodeId}__{toolName}` — like `macbook__Bash` or `server__Read`. The Session asks the Gateway to dispatch these, and the Gateway looks up the node in its registry, finds the WebSocket connection, and sends a `tool.invoke` event. The node executes the tool (running a shell command, reading a file, etc.) and sends the result back as a `tool.result` frame, which the Gateway routes back to the originating Session.
 

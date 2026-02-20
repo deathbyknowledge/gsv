@@ -2503,3 +2503,284 @@ describe("Message Tool", () => {
     ws.close();
   }, 90000);
 });
+
+describe("Structured Tool Results", () => {
+  it("node tool result with structured content blocks is relayed to client", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const nodeId = `img-node-${crypto.randomUUID().slice(0, 8)}`;
+    const toolName = "StructuredRead";
+
+    const nodeWs = await connectWebSocket(wsUrl);
+    await sendRequest(nodeWs, "connect", {
+      minProtocol: 1,
+      client: {
+        mode: "node",
+        id: nodeId,
+      },
+      tools: [
+        {
+          name: toolName,
+          description: "Returns structured content blocks",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      ],
+      nodeRuntime: buildExecutionNodeRuntime([toolName]),
+    });
+
+    const clientWs = await connectAndAuth(wsUrl);
+
+    const invokePromise = waitForToolInvoke(nodeWs, 10000);
+
+    const clientResultPromise = sendRequest(clientWs, "tool.invoke", {
+      tool: `${nodeId}__${toolName}`,
+      args: {},
+    });
+
+    const invoke = await invokePromise;
+    expect(invoke).not.toBeNull();
+    expect(invoke!.tool).toBe(toolName);
+
+    const structuredContent = {
+      content: [
+        { type: "text", text: "Read image file test.png [image/png, 100 bytes]" },
+        {
+          type: "image",
+          data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+          mimeType: "image/png",
+        },
+      ],
+    };
+
+    await sendRequest(nodeWs, "tool.result", {
+      callId: invoke!.callId,
+      result: structuredContent,
+    });
+
+    const clientResult = await clientResultPromise as { result: unknown };
+    expect(clientResult).toBeDefined();
+    expect(clientResult.result).toBeDefined();
+
+    const resultObj = clientResult.result as { content: Array<{ type: string }> };
+    expect(Array.isArray(resultObj.content)).toBe(true);
+    expect(resultObj.content.length).toBe(2);
+    expect(resultObj.content[0].type).toBe("text");
+    expect(resultObj.content[1].type).toBe("image");
+
+    nodeWs.close();
+    clientWs.close();
+  }, 30000);
+
+  it("tool.result with unknown callId is rejected with 404", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const nodeId = `unknown-call-node-${crypto.randomUUID().slice(0, 8)}`;
+    const toolName = "UnknownCallTool";
+
+    const nodeWs = await connectWebSocket(wsUrl);
+    await sendRequest(nodeWs, "connect", {
+      minProtocol: 1,
+      client: {
+        mode: "node",
+        id: nodeId,
+      },
+      tools: [
+        {
+          name: toolName,
+          description: "Test tool for unknown callId",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      ],
+      nodeRuntime: buildExecutionNodeRuntime([toolName]),
+    });
+
+    try {
+      await sendRequest(nodeWs, "tool.result", {
+        callId: crypto.randomUUID(),
+        result: {
+          content: [
+            { type: "text", text: "This should be rejected" },
+          ],
+        },
+      });
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("Unknown callId");
+    } finally {
+      nodeWs.close();
+    }
+  });
+});
+
+// ============================================================================
+// File Transfer
+// ============================================================================
+
+describe("File Transfer", () => {
+  it("gsv__Transfer tool is registered with correct schema", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const ws = await connectAndAuth(wsUrl);
+
+    const result = await sendRequest(ws, "tools.list") as {
+      tools: Array<{
+        name: string;
+        description: string;
+        inputSchema: {
+          type: string;
+          properties: Record<string, unknown>;
+          required: string[];
+        };
+      }>;
+    };
+
+    expect(Array.isArray(result.tools)).toBe(true);
+
+    const transferTool = result.tools.find((t) => t.name === "gsv__Transfer");
+    expect(transferTool).toBeDefined();
+    expect(transferTool!.description).toContain("Transfer");
+    expect(transferTool!.inputSchema.properties.source).toBeDefined();
+    expect(transferTool!.inputSchema.properties.destination).toBeDefined();
+    expect(transferTool!.inputSchema.required).toContain("source");
+    expect(transferTool!.inputSchema.required).toContain("destination");
+
+    ws.close();
+  });
+
+  it("transfer RPCs are registered and respond", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const nodeId = `transfer-rpc-node-${crypto.randomUUID().slice(0, 8)}`;
+    const toolName = `transfer_rpc_tool_${crypto.randomUUID().slice(0, 8)}`;
+
+    const nodeWs = await connectWebSocket(wsUrl);
+    await sendRequest(nodeWs, "connect", {
+      minProtocol: 1,
+      client: {
+        mode: "node",
+        id: nodeId,
+      },
+      tools: [
+        {
+          name: toolName,
+          description: "Transfer RPC test tool",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      ],
+      nodeRuntime: buildExecutionNodeRuntime([toolName]),
+    });
+
+    const metaResult = await sendRequest(nodeWs, "transfer.meta", {
+      transferId: 99999,
+      size: 1024,
+    }) as { ok: boolean };
+    expect(metaResult.ok).toBe(true);
+
+    const acceptResult = await sendRequest(nodeWs, "transfer.accept", {
+      transferId: 99999,
+    }) as { ok: boolean };
+    expect(acceptResult.ok).toBe(true);
+
+    const completeResult = await sendRequest(nodeWs, "transfer.complete", {
+      transferId: 99999,
+    }) as { ok: boolean };
+    expect(completeResult.ok).toBe(true);
+
+    const doneResult = await sendRequest(nodeWs, "transfer.done", {
+      transferId: 99999,
+      bytesWritten: 1024,
+    }) as { ok: boolean };
+    expect(doneResult.ok).toBe(true);
+
+    nodeWs.close();
+  });
+
+  it("binary WebSocket frames do not crash the gateway", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const nodeId = `binary-frame-node-${crypto.randomUUID().slice(0, 8)}`;
+    const toolName = `binary_frame_tool_${crypto.randomUUID().slice(0, 8)}`;
+
+    const nodeWs = await connectWebSocket(wsUrl);
+    await sendRequest(nodeWs, "connect", {
+      minProtocol: 1,
+      client: {
+        mode: "node",
+        id: nodeId,
+      },
+      tools: [
+        {
+          name: toolName,
+          description: "Binary frame test tool",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      ],
+      nodeRuntime: buildExecutionNodeRuntime([toolName]),
+    });
+
+    const transferId = 12345;
+    const payload = new TextEncoder().encode("hello binary");
+    const frame = new ArrayBuffer(4 + payload.byteLength);
+    new DataView(frame).setUint32(0, transferId, true);
+    new Uint8Array(frame, 4).set(payload);
+    nodeWs.send(frame);
+
+    await Bun.sleep(500);
+
+    const pingResult = await sendRequest(nodeWs, "tools.list") as {
+      tools: unknown[];
+    };
+    expect(Array.isArray(pingResult.tools)).toBe(true);
+
+    nodeWs.close();
+  });
+
+  it("transfer.meta rejects missing transferId", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const nodeId = `transfer-validate-node-${crypto.randomUUID().slice(0, 8)}`;
+    const toolName = `transfer_validate_tool_${crypto.randomUUID().slice(0, 8)}`;
+
+    const nodeWs = await connectWebSocket(wsUrl);
+    await sendRequest(nodeWs, "connect", {
+      minProtocol: 1,
+      client: {
+        mode: "node",
+        id: nodeId,
+      },
+      tools: [
+        {
+          name: toolName,
+          description: "Transfer validation test tool",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      ],
+      nodeRuntime: buildExecutionNodeRuntime([toolName]),
+    });
+
+    try {
+      await sendRequest(nodeWs, "transfer.meta", {
+        size: 1024,
+      });
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("transferId required");
+    } finally {
+      nodeWs.close();
+    }
+  });
+});

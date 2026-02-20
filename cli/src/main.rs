@@ -6,14 +6,16 @@ use gsv::deploy;
 use gsv::protocol::{
     Frame, LogsGetPayload, LogsResultParams, NodeExecEventParams, NodeProbePayload,
     NodeProbeResultParams, NodeRuntimeInfo, ToolDefinition, ToolInvokePayload, ToolResultParams,
+    TransferEndPayload, TransferReceivePayload, TransferSendPayload, TransferStartPayload,
 };
 use gsv::tools::{all_tools_with_workspace, subscribe_exec_events, Tool};
+use gsv::transfer::TransferCoordinator;
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::future::Future;
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -760,12 +762,8 @@ mod tests {
     fn test_logger() -> NodeLogger {
         let log_path =
             std::env::temp_dir().join(format!("gsv-node-test-{}.log", uuid::Uuid::new_v4()));
-        let inner = NodeLoggerInner::open(&log_path, 1024 * 1024, 1).expect("create test logger");
-        NodeLogger {
-            inner: Arc::new(Mutex::new(inner)),
-            node_id: "test-node".to_string(),
-            workspace: "/tmp".to_string(),
-        }
+        NodeLogger::with_path("test-node", "/tmp", &log_path, 1024 * 1024, 1)
+            .expect("create test logger")
     }
 
     fn test_exec_event(index: usize) -> NodeExecEventParams {
@@ -1872,196 +1870,10 @@ const NODE_SYSTEMD_UNIT_NAME: &str = "gsv-node.service";
 #[cfg(target_os = "macos")]
 const NODE_LAUNCHD_LABEL: &str = "dev.gsv.node";
 
-const DEFAULT_NODE_LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
-const DEFAULT_NODE_LOG_MAX_FILES: usize = 5;
-
-fn node_log_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("Could not determine home directory")?;
-    Ok(home.join(".gsv").join("logs").join("node.log"))
-}
-
-fn parse_env_u64(name: &str) -> Option<u64> {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|v| *v > 0)
-}
-
-fn parse_env_usize(name: &str) -> Option<usize> {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|v| *v > 0)
-}
-
-fn node_log_max_bytes() -> u64 {
-    parse_env_u64("GSV_NODE_LOG_MAX_BYTES").unwrap_or(DEFAULT_NODE_LOG_MAX_BYTES)
-}
-
-fn node_log_max_files() -> usize {
-    parse_env_usize("GSV_NODE_LOG_MAX_FILES").unwrap_or(DEFAULT_NODE_LOG_MAX_FILES)
-}
-
-fn rotated_log_path(base: &PathBuf, index: usize) -> PathBuf {
-    PathBuf::from(format!("{}.{}", base.to_string_lossy(), index))
-}
-
-#[derive(Clone)]
-struct NodeLogger {
-    inner: Arc<Mutex<NodeLoggerInner>>,
-    node_id: String,
-    workspace: String,
-}
-
-struct NodeLoggerInner {
-    path: PathBuf,
-    file: fs::File,
-    current_size: u64,
-    max_bytes: u64,
-    max_files: usize,
-}
-
-impl NodeLoggerInner {
-    fn open(
-        path: &PathBuf,
-        max_bytes: u64,
-        max_files: usize,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
-        let current_size = file.metadata().map(|m| m.len()).unwrap_or(0);
-
-        Ok(Self {
-            path: path.clone(),
-            file,
-            current_size,
-            max_bytes,
-            max_files: max_files.max(1),
-        })
-    }
-
-    fn rotate_if_needed(&mut self, incoming: usize) -> Result<(), Box<dyn std::error::Error>> {
-        let incoming = incoming as u64;
-        if self.current_size + incoming <= self.max_bytes {
-            return Ok(());
-        }
-
-        self.file.flush()?;
-
-        let oldest = rotated_log_path(&self.path, self.max_files);
-        if oldest.exists() {
-            let _ = fs::remove_file(&oldest);
-        }
-
-        if self.max_files > 1 {
-            for i in (1..self.max_files).rev() {
-                let src = rotated_log_path(&self.path, i);
-                if src.exists() {
-                    let dst = rotated_log_path(&self.path, i + 1);
-                    let _ = fs::rename(&src, &dst);
-                }
-            }
-        }
-
-        if self.path.exists() {
-            let _ = fs::rename(&self.path, rotated_log_path(&self.path, 1));
-        }
-
-        self.file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.path)?;
-        self.current_size = 0;
-
-        Ok(())
-    }
-
-    fn write_line(&mut self, line: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let incoming = line.len() + 1;
-        self.rotate_if_needed(incoming)?;
-        self.file.write_all(line.as_bytes())?;
-        self.file.write_all(b"\n")?;
-        self.file.flush()?;
-        self.current_size += incoming as u64;
-        Ok(())
-    }
-}
-
-impl NodeLogger {
-    fn new(node_id: &str, workspace: &PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-        let path = node_log_path()?;
-        let inner = NodeLoggerInner::open(&path, node_log_max_bytes(), node_log_max_files())?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(inner)),
-            node_id: node_id.to_string(),
-            workspace: workspace.display().to_string(),
-        })
-    }
-
-    fn info(&self, event: &str, fields: serde_json::Value) {
-        self.log("INFO", event, fields);
-    }
-
-    fn warn(&self, event: &str, fields: serde_json::Value) {
-        self.log("WARN", event, fields);
-    }
-
-    fn error(&self, event: &str, fields: serde_json::Value) {
-        self.log("ERROR", event, fields);
-    }
-
-    fn log(&self, level: &str, event: &str, fields: serde_json::Value) {
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            "ts".to_string(),
-            json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
-        );
-        obj.insert("level".to_string(), json!(level));
-        obj.insert("component".to_string(), json!("node"));
-        obj.insert("event".to_string(), json!(event));
-        obj.insert("nodeId".to_string(), json!(self.node_id));
-        obj.insert("workspace".to_string(), json!(self.workspace));
-
-        match fields {
-            serde_json::Value::Object(map) => {
-                for (k, v) in map {
-                    obj.insert(k, v);
-                }
-            }
-            serde_json::Value::Null => {}
-            other => {
-                obj.insert("data".to_string(), other);
-            }
-        }
-
-        let line = serde_json::Value::Object(obj).to_string();
-
-        if level == "ERROR" {
-            eprintln!("{}", line);
-        } else {
-            println!("{}", line);
-        }
-
-        let mut guard = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                eprintln!("Failed to acquire node log writer lock");
-                return;
-            }
-        };
-
-        if let Err(err) = guard.write_line(&line) {
-            eprintln!("Failed to write node log file: {}", err);
-        }
-    }
-}
+use gsv::logger::{self, NodeLogger};
 
 fn node_logs_file(lines: usize, follow: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let log_path = node_log_path()?;
+    let log_path = logger::node_log_path()?;
     if !log_path.exists() {
         return Err(format!("Log file not found: {}", log_path.display()).into());
     }
@@ -2088,7 +1900,7 @@ fn resolve_logs_get_line_limit(lines: Option<usize>) -> usize {
 }
 
 fn read_recent_node_log_lines(limit: usize) -> Result<(Vec<String>, bool), String> {
-    let path = node_log_path().map_err(|e| format!("Failed to resolve log path: {}", e))?;
+    let path = logger::node_log_path().map_err(|e| format!("Failed to resolve log path: {}", e))?;
     let file =
         fs::File::open(&path).map_err(|e| format!("Failed to open '{}': {}", path.display(), e))?;
     let reader = io::BufReader::new(file);
@@ -2530,7 +2342,9 @@ fn install_systemd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::e
         println!("Enabling linger (requires sudo - you may be prompted for password)...");
         match try_enable_linger() {
             Ok(()) => {
-                println!("✓ Enabled user linger - service will start at boot and persist after logout.");
+                println!(
+                    "✓ Enabled user linger - service will start at boot and persist after logout."
+                );
             }
             Err(e) => {
                 println!();
@@ -2628,7 +2442,7 @@ fn launchd_plist_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
 #[cfg(target_os = "macos")]
 fn launchd_log_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    node_log_path()
+    logger::node_log_path()
 }
 
 #[cfg(target_os = "macos")]
@@ -3117,14 +2931,14 @@ async fn run_node(
     workspace: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let logger = NodeLogger::new(&node_id, &workspace)?;
-    let log_path = node_log_path()?;
+    let log_path = logger::node_log_path()?;
     logger.info(
         "node.start",
         json!({
             "url": url,
             "logPath": log_path.display().to_string(),
-            "logMaxBytes": node_log_max_bytes(),
-            "logMaxFiles": node_log_max_files(),
+            "logMaxBytes": logger::node_log_max_bytes(),
+            "logMaxFiles": logger::node_log_max_files(),
         }),
     );
 
@@ -3160,6 +2974,8 @@ async fn run_node(
             }
         }
     });
+
+    let transfer_coordinator = Arc::new(TransferCoordinator::new());
 
     loop {
         logger.info("connect.attempt", json!({ "url": url }));
@@ -3206,14 +3022,24 @@ async fn run_node(
         };
         let conn = Arc::new(conn);
 
+        let coordinator_for_binary = transfer_coordinator.clone();
+        conn.set_binary_handler(move |data| {
+            coordinator_for_binary.route_binary_frame(&data);
+        })
+        .await;
+
         let conn_clone = conn.clone();
         let tools_clone = tools_for_handler.clone();
         let logger_clone = logger.clone();
+        let coordinator_for_events = transfer_coordinator.clone();
+        let workspace_for_transfers = workspace.clone();
 
         conn.set_event_handler(move |frame| {
             let conn = conn_clone.clone();
             let tools = tools_clone.clone();
             let logger = logger_clone.clone();
+            let coordinator = coordinator_for_events.clone();
+            let transfer_workspace = workspace_for_transfers.clone();
 
             tokio::spawn(async move {
                 if let Frame::Evt(evt) = frame {
@@ -3442,6 +3268,96 @@ async fn run_node(
                                 );
                             }
                         }
+                    } else if evt.event == "transfer.send" {
+                        if let Some(payload) = evt.payload {
+                            match serde_json::from_value::<TransferSendPayload>(payload) {
+                                Ok(send_payload) => {
+                                    let conn = conn.clone();
+                                    let ws = transfer_workspace.clone();
+                                    let coord = coordinator.clone();
+                                    let log = logger.clone();
+                                    tokio::spawn(async move {
+                                        gsv::transfer::handle_transfer_send(
+                                            conn,
+                                            send_payload,
+                                            ws,
+                                            coord,
+                                            log,
+                                        )
+                                        .await;
+                                    });
+                                }
+                                Err(e) => {
+                                    logger.error(
+                                        "transfer.send.parse_failed",
+                                        json!({ "error": e.to_string() }),
+                                    );
+                                }
+                            }
+                        }
+                    } else if evt.event == "transfer.receive" {
+                        if let Some(payload) = evt.payload {
+                            match serde_json::from_value::<TransferReceivePayload>(payload) {
+                                Ok(receive_payload) => {
+                                    let conn = conn.clone();
+                                    let ws = transfer_workspace.clone();
+                                    let coord = coordinator.clone();
+                                    let log = logger.clone();
+                                    tokio::spawn(async move {
+                                        gsv::transfer::handle_transfer_receive(
+                                            conn,
+                                            receive_payload,
+                                            ws,
+                                            coord,
+                                            log,
+                                        )
+                                        .await;
+                                    });
+                                }
+                                Err(e) => {
+                                    logger.error(
+                                        "transfer.receive.parse_failed",
+                                        json!({ "error": e.to_string() }),
+                                    );
+                                }
+                            }
+                        }
+                    } else if evt.event == "transfer.start" {
+                        if let Some(payload) = evt.payload {
+                            match serde_json::from_value::<TransferStartPayload>(payload) {
+                                Ok(start_payload) => {
+                                    logger.info(
+                                        "transfer.start",
+                                        json!({ "transferId": start_payload.transfer_id }),
+                                    );
+                                    coordinator.fire_start_signal(start_payload.transfer_id);
+                                }
+                                Err(e) => {
+                                    logger.error(
+                                        "transfer.start.parse_failed",
+                                        json!({ "error": e.to_string() }),
+                                    );
+                                }
+                            }
+                        }
+                    } else if evt.event == "transfer.end" {
+                        if let Some(payload) = evt.payload {
+                            match serde_json::from_value::<TransferEndPayload>(payload) {
+                                Ok(end_payload) => {
+                                    logger.info(
+                                        "transfer.end",
+                                        json!({ "transferId": end_payload.transfer_id }),
+                                    );
+                                    coordinator.close_chunk_sender(end_payload.transfer_id);
+                                }
+                                Err(e) => {
+                                    logger.error(
+                                        "transfer.end.parse_failed",
+                                        json!({ "error": e.to_string() }),
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -3459,14 +3375,14 @@ async fn run_node(
             );
         }
 
+        let keepalive_interval = tokio::time::Duration::from_secs(240);
+        let keepalive_timeout = tokio::time::Duration::from_secs(10);
         logger.info(
             "connect.ok",
             json!({
-                "keepaliveSeconds": 300,
+                "keepaliveSeconds": keepalive_interval.as_secs(),
             }),
         );
-        let keepalive_interval = tokio::time::Duration::from_secs(60 * 5);
-        let keepalive_timeout = tokio::time::Duration::from_secs(10);
         let mut next_keepalive_at = tokio::time::Instant::now() + keepalive_interval;
 
         // Monitor for disconnection or Ctrl+C

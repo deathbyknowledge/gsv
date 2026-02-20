@@ -35,7 +35,7 @@ Things like:
 
 When nodes connect, their tools become available with a prefix: `{nodeId}__toolname`. For example, if a node named "laptop" connects with a `bash` tool, you can call `laptop__bash`.
 
-Use `gsv__ListFiles` to see your workspace, or node tools for external access.
+Use `gsv__ReadFile` to browse your workspace, or node tools for external access.
 
 ---
 

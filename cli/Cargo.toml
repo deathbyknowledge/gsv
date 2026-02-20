@@ -12,6 +12,7 @@ tokio = { version = "1", features = [
     "io-util",
     "process",
     "signal",
+    "fs",
 ] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
@@ -38,6 +39,7 @@ sha2 = "0.10"
 base64 = "0.22"
 blake3 = "1.5"
 mime_guess = "2.0"
+infer = "0.16"
 flate2 = "1.0"
 tar = "0.4"
 json5 = "0.4"

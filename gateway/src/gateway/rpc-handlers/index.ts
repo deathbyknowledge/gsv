@@ -52,6 +52,12 @@ import {
   handleWorkspaceWrite,
   handleWorkspaceDelete,
 } from "./workspace";
+import {
+  handleTransferMeta,
+  handleTransferAccept,
+  handleTransferComplete,
+  handleTransferDone,
+} from "./transfer";
 
 export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
   return {
@@ -101,5 +107,9 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     "workspace.read": handleWorkspaceRead,
     "workspace.write": handleWorkspaceWrite,
     "workspace.delete": handleWorkspaceDelete,
+    "transfer.meta": handleTransferMeta,
+    "transfer.accept": handleTransferAccept,
+    "transfer.complete": handleTransferComplete,
+    "transfer.done": handleTransferDone,
   };
 }

@@ -1,6 +1,6 @@
 # WebSocket Protocol Reference
 
-All communication between GSV clients, nodes, and the gateway uses JSON frames over WebSocket. The gateway endpoint is `GET /ws`.
+All communication between GSV clients, nodes, and the gateway uses JSON text frames over WebSocket. Binary WebSocket frames are used for file transfer data. The gateway endpoint is `GET /ws`.
 
 ---
 
@@ -81,6 +81,27 @@ Every message is a JSON object with a `type` discriminator.
 | `message` | `string` | yes | Human-readable error message. |
 | `details` | `unknown` | no | Additional error context. |
 | `retryable` | `boolean` | no | Whether the client should retry. |
+
+---
+
+## Binary Frames
+
+In addition to JSON text frames, GSV uses binary WebSocket frames for bulk data transfer (file transfers via `gsv__Transfer`). Binary and text frames coexist on the same WebSocket connection.
+
+### Binary Frame Format
+
+```
+[4 bytes: transferId (u32 LE)][N bytes: chunk data]
+```
+
+| Offset | Size | Type | Description |
+|--------|------|------|-------------|
+| 0 | 4 | `u32` (little-endian) | Transfer ID. Correlates binary chunks with an active transfer session. |
+| 4 | N | `bytes` | Raw file data chunk. |
+
+Chunk size is 256 KB. The last chunk of a transfer may be smaller. Binary frames carry no JSON structure — the `transferId` prefix is sufficient for demultiplexing when multiple transfers are in flight.
+
+The transfer lifecycle is coordinated through JSON text frame events and RPCs (see [Transfer Events](#transfer-events) and [Transfer RPCs](#transfer-rpcs)).
 
 ---
 
@@ -1403,6 +1424,120 @@ Emitted to a node to check binary availability.
 | `kind` | `string` | Probe kind. Currently only `"bins"`. |
 | `bins` | `string[]` | Binary names to check. |
 | `timeoutMs` | `number` | Probe timeout in milliseconds. |
+
+### Transfer Events
+
+Events used to coordinate file transfers via `gsv__Transfer`. All transfer events are sent from the Gateway to nodes.
+
+#### `transfer.send`
+
+Tells the source node to read a file and report metadata.
+
+**Payload:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transferId` | `number` | Transfer identifier (u32). Used to tag binary frames. |
+| `path` | `string` | File path to read on the source node. |
+
+#### `transfer.start`
+
+Tells the source node to begin streaming the file as binary WebSocket frames.
+
+**Payload:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transferId` | `number` | Transfer identifier. |
+
+#### `transfer.receive`
+
+Tells the destination node to prepare for an incoming file.
+
+**Payload:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transferId` | `number` | Transfer identifier. |
+| `path` | `string` | File path to write on the destination node. |
+| `size` | `number` | Expected file size in bytes. |
+| `mime` | `string` | MIME type of the file (when known). |
+
+#### `transfer.end`
+
+Tells the destination node that all data has been sent and the file is complete.
+
+**Payload:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transferId` | `number` | Transfer identifier. |
+
+### Transfer RPCs
+
+RPCs sent from nodes to the Gateway during a file transfer.
+
+#### `transfer.meta`
+
+**Direction:** N -> G
+
+Source node reports file metadata after receiving `transfer.send`.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `transferId` | `number` | yes | Transfer identifier. |
+| `size` | `number` | no | File size in bytes. Present on success. |
+| `mime` | `string` | no | Detected MIME type. |
+| `error` | `string` | no | Error message if the file cannot be read. |
+
+**Result:** `{ ok: true }`
+
+#### `transfer.accept`
+
+**Direction:** N -> G
+
+Destination node confirms it is ready to receive data (or reports an error).
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `transferId` | `number` | yes | Transfer identifier. |
+| `error` | `string` | no | Error message if the destination cannot accept the file. |
+
+**Result:** `{ ok: true }`
+
+#### `transfer.complete`
+
+**Direction:** N -> G
+
+Source node signals it has finished sending all binary frames.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `transferId` | `number` | yes | Transfer identifier. |
+
+**Result:** `{ ok: true }`
+
+#### `transfer.done`
+
+**Direction:** N -> G
+
+Destination node confirms the file has been fully written to disk.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `transferId` | `number` | yes | Transfer identifier. |
+| `bytesWritten` | `number` | no | Total bytes written. |
+| `error` | `string` | no | Error message if the write failed. |
+
+**Result:** `{ ok: true }`
 
 ---
 

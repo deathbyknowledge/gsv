@@ -1,6 +1,6 @@
 # How to Run a Node
 
-Nodes are machines running the GSV CLI that provide tools to the agent over WebSocket. When a node connects, the agent gains access to Bash, Read, Write, Edit, Glob, and Grep on that machine.
+Nodes are machines running the GSV CLI that provide tools to the agent over WebSocket. When a node connects, the agent gains access to Bash, Read, Write, Edit, Glob, and Grep on that machine. The Read tool supports both text and image files — when reading an image, the model sees the actual image content rather than raw bytes.
 
 ## Install and start a node as a background service
 
@@ -68,6 +68,18 @@ gsv node install --id server --workspace /var/app
 ```
 
 The agent sees tools from all connected nodes simultaneously and can reason about which machine to use for a given task.
+
+## Transfer files between nodes
+
+With multiple nodes connected, the agent can transfer files between them using the `gsv__Transfer` native tool. Transfer endpoints use the format `{nodeId}:/path/to/file` for node filesystems or `gsv:workspace/path` for R2 workspace storage.
+
+```
+# Examples the agent might use:
+gsv__Transfer { source: "server:/var/app/build.tar.gz", destination: "laptop:/tmp/build.tar.gz" }
+gsv__Transfer { source: "laptop:/path/to/config.json", destination: "gsv:workspace/config.json" }
+```
+
+Transfers flow as binary data through the Gateway relay. No manual file transfer setup is needed — the agent handles it when the task requires moving files between machines.
 
 ## Set default node config
 
