@@ -39,7 +39,6 @@ import {
   getHeartbeatConfig,
   getNextHeartbeatTime,
   isWithinActiveHours,
-  shouldDeliverResponse,
   HeartbeatResult,
 } from "./heartbeat";
 import { loadHeartbeatFile, isHeartbeatFileEmpty } from "../agents/loader";
@@ -55,13 +54,7 @@ import {
   resolveAgentIdFromSessionKey,
   resolveAgentMainSessionKey,
 } from "../session/routing";
-import {
-  parseCommand,
-  HELP_TEXT,
-  normalizeThinkLevel,
-  MODEL_SELECTOR_HELP,
-  parseModelSelection,
-} from "./commands";
+import { parseCommand } from "./commands";
 import {
   parseDirectives,
   isDirectiveOnly,
@@ -86,10 +79,19 @@ import {
 } from "../protocol/transfer";
 import { listHostsByRole, pickExecutionHostId } from "./capabilities";
 import {
+  executeChannelSlashCommand,
+  executeCronTool as executeCronToolHandler,
+  executeMessageTool as executeMessageToolHandler,
+  executeSessionSendTool as executeSessionSendToolHandler,
+  executeSessionsListTool as executeSessionsListToolHandler,
+} from "./tool-executors";
+import {
+  routePayloadToChannel,
+  type PendingChannelResponseContext,
+} from "./channel-routing";
+import {
   CronService,
   CronStore,
-  normalizeCronToolJobCreateInput,
-  normalizeCronToolJobPatchInput,
   type CronJob,
   type CronJobCreate,
   type CronJobPatch,
@@ -244,50 +246,6 @@ function asNumber(value: unknown): number | undefined {
     return undefined;
   }
   return value;
-}
-
-function asMode(value: unknown): "due" | "force" | undefined {
-  if (value === "due" || value === "force") {
-    return value;
-  }
-  return undefined;
-}
-
-function formatCronDuration(ms: number): string {
-  if (ms % 86_400_000 === 0) {
-    const days = ms / 86_400_000;
-    return days === 1 ? "1 day" : `${days} days`;
-  }
-  if (ms % 3_600_000 === 0) {
-    const hours = ms / 3_600_000;
-    return hours === 1 ? "1 hour" : `${hours} hours`;
-  }
-  if (ms % 60_000 === 0) {
-    const minutes = ms / 60_000;
-    return minutes === 1 ? "1 minute" : `${minutes} minutes`;
-  }
-  if (ms % 1_000 === 0) {
-    const seconds = ms / 1_000;
-    return seconds === 1 ? "1 second" : `${seconds} seconds`;
-  }
-  return `${ms} ms`;
-}
-
-function describeCronSchedule(job: CronJob, timezone: string): string {
-  if (job.schedule.kind === "at") {
-    return `one-shot at ${formatTimeFull(new Date(job.schedule.atMs), timezone)}`;
-  }
-
-  if (job.schedule.kind === "every") {
-    const base = `every ${formatCronDuration(job.schedule.everyMs)}`;
-    if (job.schedule.anchorMs !== undefined) {
-      return `${base} (anchor ${formatTimeFull(new Date(job.schedule.anchorMs), timezone)})`;
-    }
-    return `${base} (starting from creation time)`;
-  }
-
-  const tz = job.schedule.tz || timezone;
-  return `cron "${job.schedule.expr}" (${tz})`;
 }
 
 type TransferState = {
@@ -2411,202 +2369,14 @@ export class Gateway extends DurableObject<Env> {
   }
 
   async executeCronTool(args: Record<string, unknown>): Promise<unknown> {
-    const actionRaw = typeof args.action === "string" ? args.action : "status";
-    const action = actionRaw.trim().toLowerCase();
-
-    switch (action) {
-      case "status": {
-        const status = await this.getCronStatus();
-        const config = this.getFullConfig();
-        const tz = resolveTimezone(config.userTimezone);
-        return {
-          ...status,
-          currentTime: formatTimeFull(new Date(), tz),
-          timezone: tz,
-        };
-      }
-      case "list": {
-        const listed = await this.listCronJobs({
-          agentId: asString(args.agentId),
-          includeDisabled:
-            typeof args.includeDisabled === "boolean"
-              ? args.includeDisabled
-              : undefined,
-          limit: asNumber(args.limit),
-          offset: asNumber(args.offset),
-        });
-        const config = this.getFullConfig();
-        const timezone = resolveTimezone(config.userTimezone);
-        return {
-          ...listed,
-          timezone,
-          currentTime: formatTimeFull(new Date(), timezone),
-          jobs: listed.jobs.map((job) => ({
-            ...job,
-            scheduleHuman: describeCronSchedule(job, timezone),
-            nextRunHuman:
-              job.state.nextRunAtMs !== undefined
-                ? formatTimeFull(new Date(job.state.nextRunAtMs), timezone)
-                : undefined,
-            lastRunHuman:
-              job.state.lastRunAtMs !== undefined
-                ? formatTimeFull(new Date(job.state.lastRunAtMs), timezone)
-                : undefined,
-          })),
-        };
-      }
-      case "add": {
-        const jobInput = asObject(args.job) ?? args;
-        if (!jobInput || typeof jobInput !== "object") {
-          throw new Error("cron add requires a job object");
-        }
-        const ji = jobInput as Record<string, unknown>;
-        if (!ji.name || !ji.schedule || !ji.spec) {
-          throw new Error("cron add requires name, schedule, and spec");
-        }
-        const config = this.getFullConfig();
-        const timezone = resolveTimezone(config.userTimezone);
-        const normalizedInput = normalizeCronToolJobCreateInput(ji, timezone);
-        const job = await this.addCronJob(normalizedInput);
-        return { ok: true, job };
-      }
-      case "update": {
-        const id = asString(args.id);
-        if (!id) {
-          throw new Error("cron update requires id");
-        }
-        const patch = asObject(args.patch);
-        if (!patch) {
-          throw new Error("cron update requires patch object");
-        }
-        const config = this.getFullConfig();
-        const timezone = resolveTimezone(config.userTimezone);
-        const normalizedPatch = normalizeCronToolJobPatchInput(patch, timezone);
-        const job = await this.updateCronJob(id, normalizedPatch);
-        return { ok: true, job };
-      }
-      case "remove": {
-        const id = asString(args.id);
-        if (!id) {
-          throw new Error("cron remove requires id");
-        }
-        const result = await this.removeCronJob(id);
-        return { ok: true, removed: result.removed };
-      }
-      case "run":
-        return {
-          ok: true,
-          ...(await this.runCronJobs({
-            id: asString(args.id),
-            mode: asMode(args.mode),
-          })),
-        };
-      case "runs":
-        return await this.listCronRuns({
-          jobId: asString(args.jobId),
-          limit: asNumber(args.limit),
-          offset: asNumber(args.offset),
-        });
-      default:
-        throw new Error(`Unknown cron action: ${action}`);
-    }
+    return executeCronToolHandler(this, args);
   }
 
   async executeMessageTool(
     agentId: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    const text = asString(args.text);
-    if (!text) {
-      throw new Error("text is required");
-    }
-
-    // Resolve defaults from last active channel context
-    const lastActive = this.lastActiveContext[agentId];
-
-    const channel = asString(args.channel) ?? lastActive?.channel;
-    if (!channel) {
-      throw new Error(
-        "channel is required (no current channel context available)",
-      );
-    }
-    const to = asString(args.to) ?? lastActive?.peer?.id;
-    if (!to) {
-      throw new Error(
-        "to (peer ID) is required (no current peer context available)",
-      );
-    }
-
-    const peerKind =
-      asString(args.peerKind) ?? lastActive?.peer?.kind ?? "dm";
-    if (!["dm", "group", "channel", "thread"].includes(peerKind)) {
-      throw new Error(
-        `Invalid peerKind: ${peerKind}. Must be dm, group, channel, or thread.`,
-      );
-    }
-    const accountId =
-      asString(args.accountId) ?? lastActive?.accountId ?? "default";
-    const replyToId = asString(args.replyToId);
-
-    const peer: ChannelPeer = {
-      kind: peerKind as ChannelPeer["kind"],
-      id: to,
-    };
-    const message: ChannelOutboundMessage = {
-      peer,
-      text,
-      replyToId,
-    };
-
-    // Try Service Binding RPC first
-    const channelBinding = this.getChannelBinding(channel);
-    if (channelBinding) {
-      const result = await channelBinding.send(accountId, message);
-      if (!result.ok) {
-        throw new Error(`Channel send failed: ${result.error}`);
-      }
-      return {
-        sent: true,
-        channel,
-        to,
-        peerKind,
-        accountId,
-        messageId: result.messageId,
-      };
-    }
-
-    // WebSocket fallback
-    const channelKey = `${channel}:${accountId}`;
-    const channelWs = this.channels.get(channelKey);
-    if (!channelWs || channelWs.readyState !== WebSocket.OPEN) {
-      throw new Error(
-        `Channel "${channel}" (account: ${accountId}) is not connected. ` +
-          `Make sure the channel is started and connected.`,
-      );
-    }
-
-    const outbound: ChannelOutboundPayload = {
-      channel,
-      accountId,
-      peer: { kind: peerKind as PeerInfo["kind"], id: to },
-      sessionKey: "",
-      message: { text, replyToId },
-    };
-    const evt: EventFrame<ChannelOutboundPayload> = {
-      type: "evt",
-      event: "channel.outbound",
-      payload: outbound,
-    };
-    channelWs.send(JSON.stringify(evt));
-
-    return {
-      sent: true,
-      channel,
-      to,
-      peerKind,
-      accountId,
-      via: "websocket",
-    };
+    return executeMessageToolHandler(this, agentId, args);
   }
 
   // ---------------------------------------------------------------------------
@@ -2616,51 +2386,7 @@ export class Gateway extends DurableObject<Env> {
   async executeSessionsListTool(
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    const limit = Math.min(Math.max(asNumber(args.limit) ?? 20, 1), 100);
-    const offset = Math.max(asNumber(args.offset) ?? 0, 0);
-    const messageLimit = Math.min(
-      Math.max(asNumber(args.messageLimit) ?? 0, 0),
-      20,
-    );
-
-    const allSessions = Object.values(this.sessionRegistry).sort(
-      (a, b) => b.lastActiveAt - a.lastActiveAt,
-    );
-
-    const page = allSessions.slice(offset, offset + limit);
-
-    // Build result rows, optionally including recent messages
-    const sessions: unknown[] = [];
-    for (const entry of page) {
-      const row: Record<string, unknown> = {
-        sessionKey: entry.sessionKey,
-        label: entry.label,
-        lastActiveAt: entry.lastActiveAt,
-        createdAt: entry.createdAt,
-      };
-
-      if (messageLimit > 0) {
-        try {
-          const sessionStub = env.SESSION.getByName(entry.sessionKey);
-          const preview = await sessionStub.preview(messageLimit);
-          row.messageCount = preview.messageCount;
-          row.messages = preview.messages;
-        } catch (e) {
-          row.messageCount = 0;
-          row.messages = [];
-          row.previewError = String(e);
-        }
-      }
-
-      sessions.push(row);
-    }
-
-    return {
-      sessions,
-      count: allSessions.length,
-      offset,
-      limit,
-    };
+    return executeSessionsListToolHandler(this, args);
   }
 
   // ---------------------------------------------------------------------------
@@ -2671,105 +2397,7 @@ export class Gateway extends DurableObject<Env> {
     callerAgentId: string,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    const rawSessionKey = asString(args.sessionKey);
-    if (!rawSessionKey) {
-      throw new Error("sessionKey is required");
-    }
-    const message = asString(args.message);
-    if (!message) {
-      throw new Error("message is required");
-    }
-    const waitSeconds = Math.min(
-      Math.max(asNumber(args.waitSeconds) ?? 30, 0),
-      120,
-    );
-
-    const sessionKey = this.canonicalizeSessionKey(rawSessionKey);
-    const runId = crypto.randomUUID();
-
-    // Verify the session exists in the registry (or allow creating new sessions)
-    const sessionStub = env.SESSION.getByName(sessionKey);
-
-    // Inject the message (same as chat.send but skipping directives/commands)
-    const tools = JSON.parse(JSON.stringify(this.getAllTools()));
-    const runtimeNodes = JSON.parse(
-      JSON.stringify(this.getRuntimeNodeInventory()),
-    );
-
-    const result = await sessionStub.chatSend(
-      message,
-      runId,
-      tools,
-      runtimeNodes,
-      sessionKey,
-    );
-
-    if (!result.ok) {
-      throw new Error("Failed to inject message into session");
-    }
-
-    // Fire-and-forget mode
-    if (waitSeconds === 0) {
-      return {
-        status: "accepted",
-        runId,
-        sessionKey,
-        queued: result.queued ?? false,
-      };
-    }
-
-    // Wait for the agent's reply by polling the session preview
-    const deadline = Date.now() + waitSeconds * 1000;
-    const pollIntervalMs = 500;
-
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, pollIntervalMs));
-
-      try {
-        const preview = await sessionStub.preview(5);
-        // Look for the last assistant message after our injection
-        const messages = preview.messages as Array<{
-          role?: string;
-          content?: unknown;
-        }>;
-        for (let i = messages.length - 1; i >= 0; i--) {
-          const msg = messages[i];
-          if (msg.role === "assistant" && msg.content) {
-            // Extract text from content
-            const content = msg.content;
-            let reply: string | undefined;
-            if (typeof content === "string") {
-              reply = content;
-            } else if (Array.isArray(content)) {
-              reply = content
-                .filter(
-                  (b: { type?: string }) =>
-                    b.type === "text",
-                )
-                .map((b: { text?: string }) => b.text ?? "")
-                .join("");
-            }
-            if (reply) {
-              return {
-                status: "ok",
-                runId,
-                sessionKey,
-                reply,
-              };
-            }
-          }
-        }
-      } catch {
-        // Session might not be ready yet, keep polling
-      }
-    }
-
-    return {
-      status: "timeout",
-      runId,
-      sessionKey,
-      waitedSeconds: waitSeconds,
-    };
+    return executeSessionSendToolHandler(this, callerAgentId, args);
   }
 
   /**
@@ -2778,137 +2406,8 @@ export class Gateway extends DurableObject<Env> {
   private async handleSlashCommand(
     command: { name: string; args: string },
     sessionKey: string,
-    channel: ChannelId,
-    accountId: string,
-    peer: PeerInfo,
-    messageId: string,
   ): Promise<{ handled: boolean; response?: string; error?: string }> {
-    const sessionStub = env.SESSION.getByName(sessionKey);
-
-    try {
-      switch (command.name) {
-        case "reset": {
-          const result = await sessionStub.reset();
-          return {
-            handled: true,
-            response: `Session reset. Archived ${result.archivedMessages} messages.`,
-          };
-        }
-
-        case "compact": {
-          const keepCount = command.args ? parseInt(command.args, 10) : 20;
-          if (isNaN(keepCount) || keepCount < 1) {
-            return {
-              handled: true,
-              error: "Invalid count. Usage: /compact [N]",
-            };
-          }
-          const result = await sessionStub.compact(keepCount);
-          return {
-            handled: true,
-            response: `Compacted session. Kept ${result.keptMessages} messages, archived ${result.trimmedMessages}.`,
-          };
-        }
-
-        case "stop": {
-          const result = await sessionStub.abort();
-          if (result.wasRunning) {
-            return {
-              handled: true,
-              response: `Stopped run \`${result.runId}\`${result.pendingToolsCancelled > 0 ? `, cancelled ${result.pendingToolsCancelled} pending tool(s)` : ""}.`,
-            };
-          } else {
-            return {
-              handled: true,
-              response: "No run in progress.",
-            };
-          }
-        }
-
-        case "status": {
-          const info = await sessionStub.get();
-          const stats = await sessionStub.stats();
-          const config = this.getFullConfig();
-
-          const lines = [
-            `**Session Status**`,
-            `• Session: \`${sessionKey}\``,
-            `• Messages: ${info.messageCount}`,
-            `• Tokens: ${stats.tokens.input} in / ${stats.tokens.output} out`,
-            `• Model: ${config.model.provider}/${config.model.id}`,
-            info.settings.thinkingLevel
-              ? `• Thinking: ${info.settings.thinkingLevel}`
-              : null,
-            info.resetPolicy ? `• Reset: ${info.resetPolicy.mode}` : null,
-          ].filter(Boolean);
-
-          return { handled: true, response: lines.join("\n") };
-        }
-
-        case "model": {
-          const info = await sessionStub.get();
-          const config = this.getFullConfig();
-          const effectiveModel = info.settings.model || config.model;
-
-          if (!command.args) {
-            return {
-              handled: true,
-              response: `Current model: ${effectiveModel.provider}/${effectiveModel.id}\n\n${MODEL_SELECTOR_HELP}`,
-            };
-          }
-
-          const resolved = parseModelSelection(
-            command.args,
-            effectiveModel.provider,
-          );
-          if (!resolved) {
-            return {
-              handled: true,
-              error: `Invalid model selector: ${command.args}\n\n${MODEL_SELECTOR_HELP}`,
-            };
-          }
-
-          await sessionStub.patch({ settings: { model: resolved } });
-          return {
-            handled: true,
-            response: `Model set to ${resolved.provider}/${resolved.id}`,
-          };
-        }
-
-        case "think": {
-          if (!command.args) {
-            const info = await sessionStub.get();
-            return {
-              handled: true,
-              response: `Thinking level: ${info.settings.thinkingLevel || "off"}\n\nLevels: off, minimal, low, medium, high, xhigh`,
-            };
-          }
-
-          const level = normalizeThinkLevel(command.args);
-          if (!level) {
-            return {
-              handled: true,
-              error: `Invalid level: ${command.args}\n\nLevels: off, minimal, low, medium, high, xhigh`,
-            };
-          }
-
-          await sessionStub.patch({ settings: { thinkingLevel: level } });
-          return {
-            handled: true,
-            response: `Thinking level set to ${level}`,
-          };
-        }
-
-        case "help": {
-          return { handled: true, response: HELP_TEXT };
-        }
-
-        default:
-          return { handled: false };
-      }
-    } catch (e) {
-      return { handled: true, error: `Command failed: ${e}` };
-    }
+    return executeChannelSlashCommand(this, command, sessionKey);
   }
 
   /**
@@ -3259,156 +2758,10 @@ export class Gateway extends DurableObject<Env> {
 
   private routeToChannel(
     sessionKey: string,
-    context: {
-      channel: ChannelId;
-      accountId: string;
-      peer: PeerInfo;
-      inboundMessageId: string;
-      agentId?: string;
-    },
+    context: PendingChannelResponseContext,
     payload: ChatEventPayload,
   ): void {
-    // Extract text from response
-    let text = "";
-    const msg = payload.message as { content?: unknown } | undefined;
-    if (msg?.content) {
-      if (typeof msg.content === "string") {
-        text = msg.content;
-      } else if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (typeof block === "object" && block && "type" in block) {
-            if (
-              (block as { type: string }).type === "text" &&
-              "text" in block
-            ) {
-              text += (block as { text: string }).text;
-            }
-          }
-        }
-      }
-    }
-
-    text = trimLeadingBlankLines(text);
-    if (!text.trim()) {
-      console.log(`[Gateway] No text content in response for ${sessionKey}`);
-      return;
-    }
-
-    // Check if this is a heartbeat response (inboundMessageId starts with "heartbeat:")
-    const isHeartbeat = context.inboundMessageId.startsWith("heartbeat:");
-
-    if (isHeartbeat) {
-      const { deliver, cleanedText } = shouldDeliverResponse(text);
-
-      if (!deliver) {
-        console.log(
-          `[Gateway] Heartbeat response suppressed (HEARTBEAT_OK or short ack)`,
-        );
-        return;
-      }
-
-      // Use cleaned text (HEARTBEAT_OK stripped)
-      text = cleanedText || text;
-
-      // Deduplication: Skip if same text was sent within 24 hours
-      const agentId = context.agentId;
-      if (agentId) {
-        const state = this.heartbeatState[agentId];
-        const now = Date.now();
-        const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-        if (
-          state?.lastHeartbeatText &&
-          state?.lastHeartbeatSentAt &&
-          state.lastHeartbeatText.trim() === text.trim() &&
-          now - state.lastHeartbeatSentAt < DEDUP_WINDOW_MS
-        ) {
-          console.log(
-            `[Gateway] Heartbeat response deduplicated for ${agentId} (same text within 24h)`,
-          );
-          return;
-        }
-
-        // Update state with this response (will be delivered)
-        this.heartbeatState[agentId] = {
-          ...state,
-          agentId,
-          lastHeartbeatText: text.trim(),
-          lastHeartbeatSentAt: now,
-          nextHeartbeatAt: state?.nextHeartbeatAt ?? null,
-          lastHeartbeatAt: state?.lastHeartbeatAt ?? null,
-        };
-      }
-    }
-
-    const replyToId = isHeartbeat ? undefined : context.inboundMessageId;
-
-    // Try Service Binding RPC first for channel workers with direct RPC bindings.
-    const channelBinding = this.getChannelBinding(context.channel);
-
-    if (channelBinding) {
-      // Clone the message to ensure it's a plain object (not a proxy)
-      // This is necessary for Service Binding RPC serialization
-      const message: ChannelOutboundMessage = JSON.parse(
-        JSON.stringify({
-          peer: {
-            kind: context.peer.kind,
-            id: context.peer.id,
-            name: context.peer.name,
-          },
-          text,
-          replyToId,
-        }),
-      );
-      channelBinding
-        .send(context.accountId, message)
-        .then((result) => {
-          if (result.ok) {
-            console.log(
-              `[Gateway] Routed response via RPC to ${context.channel}:${context.accountId}${isHeartbeat ? " (heartbeat)" : ""}`,
-            );
-          } else {
-            console.error(`[Gateway] Channel RPC send failed: ${result.error}`);
-          }
-        })
-        .catch((e) => {
-          console.error(`[Gateway] Channel RPC error:`, e);
-        });
-      return;
-    }
-
-    // WebSocket fallback (for channels that connect via WebSocket)
-    const channelKey = `${context.channel}:${context.accountId}`;
-    const channelWs = this.channels.get(channelKey);
-
-    if (!channelWs || channelWs.readyState !== WebSocket.OPEN) {
-      console.log(
-        `[Gateway] Channel ${channelKey} not connected for outbound (no RPC binding, no WebSocket)`,
-      );
-      return;
-    }
-
-    const outbound: ChannelOutboundPayload = {
-      channel: context.channel,
-      accountId: context.accountId,
-      peer: context.peer,
-      sessionKey,
-      message: {
-        text,
-        replyToId,
-      },
-    };
-
-    const evt: EventFrame<ChannelOutboundPayload> = {
-      type: "evt",
-      event: "channel.outbound",
-      payload: outbound,
-    };
-
-    channelWs.send(JSON.stringify(evt));
-    console.log(
-      `[Gateway] Routed response to channel ${channelKey}${isHeartbeat ? " (heartbeat)" : ""}`,
-    );
+    routePayloadToChannel(this, sessionKey, context, payload);
   }
 
   // ---- Heartbeat System ----
@@ -3893,10 +3246,6 @@ export class Gateway extends DurableObject<Env> {
       const commandResult = await this.handleSlashCommand(
         command,
         sessionKey,
-        params.channel,
-        params.accountId,
-        params.peer,
-        params.message.id,
       );
 
       if (commandResult.handled) {
