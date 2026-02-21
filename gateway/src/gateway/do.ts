@@ -1591,32 +1591,6 @@ export class Gateway extends DurableObject<Env> {
     }
   }
 
-  onNodeConnected(nodeId: string): void {
-    this.ctx.waitUntil(
-      (async () => {
-        try {
-          await this.dispatchPendingNodeProbesForNode(nodeId);
-          for (const agentId of this.getSkillProbeAgentIds()) {
-            await this.refreshSkillRuntimeFacts(agentId, { force: false });
-          }
-        } catch (error) {
-          console.error(
-            `[Gateway] Failed to refresh skill runtime facts on node connect (${nodeId}):`,
-            error,
-          );
-        }
-      })(),
-    );
-  }
-
-  private getSkillProbeAgentIds(): string[] {
-    const configured = this.getFullConfig().agents.list.map((agent) =>
-      normalizeAgentId(agent.id || "main"),
-    );
-    const unique = new Set(["main", ...configured]);
-    return Array.from(unique).sort();
-  }
-
   async handleNodeProbeResult(
     nodeId: string,
     params: NodeProbeResultParams,
