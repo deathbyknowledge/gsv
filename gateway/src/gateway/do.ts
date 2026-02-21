@@ -1,5 +1,6 @@
-import { DurableObject, env } from "cloudflare:workers";
-import { PersistedObject, snapshot, type Proxied } from "../shared/persisted-object";
+import { DurableObject } from "cloudflare:workers";
+import type { ChannelWorkerInterface } from "../channel-interface";
+import { PersistedObject, snapshot } from "../shared/persisted-object";
 import type {
   Frame,
   EventFrame,
@@ -7,16 +8,10 @@ import type {
   RequestFrame,
   ResponseFrame,
 } from "../protocol/frames";
-import type {
-  ChannelWorkerInterface,
-  ChannelOutboundMessage,
-  ChannelPeer,
-} from "../channel-interface";
 import {
   isWebSocketRequest,
   validateFrame,
   isWsConnected,
-  trimLeadingBlankLines,
   toErrorShape,
 } from "../shared/utils";
 import { DEFAULT_CONFIG } from "../config/defaults";
@@ -27,13 +22,7 @@ import {
   HeartbeatConfig,
   PendingPair,
 } from "../config";
-import {
-  resolveAgentIdFromBinding,
-  getDefaultAgentId,
-  isAllowedSender,
-  normalizeE164,
-  resolveLinkedIdentity,
-} from "../config/parsing";
+import { getDefaultAgentId } from "../config/parsing";
 import {
   HeartbeatState,
   getHeartbeatConfig,
@@ -47,22 +36,13 @@ import {
   resolveEffectiveSkillPolicy,
 } from "../agents/prompt";
 import {
-  buildAgentSessionKey,
   canonicalizeSessionKey as canonicalizeKey,
   normalizeAgentId,
   normalizeMainKey,
   resolveAgentIdFromSessionKey,
   resolveAgentMainSessionKey,
 } from "../session/routing";
-import { parseCommand } from "./commands";
-import {
-  parseDirectives,
-  isDirectiveOnly,
-  formatDirectiveAck,
-} from "./directives";
-import { processMediaWithTranscription } from "../transcription";
-import { formatEnvelope, formatTimeFull, resolveTimezone } from "../shared/time";
-import { processInboundMedia } from "../storage/media";
+import { formatTimeFull, resolveTimezone } from "../shared/time";
 import { listWorkspaceSkills } from "../skills";
 import { getNativeToolDefinitions } from "../agents/tools";
 import type {
@@ -70,16 +50,49 @@ import type {
 } from "../protocol/transfer";
 import { listHostsByRole, pickExecutionHostId } from "./capabilities";
 import {
-  executeChannelSlashCommand,
   executeCronTool as executeCronToolHandler,
   executeMessageTool as executeMessageToolHandler,
   executeSessionSendTool as executeSessionSendToolHandler,
   executeSessionsListTool as executeSessionsListToolHandler,
 } from "./tool-executors";
 import {
+  deliverPendingAsyncExecDeliveries as deliverPendingAsyncExecDeliveriesHandler,
+  gcDeliveredAsyncExecEvents as gcDeliveredAsyncExecEventsHandler,
+  gcPendingAsyncExecDeliveries as gcPendingAsyncExecDeliveriesHandler,
+  gcPendingAsyncExecSessions as gcPendingAsyncExecSessionsHandler,
+  handleNodeExecEvent as handleNodeExecEventHandler,
+  nextDeliveredAsyncExecEventGcAtMs as nextDeliveredAsyncExecEventGcAtMsHandler,
+  nextPendingAsyncExecDeliveryAtMs as nextPendingAsyncExecDeliveryAtMsHandler,
+  nextPendingAsyncExecSessionExpiryAtMs as nextPendingAsyncExecSessionExpiryAtMsHandler,
+  registerPendingAsyncExecSession as registerPendingAsyncExecSessionHandler,
+} from "./async-exec-state";
+import {
+  canNodeProbeBins as canNodeProbeBinsHandler,
+  clampSkillProbeTimeoutMs as clampSkillProbeTimeoutMsHandler,
+  dispatchPendingNodeProbesForNode as dispatchPendingNodeProbesForNodeHandler,
+  gcPendingNodeProbes as gcPendingNodeProbesHandler,
+  handleNodeProbeResult as handleNodeProbeResultHandler,
+  handlePendingNodeProbeTimeouts as handlePendingNodeProbeTimeoutsHandler,
+  markPendingNodeProbesAsQueued as markPendingNodeProbesAsQueuedHandler,
+  nextPendingNodeProbeExpiryAtMs as nextPendingNodeProbeExpiryAtMsHandler,
+  nextPendingNodeProbeGcAtMs as nextPendingNodeProbeGcAtMsHandler,
+  queueNodeBinProbe as queueNodeBinProbeHandler,
+  sanitizeSkillBinName as sanitizeSkillBinNameHandler,
+} from "./skill-probes";
+import {
+  handleChannelInboundRpc as handleChannelInboundRpcHandler,
+  type ChannelInboundRpcResult,
+} from "./channel-inbound";
+import {
   routePayloadToChannel,
   type PendingChannelResponseContext,
 } from "./channel-routing";
+import {
+  getChannelBinding as getChannelBindingHandler,
+  handleChannelStatusChanged as handleChannelStatusChangedHandler,
+  sendChannelResponse as sendChannelResponseHandler,
+  sendTypingToChannel as sendTypingToChannelHandler,
+} from "./channel-transport";
 import {
   completeTransfer as completeTransferHandler,
   failTransfer as failTransferHandler,
@@ -107,8 +120,6 @@ import type {
   ChannelId,
   PeerInfo,
   ChannelInboundParams,
-  ChannelOutboundPayload,
-  ChannelTypingPayload,
 } from "../protocol/channel";
 import type {
   LogsGetEventPayload,
@@ -122,7 +133,6 @@ import type {
   NodeExecEventParams,
   NodeExecEventType,
   NodeRuntimeInfo,
-  NodeProbePayload,
   NodeProbeResultParams,
   ToolDefinition,
   ToolInvokePayload,
@@ -205,18 +215,7 @@ const DEFAULT_LOG_LINES = 100;
 const MAX_LOG_LINES = 5000;
 const DEFAULT_INTERNAL_LOG_TIMEOUT_MS = 20_000;
 const MAX_INTERNAL_LOG_TIMEOUT_MS = 120_000;
-const DEFAULT_SKILL_PROBE_TIMEOUT_MS = 15_000;
-const MAX_SKILL_PROBE_TIMEOUT_MS = 120_000;
-const MAX_SKILL_PROBE_ATTEMPTS = 2;
-const DEFAULT_SKILL_PROBE_MAX_AGE_MS = 10 * 60_000;
-const MIN_SKILL_PROBE_MAX_AGE_MS = 1000;
-const MAX_SKILL_PROBE_MAX_AGE_MS = 24 * 60 * 60_000;
 const SKILL_BIN_STATUS_TTL_MS = 5 * 60_000;
-const ASYNC_EXEC_SESSION_TTL_MS = 24 * 60 * 60_000;
-const ASYNC_EXEC_DELIVERY_TTL_MS = 24 * 60 * 60_000;
-const ASYNC_EXEC_DELIVERY_RETRY_BASE_MS = 1000;
-const ASYNC_EXEC_DELIVERY_RETRY_MAX_MS = 60_000;
-const ASYNC_EXEC_EVENT_DEDUPE_TTL_MS = 24 * 60 * 60_000;
 
 type GatewayMethodHandlerContext = {
   gw: Gateway;
@@ -228,28 +227,6 @@ type GatewayMethodHandlerContext = {
 type GatewayMethodHandler = (
   ctx: GatewayMethodHandlerContext,
 ) => Promise<unknown | DeferredResponse> | unknown | DeferredResponse;
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function asString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return undefined;
-  }
-  return value;
-}
 
 export class Gateway extends DurableObject<Env> {
   clients: Map<string, WebSocket> = new Map();
@@ -741,152 +718,23 @@ export class Gateway extends DurableObject<Env> {
   }
 
   private canNodeProbeBins(nodeId: string): boolean {
-    const runtime = this.nodeRuntimeRegistry[nodeId];
-    if (!runtime) {
-      return false;
-    }
-    return runtime.hostCapabilities.includes("shell.exec");
+    return canNodeProbeBinsHandler(this, nodeId);
   }
 
   private sanitizeSkillBinName(bin: string): string | null {
-    const trimmed = bin.trim();
-    if (trimmed.length === 0) {
-      return null;
-    }
-    if (!/^[A-Za-z0-9._+-]+$/.test(trimmed)) {
-      return null;
-    }
-    return trimmed;
+    return sanitizeSkillBinNameHandler(bin);
   }
 
   private clampSkillProbeTimeoutMs(timeoutMs?: number): number {
-    const timeoutInput =
-      typeof timeoutMs === "number" && Number.isFinite(timeoutMs)
-        ? Math.floor(timeoutMs)
-        : DEFAULT_SKILL_PROBE_TIMEOUT_MS;
-    return Math.max(1000, Math.min(timeoutInput, MAX_SKILL_PROBE_TIMEOUT_MS));
-  }
-
-  private resolveSkillProbeMaxAgeMs(): number {
-    const configured = this.getFullConfig().timeouts.skillProbeMaxAgeMs;
-    if (typeof configured !== "number" || !Number.isFinite(configured)) {
-      return DEFAULT_SKILL_PROBE_MAX_AGE_MS;
-    }
-
-    const normalized = Math.floor(configured);
-    return Math.max(
-      MIN_SKILL_PROBE_MAX_AGE_MS,
-      Math.min(normalized, MAX_SKILL_PROBE_MAX_AGE_MS),
-    );
-  }
-
-  private collectPendingProbeBinsForNode(nodeId: string): Set<string> {
-    const bins = new Set<string>();
-    for (const probe of Object.values(this.pendingNodeProbes)) {
-      if (probe.nodeId !== nodeId || probe.kind !== "bins") {
-        continue;
-      }
-      for (const bin of probe.bins) {
-        bins.add(bin);
-      }
-    }
-    return bins;
-  }
-
-  private asyncExecSessionKey(nodeId: string, sessionId: string): string {
-    return `${nodeId}:${sessionId}`;
-  }
-
-  private clonePendingAsyncExecSession(
-    value: PendingAsyncExecSession,
-    overrides?: Partial<PendingAsyncExecSession>,
-  ): PendingAsyncExecSession {
-    const plain = snapshot(
-      value as unknown as Proxied<PendingAsyncExecSession>,
-    );
-    return {
-      nodeId: overrides?.nodeId ?? plain.nodeId,
-      sessionId: overrides?.sessionId ?? plain.sessionId,
-      sessionKey: overrides?.sessionKey ?? plain.sessionKey,
-      callId: overrides?.callId ?? plain.callId,
-      createdAt: overrides?.createdAt ?? plain.createdAt,
-      updatedAt: overrides?.updatedAt ?? plain.updatedAt,
-      expiresAt: overrides?.expiresAt ?? plain.expiresAt,
-    };
-  }
-
-  private asPendingAsyncExecSession(
-    value: unknown,
-  ): PendingAsyncExecSession | undefined {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return undefined;
-    }
-    const record = value as Record<string, unknown>;
-    const nodeId = asString(record.nodeId);
-    const sessionId = asString(record.sessionId);
-    const sessionKey = asString(record.sessionKey);
-    const callId = asString(record.callId);
-    const createdAt = asNumber(record.createdAt);
-    const updatedAt = asNumber(record.updatedAt);
-    const expiresAt = asNumber(record.expiresAt);
-    if (
-      !nodeId ||
-      !sessionId ||
-      !sessionKey ||
-      !callId ||
-      createdAt === undefined ||
-      updatedAt === undefined ||
-      expiresAt === undefined
-    ) {
-      return undefined;
-    }
-    return {
-      nodeId,
-      sessionId,
-      sessionKey,
-      callId,
-      createdAt,
-      updatedAt,
-      expiresAt,
-    };
+    return clampSkillProbeTimeoutMsHandler(timeoutMs);
   }
 
   private gcPendingAsyncExecSessions(now = Date.now(), reason?: string): number {
-    let removed = 0;
-    for (const [key, rawValue] of Object.entries(this.pendingAsyncExecSessions)) {
-      const value = this.asPendingAsyncExecSession(rawValue);
-      if (!value) {
-        delete this.pendingAsyncExecSessions[key];
-        removed += 1;
-        continue;
-      }
-      if (value.expiresAt > now) {
-        continue;
-      }
-      delete this.pendingAsyncExecSessions[key];
-      removed += 1;
-    }
-    if (removed > 0) {
-      console.warn(
-        `[Gateway] GC removed ${removed} stale async exec sessions${reason ? ` (${reason})` : ""}`,
-      );
-    }
-    return removed;
+    return gcPendingAsyncExecSessionsHandler(this, now, reason);
   }
 
   private nextPendingAsyncExecSessionExpiryAtMs(): number | undefined {
-    let next: number | undefined;
-    for (const [key, rawValue] of Object.entries(this.pendingAsyncExecSessions)) {
-      const value = this.asPendingAsyncExecSession(rawValue);
-      if (!value) {
-        delete this.pendingAsyncExecSessions[key];
-        continue;
-      }
-      if (next === undefined || value.expiresAt < next) {
-        next = value.expiresAt;
-      }
-    }
-    return next;
+    return nextPendingAsyncExecSessionExpiryAtMsHandler(this);
   }
 
   registerPendingAsyncExecSession(params: {
@@ -895,506 +743,34 @@ export class Gateway extends DurableObject<Env> {
     sessionKey: string;
     callId: string;
   }): void {
-    const now = Date.now();
-    const normalizedSessionId = params.sessionId.trim();
-    if (!normalizedSessionId) {
-      return;
-    }
-    this.gcPendingAsyncExecSessions(now, "register");
-    const key = this.asyncExecSessionKey(params.nodeId, normalizedSessionId);
-    this.pendingAsyncExecSessions[key] = {
-      nodeId: params.nodeId,
-      sessionId: normalizedSessionId,
-      sessionKey: params.sessionKey,
-      callId: params.callId,
-      createdAt: now,
-      updatedAt: now,
-      expiresAt: now + ASYNC_EXEC_SESSION_TTL_MS,
-    };
+    registerPendingAsyncExecSessionHandler(this, params);
     this.ctx.waitUntil(this.scheduleGatewayAlarm());
   }
 
-  private getPendingAsyncExecSession(
-    nodeId: string,
-    sessionId: string,
-  ): PendingAsyncExecSession | undefined {
-    const key = this.asyncExecSessionKey(nodeId, sessionId);
-    const rawValue = this.pendingAsyncExecSessions[key];
-    const value = this.asPendingAsyncExecSession(rawValue);
-    if (!value) {
-      if (rawValue !== undefined) {
-        delete this.pendingAsyncExecSessions[key];
-      }
-      return undefined;
-    }
-    return this.clonePendingAsyncExecSession(value);
-  }
-
-  private deletePendingAsyncExecSession(nodeId: string, sessionId: string): void {
-    const key = this.asyncExecSessionKey(nodeId, sessionId);
-    delete this.pendingAsyncExecSessions[key];
-  }
-
-  private touchPendingAsyncExecSession(nodeId: string, sessionId: string): void {
-    const key = this.asyncExecSessionKey(nodeId, sessionId);
-    const rawValue = this.pendingAsyncExecSessions[key];
-    const value = this.asPendingAsyncExecSession(rawValue);
-    if (!value) {
-      if (rawValue !== undefined) {
-        delete this.pendingAsyncExecSessions[key];
-      }
-      return;
-    }
-    const now = Date.now();
-    this.pendingAsyncExecSessions[key] = this.clonePendingAsyncExecSession(value, {
-      updatedAt: now,
-      expiresAt: now + ASYNC_EXEC_SESSION_TTL_MS,
-    });
-  }
-
-  private asAsyncExecTerminalEvent(
-    value: string,
-  ): AsyncExecTerminalEventType | undefined {
-    if (value === "finished" || value === "failed" || value === "timed_out") {
-      return value;
-    }
-    return undefined;
-  }
-
-  private resolveAsyncExecEventId(
-    nodeId: string,
-    sessionId: string,
-    params: NodeExecEventParams,
-  ): string {
-    const explicit =
-      typeof params.eventId === "string" ? params.eventId.trim() : "";
-    if (explicit) {
-      return explicit;
-    }
-
-    const parts = [
-      nodeId,
-      sessionId,
-      typeof params.event === "string" ? params.event.trim() : "unknown",
-      typeof params.callId === "string" ? params.callId.trim() : "",
-      typeof params.startedAt === "number" ? String(params.startedAt) : "",
-      typeof params.endedAt === "number" ? String(params.endedAt) : "",
-      typeof params.exitCode === "number" ? String(params.exitCode) : "",
-      typeof params.signal === "string" ? params.signal.trim() : "",
-    ];
-
-    return parts.filter((part) => part.length > 0).join(":");
-  }
-
-  private clonePendingAsyncExecDelivery(
-    value: PendingAsyncExecDelivery,
-    overrides?: Partial<PendingAsyncExecDelivery>,
-  ): PendingAsyncExecDelivery {
-    const plain = snapshot(
-      value as unknown as Proxied<PendingAsyncExecDelivery>,
-    );
-    return {
-      eventId: overrides?.eventId ?? plain.eventId,
-      nodeId: overrides?.nodeId ?? plain.nodeId,
-      sessionId: overrides?.sessionId ?? plain.sessionId,
-      sessionKey: overrides?.sessionKey ?? plain.sessionKey,
-      callId: overrides?.callId ?? plain.callId,
-      event: overrides?.event ?? plain.event,
-      exitCode: overrides?.exitCode ?? plain.exitCode,
-      signal: overrides?.signal ?? plain.signal,
-      outputTail: overrides?.outputTail ?? plain.outputTail,
-      startedAt: overrides?.startedAt ?? plain.startedAt,
-      endedAt: overrides?.endedAt ?? plain.endedAt,
-      createdAt: overrides?.createdAt ?? plain.createdAt,
-      updatedAt: overrides?.updatedAt ?? plain.updatedAt,
-      attempts: overrides?.attempts ?? plain.attempts,
-      nextAttemptAt: overrides?.nextAttemptAt ?? plain.nextAttemptAt,
-      expiresAt: overrides?.expiresAt ?? plain.expiresAt,
-      lastError: overrides?.lastError ?? plain.lastError,
-    };
-  }
-
-  private asPendingAsyncExecDelivery(
-    value: unknown,
-  ): PendingAsyncExecDelivery | undefined {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return undefined;
-    }
-
-    const record = value as Record<string, unknown>;
-    const eventId = asString(record.eventId);
-    const nodeId = asString(record.nodeId);
-    const sessionId = asString(record.sessionId);
-    const sessionKey = asString(record.sessionKey);
-    const callId = asString(record.callId);
-    const event =
-      typeof record.event === "string"
-        ? this.asAsyncExecTerminalEvent(record.event.trim())
-        : undefined;
-    const createdAt = asNumber(record.createdAt);
-    const updatedAt = asNumber(record.updatedAt);
-    const attempts = asNumber(record.attempts);
-    const nextAttemptAt = asNumber(record.nextAttemptAt);
-    const expiresAt = asNumber(record.expiresAt);
-
-    if (
-      !eventId ||
-      !nodeId ||
-      !sessionId ||
-      !sessionKey ||
-      !callId ||
-      !event ||
-      createdAt === undefined ||
-      updatedAt === undefined ||
-      attempts === undefined ||
-      nextAttemptAt === undefined ||
-      expiresAt === undefined
-    ) {
-      return undefined;
-    }
-
-    return {
-      eventId,
-      nodeId,
-      sessionId,
-      sessionKey,
-      callId,
-      event,
-      exitCode:
-        typeof record.exitCode === "number" && Number.isFinite(record.exitCode)
-          ? record.exitCode
-          : record.exitCode === null
-            ? null
-            : undefined,
-      signal: asString(record.signal),
-      outputTail: asString(record.outputTail),
-      startedAt: asNumber(record.startedAt),
-      endedAt: asNumber(record.endedAt),
-      createdAt,
-      updatedAt,
-      attempts: Math.max(0, Math.floor(attempts)),
-      nextAttemptAt: Math.floor(nextAttemptAt),
-      expiresAt: Math.floor(expiresAt),
-      lastError: asString(record.lastError),
-    };
-  }
-
   private gcPendingAsyncExecDeliveries(now = Date.now(), reason?: string): number {
-    let removed = 0;
-    for (const [eventId, rawValue] of Object.entries(this.pendingAsyncExecDeliveries)) {
-      const value = this.asPendingAsyncExecDelivery(rawValue);
-      if (!value || value.expiresAt <= now) {
-        delete this.pendingAsyncExecDeliveries[eventId];
-        removed += 1;
-      }
-    }
-
-    if (removed > 0) {
-      console.warn(
-        `[Gateway] GC removed ${removed} stale async exec deliveries${reason ? ` (${reason})` : ""}`,
-      );
-    }
-
-    return removed;
+    return gcPendingAsyncExecDeliveriesHandler(this, now, reason);
   }
 
   private nextPendingAsyncExecDeliveryAtMs(now = Date.now()): number | undefined {
-    let next: number | undefined;
-    for (const [eventId, rawValue] of Object.entries(this.pendingAsyncExecDeliveries)) {
-      const value = this.asPendingAsyncExecDelivery(rawValue);
-      if (!value) {
-        delete this.pendingAsyncExecDeliveries[eventId];
-        continue;
-      }
-
-      const candidate = value.expiresAt <= now ? now : Math.max(now, value.nextAttemptAt);
-      if (next === undefined || candidate < next) {
-        next = candidate;
-      }
-    }
-    return next;
+    return nextPendingAsyncExecDeliveryAtMsHandler(this, now);
   }
 
   private gcDeliveredAsyncExecEvents(now = Date.now(), reason?: string): number {
-    let removed = 0;
-    for (const [eventId, expiresAt] of Object.entries(this.deliveredAsyncExecEvents)) {
-      if (
-        typeof expiresAt !== "number" ||
-        !Number.isFinite(expiresAt) ||
-        expiresAt <= now
-      ) {
-        delete this.deliveredAsyncExecEvents[eventId];
-        removed += 1;
-      }
-    }
-
-    if (removed > 0) {
-      console.warn(
-        `[Gateway] GC removed ${removed} delivered async exec event ids${reason ? ` (${reason})` : ""}`,
-      );
-    }
-
-    return removed;
+    return gcDeliveredAsyncExecEventsHandler(this, now, reason);
   }
 
   private nextDeliveredAsyncExecEventGcAtMs(now = Date.now()): number | undefined {
-    let next: number | undefined;
-    for (const [eventId, expiresAt] of Object.entries(this.deliveredAsyncExecEvents)) {
-      if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
-        delete this.deliveredAsyncExecEvents[eventId];
-        if (next === undefined || now < next) {
-          next = now;
-        }
-        continue;
-      }
-      const candidate = expiresAt <= now ? now : expiresAt;
-      if (next === undefined || candidate < next) {
-        next = candidate;
-      }
-    }
-    return next;
-  }
-
-  private isAsyncExecEventDelivered(eventId: string, now = Date.now()): boolean {
-    const expiresAt = this.deliveredAsyncExecEvents[eventId];
-    if (typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt > now) {
-      return true;
-    }
-
-    if (expiresAt !== undefined) {
-      delete this.deliveredAsyncExecEvents[eventId];
-    }
-
-    return false;
-  }
-
-  private markAsyncExecEventDelivered(eventId: string, now = Date.now()): void {
-    this.deliveredAsyncExecEvents[eventId] = now + ASYNC_EXEC_EVENT_DEDUPE_TTL_MS;
-  }
-
-  private getPendingAsyncExecDelivery(
-    eventId: string,
-  ): PendingAsyncExecDelivery | undefined {
-    const rawValue = this.pendingAsyncExecDeliveries[eventId];
-    const value = this.asPendingAsyncExecDelivery(rawValue);
-    if (!value) {
-      if (rawValue !== undefined) {
-        delete this.pendingAsyncExecDeliveries[eventId];
-      }
-      return undefined;
-    }
-    return this.clonePendingAsyncExecDelivery(value);
-  }
-
-  private asyncExecDeliveryBackoffMs(attempts: number): number {
-    const normalizedAttempts = Math.max(1, Math.floor(attempts));
-    const exponent = Math.min(normalizedAttempts - 1, 8);
-    return Math.min(
-      ASYNC_EXEC_DELIVERY_RETRY_MAX_MS,
-      ASYNC_EXEC_DELIVERY_RETRY_BASE_MS * 2 ** exponent,
-    );
-  }
-
-  private queueAsyncExecDelivery(params: {
-    eventId: string;
-    nodeId: string;
-    sessionId: string;
-    sessionKey: string;
-    callId: string;
-    event: AsyncExecTerminalEventType;
-    exitCode?: number | null;
-    signal?: string;
-    outputTail?: string;
-    startedAt?: number;
-    endedAt?: number;
-  }): PendingAsyncExecDelivery {
-    const existing = this.getPendingAsyncExecDelivery(params.eventId);
-    if (existing) {
-      return existing;
-    }
-
-    const now = Date.now();
-    const delivery: PendingAsyncExecDelivery = {
-      eventId: params.eventId,
-      nodeId: params.nodeId,
-      sessionId: params.sessionId,
-      sessionKey: params.sessionKey,
-      callId: params.callId,
-      event: params.event,
-      exitCode: params.exitCode,
-      signal: params.signal,
-      outputTail: params.outputTail,
-      startedAt: params.startedAt,
-      endedAt: params.endedAt,
-      createdAt: now,
-      updatedAt: now,
-      attempts: 0,
-      nextAttemptAt: now,
-      expiresAt: now + ASYNC_EXEC_DELIVERY_TTL_MS,
-    };
-    this.pendingAsyncExecDeliveries[params.eventId] = delivery;
-    return delivery;
+    return nextDeliveredAsyncExecEventGcAtMsHandler(this, now);
   }
 
   private async deliverPendingAsyncExecDeliveries(now = Date.now()): Promise<number> {
-    this.gcDeliveredAsyncExecEvents(now, "delivery-scan");
-    this.gcPendingAsyncExecDeliveries(now, "delivery-scan");
-
-    const deliveries = Object.entries(this.pendingAsyncExecDeliveries)
-      .map(([eventId, rawValue]) => {
-        const value = this.asPendingAsyncExecDelivery(rawValue);
-        if (!value) {
-          delete this.pendingAsyncExecDeliveries[eventId];
-          return null;
-        }
-        return value;
-      })
-      .filter((entry): entry is PendingAsyncExecDelivery => entry !== null)
-      .sort((left, right) => left.nextAttemptAt - right.nextAttemptAt);
-
-    let delivered = 0;
-    for (const delivery of deliveries) {
-      if (delivery.expiresAt <= now) {
-        delete this.pendingAsyncExecDeliveries[delivery.eventId];
-        continue;
-      }
-
-      if (delivery.nextAttemptAt > now) {
-        continue;
-      }
-
-      if (this.isAsyncExecEventDelivered(delivery.eventId, now)) {
-        delete this.pendingAsyncExecDeliveries[delivery.eventId];
-        continue;
-      }
-
-      try {
-        const session = this.env.SESSION.getByName(delivery.sessionKey);
-        await session.ingestAsyncExecCompletion({
-          eventId: delivery.eventId,
-          nodeId: delivery.nodeId,
-          sessionId: delivery.sessionId,
-          callId: delivery.callId,
-          event: delivery.event,
-          exitCode: delivery.exitCode,
-          signal: delivery.signal,
-          outputTail: delivery.outputTail,
-          startedAt: delivery.startedAt,
-          endedAt: delivery.endedAt,
-          tools: JSON.parse(JSON.stringify(this.getAllTools())),
-          runtimeNodes: JSON.parse(JSON.stringify(this.getRuntimeNodeInventory())),
-        });
-        this.markAsyncExecEventDelivered(delivery.eventId, now);
-        delete this.pendingAsyncExecDeliveries[delivery.eventId];
-        delivered += 1;
-      } catch (error) {
-        const attempts = delivery.attempts + 1;
-        this.pendingAsyncExecDeliveries[delivery.eventId] =
-          this.clonePendingAsyncExecDelivery(delivery, {
-            attempts,
-            updatedAt: now,
-            nextAttemptAt: now + this.asyncExecDeliveryBackoffMs(attempts),
-            lastError: error instanceof Error ? error.message : String(error),
-          });
-      }
-    }
-
-    return delivered;
-  }
-
-  private cloneNodeRuntimeInfo(
-    runtime: NodeRuntimeInfo,
-    overrides?: Partial<NodeRuntimeInfo>,
-  ): NodeRuntimeInfo {
-    const plainRuntime = snapshot(
-      runtime as unknown as Proxied<NodeRuntimeInfo>,
-    );
-    const hostCapabilities =
-      overrides?.hostCapabilities ?? plainRuntime.hostCapabilities;
-    const toolCapabilities =
-      overrides?.toolCapabilities ?? plainRuntime.toolCapabilities;
-    const hostEnv = overrides?.hostEnv ?? plainRuntime.hostEnv;
-    const hostBinStatus = overrides?.hostBinStatus ?? plainRuntime.hostBinStatus;
-
-    return {
-      hostRole: overrides?.hostRole ?? plainRuntime.hostRole,
-      hostCapabilities: [...hostCapabilities],
-      toolCapabilities: Object.fromEntries(
-        Object.entries(toolCapabilities).map(([toolName, capabilities]) => [
-          toolName,
-          [...capabilities],
-        ]),
-      ),
-      hostOs: overrides?.hostOs ?? plainRuntime.hostOs,
-      hostEnv: hostEnv ? [...hostEnv] : undefined,
-      hostBinStatus: hostBinStatus
-        ? Object.fromEntries(
-            Object.entries(hostBinStatus).map(([bin, available]) => [
-              bin,
-              available === true,
-            ]),
-          )
-        : undefined,
-      hostBinStatusUpdatedAt:
-        overrides?.hostBinStatusUpdatedAt ??
-        plainRuntime.hostBinStatusUpdatedAt,
-    };
-  }
-
-  private clonePendingNodeProbe(
-    probe: PendingNodeProbe,
-    overrides?: Partial<PendingNodeProbe>,
-  ): PendingNodeProbe {
-    const plainProbe = snapshot(
-      probe as unknown as Proxied<PendingNodeProbe>,
-    );
-    const bins = overrides?.bins ?? plainProbe.bins;
-    return {
-      nodeId: overrides?.nodeId ?? plainProbe.nodeId,
-      agentId: overrides?.agentId ?? plainProbe.agentId,
-      kind: overrides?.kind ?? plainProbe.kind,
-      bins: [...bins],
-      timeoutMs: overrides?.timeoutMs ?? plainProbe.timeoutMs,
-      attempts: overrides?.attempts ?? plainProbe.attempts,
-      createdAt: overrides?.createdAt ?? plainProbe.createdAt,
-      sentAt: overrides?.sentAt ?? plainProbe.sentAt,
-      expiresAt: overrides?.expiresAt ?? plainProbe.expiresAt,
-    };
-  }
-
-  private dispatchNodeProbe(
-    probeId: string,
-    probe: PendingNodeProbe,
-  ): boolean {
-    const nodeWs = this.nodes.get(probe.nodeId);
-    if (!nodeWs || nodeWs.readyState !== WebSocket.OPEN) {
-      return false;
-    }
-
-    const evt: EventFrame<NodeProbePayload> = {
-      type: "evt",
-      event: "node.probe",
-      payload: {
-        probeId,
-        kind: probe.kind,
-        bins: [...probe.bins],
-        timeoutMs: probe.timeoutMs,
+    return deliverPendingAsyncExecDeliveriesHandler(
+      this,
+      {
+        getSessionByName: (sessionKey) => this.env.SESSION.getByName(sessionKey),
       },
-    };
-
-    try {
-      nodeWs.send(JSON.stringify(evt));
-    } catch {
-      return false;
-    }
-
-    const sentAt = Date.now();
-    this.pendingNodeProbes[probeId] = this.clonePendingNodeProbe(probe, {
-      attempts: probe.attempts + 1,
-      sentAt,
-      expiresAt: sentAt + probe.timeoutMs,
-    });
-    return true;
+      now,
+    );
   }
 
   private queueNodeBinProbe(params: {
@@ -1403,271 +779,52 @@ export class Gateway extends DurableObject<Env> {
     bins: string[];
     timeoutMs: number;
   }): { probeId?: string; bins: string[]; dispatched: boolean } {
-    this.gcPendingNodeProbes(Date.now(), `queue:${params.nodeId}`);
-    const pendingBins = this.collectPendingProbeBinsForNode(params.nodeId);
-    const bins = params.bins
-      .map((bin) => this.sanitizeSkillBinName(bin))
-      .filter((bin): bin is string => bin !== null)
-      .filter((bin) => !pendingBins.has(bin))
-      .sort();
-
-    if (bins.length === 0) {
-      return { bins, dispatched: false };
-    }
-
-    const probeId = crypto.randomUUID();
-    const probe: PendingNodeProbe = {
-      nodeId: params.nodeId,
-      agentId: params.agentId,
-      kind: "bins",
-      bins,
-      timeoutMs: params.timeoutMs,
-      attempts: 0,
-      createdAt: Date.now(),
-    };
-    this.pendingNodeProbes[probeId] = probe;
-
-    const dispatched = this.dispatchNodeProbe(probeId, probe);
-    return { probeId, bins, dispatched };
+    return queueNodeBinProbeHandler(this, params);
   }
 
   markPendingNodeProbesAsQueued(nodeId: string, reason: string): void {
-    for (const [probeId, probe] of Object.entries(this.pendingNodeProbes)) {
-      if (probe.nodeId !== nodeId || !probe.sentAt) {
-        continue;
-      }
-      this.pendingNodeProbes[probeId] = this.clonePendingNodeProbe(probe, {
-        attempts: 0,
-        sentAt: undefined,
-        expiresAt: undefined,
-      });
-    }
-    console.warn(`[Gateway] Marked pending node probes for ${nodeId} as queued: ${reason}`);
+    markPendingNodeProbesAsQueuedHandler(this, nodeId, reason);
   }
 
   async dispatchPendingNodeProbesForNode(nodeId: string): Promise<number> {
-    this.gcPendingNodeProbes(Date.now(), `dispatch:${nodeId}`);
-    let dispatched = 0;
-    for (const [probeId, probe] of Object.entries(this.pendingNodeProbes)) {
-      if (probe.nodeId !== nodeId || probe.sentAt || probe.attempts >= MAX_SKILL_PROBE_ATTEMPTS) {
-        continue;
-      }
-      if (this.dispatchNodeProbe(probeId, probe)) {
-        dispatched += 1;
-      }
-    }
-    await this.scheduleGatewayAlarm();
-    return dispatched;
+    return dispatchPendingNodeProbesForNodeHandler(this, nodeId, {
+      scheduleAlarm: () => this.scheduleGatewayAlarm(),
+    });
   }
 
   private nextPendingNodeProbeExpiryAtMs(): number | undefined {
-    let next: number | undefined;
-    for (const probe of Object.values(this.pendingNodeProbes)) {
-      if (!probe.expiresAt) {
-        continue;
-      }
-      if (next === undefined || probe.expiresAt < next) {
-        next = probe.expiresAt;
-      }
-    }
-    return next;
+    return nextPendingNodeProbeExpiryAtMsHandler(this);
   }
 
   private nextPendingNodeProbeGcAtMs(now = Date.now()): number | undefined {
-    const maxAgeMs = this.resolveSkillProbeMaxAgeMs();
-    let next: number | undefined;
-    for (const probe of Object.values(this.pendingNodeProbes)) {
-      const gcAt = probe.createdAt + maxAgeMs;
-      const candidate = gcAt <= now ? now : gcAt;
-      if (next === undefined || candidate < next) {
-        next = candidate;
-      }
-    }
-    return next;
+    return nextPendingNodeProbeGcAtMsHandler(this, now);
   }
 
   private gcPendingNodeProbes(now = Date.now(), reason?: string): number {
-    const maxAgeMs = this.resolveSkillProbeMaxAgeMs();
-    let removed = 0;
-    for (const [probeId, probe] of Object.entries(this.pendingNodeProbes)) {
-      if (probe.createdAt + maxAgeMs > now) {
-        continue;
-      }
-      delete this.pendingNodeProbes[probeId];
-      removed += 1;
-    }
-
-    if (removed > 0) {
-      console.warn(
-        `[Gateway] GC removed ${removed} stale pending node probes${reason ? ` (${reason})` : ""}`,
-      );
-    }
-    return removed;
+    return gcPendingNodeProbesHandler(this, now, reason);
   }
 
   private async handlePendingNodeProbeTimeouts(): Promise<void> {
-    const now = Date.now();
-    this.gcPendingNodeProbes(now, "timeout-scan");
-    for (const [probeId, probe] of Object.entries(this.pendingNodeProbes)) {
-      if (!probe.expiresAt || probe.expiresAt > now) {
-        continue;
-      }
-
-      if (probe.attempts < MAX_SKILL_PROBE_ATTEMPTS) {
-        const queued: PendingNodeProbe = this.clonePendingNodeProbe(probe, {
-          sentAt: undefined,
-          expiresAt: undefined,
-        });
-        this.pendingNodeProbes[probeId] = queued;
-        const dispatched = this.dispatchNodeProbe(probeId, queued);
-        if (dispatched) {
-          console.warn(
-            `[Gateway] Retrying node probe ${probeId} for ${probe.nodeId} (attempt ${queued.attempts + 1})`,
-          );
-          continue;
-        }
-      }
-
-      console.warn(
-        `[Gateway] Node probe ${probeId} timed out for ${probe.nodeId} after ${probe.attempts} attempts`,
-      );
-      delete this.pendingNodeProbes[probeId];
-    }
+    return handlePendingNodeProbeTimeoutsHandler(this);
   }
 
   async handleNodeProbeResult(
     nodeId: string,
     params: NodeProbeResultParams,
   ): Promise<{ ok: true; dropped?: true }> {
-    const probe = this.pendingNodeProbes[params.probeId];
-    if (!probe) {
-      return { ok: true, dropped: true };
-    }
-    if (probe.nodeId !== nodeId) {
-      throw new Error(`Node ${nodeId} is not authorized for probe ${params.probeId}`);
-    }
-
-    if (probe.kind === "bins") {
-      const reported = asObject(params.bins) ?? {};
-      const resultStatus = Object.fromEntries(
-        probe.bins.map((bin) => [bin, false]),
-      ) as Record<string, boolean>;
-      for (const bin of probe.bins) {
-        const raw = reported[bin];
-        if (typeof raw === "boolean") {
-          resultStatus[bin] = raw;
-        }
-      }
-
-      const runtime = this.nodeRuntimeRegistry[nodeId];
-      if (runtime) {
-        const existingStatus = runtime.hostBinStatus ?? {};
-        this.nodeRuntimeRegistry[nodeId] = this.cloneNodeRuntimeInfo(runtime, {
-          hostBinStatus: Object.fromEntries(
-            Object.entries({
-              ...existingStatus,
-              ...resultStatus,
-            }).sort(([left], [right]) => left.localeCompare(right)),
-          ),
-          hostBinStatusUpdatedAt: Date.now(),
-        });
-      }
-    }
-
-    delete this.pendingNodeProbes[params.probeId];
-    await this.scheduleGatewayAlarm();
-    return { ok: true };
+    return handleNodeProbeResultHandler(this, nodeId, params, {
+      scheduleAlarm: () => this.scheduleGatewayAlarm(),
+    });
   }
 
   async handleNodeExecEvent(
     nodeId: string,
     params: NodeExecEventParams,
   ): Promise<{ ok: true; dropped?: true }> {
-    const sessionId =
-      typeof params.sessionId === "string" ? params.sessionId.trim() : "";
-    if (!sessionId) {
-      return { ok: true, dropped: true };
-    }
-
-    const eventType =
-      typeof params.event === "string" ? params.event.trim() : "";
-    if (!["started", "finished", "failed", "timed_out"].includes(eventType)) {
-      return { ok: true, dropped: true };
-    }
-
-    const eventId = this.resolveAsyncExecEventId(nodeId, sessionId, params);
-    if (!eventId) {
-      return { ok: true, dropped: true };
-    }
-
-    const now = Date.now();
-    this.gcPendingAsyncExecSessions(now, "node.exec.event");
-    this.gcPendingAsyncExecDeliveries(now, "node.exec.event");
-    this.gcDeliveredAsyncExecEvents(now, "node.exec.event");
-
-    if (this.isAsyncExecEventDelivered(eventId, now)) {
-      return { ok: true };
-    }
-
-    if (this.getPendingAsyncExecDelivery(eventId)) {
-      return { ok: true };
-    }
-
-    if (eventType === "started") {
-      const pending = this.getPendingAsyncExecSession(nodeId, sessionId);
-      if (!pending) {
-        return { ok: true, dropped: true };
-      }
-      this.touchPendingAsyncExecSession(nodeId, sessionId);
-      await this.scheduleGatewayAlarm();
-      return { ok: true };
-    }
-
-    const terminalEvent = this.asAsyncExecTerminalEvent(eventType);
-    if (!terminalEvent) {
-      return { ok: true, dropped: true };
-    }
-
-    const pending = this.getPendingAsyncExecSession(nodeId, sessionId);
-    if (!pending) {
-      return { ok: true, dropped: true };
-    }
-
-    const outputTail =
-      typeof params.outputTail === "string" ? params.outputTail.trim() : "";
-    this.queueAsyncExecDelivery({
-      eventId,
-      nodeId,
-      sessionId,
-      sessionKey: pending.sessionKey,
-      callId: pending.callId,
-      event: terminalEvent,
-      exitCode:
-        typeof params.exitCode === "number" && Number.isFinite(params.exitCode)
-          ? params.exitCode
-          : params.exitCode === null
-            ? null
-            : undefined,
-      signal:
-        typeof params.signal === "string" ? params.signal.trim() || undefined : undefined,
-      outputTail:
-        outputTail.length > 4000
-          ? outputTail.slice(outputTail.length - 4000)
-          : outputTail || undefined,
-      startedAt:
-        typeof params.startedAt === "number" && Number.isFinite(params.startedAt)
-          ? params.startedAt
-          : undefined,
-      endedAt:
-        typeof params.endedAt === "number" && Number.isFinite(params.endedAt)
-          ? params.endedAt
-          : undefined,
+    return handleNodeExecEventHandler(this, nodeId, params, {
+      getSessionByName: (sessionKey) => this.env.SESSION.getByName(sessionKey),
+      scheduleAlarm: () => this.scheduleGatewayAlarm(),
     });
-    this.deletePendingAsyncExecSession(nodeId, sessionId);
-    await this.deliverPendingAsyncExecDeliveries(now);
-    await this.scheduleGatewayAlarm();
-
-    return { ok: true };
   }
 
   getTransferWs(nodeId: string): WebSocket | undefined {
@@ -2200,35 +1357,13 @@ export class Gateway extends DurableObject<Env> {
   }
 
   /**
-   * Handle a slash command and return the result
-   */
-  private async handleSlashCommand(
-    command: { name: string; args: string },
-    sessionKey: string,
-  ): Promise<{ handled: boolean; response?: string; error?: string }> {
-    return executeChannelSlashCommand(this, command, sessionKey);
-  }
-
-  /**
    * Get channel service binding by channel ID.
    * Returns undefined if channel is not configured.
    */
   getChannelBinding(
     channel: ChannelId,
   ): (Fetcher & ChannelWorkerInterface) | undefined {
-    // Map channel IDs to service bindings
-    // Add new channels here as they're configured
-    switch (channel) {
-      case "whatsapp":
-        return (env as any).CHANNEL_WHATSAPP as Fetcher &
-          ChannelWorkerInterface;
-      case "discord":
-        return (env as any).CHANNEL_DISCORD as Fetcher & ChannelWorkerInterface;
-      case "test":
-        return (env as any).CHANNEL_TEST as Fetcher & ChannelWorkerInterface;
-      default:
-        return undefined;
-    }
+    return getChannelBindingHandler(channel);
   }
 
   /**
@@ -2243,65 +1378,14 @@ export class Gateway extends DurableObject<Env> {
     replyToId: string,
     text: string,
   ): void {
-    const cleanedText = trimLeadingBlankLines(text);
-    if (!cleanedText.trim()) {
-      console.log(
-        `[Gateway] Skipping empty channel response for ${channel}:${accountId}`,
-      );
-      return;
-    }
-
-    // Try Service Binding RPC first (fire-and-forget)
-    const channelBinding = this.getChannelBinding(channel);
-    if (channelBinding) {
-      const message: ChannelOutboundMessage = {
-        peer: peer as ChannelPeer,
-        text: cleanedText,
-        replyToId,
-      };
-      channelBinding
-        .send(accountId, message)
-        .then((result) => {
-          if (!result.ok) {
-            console.error(`[Gateway] Channel RPC send failed: ${result.error}`);
-          }
-        })
-        .catch((e) => {
-          console.error(`[Gateway] Channel RPC error:`, e);
-          // Could implement WebSocket fallback here if needed
-        });
-      return;
-    }
-
-    // WebSocket fallback (for backwards compatibility during migration)
-    const channelKey = `${channel}:${accountId}`;
-    const channelWs = this.channels.get(channelKey);
-
-    if (!channelWs || channelWs.readyState !== WebSocket.OPEN) {
-      console.log(
-        `[Gateway] Channel ${channelKey} not connected for command response`,
-      );
-      return;
-    }
-
-    const outbound: ChannelOutboundPayload = {
+    sendChannelResponseHandler(
+      this,
       channel,
       accountId,
       peer,
-      sessionKey: "",
-      message: {
-        text: cleanedText,
-        replyToId,
-      },
-    };
-
-    const evt: EventFrame<ChannelOutboundPayload> = {
-      type: "evt",
-      event: "channel.outbound",
-      payload: outbound,
-    };
-
-    channelWs.send(JSON.stringify(evt));
+      replyToId,
+      text,
+    );
   }
 
   /**
@@ -2316,47 +1400,13 @@ export class Gateway extends DurableObject<Env> {
     sessionKey: string,
     typing: boolean,
   ): void {
-    // Try Service Binding RPC first (fire-and-forget)
-    const channelBinding = this.getChannelBinding(channel);
-    if (channelBinding?.setTyping) {
-      channelBinding
-        .setTyping(accountId, peer as ChannelPeer, typing)
-        .then(() => {
-          console.log(
-            `[Gateway] Sent typing=${typing} via RPC to ${channel}:${accountId}`,
-          );
-        })
-        .catch((e) => {
-          console.error(`[Gateway] Channel typing RPC error:`, e);
-        });
-      return;
-    }
-
-    // WebSocket fallback
-    const channelKey = `${channel}:${accountId}`;
-    const channelWs = this.channels.get(channelKey);
-
-    if (!channelWs || channelWs.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    const payload: ChannelTypingPayload = {
+    sendTypingToChannelHandler(
+      this,
       channel,
       accountId,
       peer,
       sessionKey,
       typing,
-    };
-
-    const evt: EventFrame<ChannelTypingPayload> = {
-      type: "evt",
-      event: "channel.typing",
-      payload,
-    };
-
-    channelWs.send(JSON.stringify(evt));
-    console.log(
-      `[Gateway] Sent typing=${typing} to ${channelKey} for ${peer.id}`,
     );
   }
 
@@ -2383,34 +1433,6 @@ export class Gateway extends DurableObject<Env> {
       mainKey: config.session.mainKey,
       dmScope: config.session.dmScope,
       defaultAgentId,
-    });
-  }
-
-  private buildSessionKeyFromChannel(
-    agentId: string,
-    channel: ChannelId,
-    accountId: string,
-    peer: PeerInfo,
-    senderId?: string,
-  ): string {
-    const config = this.getFullConfig();
-
-    // Check for identity link - use senderId if provided (for groups), otherwise peer.id
-    const idToCheck = senderId || peer.id;
-    const linkedIdentity = resolveLinkedIdentity(config, channel, idToCheck);
-
-    if (linkedIdentity) {
-      console.log(`[Gateway] Identity link: ${idToCheck} -> ${linkedIdentity}`);
-    }
-
-    return buildAgentSessionKey({
-      agentId,
-      channel,
-      accountId,
-      peer,
-      dmScope: config.session.dmScope,
-      mainKey: config.session.mainKey,
-      linkedIdentity,
     });
   }
 
@@ -2928,310 +1950,15 @@ export class Gateway extends DurableObject<Env> {
    * Handle inbound message from channel via RPC (Service Binding).
    * This is the same logic as handleChannelInbound but without WebSocket response.
    */
-  async handleChannelInboundRpc(params: ChannelInboundParams): Promise<{
-    ok: boolean;
-    sessionKey?: string;
-    status?: string;
-    error?: string;
-    [key: string]: unknown;
-  }> {
-    if (
-      !params?.channel ||
-      !params?.accountId ||
-      !params?.peer ||
-      !params?.message
-    ) {
-      return {
-        ok: false,
-        error: "channel, accountId, peer, and message required",
-      };
-    }
-
-    const config = this.getConfig();
-
-    // Check allowlist
-    const senderId = params.sender?.id ?? params.peer.id;
-    const senderName = params.sender?.name ?? params.peer.name;
-    const allowCheck = isAllowedSender(
-      config,
-      params.channel,
-      senderId,
-      params.peer.id,
-    );
-
-    if (!allowCheck.allowed) {
-      if (allowCheck.needsPairing) {
-        const pairKey = `${params.channel}:${normalizeE164(senderId)}`;
-        if (!this.pendingPairs[pairKey]) {
-          this.pendingPairs[pairKey] = {
-            channel: params.channel,
-            senderId: normalizeE164(senderId),
-            senderName: senderName,
-            requestedAt: Date.now(),
-            firstMessage: params.message.text?.slice(0, 200),
-          };
-          console.log(
-            `[Gateway] New pairing request from ${senderId} (${senderName})`,
-          );
-
-          // Send "pending approval" message back via channel
-          this.sendChannelResponse(
-            params.channel,
-            params.accountId,
-            params.peer,
-            params.message.id,
-            "Your message has been received. Awaiting approval from the owner.",
-          );
-        }
-        return {
-          ok: true,
-          status: "pending_pairing",
-          senderId: normalizeE164(senderId),
-        };
-      }
-
-      console.log(
-        `[Gateway] Blocked message from ${senderId}: ${allowCheck.reason}`,
-      );
-      return {
-        ok: true,
-        status: "blocked",
-        reason: allowCheck.reason,
-      };
-    }
-
-    // Build session key
-    const agentId = resolveAgentIdFromBinding(
-      config,
-      params.channel,
-      params.accountId,
-      params.peer,
-    );
-    const sessionKey = this.buildSessionKeyFromChannel(
-      agentId,
-      params.channel,
-      params.accountId,
-      params.peer,
-      senderId,
-    );
-
-    // Update channel registry
-    const channelKey = `${params.channel}:${params.accountId}`;
-    const existing = this.channelRegistry[channelKey];
-    if (existing) {
-      this.channelRegistry[channelKey] = {
-        ...existing,
-        lastMessageAt: Date.now(),
-      };
-    }
-
-    // Update last active context for this agent.
-    // This must happen for ALL inbound messages (including slash commands and
-    // directives) so that cron/heartbeat delivery can find the user's channel.
-    this.lastActiveContext[agentId] = {
-      agentId,
-      channel: params.channel,
-      accountId: params.accountId,
-      peer: params.peer,
-      sessionKey,
-      timestamp: Date.now(),
-    };
-
-    const messageText = params.message.text;
-
-    // Check for slash commands
-    const command = parseCommand(messageText);
-    if (command) {
-      const commandResult = await this.handleSlashCommand(
-        command,
-        sessionKey,
-      );
-
-      if (commandResult.handled) {
-        // Send response via channel outbound
-        this.sendChannelResponse(
-          params.channel,
-          params.accountId,
-          params.peer,
-          params.message.id,
-          commandResult.response || commandResult.error || "Command executed",
-        );
-        return {
-          ok: true,
-          sessionKey,
-          status: "command",
-          command: command.name,
-          response: commandResult.response,
-        };
-      }
-    }
-
-    const fullConfig = this.getFullConfig();
-    const sessionStub = this.env.SESSION.get(
-      this.env.SESSION.idFromName(sessionKey),
-    );
-
-    // Parse directives. For provider-less model selectors (e.g. /m:o3),
-    // resolve against the session's current provider, not the global default.
-    let directives = parseDirectives(messageText);
-    const needsProviderFallback =
-      directives.hasModelDirective &&
-      !directives.model &&
-      !!directives.rawModelDirective &&
-      !directives.rawModelDirective.includes("/");
-
-    if (needsProviderFallback) {
-      try {
-        const info = await sessionStub.get();
-        const fallbackProvider =
-          info.settings.model?.provider || fullConfig.model.provider;
-        directives = parseDirectives(messageText, fallbackProvider);
-      } catch (e) {
-        console.warn(
-          `[Gateway] Failed to resolve session model provider for ${sessionKey}, using global default:`,
-          e,
-        );
-        directives = parseDirectives(messageText, fullConfig.model.provider);
-      }
-    }
-
-    if (isDirectiveOnly(messageText)) {
-      const ack = formatDirectiveAck(directives);
-      if (ack) {
-        this.sendChannelResponse(
-          params.channel,
-          params.accountId,
-          params.peer,
-          params.message.id,
-          ack,
-        );
-      }
-      return {
-        ok: true,
-        sessionKey,
-        status: "directive-only",
-        directives: {
-          thinkLevel: directives.thinkLevel,
-          model: directives.model,
-        },
-      };
-    }
-
-    // Update session registry
-    const now = Date.now();
-    const existingSession = this.sessionRegistry[sessionKey];
-    this.sessionRegistry[sessionKey] = {
-      sessionKey,
-      createdAt: existingSession?.createdAt ?? now,
-      lastActiveAt: now,
-      label: existingSession?.label ?? params.peer.name,
-    };
-
-    // Generate runId before try block so it's accessible in catch for cleanup
-    const runId = crypto.randomUUID();
-
-    try {
-      const messageOverrides: {
-        thinkLevel?: string;
-        model?: { provider: string; id: string };
-      } = {};
-      if (directives.thinkLevel)
-        messageOverrides.thinkLevel = directives.thinkLevel;
-      if (directives.model) messageOverrides.model = directives.model;
-
-      // Process media
-      let processedMedia = await processMediaWithTranscription(
-        params.message.media,
-        {
-          workersAi: this.env.AI,
-          openaiApiKey: fullConfig.apiKeys.openai,
-          preferredProvider: fullConfig.transcription.provider,
-        },
-      );
-
-      if (processedMedia.length > 0) {
-        processedMedia = await processInboundMedia(
-          processedMedia,
-          this.env.STORAGE,
-          sessionKey,
-        );
-      }
-
-      // Store channel context by runId (not sessionKey) for correct routing with queued messages
-      this.pendingChannelResponses[runId] = {
-        channel: params.channel,
-        accountId: params.accountId,
-        peer: params.peer,
-        inboundMessageId: params.message.id,
-      };
-
-      // Wrap the message in an envelope with channel + timestamp metadata
-      const tz = resolveTimezone(fullConfig.userTimezone);
-      const senderLabel = params.sender?.name ?? params.peer.name;
-      const envelopedMessage = formatEnvelope(directives.cleaned, {
-        channel: params.channel,
-        timestamp: new Date(),
-        timezone: tz,
-        peerKind: params.peer.kind,
-        sender: senderLabel,
-      });
-
-      // Send typing indicator
-      this.sendTypingToChannel(
-        params.channel,
-        params.accountId,
-        params.peer,
-        sessionKey,
-        true,
-      );
-
-      const result = await sessionStub.chatSend(
-        envelopedMessage,
-        runId,
-        JSON.parse(JSON.stringify(this.getAllTools())),
-        JSON.parse(JSON.stringify(this.getRuntimeNodeInventory())),
-        sessionKey,
-        messageOverrides,
-        processedMedia.length > 0 ? processedMedia : undefined,
-        {
-          channel: params.channel,
-          accountId: params.accountId,
-          peer: {
-            kind: params.peer.kind,
-            id: params.peer.id,
-            name: params.peer.name,
-          },
-        },
-      );
-
-      return {
-        ok: true,
-        sessionKey,
-        status: "started",
-        runId: result.runId,
-        directives:
-          directives.hasThinkDirective || directives.hasModelDirective
-            ? {
-                thinkLevel: directives.thinkLevel,
-                model: directives.model,
-              }
-            : undefined,
-      };
-    } catch (e) {
-      this.sendTypingToChannel(
-        params.channel,
-        params.accountId,
-        params.peer,
-        sessionKey,
-        false,
-      );
-      delete this.pendingChannelResponses[runId];
-      return {
-        ok: false,
-        sessionKey,
-        error: e instanceof Error ? e.message : String(e),
-      };
-    }
+  async handleChannelInboundRpc(
+    params: ChannelInboundParams,
+  ): Promise<ChannelInboundRpcResult> {
+    return handleChannelInboundRpcHandler(this, params, {
+      getSessionStub: (sessionKey) =>
+        this.env.SESSION.get(this.env.SESSION.idFromName(sessionKey)),
+      workersAi: this.env.AI,
+      storage: this.env.STORAGE,
+    });
   }
 
   /**
@@ -3242,24 +1969,6 @@ export class Gateway extends DurableObject<Env> {
     accountId: string,
     status: { connected: boolean; authenticated: boolean; error?: string },
   ): Promise<void> {
-    const channelKey = `${channelId}:${accountId}`;
-    console.log(
-      `[Gateway] Channel status changed: ${channelKey} connected=${status.connected}`,
-    );
-
-    // Update channel registry
-    const existing = this.channelRegistry[channelKey];
-    if (existing) {
-      this.channelRegistry[channelKey] = {
-        ...existing,
-        connectedAt: status.connected ? Date.now() : existing.connectedAt,
-      };
-    } else if (status.connected) {
-      this.channelRegistry[channelKey] = {
-        channel: channelId as ChannelId,
-        accountId,
-        connectedAt: Date.now(),
-      };
-    }
+    return handleChannelStatusChangedHandler(this, channelId, accountId, status);
   }
 }
