@@ -1,6 +1,19 @@
 import { normalizeE164 } from "../../config/parsing";
 import type { Handler } from "../../protocol/methods";
 import { RpcError } from "../../shared/utils";
+import type { Gateway } from "../do";
+
+function findChannelForMessage(gw: Gateway, channel: string): string | null {
+  for (const [channelKey, ws] of gw.channels.entries()) {
+    if (
+      channelKey.startsWith(`${channel}:`) &&
+      ws.readyState === WebSocket.OPEN
+    ) {
+      return channelKey;
+    }
+  }
+  return null;
+}
 
 export const handlePairList: Handler<"pair.list"> = ({ gw }) => ({
   pairs: { ...gw.pendingPairs },
@@ -36,7 +49,7 @@ export const handlePairApprove: Handler<"pair.approve"> = ({ gw, params }) => {
 
   // Send confirmation message back to the channel
   // Find a connected channel to send through
-  const channelKey = gw.findChannelForMessage(params.channel);
+  const channelKey = findChannelForMessage(gw, params.channel);
   if (channelKey) {
     const [channel, accountId] = channelKey.split(":");
     gw.sendChannelResponse(
