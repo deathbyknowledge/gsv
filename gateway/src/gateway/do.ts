@@ -66,16 +66,7 @@ import { processInboundMedia } from "../storage/media";
 import { listWorkspaceSkills } from "../skills";
 import { getNativeToolDefinitions } from "../agents/tools";
 import type {
-  TransferEndpoint,
   TransferRequestParams,
-  TransferToolResult,
-  TransferSendPayload,
-  TransferReceivePayload,
-  TransferEndPayload,
-} from "../protocol/transfer";
-import {
-  parseTransferBinaryFrame,
-  buildTransferBinaryFrame,
 } from "../protocol/transfer";
 import { listHostsByRole, pickExecutionHostId } from "./capabilities";
 import {
@@ -89,6 +80,18 @@ import {
   routePayloadToChannel,
   type PendingChannelResponseContext,
 } from "./channel-routing";
+import {
+  completeTransfer as completeTransferHandler,
+  failTransfer as failTransferHandler,
+  failTransfersForNode as failTransfersForNodeHandler,
+  finalizeR2Upload as finalizeR2UploadHandler,
+  getTransferWs as getTransferWsHandler,
+  handleTransferBinaryFrame as handleTransferBinaryFrameHandler,
+  streamR2ToDest as streamR2ToDestHandler,
+  transferRequest as transferRequestHandler,
+  type TransferR2,
+  type TransferState,
+} from "./transfers";
 import {
   CronService,
   CronStore,
@@ -247,23 +250,6 @@ function asNumber(value: unknown): number | undefined {
   }
   return value;
 }
-
-type TransferState = {
-  transferId: number;
-  callId: string;
-  sessionKey: string;
-  source: TransferEndpoint;
-  destination: TransferEndpoint;
-  state: "init" | "meta-wait" | "accept-wait" | "streaming" | "completing";
-  size?: number;
-  mime?: string;
-  bytesTransferred: number;
-};
-
-type TransferR2 = {
-  writer: WritableStreamDefaultWriter<Uint8Array>;
-  uploadPromise: Promise<R2Object>;
-};
 
 export class Gateway extends DurableObject<Env> {
   clients: Map<string, WebSocket> = new Map();
@@ -1684,228 +1670,41 @@ export class Gateway extends DurableObject<Env> {
     return { ok: true };
   }
 
-  private nextTransferId(): number {
-    const keys = Object.keys(this.transfers);
-    if (keys.length === 0) return 1;
-    return Math.max(...keys.map(Number)) + 1;
-  }
-
   getTransferWs(nodeId: string): WebSocket | undefined {
-    if (nodeId === "gsv") return undefined;
-    const ws = this.nodes.get(nodeId);
-    return ws && ws.readyState === WebSocket.OPEN ? ws : undefined;
+    return getTransferWsHandler(this, nodeId);
   }
 
   async transferRequest(
     params: TransferRequestParams,
   ): Promise<{ ok: boolean; error?: string }> {
-    const transferId = this.nextTransferId();
-    const sourceIsGsv = params.source.node === "gsv";
-    const destIsGsv = params.destination.node === "gsv";
-
-    if (!sourceIsGsv && !this.getTransferWs(params.source.node)) {
-      return { ok: false, error: `Source node not connected: ${params.source.node}` };
-    }
-
-    if (!destIsGsv && !this.getTransferWs(params.destination.node)) {
-      return { ok: false, error: `Destination node not connected: ${params.destination.node}` };
-    }
-
-    const transfer: TransferState = {
-      transferId,
-      callId: params.callId,
-      sessionKey: params.sessionKey,
-      source: params.source,
-      destination: params.destination,
-      state: "init",
-      bytesTransferred: 0,
-    };
-
-    this.transfers[String(transferId)] = transfer;
-
-    if (sourceIsGsv) {
-      const r2Object = await this.env.STORAGE.head(params.source.path);
-      if (!r2Object) {
-        delete this.transfers[String(transferId)];
-        return { ok: false, error: `R2 object not found: ${params.source.path}` };
-      }
-      transfer.size = r2Object.size;
-      transfer.mime = r2Object.httpMetadata?.contentType;
-
-      if (destIsGsv) {
-        delete this.transfers[String(transferId)];
-        return { ok: false, error: "Cannot transfer from gsv to gsv" };
-      }
-
-      const receiveEvt: EventFrame<TransferReceivePayload> = {
-        type: "evt",
-        event: "transfer.receive",
-        payload: {
-          transferId,
-          path: params.destination.path,
-          size: transfer.size,
-          mime: transfer.mime,
-        },
-      };
-      this.getTransferWs(params.destination.node)!.send(JSON.stringify(receiveEvt));
-      transfer.state = "accept-wait";
-      this.transfers[String(transferId)] = transfer;
-    } else {
-      const sendEvt: EventFrame<TransferSendPayload> = {
-        type: "evt",
-        event: "transfer.send",
-        payload: {
-          transferId,
-          path: params.source.path,
-        },
-      };
-      this.getTransferWs(params.source.node)!.send(JSON.stringify(sendEvt));
-      transfer.state = "meta-wait";
-      this.transfers[String(transferId)] = transfer;
-    }
-
-    return { ok: true };
+    return transferRequestHandler(this, params);
   }
 
-  private handleTransferBinaryFrame(ws: WebSocket, data: ArrayBuffer): void {
-    const { transferId, chunk } = parseTransferBinaryFrame(data);
-    const transfer = this.transfers[String(transferId)];
-    if (!transfer) return;
-
-    transfer.bytesTransferred += chunk.byteLength;
-    this.transfers[String(transferId)] = transfer;
-
-    const destIsGsv = transfer.destination.node === "gsv";
-
-    if (destIsGsv) {
-      const r2 = this.transferR2.get(transferId);
-      if (r2) {
-        r2.writer.write(new Uint8Array(chunk)).catch((err) => {
-          this.failTransfer(transfer, `R2 write error: ${err}`);
-        });
-      }
-    } else {
-      const destWs = this.getTransferWs(transfer.destination.node);
-      if (destWs) {
-        destWs.send(buildTransferBinaryFrame(transferId, chunk));
-      }
-    }
+  private handleTransferBinaryFrame(_ws: WebSocket, data: ArrayBuffer): void {
+    handleTransferBinaryFrameHandler(this, data);
   }
 
   async streamR2ToDest(transfer: TransferState): Promise<void> {
-    try {
-      const r2Object = await this.env.STORAGE.get(transfer.source.path);
-      if (!r2Object) {
-        this.failTransfer(transfer, `R2 object not found: ${transfer.source.path}`);
-        return;
-      }
-
-      const destWs = this.getTransferWs(transfer.destination.node);
-      if (!destWs) {
-        this.failTransfer(transfer, `Destination node disconnected: ${transfer.destination.node}`);
-        return;
-      }
-
-      const reader = r2Object.body.getReader();
-      let done = false;
-
-      while (!done) {
-        const result = await reader.read();
-        done = result.done;
-        if (result.value) {
-          transfer.bytesTransferred += result.value.byteLength;
-          destWs.send(
-            buildTransferBinaryFrame(transfer.transferId, result.value),
-          );
-        }
-      }
-
-      this.transfers[String(transfer.transferId)] = transfer;
-
-      const endEvt: EventFrame<TransferEndPayload> = {
-        type: "evt",
-        event: "transfer.end",
-        payload: { transferId: transfer.transferId },
-      };
-      destWs.send(JSON.stringify(endEvt));
-      transfer.state = "completing";
-      this.transfers[String(transfer.transferId)] = transfer;
-    } catch (err) {
-      this.failTransfer(
-        transfer,
-        `R2 stream error: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    return streamR2ToDestHandler(this, transfer);
   }
 
   async finalizeR2Upload(transfer: TransferState): Promise<void> {
-    try {
-      const r2 = this.transferR2.get(transfer.transferId);
-      if (!r2) {
-        this.completeTransfer(transfer, transfer.bytesTransferred);
-        return;
-      }
-
-      await r2.writer.close();
-      await r2.uploadPromise;
-      this.completeTransfer(transfer, transfer.bytesTransferred);
-    } catch (err) {
-      this.failTransfer(
-        transfer,
-        `R2 upload finalize error: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    return finalizeR2UploadHandler(this, transfer);
   }
 
   completeTransfer(
     transfer: TransferState,
     bytesTransferred: number,
   ): void {
-    const toolResult: TransferToolResult = {
-      source: `${transfer.source.node}:${transfer.source.path}`,
-      destination: `${transfer.destination.node}:${transfer.destination.path}`,
-      bytesTransferred,
-      mime: transfer.mime,
-    };
-
-    const sessionStub = this.env.SESSION.getByName(transfer.sessionKey);
-    sessionStub.toolResult({
-      callId: transfer.callId,
-      result: toolResult,
-    });
-
-    this.transferR2.delete(transfer.transferId);
-    delete this.transfers[String(transfer.transferId)];
+    completeTransferHandler(this, transfer, bytesTransferred);
   }
 
   failTransfer(transfer: TransferState, error: string): void {
-    const sessionStub = this.env.SESSION.getByName(transfer.sessionKey);
-    sessionStub.toolResult({
-      callId: transfer.callId,
-      error,
-    });
-
-    const r2 = this.transferR2.get(transfer.transferId);
-    if (r2) {
-      try {
-        r2.writer.close().catch(() => {});
-      } catch {}
-    }
-
-    this.transferR2.delete(transfer.transferId);
-    delete this.transfers[String(transfer.transferId)];
+    failTransferHandler(this, transfer, error);
   }
 
   private failTransfersForNode(nodeId: string): void {
-    for (const key of Object.keys(this.transfers)) {
-      const transfer = this.transfers[key];
-      if (
-        transfer.source.node === nodeId ||
-        transfer.destination.node === nodeId
-      ) {
-        this.failTransfer(transfer, `Node disconnected: ${nodeId}`);
-      }
-    }
+    failTransfersForNodeHandler(this, nodeId);
   }
 
   /**
