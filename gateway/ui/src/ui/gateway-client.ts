@@ -359,6 +359,94 @@ export class GatewayClient {
     return this.request("workspace.delete", { path, agentId });
   }
 
+  // ---- Canvas ----
+
+  async canvasList(params?: {
+    agentId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ResponseFrame> {
+    return this.request("canvas.list", params);
+  }
+
+  async canvasGet(canvasId: string, agentId?: string): Promise<ResponseFrame> {
+    return this.request("canvas.get", { canvasId, agentId });
+  }
+
+  async canvasCreate(params: {
+    title: string;
+    agentId?: string;
+    canvasId?: string;
+    mode?: "html" | "a2ui";
+    ownerSessionKey?: string;
+    spec?: Record<string, unknown>;
+    state?: Record<string, unknown>;
+  }): Promise<ResponseFrame> {
+    return this.request("canvas.create", params);
+  }
+
+  async canvasUpsert(params: {
+    canvasId: string;
+    agentId?: string;
+    title?: string;
+    mode?: "html" | "a2ui";
+    ownerSessionKey?: string;
+    spec?: Record<string, unknown>;
+    state?: Record<string, unknown>;
+  }): Promise<ResponseFrame> {
+    return this.request("canvas.upsert", params);
+  }
+
+  async canvasPatch(params: {
+    canvasId: string;
+    agentId?: string;
+    expectedRevision?: number;
+    title?: string;
+    mode?: "html" | "a2ui";
+    ownerSessionKey?: string | null;
+    spec?: Record<string, unknown>;
+    statePatch?: Array<{
+      op: "add" | "replace" | "remove";
+      path: string;
+      value?: unknown;
+    }>;
+  }): Promise<ResponseFrame> {
+    return this.request("canvas.patch", params);
+  }
+
+  async canvasDelete(canvasId: string, agentId?: string): Promise<ResponseFrame> {
+    return this.request("canvas.delete", { canvasId, agentId });
+  }
+
+  async canvasOpen(params: {
+    canvasId: string;
+    agentId?: string;
+    clientId?: string;
+    target?: { kind: "web-client" | "node"; id: string };
+  }): Promise<ResponseFrame> {
+    return this.request("canvas.open", params);
+  }
+
+  async canvasClose(params: {
+    canvasId: string;
+    agentId?: string;
+    viewId?: string;
+    clientId?: string;
+    target?: { kind: "web-client" | "node"; id: string };
+  }): Promise<ResponseFrame> {
+    return this.request("canvas.close", params);
+  }
+
+  async canvasAction(params: {
+    canvasId: string;
+    agentId?: string;
+    actionId: string;
+    input?: Record<string, unknown>;
+    expectedRevision?: number;
+  }): Promise<ResponseFrame> {
+    return this.request("canvas.action", params);
+  }
+
   // ---- Pairing ----
 
   async pairList(): Promise<ResponseFrame> {

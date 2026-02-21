@@ -109,6 +109,12 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     throw new RpcError(400, "callId required");
   }
 
+  const nodeAttachment = ws.deserializeAttachment();
+  const nodeId = nodeAttachment.nodeId as string | undefined;
+  if (nodeId && gw.resolveInternalToolResult(nodeId, params)) {
+    return { ok: true };
+  }
+
   const route = gw.pendingToolCalls[params.callId];
   if (!route) {
     throw new RpcError(404, "Unknown callId");
@@ -154,8 +160,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     throw new RpcError(404, `Unknown session tool call: ${params.callId}`);
   }
 
-  const nodeAttachment = ws.deserializeAttachment();
-  const nodeId = nodeAttachment.nodeId as string | undefined;
   const runningSessionId = extractRunningSessionId(params.result);
   if (nodeId && runningSessionId) {
     gw.registerPendingAsyncExecSession({

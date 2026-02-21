@@ -30,6 +30,11 @@ const ChannelsView = lazy(() =>
 const NodesView = lazy(() =>
   import("./views/NodesView").then((module) => ({ default: module.NodesView })),
 );
+const CanvasView = lazy(() =>
+  import("./views/CanvasView").then((module) => ({
+    default: module.CanvasView,
+  })),
+);
 const WorkspaceView = lazy(() =>
   import("./views/WorkspaceView").then((module) => ({
     default: module.WorkspaceView,
@@ -291,6 +296,7 @@ function ReactTabView({ tab }: { tab: Tab }) {
       {tab === "sessions" ? <SessionsView /> : null}
       {tab === "channels" ? <ChannelsView /> : null}
       {tab === "nodes" ? <NodesView /> : null}
+      {tab === "canvas" ? <CanvasView /> : null}
       {tab === "workspace" ? <WorkspaceView /> : null}
       {tab === "cron" ? <CronView /> : null}
       {tab === "logs" ? <LogsView /> : null}

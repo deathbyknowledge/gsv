@@ -150,6 +150,13 @@ type PendingInternalLogRequest = {
   timeoutHandle: ReturnType<typeof setTimeout>;
 };
 
+type PendingInternalToolRequest = {
+  nodeId: string;
+  resolve: (result: unknown) => void;
+  reject: (error: Error) => void;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+};
+
 type PendingNodeProbe = {
   nodeId: string;
   agentId: string;
@@ -201,6 +208,8 @@ const DEFAULT_LOG_LINES = 100;
 const MAX_LOG_LINES = 5000;
 const DEFAULT_INTERNAL_LOG_TIMEOUT_MS = 20_000;
 const MAX_INTERNAL_LOG_TIMEOUT_MS = 120_000;
+const DEFAULT_INTERNAL_TOOL_TIMEOUT_MS = 60_000;
+const MAX_INTERNAL_TOOL_TIMEOUT_MS = 180_000;
 const DEFAULT_SKILL_PROBE_TIMEOUT_MS = 15_000;
 const MAX_SKILL_PROBE_TIMEOUT_MS = 120_000;
 const MAX_SKILL_PROBE_ATTEMPTS = 2;
@@ -353,6 +362,10 @@ export class Gateway extends DurableObject<Env> {
   private readonly pendingInternalLogCalls = new Map<
     string,
     PendingInternalLogRequest
+  >();
+  private readonly pendingInternalToolCalls = new Map<
+    string,
+    PendingInternalToolRequest
   >();
 
   readonly configStore = PersistedObject<Record<string, unknown>>(
@@ -727,6 +740,10 @@ export class Gateway extends DurableObject<Env> {
         nodeId,
         `Node disconnected during log request: ${nodeId}`,
       );
+      this.cancelInternalToolRequestsForNode(
+        nodeId,
+        `Node disconnected during tool request: ${nodeId}`,
+      );
       this.markPendingNodeProbesAsQueued(
         nodeId,
         `Node disconnected during node probe: ${nodeId}`,
@@ -927,6 +944,114 @@ export class Gateway extends DurableObject<Env> {
 
       clearTimeout(pending.timeoutHandle);
       this.pendingInternalLogCalls.delete(callId);
+      pending.reject(new Error(reason));
+    }
+  }
+
+  async executeToolOnce(params: {
+    tool: string;
+    args?: Record<string, unknown>;
+    timeoutMs?: number;
+  }): Promise<unknown> {
+    const resolved = this.findNodeForTool(params.tool);
+    if (!resolved) {
+      throw new Error(`No node provides tool: ${params.tool}`);
+    }
+
+    const nodeWs = this.nodes.get(resolved.nodeId);
+    if (!nodeWs || nodeWs.readyState !== WebSocket.OPEN) {
+      throw new Error(`Node not connected: ${resolved.nodeId}`);
+    }
+
+    const timeoutInput =
+      typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
+        ? Math.floor(params.timeoutMs)
+        : DEFAULT_INTERNAL_TOOL_TIMEOUT_MS;
+    const timeoutMs = Math.max(
+      1000,
+      Math.min(timeoutInput, MAX_INTERNAL_TOOL_TIMEOUT_MS),
+    );
+    const callId = crypto.randomUUID();
+
+    const responsePromise = new Promise<unknown>((resolve, reject) => {
+      const timeoutHandle = setTimeout(() => {
+        const pending = this.pendingInternalToolCalls.get(callId);
+        if (!pending) {
+          return;
+        }
+        this.pendingInternalToolCalls.delete(callId);
+        pending.reject(
+          new Error(
+            `tool.call timed out for node ${pending.nodeId} after ${timeoutMs}ms`,
+          ),
+        );
+      }, timeoutMs);
+
+      this.pendingInternalToolCalls.set(callId, {
+        nodeId: resolved.nodeId,
+        resolve,
+        reject,
+        timeoutHandle,
+      });
+    });
+
+    try {
+      const evt: EventFrame<ToolInvokePayload> = {
+        type: "evt",
+        event: "tool.invoke",
+        payload: {
+          callId,
+          tool: resolved.toolName,
+          args: params.args ?? {},
+        },
+      };
+      nodeWs.send(JSON.stringify(evt));
+    } catch (error) {
+      const pending = this.pendingInternalToolCalls.get(callId);
+      if (pending) {
+        clearTimeout(pending.timeoutHandle);
+        this.pendingInternalToolCalls.delete(callId);
+      }
+      throw error;
+    }
+
+    return await responsePromise;
+  }
+
+  resolveInternalToolResult(
+    nodeId: string,
+    params: { callId: string; result?: unknown; error?: string },
+  ): boolean {
+    const pending = this.pendingInternalToolCalls.get(params.callId);
+    if (!pending) {
+      return false;
+    }
+
+    this.pendingInternalToolCalls.delete(params.callId);
+    clearTimeout(pending.timeoutHandle);
+
+    if (pending.nodeId !== nodeId) {
+      pending.reject(new Error("Node not authorized for this internal tool call"));
+      return true;
+    }
+
+    if (params.error) {
+      pending.reject(new Error(params.error));
+      return true;
+    }
+
+    pending.resolve(params.result);
+    return true;
+  }
+
+  cancelInternalToolRequestsForNode(nodeId: string, reason: string): void {
+    for (const [callId, pending] of this.pendingInternalToolCalls.entries()) {
+      if (pending.nodeId !== nodeId) {
+        continue;
+      }
+
+      clearTimeout(pending.timeoutHandle);
+      this.pendingInternalToolCalls.delete(callId);
       pending.reject(new Error(reason));
     }
   }
@@ -3447,6 +3572,20 @@ export class Gateway extends DurableObject<Env> {
 
   getConfig(): GsvConfig {
     return this.getFullConfig();
+  }
+
+  broadcastEvent(event: string, payload?: unknown): void {
+    const evt: EventFrame<unknown> = {
+      type: "evt",
+      event,
+      payload,
+    };
+    const message = JSON.stringify(evt);
+    for (const ws of this.clients.values()) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
+    }
   }
 
   broadcastToSession(sessionKey: string, payload: ChatEventPayload): void {

@@ -14,6 +14,20 @@ import {
   ChannelRegistryEntry,
   ChannelId,
 } from "./channel";
+import type {
+  CanvasActionParams,
+  CanvasActionResult,
+  CanvasCloseParams,
+  CanvasCreateParams,
+  CanvasDeleteParams,
+  CanvasDocument,
+  CanvasGetParams,
+  CanvasListParams,
+  CanvasListResult,
+  CanvasOpenParams,
+  CanvasPatchParams,
+  CanvasUpsertParams,
+} from "./canvas";
 import type { RequestFrame } from "./frames";
 import type { SessionRegistryEntry } from "./session";
 import type {
@@ -429,6 +443,51 @@ export type RpcMethods = {
       path: string;
       deleted: true;
     };
+  };
+
+  "canvas.list": {
+    params: CanvasListParams | undefined;
+    result: CanvasListResult;
+  };
+
+  "canvas.get": {
+    params: CanvasGetParams;
+    result: CanvasDocument;
+  };
+
+  "canvas.create": {
+    params: CanvasCreateParams;
+    result: CanvasDocument;
+  };
+
+  "canvas.upsert": {
+    params: CanvasUpsertParams;
+    result: CanvasDocument;
+  };
+
+  "canvas.patch": {
+    params: CanvasPatchParams;
+    result: CanvasDocument;
+  };
+
+  "canvas.delete": {
+    params: CanvasDeleteParams;
+    result: { ok: true; deleted: boolean; canvasId: string; agentId: string };
+  };
+
+  "canvas.open": {
+    params: CanvasOpenParams;
+    result: { ok: true; canvasId: string; viewId: string };
+  };
+
+  "canvas.close": {
+    params: CanvasCloseParams;
+    result: { ok: true; canvasId: string; viewId?: string; closed: boolean };
+  };
+
+  "canvas.action": {
+    params: CanvasActionParams;
+    result: CanvasActionResult;
   };
 
   "tool.request": {

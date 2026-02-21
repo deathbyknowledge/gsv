@@ -53,6 +53,17 @@ import {
   handleWorkspaceDelete,
 } from "./workspace";
 import {
+  handleCanvasList,
+  handleCanvasGet,
+  handleCanvasCreate,
+  handleCanvasUpsert,
+  handleCanvasPatch,
+  handleCanvasDelete,
+  handleCanvasOpen,
+  handleCanvasClose,
+  handleCanvasAction,
+} from "./canvas";
+import {
   handleTransferMeta,
   handleTransferAccept,
   handleTransferComplete,
@@ -107,6 +118,15 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     "workspace.read": handleWorkspaceRead,
     "workspace.write": handleWorkspaceWrite,
     "workspace.delete": handleWorkspaceDelete,
+    "canvas.list": handleCanvasList,
+    "canvas.get": handleCanvasGet,
+    "canvas.create": handleCanvasCreate,
+    "canvas.upsert": handleCanvasUpsert,
+    "canvas.patch": handleCanvasPatch,
+    "canvas.delete": handleCanvasDelete,
+    "canvas.open": handleCanvasOpen,
+    "canvas.close": handleCanvasClose,
+    "canvas.action": handleCanvasAction,
     "transfer.meta": handleTransferMeta,
     "transfer.accept": handleTransferAccept,
     "transfer.complete": handleTransferComplete,

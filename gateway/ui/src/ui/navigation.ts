@@ -10,6 +10,7 @@ const TAB_PATHS: Record<Tab, string> = {
   sessions: "/sessions",
   channels: "/channels",
   nodes: "/nodes",
+  canvas: "/canvas",
   workspace: "/workspace",
   cron: "/cron",
   logs: "/logs",

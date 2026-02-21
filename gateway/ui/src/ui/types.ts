@@ -159,6 +159,67 @@ export type ChatEventPayload = {
   error?: string;
 };
 
+// Canvas types
+export type CanvasMode = "html" | "a2ui";
+
+export type CanvasDescriptor = {
+  canvasId: string;
+  agentId: string;
+  title: string;
+  mode: CanvasMode;
+  ownerSessionKey?: string;
+  entryAsset?: string;
+  createdAt: number;
+  updatedAt: number;
+  revision: number;
+};
+
+export type CanvasDocument = {
+  descriptor: CanvasDescriptor;
+  spec: Record<string, unknown>;
+  state: Record<string, unknown>;
+};
+
+export type CanvasListResult = {
+  canvases: CanvasDescriptor[];
+  count: number;
+};
+
+export type CanvasActionResult = {
+  ok: true;
+  eventId: string;
+  status: "started" | "finished";
+  revision?: number;
+};
+
+export type CanvasUpdatedEventPayload = {
+  canvasId: string;
+  agentId: string;
+  revision: number;
+  changedPaths?: string[];
+  descriptor?: CanvasDescriptor;
+};
+
+export type CanvasViewUpdatedEventPayload = {
+  canvasId: string;
+  agentId: string;
+  viewId: string;
+  state: "opening" | "open" | "closed";
+  target?: {
+    kind: "web-client" | "node";
+    id: string;
+  };
+};
+
+export type CanvasActionEventPayload = {
+  canvasId: string;
+  agentId: string;
+  actionId: string;
+  eventId: string;
+  revision?: number;
+  error?: string;
+};
+
 // Config types
 export type GsvConfig = {
   model: { provider: string; id: string };
@@ -181,6 +242,7 @@ export type Tab =
   | "sessions"
   | "channels"
   | "nodes"
+  | "canvas"
   | "workspace"
   | "cron"
   | "logs"
@@ -191,7 +253,7 @@ export type Tab =
 export const TAB_GROUPS: { label: string; tabs: Tab[] }[] = [
   { label: "Chat", tabs: ["chat"] },
   { label: "Control", tabs: ["overview", "sessions", "channels", "nodes"] },
-  { label: "Agent", tabs: ["workspace", "cron", "logs"] },
+  { label: "Agent", tabs: ["canvas", "workspace", "cron", "logs"] },
   { label: "Settings", tabs: ["pairing", "config", "debug"] },
 ];
 
@@ -201,6 +263,7 @@ export const TAB_ICONS: Record<Tab, string> = {
   sessions: "\uD83D\uDCCB",
   channels: "\uD83D\uDCF1",
   nodes: "\uD83D\uDDA5\uFE0F",
+  canvas: "\uD83D\uDDBC\uFE0F",
   workspace: "\uD83D\uDCC1",
   cron: "\u23F0",
   logs: "\uD83D\uDCDC",
@@ -215,6 +278,7 @@ export const TAB_LABELS: Record<Tab, string> = {
   sessions: "Sessions",
   channels: "Channels",
   nodes: "Nodes",
+  canvas: "Canvas",
   workspace: "Workspace",
   cron: "Cron Jobs",
   logs: "Logs",
