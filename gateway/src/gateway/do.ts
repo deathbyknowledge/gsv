@@ -112,7 +112,6 @@ import type {
   LogsResultParams,
 } from "../protocol/logs";
 import type { SessionRegistryEntry } from "../protocol/session";
-import type { SkillsStatusResult } from "../protocol/skills";
 import type {
   RuntimeNodeInventory,
   NodeExecEventParams,
@@ -538,140 +537,6 @@ export class Gateway extends DurableObject<Env> {
     }
 
     return handler as unknown as GatewayMethodHandler;
-  }
-
-  /**
-   * Handle a slash command for chat.send (no channel context)
-   */
-  async handleSlashCommandForChat(
-    command: { name: string; args: string },
-    sessionKey: string,
-  ): Promise<{ handled: boolean; response?: string; error?: string }> {
-    const sessionStub = env.SESSION.getByName(sessionKey);
-
-    try {
-      switch (command.name) {
-        case "reset": {
-          const result = await sessionStub.reset();
-          return {
-            handled: true,
-            response: `Session reset. Archived ${result.archivedMessages} messages.`,
-          };
-        }
-
-        case "compact": {
-          const keepCount = command.args ? parseInt(command.args, 10) : 20;
-          if (isNaN(keepCount) || keepCount < 1) {
-            return {
-              handled: true,
-              error: "Invalid count. Usage: /compact [N]",
-            };
-          }
-          const result = await sessionStub.compact(keepCount);
-          return {
-            handled: true,
-            response: `Compacted session. Kept ${result.keptMessages} messages, archived ${result.trimmedMessages}.`,
-          };
-        }
-
-        case "stop": {
-          const result = await sessionStub.abort();
-          if (result.wasRunning) {
-            return {
-              handled: true,
-              response: `Stopped run ${result.runId}${result.pendingToolsCancelled > 0 ? `, cancelled ${result.pendingToolsCancelled} pending tool(s)` : ""}.`,
-            };
-          } else {
-            return {
-              handled: true,
-              response: "No run in progress.",
-            };
-          }
-        }
-
-        case "status": {
-          const info = await sessionStub.get();
-          const stats = await sessionStub.stats();
-          const config = this.getFullConfig();
-
-          const lines = [
-            `Session: ${sessionKey}`,
-            `Messages: ${info.messageCount}`,
-            `Tokens: ${stats.tokens.input} in / ${stats.tokens.output} out`,
-            `Model: ${config.model.provider}/${config.model.id}`,
-            info.settings.thinkingLevel
-              ? `Thinking: ${info.settings.thinkingLevel}`
-              : null,
-            info.resetPolicy ? `Reset: ${info.resetPolicy.mode}` : null,
-          ].filter(Boolean);
-
-          return { handled: true, response: lines.join("\n") };
-        }
-
-        case "model": {
-          const info = await sessionStub.get();
-          const config = this.getFullConfig();
-          const effectiveModel = info.settings.model || config.model;
-
-          if (!command.args) {
-            return {
-              handled: true,
-              response: `Current model: ${effectiveModel.provider}/${effectiveModel.id}\n${MODEL_SELECTOR_HELP}`,
-            };
-          }
-
-          const resolved = parseModelSelection(
-            command.args,
-            effectiveModel.provider,
-          );
-          if (!resolved) {
-            return {
-              handled: true,
-              error: `Invalid model selector: ${command.args}\n${MODEL_SELECTOR_HELP}`,
-            };
-          }
-
-          await sessionStub.patch({ settings: { model: resolved } });
-          return {
-            handled: true,
-            response: `Model set to ${resolved.provider}/${resolved.id}`,
-          };
-        }
-
-        case "think": {
-          if (!command.args) {
-            const info = await sessionStub.get();
-            return {
-              handled: true,
-              response: `Thinking level: ${info.settings.thinkingLevel || "off"}\nLevels: off, minimal, low, medium, high, xhigh`,
-            };
-          }
-
-          const level = normalizeThinkLevel(command.args);
-          if (!level) {
-            return {
-              handled: true,
-              error: `Invalid level: ${command.args}\nLevels: off, minimal, low, medium, high, xhigh`,
-            };
-          }
-
-          await sessionStub.patch({ settings: { thinkingLevel: level } });
-          return {
-            handled: true,
-            response: `Thinking level set to ${level}`,
-          };
-        }
-
-        case "help": {
-          return { handled: true, response: HELP_TEXT };
-        }
-
-        default:
-          return { handled: false };
-      }
-    } catch (e) {
-      return { handled: true, error: `Command failed: ${e}` };
-    }
   }
 
   webSocketClose(ws: WebSocket) {
@@ -2317,78 +2182,6 @@ export class Gateway extends DurableObject<Env> {
     };
   }
 
-  async getSkillsStatus(agentId: string): Promise<SkillsStatusResult> {
-    const normalizedAgentId = normalizeAgentId(agentId || "main");
-    const config = this.getFullConfig();
-    const workspaceSkills = await listWorkspaceSkills(
-      this.env.STORAGE,
-      normalizedAgentId,
-    );
-    const runtimeInventory = this.getRuntimeNodeInventory();
-
-    const requiredBinsSet = new Set<string>();
-    const skillEntries = workspaceSkills
-      .map((skill) => {
-        const policy = resolveEffectiveSkillPolicy(skill, config.skills.entries);
-        if (!policy) {
-          return {
-            name: skill.name,
-            description: skill.description,
-            location: skill.location,
-            always: false,
-            eligible: false,
-            eligibleHosts: [],
-            reasons: ["disabled by skills.entries policy"],
-          };
-        }
-
-        if (policy.requires) {
-          for (const bin of [...policy.requires.bins, ...policy.requires.anyBins]) {
-            requiredBinsSet.add(bin);
-          }
-        }
-
-        const evaluation = evaluateSkillEligibility(
-          policy,
-          runtimeInventory,
-          config,
-        );
-
-        return {
-          name: skill.name,
-          description: skill.description,
-          location: skill.location,
-          always: policy.always,
-          eligible: evaluation.eligible,
-          eligibleHosts: evaluation.matchingHostIds,
-          reasons: evaluation.reasons,
-          requirements: policy.requires,
-        };
-      })
-      .sort((left, right) => left.name.localeCompare(right.name));
-
-    const nodeEntries = runtimeInventory.hosts
-      .map((host) => ({
-        nodeId: host.nodeId,
-        hostRole: host.hostRole,
-        hostCapabilities: host.hostCapabilities,
-        hostOs: host.hostOs,
-        hostEnv: host.hostEnv ?? [],
-        hostBins: host.hostBins ?? [],
-        hostBinStatusUpdatedAt: host.hostBinStatusUpdatedAt,
-        canProbeBins: this.canNodeProbeBins(host.nodeId),
-      }))
-      .sort((left, right) => left.nodeId.localeCompare(right.nodeId));
-
-    return {
-      agentId: normalizedAgentId,
-      refreshedAt: Date.now(),
-      requiredBins: Array.from(requiredBinsSet).sort(),
-      nodes: nodeEntries,
-      skills: skillEntries,
-    };
-  }
-
   getAllTools(): ToolDefinition[] {
     console.log(`[Gateway] getAllTools called`);
     console.log(
@@ -3349,21 +3142,6 @@ export class Gateway extends DurableObject<Env> {
     });
   }
 
-  /**
-   * Find a connected channel WebSocket for a given channel type
-   */
-  findChannelForMessage(channel: string): string | null {
-    for (const [channelKey, ws] of this.channels.entries()) {
-      if (
-        channelKey.startsWith(`${channel}:`) &&
-        ws.readyState === WebSocket.OPEN
-      ) {
-        return channelKey;
-      }
-    }
-    return null;
-  }
-
   getConfigPath(path: string): unknown {
     const parts = path.split(".");
     let current: unknown = this.getFullConfig();
@@ -4014,72 +3792,6 @@ export class Gateway extends DurableObject<Env> {
       ok: true,
       message: `Heartbeat triggered for agent ${agentId} (session: ${result.sessionKey})`,
     };
-  }
-
-  /**
-   * Get heartbeat status for all agents
-   */
-  async getHeartbeatStatus(): Promise<
-    Record<
-      string,
-      HeartbeatState & {
-        lastActive?: {
-          channel: ChannelId;
-          accountId: string;
-          peer: PeerInfo;
-          timestamp: number;
-        };
-      }
-    >
-  > {
-    const result: Record<
-      string,
-      HeartbeatState & {
-        lastActive?: {
-          channel: ChannelId;
-          accountId: string;
-          peer: PeerInfo;
-          timestamp: number;
-        };
-      }
-    > = {};
-
-    // Merge heartbeat state with last active context
-    for (const [agentId, state] of Object.entries(this.heartbeatState)) {
-      const lastActive = this.lastActiveContext[agentId];
-      result[agentId] = {
-        ...state,
-        lastActive: lastActive
-          ? {
-              channel: lastActive.channel,
-              accountId: lastActive.accountId,
-              peer: lastActive.peer,
-              timestamp: lastActive.timestamp,
-            }
-          : undefined,
-      };
-    }
-
-    // Also include agents with lastActive but no heartbeat state yet
-    for (const [agentId, context] of Object.entries(this.lastActiveContext)) {
-      if (!result[agentId]) {
-        result[agentId] = {
-          agentId,
-          nextHeartbeatAt: null,
-          lastHeartbeatAt: null,
-          lastHeartbeatText: null,
-          lastHeartbeatSentAt: null,
-          lastActive: {
-            channel: context.channel,
-            accountId: context.accountId,
-            peer: context.peer,
-            timestamp: context.timestamp,
-          },
-        };
-      }
-    }
-
-    return result;
   }
 
   // ─────────────────────────────────────────────────────────
