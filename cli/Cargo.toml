@@ -4,7 +4,16 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "sync",
+    "io-util",
+    "process",
+    "signal",
+    "fs",
+] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -20,6 +29,7 @@ async-trait = "0.1"
 toml = "0.8"
 qrcode = "0.14"
 cliclack = "0.3.8"
+whoami = "1"
 
 # TLS backends - use native-tls by default (respects system certs)
 # CI builds for Linux use rustls feature to avoid OpenSSL dependency
@@ -29,6 +39,7 @@ sha2 = "0.10"
 base64 = "0.22"
 blake3 = "1.5"
 mime_guess = "2.0"
+infer = "0.16"
 flate2 = "1.0"
 tar = "0.4"
 json5 = "0.4"
@@ -36,6 +47,11 @@ rpassword = "7"
 
 # Only needed when rustls feature is enabled
 rustls_crate = { package = "rustls", version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
 
 [features]
 default = ["native-tls"]

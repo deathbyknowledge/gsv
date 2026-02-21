@@ -16,35 +16,19 @@ const VIRTUAL_SKILLS_ROOT = "skills";
 
 export const getWorkspaceToolDefinitions = (): ToolDefinition[] => [
   {
-    name: NATIVE_TOOLS.LIST_FILES,
+    name: NATIVE_TOOLS.READ_FILE,
     description:
-      "List files and directories in your workspace. Your workspace persists across sessions and contains your identity files (SOUL.md, IDENTITY.md, etc.), memory files, and any other files you create. You can also list under skills/ to browse skill files.",
+      "Read a file or list a directory in your workspace. Your workspace persists across sessions and contains your identity files (SOUL.md, IDENTITY.md, etc.), memory files, and any other files you create. If the path points to a file, returns its content. If the path points to a directory (or is omitted), lists the files and subdirectories. Reading skills/* first checks agent overrides, then falls back to global skills.",
     inputSchema: {
       type: "object",
       properties: {
         path: {
           type: "string",
           description:
-            "Directory path relative to workspace root (e.g., '/' for root, 'memory/' for memory directory, or 'skills/' for skill files). Defaults to '/'.",
+            "Path relative to workspace root. Omit or use '/' to list the root. Examples: 'SOUL.md', 'memory/', 'skills/summarize/SKILL.md'.",
         },
       },
       required: [],
-    },
-  },
-  {
-    name: NATIVE_TOOLS.READ_FILE,
-    description:
-      "Read a file from your workspace. Use this to read your identity files, memory files, or any files you've created. Reading skills/* first checks agent overrides under agents/{agentId}/skills/*, then falls back to global skills/*.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: {
-          type: "string",
-          description:
-            "File path relative to workspace root (e.g., 'SOUL.md', 'memory/2024-01-15.md', or 'skills/summarize/SKILL.md')",
-        },
-      },
-      required: ["path"],
     },
   },
   {
@@ -396,15 +380,12 @@ export async function listFiles(
 export async function readFile(
   bucket: R2Bucket,
   basePath: string,
-  relativePath: string,
+  relativePath?: string,
 ): Promise<{ ok: boolean; result?: unknown; error?: string }> {
-  if (!relativePath) {
-    return { ok: false, error: "path is required" };
-  }
-
   const normalizedPath = normalizeRelativePath(relativePath, "");
+
   if (!normalizedPath) {
-    return { ok: false, error: "path is required" };
+    return listFiles(bucket, basePath, relativePath);
   }
 
   if (isVirtualSkillsPath(normalizedPath)) {
@@ -413,41 +394,84 @@ export async function readFile(
       basePath,
       normalizedPath,
     );
-    if (!resolved) {
-      return { ok: false, error: `File not found: ${relativePath}` };
+    if (resolved) {
+      return {
+        ok: true,
+        result: {
+          path: relativePath,
+          content: resolved.content,
+          size: resolved.size,
+          lastModified: resolved.lastModified,
+          resolvedPath: resolved.resolvedPath,
+          resolvedSource: resolved.source,
+        },
+      };
     }
-
-    return {
-      ok: true,
-      result: {
-        path: relativePath,
-        content: resolved.content,
-        size: resolved.size,
-        lastModified: resolved.lastModified,
-        resolvedPath: resolved.resolvedPath,
-        resolvedSource: resolved.source,
-      },
-    };
+    const listed = await listVirtualSkills(bucket, basePath, normalizedPath);
+    if (listed.files.length > 0 || listed.directories.length > 0) {
+      return {
+        ok: true,
+        result: {
+          path: relativePath || "/",
+          files: listed.files,
+          directories: listed.directories,
+        },
+      };
+    }
+    return { ok: false, error: `Not found: ${relativePath}` };
   }
 
   const fullPath = normalizePath(basePath, normalizedPath);
   const object = await bucket.get(fullPath);
 
-  if (!object) {
-    return { ok: false, error: `File not found: ${relativePath}` };
+  if (object) {
+    const content = await object.text();
+    return {
+      ok: true,
+      result: {
+        path: relativePath,
+        content,
+        size: object.size,
+        lastModified: object.uploaded?.toISOString(),
+      },
+    };
   }
 
-  const content = await object.text();
+  const prefix = fullPath.endsWith("/") ? fullPath : `${fullPath}/`;
+  const listed = await bucket.list({
+    prefix,
+    delimiter: "/",
+  });
 
-  return {
-    ok: true,
-    result: {
-      path: relativePath,
-      content,
-      size: object.size,
-      lastModified: object.uploaded?.toISOString(),
-    },
-  };
+  const files: string[] = [];
+  const directories: string[] = [];
+
+  for (const obj of listed.objects) {
+    const relPath = obj.key.replace(`${basePath}/`, "");
+    if (relPath) {
+      files.push(relPath);
+    }
+  }
+
+  for (const dp of listed.delimitedPrefixes || []) {
+    const relPath = dp.replace(`${basePath}/`, "");
+    if (relPath) {
+      directories.push(relPath);
+    }
+  }
+
+  if (files.length > 0 || directories.length > 0) {
+    return {
+      ok: true,
+      result: {
+        path: relativePath || "/",
+        files,
+        directories,
+      },
+    };
+  }
+
+  return { ok: false, error: `Not found: ${relativePath}` };
 }
 
 /**
@@ -632,10 +656,8 @@ export async function deleteFile(
 }
 
 export const workspaceNativeToolHandlers: NativeToolHandlerMap = {
-  [NATIVE_TOOLS.LIST_FILES]: async (context, args) =>
-    await listFiles(context.bucket, context.basePath, args.path as string | undefined),
   [NATIVE_TOOLS.READ_FILE]: async (context, args) =>
-    await readFile(context.bucket, context.basePath, args.path as string),
+    await readFile(context.bucket, context.basePath, args.path as string | undefined),
   [NATIVE_TOOLS.WRITE_FILE]: async (context, args) =>
     await writeFile(
       context.bucket,

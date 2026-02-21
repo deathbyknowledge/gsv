@@ -31,6 +31,12 @@ import type {
   ToolResultParams,
 } from "./tools";
 import type {
+  TransferMetaParams,
+  TransferAcceptParams,
+  TransferCompleteParams,
+  TransferDoneParams,
+} from "./transfer";
+import type {
   CronJob,
   CronJobCreate,
   CronJobPatch,
@@ -430,6 +436,26 @@ export type RpcMethods = {
     result: {
       status: "sent";
     };
+  };
+
+  "transfer.meta": {
+    params: TransferMetaParams;
+    result: { ok: true };
+  };
+
+  "transfer.accept": {
+    params: TransferAcceptParams;
+    result: { ok: true };
+  };
+
+  "transfer.complete": {
+    params: TransferCompleteParams;
+    result: { ok: true };
+  };
+
+  "transfer.done": {
+    params: TransferDoneParams;
+    result: { ok: true };
   };
 };
 

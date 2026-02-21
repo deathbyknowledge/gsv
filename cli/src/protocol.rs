@@ -180,6 +180,86 @@ pub struct LogsResultParams {
     pub error: Option<String>,
 }
 
+pub const TRANSFER_BINARY_TAG_BYTES: usize = 4;
+
+pub fn build_transfer_binary_frame(transfer_id: u32, data: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(TRANSFER_BINARY_TAG_BYTES + data.len());
+    frame.extend_from_slice(&transfer_id.to_le_bytes());
+    frame.extend_from_slice(data);
+    frame
+}
+
+pub fn parse_transfer_binary_frame(data: &[u8]) -> Option<(u32, &[u8])> {
+    if data.len() < TRANSFER_BINARY_TAG_BYTES {
+        return None;
+    }
+    let transfer_id = u32::from_le_bytes(data[..4].try_into().ok()?);
+    Some((transfer_id, &data[4..]))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferSendPayload {
+    pub transfer_id: u32,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferMetaParams {
+    pub transfer_id: u32,
+    pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferReceivePayload {
+    pub transfer_id: u32,
+    pub path: String,
+    pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferAcceptParams {
+    pub transfer_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferStartPayload {
+    pub transfer_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferCompleteParams {
+    pub transfer_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferEndPayload {
+    pub transfer_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferDoneParams {
+    pub transfer_id: u32,
+    pub bytes_written: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 impl RequestFrame {
     pub fn new(method: &str, params: Option<Value>) -> Self {
         Self {

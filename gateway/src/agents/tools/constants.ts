@@ -1,7 +1,6 @@
 export const NATIVE_TOOL_PREFIX = "gsv__";
 
 export const NATIVE_TOOLS = {
-  LIST_FILES: `${NATIVE_TOOL_PREFIX}ListFiles`,
   READ_FILE: `${NATIVE_TOOL_PREFIX}ReadFile`,
   WRITE_FILE: `${NATIVE_TOOL_PREFIX}WriteFile`,
   EDIT_FILE: `${NATIVE_TOOL_PREFIX}EditFile`,

@@ -166,7 +166,7 @@ describe("workspace tools: global skills routing", () => {
         bucket: bucket as unknown as R2Bucket,
         agentId: "main",
       },
-      NATIVE_TOOLS.LIST_FILES,
+      NATIVE_TOOLS.READ_FILE,
       { path: "skills/" },
     );
 
@@ -187,7 +187,7 @@ describe("workspace tools: global skills routing", () => {
         bucket: bucket as unknown as R2Bucket,
         agentId: "main",
       },
-      NATIVE_TOOLS.LIST_FILES,
+      NATIVE_TOOLS.READ_FILE,
       { path: "skills/demo" },
     );
 

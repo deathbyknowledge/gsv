@@ -4,8 +4,7 @@
 # Installs the GSV CLI.
 #
 # Usage:
-#   curl -sSL https://gsv.dev/install.sh | bash
-#   curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
+#   curl -sSL https://install.gsv.space | bash
 #
 # Environment variables:
 #   GSV_INSTALL_DIR  - Where to install CLI (default: /usr/local/bin)

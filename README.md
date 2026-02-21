@@ -2,6 +2,7 @@
 ![gsv](https://github.com/user-attachments/assets/dba02d8f-3a3a-40c5-b38f-5eea3b2ea99d)
 **GSV** (General Systems Vehicle) is a distributed AI agent platform built on Cloudflare's global infrastructure. Named after the planet-scale sentient ships from Iain M. Banks' Culture series, GSV provides a foundation for personal AI that exists as ephemeral beings spawning across the earth's edge network.
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deathbyknowledge/gsv)
 ## Quick Start
 
 ### Prerequisites
@@ -12,7 +13,7 @@
 
 ```bash
 # Installs CLI
-curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
+curl -sSL https://install.gsv.space | bash
 
 # https://dash.cloudflare.com/profile/api-tokens Use "Edit Cloudflare Workers" template
 # First-time guided deploy
@@ -22,7 +23,7 @@ gsv deploy up --wizard
 If you want to configure a different machine after deployment:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
+curl -sSL https://install.gsv.space | bash
 gsv local-config set gateway.url wss://gsv.<your-domain>.workers.dev/ws
 gsv local-config set gateway.token <your-auth-token> # you can always get it with `gsv config get auth.token`
 ```
