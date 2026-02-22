@@ -976,7 +976,7 @@ export class Session extends DurableObject<Env> {
       this.messageQueue = [];
 
       for (const queuedMessage of queuedMessages) {
-        const userMessage = this.buildUserMessage(
+        const userMessage = buildUserMessage(
           queuedMessage.text,
           queuedMessage.media,
         );
