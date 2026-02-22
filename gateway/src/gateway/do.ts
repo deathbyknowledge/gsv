@@ -24,10 +24,7 @@ import {
   scheduleHeartbeat as scheduleHeartbeatHandler,
   triggerHeartbeat as triggerHeartbeatHandler,
 } from "./heartbeat";
-import {
-  evaluateSkillEligibility,
-  resolveEffectiveSkillPolicy,
-} from "../agents/prompt";
+import { resolveEffectiveSkillPolicy } from "../agents/prompt";
 import {
   canonicalizeSessionKey as canonicalizeKey,
   normalizeAgentId,
@@ -74,10 +71,7 @@ import {
   handleChannelInboundRpc as handleChannelInboundRpcHandler,
   type ChannelInboundRpcResult,
 } from "./channel-inbound";
-import {
-  routePayloadToChannel,
-  type PendingChannelResponseContext,
-} from "./channel-routing";
+import { routePayloadToChannel } from "./channel-routing";
 import {
   getChannelBinding as getChannelBindingHandler,
   handleChannelStatusChanged as handleChannelStatusChangedHandler,
@@ -395,7 +389,7 @@ export class Gateway extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
     if (typeof message !== "string") {
-      this.handleTransferBinaryFrame(ws, message as ArrayBuffer);
+      handleTransferBinaryFrameHandler(this, message as ArrayBuffer);
       return;
     }
     try {
@@ -507,7 +501,7 @@ export class Gateway extends DurableObject<Env> {
         nodeId,
         `Node disconnected during node probe: ${nodeId}`,
       );
-      this.failTransfersForNode(nodeId);
+      failTransfersForNodeHandler(this, nodeId);
       delete this.nodeRuntimeRegistry[nodeId];
       console.log(`[Gateway] Node ${nodeId} removed from registry`);
     } else if (mode === "channel" && channelKey) {
@@ -714,29 +708,6 @@ export class Gateway extends DurableObject<Env> {
     }
   }
 
-  private canNodeProbeBins(nodeId: string): boolean {
-    return canNodeProbeBinsHandler(this, nodeId);
-  }
-
-  private sanitizeSkillBinName(bin: string): string | null {
-    return sanitizeSkillBinNameHandler(bin);
-  }
-
-  private clampSkillProbeTimeoutMs(timeoutMs?: number): number {
-    return clampSkillProbeTimeoutMsHandler(timeoutMs);
-  }
-
-  private gcPendingAsyncExecSessions(
-    now = Date.now(),
-    reason?: string,
-  ): number {
-    return gcPendingAsyncExecSessionsHandler(this, now, reason);
-  }
-
-  private nextPendingAsyncExecSessionExpiryAtMs(): number | undefined {
-    return nextPendingAsyncExecSessionExpiryAtMsHandler(this);
-  }
-
   registerPendingAsyncExecSession(params: {
     nodeId: string;
     sessionId: string;
@@ -747,69 +718,12 @@ export class Gateway extends DurableObject<Env> {
     this.ctx.waitUntil(this.scheduleGatewayAlarm());
   }
 
-  private gcPendingAsyncExecDeliveries(
-    now = Date.now(),
-    reason?: string,
-  ): number {
-    return gcPendingAsyncExecDeliveriesHandler(this, now, reason);
-  }
-
-  private nextPendingAsyncExecDeliveryAtMs(
-    now = Date.now(),
-  ): number | undefined {
-    return nextPendingAsyncExecDeliveryAtMsHandler(this, now);
-  }
-
-  private gcDeliveredAsyncExecEvents(
-    now = Date.now(),
-    reason?: string,
-  ): number {
-    return gcDeliveredAsyncExecEventsHandler(this, now, reason);
-  }
-
-  private nextDeliveredAsyncExecEventGcAtMs(
-    now = Date.now(),
-  ): number | undefined {
-    return nextDeliveredAsyncExecEventGcAtMsHandler(this, now);
-  }
-
-  private async deliverPendingAsyncExecDeliveries(
-    now = Date.now(),
-  ): Promise<number> {
-    return deliverPendingAsyncExecDeliveriesHandler(this, now);
-  }
-
-  private queueNodeBinProbe(params: {
-    nodeId: string;
-    agentId: string;
-    bins: string[];
-    timeoutMs: number;
-  }): { probeId?: string; bins: string[]; dispatched: boolean } {
-    return queueNodeBinProbeHandler(this, params);
-  }
-
   markPendingNodeProbesAsQueued(nodeId: string, reason: string): void {
     markPendingNodeProbesAsQueuedHandler(this, nodeId, reason);
   }
 
   async dispatchPendingNodeProbesForNode(nodeId: string): Promise<number> {
     return dispatchPendingNodeProbesForNodeHandler(this, nodeId);
-  }
-
-  private nextPendingNodeProbeExpiryAtMs(): number | undefined {
-    return nextPendingNodeProbeExpiryAtMsHandler(this);
-  }
-
-  private nextPendingNodeProbeGcAtMs(now = Date.now()): number | undefined {
-    return nextPendingNodeProbeGcAtMsHandler(this, now);
-  }
-
-  private gcPendingNodeProbes(now = Date.now(), reason?: string): number {
-    return gcPendingNodeProbesHandler(this, now, reason);
-  }
-
-  private async handlePendingNodeProbeTimeouts(): Promise<void> {
-    return handlePendingNodeProbeTimeoutsHandler(this);
   }
 
   async handleNodeProbeResult(
@@ -836,10 +750,6 @@ export class Gateway extends DurableObject<Env> {
     return transferRequestHandler(this, params);
   }
 
-  private handleTransferBinaryFrame(_ws: WebSocket, data: ArrayBuffer): void {
-    handleTransferBinaryFrameHandler(this, data);
-  }
-
   async streamR2ToDest(transfer: TransferState): Promise<void> {
     return streamR2ToDestHandler(this, transfer);
   }
@@ -854,10 +764,6 @@ export class Gateway extends DurableObject<Env> {
 
   failTransfer(transfer: TransferState, error: string): void {
     failTransferHandler(this, transfer, error);
-  }
-
-  private failTransfersForNode(nodeId: string): void {
-    failTransfersForNodeHandler(this, nodeId);
   }
 
   /**
@@ -993,7 +899,7 @@ export class Gateway extends DurableObject<Env> {
         continue;
       }
       for (const bin of [...policy.requires.bins, ...policy.requires.anyBins]) {
-        const sanitized = this.sanitizeSkillBinName(bin);
+        const sanitized = sanitizeSkillBinNameHandler(bin);
         if (sanitized) {
           requiredBinsSet.add(sanitized);
         }
@@ -1012,7 +918,7 @@ export class Gateway extends DurableObject<Env> {
       };
     }
 
-    const timeoutMs = this.clampSkillProbeTimeoutMs(options?.timeoutMs);
+    const timeoutMs = clampSkillProbeTimeoutMsHandler(options?.timeoutMs);
     const now = Date.now();
     let updatedNodeCount = 0;
     const skippedNodeIds: string[] = [];
@@ -1025,7 +931,7 @@ export class Gateway extends DurableObject<Env> {
         continue;
       }
 
-      if (!this.canNodeProbeBins(nodeId)) {
+      if (!canNodeProbeBinsHandler(this, nodeId)) {
         skippedNodeIds.push(nodeId);
         continue;
       }
@@ -1043,7 +949,7 @@ export class Gateway extends DurableObject<Env> {
         continue;
       }
 
-      const probe = this.queueNodeBinProbe({
+      const probe = queueNodeBinProbeHandler(this, {
         nodeId,
         agentId: normalizedAgentId,
         bins: binsToProbe,
@@ -1114,10 +1020,10 @@ export class Gateway extends DurableObject<Env> {
       maxConcurrentRuns,
       mainKey: config.session.mainKey,
       executeSystemEvent: async ({ job, text, sessionKey }) => {
-        return await this.executeCronJob({ job, text, sessionKey });
+        return await executeCronJobHandler(this, { job, text, sessionKey });
       },
       executeTask: async (params) => {
-        return await this.executeCronJob({
+        return await executeCronJobHandler(this, {
           job: params.job,
           text: params.message,
           sessionKey: params.sessionKey,
@@ -1129,30 +1035,6 @@ export class Gateway extends DurableObject<Env> {
       },
       logger: console,
     });
-  }
-
-  /**
-   * Execute a cron job by sending a message to a session with delivery wiring.
-   *
-   * For both systemEvent (main session) and task (isolated session) modes,
-   * this resolves a delivery target from the job's explicit channel/to or
-   * from lastActiveContext, and registers pendingChannelResponses so the
-   * session's response routes back to the originating channel.
-   */
-  private async executeCronJob(params: {
-    job: CronJob;
-    text: string;
-    sessionKey: string;
-    deliver?: boolean;
-    channel?: string;
-    to?: string;
-    bestEffortDeliver?: boolean;
-  }): Promise<{
-    status: "ok" | "error" | "skipped";
-    error?: string;
-    summary?: string;
-  }> {
-    return executeCronJobHandler(this, params);
   }
 
   async getCronStatus(): Promise<{
@@ -1267,28 +1149,6 @@ export class Gateway extends DurableObject<Env> {
     text: string,
   ): void {
     sendChannelResponseHandler(this, channel, accountId, peer, replyToId, text);
-  }
-
-  /**
-   * Send a typing indicator to a channel via Service Binding RPC.
-   * Falls back to WebSocket if channel binding not configured.
-   * Fire-and-forget - errors are logged but not propagated.
-   */
-  private sendTypingToChannel(
-    channel: ChannelId,
-    accountId: string,
-    peer: PeerInfo,
-    sessionKey: string,
-    typing: boolean,
-  ): void {
-    sendTypingToChannelHandler(
-      this,
-      channel,
-      accountId,
-      peer,
-      sessionKey,
-      typing,
-    );
   }
 
   pendingChannelResponses = PersistedObject<
@@ -1433,7 +1293,7 @@ export class Gateway extends DurableObject<Env> {
     // Handle partial state: route text to channel but keep context for final response
     if (payload.state === "partial" && payload.message) {
       // Route partial text to channel (e.g., "Let me check..." before tool execution)
-      this.routeToChannel(sessionKey, channelContext, payload);
+      routePayloadToChannel(this, sessionKey, channelContext, payload);
       // Don't delete context - we'll need it for the final response
       return;
     }
@@ -1441,17 +1301,18 @@ export class Gateway extends DurableObject<Env> {
     // Handle final/error state: route to channel, stop typing, and clean up
     if (payload.state === "final" || payload.state === "error") {
       // Stop typing indicator
-      this.sendTypingToChannel(
+      sendTypingToChannelHandler(
+        this,
         channelContext.channel,
         channelContext.accountId,
         channelContext.peer,
         sessionKey,
-        false, // typing = false
+        false,
       );
 
       // Route the response to the channel
       if (payload.state === "final" && payload.message) {
-        this.routeToChannel(sessionKey, channelContext, payload);
+        routePayloadToChannel(this, sessionKey, channelContext, payload);
       }
 
       // Clean up context for this runId
@@ -1459,24 +1320,17 @@ export class Gateway extends DurableObject<Env> {
     }
   }
 
-  private routeToChannel(
-    sessionKey: string,
-    context: PendingChannelResponseContext,
-    payload: ChatEventPayload,
-  ): void {
-    routePayloadToChannel(this, sessionKey, context, payload);
-  }
-
   // ---- Heartbeat System ----
 
   async scheduleGatewayAlarm(): Promise<void> {
     const heartbeatNext = nextHeartbeatDueAtMsHandler(this);
     const cronNext = this.getCronService().nextRunAtMs();
-    const probeTimeoutNext = this.nextPendingNodeProbeExpiryAtMs();
-    const probeGcNext = this.nextPendingNodeProbeGcAtMs();
-    const asyncExecGcNext = this.nextPendingAsyncExecSessionExpiryAtMs();
-    const asyncExecDeliveryNext = this.nextPendingAsyncExecDeliveryAtMs();
-    const asyncExecDeliveredGcNext = this.nextDeliveredAsyncExecEventGcAtMs();
+    const probeTimeoutNext = nextPendingNodeProbeExpiryAtMsHandler(this);
+    const probeGcNext = nextPendingNodeProbeGcAtMsHandler(this);
+    const asyncExecGcNext = nextPendingAsyncExecSessionExpiryAtMsHandler(this);
+    const asyncExecDeliveryNext = nextPendingAsyncExecDeliveryAtMsHandler(this);
+    const asyncExecDeliveredGcNext =
+      nextDeliveredAsyncExecEventGcAtMsHandler(this);
     let nextAlarm: number | undefined;
     const candidates = [
       heartbeatNext,
@@ -1532,12 +1386,12 @@ export class Gateway extends DurableObject<Env> {
       console.error(`[Gateway] Cron due run failed:`, error);
     }
 
-    this.gcPendingNodeProbes(now, "alarm");
-    await this.handlePendingNodeProbeTimeouts();
-    this.gcPendingAsyncExecSessions(now, "alarm");
-    this.gcPendingAsyncExecDeliveries(now, "alarm");
-    this.gcDeliveredAsyncExecEvents(now, "alarm");
-    await this.deliverPendingAsyncExecDeliveries(now);
+    gcPendingNodeProbesHandler(this, now, "alarm");
+    await handlePendingNodeProbeTimeoutsHandler(this);
+    gcPendingAsyncExecSessionsHandler(this, now, "alarm");
+    gcPendingAsyncExecDeliveriesHandler(this, now, "alarm");
+    gcDeliveredAsyncExecEventsHandler(this, now, "alarm");
+    await deliverPendingAsyncExecDeliveriesHandler(this, now);
 
     await this.scheduleGatewayAlarm();
   }
