@@ -1,51 +1,21 @@
 import { env } from "cloudflare:workers";
-import { snapshot, type Proxied } from "../shared/persisted-object";
+import { snapshot, type Proxied } from "../../shared/persisted-object";
 import type {
-  NodeExecEventParams,
-  NodeExecEventType,
-} from "../protocol/tools";
-import type { Gateway } from "./do";
+  AsyncExecCompletionInput,
+  AsyncExecTerminalEventType,
+} from "../../protocol/async-exec";
+import type { NodeExecEventParams } from "../../protocol/tools";
+import type { Gateway } from "../do";
+import type {
+  PendingAsyncExecDelivery,
+  PendingAsyncExecSession,
+} from "./types";
 
 const ASYNC_EXEC_SESSION_TTL_MS = 24 * 60 * 60_000;
 const ASYNC_EXEC_DELIVERY_TTL_MS = 24 * 60 * 60_000;
 const ASYNC_EXEC_DELIVERY_RETRY_BASE_MS = 1000;
 const ASYNC_EXEC_DELIVERY_RETRY_MAX_MS = 60_000;
 const ASYNC_EXEC_EVENT_DEDUPE_TTL_MS = 24 * 60 * 60_000;
-
-type AsyncExecTerminalEventType = Extract<
-  NodeExecEventType,
-  "finished" | "failed" | "timed_out"
->;
-
-type PendingAsyncExecSession = {
-  nodeId: string;
-  sessionId: string;
-  sessionKey: string;
-  callId: string;
-  createdAt: number;
-  updatedAt: number;
-  expiresAt: number;
-};
-
-type PendingAsyncExecDelivery = {
-  eventId: string;
-  nodeId: string;
-  sessionId: string;
-  sessionKey: string;
-  callId: string;
-  event: AsyncExecTerminalEventType;
-  exitCode?: number | null;
-  signal?: string;
-  outputTail?: string;
-  startedAt?: number;
-  endedAt?: number;
-  createdAt: number;
-  updatedAt: number;
-  attempts: number;
-  nextAttemptAt: number;
-  expiresAt: number;
-  lastError?: string;
-};
 
 function asString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -585,7 +555,7 @@ export async function deliverPendingAsyncExecDeliveries(
 
     try {
       const session = env.SESSION.getByName(delivery.sessionKey);
-      await session.ingestAsyncExecCompletion({
+      const completion: AsyncExecCompletionInput = {
         eventId: delivery.eventId,
         nodeId: delivery.nodeId,
         sessionId: delivery.sessionId,
@@ -598,7 +568,8 @@ export async function deliverPendingAsyncExecDeliveries(
         endedAt: delivery.endedAt,
         tools: JSON.parse(JSON.stringify(gw.getAllTools())),
         runtimeNodes: JSON.parse(JSON.stringify(gw.getRuntimeNodeInventory())),
-      });
+      };
+      await session.ingestAsyncExecCompletion(completion);
       markAsyncExecEventDelivered(gw, delivery.eventId, now);
       delete gw.pendingAsyncExecDeliveries[delivery.eventId];
       delivered += 1;

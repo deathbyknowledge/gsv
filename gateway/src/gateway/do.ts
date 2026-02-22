@@ -53,7 +53,9 @@ import {
   nextPendingAsyncExecDeliveryAtMs as nextPendingAsyncExecDeliveryAtMsHandler,
   nextPendingAsyncExecSessionExpiryAtMs as nextPendingAsyncExecSessionExpiryAtMsHandler,
   registerPendingAsyncExecSession as registerPendingAsyncExecSessionHandler,
-} from "./async-exec-state";
+  type PendingAsyncExecDelivery,
+  type PendingAsyncExecSession,
+} from "./async-exec";
 import {
   canNodeProbeBins as canNodeProbeBinsHandler,
   clampSkillProbeTimeoutMs as clampSkillProbeTimeoutMsHandler,
@@ -116,7 +118,6 @@ import type { SessionRegistryEntry } from "../protocol/session";
 import type {
   RuntimeNodeInventory,
   NodeExecEventParams,
-  NodeExecEventType,
   NodeRuntimeInfo,
   NodeProbeResultParams,
   ToolDefinition,
@@ -159,41 +160,6 @@ type PendingNodeProbe = {
   createdAt: number;
   sentAt?: number;
   expiresAt?: number;
-};
-
-type PendingAsyncExecSession = {
-  nodeId: string;
-  sessionId: string;
-  sessionKey: string;
-  callId: string;
-  createdAt: number;
-  updatedAt: number;
-  expiresAt: number;
-};
-
-type AsyncExecTerminalEventType = Extract<
-  NodeExecEventType,
-  "finished" | "failed" | "timed_out"
->;
-
-type PendingAsyncExecDelivery = {
-  eventId: string;
-  nodeId: string;
-  sessionId: string;
-  sessionKey: string;
-  callId: string;
-  event: AsyncExecTerminalEventType;
-  exitCode?: number | null;
-  signal?: string;
-  outputTail?: string;
-  startedAt?: number;
-  endedAt?: number;
-  createdAt: number;
-  updatedAt: number;
-  attempts: number;
-  nextAttemptAt: number;
-  expiresAt: number;
-  lastError?: string;
 };
 
 const DEFAULT_LOG_LINES = 100;
