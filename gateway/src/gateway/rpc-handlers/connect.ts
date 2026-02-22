@@ -1,6 +1,32 @@
 import { RpcError, timingSafeEqualStr } from "../../shared/utils";
 import type { ConnectResult, Handler } from "../../protocol/methods";
+import { normalizeAgentId } from "../../session/routing";
 import { validateNodeRuntimeInfo } from "../capabilities";
+import type { Gateway } from "../do";
+
+function getSkillProbeAgentIds(gw: Gateway): string[] {
+  const configured = gw
+    .getFullConfig()
+    .agents.list.map((agent) => normalizeAgentId(agent.id || "main"));
+  const unique = new Set(["main", ...configured]);
+  return Array.from(unique).sort();
+}
+
+function onNodeConnected(gw: Gateway, nodeId: string): void {
+  void (async () => {
+    try {
+      await gw.dispatchPendingNodeProbesForNode(nodeId);
+      for (const agentId of getSkillProbeAgentIds(gw)) {
+        await gw.refreshSkillRuntimeFacts(agentId, { force: false });
+      }
+    } catch (error) {
+      console.error(
+        `[Gateway] Failed to refresh skill runtime facts on node connect (${nodeId}):`,
+        error,
+      );
+    }
+  })();
+}
 
 export const handleConnect: Handler<"connect"> = async (ctx) => {
   const { ws, gw, params } = ctx;
@@ -89,7 +115,7 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
     // Store tools with their original names (namespacing happens in getAllTools)
     gw.toolRegistry[nodeId] = nodeTools;
     gw.nodeRuntimeRegistry[nodeId] = runtime;
-    gw.onNodeConnected(nodeId);
+    onNodeConnected(gw, nodeId);
     console.log(
       `[Gateway] Node connected: ${nodeId}, role=${runtime.hostRole}, tools: [${nodeTools.map((t) => `${nodeId}__${t.name}`).join(", ")}]`,
     );
