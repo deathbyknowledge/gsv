@@ -15,22 +15,15 @@ import {
   toErrorShape,
 } from "../shared/utils";
 import { DEFAULT_CONFIG } from "../config/defaults";
-import {
-  GsvConfig,
-  GsvConfigInput,
-  mergeConfig,
-  HeartbeatConfig,
-  PendingPair,
-} from "../config";
+import { GsvConfig, GsvConfigInput, mergeConfig, PendingPair } from "../config";
 import { getDefaultAgentId } from "../config/parsing";
 import {
   HeartbeatState,
-  getHeartbeatConfig,
-  getNextHeartbeatTime,
-  isWithinActiveHours,
-  HeartbeatResult,
+  nextHeartbeatDueAtMs as nextHeartbeatDueAtMsHandler,
+  runDueHeartbeats as runDueHeartbeatsHandler,
+  scheduleHeartbeat as scheduleHeartbeatHandler,
+  triggerHeartbeat as triggerHeartbeatHandler,
 } from "./heartbeat";
-import { loadHeartbeatFile, isHeartbeatFileEmpty } from "../agents/loader";
 import {
   evaluateSkillEligibility,
   resolveEffectiveSkillPolicy,
@@ -42,12 +35,9 @@ import {
   resolveAgentIdFromSessionKey,
   resolveAgentMainSessionKey,
 } from "../session/routing";
-import { formatTimeFull, resolveTimezone } from "../shared/time";
 import { listWorkspaceSkills } from "../skills";
 import { getNativeToolDefinitions } from "../agents/tools";
-import type {
-  TransferRequestParams,
-} from "../protocol/transfer";
+import type { TransferRequestParams } from "../protocol/transfer";
 import { listHostsByRole, pickExecutionHostId } from "./capabilities";
 import {
   executeCronTool as executeCronToolHandler,
@@ -55,6 +45,7 @@ import {
   executeSessionSendTool as executeSessionSendToolHandler,
   executeSessionsListTool as executeSessionsListToolHandler,
 } from "./tool-executors";
+import { executeCronJob as executeCronJobHandler } from "./cron-execution";
 import {
   deliverPendingAsyncExecDeliveries as deliverPendingAsyncExecDeliveriesHandler,
   gcDeliveredAsyncExecEvents as gcDeliveredAsyncExecEventsHandler,
@@ -256,10 +247,9 @@ export class Gateway extends DurableObject<Env> {
     this.ctx.storage.kv,
     { prefix: "pendingLogCalls:" },
   );
-  readonly pendingNodeProbes = PersistedObject<Record<string, PendingNodeProbe>>(
-    this.ctx.storage.kv,
-    { prefix: "pendingNodeProbes:" },
-  );
+  readonly pendingNodeProbes = PersistedObject<
+    Record<string, PendingNodeProbe>
+  >(this.ctx.storage.kv, { prefix: "pendingNodeProbes:" });
   readonly pendingAsyncExecSessions = PersistedObject<
     Record<string, PendingAsyncExecSession>
   >(this.ctx.storage.kv, { prefix: "pendingAsyncExecSessions:" });
@@ -628,7 +618,10 @@ export class Gateway extends DurableObject<Env> {
       typeof params?.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
         ? Math.floor(params.timeoutMs)
         : DEFAULT_INTERNAL_LOG_TIMEOUT_MS;
-    const timeoutMs = Math.max(1000, Math.min(timeoutInput, MAX_INTERNAL_LOG_TIMEOUT_MS));
+    const timeoutMs = Math.max(
+      1000,
+      Math.min(timeoutInput, MAX_INTERNAL_LOG_TIMEOUT_MS),
+    );
     const callId = crypto.randomUUID();
 
     const responsePromise = new Promise<LogsGetResult>((resolve, reject) => {
@@ -639,7 +632,9 @@ export class Gateway extends DurableObject<Env> {
         }
         this.pendingInternalLogCalls.delete(callId);
         pending.reject(
-          new Error(`logs.get timed out for node ${pending.nodeId} after ${timeoutMs}ms`),
+          new Error(
+            `logs.get timed out for node ${pending.nodeId} after ${timeoutMs}ms`,
+          ),
         );
       }, timeoutMs);
 
@@ -686,7 +681,9 @@ export class Gateway extends DurableObject<Env> {
     clearTimeout(pending.timeoutHandle);
 
     if (pending.nodeId !== nodeId) {
-      pending.reject(new Error("Node not authorized for this internal logs call"));
+      pending.reject(
+        new Error("Node not authorized for this internal logs call"),
+      );
       return true;
     }
 
@@ -729,7 +726,10 @@ export class Gateway extends DurableObject<Env> {
     return clampSkillProbeTimeoutMsHandler(timeoutMs);
   }
 
-  private gcPendingAsyncExecSessions(now = Date.now(), reason?: string): number {
+  private gcPendingAsyncExecSessions(
+    now = Date.now(),
+    reason?: string,
+  ): number {
     return gcPendingAsyncExecSessionsHandler(this, now, reason);
   }
 
@@ -747,30 +747,36 @@ export class Gateway extends DurableObject<Env> {
     this.ctx.waitUntil(this.scheduleGatewayAlarm());
   }
 
-  private gcPendingAsyncExecDeliveries(now = Date.now(), reason?: string): number {
+  private gcPendingAsyncExecDeliveries(
+    now = Date.now(),
+    reason?: string,
+  ): number {
     return gcPendingAsyncExecDeliveriesHandler(this, now, reason);
   }
 
-  private nextPendingAsyncExecDeliveryAtMs(now = Date.now()): number | undefined {
+  private nextPendingAsyncExecDeliveryAtMs(
+    now = Date.now(),
+  ): number | undefined {
     return nextPendingAsyncExecDeliveryAtMsHandler(this, now);
   }
 
-  private gcDeliveredAsyncExecEvents(now = Date.now(), reason?: string): number {
+  private gcDeliveredAsyncExecEvents(
+    now = Date.now(),
+    reason?: string,
+  ): number {
     return gcDeliveredAsyncExecEventsHandler(this, now, reason);
   }
 
-  private nextDeliveredAsyncExecEventGcAtMs(now = Date.now()): number | undefined {
+  private nextDeliveredAsyncExecEventGcAtMs(
+    now = Date.now(),
+  ): number | undefined {
     return nextDeliveredAsyncExecEventGcAtMsHandler(this, now);
   }
 
-  private async deliverPendingAsyncExecDeliveries(now = Date.now()): Promise<number> {
-    return deliverPendingAsyncExecDeliveriesHandler(
-      this,
-      {
-        getSessionByName: (sessionKey) => this.env.SESSION.getByName(sessionKey),
-      },
-      now,
-    );
+  private async deliverPendingAsyncExecDeliveries(
+    now = Date.now(),
+  ): Promise<number> {
+    return deliverPendingAsyncExecDeliveriesHandler(this, now);
   }
 
   private queueNodeBinProbe(params: {
@@ -787,9 +793,7 @@ export class Gateway extends DurableObject<Env> {
   }
 
   async dispatchPendingNodeProbesForNode(nodeId: string): Promise<number> {
-    return dispatchPendingNodeProbesForNodeHandler(this, nodeId, {
-      scheduleAlarm: () => this.scheduleGatewayAlarm(),
-    });
+    return dispatchPendingNodeProbesForNodeHandler(this, nodeId);
   }
 
   private nextPendingNodeProbeExpiryAtMs(): number | undefined {
@@ -812,19 +816,14 @@ export class Gateway extends DurableObject<Env> {
     nodeId: string,
     params: NodeProbeResultParams,
   ): Promise<{ ok: true; dropped?: true }> {
-    return handleNodeProbeResultHandler(this, nodeId, params, {
-      scheduleAlarm: () => this.scheduleGatewayAlarm(),
-    });
+    return handleNodeProbeResultHandler(this, nodeId, params);
   }
 
   async handleNodeExecEvent(
     nodeId: string,
     params: NodeExecEventParams,
   ): Promise<{ ok: true; dropped?: true }> {
-    return handleNodeExecEventHandler(this, nodeId, params, {
-      getSessionByName: (sessionKey) => this.env.SESSION.getByName(sessionKey),
-      scheduleAlarm: () => this.scheduleGatewayAlarm(),
-    });
+    return handleNodeExecEventHandler(this, nodeId, params);
   }
 
   getTransferWs(nodeId: string): WebSocket | undefined {
@@ -849,10 +848,7 @@ export class Gateway extends DurableObject<Env> {
     return finalizeR2UploadHandler(this, transfer);
   }
 
-  completeTransfer(
-    transfer: TransferState,
-    bytesTransferred: number,
-  ): void {
+  completeTransfer(transfer: TransferState, bytesTransferred: number): void {
     completeTransferHandler(this, transfer, bytesTransferred);
   }
 
@@ -1156,115 +1152,7 @@ export class Gateway extends DurableObject<Env> {
     error?: string;
     summary?: string;
   }> {
-    const runId = crypto.randomUUID();
-    const agentId = params.job.agentId;
-    const session = this.env.SESSION.getByName(params.sessionKey);
-
-    // Resolve delivery target.
-    // If deliver is explicitly false, skip delivery setup.
-    // Otherwise, try explicit channel/to from the job spec, then fall back to lastActiveContext.
-    let deliveryContext: {
-      channel: ChannelId;
-      accountId: string;
-      peer: PeerInfo;
-    } | null = null;
-
-    const shouldDeliver = params.deliver !== false;
-    if (shouldDeliver) {
-      const lastActive = this.lastActiveContext[agentId];
-
-      if (params.channel && params.to && lastActive) {
-        // Explicit channel/to specified — use them with the lastActive accountId
-        deliveryContext = JSON.parse(JSON.stringify({
-          channel: params.channel,
-          accountId: lastActive.accountId,
-          peer: { kind: "dm" as const, id: params.to },
-        }));
-      } else if (params.to && lastActive) {
-        // Explicit "to" but no channel — use lastActive channel
-        deliveryContext = JSON.parse(JSON.stringify({
-          channel: lastActive.channel,
-          accountId: lastActive.accountId,
-          peer: { kind: "dm" as const, id: params.to },
-        }));
-      } else if (lastActive) {
-        // Fall back to last active context (same as heartbeat does)
-        deliveryContext = JSON.parse(JSON.stringify({
-          channel: lastActive.channel,
-          accountId: lastActive.accountId,
-          peer: lastActive.peer,
-        }));
-      }
-    }
-
-    // Register delivery context so broadcastToSession can route the response
-    if (deliveryContext) {
-      this.pendingChannelResponses[runId] = {
-        ...deliveryContext,
-        inboundMessageId: `cron:${params.job.id}:${Date.now()}`,
-        agentId,
-      };
-    }
-
-    // Ensure lastActiveContext is set so gsv__Message can resolve defaults
-    // (for isolated cron sessions, no channel inbound has ever set this).
-    if (deliveryContext) {
-      this.lastActiveContext[agentId] = {
-        agentId,
-        channel: deliveryContext.channel,
-        accountId: deliveryContext.accountId,
-        peer: deliveryContext.peer,
-        sessionKey: params.sessionKey,
-        timestamp: Date.now(),
-      };
-    }
-
-    // Prepend current time context so the agent knows when the cron fired.
-    // When delivery is wired, append an instruction so the agent doesn't
-    // also use gsv__Message (which would cause duplicate delivery).
-    const config = this.getFullConfig();
-    const tz = resolveTimezone(config.userTimezone);
-    const timePrefix = `[cron · ${formatTimeFull(new Date(), tz)}]`;
-    const deliveryNote = deliveryContext
-      ? `\n[Your response will be delivered automatically to ${deliveryContext.channel}:${deliveryContext.peer.id} — reply normally, do NOT use gsv__Message for this.]`
-      : "";
-    const cronMessage = `${timePrefix} ${params.text}${deliveryNote}`;
-
-    try {
-      await session.chatSend(
-        cronMessage,
-        runId,
-        JSON.parse(JSON.stringify(this.getAllTools())),
-        JSON.parse(JSON.stringify(this.getRuntimeNodeInventory())),
-        params.sessionKey,
-        undefined, // messageOverrides
-        undefined, // media
-        deliveryContext
-          ? {
-              channel: deliveryContext.channel,
-              accountId: deliveryContext.accountId,
-              peer: {
-                kind: deliveryContext.peer.kind,
-                id: deliveryContext.peer.id,
-                name: deliveryContext.peer.name,
-              },
-            }
-          : undefined,
-      );
-      return {
-        status: "ok",
-        summary: `queued to ${params.sessionKey}${deliveryContext ? ` (delivering to ${deliveryContext.channel}:${deliveryContext.peer.id})` : ""}`,
-      };
-    } catch (error) {
-      // Clean up pending context on failure
-      if (deliveryContext) {
-        delete this.pendingChannelResponses[runId];
-      }
-      return {
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+    return executeCronJobHandler(this, params);
   }
 
   async getCronStatus(): Promise<{
@@ -1378,14 +1266,7 @@ export class Gateway extends DurableObject<Env> {
     replyToId: string,
     text: string,
   ): void {
-    sendChannelResponseHandler(
-      this,
-      channel,
-      accountId,
-      peer,
-      replyToId,
-      text,
-    );
+    sendChannelResponseHandler(this, channel, accountId, peer, replyToId, text);
   }
 
   /**
@@ -1493,7 +1374,8 @@ export class Gateway extends DurableObject<Env> {
   }
 
   getFullConfig(): GsvConfig {
-    return mergeConfig(DEFAULT_CONFIG,
+    return mergeConfig(
+      DEFAULT_CONFIG,
       snapshot(this.configStore) as GsvConfigInput,
     );
   }
@@ -1587,32 +1469,8 @@ export class Gateway extends DurableObject<Env> {
 
   // ---- Heartbeat System ----
 
-  private resolveHeartbeatAgentIds(config: GsvConfig): string[] {
-    const configured = config.agents.list
-      .map((agent) => agent.id)
-      .filter(Boolean);
-    if (configured.length > 0) {
-      return configured;
-    }
-    return [getDefaultAgentId(config)];
-  }
-
-  private nextHeartbeatDueAtMs(): number | undefined {
-    let next: number | undefined;
-    for (const state of Object.values(this.heartbeatState)) {
-      const candidate = state?.nextHeartbeatAt ?? undefined;
-      if (!candidate) {
-        continue;
-      }
-      if (next === undefined || candidate < next) {
-        next = candidate;
-      }
-    }
-    return next;
-  }
-
-  private async scheduleGatewayAlarm(): Promise<void> {
-    const heartbeatNext = this.nextHeartbeatDueAtMs();
+  async scheduleGatewayAlarm(): Promise<void> {
+    const heartbeatNext = nextHeartbeatDueAtMsHandler(this);
     const cronNext = this.getCronService().nextRunAtMs();
     const probeTimeoutNext = this.nextPendingNodeProbeExpiryAtMs();
     const probeGcNext = this.nextPendingNodeProbeGcAtMs();
@@ -1628,16 +1486,16 @@ export class Gateway extends DurableObject<Env> {
       asyncExecGcNext,
       asyncExecDeliveryNext,
       asyncExecDeliveredGcNext,
-    ].filter(
-      (value): value is number => typeof value === "number",
-    );
+    ].filter((value): value is number => typeof value === "number");
     if (candidates.length > 0) {
       nextAlarm = Math.min(...candidates);
     }
 
     if (nextAlarm === undefined) {
       await this.ctx.storage.deleteAlarm();
-      console.log(`[Gateway] Alarm cleared (no heartbeat/cron/probe work scheduled)`);
+      console.log(
+        `[Gateway] Alarm cleared (no heartbeat/cron/probe work scheduled)`,
+      );
       return;
     }
 
@@ -1651,31 +1509,7 @@ export class Gateway extends DurableObject<Env> {
    * Schedule the next heartbeat alarm
    */
   async scheduleHeartbeat(): Promise<void> {
-    const config = this.getFullConfig();
-    const activeAgentIds = new Set(this.resolveHeartbeatAgentIds(config));
-
-    for (const existingAgentId of Object.keys(this.heartbeatState)) {
-      if (!activeAgentIds.has(existingAgentId)) {
-        delete this.heartbeatState[existingAgentId];
-      }
-    }
-
-    for (const agentId of activeAgentIds) {
-      const heartbeatConfig = getHeartbeatConfig(config, agentId);
-      const nextTime = getNextHeartbeatTime(heartbeatConfig);
-
-      const state = this.heartbeatState[agentId] ?? {
-        agentId,
-        nextHeartbeatAt: null,
-        lastHeartbeatAt: null,
-        lastHeartbeatText: null,
-        lastHeartbeatSentAt: null,
-      };
-      state.nextHeartbeatAt = nextTime;
-      this.heartbeatState[agentId] = state;
-    }
-
-    await this.scheduleGatewayAlarm();
+    return scheduleHeartbeatHandler(this);
   }
 
   /**
@@ -1684,34 +1518,9 @@ export class Gateway extends DurableObject<Env> {
   async alarm(): Promise<void> {
     console.log(`[Gateway] Alarm fired`);
 
-    const config = this.getFullConfig();
     const now = Date.now();
 
-    // Run due heartbeats.
-    for (const agentId of Object.keys(this.heartbeatState)) {
-      const state = this.heartbeatState[agentId];
-      if (!state.nextHeartbeatAt || state.nextHeartbeatAt > now) continue;
-
-      const heartbeatConfig = getHeartbeatConfig(config, agentId);
-
-      // Check active hours
-      if (!isWithinActiveHours(heartbeatConfig.activeHours)) {
-        console.log(
-          `[Gateway] Heartbeat for ${agentId} skipped (outside active hours)`,
-        );
-        state.nextHeartbeatAt = getNextHeartbeatTime(heartbeatConfig);
-        this.heartbeatState[agentId] = state;
-        continue;
-      }
-
-      // Run heartbeat
-      await this.runHeartbeat(agentId, heartbeatConfig, "interval");
-
-      // Schedule next
-      state.lastHeartbeatAt = now;
-      state.nextHeartbeatAt = getNextHeartbeatTime(heartbeatConfig);
-      this.heartbeatState[agentId] = state;
-    }
+    await runDueHeartbeatsHandler(this, now);
 
     // Run due cron jobs.
     try {
@@ -1734,179 +1543,6 @@ export class Gateway extends DurableObject<Env> {
   }
 
   /**
-   * Run a heartbeat for an agent
-   */
-  private async runHeartbeat(
-    agentId: string,
-    config: HeartbeatConfig,
-    reason: "interval" | "manual" | "cron",
-  ): Promise<HeartbeatResult> {
-    console.log(
-      `[Gateway] Running heartbeat for agent ${agentId} (reason: ${reason})`,
-    );
-
-    const result: HeartbeatResult = {
-      agentId,
-      sessionKey: "",
-      reason,
-      timestamp: Date.now(),
-    };
-
-    // Skip check 1: Outside active hours (unless manual trigger)
-    if (reason !== "manual" && config.activeHours) {
-      const now = new Date();
-      if (!isWithinActiveHours(config.activeHours, now)) {
-        console.log(
-          `[Gateway] Skipping heartbeat for ${agentId}: outside active hours`,
-        );
-        result.skipped = true;
-        result.skipReason = "outside_active_hours";
-        return result;
-      }
-    }
-
-    // Skip check 2: Empty HEARTBEAT.md file (unless manual trigger)
-    if (reason !== "manual") {
-      const heartbeatFile = await loadHeartbeatFile(this.env.STORAGE, agentId);
-      if (
-        !heartbeatFile.exists ||
-        isHeartbeatFileEmpty(heartbeatFile.content)
-      ) {
-        console.log(
-          `[Gateway] Skipping heartbeat for ${agentId}: HEARTBEAT.md is empty or missing`,
-        );
-        result.skipped = true;
-        result.skipReason = heartbeatFile.exists
-          ? "empty_heartbeat_file"
-          : "no_heartbeat_file";
-        return result;
-      }
-    }
-
-    // Skip check 3: Session is busy (has messages in queue)
-    // Get the target session and check if it's processing
-    const lastActive = this.lastActiveContext[agentId];
-    if (reason !== "manual" && lastActive) {
-      const sessionStub = this.env.SESSION.get(
-        this.env.SESSION.idFromName(lastActive.sessionKey),
-      );
-      const stats = await sessionStub.stats();
-      if (stats.isProcessing || stats.queueSize > 0) {
-        console.log(
-          `[Gateway] Skipping heartbeat for ${agentId}: session is busy (queue: ${stats.queueSize})`,
-        );
-        result.skipped = true;
-        result.skipReason = "session_busy";
-        return result;
-      }
-    }
-
-    // Resolve delivery target from config
-    const target = config.target ?? "last";
-
-    // Heartbeats always run in their own internal session.
-    // Delivery routing is independent and controlled by target/lastActive context.
-    const sessionKey = `agent:${agentId}:heartbeat:system:internal`;
-    let deliveryContext: {
-      channel: ChannelId;
-      accountId: string;
-      peer: PeerInfo;
-    } | null = null;
-
-    if (target === "none") {
-      console.log(`[Gateway] Heartbeat target=none, running silently`);
-    } else if (target === "last" && lastActive) {
-      // Clone to strip Proxy wrappers from PersistedObject before storing in another PersistedObject
-      deliveryContext = JSON.parse(
-        JSON.stringify({
-          channel: lastActive.channel,
-          accountId: lastActive.accountId,
-          peer: lastActive.peer,
-        }),
-      );
-      console.log(
-        `[Gateway] Heartbeat target=last, delivering to ${lastActive.channel}:${lastActive.peer.id}`,
-      );
-    } else if (target === "last") {
-      console.log(
-        `[Gateway] Heartbeat target=last, no last active context, running silently`,
-      );
-    } else if (target !== "last" && target !== "none") {
-      // Specific channel target (e.g., "whatsapp")
-      // For now, use last active if channel matches
-      if (lastActive && lastActive.channel === target) {
-        // Clone to strip Proxy wrappers from PersistedObject before storing in another PersistedObject
-        deliveryContext = JSON.parse(
-          JSON.stringify({
-            channel: lastActive.channel,
-            accountId: lastActive.accountId,
-            peer: lastActive.peer,
-          }),
-        );
-        console.log(
-          `[Gateway] Heartbeat target=${target}, matched last active`,
-        );
-      } else {
-        console.log(
-          `[Gateway] Heartbeat target=${target}, no matching context, running silently`,
-        );
-      }
-    }
-
-    // Set sessionKey in result
-    result.sessionKey = sessionKey;
-
-    // Get the session DO
-    const session = this.env.SESSION.getByName(sessionKey);
-
-    // Send heartbeat prompt
-    const runId = crypto.randomUUID();
-
-    // Set up delivery context if we have one (keyed by runId for correct routing)
-    if (deliveryContext) {
-      this.pendingChannelResponses[runId] = {
-        ...deliveryContext,
-        inboundMessageId: `heartbeat:${reason}:${Date.now()}`,
-        agentId, // For deduplication lookup
-      };
-    }
-    const prompt = config.prompt;
-    const tools = JSON.parse(JSON.stringify(this.getAllTools()));
-    const runtimeNodes = JSON.parse(
-      JSON.stringify(this.getRuntimeNodeInventory()),
-    );
-
-    try {
-      await session.chatSend(
-        prompt,
-        runId,
-        tools,
-        runtimeNodes,
-        sessionKey,
-        undefined, // messageOverrides
-        undefined, // media
-        deliveryContext
-          ? {
-              channel: deliveryContext.channel,
-              accountId: deliveryContext.accountId,
-              peer: deliveryContext.peer,
-            }
-          : undefined,
-      );
-      console.log(`[Gateway] Heartbeat sent to session ${sessionKey}`);
-    } catch (e) {
-      console.error(`[Gateway] Heartbeat failed for ${agentId}:`, e);
-      result.error = e instanceof Error ? e.message : String(e);
-      // Clean up pending context on failure (keyed by runId)
-      if (deliveryContext) {
-        delete this.pendingChannelResponses[runId];
-      }
-    }
-
-    return result;
-  }
-
-  /**
    * Manually trigger a heartbeat for an agent
    */
   async triggerHeartbeat(agentId: string): Promise<{
@@ -1915,31 +1551,7 @@ export class Gateway extends DurableObject<Env> {
     skipped?: boolean;
     skipReason?: string;
   }> {
-    const config = await this.getConfig();
-    const heartbeatConfig = getHeartbeatConfig(config, agentId);
-
-    const result = await this.runHeartbeat(agentId, heartbeatConfig, "manual");
-
-    if (result.skipped) {
-      return {
-        ok: true,
-        message: `Heartbeat skipped for agent ${agentId}: ${result.skipReason}`,
-        skipped: true,
-        skipReason: result.skipReason,
-      };
-    }
-
-    if (result.error) {
-      return {
-        ok: false,
-        message: `Heartbeat failed for agent ${agentId}: ${result.error}`,
-      };
-    }
-
-    return {
-      ok: true,
-      message: `Heartbeat triggered for agent ${agentId} (session: ${result.sessionKey})`,
-    };
+    return triggerHeartbeatHandler(this, agentId);
   }
 
   // ─────────────────────────────────────────────────────────
@@ -1953,12 +1565,7 @@ export class Gateway extends DurableObject<Env> {
   async handleChannelInboundRpc(
     params: ChannelInboundParams,
   ): Promise<ChannelInboundRpcResult> {
-    return handleChannelInboundRpcHandler(this, params, {
-      getSessionStub: (sessionKey) =>
-        this.env.SESSION.get(this.env.SESSION.idFromName(sessionKey)),
-      workersAi: this.env.AI,
-      storage: this.env.STORAGE,
-    });
+    return handleChannelInboundRpcHandler(this, params);
   }
 
   /**
@@ -1969,6 +1576,11 @@ export class Gateway extends DurableObject<Env> {
     accountId: string,
     status: { connected: boolean; authenticated: boolean; error?: string },
   ): Promise<void> {
-    return handleChannelStatusChangedHandler(this, channelId, accountId, status);
+    return handleChannelStatusChangedHandler(
+      this,
+      channelId,
+      accountId,
+      status,
+    );
   }
 }
