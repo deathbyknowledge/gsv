@@ -47,6 +47,17 @@ import {
   shouldAutoResetByPolicy,
   type ResetPolicy as SessionResetPolicy,
 } from "./reset";
+import {
+  ASYNC_EXEC_EVENT_SEEN_TTL_MS,
+  asPendingAsyncExecCompletion,
+  buildAsyncExecSystemEventMessage,
+  gcAsyncExecCompletionState,
+  hasPendingAsyncExecCompletions,
+  normalizeAsyncExecCompletionInput,
+  type AsyncExecCompletionInput,
+  type PendingAsyncExecCompletion,
+} from "./async-exec";
+import { buildUserMessage } from "./user-message";
 
 type PendingToolCall = {
   id: string;
@@ -68,25 +79,6 @@ type ToolResultInput = {
   callId: string;
   result?: unknown;
   error?: string;
-};
-
-type AsyncExecCompletionInput = {
-  eventId: string;
-  nodeId: string;
-  sessionId: string;
-  callId?: string;
-  event: "finished" | "failed" | "timed_out";
-  exitCode?: number | null;
-  signal?: string;
-  outputTail?: string;
-  startedAt?: number;
-  endedAt?: number;
-  tools: ToolDefinition[];
-  runtimeNodes?: RuntimeNodeInventory;
-};
-
-type PendingAsyncExecCompletion = AsyncExecCompletionInput & {
-  receivedAt: number;
 };
 
 export type SessionSettings = {
@@ -213,8 +205,6 @@ export type AbortResult = {
 // LRU cache for fetched media (in-memory, survives within request but not hibernation)
 const MEDIA_CACHE_MAX_SIZE = 50 * 1024 * 1024; // 50MB budget
 const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
-const ASYNC_EXEC_EVENT_SEEN_TTL_MS = 24 * 60 * 60_000;
-const ASYNC_EXEC_EVENT_PENDING_MAX_AGE_MS = 24 * 60 * 60_000;
 
 function isStructuredToolResult(
   result: unknown,
@@ -618,101 +608,6 @@ export class Session extends DurableObject<Env> {
     return this.currentRun !== null;
   }
 
-  private hasPendingAsyncExecCompletions(): boolean {
-    let hasPending = false;
-    for (const [eventId, rawCompletion] of Object.entries(
-      this.pendingAsyncExecCompletions,
-    )) {
-      const completion = this.asPendingAsyncExecCompletion(rawCompletion);
-      if (!completion) {
-        delete this.pendingAsyncExecCompletions[eventId];
-        continue;
-      }
-      hasPending = true;
-    }
-    return hasPending;
-  }
-
-  private asPendingAsyncExecCompletion(
-    value: unknown,
-  ): PendingAsyncExecCompletion | undefined {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return undefined;
-    }
-    const record = value as Record<string, unknown>;
-    const eventId =
-      typeof record.eventId === "string" ? record.eventId.trim() : "";
-    const nodeId =
-      typeof record.nodeId === "string" ? record.nodeId.trim() : "";
-    const sessionId =
-      typeof record.sessionId === "string" ? record.sessionId.trim() : "";
-    const event = typeof record.event === "string" ? record.event.trim() : "";
-    const receivedAt =
-      typeof record.receivedAt === "number" &&
-      Number.isFinite(record.receivedAt)
-        ? record.receivedAt
-        : undefined;
-    if (
-      !eventId ||
-      !nodeId ||
-      !sessionId ||
-      !event ||
-      receivedAt === undefined
-    ) {
-      return undefined;
-    }
-    return value as PendingAsyncExecCompletion;
-  }
-
-  private gcAsyncExecCompletionState(now = Date.now()): void {
-    for (const [eventId, expiresAt] of Object.entries(
-      this.seenAsyncExecEventIds,
-    )) {
-      if (
-        typeof expiresAt !== "number" ||
-        !Number.isFinite(expiresAt) ||
-        expiresAt <= now
-      ) {
-        delete this.seenAsyncExecEventIds[eventId];
-      }
-    }
-
-    for (const [eventId, rawCompletion] of Object.entries(
-      this.pendingAsyncExecCompletions,
-    )) {
-      const completion = this.asPendingAsyncExecCompletion(rawCompletion);
-      const receivedAt = completion?.receivedAt;
-      if (
-        !receivedAt ||
-        receivedAt + ASYNC_EXEC_EVENT_PENDING_MAX_AGE_MS <= now
-      ) {
-        delete this.pendingAsyncExecCompletions[eventId];
-      }
-    }
-  }
-
-  private buildAsyncExecSystemEventMessage(
-    completion: PendingAsyncExecCompletion,
-  ): string {
-    const payload = {
-      eventId: completion.eventId,
-      nodeId: completion.nodeId,
-      sessionId: completion.sessionId,
-      callId: completion.callId,
-      event: completion.event,
-      exitCode: completion.exitCode,
-      signal: completion.signal,
-      outputTail: completion.outputTail,
-      startedAt: completion.startedAt,
-      endedAt: completion.endedAt,
-    };
-
-    return [
-      "System event: async_exec_completion",
-      JSON.stringify(payload),
-    ].join("\n");
-  }
-
   private async pumpAsyncExecCompletions(): Promise<void> {
     if (this.asyncExecPumpState.active) {
       return;
@@ -721,8 +616,11 @@ export class Session extends DurableObject<Env> {
     this.asyncExecPumpState.active = true;
 
     try {
-      this.gcAsyncExecCompletionState();
-      if (!this.hasPendingAsyncExecCompletions()) {
+      gcAsyncExecCompletionState(
+        this.seenAsyncExecEventIds,
+        this.pendingAsyncExecCompletions,
+      );
+      if (!hasPendingAsyncExecCompletions(this.pendingAsyncExecCompletions)) {
         return;
       }
 
@@ -732,7 +630,7 @@ export class Session extends DurableObject<Env> {
 
       const next = Object.entries(this.pendingAsyncExecCompletions)
         .map(([eventId, entry]) => {
-          const completion = this.asPendingAsyncExecCompletion(entry);
+          const completion = asPendingAsyncExecCompletion(entry);
           if (!completion) {
             delete this.pendingAsyncExecCompletions[eventId];
             return null;
@@ -746,7 +644,7 @@ export class Session extends DurableObject<Env> {
         return;
       }
 
-      const message = this.buildAsyncExecSystemEventMessage(next);
+      const message = buildAsyncExecSystemEventMessage(next);
       const runId = crypto.randomUUID();
       const sessionKey = this.meta.sessionKey;
       if (!sessionKey) {
@@ -782,7 +680,10 @@ export class Session extends DurableObject<Env> {
         Date.now() + ASYNC_EXEC_EVENT_SEEN_TTL_MS;
     } finally {
       this.asyncExecPumpState.active = false;
-      if (!this.isProcessing && this.hasPendingAsyncExecCompletions()) {
+      if (
+        !this.isProcessing &&
+        hasPendingAsyncExecCompletions(this.pendingAsyncExecCompletions)
+      ) {
         this.ctx.waitUntil(this.pumpAsyncExecCompletions());
       }
     }
@@ -791,22 +692,19 @@ export class Session extends DurableObject<Env> {
   async ingestAsyncExecCompletion(
     input: AsyncExecCompletionInput,
   ): Promise<{ ok: true; duplicate?: true }> {
-    const eventId =
-      typeof input.eventId === "string" ? input.eventId.trim() : "";
-    const nodeId = typeof input.nodeId === "string" ? input.nodeId.trim() : "";
-    const sessionId =
-      typeof input.sessionId === "string" ? input.sessionId.trim() : "";
-    const event = typeof input.event === "string" ? input.event.trim() : "";
-    if (!eventId || !nodeId || !sessionId) {
-      return { ok: true, duplicate: true };
-    }
-    if (!["finished", "failed", "timed_out"].includes(event)) {
-      return { ok: true, duplicate: true };
-    }
-
     const now = Date.now();
-    this.gcAsyncExecCompletionState(now);
+    const completion = normalizeAsyncExecCompletionInput(input, now);
+    if (!completion) {
+      return { ok: true, duplicate: true };
+    }
 
+    gcAsyncExecCompletionState(
+      this.seenAsyncExecEventIds,
+      this.pendingAsyncExecCompletions,
+      now,
+    );
+
+    const eventId = completion.eventId;
     const seenUntil = this.seenAsyncExecEventIds[eventId];
     if (typeof seenUntil === "number" && seenUntil > now) {
       return { ok: true, duplicate: true };
@@ -815,53 +713,15 @@ export class Session extends DurableObject<Env> {
     for (const [pendingId, rawCompletion] of Object.entries(
       this.pendingAsyncExecCompletions,
     )) {
-      const completion = this.asPendingAsyncExecCompletion(rawCompletion);
-      if (!completion) {
+      const pending = asPendingAsyncExecCompletion(rawCompletion);
+      if (!pending) {
         delete this.pendingAsyncExecCompletions[pendingId];
         continue;
       }
-      if (completion.eventId === eventId) {
+      if (pending.eventId === eventId) {
         return { ok: true, duplicate: true };
       }
     }
-
-    const completion: PendingAsyncExecCompletion = {
-      eventId,
-      nodeId,
-      sessionId,
-      callId:
-        typeof input.callId === "string"
-          ? input.callId.trim() || undefined
-          : undefined,
-      event: event as PendingAsyncExecCompletion["event"],
-      exitCode:
-        typeof input.exitCode === "number" && Number.isFinite(input.exitCode)
-          ? input.exitCode
-          : input.exitCode === null
-            ? null
-            : undefined,
-      signal:
-        typeof input.signal === "string"
-          ? input.signal.trim() || undefined
-          : undefined,
-      outputTail:
-        typeof input.outputTail === "string"
-          ? input.outputTail.trim() || undefined
-          : undefined,
-      startedAt:
-        typeof input.startedAt === "number" && Number.isFinite(input.startedAt)
-          ? input.startedAt
-          : undefined,
-      endedAt:
-        typeof input.endedAt === "number" && Number.isFinite(input.endedAt)
-          ? input.endedAt
-          : undefined,
-      tools: JSON.parse(JSON.stringify(input.tools ?? [])),
-      runtimeNodes: input.runtimeNodes
-        ? JSON.parse(JSON.stringify(input.runtimeNodes))
-        : undefined,
-      receivedAt: now,
-    };
 
     this.pendingAsyncExecCompletions[eventId] = completion;
     this.ctx.waitUntil(this.pumpAsyncExecCompletions());
@@ -963,7 +823,7 @@ export class Session extends DurableObject<Env> {
     console.log(`[Session] Starting run ${runId}`);
 
     // Build user message and evaluate freshness before touching updatedAt
-    const userMessage = this.buildUserMessage(message, media);
+    const userMessage = buildUserMessage(message, media);
     const shouldResetBeforeRun = this.shouldAutoReset(this.meta.updatedAt);
 
     // Persist message immediately for normal runs.
@@ -1116,7 +976,7 @@ export class Session extends DurableObject<Env> {
       this.messageQueue = [];
 
       for (const queuedMessage of queuedMessages) {
-        const userMessage = this.buildUserMessage(
+        const userMessage = buildUserMessage(
           queuedMessage.text,
           queuedMessage.media,
         );
@@ -1269,7 +1129,7 @@ export class Session extends DurableObject<Env> {
     this.currentRun = null;
     console.log(`[Session] Finished run ${runId}`);
 
-    if (this.hasPendingAsyncExecCompletions()) {
+    if (hasPendingAsyncExecCompletions(this.pendingAsyncExecCompletions)) {
       this.ctx.waitUntil(this.pumpAsyncExecCompletions());
       return;
     }
@@ -1313,106 +1173,6 @@ export class Session extends DurableObject<Env> {
     return {
       isProcessing: this.isProcessing,
       queueSize: this.messageQueue.length,
-    };
-  }
-
-  /**
-   * Build a UserMessage with text and optional media attachments
-   * Media with r2Key are stored as references (not base64)
-   */
-  private buildUserMessage(
-    text: string,
-    media?: MediaAttachment[],
-  ): UserMessage {
-    // Separate media by type
-    const images = media?.filter((m) => m.type === "image") ?? [];
-    const documents = media?.filter((m) => m.type === "document") ?? [];
-    const audioWithTranscript =
-      media?.filter((m) => m.type === "audio" && m.transcription) ?? [];
-    const audioWithoutTranscript =
-      media?.filter((m) => m.type === "audio" && !m.transcription) ?? [];
-
-    // If no processable media, use simple string content
-    if (
-      images.length === 0 &&
-      documents.length === 0 &&
-      audioWithTranscript.length === 0 &&
-      audioWithoutTranscript.length === 0
-    ) {
-      return {
-        role: "user",
-        content: text || "[Empty message]",
-        timestamp: Date.now(),
-      };
-    }
-
-    // Build content array
-    const content: Array<
-      | TextContent
-      | ImageContent
-      | { type: "image"; r2Key: string; mimeType: string }
-    > = [];
-
-    // Add text first (if any)
-    if (text && text !== "[Media]") {
-      content.push({ type: "text", text });
-    }
-
-    // Add images (as r2Key references or base64)
-    for (const img of images) {
-      if (img.r2Key) {
-        content.push({
-          type: "image",
-          r2Key: img.r2Key,
-          mimeType: img.mimeType,
-        });
-      } else if (img.data && img.mimeType) {
-        content.push({
-          type: "image",
-          data: img.data,
-          mimeType: img.mimeType,
-        });
-      }
-    }
-
-    // Add audio transcriptions as text
-    for (const audio of audioWithTranscript) {
-      const transcription = audio.transcription!;
-      content.push({
-        type: "text",
-        text: `[Voice message transcription: ${transcription}]`,
-      });
-    }
-
-    // Add placeholder for audio that failed transcription
-    for (const audio of audioWithoutTranscript) {
-      content.push({
-        type: "text",
-        text: `[Voice message received - transcription unavailable]`,
-      });
-    }
-
-    // Add documents as text placeholders
-    // TODO: Future enhancement - extract text or convert to images for vision models
-    for (const doc of documents) {
-      const filename = doc.filename || "document";
-      const mimeType = doc.mimeType || "application/octet-stream";
-      const size = doc.size ? ` (${Math.round(doc.size / 1024)}KB)` : "";
-      content.push({
-        type: "text",
-        text: `[Document attached: ${filename}${size}, type: ${mimeType}]`,
-      });
-    }
-
-    // If content is still empty (shouldn't happen, but safety), add placeholder
-    if (content.length === 0) {
-      content.push({ type: "text", text: "[Media message]" });
-    }
-
-    return {
-      role: "user",
-      content: content as UserMessage["content"],
-      timestamp: Date.now(),
     };
   }
 
