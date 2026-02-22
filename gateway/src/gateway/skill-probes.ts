@@ -26,10 +26,6 @@ type PendingNodeProbe = {
   expiresAt?: number;
 };
 
-export type SkillProbeDeps = {
-  scheduleAlarm: () => Promise<void>;
-};
-
 export function canNodeProbeBins(gw: Gateway, nodeId: string): boolean {
   const runtime = gw.nodeRuntimeRegistry[nodeId];
   if (!runtime) {
@@ -237,7 +233,6 @@ export function markPendingNodeProbesAsQueued(
 export async function dispatchPendingNodeProbesForNode(
   gw: Gateway,
   nodeId: string,
-  deps: SkillProbeDeps,
 ): Promise<number> {
   gcPendingNodeProbes(gw, Date.now(), `dispatch:${nodeId}`);
   let dispatched = 0;
@@ -249,7 +244,7 @@ export async function dispatchPendingNodeProbesForNode(
       dispatched += 1;
     }
   }
-  await deps.scheduleAlarm();
+  await gw.scheduleGatewayAlarm();
   return dispatched;
 }
 
@@ -343,7 +338,6 @@ export async function handleNodeProbeResult(
   gw: Gateway,
   nodeId: string,
   params: NodeProbeResultParams,
-  deps: SkillProbeDeps,
 ): Promise<{ ok: true; dropped?: true }> {
   const probe = gw.pendingNodeProbes[params.probeId];
   if (!probe) {
@@ -384,6 +378,6 @@ export async function handleNodeProbeResult(
   }
 
   delete gw.pendingNodeProbes[params.probeId];
-  await deps.scheduleAlarm();
+  await gw.scheduleGatewayAlarm();
   return { ok: true };
 }

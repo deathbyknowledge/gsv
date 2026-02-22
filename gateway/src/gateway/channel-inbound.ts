@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import {
   isAllowedSender,
   normalizeE164,
@@ -29,16 +30,9 @@ export type ChannelInboundRpcResult = {
   [key: string]: unknown;
 };
 
-export type ChannelInboundDeps = {
-  getSessionStub: (sessionKey: string) => ReturnType<Env["SESSION"]["get"]>;
-  workersAi: Env["AI"];
-  storage: Env["STORAGE"];
-};
-
 export async function handleChannelInboundRpc(
   gw: Gateway,
   params: ChannelInboundParams,
-  deps: ChannelInboundDeps,
 ): Promise<ChannelInboundRpcResult> {
   if (
     !params?.channel ||
@@ -163,7 +157,7 @@ export async function handleChannelInboundRpc(
   }
 
   const fullConfig = gw.getFullConfig();
-  const sessionStub = deps.getSessionStub(sessionKey);
+  const sessionStub = env.SESSION.getByName(sessionKey);
 
   let directives = parseDirectives(messageText);
   const needsProviderFallback =
@@ -232,7 +226,7 @@ export async function handleChannelInboundRpc(
     let processedMedia = await processMediaWithTranscription(
       params.message.media,
       {
-        workersAi: deps.workersAi,
+        workersAi: env.AI,
         openaiApiKey: fullConfig.apiKeys.openai,
         preferredProvider: fullConfig.transcription.provider,
       },
@@ -241,7 +235,7 @@ export async function handleChannelInboundRpc(
     if (processedMedia.length > 0) {
       processedMedia = await processInboundMedia(
         processedMedia,
-        deps.storage,
+        env.STORAGE,
         sessionKey,
       );
     }

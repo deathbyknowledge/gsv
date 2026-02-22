@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { snapshot, type Proxied } from "../shared/persisted-object";
 import type {
   NodeExecEventParams,
@@ -44,14 +45,6 @@ type PendingAsyncExecDelivery = {
   nextAttemptAt: number;
   expiresAt: number;
   lastError?: string;
-};
-
-export type AsyncExecDeliveryDeps = {
-  getSessionByName: (sessionKey: string) => ReturnType<Env["SESSION"]["getByName"]>;
-};
-
-export type AsyncExecEventDeps = AsyncExecDeliveryDeps & {
-  scheduleAlarm: () => Promise<void>;
 };
 
 function asString(value: unknown): string | undefined {
@@ -557,7 +550,6 @@ export function nextDeliveredAsyncExecEventGcAtMs(
 
 export async function deliverPendingAsyncExecDeliveries(
   gw: Gateway,
-  deps: AsyncExecDeliveryDeps,
   now = Date.now(),
 ): Promise<number> {
   gcDeliveredAsyncExecEvents(gw, now, "delivery-scan");
@@ -592,7 +584,7 @@ export async function deliverPendingAsyncExecDeliveries(
     }
 
     try {
-      const session = deps.getSessionByName(delivery.sessionKey);
+      const session = env.SESSION.getByName(delivery.sessionKey);
       await session.ingestAsyncExecCompletion({
         eventId: delivery.eventId,
         nodeId: delivery.nodeId,
@@ -629,7 +621,6 @@ export async function handleNodeExecEvent(
   gw: Gateway,
   nodeId: string,
   params: NodeExecEventParams,
-  deps: AsyncExecEventDeps,
 ): Promise<{ ok: true; dropped?: true }> {
   const sessionId =
     typeof params.sessionId === "string" ? params.sessionId.trim() : "";
@@ -667,7 +658,7 @@ export async function handleNodeExecEvent(
       return { ok: true, dropped: true };
     }
     touchPendingAsyncExecSession(gw, nodeId, sessionId);
-    await deps.scheduleAlarm();
+    await gw.scheduleGatewayAlarm();
     return { ok: true };
   }
 
@@ -712,8 +703,8 @@ export async function handleNodeExecEvent(
         : undefined,
   });
   deletePendingAsyncExecSession(gw, nodeId, sessionId);
-  await deliverPendingAsyncExecDeliveries(gw, deps, now);
-  await deps.scheduleAlarm();
+  await deliverPendingAsyncExecDeliveries(gw, now);
+  await gw.scheduleGatewayAlarm();
 
   return { ok: true };
 }
