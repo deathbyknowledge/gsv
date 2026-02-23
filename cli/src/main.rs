@@ -12,10 +12,11 @@ use gsv::tools::{all_tools_with_workspace, subscribe_exec_events, Tool};
 use gsv::transfer::TransferCoordinator;
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ffi::OsString;
 use std::fs;
 use std::future::Future;
 use std::io::{self, BufRead, IsTerminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 mod commands;
@@ -1047,6 +1048,45 @@ mod tests {
             started_at: Some(1),
             ended_at: Some(2),
         }
+    }
+
+    #[test]
+    fn test_select_service_path_prefers_probed_path() {
+        let selected = select_service_path(
+            Some(OsString::from("/probe/bin:/usr/bin")),
+            Some(OsString::from("/env/bin:/usr/bin")),
+        );
+        assert_eq!(selected.as_deref(), Some("/probe/bin:/usr/bin"));
+    }
+
+    #[test]
+    fn test_select_service_path_falls_back_to_env_path() {
+        let selected = select_service_path(None, Some(OsString::from("/env/bin:/usr/bin")));
+        assert_eq!(selected.as_deref(), Some("/env/bin:/usr/bin"));
+    }
+
+    #[test]
+    fn test_select_service_path_rejects_empty_path() {
+        let selected = select_service_path(Some(OsString::from("   ")), None);
+        assert!(selected.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_systemd_path_environment_line_escapes_special_chars() {
+        let line = systemd_path_environment_line(Some(r#"/opt/bin:"quoted"\test%path"#));
+        assert_eq!(
+            line,
+            "Environment=\"PATH=/opt/bin:\\\"quoted\\\"\\\\test%%path\"\n"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_launchd_path_environment_block_escapes_xml() {
+        let block = launchd_path_environment_block(Some("/opt/bin:&\"'<>"));
+        assert!(block.contains("<key>EnvironmentVariables</key>"));
+        assert!(block.contains("<string>/opt/bin:&amp;&quot;&apos;&lt;&gt;</string>"));
     }
 
     #[test]
@@ -2763,16 +2803,37 @@ fn try_enable_linger() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(target_os = "linux")]
+fn systemd_escape_environment_value(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('%', "%%")
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_path_environment_line(path: Option<&str>) -> String {
+    path.map(|value| {
+        format!(
+            "Environment=\"PATH={}\"\n",
+            systemd_escape_environment_value(value)
+        )
+    })
+    .unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
 fn install_systemd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let unit_path = systemd_user_unit_path()?;
     if let Some(parent) = unit_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
+    let path_env_line = systemd_path_environment_line(node_service_path().as_deref());
     let exe_path = exe_path.display().to_string().replace('"', "\\\"");
     let unit = format!(
-        "[Unit]\nDescription=GSV Node daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart=\"{}\" node --foreground\nRestart=always\nRestartSec=3\nKillSignal=SIGTERM\n\n[Install]\nWantedBy=default.target\n",
-        exe_path
+        "[Unit]\nDescription=GSV Node daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart=\"{}\" node --foreground\n{}Restart=always\nRestartSec=3\nKillSignal=SIGTERM\n\n[Install]\nWantedBy=default.target\n",
+        exe_path,
+        path_env_line,
     );
     std::fs::write(&unit_path, unit)?;
 
@@ -2934,6 +2995,17 @@ fn xml_escape(value: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
+fn launchd_path_environment_block(path: Option<&str>) -> String {
+    path.map(|value| {
+        format!(
+            "  <key>EnvironmentVariables</key>\n  <dict>\n    <key>PATH</key>\n    <string>{}</string>\n  </dict>\n",
+            xml_escape(value)
+        )
+    })
+    .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
 fn install_launchd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let plist_path = launchd_plist_path()?;
     if let Some(parent) = plist_path.parent() {
@@ -2945,10 +3017,12 @@ fn install_launchd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::e
         std::fs::create_dir_all(parent)?;
     }
 
+    let path_env_block = launchd_path_environment_block(node_service_path().as_deref());
     let plist = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>{}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n    <string>node</string>\n    <string>--foreground</string>\n  </array>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n</dict>\n</plist>\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>{}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n    <string>node</string>\n    <string>--foreground</string>\n  </array>\n{}  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n</dict>\n</plist>\n",
         NODE_LAUNCHD_LABEL,
         xml_escape(&exe_path.display().to_string()),
+        path_env_block,
     );
     std::fs::write(&plist_path, plist)?;
 
@@ -3073,6 +3147,71 @@ fn capabilities_for_tool(tool_name: &str) -> Result<Vec<&'static str>, String> {
         "Process" => Ok(vec!["shell.exec"]),
         _ => Err(format!("No capability mapping for tool '{}'", tool_name)),
     }
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return fs::metadata(path)
+            .map(|meta| (meta.permissions().mode() & 0o111) != 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn resolve_login_shell() -> String {
+    if let Ok(raw) = std::env::var("SHELL") {
+        let candidate = raw.trim();
+        if !candidate.is_empty() {
+            let path = Path::new(candidate);
+            if path.is_absolute() && is_executable_file(path) {
+                return candidate.to_string();
+            }
+        }
+    }
+    "/bin/sh".to_string()
+}
+
+fn probe_path_from_login_shell() -> Option<OsString> {
+    let shell = resolve_login_shell();
+    let output = std::process::Command::new(shell)
+        .arg("-lc")
+        .arg("env")
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    for line in output.stdout.split(|byte| *byte == b'\n') {
+        if let Some(path_bytes) = line.strip_prefix(b"PATH=") {
+            let path = String::from_utf8_lossy(path_bytes).to_string();
+            return Some(OsString::from(path));
+        }
+    }
+    None
+}
+
+fn select_service_path(
+    probed_path: Option<OsString>,
+    env_path: Option<OsString>,
+) -> Option<String> {
+    probed_path
+        .or(env_path)
+        .map(|path| path.to_string_lossy().trim().to_string())
+        .filter(|path| !path.is_empty())
+}
+
+fn node_service_path() -> Option<String> {
+    select_service_path(probe_path_from_login_shell(), std::env::var_os("PATH"))
 }
 
 fn build_execution_node_runtime(
