@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use gsv::config;
 use gsv::connection::Connection;
@@ -13,6 +13,45 @@ use crate::{
     SkillsAction, ToolsAction, WhatsAppAction,
 };
 
+enum ChatSendResult {
+    NoWait,
+    Wait,
+}
+
+fn chat_event_matches_request(
+    payload: &serde_json::Value,
+    requested_session_key: &str,
+    expected_run_id: Option<&str>,
+) -> bool {
+    if let Some(run_id) = expected_run_id {
+        return payload
+            .get("runId")
+            .and_then(|r| r.as_str())
+            .map(|event_run_id| event_run_id == run_id)
+            .unwrap_or(false);
+    }
+
+    payload
+        .get("sessionKey")
+        .and_then(|s| s.as_str())
+        .map(|event_session| event_session == requested_session_key)
+        .unwrap_or(true)
+}
+
+async fn wait_for_chat_response(response_received: &AtomicBool) {
+    // Wait up to 120 seconds for LLM + tool execution.
+    let timeout = tokio::time::Duration::from_secs(120);
+    let start = tokio::time::Instant::now();
+
+    while !response_received.load(Ordering::SeqCst) {
+        if start.elapsed() > timeout {
+            eprintln!("Timeout waiting for response");
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+}
+
 pub(crate) async fn run_client(
     url: &str,
     token: Option<String>,
@@ -24,6 +63,8 @@ pub(crate) async fn run_client(
     // Flag to track when we've received a final/error response
     let response_received = Arc::new(AtomicBool::new(false));
     let response_received_clone = response_received.clone();
+    let expected_run_id = Arc::new(Mutex::new(None::<String>));
+    let expected_run_id_clone = expected_run_id.clone();
     let session_key_owned = session_key.to_string();
 
     let conn = Connection::connect_with_options(
@@ -36,13 +77,19 @@ pub(crate) async fn run_client(
             if let Frame::Evt(evt) = frame {
                 if evt.event == "chat" {
                     if let Some(payload) = evt.payload {
-                        // Filter by sessionKey - ignore events for other sessions
-                        if let Some(event_session) =
-                            payload.get("sessionKey").and_then(|s| s.as_str())
-                        {
-                            if event_session != session_key_owned {
-                                return;
-                            }
+                        let expected_run_id = expected_run_id_clone
+                            .lock()
+                            .ok()
+                            .and_then(|run_id| run_id.clone());
+
+                        // Prefer runId filtering when available (authoritative for this request).
+                        // Fall back to sessionKey filtering for older payloads.
+                        if !chat_event_matches_request(
+                            &payload,
+                            &session_key_owned,
+                            expected_run_id.as_deref(),
+                        ) {
+                            return;
                         }
 
                         if let Some(state) = payload.get("state").and_then(|s| s.as_str()) {
@@ -60,12 +107,18 @@ pub(crate) async fn run_client(
                                             println!("\nAssistant: {}", format_content(content));
                                         }
                                     }
+                                    if let Ok(mut run_id) = expected_run_id_clone.lock() {
+                                        *run_id = None;
+                                    }
                                     response_received_clone.store(true, Ordering::SeqCst);
                                 }
                                 "error" => {
                                     if let Some(err) = payload.get("error").and_then(|e| e.as_str())
                                     {
                                         eprintln!("\nError: {}", err);
+                                    }
+                                    if let Ok(mut run_id) = expected_run_id_clone.lock() {
+                                        *run_id = None;
                                     }
                                     response_received_clone.store(true, Ordering::SeqCst);
                                 }
@@ -84,20 +137,24 @@ pub(crate) async fn run_client(
 
     if let Some(msg) = message {
         // One-shot mode: send message and wait for response
-        let was_command = send_chat(&gateway, session_key, &msg).await?;
+        response_received.store(false, Ordering::SeqCst);
+        if let Ok(mut run_id) = expected_run_id.lock() {
+            *run_id = None;
+        }
 
-        // Only wait for chat event if this wasn't a command/directive
-        if !was_command {
-            // Wait for response (up to 120 seconds for LLM + tool execution)
-            let timeout = tokio::time::Duration::from_secs(120);
-            let start = tokio::time::Instant::now();
+        let run_id = uuid::Uuid::new_v4().to_string();
+        if let Ok(mut expected) = expected_run_id.lock() {
+            *expected = Some(run_id.clone());
+        }
 
-            while !response_received.load(Ordering::SeqCst) {
-                if start.elapsed() > timeout {
-                    eprintln!("Timeout waiting for response");
-                    break;
+        match send_chat(&gateway, session_key, &msg, &run_id).await? {
+            ChatSendResult::NoWait => {
+                if let Ok(mut expected) = expected_run_id.lock() {
+                    *expected = None;
                 }
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+            ChatSendResult::Wait => {
+                wait_for_chat_response(response_received.as_ref()).await;
             }
         }
     } else {
@@ -124,21 +181,23 @@ pub(crate) async fn run_client(
 
             // Reset response flag
             response_received.store(false, Ordering::SeqCst);
+            if let Ok(mut run_id) = expected_run_id.lock() {
+                *run_id = None;
+            }
 
-            let was_command = send_chat(&gateway, session_key, line).await?;
+            let run_id = uuid::Uuid::new_v4().to_string();
+            if let Ok(mut expected) = expected_run_id.lock() {
+                *expected = Some(run_id.clone());
+            }
 
-            // Only wait for chat event if this wasn't a command/directive
-            if !was_command {
-                // Wait for response (up to 120 seconds)
-                let timeout = tokio::time::Duration::from_secs(120);
-                let start = tokio::time::Instant::now();
-
-                while !response_received.load(Ordering::SeqCst) {
-                    if start.elapsed() > timeout {
-                        eprintln!("Timeout waiting for response");
-                        break;
+            match send_chat(&gateway, session_key, line, &run_id).await? {
+                ChatSendResult::NoWait => {
+                    if let Ok(mut expected) = expected_run_id.lock() {
+                        *expected = None;
                     }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+                ChatSendResult::Wait => {
+                    wait_for_chat_response(response_received.as_ref()).await;
                 }
             }
 
@@ -1163,9 +1222,14 @@ async fn send_chat(
     client: &GatewayClient,
     session_key: &str,
     message: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
+    run_id: &str,
+) -> Result<ChatSendResult, Box<dyn std::error::Error>> {
     let payload = client
-        .chat_send(session_key.to_string(), message.to_string())
+        .chat_send(
+            session_key.to_string(),
+            message.to_string(),
+            run_id.to_string(),
+        )
         .await?;
 
     if let Some(status) = payload.get("status").and_then(|s| s.as_str()) {
@@ -1177,19 +1241,19 @@ async fn send_chat(
                 if let Some(error) = payload.get("error").and_then(|e| e.as_str()) {
                     eprintln!("Error: {}", error);
                 }
-                return Ok(true);
+                return Ok(ChatSendResult::NoWait);
             }
             "directive-only" => {
                 if let Some(response) = payload.get("response").and_then(|r| r.as_str()) {
                     println!("{}", response);
                 }
-                return Ok(true);
+                return Ok(ChatSendResult::NoWait);
             }
             _ => {}
         }
     }
 
-    Ok(false) // Wait for chat event
+    Ok(ChatSendResult::Wait)
 }
 
 fn format_content(content: &serde_json::Value) -> String {
@@ -1235,4 +1299,60 @@ fn render_qr_terminal(data: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("{}", image);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::chat_event_matches_request;
+    use serde_json::json;
+
+    #[test]
+    fn chat_event_matches_by_run_id_when_present() {
+        let payload = json!({
+            "runId": "run-123",
+            "sessionKey": "agent:main:main",
+        });
+        assert!(chat_event_matches_request(
+            &payload,
+            "agent:main:cli:dm:main",
+            Some("run-123"),
+        ));
+    }
+
+    #[test]
+    fn chat_event_rejects_non_matching_run_id() {
+        let payload = json!({
+            "runId": "run-456",
+            "sessionKey": "agent:main:main",
+        });
+        assert!(!chat_event_matches_request(
+            &payload,
+            "agent:main:cli:dm:main",
+            Some("run-123"),
+        ));
+    }
+
+    #[test]
+    fn chat_event_falls_back_to_session_key_without_run_id() {
+        let payload = json!({
+            "sessionKey": "agent:main:cli:dm:main",
+        });
+        assert!(chat_event_matches_request(
+            &payload,
+            "agent:main:cli:dm:main",
+            None,
+        ));
+    }
+
+    #[test]
+    fn chat_event_rejects_other_session_without_run_id() {
+        let payload = json!({
+            "sessionKey": "agent:main:main",
+        });
+        assert!(!chat_event_matches_request(
+            &payload,
+            "agent:main:cli:dm:main",
+            None,
+        ));
+    }
 }
