@@ -7,8 +7,12 @@
  * - Process scheduled tasks
  */
 
-import { HeartbeatConfig, GsvConfig } from "../config";
-import { parseDuration, getAgentConfig } from "../config/parsing";
+import { env } from "cloudflare:workers";
+import type { HeartbeatConfig, GsvConfig } from "../config";
+import { parseDuration, getAgentConfig, getDefaultAgentId } from "../config/parsing";
+import { loadHeartbeatFile, isHeartbeatFileEmpty } from "../agents/loader";
+import type { ChannelId, PeerInfo } from "../protocol/channel";
+import type { Gateway } from "./do";
 
 // Token to indicate no action needed
 export const HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK";
@@ -162,3 +166,268 @@ export type HeartbeatState = {
   lastHeartbeatText: string | null;
   lastHeartbeatSentAt: number | null;
 };
+
+export type HeartbeatRunReason = "interval" | "manual" | "cron";
+
+export function resolveHeartbeatAgentIds(config: GsvConfig): string[] {
+  const configured = config.agents.list
+    .map((agent) => agent.id)
+    .filter(Boolean);
+  if (configured.length > 0) {
+    return configured;
+  }
+  return [getDefaultAgentId(config)];
+}
+
+export function nextHeartbeatDueAtMs(gw: Gateway): number | undefined {
+  let next: number | undefined;
+  for (const state of Object.values(gw.heartbeatState)) {
+    const candidate = state?.nextHeartbeatAt ?? undefined;
+    if (!candidate) {
+      continue;
+    }
+    if (next === undefined || candidate < next) {
+      next = candidate;
+    }
+  }
+  return next;
+}
+
+export async function scheduleHeartbeat(
+  gw: Gateway,
+): Promise<void> {
+  const config = gw.getFullConfig();
+  const activeAgentIds = new Set(resolveHeartbeatAgentIds(config));
+
+  for (const existingAgentId of Object.keys(gw.heartbeatState)) {
+    if (!activeAgentIds.has(existingAgentId)) {
+      delete gw.heartbeatState[existingAgentId];
+    }
+  }
+
+  for (const agentId of activeAgentIds) {
+    const heartbeatConfig = getHeartbeatConfig(config, agentId);
+    const nextTime = getNextHeartbeatTime(heartbeatConfig);
+
+    const state = gw.heartbeatState[agentId] ?? {
+      agentId,
+      nextHeartbeatAt: null,
+      lastHeartbeatAt: null,
+      lastHeartbeatText: null,
+      lastHeartbeatSentAt: null,
+    };
+    state.nextHeartbeatAt = nextTime;
+    gw.heartbeatState[agentId] = state;
+  }
+
+  await gw.scheduleGatewayAlarm();
+}
+
+export async function runDueHeartbeats(
+  gw: Gateway,
+  now: number,
+): Promise<void> {
+  const config = gw.getFullConfig();
+
+  for (const agentId of Object.keys(gw.heartbeatState)) {
+    const state = gw.heartbeatState[agentId];
+    if (!state.nextHeartbeatAt || state.nextHeartbeatAt > now) continue;
+
+    const heartbeatConfig = getHeartbeatConfig(config, agentId);
+
+    if (!isWithinActiveHours(heartbeatConfig.activeHours)) {
+      console.log(
+        `[Gateway] Heartbeat for ${agentId} skipped (outside active hours)`,
+      );
+      state.nextHeartbeatAt = getNextHeartbeatTime(heartbeatConfig);
+      gw.heartbeatState[agentId] = state;
+      continue;
+    }
+
+    await runHeartbeat(gw, agentId, heartbeatConfig, "interval");
+
+    state.lastHeartbeatAt = now;
+    state.nextHeartbeatAt = getNextHeartbeatTime(heartbeatConfig);
+    gw.heartbeatState[agentId] = state;
+  }
+}
+
+export async function runHeartbeat(
+  gw: Gateway,
+  agentId: string,
+  config: HeartbeatConfig,
+  reason: HeartbeatRunReason,
+): Promise<HeartbeatResult> {
+  console.log(
+    `[Gateway] Running heartbeat for agent ${agentId} (reason: ${reason})`,
+  );
+
+  const result: HeartbeatResult = {
+    agentId,
+    sessionKey: "",
+    reason,
+    timestamp: Date.now(),
+  };
+
+  if (reason !== "manual" && config.activeHours) {
+    const now = new Date();
+    if (!isWithinActiveHours(config.activeHours, now)) {
+      console.log(
+        `[Gateway] Skipping heartbeat for ${agentId}: outside active hours`,
+      );
+      result.skipped = true;
+      result.skipReason = "outside_active_hours";
+      return result;
+    }
+  }
+
+  if (reason !== "manual") {
+    const heartbeatFile = await loadHeartbeatFile(env.STORAGE, agentId);
+    if (!heartbeatFile.exists || isHeartbeatFileEmpty(heartbeatFile.content)) {
+      console.log(
+        `[Gateway] Skipping heartbeat for ${agentId}: HEARTBEAT.md is empty or missing`,
+      );
+      result.skipped = true;
+      result.skipReason = heartbeatFile.exists
+        ? "empty_heartbeat_file"
+        : "no_heartbeat_file";
+      return result;
+    }
+  }
+
+  const lastActive = gw.lastActiveContext[agentId];
+  if (reason !== "manual" && lastActive) {
+    const sessionStub = env.SESSION.getByName(lastActive.sessionKey);
+    const stats = await sessionStub.stats();
+    if (stats.isProcessing || stats.queueSize > 0) {
+      console.log(
+        `[Gateway] Skipping heartbeat for ${agentId}: session is busy (queue: ${stats.queueSize})`,
+      );
+      result.skipped = true;
+      result.skipReason = "session_busy";
+      return result;
+    }
+  }
+
+  const target = config.target ?? "last";
+  const sessionKey = `agent:${agentId}:heartbeat:system:internal`;
+  let deliveryContext: {
+    channel: ChannelId;
+    accountId: string;
+    peer: PeerInfo;
+  } | null = null;
+
+  if (target === "none") {
+    console.log(`[Gateway] Heartbeat target=none, running silently`);
+  } else if (target === "last" && lastActive) {
+    deliveryContext = JSON.parse(
+      JSON.stringify({
+        channel: lastActive.channel,
+        accountId: lastActive.accountId,
+        peer: lastActive.peer,
+      }),
+    );
+    console.log(
+      `[Gateway] Heartbeat target=last, delivering to ${lastActive.channel}:${lastActive.peer.id}`,
+    );
+  } else if (target === "last") {
+    console.log(
+      `[Gateway] Heartbeat target=last, no last active context, running silently`,
+    );
+  } else if (target !== "last" && target !== "none") {
+    if (lastActive && lastActive.channel === target) {
+      deliveryContext = JSON.parse(
+        JSON.stringify({
+          channel: lastActive.channel,
+          accountId: lastActive.accountId,
+          peer: lastActive.peer,
+        }),
+      );
+      console.log(`[Gateway] Heartbeat target=${target}, matched last active`);
+    } else {
+      console.log(
+        `[Gateway] Heartbeat target=${target}, no matching context, running silently`,
+      );
+    }
+  }
+
+  result.sessionKey = sessionKey;
+
+  const session = env.SESSION.getByName(sessionKey);
+  const runId = crypto.randomUUID();
+
+  if (deliveryContext) {
+    gw.pendingChannelResponses[runId] = {
+      ...deliveryContext,
+      inboundMessageId: `heartbeat:${reason}:${Date.now()}`,
+      agentId,
+    };
+  }
+  const prompt = config.prompt;
+  const tools = JSON.parse(JSON.stringify(gw.getAllTools()));
+  const runtimeNodes = JSON.parse(JSON.stringify(gw.getRuntimeNodeInventory()));
+
+  try {
+    await session.chatSend(
+      prompt,
+      runId,
+      tools,
+      runtimeNodes,
+      sessionKey,
+      undefined,
+      undefined,
+      deliveryContext
+        ? {
+            channel: deliveryContext.channel,
+            accountId: deliveryContext.accountId,
+            peer: deliveryContext.peer,
+          }
+        : undefined,
+    );
+    console.log(`[Gateway] Heartbeat sent to session ${sessionKey}`);
+  } catch (e) {
+    console.error(`[Gateway] Heartbeat failed for ${agentId}:`, e);
+    result.error = e instanceof Error ? e.message : String(e);
+    if (deliveryContext) {
+      delete gw.pendingChannelResponses[runId];
+    }
+  }
+
+  return result;
+}
+
+export async function triggerHeartbeat(
+  gw: Gateway,
+  agentId: string,
+): Promise<{
+  ok: boolean;
+  message: string;
+  skipped?: boolean;
+  skipReason?: string;
+}> {
+  const config = gw.getConfig();
+  const heartbeatConfig = getHeartbeatConfig(config, agentId);
+
+  const result = await runHeartbeat(gw, agentId, heartbeatConfig, "manual");
+
+  if (result.skipped) {
+    return {
+      ok: true,
+      message: `Heartbeat skipped for agent ${agentId}: ${result.skipReason}`,
+      skipped: true,
+      skipReason: result.skipReason,
+    };
+  }
+
+  if (result.error) {
+    return {
+      ok: false,
+      message: `Heartbeat failed for agent ${agentId}: ${result.error}`,
+    };
+  }
+
+  return {
+    ok: true,
+    message: `Heartbeat triggered for agent ${agentId} (session: ${result.sessionKey})`,
+  };
+}
