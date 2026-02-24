@@ -1,5 +1,3 @@
-import { Badge } from "@cloudflare/kumo/components/badge";
-import { Button } from "@cloudflare/kumo/components/button";
 import {
   useCallback,
   useEffect,
@@ -10,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { TAB_GROUPS, TAB_ICONS, TAB_LABELS, type Tab } from "../../ui/types";
+import { TAB_ICONS, TAB_LABELS, OS_DOCK_TABS, TAB_GROUPS, type Tab } from "../../ui/types";
 import { preloadTabView, TabView } from "../tabViews";
 
 const WINDOW_MIN_WIDTH = 420;
@@ -31,6 +29,7 @@ const TAB_ACCENTS: Record<Tab, string> = {
   pairing: "hsl(24 92% 64%)",
   config: "hsl(205 68% 68%)",
   debug: "hsl(337 84% 62%)",
+  settings: "hsl(220 60% 65%)",
 };
 
 const CLOCK_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -364,7 +363,8 @@ export function OsShell({
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const [clockLabel, setClockLabel] = useState(() => formatClock(new Date()));
 
-  const launchTabs = useMemo(() => TAB_GROUPS.flatMap((group) => group.tabs), []);
+  const launchTabs = OS_DOCK_TABS;
+  const allTabs = useMemo(() => TAB_GROUPS.flatMap((group) => group.tabs), []);
   const openTabs = useMemo(
     () => new Set(windows.map((windowState) => windowState.tab)),
     [windows],
@@ -932,7 +932,7 @@ export function OsShell({
   const commandActions = useMemo<CommandAction[]>(() => {
     const actions: CommandAction[] = [];
 
-    for (const windowTab of launchTabs) {
+    for (const windowTab of allTabs.concat(launchTabs.filter(t => !allTabs.includes(t)))) {
       const tabLabel = TAB_LABELS[windowTab];
       const count = windowCountByTab[windowTab] ?? 0;
       actions.push({
@@ -1198,253 +1198,159 @@ export function OsShell({
 
   return (
     <div className="os-shell" style={shellStyle}>
-      <header className="os-menubar">
-        <div className="os-menubar-brand">
-          <span className="os-menubar-logo">⚡</span>
-          <span className="os-menubar-title">GSV Control OS</span>
+      {/* ── Ambient Background ── */}
+      <div className="os-ambient">
+        <div className="os-orb os-orb-1" />
+        <div className="os-orb os-orb-2" />
+        <div className="os-orb os-orb-3" />
+      </div>
+
+      {/* ── Status Bar (minimal, macOS-style) ── */}
+      <header className="os-statusbar">
+        <div className="os-statusbar-left">
+          <span className="os-statusbar-brand">GSV</span>
+          <span className={`os-statusbar-dot ${connectionState}`} />
+          <span className="os-statusbar-label">{connectionStateLabel}</span>
         </div>
-        <div className="os-menubar-status">
-          <Badge className="ui-badge-fix" variant={connectionBadgeVariant}>
-            {connectionState}
-          </Badge>
-          <div className="os-menubar-telemetry">
-            <span className="os-menubar-chip">
-              {totalWindowCount} window{totalWindowCount === 1 ? "" : "s"}
-            </span>
-            <span className="os-menubar-chip">{focusedTabLabel}</span>
-            <span className="os-menubar-chip mono">{clockLabel}</span>
-          </div>
-          <Button
-            variant="secondary"
-            className="ui-button-fix"
-            size="sm"
-            onClick={() => setCommandOpen(true)}
-          >
-            ⌘K
-          </Button>
-          <Button
-            variant="secondary"
-            className="ui-button-fix"
-            size="sm"
+        <div className="os-statusbar-right">
+          <button
+            type="button"
+            className="os-statusbar-btn"
             onClick={onExitOsMode}
+            title="Switch to classic view"
           >
             Classic
-          </Button>
-          <Button
-            variant="ghost"
-            shape="square"
-            aria-label="Toggle theme"
-            title="Toggle theme"
-            onClick={onToggleTheme}
-          >
-            {theme === "dark" ? "🌙" : "☀️"}
-          </Button>
-          <Button
-            variant="secondary"
-            className="ui-button-fix"
-            size="sm"
+          </button>
+          <button
+            type="button"
+            className="os-statusbar-btn"
             onClick={onDisconnect}
+            title="Disconnect"
           >
-            Disconnect
-          </Button>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+          </button>
+          <span className="os-statusbar-clock">{clockLabel}</span>
         </div>
       </header>
 
-      <div className="os-workspace">
-        <aside className="os-launchpad">
-          {TAB_GROUPS.map((group) => (
-            <section className="os-launch-group" key={group.label}>
-              <h2 className="os-launch-group-label">{group.label}</h2>
-              <div className="os-launch-grid">
-                {group.tabs.map((windowTab) => {
-                  const isOpen = openTabs.has(windowTab);
-                  const isFocused = focusedTab === windowTab;
-                  const count = windowCountByTab[windowTab] ?? 0;
-                  return (
-                    <button
-                      key={windowTab}
-                      type="button"
-                      className={`os-launch-item ${isOpen ? "open" : ""} ${
-                        isFocused ? "focused" : ""
-                      }`}
-                      style={
-                        {
-                          "--os-item-accent": TAB_ACCENTS[windowTab],
-                        } as CSSProperties
-                      }
-                      onClick={(event) => onAppClick(event, windowTab)}
-                      onMouseEnter={() => preloadTabView(windowTab)}
-                      onFocus={() => preloadTabView(windowTab)}
-                    >
-                      <span className="os-launch-icon">{TAB_ICONS[windowTab]}</span>
-                      <span className="os-launch-label">{TAB_LABELS[windowTab]}</span>
-                      {count > 1 ? <span className="os-launch-count">{count}</span> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-          <p className="os-launch-hint">
-            Tip: hold <kbd>Shift</kbd>/<kbd>Alt</kbd>/<kbd>Cmd</kbd> while opening an app to spawn another window.
-          </p>
-        </aside>
+      {/* ── Desktop (full canvas for windows) ── */}
+      <main className="os-desktop" ref={desktopRef}>
+        {snapPreview ? (
+          <div
+            className={`os-snap-preview ${snapPreview.zone}`}
+            style={{
+              transform: `translate(${snapPreview.rect.x}px, ${snapPreview.rect.y}px)`,
+              width: `${snapPreview.rect.width}px`,
+              height: `${snapPreview.rect.height}px`,
+            }}
+          />
+        ) : null}
 
-        <main className="os-desktop" ref={desktopRef}>
-          {snapPreview ? (
+        {visibleWindows.map((windowState) => (
+          <section
+            key={windowState.id}
+            className={`os-window ${
+              focusedWindowId === windowState.id ? "focused" : ""
+            } ${windowState.maximized ? "maximized" : ""}`}
+            style={
+              {
+                "--os-tab-accent": TAB_ACCENTS[windowState.tab],
+                transform: `translate(${windowState.x}px, ${windowState.y}px)`,
+                width: `${windowState.width}px`,
+                height: `${windowState.height}px`,
+                zIndex: windowState.z,
+              } as CSSProperties
+            }
+            onMouseDown={() => focusWindow(windowState.id)}
+          >
             <div
-              className={`os-snap-preview ${snapPreview.zone}`}
-              style={{
-                transform: `translate(${snapPreview.rect.x}px, ${snapPreview.rect.y}px)`,
-                width: `${snapPreview.rect.width}px`,
-                height: `${snapPreview.rect.height}px`,
-              }}
-            />
-          ) : null}
-
-          <aside className="os-status-rail">
-            <section className="os-status-card">
-              <p className="os-status-title">System Pulse</p>
-              <div className="os-status-grid">
-                <span>Link</span>
-                <strong>{connectionStateLabel}</strong>
-                <span>Active</span>
-                <strong>{focusedTabLabel}</strong>
-                <span>Visible</span>
-                <strong>{visibleWindowCount}</strong>
-                <span>Theme</span>
-                <strong>{theme}</strong>
-              </div>
-            </section>
-            <section className="os-status-card">
-              <p className="os-status-title">Quick Keys</p>
-              <p className="os-status-shortcut">
-                <kbd>⌘K</kbd> palette
-              </p>
-              <p className="os-status-shortcut">
-                <kbd>⇧</kbd> + <kbd>←</kbd>/<kbd>→</kbd>/<kbd>↑</kbd> snap
-              </p>
-            </section>
-          </aside>
-
-          {visibleWindows.map((windowState) => (
-            <section
-              key={windowState.id}
-              className={`os-window ${
-                focusedWindowId === windowState.id ? "focused" : ""
-              } ${windowState.maximized ? "maximized" : ""}`}
-              style={
-                {
-                  "--os-tab-accent": TAB_ACCENTS[windowState.tab],
-                  transform: `translate(${windowState.x}px, ${windowState.y}px)`,
-                  width: `${windowState.width}px`,
-                  height: `${windowState.height}px`,
-                  zIndex: windowState.z,
-                } as CSSProperties
-              }
-              onMouseDown={() => focusWindow(windowState.id)}
+              className="os-window-titlebar"
+              onPointerDown={(event) => beginDrag(event, windowState.id)}
+              onDoubleClick={() => toggleWindowMaximized(windowState.id)}
             >
-              <div
-                className="os-window-titlebar"
-                onPointerDown={(event) => beginDrag(event, windowState.id)}
-              >
-                <div className="os-window-actions">
-                  <button
-                    type="button"
-                    className="os-window-action close"
-                    data-window-action
-                    aria-label={`Close ${TAB_LABELS[windowState.tab]}`}
-                    onClick={() => closeWindow(windowState.id)}
-                  />
-                  <button
-                    type="button"
-                    className="os-window-action minimize"
-                    data-window-action
-                    aria-label={`Minimize ${TAB_LABELS[windowState.tab]}`}
-                    onClick={() => minimizeWindow(windowState.id)}
-                  />
-                  <button
-                    type="button"
-                    className="os-window-action maximize"
-                    data-window-action
-                    aria-label={`Toggle maximize ${TAB_LABELS[windowState.tab]}`}
-                    onClick={() => toggleWindowMaximized(windowState.id)}
-                  />
-                </div>
-                <div className="os-window-title">
-                  <span className="os-window-title-icon">{TAB_ICONS[windowState.tab]}</span>
-                  <span className="os-window-title-label">{TAB_LABELS[windowState.tab]}</span>
-                </div>
+              <div className="os-window-actions">
                 <button
                   type="button"
-                  className="os-window-clone"
+                  className="os-window-action close"
                   data-window-action
-                  onClick={() => openWindow(windowState.tab, { newWindow: true })}
-                >
-                  + window
-                </button>
+                  aria-label={`Close ${TAB_LABELS[windowState.tab]}`}
+                  onClick={() => closeWindow(windowState.id)}
+                />
+                <button
+                  type="button"
+                  className="os-window-action minimize"
+                  data-window-action
+                  aria-label={`Minimize ${TAB_LABELS[windowState.tab]}`}
+                  onClick={() => minimizeWindow(windowState.id)}
+                />
+                <button
+                  type="button"
+                  className="os-window-action maximize"
+                  data-window-action
+                  aria-label={`Toggle maximize ${TAB_LABELS[windowState.tab]}`}
+                  onClick={() => toggleWindowMaximized(windowState.id)}
+                />
               </div>
-
-              <div className="os-window-content">
-                <TabView tab={windowState.tab} />
+              <div className="os-window-title">
+                <span className="os-window-title-label">{TAB_LABELS[windowState.tab]}</span>
               </div>
-
-              {!windowState.maximized
-                ? RESIZE_HANDLES.map((handle) => (
-                    <div
-                      key={handle.edge}
-                      className={handle.className}
-                      onPointerDown={(event) =>
-                        beginResize(event, windowState.id, handle.edge)
-                      }
-                    />
-                  ))
-                : null}
-            </section>
-          ))}
-
-          {!visibleWindows.length ? (
-            <div className="os-desktop-empty">
-              <p>All windows minimized</p>
-              <span>Select an app from the dock to continue.</span>
             </div>
-          ) : null}
-        </main>
+
+            <div className="os-window-content">
+              <TabView tab={windowState.tab} />
+            </div>
+
+            {!windowState.maximized
+              ? RESIZE_HANDLES.map((handle) => (
+                  <div
+                    key={handle.edge}
+                    className={handle.className}
+                    onPointerDown={(event) =>
+                      beginResize(event, windowState.id, handle.edge)
+                    }
+                  />
+                ))
+              : null}
+          </section>
+        ))}
+
+        {!visibleWindows.length ? (
+          <div className="os-desktop-empty">
+            <p>No open windows</p>
+            <span>Click an app in the dock below, or press <kbd>⌘K</kbd></span>
+          </div>
+        ) : null}
+      </main>
+
+      {/* ── Dock (centered floating pill, icon-only) ── */}
+      <div className="os-dock-container">
+        <div className="os-dock">
+          {launchTabs.map((windowTab) => {
+            const isOpen = openTabs.has(windowTab);
+            const isFocused = focusedTab === windowTab;
+            return (
+              <button
+                key={windowTab}
+                type="button"
+                className={`os-dock-item ${isOpen ? "open" : ""} ${
+                  isFocused ? "focused" : ""
+                }`}
+                onClick={(event) => onAppClick(event, windowTab)}
+                onMouseEnter={() => preloadTabView(windowTab)}
+                onFocus={() => preloadTabView(windowTab)}
+                title={TAB_LABELS[windowTab]}
+              >
+                <span className="os-dock-item-icon" dangerouslySetInnerHTML={{ __html: TAB_ICONS[windowTab] }} />
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <footer className="os-dock">
-        {launchTabs.map((windowTab) => {
-          const isOpen = openTabs.has(windowTab);
-          const isFocused = focusedTab === windowTab;
-          const count = windowCountByTab[windowTab] ?? 0;
-          return (
-            <button
-              key={windowTab}
-              type="button"
-              className={`os-dock-item ${isOpen ? "open" : ""} ${
-                isFocused ? "focused" : ""
-              }`}
-              style={
-                {
-                  "--os-item-accent": TAB_ACCENTS[windowTab],
-                } as CSSProperties
-              }
-              onClick={(event) => onAppClick(event, windowTab)}
-              onMouseEnter={() => preloadTabView(windowTab)}
-              onFocus={() => preloadTabView(windowTab)}
-            >
-              <span className="os-dock-item-icon">{TAB_ICONS[windowTab]}</span>
-              <span className="os-dock-item-label">{TAB_LABELS[windowTab]}</span>
-              {count > 1 ? <span className="os-dock-item-count">{count}</span> : null}
-              <span className="os-dock-indicator" />
-            </button>
-          );
-        })}
-      </footer>
-
+      {/* ── Launcher / Command Palette ── */}
       {commandOpen ? (
         <div
-          className="os-command-overlay"
+          className="os-launcher-overlay"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
               setCommandOpen(false);
@@ -1452,41 +1358,36 @@ export function OsShell({
             }
           }}
         >
-          <div className="os-command-palette" role="dialog" aria-modal="true">
-            <div className="os-command-header">
-              <p>Command Palette</p>
-              <span>
-                {filteredCommandActions.length} action
-                {filteredCommandActions.length === 1 ? "" : "s"} · ⌘K
-              </span>
+          <div className="os-launcher" role="dialog" aria-modal="true">
+            <div className="os-launcher-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input
+                ref={commandInputRef}
+                value={commandQuery}
+                onChange={(event) => setCommandQuery(event.target.value)}
+                placeholder="Search apps and commands..."
+              />
             </div>
-            <input
-              ref={commandInputRef}
-              className="os-command-input"
-              value={commandQuery}
-              onChange={(event) => setCommandQuery(event.target.value)}
-              placeholder="Open app, snap window, switch mode..."
-            />
-            <div className="os-command-results">
+            <div className="os-launcher-results">
               {filteredCommandActions.length ? (
                 filteredCommandActions.map((action, index) => (
                   <button
                     key={action.id}
                     type="button"
-                    className={`os-command-item ${
+                    className={`os-launcher-item ${
                       index === selectedCommandIndex ? "active" : ""
                     }`}
                     onMouseEnter={() => setSelectedCommandIndex(index)}
                     onClick={() => executeCommand(action)}
                   >
-                    <span className="os-command-item-label">{action.label}</span>
+                    <span className="os-launcher-item-label">{action.label}</span>
                     {action.hint ? (
-                      <span className="os-command-item-hint">{action.hint}</span>
+                      <span className="os-launcher-item-hint">{action.hint}</span>
                     ) : null}
                   </button>
                 ))
               ) : (
-                <div className="os-command-empty">No command matches “{commandQuery}”.</div>
+                <div className="os-launcher-empty">No results for "{commandQuery}"</div>
               )}
             </div>
           </div>

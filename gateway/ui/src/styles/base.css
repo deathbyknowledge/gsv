@@ -1,174 +1,113 @@
-/* CSS Variables */
+/* ── Design Tokens ── */
 :root {
-  --bg-primary: var(--color-kumo-base);
-  --bg-secondary: var(--color-kumo-elevated);
-  --bg-tertiary: var(--color-kumo-tint);
-  --bg-hover: var(--color-kumo-overlay);
+  --bg-base: #0a0a0c;
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-active: rgba(255, 255, 255, 0.14);
+  --glass-shadow: 0 30px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.1);
 
-  --text-primary: var(--text-color-kumo-default);
-  --text-secondary: var(--text-color-kumo-strong);
-  --text-muted: var(--text-color-kumo-inactive);
+  --text-main: #f3f3f3;
+  --text-muted: #71717a;
+  --text-dim: #3f3f46;
 
-  --border-default: var(--color-kumo-line);
-  --border-muted: color-mix(in srgb, var(--color-kumo-line) 70%, transparent);
+  --accent: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.5);
+  --accent-success: #22c55e;
+  --accent-warning: #eab308;
+  --accent-danger: #ef4444;
 
-  --accent-primary: var(--color-kumo-brand);
-  --accent-success: var(--text-color-kumo-success);
-  --accent-warning: var(--text-color-kumo-warning);
-  --accent-danger: var(--text-color-kumo-danger);
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Typography */
-  --font-sans: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-
-  --font-size-xs: 0.75rem;
-  --font-size-sm: 0.875rem;
-  --font-size-base: 1rem;
-  --font-size-lg: 1.125rem;
+  --font-size-xs: 0.6875rem;
+  --font-size-sm: 0.8125rem;
+  --font-size-base: 0.875rem;
+  --font-size-lg: 1rem;
   --font-size-xl: 1.25rem;
 
-  /* Spacing */
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.25rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
 
-  /* Border radius */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
 
-  /* Shadows */
-  --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 16px 30px rgba(0, 0, 0, 0.12);
-  --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.16);
+  /* Aliases consumed by view templates */
+  --bg-primary: var(--bg-base);
+  --bg-secondary: rgba(255, 255, 255, 0.03);
+  --bg-tertiary: rgba(255, 255, 255, 0.06);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --text-primary: var(--text-main);
+  --text-secondary: #a1a1aa;
+  --border-default: var(--glass-border);
+  --border-muted: rgba(255, 255, 255, 0.05);
+  --accent-primary: var(--accent);
 
-  /* Layout */
-  --nav-width: 248px;
-  --topbar-height: 56px;
+  --nav-width: 0;       /* unused - kept for compat */
+  --topbar-height: 0;   /* unused - kept for compat */
 }
 
-/* Reset */
-*, *::before, *::after {
-  box-sizing: border-box;
-}
-
-h1, h2, h3, h4, h5, h6, p, ul, ol {
-  margin: 0;
-  padding: 0;
-}
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; }
+h1, h2, h3, h4, h5, h6, p, ul, ol { margin: 0; padding: 0; }
 
 html, body {
   height: 100%;
   overflow: hidden;
+  background: var(--bg-base);
 }
 
 body {
-  font-family: var(--font-sans);
+  font-family: var(--font-family);
   font-size: var(--font-size-base);
   line-height: 1.5;
-  color: var(--text-primary);
-  background:
-    radial-gradient(circle at 12% -8%, color-mix(in srgb, var(--accent-primary) 12%, transparent) 0%, transparent 44%),
-    radial-gradient(circle at 82% 4%, color-mix(in srgb, var(--accent-success) 9%, transparent) 0%, transparent 36%),
-    var(--bg-primary);
+  color: var(--text-main);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Typography */
-h1, h2, h3, h4, h5, h6 {
-  font-weight: 600;
-  line-height: 1.25;
-}
+/* ── Typography ── */
+h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
+h2 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; }
+h3 { font-size: 1.0625rem; font-weight: 600; }
+h4 { font-size: var(--font-size-base); font-weight: 600; }
 
-h1 { font-size: 1.5rem; }
-h2 { font-size: 1.25rem; }
-h3 { font-size: 1.125rem; }
-h4 { font-size: 1rem; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
 
-a {
-  color: var(--text-color-kumo-link);
-  text-decoration: none;
-}
-
-a:hover {
-  text-decoration: underline;
-}
-
-code, pre {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-}
-
+code, pre { font-family: var(--font-mono); font-size: 0.9em; }
 code {
-  background: color-mix(in srgb, var(--bg-tertiary) 80%, transparent);
-  padding: 0.2em 0.4em;
+  background: rgba(255,255,255,0.06);
+  padding: 0.15em 0.4em;
   border-radius: var(--radius-sm);
 }
-
 pre {
-  background: color-mix(in srgb, var(--bg-tertiary) 62%, transparent);
+  background: rgba(0,0,0,0.3);
   padding: var(--space-4);
   border-radius: var(--radius-md);
   overflow-x: auto;
+  border: 1px solid var(--glass-border);
 }
+pre code { background: none; padding: 0; }
 
-pre code {
-  background: none;
-  padding: 0;
-}
+/* ── Scrollbars ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
-/* Scrollbars */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--border-default);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
-}
-
-/* Utilities */
-.muted {
-  color: var(--text-muted);
-}
-
-.text-secondary {
-  color: var(--text-secondary);
-}
-
-.text-success {
-  color: var(--accent-success);
-}
-
-.text-warning {
-  color: var(--accent-warning);
-}
-
-.text-danger {
-  color: var(--accent-danger);
-}
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-.truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* ── Utilities ── */
+.muted { color: var(--text-muted); }
+.text-secondary { color: var(--text-secondary); }
+.text-success { color: var(--accent-success); }
+.text-warning { color: var(--accent-warning); }
+.text-danger { color: var(--accent-danger); }
+.mono { font-family: var(--font-mono); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

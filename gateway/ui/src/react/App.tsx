@@ -267,7 +267,7 @@ function MainShell({
                   onMouseEnter={() => preloadTabView(groupTab)}
                   onFocus={() => preloadTabView(groupTab)}
                 >
-                  <span className="nav-item-icon">{TAB_ICONS[groupTab]}</span>
+                  <span className="nav-item-icon" dangerouslySetInnerHTML={{ __html: TAB_ICONS[groupTab] }} />
                   <span className="nav-item-label">{TAB_LABELS[groupTab]}</span>
                 </button>
               ))}

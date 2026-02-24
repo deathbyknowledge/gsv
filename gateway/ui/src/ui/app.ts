@@ -4,6 +4,7 @@
 
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { GatewayClient, type ConnectionState } from "./gateway-client";
 import { loadSettings, saveSettings, applyTheme, getGatewayUrl, type UiSettings } from "./storage";
 import { navigateTo, getCurrentTab } from "./navigation";
@@ -21,7 +22,7 @@ import type {
   ChannelLoginResult,
   ContentBlock,
 } from "./types";
-import { TAB_GROUPS, TAB_ICONS, TAB_LABELS } from "./types";
+import { TAB_GROUPS, TAB_ICONS, TAB_LABELS, WINDOW_DEFAULTS, type WindowState } from "./types";
 
 // View imports
 import { renderChat } from "./views/chat";
@@ -57,8 +58,12 @@ export class GsvApp extends LitElement {
 
   // ---- Navigation ----
   @state() tab: Tab = getCurrentTab();
-  @state() navDrawerOpen = false;
-  @state() isMobileLayout = false;
+
+  // ---- Window Management ----
+  @state() openWindows: Record<string, WindowState> = {};
+  @state() topZIndex = 10;
+  @state() showLauncher = false;
+  @state() launcherSearch = "";
 
   // ---- Chat State ----
   @state() chatMessages: Message[] = [];
@@ -116,16 +121,21 @@ export class GsvApp extends LitElement {
   private chatAutoScrollRaf: number | null = null;
   private chatStreamRunId: string | null = null;
   private channelsRefreshTimer: ReturnType<typeof setInterval> | null = null;
-  private mobileMediaQuery: MediaQueryList | null = null;
+  private dragState: { active: boolean; tab: string; startX: number; startY: number; initialX: number; initialY: number } = {
+    active: false, tab: "", startX: 0, startY: 0, initialX: 0, initialY: 0,
+  };
+  private clockTimer: ReturnType<typeof setInterval> | null = null;
+  @state() private clockText = "";
 
   // ---- Lifecycle ----
 
   connectedCallback() {
     super.connectedCallback();
     applyTheme(this.settings.theme);
-    this.mobileMediaQuery = window.matchMedia("(max-width: 960px)");
-    this.isMobileLayout = this.mobileMediaQuery.matches;
-    this.mobileMediaQuery.addEventListener("change", this.handleMobileMedia);
+
+    // Clock for status bar
+    this.updateClock();
+    this.clockTimer = setInterval(() => this.updateClock(), 1000);
     
     // Only auto-connect if we have previously connected successfully
     // (token is set or user explicitly clicked connect)
@@ -136,16 +146,20 @@ export class GsvApp extends LitElement {
     
     // Handle browser back/forward
     window.addEventListener("popstate", this.handlePopState);
+
+    // Global drag listeners
+    window.addEventListener("mousemove", this.onDrag);
+    window.addEventListener("mouseup", this.stopDrag);
   }
 
   protected updated(changed: PropertyValues<this>) {
-    if (changed.has("tab") || changed.has("connectionState")) {
+    if (changed.has("openWindows") || changed.has("connectionState")) {
       this.syncChannelsAutoRefresh();
     }
 
     if (
-      this.tab === "chat" &&
-      (changed.has("tab") ||
+      this.openWindows["chat"] &&
+      (changed.has("openWindows") ||
         changed.has("chatMessages") ||
         changed.has("chatStream") ||
         changed.has("chatLoading") ||
@@ -164,34 +178,159 @@ export class GsvApp extends LitElement {
     this.stopChannelsAutoRefresh();
     this.client?.stop();
     window.removeEventListener("popstate", this.handlePopState);
-    this.mobileMediaQuery?.removeEventListener("change", this.handleMobileMedia);
-    this.mobileMediaQuery = null;
+    window.removeEventListener("mousemove", this.onDrag);
+    window.removeEventListener("mouseup", this.stopDrag);
+    if (this.clockTimer) {
+      clearInterval(this.clockTimer);
+      this.clockTimer = null;
+    }
   }
 
   private handlePopState = () => {
-    this.tab = getCurrentTab();
-    this.closeNavDrawer();
+    const tab = getCurrentTab();
+    this.tab = tab;
+    this.openWindow(tab);
   };
 
-  private handleMobileMedia = (event: MediaQueryListEvent) => {
-    this.isMobileLayout = event.matches;
-    if (!event.matches) {
-      this.navDrawerOpen = false;
-    }
-  };
-
-  private toggleNavDrawer() {
-    if (!this.isMobileLayout) {
-      return;
-    }
-    this.navDrawerOpen = !this.navDrawerOpen;
+  private updateClock() {
+    const now = new Date();
+    this.clockText = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
-  private closeNavDrawer() {
-    if (!this.navDrawerOpen) {
+  // ---- Window Management ----
+
+  openWindow(tab: Tab) {
+    if (this.openWindows[tab]) {
+      // Already open: un-minimize and focus
+      if (this.openWindows[tab].minimized) {
+        this.openWindows = {
+          ...this.openWindows,
+          [tab]: { ...this.openWindows[tab], minimized: false },
+        };
+      }
+      this.focusWindow(tab);
       return;
     }
-    this.navDrawerOpen = false;
+
+    const defaults = WINDOW_DEFAULTS[tab];
+    const offset = Object.keys(this.openWindows).length * 30;
+    const newZ = this.topZIndex + 1;
+    this.topZIndex = newZ;
+
+    const ws: WindowState = {
+      tab,
+      x: Math.max(40, Math.round(window.innerWidth / 2 - defaults.width / 2 + offset)),
+      y: Math.max(40, Math.round(window.innerHeight / 2 - defaults.height / 2 + offset)),
+      width: defaults.width,
+      height: defaults.height,
+      minimized: false,
+      maximized: false,
+      zIndex: newZ,
+    };
+
+    this.openWindows = { ...this.openWindows, [tab]: ws };
+    this.tab = tab;
+    navigateTo(tab);
+    this.loadTabData(tab);
+  }
+
+  closeWindow(tab: string) {
+    const next = { ...this.openWindows };
+    delete next[tab];
+    this.openWindows = next;
+  }
+
+  minimizeWindow(tab: string) {
+    if (!this.openWindows[tab]) return;
+    this.openWindows = {
+      ...this.openWindows,
+      [tab]: { ...this.openWindows[tab], minimized: !this.openWindows[tab].minimized },
+    };
+  }
+
+  maximizeWindow(tab: string) {
+    if (!this.openWindows[tab]) return;
+    this.openWindows = {
+      ...this.openWindows,
+      [tab]: { ...this.openWindows[tab], maximized: !this.openWindows[tab].maximized },
+    };
+  }
+
+  focusWindow(tab: string) {
+    if (!this.openWindows[tab]) return;
+    const newZ = this.topZIndex + 1;
+    this.topZIndex = newZ;
+    this.openWindows = {
+      ...this.openWindows,
+      [tab]: { ...this.openWindows[tab], zIndex: newZ },
+    };
+    this.tab = tab as Tab;
+    navigateTo(tab as Tab);
+  }
+
+  private startWindowDrag(e: MouseEvent, tab: string) {
+    if ((e.target as HTMLElement).closest(".window-controls")) return;
+    if (this.openWindows[tab]?.maximized) return;
+
+    e.preventDefault();
+    this.focusWindow(tab);
+
+    this.dragState = {
+      active: true,
+      tab,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialX: this.openWindows[tab].x,
+      initialY: this.openWindows[tab].y,
+    };
+
+    document.body.classList.add("os-dragging");
+  }
+
+  private onDrag = (e: MouseEvent) => {
+    if (!this.dragState.active) return;
+    e.preventDefault();
+
+    const dx = e.clientX - this.dragState.startX;
+    const dy = e.clientY - this.dragState.startY;
+    let newY = this.dragState.initialY + dy;
+    if (newY < 32) newY = 32; // Don't go above status bar
+
+    const tab = this.dragState.tab;
+    if (!this.openWindows[tab]) return;
+
+    this.openWindows = {
+      ...this.openWindows,
+      [tab]: {
+        ...this.openWindows[tab],
+        x: this.dragState.initialX + dx,
+        y: newY,
+      },
+    };
+  };
+
+  private stopDrag = () => {
+    if (!this.dragState.active) return;
+    this.dragState.active = false;
+    document.body.classList.remove("os-dragging");
+  };
+
+  toggleLauncher() {
+    this.showLauncher = !this.showLauncher;
+    this.launcherSearch = "";
+  }
+
+  private closeLauncherOnBackdrop(e: MouseEvent) {
+    if ((e.target as HTMLElement).classList.contains("launcher-overlay")) {
+      this.showLauncher = false;
+      this.launcherSearch = "";
+    }
+  }
+
+  private launchFromLauncher(tab: Tab) {
+    this.showLauncher = false;
+    this.launcherSearch = "";
+    this.openWindow(tab);
   }
 
   private scheduleChatAutoScroll() {
@@ -210,7 +349,7 @@ export class GsvApp extends LitElement {
 
   private syncChannelsAutoRefresh() {
     const shouldRefresh =
-      this.tab === "channels" && this.connectionState === "connected";
+      !!this.openWindows["channels"] && this.connectionState === "connected";
 
     if (!shouldRefresh) {
       this.stopChannelsAutoRefresh();
@@ -302,12 +441,7 @@ export class GsvApp extends LitElement {
   // ---- Tab Navigation ----
 
   switchTab(tab: Tab) {
-    if (this.tab !== tab) {
-      this.tab = tab;
-      navigateTo(tab);
-      this.loadTabData(tab);
-    }
-    this.closeNavDrawer();
+    this.openWindow(tab);
   }
 
   private async loadTabData(tab: Tab) {
@@ -1014,20 +1148,142 @@ export class GsvApp extends LitElement {
       return this.renderConnectScreen();
     }
 
+    const allTabs: Tab[] = TAB_GROUPS.flatMap(g => g.tabs);
+    // Pinned tabs always show in dock; non-pinned only when open
+    const dockTabs = allTabs.filter(t => WINDOW_DEFAULTS[t].pinned || this.openWindows[t]);
+
     return html`
-      <div class="app-shell ${this.isMobileLayout ? "mobile" : ""} ${this.navDrawerOpen ? "nav-open" : ""}">
-        <button
-          type="button"
-          class="nav-backdrop ${this.navDrawerOpen ? "open" : ""}"
-          @click=${() => this.closeNavDrawer()}
-          aria-label="Close navigation menu"
-        ></button>
-        ${this.renderNav()}
-        <div class="main-content">
-          ${this.renderTopbar()}
-          <div class="page-content">
-            ${this.renderView()}
+      <!-- Ambient Background -->
+      <div class="ambient-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+      </div>
+
+      <!-- Status Bar -->
+      <div class="status-bar">
+        <div class="status-left">
+          <div class="status-btn" style="font-weight: 700;">GSV</div>
+          <div class="status-btn">
+            <span class="status-dot ${this.connectionState}"></span>
+            ${this.connectionState === "connected" ? "Connected" :
+              this.connectionState === "connecting" ? "Connecting..." :
+              "Disconnected"}
           </div>
+        </div>
+        <div class="status-right">
+          <div class="status-btn" @click=${() => this.disconnect()} title="Disconnect">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+          </div>
+          <div class="status-btn">${this.clockText}</div>
+        </div>
+      </div>
+
+      <!-- Desktop Area (contains windows) -->
+      <div class="desktop">
+        ${Object.values(this.openWindows).map(ws => this.renderWindow(ws))}
+      </div>
+
+      <!-- Launcher Overlay -->
+      <div
+        class="launcher-overlay ${this.showLauncher ? "show" : ""}"
+        @click=${(e: MouseEvent) => this.closeLauncherOnBackdrop(e)}
+      >
+        <div class="launcher">
+          <div class="launcher-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input
+              type="text"
+              placeholder="Search apps..."
+              .value=${this.launcherSearch}
+              @input=${(e: Event) => { this.launcherSearch = (e.target as HTMLInputElement).value; }}
+            />
+          </div>
+          <div class="launcher-grid">
+            ${allTabs
+              .filter(t => !this.launcherSearch || TAB_LABELS[t].toLowerCase().includes(this.launcherSearch.toLowerCase()))
+              .map(t => html`
+                <button
+                  class="launcher-item"
+                  @click=${() => this.launchFromLauncher(t)}
+                >
+                  ${unsafeHTML(TAB_ICONS[t])}
+                  <span>${TAB_LABELS[t]}</span>
+                </button>
+              `)}
+          </div>
+        </div>
+      </div>
+
+      <!-- Dock -->
+      <div class="dock-container">
+        <div class="dock">
+          <button
+            class="dock-item"
+            @click=${() => this.toggleLauncher()}
+            title="App Launcher"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          </button>
+          <div class="dock-separator"></div>
+          ${dockTabs.map(t => {
+            const isOpen = !!this.openWindows[t];
+            const isFocused = isOpen && this.openWindows[t].zIndex === this.topZIndex;
+            return html`
+              <button
+                class="dock-item ${isOpen ? "running" : ""} ${isFocused ? "focused" : ""}"
+                @click=${() => {
+                  if (!isOpen) {
+                    this.openWindow(t);
+                  } else if (this.openWindows[t].minimized) {
+                    this.minimizeWindow(t);
+                  } else if (isFocused) {
+                    this.minimizeWindow(t);
+                  } else {
+                    this.focusWindow(t);
+                  }
+                }}
+                title=${TAB_LABELS[t]}
+              >
+                ${unsafeHTML(TAB_ICONS[t])}
+              </button>
+            `;
+          })}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderWindow(ws: WindowState) {
+    const isChat = ws.tab === "chat";
+    const isDragging = this.dragState.active && this.dragState.tab === ws.tab;
+
+    return html`
+      <div
+        class="window visible ${ws.minimized ? "minimized" : ""} ${ws.maximized ? "maximized" : ""} ${isDragging ? "dragging" : ""}"
+        style="left:${ws.x}px; top:${ws.y}px; width:${ws.width}px; height:${ws.height}px; z-index:${ws.zIndex};"
+        @mousedown=${() => this.focusWindow(ws.tab)}
+      >
+        <div
+          class="window-header"
+          @mousedown=${(e: MouseEvent) => this.startWindowDrag(e, ws.tab)}
+          @dblclick=${() => this.maximizeWindow(ws.tab)}
+        >
+          <div class="window-controls">
+            <button class="control-btn btn-close" @click=${(e: Event) => { e.stopPropagation(); this.closeWindow(ws.tab); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <button class="control-btn btn-minimize" @click=${(e: Event) => { e.stopPropagation(); this.minimizeWindow(ws.tab); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <button class="control-btn btn-maximize" @click=${(e: Event) => { e.stopPropagation(); this.maximizeWindow(ws.tab); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+            </button>
+          </div>
+          <div class="window-title">${TAB_LABELS[ws.tab]}</div>
+        </div>
+        <div class="window-content ${isChat ? "chat-content" : ""}">
+          ${this.renderViewContent(ws.tab)}
         </div>
       </div>
     `;
@@ -1037,10 +1293,21 @@ export class GsvApp extends LitElement {
     const isConnecting = this.connectionState === "connecting";
     
     return html`
+      <!-- Ambient Background -->
+      <div class="ambient-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+      </div>
+
       <div class="connect-screen">
         <div class="connect-card">
           <div class="connect-header">
-            <span class="connect-logo">🚀</span>
+            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--accent-primary);">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+              <polyline points="2 17 12 22 22 17"/>
+              <polyline points="2 12 12 17 22 12"/>
+            </svg>
             <h1>GSV</h1>
             <p class="text-secondary">Connect to your Gateway</p>
           </div>
@@ -1097,94 +1364,13 @@ export class GsvApp extends LitElement {
               ${isConnecting ? html`<span class="spinner"></span> Connecting...` : "Connect"}
             </button>
           </div>
-          
-          <div class="connect-footer">
-            <p class="text-secondary">
-              Theme: 
-              <button 
-                class="btn btn-ghost btn-sm"
-                @click=${() => {
-                  const newTheme = this.settings.theme === "dark" ? "light" : "dark";
-                  this.settings = { ...this.settings, theme: newTheme };
-                  saveSettings({ theme: newTheme });
-                  applyTheme(newTheme);
-                }}
-              >
-                ${this.settings.theme === "dark" ? "🌙 Dark" : "☀️ Light"}
-              </button>
-            </p>
-          </div>
         </div>
       </div>
     `;
   }
 
-  private renderNav() {
-    return html`
-      <nav class="nav-sidebar ${this.navDrawerOpen ? "open" : ""}">
-        <div class="nav-header">
-          <span class="nav-logo">🚀</span>
-          <span class="nav-title">GSV</span>
-        </div>
-        
-        <div class="nav-groups">
-          ${TAB_GROUPS.map(group => html`
-            <div class="nav-group">
-              <div class="nav-group-label">${group.label}</div>
-              ${group.tabs.map(tab => html`
-                <div 
-                  class="nav-item ${this.tab === tab ? "active" : ""}"
-                  @click=${() => this.switchTab(tab)}
-                >
-                  <span class="nav-item-icon">${TAB_ICONS[tab]}</span>
-                  <span class="nav-item-label">${TAB_LABELS[tab]}</span>
-                </div>
-              `)}
-            </div>
-          `)}
-        </div>
-        
-        <div class="nav-footer">
-          <div class="connection-status">
-            <span class="connection-dot ${this.connectionState}"></span>
-            <span>${this.connectionState === "connected" ? "Connected" : 
-                   this.connectionState === "connecting" ? "Connecting..." : 
-                   "Disconnected"}</span>
-          </div>
-        </div>
-      </nav>
-    `;
-  }
-
-  private renderTopbar() {
-    return html`
-      <header class="topbar">
-        <div class="topbar-title-wrap">
-          <button
-            class="btn btn-ghost btn-icon topbar-menu-btn"
-            @click=${() => this.toggleNavDrawer()}
-            title="Toggle navigation"
-            aria-label="Toggle navigation menu"
-          >
-            ☰
-          </button>
-          <h1 class="topbar-title">${TAB_LABELS[this.tab]}</h1>
-        </div>
-        <div class="topbar-actions">
-          <button 
-            class="btn btn-ghost btn-icon"
-            @click=${() => this.updateSettings({ theme: this.settings.theme === "dark" ? "light" : "dark" })}
-            title="Toggle theme"
-          >
-            ${this.settings.theme === "dark" ? "🌙" : "☀️"}
-          </button>
-        </div>
-      </header>
-    `;
-  }
-
-  private renderView() {
-    switch (this.tab) {
+  private renderViewContent(tab: Tab) {
+    switch (tab) {
       case "chat":
         return renderChat(this);
       case "overview":

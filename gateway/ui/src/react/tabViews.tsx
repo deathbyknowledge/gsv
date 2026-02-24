@@ -45,6 +45,10 @@ const TAB_VIEW_LOADERS: Record<Tab, TabViewLoader> = {
     })),
   debug: () =>
     import("./views/DebugView").then((module) => ({ default: module.DebugView })),
+  settings: () =>
+    import("./views/SettingsView").then((module) => ({
+      default: module.SettingsView,
+    })),
 };
 
 const TAB_VIEW_COMPONENTS: Record<Tab, LazyExoticComponent<ComponentType>> = {
@@ -59,6 +63,7 @@ const TAB_VIEW_COMPONENTS: Record<Tab, LazyExoticComponent<ComponentType>> = {
   pairing: lazy(TAB_VIEW_LOADERS.pairing),
   config: lazy(TAB_VIEW_LOADERS.config),
   debug: lazy(TAB_VIEW_LOADERS.debug),
+  settings: lazy(TAB_VIEW_LOADERS.settings),
 };
 
 const preloadedTabs = new Set<Tab>();
