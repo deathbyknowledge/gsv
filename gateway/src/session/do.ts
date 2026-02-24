@@ -64,6 +64,7 @@ import {
   parseToolApprovalDecision,
   type ToolApprovalEvaluation,
 } from "./tool-approval";
+import { Agent, Connection, ConnectionContext } from "agents";
 
 type PendingToolCall = {
   id: string;
@@ -290,9 +291,13 @@ class MediaCache {
   }
 }
 
-export class Session extends DurableObject<Env> {
+export class Session extends Agent<Env> {
   private static generateSessionId(): string {
     return crypto.randomUUID();
+  }
+
+  shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
+    return false;
   }
 
   /**
@@ -1243,10 +1248,12 @@ export class Session extends DurableObject<Env> {
 
     // If this turn resumed from tool calls, inject queued user messages now so they
     // are included before the next LLM continuation, without waiting for run end.
-    let continuationOverrides: {
-      thinkLevel?: string;
-      model?: { provider: string; id: string };
-    } | undefined;
+    let continuationOverrides:
+      | {
+          thinkLevel?: string;
+          model?: { provider: string; id: string };
+        }
+      | undefined;
     if (hadPendingToolCalls && this.messageQueue.length > 0) {
       const queuedMessages = [...this.messageQueue];
       this.messageQueue = [];
