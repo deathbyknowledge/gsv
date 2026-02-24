@@ -25,21 +25,38 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       channel: ${{ steps.channel.outputs.channel }}
+      short_sha: ${{ steps.channel.outputs.short_sha }}
+      release_tag: ${{ steps.channel.outputs.release_tag }}
+      built_at: ${{ steps.channel.outputs.built_at }}
     steps:
       - name: Resolve channel
         id: channel
         run: |
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "channel=${{ inputs.channel }}" >> "$GITHUB_OUTPUT"
+            CHANNEL="${{ inputs.channel }}"
           elif [ "${{ github.ref }}" = "refs/heads/stable" ]; then
-            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            CHANNEL="stable"
           else
-            echo "channel=dev" >> "$GITHUB_OUTPUT"
+            CHANNEL="dev"
           fi
+
+          echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=gsv-${CHANNEL}-${GITHUB_RUN_NUMBER}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "built_at=${BUILT_AT}" >> "$GITHUB_OUTPUT"
 
   # Build CLI binaries for multiple platforms
   build-cli:
     needs: [resolve]
+    env:
+      GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.channel }}
+      GSV_BUILD_SHA: ${{ github.sha }}
+      GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
+      GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
+      GSV_BUILD_TIMESTAMP: ${{ needs.resolve.outputs.built_at }}
     strategy:
       matrix:
         include:
@@ -77,11 +94,22 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} --no-default-features --features rustls
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.channel }}
+          GSV_BUILD_SHA: ${{ github.sha }}
+          GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
+          GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
+          GSV_BUILD_TIMESTAMP: ${{ needs.resolve.outputs.built_at }}
 
       - name: Build CLI (macOS - use native-tls for system certs)
         if: runner.os == 'macOS'
         working-directory: cli
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.channel }}
+          GSV_BUILD_SHA: ${{ github.sha }}
+          GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
+          GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
+          GSV_BUILD_TIMESTAMP: ${{ needs.resolve.outputs.built_at }}
 
       - name: Rename binary
         run: |
@@ -222,6 +250,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CHANNEL: ${{ needs.resolve.outputs.channel }}
+      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
+      BUILT_AT: ${{ needs.resolve.outputs.built_at }}
     steps:
       - uses: actions/checkout@v4
 
@@ -258,9 +289,6 @@ jobs:
       - name: Build release body
         id: body
         run: |
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
           if [ "$CHANNEL" = "stable" ]; then
             TITLE="GSV (stable)"
             INSTALL_CMD='curl -sSL https://install.gsv.space | bash'
@@ -272,12 +300,18 @@ jobs:
           cat > body.md <<BODY
           ## ${TITLE}
 
-          **Commit:** \`${SHORT_SHA}\` · **Built:** ${TIMESTAMP}
+          **Commit:** \`${SHORT_SHA}\` · **Built:** ${BUILT_AT} · **Release tag:** \`${RELEASE_TAG}\`
 
           ### Installation
 
           \`\`\`bash
           ${INSTALL_CMD}
+          \`\`\`
+
+          Pin a specific release tag:
+
+          \`\`\`bash
+          GSV_VERSION=${RELEASE_TAG} curl -sSL https://install.gsv.space | bash
           \`\`\`
 
           ### Cloudflare Bundles
@@ -296,7 +330,28 @@ jobs:
           - **Linux (ARM64)**: \`gsv-linux-arm64\`
           BODY
 
-      - name: Create or update release
+      - name: Create immutable release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: GSV (${{ env.CHANNEL }}) ${{ env.RELEASE_TAG }}
+          draft: false
+          prerelease: ${{ env.CHANNEL == 'dev' }}
+          make_latest: false
+          body_path: body.md
+          files: |
+            release/gsv-linux-x64
+            release/gsv-linux-arm64
+            release/gsv-darwin-x64
+            release/gsv-darwin-arm64
+            release/gsv-cloudflare-gateway.tar.gz
+            release/gsv-cloudflare-channel-whatsapp.tar.gz
+            release/gsv-cloudflare-channel-discord.tar.gz
+            release/cloudflare-checksums.txt
+            release/install.sh
+            release/checksums.txt
+
+      - name: Create or update channel release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.CHANNEL }}

@@ -24,7 +24,7 @@ mod commands;
 #[derive(Parser)]
 #[command(
     name = "gsv",
-    version,
+    version = gsv::build_info::BUILD_VERSION,
     about = "GSV CLI - Client and Node for GSV Gateway"
 )]
 struct Cli {
@@ -96,6 +96,163 @@ enum Commands {
         action: DeployAction,
     },
 
+    /// First-time setup flow (deploy + node daemon install/start)
+    Setup {
+        /// Release tag/channel (e.g., stable, dev, v0.2.0, or latest)
+        #[arg(long, default_value = "latest")]
+        version: String,
+
+        /// Component to include (repeat for multiple)
+        #[arg(short = 'c', long = "component")]
+        component: Vec<String>,
+
+        /// Include all components
+        #[arg(long)]
+        all: bool,
+
+        /// Overwrite existing extracted bundle directories
+        #[arg(long)]
+        force_fetch: bool,
+
+        /// Use local Cloudflare bundle directory instead of downloading from release assets
+        #[arg(long)]
+        bundle_dir: Option<PathBuf>,
+
+        /// Disable interactive deploy wizard prompts
+        #[arg(long)]
+        no_wizard: bool,
+
+        /// Cloudflare API token (falls back to config `cloudflare.api_token`)
+        #[arg(long, env = "CF_API_TOKEN")]
+        api_token: Option<String>,
+
+        /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
+        #[arg(long, env = "CF_ACCOUNT_ID")]
+        account_id: Option<String>,
+
+        /// Gateway auth token to set in gateway config (`auth.token`)
+        #[arg(long, env = "GSV_GATEWAY_AUTH_TOKEN")]
+        gateway_auth_token: Option<String>,
+
+        /// LLM provider to configure on gateway (`anthropic`, `openai`, `google`, `openrouter`, or custom)
+        #[arg(long)]
+        llm_provider: Option<String>,
+
+        /// LLM model ID to configure on gateway
+        #[arg(long)]
+        llm_model: Option<String>,
+
+        /// LLM API key to configure on gateway (`apiKeys.<provider>`)
+        #[arg(long)]
+        llm_api_key: Option<String>,
+
+        /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
+        #[arg(long, env = "DISCORD_BOT_TOKEN")]
+        discord_bot_token: Option<String>,
+
+        /// Node ID to persist in local config (used by node daemon)
+        #[arg(long)]
+        id: Option<String>,
+
+        /// Node workspace to persist in local config (used by node daemon)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+
+        /// Skip node daemon installation/start
+        #[arg(long)]
+        skip_node: bool,
+    },
+
+    /// Upgrade deployed Cloudflare components (wrapper around `deploy up`)
+    Upgrade {
+        /// Release tag/channel (e.g., stable, dev, v0.2.0, or latest)
+        #[arg(long, default_value = "latest")]
+        version: String,
+
+        /// Component to include (repeat for multiple)
+        #[arg(short = 'c', long = "component")]
+        component: Vec<String>,
+
+        /// Include all components
+        #[arg(long)]
+        all: bool,
+
+        /// Overwrite existing extracted bundle directories (auto-enabled for mutable refs like dev/stable/latest)
+        #[arg(long)]
+        force_fetch: bool,
+
+        /// Use local Cloudflare bundle directory instead of downloading from release assets
+        #[arg(long)]
+        bundle_dir: Option<PathBuf>,
+
+        /// Run interactive setup prompts (first-time guided flow)
+        #[arg(long)]
+        wizard: bool,
+
+        /// Cloudflare API token (falls back to config `cloudflare.api_token`)
+        #[arg(long, env = "CF_API_TOKEN")]
+        api_token: Option<String>,
+
+        /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
+        #[arg(long, env = "CF_ACCOUNT_ID")]
+        account_id: Option<String>,
+
+        /// Gateway auth token to set in gateway config (`auth.token`)
+        #[arg(long, env = "GSV_GATEWAY_AUTH_TOKEN")]
+        gateway_auth_token: Option<String>,
+
+        /// LLM provider to configure on gateway (`anthropic`, `openai`, `google`, `openrouter`, or custom)
+        #[arg(long)]
+        llm_provider: Option<String>,
+
+        /// LLM model ID to configure on gateway
+        #[arg(long)]
+        llm_model: Option<String>,
+
+        /// LLM API key to configure on gateway (`apiKeys.<provider>`)
+        #[arg(long)]
+        llm_api_key: Option<String>,
+
+        /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
+        #[arg(long, env = "DISCORD_BOT_TOKEN")]
+        discord_bot_token: Option<String>,
+    },
+
+    /// Uninstall deployment and optionally remove local node daemon
+    Uninstall {
+        /// Component to remove (repeat for multiple). Defaults to all when omitted.
+        #[arg(short = 'c', long = "component")]
+        component: Vec<String>,
+
+        /// Remove all components
+        #[arg(long)]
+        all: bool,
+
+        /// Also delete the shared R2 storage bucket
+        #[arg(long)]
+        delete_bucket: bool,
+
+        /// Purge all objects from the shared R2 bucket before deleting it (requires --delete-bucket)
+        #[arg(long)]
+        purge_bucket: bool,
+
+        /// Run interactive teardown wizard
+        #[arg(long)]
+        wizard: bool,
+
+        /// Cloudflare API token (falls back to config `cloudflare.api_token`)
+        #[arg(long, env = "CF_API_TOKEN")]
+        api_token: Option<String>,
+
+        /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
+        #[arg(long, env = "CF_ACCOUNT_ID")]
+        account_id: Option<String>,
+
+        /// Keep local node daemon installed
+        #[arg(long)]
+        keep_node: bool,
+    },
+
     /// Manage sessions
     Session {
         #[command(subcommand)]
@@ -137,6 +294,9 @@ enum Commands {
         #[command(subcommand)]
         action: ChannelAction,
     },
+
+    /// Show CLI version and build metadata
+    Version,
 }
 
 #[derive(Subcommand)]
@@ -387,12 +547,12 @@ enum LocalConfigAction {
     Show,
     /// Get a config value
     Get {
-        /// Config key (e.g., "gateway.url", "gateway.token", "workspace.path")
+        /// Config key (e.g., "gateway.url", "gateway.token", "release.channel", "node.workspace")
         key: String,
     },
     /// Set a config value
     Set {
-        /// Config key (e.g., "gateway.url", "gateway.token", "workspace.path")
+        /// Config key (e.g., "gateway.url", "gateway.token", "release.channel", "node.workspace")
         key: String,
         /// Value to set
         value: String,
@@ -405,7 +565,7 @@ enum LocalConfigAction {
 enum DeployAction {
     /// Deploy prebuilt Cloudflare bundles (fetch/install + apply)
     Up {
-        /// Release tag (e.g., v0.2.0) or "latest"
+        /// Release tag/channel (e.g., stable, dev, v0.2.0, or latest)
         #[arg(long, default_value = "latest")]
         version: String,
 
@@ -713,6 +873,101 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Config { action } => commands::run_config(&url, token, action).await,
         Commands::LocalConfig { action } => run_local_config(action),
         Commands::Deploy { action } => run_deploy(action, &cfg).await,
+        Commands::Setup {
+            version,
+            component,
+            all,
+            force_fetch,
+            bundle_dir,
+            no_wizard,
+            api_token,
+            account_id,
+            gateway_auth_token,
+            llm_provider,
+            llm_model,
+            llm_api_key,
+            discord_bot_token,
+            id,
+            workspace,
+            skip_node,
+        } => {
+            run_setup(
+                &cfg,
+                version,
+                component,
+                all,
+                force_fetch,
+                bundle_dir,
+                no_wizard,
+                api_token,
+                account_id,
+                gateway_auth_token,
+                llm_provider,
+                llm_model,
+                llm_api_key,
+                discord_bot_token,
+                id,
+                workspace,
+                skip_node,
+            )
+            .await
+        }
+        Commands::Upgrade {
+            version,
+            component,
+            all,
+            force_fetch,
+            bundle_dir,
+            wizard,
+            api_token,
+            account_id,
+            gateway_auth_token,
+            llm_provider,
+            llm_model,
+            llm_api_key,
+            discord_bot_token,
+        } => {
+            run_upgrade(
+                &cfg,
+                version,
+                component,
+                all,
+                force_fetch,
+                bundle_dir,
+                wizard,
+                api_token,
+                account_id,
+                gateway_auth_token,
+                llm_provider,
+                llm_model,
+                llm_api_key,
+                discord_bot_token,
+            )
+            .await
+        }
+        Commands::Uninstall {
+            component,
+            all,
+            delete_bucket,
+            purge_bucket,
+            wizard,
+            api_token,
+            account_id,
+            keep_node,
+        } => {
+            run_uninstall(
+                &cfg,
+                component,
+                all,
+                delete_bucket,
+                purge_bucket,
+                wizard,
+                api_token,
+                account_id,
+                keep_node,
+            )
+            .await
+        }
         Commands::Session { action } => commands::run_session(&url, token, action).await,
         Commands::Tools { action } => commands::run_tools(&url, token, action).await,
         Commands::Skills { action } => commands::run_skills(&url, token, action).await,
@@ -720,7 +975,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Heartbeat { action } => commands::run_heartbeat(&url, token, action).await,
         Commands::Pair { action } => commands::run_pair(&url, token, action).await,
         Commands::Channel { action } => commands::run_channel(action, &url, token, &cfg).await,
+        Commands::Version => run_version(),
     }
+}
+
+fn run_version() -> Result<(), Box<dyn std::error::Error>> {
+    println!("gsv {}", gsv::build_info::version_display());
+    println!("package version: {}", gsv::build_info::PACKAGE_VERSION);
+    if gsv::build_info::is_ci_build() {
+        if !gsv::build_info::BUILD_CHANNEL.is_empty() {
+            println!("channel: {}", gsv::build_info::BUILD_CHANNEL);
+        }
+        if !gsv::build_info::BUILD_SHA.is_empty() {
+            println!("commit: {}", gsv::build_info::BUILD_SHA);
+        }
+        if !gsv::build_info::BUILD_RUN_NUMBER.is_empty() {
+            println!("run: {}", gsv::build_info::BUILD_RUN_NUMBER);
+        }
+        if !gsv::build_info::BUILD_TAG.is_empty() {
+            println!("release tag: {}", gsv::build_info::BUILD_TAG);
+        }
+    }
+    println!("build timestamp: {}", gsv::build_info::BUILD_TIMESTAMP);
+    Ok(())
 }
 
 fn run_init(force: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -749,6 +1026,7 @@ fn run_init(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!("\nOr use 'gsv local-config set' to update values:");
     println!("  gsv local-config set gateway.url wss://gateway.example.com/ws");
     println!("  gsv local-config set gateway.token your-secret-token");
+    println!("  gsv local-config set release.channel stable");
     println!("  gsv local-config set node.id my-node");
     println!("  gsv local-config set node.workspace /path/to/workspace");
 
@@ -879,6 +1157,7 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                         "****".to_string()
                     }
                 }),
+                "release.channel" => cfg.release.channel,
                 "r2.account_id" => cfg.r2.account_id,
                 "r2.access_key_id" => cfg.r2.access_key_id.map(|s| {
                     if s.len() > 8 {
@@ -896,6 +1175,7 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                     eprintln!("\nValid keys:");
                     eprintln!("  gateway.url, gateway.token");
                     eprintln!("  cloudflare.account_id, cloudflare.api_token");
+                    eprintln!("  release.channel");
                     eprintln!("  r2.account_id, r2.access_key_id, r2.bucket");
                     eprintln!("  session.default_key");
                     eprintln!("  node.id, node.workspace");
@@ -917,6 +1197,14 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                 "gateway.token" => cfg.gateway.token = Some(value.clone()),
                 "cloudflare.account_id" => cfg.cloudflare.account_id = Some(value.clone()),
                 "cloudflare.api_token" => cfg.cloudflare.api_token = Some(value.clone()),
+                "release.channel" => {
+                    let normalized = value.trim().to_ascii_lowercase();
+                    if normalized != "stable" && normalized != "dev" {
+                        eprintln!("release.channel must be 'stable' or 'dev'");
+                        return Ok(());
+                    }
+                    cfg.release.channel = Some(normalized);
+                }
                 "r2.account_id" => cfg.r2.account_id = Some(value.clone()),
                 "r2.access_key_id" => cfg.r2.access_key_id = Some(value.clone()),
                 "r2.secret_access_key" => cfg.r2.secret_access_key = Some(value.clone()),
@@ -1264,6 +1552,213 @@ fn save_gateway_local_config(
     }
     local_cfg.save()?;
     Ok(())
+}
+
+fn normalize_release_channel(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "dev" | "stable" => Some(normalized),
+        _ => None,
+    }
+}
+
+fn release_channel_from_env() -> Option<String> {
+    std::env::var("GSV_CHANNEL")
+        .ok()
+        .and_then(|value| normalize_release_channel(&value))
+}
+
+fn release_channel_from_config(cfg: &CliConfig) -> Option<String> {
+    cfg.release_channel()
+}
+
+fn resolve_channel_aware_version(cfg: &CliConfig, version: &str) -> (String, Option<&'static str>) {
+    if version != "latest" {
+        return (version.to_string(), None);
+    }
+
+    if let Some(channel) = release_channel_from_env() {
+        return (channel, Some("GSV_CHANNEL"));
+    }
+
+    if let Some(channel) = release_channel_from_config(cfg) {
+        return (channel, Some("local config (release.channel)"));
+    }
+
+    ("latest".to_string(), None)
+}
+
+fn is_mutable_release_ref(version: &str) -> bool {
+    let normalized = version.trim().to_ascii_lowercase();
+    matches!(normalized.as_str(), "latest" | "dev" | "stable")
+}
+
+fn node_service_management_supported() -> bool {
+    cfg!(any(target_os = "linux", target_os = "macos"))
+}
+
+async fn run_setup(
+    cfg: &CliConfig,
+    version: String,
+    component: Vec<String>,
+    all: bool,
+    force_fetch: bool,
+    bundle_dir: Option<PathBuf>,
+    no_wizard: bool,
+    api_token: Option<String>,
+    account_id: Option<String>,
+    gateway_auth_token: Option<String>,
+    llm_provider: Option<String>,
+    llm_model: Option<String>,
+    llm_api_key: Option<String>,
+    discord_bot_token: Option<String>,
+    node_id: Option<String>,
+    node_workspace: Option<PathBuf>,
+    skip_node: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let wizard = !no_wizard && can_prompt_interactively();
+    if !no_wizard && !wizard {
+        println!(
+            "Interactive terminal not detected; continuing setup without wizard prompts (pass --no-wizard to silence this)."
+        );
+    }
+
+    let (version, version_channel_source) = resolve_channel_aware_version(cfg, &version);
+    if let Some(source) = version_channel_source {
+        println!("Using release channel '{}' from {}.", version, source);
+    }
+
+    run_deploy(
+        DeployAction::Up {
+            version,
+            component,
+            all,
+            force_fetch,
+            bundle_dir,
+            wizard,
+            api_token,
+            account_id,
+            gateway_auth_token,
+            llm_provider,
+            llm_model,
+            llm_api_key,
+            discord_bot_token,
+        },
+        cfg,
+    )
+    .await?;
+
+    if skip_node {
+        println!("Skipped node daemon setup (--skip-node).");
+        return Ok(());
+    }
+
+    if !node_service_management_supported() {
+        println!(
+            "Node daemon management is unsupported on this OS. Run `gsv node --foreground` to start a node manually."
+        );
+        return Ok(());
+    }
+
+    let refreshed_cfg = CliConfig::load();
+    run_node_default_managed(&refreshed_cfg, node_id, node_workspace, None, None)
+}
+
+async fn run_upgrade(
+    cfg: &CliConfig,
+    version: String,
+    component: Vec<String>,
+    all: bool,
+    force_fetch: bool,
+    bundle_dir: Option<PathBuf>,
+    wizard: bool,
+    api_token: Option<String>,
+    account_id: Option<String>,
+    gateway_auth_token: Option<String>,
+    llm_provider: Option<String>,
+    llm_model: Option<String>,
+    llm_api_key: Option<String>,
+    discord_bot_token: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (version, version_channel_source) = resolve_channel_aware_version(cfg, &version);
+    if let Some(source) = version_channel_source {
+        println!("Using release channel '{}' from {}.", version, source);
+    }
+
+    let effective_force_fetch = force_fetch || is_mutable_release_ref(&version);
+    if effective_force_fetch && !force_fetch && is_mutable_release_ref(&version) {
+        println!(
+            "Refresh enabled for mutable release ref '{}' (dev/stable/latest).",
+            version
+        );
+    }
+
+    run_deploy(
+        DeployAction::Up {
+            version,
+            component,
+            all,
+            force_fetch: effective_force_fetch,
+            bundle_dir,
+            wizard,
+            api_token,
+            account_id,
+            gateway_auth_token,
+            llm_provider,
+            llm_model,
+            llm_api_key,
+            discord_bot_token,
+        },
+        cfg,
+    )
+    .await
+}
+
+async fn run_uninstall(
+    cfg: &CliConfig,
+    component: Vec<String>,
+    all: bool,
+    delete_bucket: bool,
+    purge_bucket: bool,
+    wizard: bool,
+    api_token: Option<String>,
+    account_id: Option<String>,
+    keep_node: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let all = if !all && component.is_empty() {
+        true
+    } else {
+        all
+    };
+
+    run_deploy(
+        DeployAction::Down {
+            component,
+            all,
+            delete_bucket,
+            purge_bucket,
+            wizard,
+            api_token,
+            account_id,
+        },
+        cfg,
+    )
+    .await?;
+
+    if keep_node {
+        println!("Skipped node daemon uninstall (--keep-node).");
+        return Ok(());
+    }
+
+    if !node_service_management_supported() {
+        println!(
+            "Node daemon management is unsupported on this OS. Local node teardown was skipped."
+        );
+        return Ok(());
+    }
+
+    let refreshed_cfg = CliConfig::load();
+    run_node_service(NodeAction::Uninstall, &refreshed_cfg, None, None)
 }
 
 async fn run_deploy(

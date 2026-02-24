@@ -9,6 +9,7 @@
 # Environment variables:
 #   GSV_INSTALL_DIR  - Where to install CLI (default: /usr/local/bin)
 #   GSV_CHANNEL      - Release channel: stable or dev (default: stable)
+#   GSV_VERSION      - Exact GitHub release tag to install (overrides channel)
 
 set -e
 
@@ -19,6 +20,7 @@ set -e
 REPO="deathbyknowledge/gsv"
 INSTALL_DIR="${GSV_INSTALL_DIR:-/usr/local/bin}"
 CHANNEL="${GSV_CHANNEL:-stable}"
+VERSION="${GSV_VERSION:-}"
 CONFIG_DIR="${HOME}/.config/gsv"
 
 # Colors
@@ -110,13 +112,19 @@ validate_channel() {
 # ============================================================================
 
 download_cli() {
-    validate_channel
-    
-    local url="https://github.com/${REPO}/releases/download/${CHANNEL}/${BINARY_NAME}"
+    local release_ref
+    if [ -n "$VERSION" ]; then
+        release_ref="$VERSION"
+    else
+        validate_channel
+        release_ref="$CHANNEL"
+    fi
+
+    local url="https://github.com/${REPO}/releases/download/${release_ref}/${BINARY_NAME}"
     local tmp_dir=$(mktemp -d)
     local tmp_file="${tmp_dir}/gsv"
     
-    info "Downloading CLI (${CHANNEL}) for ${OS}-${ARCH}..."
+    info "Downloading CLI (${release_ref}) for ${OS}-${ARCH}..."
     
     if command -v curl > /dev/null 2>&1; then
         HTTP_CODE=$(curl -sSL -w "%{http_code}" -o "$tmp_file" "$url" 2>/dev/null)
@@ -168,7 +176,35 @@ ensure_config_file() {
 #   gsv local-config set gateway.token <your-auth-token>
 EOF
 
+    if [ -z "$VERSION" ]; then
+        printf "\n[release]\nchannel = \"%s\"\n" "$CHANNEL" >> "${config_file}"
+    else
+        cat >> "${config_file}" <<'EOF'
+
+[release]
+# Preferred default upgrade/setup channel (`stable` or `dev`)
+# channel = "stable"
+EOF
+    fi
+
     success "Created config file at ${config_file}"
+}
+
+persist_release_channel() {
+    if [ -n "$VERSION" ]; then
+        return
+    fi
+
+    local gsv_bin="${INSTALL_DIR}/gsv"
+    if [ ! -x "$gsv_bin" ]; then
+        return
+    fi
+
+    if "$gsv_bin" local-config set release.channel "$CHANNEL" >/dev/null 2>&1; then
+        success "Saved default release channel (${CHANNEL})"
+    else
+        warn "Could not persist release.channel in local config"
+    fi
 }
 
 # ============================================================================
@@ -179,7 +215,11 @@ main() {
     print_banner
     detect_platform
     
-    echo -e "  Platform: ${BOLD}${OS}-${ARCH}${NC}  Channel: ${BOLD}${CHANNEL}${NC}"
+    if [ -n "$VERSION" ]; then
+        echo -e "  Platform: ${BOLD}${OS}-${ARCH}${NC}  Version: ${BOLD}${VERSION}${NC}"
+    else
+        echo -e "  Platform: ${BOLD}${OS}-${ARCH}${NC}  Channel: ${BOLD}${CHANNEL}${NC}"
+    fi
     echo ""
     
     # Install CLI
@@ -188,6 +228,7 @@ main() {
 
     echo ""
     ensure_config_file
+    persist_release_channel
     
     # Done!
     echo ""
@@ -200,7 +241,7 @@ main() {
     echo "  Config:  ${CONFIG_DIR}/config.toml"
     echo ""
     echo "  Next steps:"
-    echo "    gsv deploy up --wizard --all  # Deploy/update Cloudflare resources"
+    echo "    gsv setup                      # Deploy + configure local node"
     echo "    gsv local-config set gateway.url wss://<your-gateway>.workers.dev/ws"
     echo "    gsv local-config set gateway.token <your-auth-token>"
     echo "    gsv client \"Hello!\"     # Start chatting"

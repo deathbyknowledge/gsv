@@ -16,8 +16,14 @@
 curl -sSL https://install.gsv.space | bash
 
 # https://dash.cloudflare.com/profile/api-tokens Use "Edit Cloudflare Workers" template
-# First-time guided deploy
-gsv deploy up --wizard
+# First-time guided setup (deploy + local node daemon)
+gsv setup
+
+# Cloud-only setup (skip local node daemon)
+gsv setup --skip-node
+
+# Pin exact CLI release tag (immutable build)
+GSV_VERSION=gsv-stable-1234-abcdef0 curl -sSL https://install.gsv.space | bash
 ```
 
 If you want to configure a different machine after deployment:
@@ -39,7 +45,8 @@ gsv client "Hello, what can you help me with?"
 Nodes give GSV tools to interact with your machines:
 
 ```bash
-# Recommended: install node as a background service
+# Already handled by `gsv setup` unless you used --skip-node.
+# Manual install/start as a background service:
 gsv node install --id macbook --workspace ~/projects
 
 # Check status/logs
@@ -154,6 +161,12 @@ agents/{agentId}/
 
 ```bash
 # Core
+gsv setup [--id ID --workspace DIR]            # First-time setup (deploy + node)
+gsv upgrade [--version TAG] [--all]            # Upgrade deployed components
+GSV_CHANNEL=dev gsv upgrade --all              # Upgrade from moving dev channel release
+gsv local-config set release.channel stable    # Persist default release track for setup/upgrade
+gsv uninstall [--delete-bucket]                # Teardown deployment (+ local node by default)
+gsv version                                    # Show build/version metadata
 gsv client [MESSAGE]                  # Chat (interactive if no message)
 gsv node install --id ID --workspace DIR      # Install/start node daemon
 gsv node start|stop|status                    # Manage node daemon
