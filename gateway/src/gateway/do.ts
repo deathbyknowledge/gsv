@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { ChannelWorkerInterface } from "../channel-interface";
-import { PersistedObject, snapshot } from "../shared/persisted-object";
+import { PersistedObject, snapshot, type Proxied } from "../shared/persisted-object";
 import type {
   Frame,
   EventFrame,
@@ -61,6 +61,7 @@ import {
   type CronRunResult,
 } from "../cron";
 import type { ChatEventPayload } from "../protocol/chat";
+import type { Surface } from "../protocol/surface";
 import type {
   ChannelRegistryEntry,
   ChannelId,
@@ -147,6 +148,12 @@ export class Gateway extends DurableObject<Env> {
     {
       prefix: "pendingPairs:",
     },
+  );
+
+  // Surface registry — renderable views across all clients
+  readonly surfaces = PersistedObject<Record<string, Surface>>(
+    this.ctx.storage.kv,
+    { prefix: "surfaces:" },
   );
 
   // Heartbeat scheduler state (persisted to survive DO eviction)
@@ -345,6 +352,8 @@ export class Gateway extends DurableObject<Env> {
       }
       this.clients.delete(clientId);
       this.nodeService.cleanupClientPendingOperations(clientId);
+      // Cleanup surfaces targeting this disconnected client.
+      this.cleanupSurfacesForClient(clientId);
     } else if (mode === "node" && nodeId) {
       // Ignore close events from stale sockets that were replaced by reconnect.
       if (this.nodes.get(nodeId) !== ws) {
@@ -360,6 +369,7 @@ export class Gateway extends DurableObject<Env> {
         `Node disconnected during log request: ${nodeId}`,
       );
       failTransfersForNode(this, nodeId);
+      this.cleanupSurfacesForClient(nodeId);
       console.log(`[Gateway] Node ${nodeId} marked offline`);
     } else if (mode === "channel" && channelKey) {
       // Ignore close events from stale sockets that were replaced by reconnect.
@@ -828,6 +838,71 @@ export class Gateway extends DurableObject<Env> {
     return this.getFullConfig();
   }
 
+  /** Broadcast an event frame to all connected clients. */
+  broadcastToClients<T>(event: string, payload: T): void {
+    const evt: EventFrame<T> = { type: "evt", event, payload };
+    const message = JSON.stringify(evt);
+    for (const ws of this.clients.values()) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
+    }
+  }
+
+  /**
+   * Broadcast a surface event to all web clients AND the targeted node
+   * (if the surface targets a display-capable node).
+   *
+   * @param excludeWs - Skip this WebSocket (the requesting client already
+   *   gets the data from the RPC response, so echoing the event back causes
+   *   duplicate windows in the OS shell).
+   */
+  broadcastSurfaceEvent<T>(event: string, payload: T, targetClientId?: string, excludeWs?: WebSocket): void {
+    const evt: EventFrame<T> = { type: "evt", event, payload };
+    const message = JSON.stringify(evt);
+
+    // Broadcast to all web clients except the sender
+    for (const ws of this.clients.values()) {
+      if (ws === excludeWs) continue;
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
+    }
+
+    // Also send to the targeted node if it's a node (not a web client)
+    if (targetClientId && this.nodes.has(targetClientId)) {
+      const nodeWs = this.nodes.get(targetClientId);
+      if (nodeWs && nodeWs !== excludeWs && nodeWs.readyState === WebSocket.OPEN) {
+        nodeWs.send(message);
+      }
+    }
+  }
+
+  /** Check if a node has the display.surface capability. */
+  nodeHasDisplayCapability(nodeId: string): boolean {
+    const runtime = this.nodeService.getNodeRuntime(nodeId);
+    return runtime?.hostCapabilities?.includes("display.surface") ?? false;
+  }
+
+  /** Find the first display-capable node. */
+  findDisplayNode(): string | null {
+    for (const nodeId of this.nodes.keys()) {
+      if (this.nodeHasDisplayCapability(nodeId)) {
+        return nodeId;
+      }
+    }
+    return null;
+  }
+
+  /** Clean up surfaces targeting a disconnected client or node. */
+  cleanupSurfacesForClient(clientId: string): void {
+    for (const [surfaceId, surface] of Object.entries(this.surfaces)) {
+      if (surface.targetClientId === clientId) {
+        delete this.surfaces[surfaceId];
+      }
+    }
+  }
+
   broadcastToSession(sessionKey: string, payload: ChatEventPayload): void {
     const evt: EventFrame<ChatEventPayload> = {
       type: "evt",
@@ -892,6 +967,113 @@ export class Gateway extends DurableObject<Env> {
         routePayloadToChannel(this, sessionKey, channelContext, payload);
       }
     }
+  }
+
+  // ---- Surface System (agent tool entry points) ----
+
+  /**
+   * Open a surface on a specific client or the first available client.
+   * Called by Session DO via gateway stub (for agent tools like gsv__OpenView).
+   */
+  async openSurface(params: {
+    kind: string;
+    contentRef: string;
+    label?: string;
+    contentData?: unknown;
+    targetClientId?: string;
+    sourceSessionKey?: string;
+  }): Promise<{ ok: boolean; surface?: Surface; error?: string }> {
+    let targetClientId = params.targetClientId;
+
+    // Auto-target resolution:
+    //   1. For webview/media surfaces, prefer display-capable nodes (native windows,
+    //      no X-Frame-Options issues, autoplay works). Fall back to web clients.
+    //   2. For app surfaces, prefer web clients (built-in tab views).
+    //   3. If nothing is connected, error out.
+    if (!targetClientId) {
+      const isNativeKind = params.kind === "webview" || params.kind === "media";
+      const displayNode = this.findDisplayNode();
+      const firstClient = this.clients.keys().next();
+
+      if (isNativeKind && displayNode) {
+        targetClientId = displayNode;
+      } else if (!firstClient.done) {
+        targetClientId = firstClient.value;
+      } else if (displayNode) {
+        targetClientId = displayNode;
+      } else {
+        return { ok: false, error: "No clients or display-capable nodes connected" };
+      }
+    }
+
+    // Verify target is connected
+    if (!this.clients.has(targetClientId) && !this.nodes.has(targetClientId)) {
+      return { ok: false, error: `Target not connected: ${targetClientId}` };
+    }
+
+    const now = Date.now();
+    const surfaceId = crypto.randomUUID();
+    const surface: Surface = {
+      surfaceId,
+      kind: params.kind as Surface["kind"],
+      label: params.label ?? params.contentRef,
+      contentRef: params.contentRef,
+      contentData: params.contentData,
+      targetClientId,
+      sourceSessionKey: params.sourceSessionKey,
+      state: "open",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.surfaces[surfaceId] = surface;
+
+    // Broadcast to all clients + targeted node
+    this.broadcastSurfaceEvent("surface.opened", { surface }, targetClientId);
+
+    console.log(
+      `[Gateway] Surface opened via tool: ${surfaceId} kind=${surface.kind} ref=${surface.contentRef} target=${targetClientId}`,
+    );
+
+    return { ok: true, surface };
+  }
+
+  /**
+   * List all surfaces, optionally filtered by target client.
+   * Called by Session DO via gateway stub (for agent tools like gsv__ListViews).
+   */
+  async listSurfaces(targetClientId?: string): Promise<{
+    surfaces: Surface[];
+    count: number;
+  }> {
+    const all = Object.values(this.surfaces);
+    const filtered = targetClientId
+      ? all.filter((s) => s.targetClientId === targetClientId)
+      : all;
+    // Snapshot proxied values so they serialize correctly across the RPC boundary.
+    const snapped = filtered.map((s) =>
+      snapshot(s as unknown as Proxied<Surface>),
+    );
+    return { surfaces: snapped, count: snapped.length };
+  }
+
+  /**
+   * Close a surface by ID.
+   * Called by Session DO via gateway stub (for agent tools like gsv__CloseView).
+   */
+  async closeSurface(surfaceId: string): Promise<{ ok: boolean; error?: string }> {
+    const surface = this.surfaces[surfaceId];
+    if (!surface) {
+      return { ok: false, error: `Surface not found: ${surfaceId}` };
+    }
+
+    const targetClientId = surface.targetClientId;
+    delete this.surfaces[surfaceId];
+
+    this.broadcastSurfaceEvent("surface.closed", { surfaceId, targetClientId }, targetClientId);
+
+    console.log(`[Gateway] Surface closed via tool: ${surfaceId}`);
+    return { ok: true };
   }
 
   // ---- Heartbeat System ----

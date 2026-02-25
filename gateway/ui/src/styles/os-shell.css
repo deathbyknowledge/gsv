@@ -14,46 +14,196 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Ambient Orb Background ── */
-.os-ambient {
+/* ── Wallpaper Background ── */
+.os-wallpaper {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: #0f0f13;
   overflow: hidden;
 }
 
-.os-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.6;
-  animation: os-orb-float 20s infinite ease-in-out alternate;
-  will-change: transform;
-}
-.os-orb-1 {
-  width: 60vw; height: 60vw;
-  background: radial-gradient(circle, #4f46e5 0%, transparent 70%);
-  top: -20vw; left: -10vw;
-}
-.os-orb-2 {
-  width: 50vw; height: 50vw;
-  background: radial-gradient(circle, #db2777 0%, transparent 70%);
-  bottom: -10vw; right: -10vw;
-  animation-delay: -5s;
-}
-.os-orb-3 {
-  width: 40vw; height: 40vw;
-  background: radial-gradient(circle, #06b6d4 0%, transparent 70%);
-  top: 20vh; left: 40vw;
-  animation-delay: -10s;
+/* Starfield: deep dark space, stars rendered via canvas */
+.os-wp-starfield {
+  background: radial-gradient(ellipse at 50% 40%, #0c0c18 0%, #050508 60%, #000 100%);
 }
 
-@keyframes os-orb-float {
+/* Mesh gradient: smooth multi-color gradient, slow shift */
+.os-wp-mesh {
+  background: #0a0a10;
+}
+.os-wp-mesh::before,
+.os-wp-mesh::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.75;
+  animation: os-mesh-drift 30s infinite ease-in-out alternate;
+}
+.os-wp-mesh::before {
+  width: 55vw; height: 55vw;
+  background: radial-gradient(circle, hsl(240 70% 38%) 0%, transparent 70%);
+  top: -15vw; left: -5vw;
+}
+.os-wp-mesh::after {
+  width: 50vw; height: 50vw;
+  background: radial-gradient(circle, hsl(280 60% 32%) 0%, transparent 70%);
+  bottom: -10vw; right: -5vw;
+  animation-delay: -12s;
+}
+@keyframes os-mesh-drift {
   0%   { transform: translate(0, 0) scale(1); }
-  33%  { transform: translate(5vw, 5vh) scale(1.1); }
-  66%  { transform: translate(-5vw, 10vh) scale(0.9); }
-  100% { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(3vw, 4vh) scale(1.05); }
+  100% { transform: translate(-2vw, -3vh) scale(0.97); }
+}
+
+/* Aurora: horizontal flowing color bands */
+.os-wp-aurora {
+  background: #050510;
+}
+.os-wp-aurora::before {
+  content: "";
+  position: absolute;
+  top: 10%; left: -20%;
+  width: 140%; height: 50%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(34, 197, 94, 0.35) 20%,
+    rgba(6, 182, 212, 0.4) 40%,
+    rgba(79, 70, 229, 0.35) 60%,
+    rgba(34, 197, 94, 0.3) 80%,
+    transparent 100%
+  );
+  filter: blur(50px);
+  animation: os-aurora-wave 20s infinite ease-in-out alternate;
+}
+.os-wp-aurora::after {
+  content: "";
+  position: absolute;
+  top: 30%; left: -10%;
+  width: 120%; height: 30%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(6, 182, 212, 0.25) 30%,
+    rgba(168, 85, 247, 0.2) 60%,
+    transparent 100%
+  );
+  filter: blur(60px);
+  animation: os-aurora-wave 25s infinite ease-in-out alternate-reverse;
+}
+@keyframes os-aurora-wave {
+  0%   { transform: translateX(-5vw) scaleY(1); }
+  50%  { transform: translateX(5vw) scaleY(1.3); }
+  100% { transform: translateX(-3vw) scaleY(0.9); }
+}
+
+/* Dark grain: near-black with subtle noise texture */
+.os-wp-dark-grain {
+  background: #0a0a0c;
+}
+.os-wp-dark-grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.15'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+  opacity: 1;
+}
+.os-wp-dark-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 50%, rgba(255,255,255,0.06) 0%, transparent 70%);
+}
+
+/* Grid: faint dot matrix */
+.os-wp-grid {
+  background: #08080c;
+}
+.os-wp-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(255,255,255,0.15) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse at 50% 50%, black 40%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 50%, black 40%, transparent 80%);
+}
+.os-wp-grid::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 40%, rgba(59, 130, 246, 0.1) 0%, transparent 60%);
+}
+
+/* ── Right-click Context Menu ── */
+.os-ctx-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 200px;
+  background: rgba(20, 20, 26, 0.88);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  padding: 6px;
+  animation: os-ctx-in 0.15s ease-out;
+}
+@keyframes os-ctx-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.os-ctx-menu-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  padding: 6px 10px 4px;
+}
+
+.os-ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  transition: background 0.1s;
+}
+.os-ctx-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.os-ctx-menu-item.active {
+  color: var(--accent);
+}
+.os-ctx-menu-item.active::after {
+  content: "";
+  margin-left: auto;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* Tiny preview swatch in the context menu */
+.os-ctx-menu-preview {
+  width: 24px; height: 24px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 /* ── Status Bar (top, 32px, minimal) ── */
@@ -269,6 +419,64 @@
 .os-window-content .chat-container { min-height: 100%; height: 100%; padding: 0; }
 .os-window-content .workspace-layout { min-height: 100%; }
 
+/* Iframe windows (webview / media surfaces) */
+.os-window-iframe-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.os-window-iframe {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+}
+.os-window-iframe-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(15, 15, 20, 0.95);
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+}
+.os-window-iframe-fallback span {
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+}
+.os-window-iframe-fallback a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  text-decoration: none;
+  transition: background 0.2s, color 0.2s;
+}
+.os-window-iframe-fallback a:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+.os-window-content:has(.os-window-iframe-wrap) {
+  padding: 0;
+  overflow: hidden;
+}
+/* Disable iframe pointer events during drag/resize to prevent capture */
+body.os-dragging .os-window-iframe {
+  pointer-events: none;
+}
+
 /* ── Resize Handles ── */
 .os-resize-handle { position: absolute; z-index: 5; }
 .os-resize-handle.n  { top: 0; left: 8px; right: 8px; height: 6px; cursor: n-resize; }
@@ -396,6 +604,15 @@
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
 }
 
+/* ── Dock separator (divides static app icons from dynamic surface windows) ── */
+.os-dock-separator {
+  width: 1px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
 /* ── Launcher / Command Palette Overlay ── */
 .os-launcher-overlay {
   position: fixed;
@@ -510,6 +727,328 @@ body.os-dragging,
 body.os-dragging * {
   user-select: none !important;
   cursor: grabbing !important;
+}
+
+/* ── Settings Display Tab ── */
+.settings-display {
+  padding: 8px 0;
+}
+.settings-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin: 0 0 4px;
+}
+.settings-section-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 0 0 12px;
+}
+.settings-wallpaper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+.settings-wallpaper-card {
+  all: unset;
+  cursor: pointer;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  overflow: hidden;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.04));
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.settings-wallpaper-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.settings-wallpaper-card.active {
+  border-color: var(--accent-primary, hsl(191 95% 58%));
+  box-shadow: 0 0 0 1px var(--accent-primary, hsl(191 95% 58%));
+}
+.settings-wallpaper-preview {
+  width: 100%;
+  height: 80px;
+  position: relative;
+  overflow: hidden;
+}
+.settings-wallpaper-info {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-wallpaper-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.settings-wallpaper-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.settings-theme-row {
+  display: flex;
+  gap: 8px;
+}
+.settings-theme-btn {
+  all: unset;
+  cursor: pointer;
+  padding: 6px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--glass-bg, rgba(255, 255, 255, 0.04));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.settings-theme-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+}
+.settings-theme-btn.active {
+  background: var(--accent-primary, hsl(191 95% 58%));
+  color: #000;
+  border-color: var(--accent-primary, hsl(191 95% 58%));
+}
+
+/* ═══════════════════════════════════════════
+   Light Theme Overrides
+   Glassmorphism with darker overlays on light backgrounds.
+   Applied when <html data-theme="light">.
+   ═══════════════════════════════════════════ */
+
+/* ── Status Bar ── */
+[data-theme="light"] .os-statusbar {
+  background: rgba(255, 255, 255, 0.55);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  color: #1a1a1e;
+}
+[data-theme="light"] .os-statusbar-label {
+  color: #52525b;
+}
+[data-theme="light"] .os-statusbar-btn {
+  color: #52525b;
+}
+[data-theme="light"] .os-statusbar-btn:hover {
+  color: #1a1a1e;
+  background: rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .os-statusbar-clock {
+  color: #3f3f46;
+}
+
+/* ── Windows ── */
+[data-theme="light"] .os-window {
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 25px 60px rgba(0, 0, 0, 0.12),
+    0 8px 20px rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+[data-theme="light"] .os-window.focused {
+  border-color: rgba(0, 0, 0, 0.15);
+  box-shadow:
+    0 30px 70px rgba(0, 0, 0, 0.15),
+    0 10px 24px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+/* ── Window Title Bar ── */
+[data-theme="light"] .os-window-titlebar {
+  background: rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .os-window-title-label {
+  color: #6b6b76;
+}
+[data-theme="light"] .os-window.focused .os-window-title-label {
+  color: #3f3f46;
+}
+
+/* Unfocused traffic lights: use dark-tinted dots */
+[data-theme="light"] .os-window:not(.focused) .os-window-action {
+  background: rgba(0, 0, 0, 0.1) !important;
+}
+[data-theme="light"] .os-window:not(.focused):hover .os-window-action.close    { background: #ff5f56 !important; }
+[data-theme="light"] .os-window:not(.focused):hover .os-window-action.minimize { background: #ffbd2e !important; }
+[data-theme="light"] .os-window:not(.focused):hover .os-window-action.maximize { background: #27c93f !important; }
+
+/* ── Window Content ── */
+[data-theme="light"] .os-window-content {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* ── Iframe fallback ── */
+[data-theme="light"] .os-window-iframe-fallback {
+  background: rgba(245, 245, 248, 0.95);
+  color: rgba(0, 0, 0, 0.5);
+}
+[data-theme="light"] .os-window-iframe-fallback span {
+  color: rgba(0, 0, 0, 0.7);
+}
+[data-theme="light"] .os-window-iframe-fallback a {
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: rgba(0, 0, 0, 0.7);
+}
+[data-theme="light"] .os-window-iframe-fallback a:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #1a1a1e;
+}
+
+/* ── Snap Preview ── */
+[data-theme="light"] .os-snap-preview {
+  background: rgba(0, 0, 0, 0.04);
+  border: 2px dashed rgba(0, 0, 0, 0.15);
+}
+
+/* ── Dock ── */
+[data-theme="light"] .os-dock {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 20px 40px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+[data-theme="light"] .os-dock-item {
+  color: rgba(0, 0, 0, 0.5);
+}
+[data-theme="light"] .os-dock-item:hover {
+  color: #1a1a1e;
+  background: rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .os-dock-item.open {
+  color: #1a1a1e;
+}
+[data-theme="light"] .os-dock-item.focused {
+  color: #1a1a1e;
+}
+[data-theme="light"] .os-dock-item.open::after {
+  background: rgba(0, 0, 0, 0.3);
+}
+[data-theme="light"] .os-dock-item.focused::after {
+  background: #1a1a1e;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.25);
+}
+[data-theme="light"] .os-dock-separator {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+/* ── Desktop Empty State ── */
+[data-theme="light"] .os-desktop-empty kbd {
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* ── Context Menu ── */
+[data-theme="light"] .os-ctx-menu {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
+}
+[data-theme="light"] .os-ctx-menu-item:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .os-ctx-menu-preview {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* ── Launcher / Command Palette ── */
+[data-theme="light"] .os-launcher-overlay {
+  background: rgba(255, 255, 255, 0.3);
+}
+[data-theme="light"] .os-launcher {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 40px 80px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+[data-theme="light"] .os-launcher-search input {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  color: #1a1a1e;
+}
+[data-theme="light"] .os-launcher-item:hover,
+[data-theme="light"] .os-launcher-item.active {
+  background: rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .os-launcher-item.active {
+  outline: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* ── Settings Theme Buttons ── */
+[data-theme="light"] .settings-theme-btn {
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .settings-theme-btn:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+[data-theme="light"] .settings-theme-btn.active {
+  background: var(--accent-primary, hsl(191 95% 58%));
+  color: #fff;
+  border-color: var(--accent-primary, hsl(191 95% 58%));
+}
+
+/* ── Light-theme Wallpaper overrides ── */
+[data-theme="light"] .os-wp-starfield {
+  background: radial-gradient(ellipse at 50% 40%, #dde0ea 0%, #c8cdd8 60%, #b8bece 100%);
+}
+[data-theme="light"] .os-wp-mesh {
+  background: #dce0ea;
+}
+[data-theme="light"] .os-wp-mesh::before {
+  background: radial-gradient(circle, hsl(240 60% 68%) 0%, transparent 70%);
+}
+[data-theme="light"] .os-wp-mesh::after {
+  background: radial-gradient(circle, hsl(280 50% 70%) 0%, transparent 70%);
+}
+[data-theme="light"] .os-wp-aurora {
+  background: #dce2ee;
+}
+[data-theme="light"] .os-wp-aurora::before {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(34, 197, 94, 0.35) 20%,
+    rgba(6, 182, 212, 0.4) 40%,
+    rgba(79, 70, 229, 0.35) 60%,
+    rgba(34, 197, 94, 0.3) 80%,
+    transparent 100%
+  );
+}
+[data-theme="light"] .os-wp-aurora::after {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(6, 182, 212, 0.25) 30%,
+    rgba(168, 85, 247, 0.2) 60%,
+    transparent 100%
+  );
+}
+[data-theme="light"] .os-wp-dark-grain {
+  background: #e2e2e6;
+}
+[data-theme="light"] .os-wp-dark-grain::after {
+  background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0.06) 0%, transparent 70%);
+}
+[data-theme="light"] .os-wp-grid {
+  background: #dce0ea;
+}
+[data-theme="light"] .os-wp-grid::before {
+  background-image: radial-gradient(circle, rgba(0,0,0,0.18) 1px, transparent 1px);
+}
+[data-theme="light"] .os-wp-grid::after {
+  background: radial-gradient(ellipse at 50% 40%, rgba(59, 130, 246, 0.12) 0%, transparent 60%);
+}
+
+/* ── Settings Wallpaper Cards ── */
+[data-theme="light"] .settings-wallpaper-card {
+  background: rgba(0, 0, 0, 0.03);
+}
+[data-theme="light"] .settings-wallpaper-card:hover {
+  border-color: rgba(0, 0, 0, 0.2);
 }
 
 /* ── Reduced motion ── */

@@ -64,6 +64,11 @@ enum Commands {
         #[arg(long)]
         foreground: bool,
 
+        /// Enable display server mode: open native webview windows for surfaces.
+        /// Requires --foreground. Compile with --features display.
+        #[arg(long)]
+        display: bool,
+
         /// Node ID (default: hostname) - used as namespace prefix for tools
         #[arg(long)]
         id: Option<String>,
@@ -799,16 +804,136 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("Failed to install rustls crypto provider");
     }
 
-    // Now start tokio runtime and run async main
+    // Parse CLI early to detect display mode (needs main thread for tao event loop)
+    let cli = Cli::parse();
+
+    // Display mode: tao event loop on main thread, tokio on background thread.
+    // Must be handled before creating the tokio runtime because macOS Cocoa
+    // requires the event loop to run on the main thread.
+    #[cfg(feature = "display")]
+    if let Commands::Node {
+        display: true,
+        id,
+        workspace,
+        action: None,
+        ..
+    } = &cli.command
+    {
+        let cfg = CliConfig::load();
+        let url = cli
+            .url
+            .clone()
+            .unwrap_or_else(|| cfg.gateway_url());
+        let token = cli.token.clone().or_else(|| cfg.gateway_token());
+        let node_id = resolve_node_id(id.clone(), &cfg);
+        let workspace_path = resolve_node_workspace(workspace.clone(), &cfg);
+        return run_node_display_main(&url, token, node_id, workspace_path);
+    }
+
+    // Standard path: tokio runtime on main thread
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(async_main())
+        .block_on(async_main_with(cli))
 }
 
-async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+/// Display mode entry point: tao event loop on main thread, tokio on background thread.
+/// This function never returns normally (tao's event loop diverges).
+#[cfg(feature = "display")]
+fn run_node_display_main(
+    url: &str,
+    token: Option<String>,
+    node_id: String,
+    workspace: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gsv::display::{create_display, run_display_loop};
 
+    let (display_handle, event_loop) = create_display();
+
+    eprintln!(
+        "[display] Starting display node '{}' -> {}",
+        node_id, url
+    );
+
+    // Spawn tokio runtime on a background thread.
+    // The main thread is reserved for the tao/wry event loop (macOS requirement).
+    let url_owned = url.to_string();
+    let display_for_thread = display_handle.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to build tokio runtime for display node");
+
+        rt.block_on(async move {
+            // Channel for surface events from the node event handler
+            let (surface_tx, mut surface_rx) =
+                tokio::sync::mpsc::unbounded_channel::<(String, Option<serde_json::Value>)>();
+
+            // Task that receives surface events and forwards to tao display loop
+            let display = display_for_thread.clone();
+            let gw_url = url_owned.clone();
+            tokio::spawn(async move {
+                while let Some((event_name, payload)) = surface_rx.recv().await {
+                    process_surface_event(&display, &gw_url, &event_name, payload);
+                }
+            });
+
+            if let Err(e) =
+                run_node(&url_owned, token, node_id, workspace, true, Some(surface_tx)).await
+            {
+                eprintln!("[display] Node error: {}", e);
+                display_for_thread.shutdown();
+            }
+        });
+    });
+
+    // Run tao event loop on main thread (blocks forever)
+    run_display_loop(event_loop);
+}
+
+/// Process a surface event from the gateway and forward to the display handle.
+#[cfg(feature = "display")]
+fn process_surface_event(
+    display: &gsv::display::DisplayHandle,
+    gateway_url: &str,
+    event_name: &str,
+    payload: Option<serde_json::Value>,
+) {
+    use gsv::display::resolve_surface_url;
+    use gsv::protocol::{SurfaceClosedPayload, SurfaceOpenedPayload, SurfaceUpdatedPayload};
+
+    let Some(payload) = payload else {
+        return;
+    };
+
+    match event_name {
+        "surface.opened" => {
+            if let Ok(data) = serde_json::from_value::<SurfaceOpenedPayload>(payload) {
+                let url = resolve_surface_url(
+                    gateway_url,
+                    &data.surface.kind,
+                    &data.surface.content_ref,
+                );
+                display.open_surface(data.surface.surface_id, url, data.surface.label);
+            }
+        }
+        "surface.closed" => {
+            if let Ok(data) = serde_json::from_value::<SurfaceClosedPayload>(payload) {
+                display.close_surface(data.surface_id);
+            }
+        }
+        "surface.updated" => {
+            if let Ok(data) = serde_json::from_value::<SurfaceUpdatedPayload>(payload) {
+                let label = Some(data.surface.label.clone());
+                display.update_surface(data.surface.surface_id, label);
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn async_main_with(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // Load config from file
     let cfg = CliConfig::load();
 
@@ -831,10 +956,20 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Node {
             foreground,
+            display,
             id,
             workspace,
             action,
         } => {
+            if display && !foreground {
+                return Err("--display requires --foreground".into());
+            }
+            #[cfg(not(feature = "display"))]
+            if display {
+                return Err(
+                    "--display requires the 'display' feature. Rebuild with: cargo build --features display".into(),
+                );
+            }
             if let Some(action) = action {
                 if foreground {
                     return Err(
@@ -850,7 +985,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } else if foreground {
                 let node_id = resolve_node_id(id, &cfg);
                 let workspace = resolve_node_workspace(workspace, &cfg);
-                run_node(&url, token, node_id, workspace).await
+                run_node(&url, token, node_id, workspace, display, None).await
             } else {
                 run_node_default_managed(
                     &cfg,
@@ -3077,6 +3212,7 @@ fn capabilities_for_tool(tool_name: &str) -> Result<Vec<&'static str>, String> {
 
 fn build_execution_node_runtime(
     tool_defs: &[ToolDefinition],
+    display: bool,
 ) -> Result<NodeRuntimeInfo, Box<dyn std::error::Error>> {
     let mut seen_tool_names = HashSet::new();
     let mut host_capabilities = HashSet::new();
@@ -3109,6 +3245,11 @@ fn build_execution_node_runtime(
         "shell.exec",
     ] {
         host_capabilities.insert(capability.to_string());
+    }
+
+    // Advertise display capability when running with --display
+    if display {
+        host_capabilities.insert("display.surface".to_string());
     }
 
     let mut normalized_host_capabilities: Vec<String> = host_capabilities.into_iter().collect();
@@ -3267,6 +3408,8 @@ async fn run_node(
     token: Option<String>,
     node_id: String,
     workspace: PathBuf,
+    display_mode: bool,
+    surface_tx: Option<tokio::sync::mpsc::UnboundedSender<(String, Option<serde_json::Value>)>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let logger = NodeLogger::new(&node_id, &workspace)?;
     let log_path = logger::node_log_path()?;
@@ -3326,13 +3469,14 @@ async fn run_node(
         let tools = all_tools_with_workspace(workspace.clone());
         let tool_defs: Vec<_> = tools.iter().map(|t| t.definition()).collect();
         let tool_names: Vec<String> = tool_defs.iter().map(|t| t.name.clone()).collect();
-        let node_runtime = build_execution_node_runtime(&tool_defs)?;
+        let node_runtime = build_execution_node_runtime(&tool_defs, display_mode)?;
 
         logger.info(
             "tools.register",
             json!({
                 "toolCount": tool_names.len(),
                 "tools": tool_names,
+                "displayMode": display_mode,
             }),
         );
 
@@ -3395,6 +3539,7 @@ async fn run_node(
         let logger_clone = logger.clone();
         let coordinator_for_events = transfer_coordinator.clone();
         let workspace_for_transfers = workspace.clone();
+        let surface_tx_clone = surface_tx.clone();
 
         conn.set_event_handler(move |frame| {
             let conn = conn_clone.clone();
@@ -3402,6 +3547,7 @@ async fn run_node(
             let logger = logger_clone.clone();
             let coordinator = coordinator_for_events.clone();
             let transfer_workspace = workspace_for_transfers.clone();
+            let surface_tx = surface_tx_clone.clone();
 
             tokio::spawn(async move {
                 if let Frame::Evt(evt) = frame {
@@ -3657,6 +3803,20 @@ async fn run_node(
                                         json!({ "error": e.to_string() }),
                                     );
                                 }
+                            }
+                        }
+                    } else if evt.event.starts_with("surface.") {
+                        // Forward surface events to display module (if active)
+                        if let Some(ref tx) = surface_tx {
+                            let event_name = evt.event.clone();
+                            if let Err(e) = tx.send((event_name.clone(), evt.payload.clone())) {
+                                logger.warn(
+                                    "surface.event.forward_failed",
+                                    json!({
+                                        "event": event_name,
+                                        "error": e.to_string(),
+                                    }),
+                                );
                             }
                         }
                     }

@@ -291,14 +291,11 @@ class MediaCache {
   }
 }
 
-export class Session extends Agent<Env> {
+export class Session extends DurableObject<Env> {
   private static generateSessionId(): string {
     return crypto.randomUUID();
   }
 
-  shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
-    return false;
-  }
 
   /**
    * Extract agentId from session key.

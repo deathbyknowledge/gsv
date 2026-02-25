@@ -251,3 +251,59 @@ textarea.ui-input-fix { border-radius: var(--radius-md) !important; }
   font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
+
+/* ── Light Theme Overrides ── */
+[data-theme="light"] .btn {
+  background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .btn-secondary {
+  background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .btn-secondary:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .btn-ghost:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .btn-danger {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+[data-theme="light"] .card-header {
+  background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .card-footer {
+  background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .form-input,
+[data-theme="light"] .form-select,
+[data-theme="light"] .form-textarea {
+  background: rgba(0, 0, 0, 0.03);
+}
+[data-theme="light"] .form-input:focus,
+[data-theme="light"] .form-select:focus,
+[data-theme="light"] .form-textarea:focus {
+  background: rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .pill {
+  background: rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .table tr:hover td {
+  background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .spinner {
+  border-color: rgba(0, 0, 0, 0.1);
+  border-top-color: var(--accent);
+}
+[data-theme="light"] .logs-output {
+  background: rgba(0, 0, 0, 0.03);
+}
+[data-theme="light"] .tab:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .nav-item:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .nav-item.active {
+  background: rgba(37, 99, 235, 0.08);
+}

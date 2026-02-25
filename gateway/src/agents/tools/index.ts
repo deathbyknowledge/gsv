@@ -18,6 +18,10 @@ import {
   workspaceNativeToolHandlers,
 } from "./workspace";
 import { getTransferToolDefinitions } from "./transfer";
+import {
+  getSurfaceToolDefinitions,
+  surfaceNativeToolHandlers,
+} from "./surface";
 import type {
   NativeToolExecutionContext,
   NativeToolHandlerMap,
@@ -32,6 +36,7 @@ export * from "./gateway";
 export * from "./message";
 export * from "./sessions";
 export * from "./transfer";
+export * from "./surface";
 
 const nativeToolHandlers: NativeToolHandlerMap = {
   ...workspaceNativeToolHandlers,
@@ -39,6 +44,7 @@ const nativeToolHandlers: NativeToolHandlerMap = {
   ...cronNativeToolHandlers,
   ...messageNativeToolHandlers,
   ...sessionsNativeToolHandlers,
+  ...surfaceNativeToolHandlers,
 };
 
 export function isNativeTool(toolName: string): boolean {
@@ -53,6 +59,7 @@ export function getNativeToolDefinitions(): ToolDefinition[] {
     ...getMessageToolDefinitions(),
     ...getSessionsToolDefinitions(),
     ...getTransferToolDefinitions(),
+    ...getSurfaceToolDefinitions(),
   ];
 }
 

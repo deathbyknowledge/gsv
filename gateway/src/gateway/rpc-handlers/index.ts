@@ -58,6 +58,13 @@ import {
   handleTransferComplete,
   handleTransferDone,
 } from "./transfer";
+import {
+  handleSurfaceOpen,
+  handleSurfaceClose,
+  handleSurfaceUpdate,
+  handleSurfaceFocus,
+  handleSurfaceList,
+} from "./surface";
 
 export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
   return {
@@ -111,5 +118,10 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     "transfer.accept": handleTransferAccept,
     "transfer.complete": handleTransferComplete,
     "transfer.done": handleTransferDone,
+    "surface.open": handleSurfaceOpen,
+    "surface.close": handleSurfaceClose,
+    "surface.update": handleSurfaceUpdate,
+    "surface.focus": handleSurfaceFocus,
+    "surface.list": handleSurfaceList,
   };
 }

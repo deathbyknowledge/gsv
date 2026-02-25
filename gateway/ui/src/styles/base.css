@@ -50,8 +50,32 @@
   --border-muted: rgba(255, 255, 255, 0.05);
   --accent-primary: var(--accent);
 
-  --nav-width: 0;       /* unused - kept for compat */
-  --topbar-height: 0;   /* unused - kept for compat */
+}
+
+/* ── Light Theme Tokens ── */
+[data-theme="light"] {
+  --bg-base: #f0f0f2;
+  --glass-bg: rgba(0, 0, 0, 0.03);
+  --glass-border: rgba(0, 0, 0, 0.1);
+  --glass-border-active: rgba(0, 0, 0, 0.18);
+  --glass-shadow: 0 30px 60px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+
+  --text-main: #1a1a1e;
+  --text-muted: #6b6b76;
+  --text-dim: #a0a0ab;
+
+  --accent: #2563eb;
+  --accent-glow: rgba(37, 99, 235, 0.3);
+
+  --bg-primary: var(--bg-base);
+  --bg-secondary: rgba(0, 0, 0, 0.03);
+  --bg-tertiary: rgba(0, 0, 0, 0.05);
+  --bg-hover: rgba(0, 0, 0, 0.06);
+  --text-primary: var(--text-main);
+  --text-secondary: #52525b;
+  --border-default: var(--glass-border);
+  --border-muted: rgba(0, 0, 0, 0.06);
+  --accent-primary: var(--accent);
 }
 
 /* ── Reset ── */
@@ -97,11 +121,21 @@ pre {
 }
 pre code { background: none; padding: 0; }
 
+/* ── Light theme element overrides ── */
+[data-theme="light"] code {
+  background: rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] pre {
+  background: rgba(0, 0, 0, 0.04);
+}
+
 /* ── Scrollbars ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.25); }
 
 /* ── Utilities ── */
 .muted { color: var(--text-muted); }

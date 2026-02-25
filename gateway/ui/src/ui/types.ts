@@ -35,6 +35,31 @@ export type ErrorShape = {
   retryable?: boolean;
 };
 
+// Surface protocol types
+export type SurfaceKind = "app" | "media" | "component" | "webview";
+export type SurfaceState = "open" | "minimized" | "closed";
+export type SurfaceRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+export type Surface = {
+  surfaceId: string;
+  kind: SurfaceKind;
+  label: string;
+  contentRef: string;
+  contentData?: unknown;
+  targetClientId: string;
+  sourceClientId?: string;
+  sourceSessionKey?: string;
+  state: SurfaceState;
+  rect?: SurfaceRect;
+  zIndex?: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
 // Tool types
 export type ToolDefinition = {
   name: string;

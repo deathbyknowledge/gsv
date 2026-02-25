@@ -8,14 +8,79 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { TAB_ICONS, TAB_LABELS, OS_DOCK_TABS, TAB_GROUPS, type Tab } from "../../ui/types";
+import { TAB_ICONS, TAB_LABELS, OS_DOCK_TABS, TAB_GROUPS, type Tab, type Surface } from "../../ui/types";
+import type { Wallpaper } from "../../ui/storage";
 import { preloadTabView, TabView } from "../tabViews";
+import { WallpaperBg } from "./Wallpaper";
+import { useReactUiStore } from "../state/store";
 
 const WINDOW_MIN_WIDTH = 420;
 const WINDOW_MIN_HEIGHT = 280;
 const WINDOW_MARGIN = 12;
 const SNAP_THRESHOLD = 28;
 const CLOCK_REFRESH_MS = 15_000;
+
+/**
+ * Normalize a URL to its embeddable form for known services.
+ * Returns the embed URL if a transformation applies, or the original URL otherwise.
+ */
+function toEmbedUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.replace(/^www\./, "");
+
+    // YouTube: watch?v=ID → /embed/ID, youtu.be/ID → /embed/ID, shorts/ID → /embed/ID
+    if (host === "youtube.com" || host === "m.youtube.com") {
+      const videoId = u.searchParams.get("v");
+      if (videoId) return `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+      const shortsMatch = u.pathname.match(/^\/shorts\/([^/?]+)/);
+      if (shortsMatch) return `https://www.youtube.com/embed/${shortsMatch[1]}?autoplay=1`;
+      if (u.pathname.startsWith("/embed/")) {
+        u.searchParams.set("autoplay", "1");
+        return u.toString();
+      }
+    }
+    if (host === "youtu.be") {
+      const videoId = u.pathname.slice(1).split("/")[0];
+      if (videoId) return `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+    }
+
+    // Vimeo: vimeo.com/ID → player.vimeo.com/video/ID
+    if (host === "vimeo.com") {
+      const videoId = u.pathname.match(/^\/(\d+)/)?.[1];
+      if (videoId) return `https://player.vimeo.com/video/${videoId}?autoplay=1`;
+    }
+    if (host === "player.vimeo.com") {
+      u.searchParams.set("autoplay", "1");
+      return u.toString();
+    }
+
+    // Spotify: open.spotify.com/track/ID → open.spotify.com/embed/track/ID (etc.)
+    if (host === "open.spotify.com" && !u.pathname.startsWith("/embed/")) {
+      return `https://open.spotify.com/embed${u.pathname}`;
+    }
+
+    // Google Maps: /maps/... → /maps/embed/...
+    if (host === "google.com" && u.pathname.startsWith("/maps") && !u.pathname.includes("/embed")) {
+      return `https://www.google.com/maps/embed/v1/place?key=&q=${encodeURIComponent(raw)}`;
+    }
+
+    // Figma: figma.com/file/... or figma.com/design/... → embed
+    if (host === "figma.com" && (u.pathname.startsWith("/file/") || u.pathname.startsWith("/design/"))) {
+      return `https://www.figma.com/embed?embed_host=gsv&url=${encodeURIComponent(raw)}`;
+    }
+
+    // Loom: loom.com/share/ID → loom.com/embed/ID
+    if (host === "loom.com" || host === "www.loom.com") {
+      const shareMatch = u.pathname.match(/^\/share\/([^/?]+)/);
+      if (shareMatch) return `https://www.loom.com/embed/${shareMatch[1]}?autoplay=1`;
+    }
+
+    return raw;
+  } catch {
+    return raw;
+  }
+}
 
 const TAB_ACCENTS: Record<Tab, string> = {
   chat: "hsl(191 95% 58%)",
@@ -52,6 +117,11 @@ type OsWindow = WindowRect & {
   maximized: boolean;
   snapped: "left" | "right" | null;
   restoreRect?: WindowRect;
+  surfaceId?: string;
+  /** URL for webview/media surfaces (renders as iframe instead of TabView). */
+  url?: string;
+  /** Custom title label for webview/media windows. */
+  surfaceLabel?: string;
 };
 
 type ResizeEdge = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
@@ -97,9 +167,10 @@ type OsShellProps = {
   onSwitchTab: (tab: Tab) => void;
   connectionState: "connected" | "connecting" | "disconnected";
   theme: "dark" | "light" | "system";
+  wallpaper: Wallpaper;
   onToggleTheme: () => void;
+  onChangeWallpaper: (wallpaper: Wallpaper) => void;
   onDisconnect: () => void;
-  onExitOsMode: () => void;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -339,10 +410,18 @@ export function OsShell({
   onSwitchTab,
   connectionState,
   theme,
+  wallpaper,
   onToggleTheme,
+  onChangeWallpaper,
   onDisconnect,
-  onExitOsMode,
 }: OsShellProps) {
+  // ── Surface protocol integration ──
+  const storeSurfaces = useReactUiStore((s) => s.surfaces);
+  const storeSurfaceOpen = useReactUiStore((s) => s.surfaceOpen);
+  const storeSurfaceClose = useReactUiStore((s) => s.surfaceClose);
+  const storeSurfaceUpdate = useReactUiStore((s) => s.surfaceUpdate);
+  const storeSurfaceFocus = useReactUiStore((s) => s.surfaceFocus);
+
   const desktopRef = useRef<HTMLDivElement | null>(null);
   const commandInputRef = useRef<HTMLInputElement | null>(null);
   const interactionRef = useRef<InteractionState | null>(null);
@@ -351,9 +430,25 @@ export function OsShell({
   const focusedWindowIdRef = useRef<number | null>(1);
   const nextWindowIdRef = useRef(2);
   const nextZRef = useRef(2);
+  // Track which surfaceIds this client owns (locally opened), to avoid echo loops.
+  const ownedSurfaceIdsRef = useRef<Set<string>>(new Set());
+  // Track window IDs that have a surfaceOpen RPC in flight (surfaceId not yet known).
+  // Maps windowId → contentRef (tab name) so reconciliation can match pending opens.
+  const pendingSurfaceOpensRef = useRef<Map<number, string>>(new Map());
+  // Stable refs for surface actions (avoid callback dependency churn).
+  const surfaceOpenRef = useRef(storeSurfaceOpen);
+  surfaceOpenRef.current = storeSurfaceOpen;
+  const surfaceCloseRef = useRef(storeSurfaceClose);
+  surfaceCloseRef.current = storeSurfaceClose;
+  const surfaceUpdateRef = useRef(storeSurfaceUpdate);
+  surfaceUpdateRef.current = storeSurfaceUpdate;
+  const surfaceFocusRef = useRef(storeSurfaceFocus);
+  surfaceFocusRef.current = storeSurfaceFocus;
 
   const [windows, setWindows] = useState<OsWindow[]>(() => {
     const bounds = getDesktopBounds(null);
+    // Mark the initial window as pending so reconciliation doesn't duplicate it.
+    pendingSurfaceOpensRef.current.set(1, tab);
     return [createWindow(tab, 1, 1, 0, bounds)];
   });
   const [focusedWindowId, setFocusedWindowId] = useState<number | null>(1);
@@ -365,15 +460,20 @@ export function OsShell({
 
   const launchTabs = OS_DOCK_TABS;
   const allTabs = useMemo(() => TAB_GROUPS.flatMap((group) => group.tabs), []);
-  const openTabs = useMemo(
-    () => new Set(windows.map((windowState) => windowState.tab)),
+  /** Windows backed by a gateway surface URL (webview/media) — not tied to a Tab. */
+  const surfaceWindows = useMemo(
+    () => windows.filter((windowState) => windowState.url),
     [windows],
   );
+  const openTabs = useMemo(
+    () => new Set(windows.filter((w) => !w.url).map((w) => w.tab)),
+    [windows],
+  );
+  // Do NOT sort by z-index here — sorting reorders the array on every focus
+  // change, causing React to physically move DOM nodes (reloads iframes,
+  // resets scroll). CSS z-index (set via inline style) handles stacking.
   const visibleWindows = useMemo(
-    () =>
-      windows
-        .filter((windowState) => !windowState.minimized)
-        .sort((left, right) => left.z - right.z),
+    () => windows.filter((windowState) => !windowState.minimized),
     [windows],
   );
   const focusedWindow = useMemo(
@@ -383,8 +483,13 @@ export function OsShell({
         : windows.find((windowState) => windowState.id === focusedWindowId) ?? null,
     [focusedWindowId, windows],
   );
-  const focusedTab = focusedWindow?.tab ?? null;
-  const focusedTabLabel = focusedTab ? TAB_LABELS[focusedTab] : "No focus";
+  const focusedIsUrl = focusedWindow?.url != null;
+  const focusedTab = focusedIsUrl ? null : (focusedWindow?.tab ?? null);
+  const focusedTabLabel = focusedIsUrl
+    ? (focusedWindow?.surfaceLabel ?? "Webview")
+    : focusedTab
+      ? TAB_LABELS[focusedTab]
+      : "No focus";
   const totalWindowCount = windows.length;
   const visibleWindowCount = visibleWindows.length;
   const shellFocusAccent = focusedTab
@@ -409,7 +514,9 @@ export function OsShell({
   const windowCountByTab = useMemo(() => {
     const counts: Partial<Record<Tab, number>> = {};
     for (const windowState of windows) {
-      counts[windowState.tab] = (counts[windowState.tab] ?? 0) + 1;
+      if (!windowState.url) {
+        counts[windowState.tab] = (counts[windowState.tab] ?? 0) + 1;
+      }
     }
     return counts;
   }, [windows]);
@@ -433,6 +540,30 @@ export function OsShell({
     };
   }, []);
 
+  // Register the initial window (id=1) with the gateway surface registry.
+  // This runs once on mount. The pending marker was set synchronously in useState.
+  useEffect(() => {
+    const initialWindow = windowsRef.current.find((w) => w.id === 1);
+    if (!initialWindow) return;
+    void surfaceOpenRef.current({
+      kind: "app",
+      contentRef: initialWindow.tab,
+      label: TAB_LABELS[initialWindow.tab],
+      rect: { x: initialWindow.x, y: initialWindow.y, width: initialWindow.width, height: initialWindow.height },
+    }).then((surface) => {
+      pendingSurfaceOpensRef.current.delete(1);
+      if (surface) {
+        ownedSurfaceIdsRef.current.add(surface.surfaceId);
+        setWindows((prev) =>
+          prev.map((w) =>
+            w.id === 1 ? { ...w, surfaceId: surface.surfaceId } : w,
+          ),
+        );
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const connectionBadgeVariant = useMemo(() => {
     if (connectionState === "connected") {
       return "primary";
@@ -442,6 +573,20 @@ export function OsShell({
     }
     return "destructive";
   }, [connectionState]);
+
+  /** Fire-and-forget: sync a window's state to the gateway surface registry. */
+  const syncSurfaceState = useCallback(
+    (win: OsWindow) => {
+      if (!win.surfaceId) return;
+      void surfaceUpdateRef.current({
+        surfaceId: win.surfaceId,
+        state: win.minimized ? "minimized" : "open",
+        rect: { x: win.x, y: win.y, width: win.width, height: win.height },
+        zIndex: win.z,
+      });
+    },
+    [],
+  );
 
   const focusWindow = useCallback(
     (windowId: number, syncTab = true) => {
@@ -464,6 +609,10 @@ export function OsShell({
       setFocusedWindowId(windowId);
       if (syncTab) {
         onSwitchTab(target.tab);
+      }
+      // Surface sync: focus
+      if (target.surfaceId) {
+        void surfaceFocusRef.current(target.surfaceId);
       }
     },
     [onSwitchTab],
@@ -499,6 +648,29 @@ export function OsShell({
       if (syncTab) {
         onSwitchTab(windowTab);
       }
+
+      // Surface sync: register this window with the gateway.
+      // Mark as pending SYNCHRONOUSLY so reconciliation skips duplicates
+      // even if the surfaceOpen RPC resolves before the .then() patches the window.
+      pendingSurfaceOpensRef.current.set(windowId, windowTab);
+      void surfaceOpenRef.current({
+        kind: "app",
+        contentRef: windowTab,
+        label: TAB_LABELS[windowTab],
+        rect: { x: windowState.x, y: windowState.y, width: windowState.width, height: windowState.height },
+      }).then((surface) => {
+        pendingSurfaceOpensRef.current.delete(windowId);
+        if (surface) {
+          ownedSurfaceIdsRef.current.add(surface.surfaceId);
+          // Patch the window with its surfaceId
+          setWindows((prev) =>
+            prev.map((w) =>
+              w.id === windowId ? { ...w, surfaceId: surface.surfaceId } : w,
+            ),
+          );
+        }
+      });
+
       return windowId;
     },
     [focusWindow, onSwitchTab],
@@ -510,6 +682,12 @@ export function OsShell({
       const target = currentWindows.find((windowState) => windowState.id === windowId);
       if (!target) {
         return;
+      }
+
+      // Surface sync: close
+      if (target.surfaceId) {
+        ownedSurfaceIdsRef.current.delete(target.surfaceId);
+        void surfaceCloseRef.current(target.surfaceId);
       }
 
       const remaining = currentWindows.filter((windowState) => windowState.id !== windowId);
@@ -567,6 +745,14 @@ export function OsShell({
         ),
       );
 
+      // Surface sync: minimized
+      if (target.surfaceId) {
+        void surfaceUpdateRef.current({
+          surfaceId: target.surfaceId,
+          state: "minimized",
+        });
+      }
+
       if (focusedWindowIdRef.current !== windowId) {
         return;
       }
@@ -609,6 +795,16 @@ export function OsShell({
       );
       setFocusedWindowId(windowId);
       onSwitchTab(target.tab);
+
+      // Surface sync: restored rect
+      if (target.surfaceId) {
+        void surfaceUpdateRef.current({
+          surfaceId: target.surfaceId,
+          state: "open",
+          rect: restored,
+          zIndex: nextZ,
+        });
+      }
     },
     [onSwitchTab],
   );
@@ -652,6 +848,16 @@ export function OsShell({
       );
       setFocusedWindowId(windowId);
       onSwitchTab(current.tab);
+
+      // Surface sync: maximized rect
+      if (current.surfaceId) {
+        void surfaceUpdateRef.current({
+          surfaceId: current.surfaceId,
+          state: "open",
+          rect: { x: 0, y: 0, width: bounds.width, height: bounds.height },
+          zIndex: nextZ,
+        });
+      }
     },
     [onSwitchTab, restoreWindow],
   );
@@ -694,6 +900,16 @@ export function OsShell({
 
       setFocusedWindowId(windowId);
       onSwitchTab(target.tab);
+
+      // Surface sync: snapped rect
+      if (target.surfaceId) {
+        void surfaceUpdateRef.current({
+          surfaceId: target.surfaceId,
+          state: "open",
+          rect: snappedRect,
+          zIndex: nextZ,
+        });
+      }
     },
     [onSwitchTab],
   );
@@ -874,6 +1090,19 @@ export function OsShell({
 
       if (interaction.type === "drag" && preview) {
         snapWindow(interaction.windowId, preview.zone);
+        // snapWindow handles its own surface sync
+      } else {
+        // Drag without snap, or resize: sync the settled rect
+        const settled = windowsRef.current.find(
+          (w) => w.id === interaction.windowId,
+        );
+        if (settled?.surfaceId) {
+          void surfaceUpdateRef.current({
+            surfaceId: settled.surfaceId,
+            rect: { x: settled.x, y: settled.y, width: settled.width, height: settled.height },
+            zIndex: settled.z,
+          });
+        }
       }
     };
 
@@ -928,6 +1157,111 @@ export function OsShell({
     }
     openWindow(tab, { syncTab: false });
   }, [focusWindow, openWindow, tab]);
+
+  // ── A3: Inbound surface reconciliation ──
+  // When surfaces arrive from other clients or agents, create/destroy local windows.
+  useEffect(() => {
+    const currentWindows = windowsRef.current;
+    const localSurfaceIds = new Set(
+      currentWindows
+        .filter((w) => w.surfaceId)
+        .map((w) => w.surfaceId as string),
+    );
+    const remoteSurfaceIds = new Set(Object.keys(storeSurfaces));
+
+    // 1. Surfaces that were removed externally → close matching local windows
+    for (const win of currentWindows) {
+      if (win.surfaceId && !remoteSurfaceIds.has(win.surfaceId)) {
+        // Only auto-close if we didn't locally initiate the close (owned check)
+        if (!ownedSurfaceIdsRef.current.has(win.surfaceId)) {
+          setWindows((prev) => prev.filter((w) => w.id !== win.id));
+        }
+      }
+    }
+
+    // 2. New surfaces that we don't have a local window for → create one
+    const pendingContentRefs = new Set(pendingSurfaceOpensRef.current.values());
+    for (const [surfaceId, surface] of Object.entries(storeSurfaces)) {
+      if (localSurfaceIds.has(surfaceId)) continue;
+      if (ownedSurfaceIdsRef.current.has(surfaceId)) continue; // we opened it, patch is in flight
+      if (surface.state === "closed") continue;
+      // Skip app surfaces that match a window with a pending surfaceOpen RPC.
+      // This prevents the race where the store gets the surface before the
+      // .then() callback patches the window's surfaceId.
+      if (surface.kind === "app" && pendingContentRefs.has(surface.contentRef)) continue;
+
+      const bounds = getDesktopBounds(desktopRef.current);
+      const windowId = nextWindowIdRef.current++;
+      const nextZ = nextZRef.current++;
+
+      const rect: WindowRect = surface.rect
+        ? clampRectToBounds(surface.rect, bounds)
+        : clampRectToBounds(
+            {
+              x: 36 + (windowId % 7) * 24,
+              y: 34 + (windowId % 7) * 18,
+              width: Math.round(bounds.width * 0.68),
+              height: Math.round(bounds.height * 0.74),
+            },
+            bounds,
+          );
+
+      if (surface.kind === "app") {
+        // App surfaces map to a built-in tab
+        const surfaceTab = surface.contentRef as Tab;
+        if (!TAB_LABELS[surfaceTab]) continue; // invalid tab
+        preloadTabView(surfaceTab);
+
+        setWindows((prev) => [
+          ...prev,
+          {
+            id: windowId,
+            tab: surfaceTab,
+            z: surface.zIndex ?? nextZ,
+            minimized: surface.state === "minimized",
+            maximized: false,
+            snapped: null,
+            surfaceId,
+            ...rect,
+          },
+        ]);
+      } else if (surface.kind === "webview" || surface.kind === "media") {
+        // Webview/media surfaces render as iframe windows
+        setWindows((prev) => [
+          ...prev,
+          {
+            id: windowId,
+            tab: "chat" as Tab, // fallback tab (unused for rendering, needed for type)
+            z: surface.zIndex ?? nextZ,
+            minimized: surface.state === "minimized",
+            maximized: false,
+            snapped: null,
+            surfaceId,
+            url: toEmbedUrl(surface.contentRef),
+            surfaceLabel: surface.label,
+            ...rect,
+          },
+        ]);
+      }
+    }
+
+    // 3. Surface state updates (minimized/open) from remote
+    for (const win of currentWindows) {
+      if (!win.surfaceId) continue;
+      if (ownedSurfaceIdsRef.current.has(win.surfaceId)) continue;
+      const surface = storeSurfaces[win.surfaceId];
+      if (!surface) continue;
+
+      const shouldBeMinimized = surface.state === "minimized";
+      if (win.minimized !== shouldBeMinimized) {
+        setWindows((prev) =>
+          prev.map((w) =>
+            w.id === win.id ? { ...w, minimized: shouldBeMinimized } : w,
+          ),
+        );
+      }
+    }
+  }, [storeSurfaces]);
 
   const commandActions = useMemo<CommandAction[]>(() => {
     const actions: CommandAction[] = [];
@@ -1016,13 +1350,6 @@ export function OsShell({
       run: () => onToggleTheme(),
     });
     actions.push({
-      id: "exit-os-mode",
-      label: "Switch to classic view",
-      hint: "disable OS shell",
-      keywords: ["classic", "mode", "layout"],
-      run: () => onExitOsMode(),
-    });
-    actions.push({
       id: "disconnect",
       label: "Disconnect gateway",
       hint: "close websocket session",
@@ -1037,7 +1364,6 @@ export function OsShell({
     launchTabs,
     minimizeWindow,
     onDisconnect,
-    onExitOsMode,
     onToggleTheme,
     openWindow,
     restoreWindow,
@@ -1198,12 +1524,8 @@ export function OsShell({
 
   return (
     <div className="os-shell" style={shellStyle}>
-      {/* ── Ambient Background ── */}
-      <div className="os-ambient">
-        <div className="os-orb os-orb-1" />
-        <div className="os-orb os-orb-2" />
-        <div className="os-orb os-orb-3" />
-      </div>
+      {/* ── Wallpaper Background ── */}
+      <WallpaperBg wallpaper={wallpaper} onChangeWallpaper={onChangeWallpaper} />
 
       {/* ── Status Bar (minimal, macOS-style) ── */}
       <header className="os-statusbar">
@@ -1213,14 +1535,6 @@ export function OsShell({
           <span className="os-statusbar-label">{connectionStateLabel}</span>
         </div>
         <div className="os-statusbar-right">
-          <button
-            type="button"
-            className="os-statusbar-btn"
-            onClick={onExitOsMode}
-            title="Switch to classic view"
-          >
-            Classic
-          </button>
           <button
             type="button"
             className="os-statusbar-btn"
@@ -1246,73 +1560,102 @@ export function OsShell({
           />
         ) : null}
 
-        {visibleWindows.map((windowState) => (
-          <section
-            key={windowState.id}
-            className={`os-window ${
-              focusedWindowId === windowState.id ? "focused" : ""
-            } ${windowState.maximized ? "maximized" : ""}`}
-            style={
-              {
-                "--os-tab-accent": TAB_ACCENTS[windowState.tab],
-                transform: `translate(${windowState.x}px, ${windowState.y}px)`,
-                width: `${windowState.width}px`,
-                height: `${windowState.height}px`,
-                zIndex: windowState.z,
-              } as CSSProperties
-            }
-            onMouseDown={() => focusWindow(windowState.id)}
-          >
-            <div
-              className="os-window-titlebar"
-              onPointerDown={(event) => beginDrag(event, windowState.id)}
-              onDoubleClick={() => toggleWindowMaximized(windowState.id)}
+        {visibleWindows.map((windowState) => {
+          const isUrlWindow = Boolean(windowState.url);
+          const windowTitle = isUrlWindow
+            ? (windowState.surfaceLabel ?? "Webview")
+            : TAB_LABELS[windowState.tab];
+          const accentColor = isUrlWindow
+            ? "hsl(260 70% 62%)"
+            : TAB_ACCENTS[windowState.tab];
+
+          return (
+            <section
+              key={windowState.id}
+              className={`os-window ${
+                focusedWindowId === windowState.id ? "focused" : ""
+              } ${windowState.maximized ? "maximized" : ""}`}
+              style={
+                {
+                  "--os-tab-accent": accentColor,
+                  transform: `translate(${windowState.x}px, ${windowState.y}px)`,
+                  width: `${windowState.width}px`,
+                  height: `${windowState.height}px`,
+                  zIndex: windowState.z,
+                } as CSSProperties
+              }
+              onMouseDown={() => focusWindow(windowState.id)}
             >
-              <div className="os-window-actions">
-                <button
-                  type="button"
-                  className="os-window-action close"
-                  data-window-action
-                  aria-label={`Close ${TAB_LABELS[windowState.tab]}`}
-                  onClick={() => closeWindow(windowState.id)}
-                />
-                <button
-                  type="button"
-                  className="os-window-action minimize"
-                  data-window-action
-                  aria-label={`Minimize ${TAB_LABELS[windowState.tab]}`}
-                  onClick={() => minimizeWindow(windowState.id)}
-                />
-                <button
-                  type="button"
-                  className="os-window-action maximize"
-                  data-window-action
-                  aria-label={`Toggle maximize ${TAB_LABELS[windowState.tab]}`}
-                  onClick={() => toggleWindowMaximized(windowState.id)}
-                />
-              </div>
-              <div className="os-window-title">
-                <span className="os-window-title-label">{TAB_LABELS[windowState.tab]}</span>
-              </div>
-            </div>
-
-            <div className="os-window-content">
-              <TabView tab={windowState.tab} />
-            </div>
-
-            {!windowState.maximized
-              ? RESIZE_HANDLES.map((handle) => (
-                  <div
-                    key={handle.edge}
-                    className={handle.className}
-                    onPointerDown={(event) =>
-                      beginResize(event, windowState.id, handle.edge)
-                    }
+              <div
+                className="os-window-titlebar"
+                onPointerDown={(event) => beginDrag(event, windowState.id)}
+                onDoubleClick={() => toggleWindowMaximized(windowState.id)}
+              >
+                <div className="os-window-actions">
+                  <button
+                    type="button"
+                    className="os-window-action close"
+                    data-window-action
+                    aria-label={`Close ${windowTitle}`}
+                    onClick={() => closeWindow(windowState.id)}
                   />
-                ))
-              : null}
-          </section>
-        ))}
+                  <button
+                    type="button"
+                    className="os-window-action minimize"
+                    data-window-action
+                    aria-label={`Minimize ${windowTitle}`}
+                    onClick={() => minimizeWindow(windowState.id)}
+                  />
+                  <button
+                    type="button"
+                    className="os-window-action maximize"
+                    data-window-action
+                    aria-label={`Toggle maximize ${windowTitle}`}
+                    onClick={() => toggleWindowMaximized(windowState.id)}
+                  />
+                </div>
+                <div className="os-window-title">
+                  <span className="os-window-title-label">{windowTitle}</span>
+                </div>
+              </div>
+
+              <div className="os-window-content">
+                {isUrlWindow ? (
+                  <div className="os-window-iframe-wrap">
+                    <iframe
+                      src={windowState.url}
+                      title={windowTitle}
+                      className="os-window-iframe"
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
+                      allow="autoplay; fullscreen; picture-in-picture"
+                    />
+                    <div className="os-window-iframe-fallback">
+                      <span>{windowTitle}</span>
+                      <a href={windowState.url} target="_blank" rel="noopener noreferrer">
+                        Open externally
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                      </a>
+                    </div>
+                  </div>
+                ) : (
+                  <TabView tab={windowState.tab} />
+                )}
+              </div>
+
+              {!windowState.maximized
+                ? RESIZE_HANDLES.map((handle) => (
+                    <div
+                      key={handle.edge}
+                      className={handle.className}
+                      onPointerDown={(event) =>
+                        beginResize(event, windowState.id, handle.edge)
+                      }
+                    />
+                  ))
+                : null}
+            </section>
+          );
+        })}
 
         {!visibleWindows.length ? (
           <div className="os-desktop-empty">
@@ -1344,6 +1687,38 @@ export function OsShell({
               </button>
             );
           })}
+
+          {/* ── Dynamic surface windows (webview/media) ── */}
+          {surfaceWindows.length > 0 ? (
+            <>
+              <div className="os-dock-separator" />
+              {surfaceWindows.map((sw) => {
+                const isFocused = focusedWindowId === sw.id;
+                return (
+                  <button
+                    key={`surface-${sw.id}`}
+                    type="button"
+                    className={`os-dock-item open ${isFocused ? "focused" : ""}`}
+                    onClick={() => {
+                      if (sw.minimized) {
+                        setWindows((prev) =>
+                          prev.map((w) =>
+                            w.id === sw.id ? { ...w, minimized: false } : w,
+                          ),
+                        );
+                      }
+                      focusWindow(sw.id);
+                    }}
+                    title={sw.surfaceLabel ?? "Webview"}
+                  >
+                    <span className="os-dock-item-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    </span>
+                  </button>
+                );
+              })}
+            </>
+          ) : null}
         </div>
       </div>
 

@@ -36,6 +36,18 @@ import type {
   TransferDoneParams,
 } from "./transfer";
 import type {
+  SurfaceOpenParams,
+  SurfaceOpenResult,
+  SurfaceCloseParams,
+  SurfaceCloseResult,
+  SurfaceUpdateParams,
+  SurfaceUpdateResult,
+  SurfaceFocusParams,
+  SurfaceFocusResult,
+  SurfaceListParams,
+  SurfaceListResult,
+} from "./surface";
+import type {
   CronJob,
   CronJobCreate,
   CronJobPatch,
@@ -423,6 +435,31 @@ export type RpcMethods = {
       path: string;
       deleted: true;
     };
+  };
+
+  "surface.open": {
+    params: SurfaceOpenParams;
+    result: SurfaceOpenResult;
+  };
+
+  "surface.close": {
+    params: SurfaceCloseParams;
+    result: SurfaceCloseResult;
+  };
+
+  "surface.update": {
+    params: SurfaceUpdateParams;
+    result: SurfaceUpdateResult;
+  };
+
+  "surface.focus": {
+    params: SurfaceFocusParams;
+    result: SurfaceFocusResult;
+  };
+
+  "surface.list": {
+    params: SurfaceListParams;
+    result: SurfaceListResult;
   };
 
   "tool.request": {

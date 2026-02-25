@@ -19,6 +19,7 @@ import type {
   EventFrame,
   Message,
   SessionRegistryEntry,
+  Surface,
   Tab,
   ToolDefinition,
 } from "../../ui/types";
@@ -96,8 +97,6 @@ type ReactUiStore = {
   showConnectScreen: boolean;
 
   tab: Tab;
-  navDrawerOpen: boolean;
-  isMobileLayout: boolean;
 
   chatMessages: Message[];
   chatLoading: boolean;
@@ -144,6 +143,8 @@ type ReactUiStore = {
   pairingRequests: PendingPair[];
   pairingLoading: boolean;
 
+  surfaces: Record<string, Surface>;
+
   client: GatewayClient | null;
 
   initialize: () => void;
@@ -151,11 +152,6 @@ type ReactUiStore = {
 
   syncTabFromLocation: () => void;
   switchTab: (tab: Tab) => void;
-
-  setMobileLayout: (isMobile: boolean) => void;
-  setNavDrawerOpen: (open: boolean) => void;
-  toggleNavDrawer: () => void;
-  closeNavDrawer: () => void;
 
   startConnection: () => void;
   stopConnection: () => void;
@@ -215,6 +211,25 @@ type ReactUiStore = {
   pairReject: (channel: string, senderId: string) => Promise<void>;
 
   updateSettings: (updates: Partial<UiSettings>) => void;
+
+  surfaceOpen: (params: {
+    kind: string;
+    contentRef: string;
+    label?: string;
+    contentData?: unknown;
+    targetClientId?: string;
+    rect?: { x: number; y: number; width: number; height: number };
+  }) => Promise<Surface | null>;
+  surfaceClose: (surfaceId: string) => Promise<void>;
+  surfaceUpdate: (params: {
+    surfaceId: string;
+    state?: string;
+    rect?: { x: number; y: number; width: number; height: number };
+    label?: string;
+    zIndex?: number;
+  }) => Promise<void>;
+  surfaceFocus: (surfaceId: string) => Promise<void>;
+  surfaceList: (targetClientId?: string) => Promise<void>;
 
   clearDebugLog: () => void;
   rpcRequest: (method: string, params?: unknown) => Promise<unknown>;
@@ -289,8 +304,6 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
   showConnectScreen: true,
 
   tab: getCurrentTab(),
-  navDrawerOpen: false,
-  isMobileLayout: false,
 
   chatMessages: [],
   chatLoading: false,
@@ -337,6 +350,8 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
   pairingRequests: [],
   pairingLoading: false,
 
+  surfaces: {},
+
   client: null,
 
   initialize: () => {
@@ -370,7 +385,6 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
   syncTabFromLocation: () => {
     const tab = getCurrentTab();
     set({ tab });
-    get().closeNavDrawer();
     void get().loadTabData(tab);
     syncChannelsAutoRefresh(get);
   },
@@ -381,33 +395,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
       navigateTo(tab);
       void get().loadTabData(tab);
     }
-    get().closeNavDrawer();
     syncChannelsAutoRefresh(get);
-  },
-
-  setMobileLayout: (isMobile) => {
-    set({ isMobileLayout: isMobile });
-    if (!isMobile) {
-      set({ navDrawerOpen: false });
-    }
-  },
-
-  setNavDrawerOpen: (open) => {
-    set({ navDrawerOpen: open });
-  },
-
-  toggleNavDrawer: () => {
-    if (!get().isMobileLayout) {
-      return;
-    }
-    set({ navDrawerOpen: !get().navDrawerOpen });
-  },
-
-  closeNavDrawer: () => {
-    if (!get().navDrawerOpen) {
-      return;
-    }
-    set({ navDrawerOpen: false });
   },
 
   startConnection: () => {
@@ -437,6 +425,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
             get().loadTools(),
             get().loadSessions(),
             get().loadChannels(),
+            get().surfaceList(),
           ]).then(() => get().loadTabData(get().tab));
         } else {
           syncChannelsAutoRefresh(get);
@@ -499,6 +488,23 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
               currentRunId: matchesCurrentRun ? null : get().currentRunId,
             });
           }
+        } else if (event.event === "surface.opened") {
+          const { surface } = event.payload as { surface: Surface };
+          set((state) => ({
+            surfaces: { ...state.surfaces, [surface.surfaceId]: surface },
+          }));
+        } else if (event.event === "surface.closed") {
+          const { surfaceId } = event.payload as { surfaceId: string };
+          set((state) => {
+            const next = { ...state.surfaces };
+            delete next[surfaceId];
+            return { surfaces: next };
+          });
+        } else if (event.event === "surface.updated") {
+          const { surface } = event.payload as { surface: Surface };
+          set((state) => ({
+            surfaces: { ...state.surfaces, [surface.surfaceId]: surface },
+          }));
         }
       },
     });
@@ -1140,6 +1146,90 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
 
     if (updates.gatewayUrl || updates.token !== undefined) {
       get().startConnection();
+    }
+  },
+
+  surfaceOpen: async (params) => {
+    const client = get().client;
+    if (!client) return null;
+    try {
+      const res = await client.surfaceOpen(params);
+      if (res.ok && res.payload) {
+        const { surface } = res.payload as { surface: Surface };
+        set((state) => ({
+          surfaces: { ...state.surfaces, [surface.surfaceId]: surface },
+        }));
+        return surface;
+      }
+    } catch (e) {
+      console.error("[Store] surfaceOpen failed:", e);
+    }
+    return null;
+  },
+
+  surfaceClose: async (surfaceId) => {
+    const client = get().client;
+    if (!client) return;
+    try {
+      await client.surfaceClose(surfaceId);
+      // Optimistic removal (event will confirm)
+      set((state) => {
+        const next = { ...state.surfaces };
+        delete next[surfaceId];
+        return { surfaces: next };
+      });
+    } catch (e) {
+      console.error("[Store] surfaceClose failed:", e);
+    }
+  },
+
+  surfaceUpdate: async (params) => {
+    const client = get().client;
+    if (!client) return;
+    try {
+      const res = await client.surfaceUpdate(params);
+      if (res.ok && res.payload) {
+        const { surface } = res.payload as { surface: Surface };
+        set((state) => ({
+          surfaces: { ...state.surfaces, [surface.surfaceId]: surface },
+        }));
+      }
+    } catch (e) {
+      console.error("[Store] surfaceUpdate failed:", e);
+    }
+  },
+
+  surfaceFocus: async (surfaceId) => {
+    const client = get().client;
+    if (!client) return;
+    try {
+      const res = await client.surfaceFocus(surfaceId);
+      if (res.ok && res.payload) {
+        const { surface } = res.payload as { surface: Surface };
+        set((state) => ({
+          surfaces: { ...state.surfaces, [surface.surfaceId]: surface },
+        }));
+      }
+    } catch (e) {
+      console.error("[Store] surfaceFocus failed:", e);
+    }
+  },
+
+  surfaceList: async (targetClientId) => {
+    const client = get().client;
+    if (!client) return;
+    try {
+      const res = await client.surfaceList(targetClientId);
+      if (res.ok && res.payload) {
+        const { surfaces } = res.payload as { surfaces: Surface[] };
+        const map: Record<string, Surface> = {};
+        for (const s of surfaces) {
+          map[s.surfaceId] = s;
+        }
+        set({ surfaces: map });
+      }
+    } catch (e) {
+      console.error("[Store] surfaceList failed:", e);
     }
   },
 

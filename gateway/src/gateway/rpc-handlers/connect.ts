@@ -156,6 +156,11 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         "channel.login",
         "channel.logout",
         "channels.list",
+        "surface.open",
+        "surface.close",
+        "surface.update",
+        "surface.focus",
+        "surface.list",
       ],
       events: [
         "chat",
@@ -163,6 +168,9 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         "tool.result",
         "logs.get",
         "channel.outbound",
+        "surface.opened",
+        "surface.closed",
+        "surface.updated",
       ],
     },
   };

@@ -134,6 +134,20 @@
   font-size: var(--font-size-sm);
 }
 
+/* ── Light Theme Overrides ── */
+[data-theme="light"] .workspace-editor {
+  background: rgba(0, 0, 0, 0.03);
+}
+[data-theme="light"] .connect-screen {
+  background: rgba(255, 255, 255, 0.4);
+}
+[data-theme="light"] .connect-header h1 {
+  background: linear-gradient(135deg, #1a1a1e 0%, #52525b 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
 /* ── Responsive ── */
 @media (max-width: 720px) {
   .workspace-layout {

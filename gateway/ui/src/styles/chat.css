@@ -257,6 +257,41 @@
 .chat-empty-title { font-size: var(--font-size-xl); font-weight: 600; margin-bottom: var(--space-2); }
 .chat-empty-description { color: var(--text-muted); max-width: 400px; }
 
+/* ── Light Theme Overrides ── */
+[data-theme="light"] .session-bar {
+  background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .message.assistant .message-bubble {
+  background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .message.user .message-content code {
+  background: rgba(255, 255, 255, 0.25);
+}
+[data-theme="light"] .message.user .message-content pre {
+  background: rgba(255, 255, 255, 0.18);
+}
+[data-theme="light"] .thinking-block {
+  background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .tool-call {
+  background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .tool-call-header {
+  background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .tool-result-json {
+  background: rgba(0, 0, 0, 0.03);
+}
+[data-theme="light"] .chat-input-area {
+  background: rgba(0, 0, 0, 0.03);
+}
+[data-theme="light"] .chat-input {
+  background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .chat-input:focus {
+  background: rgba(0, 0, 0, 0.06);
+}
+
 /* ── Responsive ── */
 @media (max-width: 720px) {
   .chat-messages { padding: var(--space-3); gap: var(--space-3); }
