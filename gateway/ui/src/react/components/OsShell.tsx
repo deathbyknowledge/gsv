@@ -417,6 +417,7 @@ export function OsShell({
 }: OsShellProps) {
   // ── Surface protocol integration ──
   const storeSurfaces = useReactUiStore((s) => s.surfaces);
+  const storeClientId = useReactUiStore((s) => s.clientId);
   const storeSurfaceOpen = useReactUiStore((s) => s.surfaceOpen);
   const storeSurfaceClose = useReactUiStore((s) => s.surfaceClose);
   const storeSurfaceUpdate = useReactUiStore((s) => s.surfaceUpdate);
@@ -1185,6 +1186,9 @@ export function OsShell({
       if (localSurfaceIds.has(surfaceId)) continue;
       if (ownedSurfaceIdsRef.current.has(surfaceId)) continue; // we opened it, patch is in flight
       if (surface.state === "closed") continue;
+      // Only create windows for surfaces targeted at this client.
+      // Surfaces targeted at other clients or display nodes are not ours to render.
+      if (surface.targetClientId && storeClientId && surface.targetClientId !== storeClientId) continue;
       // Skip app surfaces that match a window with a pending surfaceOpen RPC.
       // This prevents the race where the store gets the surface before the
       // .then() callback patches the window's surfaceId.
@@ -1261,7 +1265,7 @@ export function OsShell({
         );
       }
     }
-  }, [storeSurfaces]);
+  }, [storeSurfaces, storeClientId]);
 
   const commandActions = useMemo<CommandAction[]>(() => {
     const actions: CommandAction[] = [];

@@ -46,6 +46,13 @@ export type Surface = {
   zIndex?: number;
   createdAt: number;
   updatedAt: number;
+  // Browser profile persistence (webview surfaces)
+  profileId?: string;         // derived from URL origin (e.g. "github.com")
+  profileVersion?: number;    // monotonic, incremented on each R2 upload
+  profileLock?: {             // set when a node has the profile open
+    nodeId: string;
+    surfaceId: string;
+  };
 };
 
 // ── RPC params / results ──
@@ -103,6 +110,27 @@ export type SurfaceListResult = {
   count: number;
 };
 
+// ── Eval (JavaScript execution in webview surfaces) ──
+
+export type SurfaceEvalParams = {
+  surfaceId: string;
+  /** JavaScript code to execute in the webview context. */
+  script: string;
+  /** Unique eval ID for correlating the async result. Auto-generated if omitted. */
+  evalId?: string;
+};
+
+export type SurfaceEvalResult = {
+  evalId: string;
+  surfaceId: string;
+  /** True if the script executed without throwing. */
+  ok: boolean;
+  /** JSON-serializable return value from the script (if ok). */
+  result?: unknown;
+  /** Error message (if !ok). */
+  error?: string;
+};
+
 // ── Event payloads ──
 
 export type SurfaceOpenedPayload = {
@@ -112,8 +140,25 @@ export type SurfaceOpenedPayload = {
 export type SurfaceClosedPayload = {
   surfaceId: string;
   targetClientId: string;
+  profileId?: string;
 };
 
 export type SurfaceUpdatedPayload = {
   surface: Surface;
+};
+
+/** Sent by gateway to the target node to request JS execution. */
+export type SurfaceEvalRequestPayload = {
+  evalId: string;
+  surfaceId: string;
+  script: string;
+};
+
+/** Sent by the node back to gateway with the eval result. */
+export type SurfaceEvalResultPayload = {
+  evalId: string;
+  surfaceId: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
 };

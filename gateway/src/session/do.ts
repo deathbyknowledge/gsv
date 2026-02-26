@@ -2105,10 +2105,19 @@ export class Session extends DurableObject<Env> {
           bucket: this.env.STORAGE,
           agentId,
           gateway,
+          callId: toolCall.id,
+          sessionKey: this.meta.sessionKey,
         },
         toolCall.name,
         toolCall.args,
       );
+
+      // Deferred tools (e.g. eval) will have their result routed back
+      // asynchronously via toolResult(). Don't set result/error here.
+      if (result.deferred) {
+        console.log(`[Session] Native tool ${toolCall.name} deferred (callId=${toolCall.id})`);
+        return;
+      }
 
       if (result.ok) {
         toolCall.result = result.result;

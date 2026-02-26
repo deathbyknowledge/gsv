@@ -144,6 +144,8 @@ type ReactUiStore = {
   pairingLoading: boolean;
 
   surfaces: Record<string, Surface>;
+  /** This web client's stable identity (persisted in localStorage). */
+  clientId: string | null;
 
   client: GatewayClient | null;
 
@@ -351,6 +353,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
   pairingLoading: false,
 
   surfaces: {},
+  clientId: null,
 
   client: null,
 
@@ -413,7 +416,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
       url: getGatewayUrl(get().settings),
       token: get().settings.token || undefined,
       onStateChange: (state) => {
-        set({ connectionState: state });
+        set({ connectionState: state, clientId: client.clientId });
         if (state === "connected") {
           localStorage.setItem("gsv-connected-once", "true");
           set({
@@ -425,7 +428,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
             get().loadTools(),
             get().loadSessions(),
             get().loadChannels(),
-            get().surfaceList(),
+            get().surfaceList(client.clientId),
           ]).then(() => get().loadTabData(get().tab));
         } else {
           syncChannelsAutoRefresh(get);

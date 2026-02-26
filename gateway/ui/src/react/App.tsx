@@ -50,7 +50,7 @@ export function App() {
       onSwitchTab={switchTab}
       connectionState={connectionState}
       theme={settings.theme}
-      wallpaper={settings.wallpaper ?? "starfield"}
+      wallpaper={settings.wallpaper ?? "mesh"}
       onToggleTheme={() =>
         updateSettings({
           theme: settings.theme === "dark" ? "light" : "dark",

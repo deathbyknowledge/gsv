@@ -22,11 +22,6 @@
   overflow: hidden;
 }
 
-/* Starfield: deep dark space, stars rendered via canvas */
-.os-wp-starfield {
-  background: radial-gradient(ellipse at 50% 40%, #0c0c18 0%, #050508 60%, #000 100%);
-}
-
 /* Mesh gradient: smooth multi-color gradient, slow shift */
 .os-wp-mesh {
   background: #0a0a10;
@@ -416,8 +411,74 @@
   padding: var(--space-4);
 }
 .os-window-content .view-container { max-width: none; }
-.os-window-content .chat-container { min-height: 100%; height: 100%; padding: 0; }
+.os-window-content .chat-shell { min-height: 100%; height: 100%; }
+/* Chat lives edge-to-edge inside the window — remove content padding */
+.os-window-content:has(.chat-shell) { padding: 0; overflow: hidden; }
 .os-window-content .workspace-layout { min-height: 100%; }
+
+/* ── Global view chrome overrides ──
+   Strip redundant card/section chrome inside windows.
+   The window itself provides the glass surface — nested glass is visual noise. */
+
+/* Section headers: shrink titles so they don't compete with the window titlebar.
+   First section-header (top of view) is a toolbar row; subsequent ones are sub-dividers. */
+.os-window-content .section-header {
+  margin-bottom: var(--space-3);
+}
+.os-window-content .section-header h2,
+.os-window-content .section-header .section-title,
+.os-window-content .section-header > span:first-child {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Cards: strip glass bg / border / backdrop-filter so content sits directly on the window surface */
+.os-window-content .card {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-lg);
+}
+.os-window-content .card-header {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: var(--space-2) var(--space-4);
+}
+.os-window-content .card-footer {
+  background: transparent;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Cards grid: tighter gap */
+.os-window-content .cards-grid {
+  gap: var(--space-3);
+}
+
+/* Logs output: let it blend */
+.os-window-content .logs-output {
+  background: rgba(0, 0, 0, 0.15);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Workspace editor: subtler bg */
+.os-window-content .workspace-editor {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* Tabs inside windows: subtler border */
+.os-window-content .tabs {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Tables inside windows: subtler row borders */
+.os-window-content .table th,
+.os-window-content .table td {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
 
 /* Iframe windows (webview / media surfaces) */
 .os-window-iframe-wrap {
@@ -881,6 +942,31 @@ body.os-dragging * {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* ── Global view chrome overrides (light) ── */
+[data-theme="light"] .os-window-content .card {
+  border-color: rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .os-window-content .card-header {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .os-window-content .card-footer {
+  border-top-color: rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .os-window-content .logs-output {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .os-window-content .workspace-editor {
+  background: rgba(0, 0, 0, 0.03);
+}
+[data-theme="light"] .os-window-content .tabs {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .os-window-content .table th,
+[data-theme="light"] .os-window-content .table td {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
 /* ── Iframe fallback ── */
 [data-theme="light"] .os-window-iframe-fallback {
   background: rgba(245, 245, 248, 0.95);
@@ -992,9 +1078,6 @@ body.os-dragging * {
 }
 
 /* ── Light-theme Wallpaper overrides ── */
-[data-theme="light"] .os-wp-starfield {
-  background: radial-gradient(ellipse at 50% 40%, #dde0ea 0%, #c8cdd8 60%, #b8bece 100%);
-}
 [data-theme="light"] .os-wp-mesh {
   background: #dce0ea;
 }

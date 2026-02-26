@@ -161,6 +161,9 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         "surface.update",
         "surface.focus",
         "surface.list",
+        "surface.eval",
+        "surface.eval.result",
+        "fs.authorize",
       ],
       events: [
         "chat",
@@ -171,6 +174,8 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         "surface.opened",
         "surface.closed",
         "surface.updated",
+        "surface.eval",
+        "surface.eval.result",
       ],
     },
   };

@@ -50,7 +50,7 @@ rustls_crate = { package = "rustls", version = "0.23", default-features = false,
 
 # Display feature: native webview windows for surface rendering
 tao = { version = "0.34", optional = true }
-wry = { version = "0.54", optional = true, default-features = false }
+wry = { version = "0.54", optional = true, default-features = false, features = ["fullscreen"] }
 url = { version = "2", optional = true }
 urlencoding = { version = "2", optional = true }
 

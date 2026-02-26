@@ -65,13 +65,15 @@ export function getNativeToolDefinitions(): ToolDefinition[] {
 
 /**
  * Execute a native tool
- * Returns { ok, result?, error? }
+ * Returns { ok, result?, error?, deferred? }
  */
 export async function executeNativeTool(
   context: {
     bucket: R2Bucket;
     agentId: string;
     gateway?: NativeToolExecutionContext["gateway"];
+    callId?: string;
+    sessionKey?: string;
   },
   toolName: string,
   args: Record<string, unknown>,

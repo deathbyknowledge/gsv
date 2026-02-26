@@ -17,7 +17,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 function DisplaySettings() {
   const settings = useReactUiStore((s) => s.settings);
   const updateSettings = useReactUiStore((s) => s.updateSettings);
-  const currentWallpaper = settings.wallpaper ?? "starfield";
+  const currentWallpaper = settings.wallpaper ?? "mesh";
 
   return (
     <div className="settings-display">

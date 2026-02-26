@@ -2,10 +2,9 @@
  * Local Storage for UI Settings
  */
 
-export type Wallpaper = "starfield" | "mesh" | "aurora" | "dark-grain" | "grid";
+export type Wallpaper = "mesh" | "aurora" | "dark-grain" | "grid";
 
 export const WALLPAPER_OPTIONS: { id: Wallpaper; label: string; description: string }[] = [
-  { id: "starfield", label: "Starfield", description: "Drifting stars on deep space" },
   { id: "mesh", label: "Mesh Gradient", description: "Smooth shifting color gradient" },
   { id: "aurora", label: "Aurora", description: "Flowing bands of polar light" },
   { id: "dark-grain", label: "Dark Grain", description: "Near-black with subtle noise" },
@@ -38,7 +37,7 @@ const DEFAULT_SETTINGS: UiSettings = {
   token: "",
   sessionKey: "agent:main:web:dm:local",
   theme: "dark",
-  wallpaper: "starfield",
+  wallpaper: "mesh",
 };
 
 /**

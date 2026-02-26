@@ -1,7 +1,6 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@cloudflare/kumo/components/button";
 import type {
   ContentBlock,
   ImageBlock,
@@ -23,9 +22,7 @@ function formatTime(ts: number): string {
 }
 
 function countLines(text: string): number {
-  if (!text) {
-    return 0;
-  }
+  if (!text) return 0;
   return text.split("\n").length;
 }
 
@@ -38,15 +35,9 @@ function shouldCollapseJson(jsonText: string): boolean {
 
 function formatJsonIfPossible(text: string): string | null {
   const trimmed = text.trim();
-  if (!trimmed) {
-    return null;
-  }
-
+  if (!trimmed) return null;
   const first = trimmed[0];
-  if (first !== "{" && first !== "[" && first !== "\"") {
-    return null;
-  }
-
+  if (first !== "{" && first !== "[" && first !== "\"") return null;
   try {
     const parsed = JSON.parse(trimmed);
     return JSON.stringify(parsed, null, 2);
@@ -56,33 +47,24 @@ function formatJsonIfPossible(text: string): string | null {
 }
 
 function getImageSource(block: ImageBlock): string | null {
-  if (block.data) {
-    return `data:${block.mimeType || "image/png"};base64,${block.data}`;
-  }
-  if (block.url) {
-    return block.url;
-  }
+  if (block.data) return `data:${block.mimeType || "image/png"};base64,${block.data}`;
+  if (block.url) return block.url;
   if (block.r2Key) {
     const fileName = block.r2Key.split("/").pop();
-    if (fileName) {
-      return `/media/${fileName}`;
-    }
+    if (fileName) return `/media/${fileName}`;
   }
   return null;
 }
 
 function MarkdownContent({ text }: { text: string }) {
   const safeHtml = useMemo(() => {
-    const rendered = marked.parse(text, {
-      gfm: true,
-      breaks: true,
-    }) as string;
+    const rendered = marked.parse(text, { gfm: true, breaks: true }) as string;
     return DOMPurify.sanitize(rendered);
   }, [text]);
 
   return (
     <div
-      className="message-content"
+      className="chat-md"
       dangerouslySetInnerHTML={{ __html: safeHtml }}
     />
   );
@@ -90,7 +72,7 @@ function MarkdownContent({ text }: { text: string }) {
 
 function ThinkingContent({ block }: { block: ThinkingBlock }) {
   return (
-    <details className="thinking-block">
+    <details className="chat-thinking">
       <summary>Thinking</summary>
       <pre>{block.text}</pre>
     </details>
@@ -100,115 +82,78 @@ function ThinkingContent({ block }: { block: ThinkingBlock }) {
 function ImageContent({ block }: { block: ImageBlock }) {
   const src = getImageSource(block);
   if (!src) {
-    return (
-      <div className="message-content">
-        <p className="muted">[image unavailable]</p>
-      </div>
-    );
+    return <p className="muted">[image unavailable]</p>;
   }
-
   return (
-    <div className="message-image-wrap">
-      <img className="message-image" src={src} alt="message image" loading="lazy" />
+    <div className="chat-img-wrap">
+      <img className="chat-img" src={src} alt="message image" loading="lazy" />
     </div>
   );
 }
 
 function renderContentBlock(block: ContentBlock, key: string) {
-  if (block.type === "text") {
-    return <MarkdownContent key={key} text={block.text} />;
-  }
-  if (block.type === "image") {
-    return <ImageContent key={key} block={block} />;
-  }
-  if (block.type === "thinking") {
-    return <ThinkingContent key={key} block={block} />;
-  }
+  if (block.type === "text") return <MarkdownContent key={key} text={block.text} />;
+  if (block.type === "image") return <ImageContent key={key} block={block} />;
+  if (block.type === "thinking") return <ThinkingContent key={key} block={block} />;
   return null;
 }
 
 function ToolCallCard({ toolCall }: { toolCall: ToolCallBlock }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="tool-call">
-      <div className="tool-call-header">
-        <span className="tool-call-name">
-          <span>🔧</span>
-          <span>{toolCall.name}</span>
-        </span>
-        <span className="tool-call-status">
-          <span className="pill pill-success">called</span>
-        </span>
-      </div>
-      <div className="tool-call-body">
-        <pre>
+    <div className="chat-tool">
+      <button type="button" className="chat-tool-header" onClick={() => setOpen(!open)}>
+        <span className="chat-tool-name">{toolCall.name}</span>
+        <span className="chat-tool-badge">called</span>
+        <svg className={`chat-tool-chevron ${open ? "open" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      {open ? (
+        <pre className="chat-tool-body">
           <code>{JSON.stringify(toolCall.arguments, null, 2)}</code>
         </pre>
-      </div>
+      ) : null}
     </div>
   );
 }
 
-function ToolResultContent({
-  block,
-  blockKey,
-}: {
-  block: ContentBlock;
-  blockKey: string;
-}) {
-  if (block.type !== "text") {
-    return renderContentBlock(block, blockKey);
-  }
+function ToolResultContent({ block, blockKey }: { block: ContentBlock; blockKey: string }) {
+  if (block.type !== "text") return renderContentBlock(block, blockKey);
 
   const jsonText = formatJsonIfPossible(block.text);
   if (jsonText) {
     if (shouldCollapseJson(jsonText)) {
       const lineCount = countLines(jsonText);
       return (
-        <details className="tool-result-json-details">
+        <details className="chat-tool-json-details">
           <summary>
-            <span className="tool-result-json-toggle-closed">
-              Show JSON result ({lineCount} lines)
-            </span>
-            <span className="tool-result-json-toggle-open">Hide JSON result</span>
+            <span className="chat-tool-json-toggle-closed">Show result ({lineCount} lines)</span>
+            <span className="chat-tool-json-toggle-open">Hide result</span>
           </summary>
-          <pre className="tool-result-json">
-            <code>{jsonText}</code>
-          </pre>
+          <pre className="chat-tool-json"><code>{jsonText}</code></pre>
         </details>
       );
     }
-
-    return (
-      <pre className="tool-result-json">
-        <code>{jsonText}</code>
-      </pre>
-    );
+    return <pre className="chat-tool-json"><code>{jsonText}</code></pre>;
   }
 
   return <MarkdownContent text={block.text} />;
 }
 
-function MessageBubble({ message }: { message: Message }) {
-  if (message.role === "toolResult") {
-    const toolMessage = message as ToolResultMessage;
-    return (
-      <div className="message assistant">
-        <div
-          className={`message-bubble tool-result-bubble ${
-            toolMessage.isError ? "tool-result-error" : ""
-          }`}
-        >
-          <div className="tool-result-header">
-            <span className="tool-call-name">
-              <span>🔧</span>
-              <span>{toolMessage.toolName}</span>
-            </span>
-            <span className={`pill ${toolMessage.isError ? "pill-danger" : "pill-success"}`}>
-              {toolMessage.isError ? "error" : "result"}
-            </span>
-          </div>
-          <div className="tool-result-body">
-            {toolMessage.content.map((block, index) => (
+function ToolResultBubble({ message }: { message: ToolResultMessage }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="chat-msg chat-msg-assistant">
+      <div className="chat-tool">
+        <button type="button" className="chat-tool-header" onClick={() => setOpen(!open)}>
+          <span className="chat-tool-name">{message.toolName}</span>
+          <span className={`chat-tool-badge ${message.isError ? "error" : ""}`}>
+            {message.isError ? "error" : "result"}
+          </span>
+          <svg className={`chat-tool-chevron ${open ? "open" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        {open ? (
+          <div className="chat-tool-result-body">
+            {message.content.map((block, index) => (
               <ToolResultContent
                 key={`tool-result-${index}`}
                 block={block}
@@ -216,14 +161,18 @@ function MessageBubble({ message }: { message: Message }) {
               />
             ))}
           </div>
-        </div>
-        {toolMessage.timestamp ? (
-          <div className="message-meta">
-            <span>{formatTime(toolMessage.timestamp)}</span>
-          </div>
         ) : null}
       </div>
-    );
+      {message.timestamp ? (
+        <span className="chat-meta">{formatTime(message.timestamp)}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function MessageBubble({ message }: { message: Message }) {
+  if (message.role === "toolResult") {
+    return <ToolResultBubble message={message as ToolResultMessage} />;
   }
 
   const isUser = message.role === "user";
@@ -235,19 +184,17 @@ function MessageBubble({ message }: { message: Message }) {
   const visibleBlocks = blocks.filter((b) => b.type !== "toolCall");
 
   return (
-    <div className={`message ${isUser ? "user" : "assistant"}`}>
-      <div className="message-bubble">
-        {visibleBlocks.map((block, index) => renderContentBlock(block, `content-${index}`))}
-        {toolCalls.length > 0
-          ? toolCalls.map((toolCall) => (
-              <ToolCallCard key={`${toolCall.id}-${toolCall.name}`} toolCall={toolCall} />
-            ))
-          : null}
-      </div>
-      {message.timestamp ? (
-        <div className="message-meta">
-          <span>{formatTime(message.timestamp)}</span>
+    <div className={`chat-msg ${isUser ? "chat-msg-user" : "chat-msg-assistant"}`}>
+      {visibleBlocks.length > 0 ? (
+        <div className={`chat-bubble ${isUser ? "chat-bubble-user" : "chat-bubble-assistant"}`}>
+          {visibleBlocks.map((block, index) => renderContentBlock(block, `content-${index}`))}
         </div>
+      ) : null}
+      {toolCalls.map((toolCall) => (
+        <ToolCallCard key={`${toolCall.id}-${toolCall.name}`} toolCall={toolCall} />
+      ))}
+      {message.timestamp ? (
+        <span className="chat-meta">{formatTime(message.timestamp)}</span>
       ) : null}
     </div>
   );
@@ -266,19 +213,20 @@ export function ChatView() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
+  // Focus input on mount
   useEffect(() => {
-    if (!messagesRef.current) {
-      return;
-    }
+    inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!messagesRef.current) return;
     messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
   }, [chatMessages, chatStream, chatLoading, chatSending]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const text = input.trim();
-    if (!text) {
-      return;
-    }
+    if (!text) return;
     void sendMessage(text);
     setInput("");
     if (inputRef.current) {
@@ -286,32 +234,26 @@ export function ChatView() {
     }
   };
 
+  const disabled = chatSending || connectionState !== "connected";
+
   return (
-    <div className="chat-container">
-      <div className="session-bar">
-        <span className="session-key">{settings.sessionKey}</span>
-        <div className="session-stats">
-          <span>{chatMessages.length} messages</span>
-        </div>
+    <div className="chat-shell">
+      {/* Session indicator — subtle, inline with the window */}
+      <div className="chat-session-hint">
+        <span className="mono">{settings.sessionKey.split(":").slice(-1)[0] || settings.sessionKey}</span>
+        <span className="chat-session-count">{chatMessages.length} msgs</span>
       </div>
 
-      <div className="chat-messages" ref={messagesRef}>
+      {/* Messages */}
+      <div className="chat-scroll" ref={messagesRef}>
         {chatLoading ? (
-          <div className="thinking-indicator">
-            <div className="thinking-dots">
-              <span className="thinking-dot"></span>
-              <span className="thinking-dot"></span>
-              <span className="thinking-dot"></span>
-            </div>
-            <span>Loading messages...</span>
+          <div className="chat-status">
+            <div className="chat-dots"><span /><span /><span /></div>
+            <span>Loading...</span>
           </div>
         ) : chatMessages.length === 0 ? (
           <div className="chat-empty">
-            <div className="chat-empty-icon">💬</div>
-            <h3 className="chat-empty-title">Start a conversation</h3>
-            <p className="chat-empty-description">
-              Send a message to begin chatting with your GSV agent.
-            </p>
+            <p>Send a message to start.</p>
           </div>
         ) : (
           <>
@@ -323,13 +265,9 @@ export function ChatView() {
             ))}
             {chatStream ? <MessageBubble message={chatStream} /> : null}
             {chatSending && !chatStream ? (
-              <div className="message assistant">
-                <div className="thinking-indicator">
-                  <div className="thinking-dots">
-                    <span className="thinking-dot"></span>
-                    <span className="thinking-dot"></span>
-                    <span className="thinking-dot"></span>
-                  </div>
+              <div className="chat-msg chat-msg-assistant">
+                <div className="chat-status">
+                  <div className="chat-dots"><span /><span /><span /></div>
                   <span>Thinking...</span>
                 </div>
               </div>
@@ -338,43 +276,39 @@ export function ChatView() {
         )}
       </div>
 
-      <form className="chat-input-area" onSubmit={submit}>
-        <div className="chat-input-wrapper">
-          <textarea
-            ref={inputRef}
-            className="chat-input"
-            placeholder="Type a message..."
-            rows={1}
-            value={input}
-            disabled={chatSending || connectionState !== "connected"}
-            onChange={(event) => {
-              setInput(event.target.value);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            onInput={(event) => {
-              const textarea = event.currentTarget;
-              textarea.style.height = "auto";
-              textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-            }}
-          ></textarea>
-          <Button
-            type="submit"
-            variant="primary"
-            shape="circle"
-            size="base"
-            className="chat-send-btn"
-            disabled={chatSending || connectionState !== "connected"}
-            loading={chatSending}
-            aria-label="Send message"
-          >
-            →
-          </Button>
-        </div>
+      {/* Input */}
+      <form className="chat-compose" onSubmit={submit}>
+        <textarea
+          ref={inputRef}
+          className="chat-compose-input"
+          placeholder="Message..."
+          rows={1}
+          value={input}
+          disabled={disabled}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              e.currentTarget.form?.requestSubmit();
+            }
+          }}
+          onInput={(e) => {
+            const ta = e.currentTarget;
+            ta.style.height = "auto";
+            ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+          }}
+        />
+        <button
+          type="submit"
+          className="chat-compose-send"
+          disabled={disabled}
+          aria-label="Send"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13" />
+            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+        </button>
       </form>
     </div>
   );

@@ -64,7 +64,10 @@ import {
   handleSurfaceUpdate,
   handleSurfaceFocus,
   handleSurfaceList,
+  handleSurfaceEval,
+  handleSurfaceEvalResult,
 } from "./surface";
+import { handleFsAuthorize } from "./fs";
 
 export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
   return {
@@ -123,5 +126,8 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     "surface.update": handleSurfaceUpdate,
     "surface.focus": handleSurfaceFocus,
     "surface.list": handleSurfaceList,
+    "surface.eval": handleSurfaceEval,
+    "surface.eval.result": handleSurfaceEvalResult,
+    "fs.authorize": handleFsAuthorize,
   };
 }
