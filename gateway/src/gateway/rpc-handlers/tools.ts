@@ -40,10 +40,10 @@ export const handleToolRequest: Handler<"tool.request"> = ({ gw, params }) => {
     throw new RpcError(503, "Node not connected");
   }
 
-  gw.pendingToolCalls[params.callId] = {
+  gw.registerPendingToolCall(params.callId, {
     kind: "session",
     sessionKey: params.sessionKey,
-  };
+  });
 
   // Send the original (un-namespaced) tool name to the node
   const evt: EventFrame<ToolInvokePayload> = {
@@ -83,12 +83,12 @@ export const handleToolInvoke: Handler<"tool.invoke"> = (ctx) => {
   }
 
   const callId = crypto.randomUUID();
-  gw.pendingToolCalls[callId] = {
+  gw.registerPendingToolCall(callId, {
     kind: "client",
     clientId,
     frameId: frame.id,
     createdAt: Date.now(),
-  };
+  });
 
   const evt: EventFrame<ToolInvokePayload> = {
     type: "evt",
@@ -109,7 +109,7 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     throw new RpcError(400, "callId required");
   }
 
-  const route = gw.pendingToolCalls[params.callId];
+  const route = gw.consumePendingToolCall(params.callId);
   if (!route) {
     throw new RpcError(404, "Unknown callId");
   }
@@ -118,7 +118,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     route === null ||
     (route.kind !== "client" && route.kind !== "session")
   ) {
-    delete gw.pendingToolCalls[params.callId];
     return { ok: true, dropped: true };
   }
 
@@ -128,7 +127,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
       console.log(
         `[Gateway] Dropping tool.result for disconnected client ${route.clientId} (callId=${params.callId})`,
       );
-      delete gw.pendingToolCalls[params.callId];
       return { ok: true, dropped: true };
     }
 
@@ -139,7 +137,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
         result: params.result,
       });
     }
-    delete gw.pendingToolCalls[params.callId];
     return { ok: true };
   }
 
@@ -150,7 +147,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     error: params.error,
   });
   if (!result.ok) {
-    delete gw.pendingToolCalls[params.callId];
     throw new RpcError(404, `Unknown session tool call: ${params.callId}`);
   }
 
@@ -166,7 +162,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     });
   }
 
-  delete gw.pendingToolCalls[params.callId];
 
   return { ok: true };
 };

@@ -49,12 +49,12 @@ export const handleLogsGet: Handler<"logs.get"> = ({ gw, ws, frame, params }) =>
   }
 
   const callId = crypto.randomUUID();
-  gw.pendingLogCalls[callId] = {
+  gw.registerPendingLogCall(callId, {
     clientId,
     frameId: frame.id,
     nodeId: targetNodeId,
     createdAt: Date.now(),
-  };
+  });
 
   const evt: EventFrame<LogsGetEventPayload> = {
     type: "evt",
@@ -80,7 +80,7 @@ export const handleLogsResult: Handler<"logs.result"> = ({ gw, ws, params }) => 
     throw new RpcError(403, "Node not authorized for this call");
   }
 
-  const route = gw.pendingLogCalls[params.callId];
+  const route = gw.consumePendingLogCall(params.callId);
   if (!route) {
     if (gw.resolveInternalNodeLogResult(nodeId, params)) {
       return { ok: true };
@@ -94,7 +94,6 @@ export const handleLogsResult: Handler<"logs.result"> = ({ gw, ws, params }) => 
 
   const clientWs = gw.clients.get(route.clientId);
   if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
-    delete gw.pendingLogCalls[params.callId];
     return { ok: true, dropped: true };
   }
 
@@ -110,6 +109,5 @@ export const handleLogsResult: Handler<"logs.result"> = ({ gw, ws, params }) => 
     });
   }
 
-  delete gw.pendingLogCalls[params.callId];
   return { ok: true };
 };

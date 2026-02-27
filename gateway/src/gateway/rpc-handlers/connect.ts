@@ -85,20 +85,10 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
     if (existingWs && existingWs !== ws) {
       // Any in-flight logs.get requests targeted at the old socket cannot
       // complete after replacement; fail them before swapping the node entry.
-      for (const [callId, route] of Object.entries(gw.pendingLogCalls)) {
-        if (typeof route === "object" && route.nodeId === nodeId) {
-          const clientWs = gw.clients.get(route.clientId);
-          if (clientWs && clientWs.readyState === WebSocket.OPEN) {
-            gw.sendError(
-              clientWs,
-              route.frameId,
-              503,
-              `Node replaced during log request: ${nodeId}`,
-            );
-          }
-          delete gw.pendingLogCalls[callId];
-        }
-      }
+      gw.failPendingLogCallsForNode(
+        nodeId,
+        `Node replaced during log request: ${nodeId}`,
+      );
       gw.cancelInternalNodeLogRequestsForNode(
         nodeId,
         `Node replaced during log request: ${nodeId}`,

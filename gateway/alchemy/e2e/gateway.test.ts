@@ -1532,7 +1532,7 @@ describe("Node Exec Event Routing", () => {
       expect(true).toBe(false);
     } catch (err) {
       expect((err as Error).message).toContain(
-        "Only node clients can submit exec events",
+        "Method node.exec.event not allowed for mode",
       );
     } finally {
       clientWs.close();

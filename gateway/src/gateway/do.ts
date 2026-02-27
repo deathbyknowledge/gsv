@@ -5,15 +5,9 @@ import type {
   Frame,
   EventFrame,
   ErrorShape,
-  RequestFrame,
   ResponseFrame,
 } from "../protocol/frames";
-import {
-  isWebSocketRequest,
-  validateFrame,
-  isWsConnected,
-  toErrorShape,
-} from "../shared/utils";
+import { isWebSocketRequest, validateFrame } from "../shared/utils";
 import { DEFAULT_CONFIG } from "../config/defaults";
 import { GsvConfig, GsvConfigInput, mergeConfig, PendingPair } from "../config";
 import { getDefaultAgentId } from "../config/parsing";
@@ -81,16 +75,10 @@ import {
   sendTypingToChannel as sendTypingToChannelHandler,
 } from "./channel-transport";
 import {
-  completeTransfer as completeTransferHandler,
-  failTransfer as failTransferHandler,
-  failTransfersForNode as failTransfersForNodeHandler,
-  finalizeR2Upload as finalizeR2UploadHandler,
-  getTransferWs as getTransferWsHandler,
-  handleTransferBinaryFrame as handleTransferBinaryFrameHandler,
-  streamR2ToDest as streamR2ToDestHandler,
+  failTransfersForNode,
+  handleTransferBinaryFrame,
   transferRequest as transferRequestHandler,
-  type TransferR2,
-  type TransferState,
+  GatewayTransferStateService,
 } from "./transfers";
 import {
   CronService,
@@ -124,30 +112,15 @@ import type {
   ToolInvokePayload,
   ToolRequestParams,
 } from "../protocol/tools";
-import {
-  DEFER_RESPONSE,
-  type DeferredResponse,
-  type Handler,
-  type RpcMethod,
-} from "../protocol/methods";
-import { buildRpcHandlers } from "./rpc-handlers/";
+import { GatewayRpcDispatcher } from "./rpc-dispatcher";
+import { GatewayPendingOperationsService } from "./pending-ops";
 
-export type PendingToolRoute =
-  | { kind: "session"; sessionKey: string }
-  | { kind: "client"; clientId: string; frameId: string; createdAt: number };
-
-export type PendingLogRoute = {
-  clientId: string;
-  frameId: string;
-  nodeId: string;
-  createdAt: number;
-};
-
-type PendingInternalLogRequest = {
-  nodeId: string;
-  resolve: (result: LogsGetResult) => void;
-  reject: (error: Error) => void;
-  timeoutHandle: ReturnType<typeof setTimeout>;
+type GatewayPendingChannelResponse = {
+  channel: ChannelId;
+  accountId: string;
+  peer: PeerInfo;
+  inboundMessageId: string;
+  agentId?: string;
 };
 
 type PendingNodeProbe = {
@@ -162,34 +135,33 @@ type PendingNodeProbe = {
   expiresAt?: number;
 };
 
+type PendingInternalLogRequest = {
+  nodeId: string;
+  resolve: (result: LogsGetResult) => void;
+  reject: (error: Error) => void;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+};
+
 const DEFAULT_LOG_LINES = 100;
 const MAX_LOG_LINES = 5000;
 const DEFAULT_INTERNAL_LOG_TIMEOUT_MS = 20_000;
 const MAX_INTERNAL_LOG_TIMEOUT_MS = 120_000;
+const DEFAULT_PENDING_TOOL_TIMEOUT_MS = 60_000;
 const SKILL_BIN_STATUS_TTL_MS = 5 * 60_000;
 
-type GatewayMethodHandlerContext = {
-  gw: Gateway;
-  ws: WebSocket;
-  frame: RequestFrame;
-  params: unknown;
+type GatewayAlarmParticipant = {
+  name: string;
+  nextDueMs: number | undefined;
+  run: (params: { now: number }) => Promise<void> | void;
 };
-
-type GatewayMethodHandler = (
-  ctx: GatewayMethodHandlerContext,
-) => Promise<unknown | DeferredResponse> | unknown | DeferredResponse;
 
 export class Gateway extends DurableObject<Env> {
   clients: Map<string, WebSocket> = new Map();
   nodes: Map<string, WebSocket> = new Map();
   channels: Map<string, WebSocket> = new Map();
-
-  readonly transfers = PersistedObject<Record<string, TransferState>>(
+  readonly transferStateService = new GatewayTransferStateService(
     this.ctx.storage.kv,
-    { prefix: "transfers:" },
   );
-  transferR2 = new Map<number, TransferR2>();
-
   readonly toolRegistry = PersistedObject<Record<string, ToolDefinition[]>>(
     this.ctx.storage.kv,
     { prefix: "toolRegistry:" },
@@ -198,15 +170,6 @@ export class Gateway extends DurableObject<Env> {
     Record<string, NodeRuntimeInfo>
   >(this.ctx.storage.kv, { prefix: "nodeRuntimeRegistry:" });
 
-  readonly pendingToolCalls = PersistedObject<Record<string, PendingToolRoute>>(
-    this.ctx.storage.kv,
-    { prefix: "pendingToolCalls:" },
-  );
-
-  readonly pendingLogCalls = PersistedObject<Record<string, PendingLogRoute>>(
-    this.ctx.storage.kv,
-    { prefix: "pendingLogCalls:" },
-  );
   readonly pendingNodeProbes = PersistedObject<
     Record<string, PendingNodeProbe>
   >(this.ctx.storage.kv, { prefix: "pendingNodeProbes:" });
@@ -218,7 +181,9 @@ export class Gateway extends DurableObject<Env> {
   >(this.ctx.storage.kv, { prefix: "pendingAsyncExecDeliveries:" });
   readonly deliveredAsyncExecEvents = PersistedObject<Record<string, number>>(
     this.ctx.storage.kv,
-    { prefix: "deliveredAsyncExecEvents:" },
+    {
+      prefix: "deliveredAsyncExecEvents:",
+    },
   );
   private readonly pendingInternalLogCalls = new Map<
     string,
@@ -227,13 +192,13 @@ export class Gateway extends DurableObject<Env> {
 
   readonly configStore = PersistedObject<Record<string, unknown>>(
     this.ctx.storage.kv,
-    { prefix: "config:" },
+    {
+      prefix: "config:",
+    },
   );
-
   readonly sessionRegistry = PersistedObject<
     Record<string, SessionRegistryEntry>
   >(this.ctx.storage.kv, { prefix: "sessionRegistry:" });
-
   readonly channelRegistry = PersistedObject<
     Record<string, ChannelRegistryEntry>
   >(this.ctx.storage.kv, { prefix: "channelRegistry:" });
@@ -241,7 +206,9 @@ export class Gateway extends DurableObject<Env> {
   // Heartbeat state per agent
   readonly heartbeatState = PersistedObject<Record<string, HeartbeatState>>(
     this.ctx.storage.kv,
-    { prefix: "heartbeatState:" },
+    {
+      prefix: "heartbeatState:",
+    },
   );
 
   // Last active channel context per agent (for heartbeat delivery)
@@ -260,20 +227,30 @@ export class Gateway extends DurableObject<Env> {
   >(this.ctx.storage.kv, { prefix: "lastActiveContext:" });
 
   // Pending pairing requests (key: "channel:senderId")
-  pendingPairs = PersistedObject<Record<string, PendingPair>>(
+  readonly pendingPairs = PersistedObject<Record<string, PendingPair>>(
     this.ctx.storage.kv,
-    { prefix: "pendingPairs:" },
+    {
+      prefix: "pendingPairs:",
+    },
   );
 
   // Heartbeat scheduler state (persisted to survive DO eviction)
-  heartbeatScheduler = PersistedObject<{ initialized: boolean }>(
-    this.ctx.storage.kv,
-    { prefix: "heartbeatScheduler:", defaults: { initialized: false } },
-  );
+  readonly heartbeatScheduler: { initialized: boolean } = PersistedObject<{
+    initialized: boolean;
+  }>(this.ctx.storage.kv, {
+    prefix: "heartbeatScheduler:",
+    defaults: { initialized: false },
+  });
+
+  readonly pendingChannelResponses = PersistedObject<
+    Record<string, GatewayPendingChannelResponse>
+  >(this.ctx.storage.kv, { prefix: "pendingChannelResponses:" });
 
   private readonly cronStore = new CronStore(this.ctx.storage.sql);
-
-  private readonly handlers = buildRpcHandlers();
+  private readonly rpcDispatcher = new GatewayRpcDispatcher();
+  readonly pendingOperations = new GatewayPendingOperationsService(
+    this.ctx.storage.kv,
+  );
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
@@ -355,7 +332,7 @@ export class Gateway extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
     if (typeof message !== "string") {
-      handleTransferBinaryFrameHandler(this, message as ArrayBuffer);
+      handleTransferBinaryFrame(this, message as ArrayBuffer);
       return;
     }
     try {
@@ -372,42 +349,83 @@ export class Gateway extends DurableObject<Env> {
 
   async handleFrame(ws: WebSocket, frame: Frame) {
     if (frame.type !== "req") return;
-
-    if (!isWsConnected(ws) && frame.method !== "connect") {
-      this.sendError(ws, frame.id, 101, "Not connected");
+    const requestFrame = frame;
+    const outcome = await this.rpcDispatcher.dispatch(this, ws, requestFrame);
+    if (outcome.kind === "ignore" || outcome.kind === "deferred") {
       return;
     }
 
-    const methodHandler = this.getMethodHandler(frame.method);
-    if (!methodHandler) {
-      this.sendError(ws, frame.id, 404, `Unknown method: ${frame.method}`);
+    if (outcome.kind === "ok") {
+      this.sendOk(ws, requestFrame.id, outcome.payload);
       return;
     }
 
-    try {
-      const payload = await methodHandler({
-        gw: this,
-        ws,
-        frame,
-        params: frame.params,
-      });
-      if (payload !== DEFER_RESPONSE) {
-        this.sendOk(ws, frame.id, payload);
-      }
-    } catch (error) {
-      this.sendErrorShape(ws, frame.id, toErrorShape(error));
+    this.sendErrorShape(ws, requestFrame.id, outcome.error);
+  }
+
+  registerPendingToolCall(
+    callId: string,
+    route: Parameters<GatewayPendingOperationsService["registerToolCall"]>[1],
+    options?: Parameters<
+      GatewayPendingOperationsService["registerToolCall"]
+    >[2],
+  ): void {
+    const merged = {
+      ...options,
+    };
+
+    if (merged.ttlMs === undefined && route.kind === "client") {
+      merged.ttlMs = this.resolvePendingToolTimeoutMs();
+    }
+
+    this.pendingOperations.registerToolCall(callId, route, merged);
+    if (merged.ttlMs !== undefined) {
+      this.ctx.waitUntil(this.scheduleGatewayAlarm());
     }
   }
 
-  private getMethodHandler(method: string): GatewayMethodHandler | undefined {
-    const handler = this.handlers[method as RpcMethod] as
-      | Handler<RpcMethod>
-      | undefined;
-    if (!handler) {
-      return undefined;
-    }
+  consumePendingToolCall(
+    callId: string,
+  ): ReturnType<GatewayPendingOperationsService["consumeToolCall"]> {
+    return this.pendingOperations.consumeToolCall(callId);
+  }
 
-    return handler as unknown as GatewayMethodHandler;
+  registerPendingLogCall(
+    callId: string,
+    route: Parameters<GatewayPendingOperationsService["registerLogCall"]>[1],
+    options?: Parameters<GatewayPendingOperationsService["registerLogCall"]>[2],
+  ): void {
+    const merged = {
+      ttlMs: this.resolvePendingLogTimeoutMs(),
+      ...options,
+    };
+    this.pendingOperations.registerLogCall(callId, route, merged);
+    if (merged.ttlMs !== undefined) {
+      this.ctx.waitUntil(this.scheduleGatewayAlarm());
+    }
+  }
+
+  consumePendingLogCall(
+    callId: string,
+  ): ReturnType<GatewayPendingOperationsService["consumeLogCall"]> {
+    return this.pendingOperations.consumeLogCall(callId);
+  }
+
+  private cleanupClientPendingOperations(clientId: string): void {
+    this.pendingOperations.cleanupClientPendingOperations(clientId);
+  }
+
+  failPendingLogCallsForNode(nodeId: string, message?: string): void {
+    const failureMessage = message ?? `Node disconnected: ${nodeId}`;
+    const failedCalls =
+      this.pendingOperations.failPendingLogCallsForNode(nodeId);
+    for (const failedCall of failedCalls) {
+      const clientWs = this.clients.get(failedCall.clientId);
+      if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      this.sendError(clientWs, failedCall.frameId, 503, failureMessage);
+    }
   }
 
   webSocketClose(ws: WebSocket) {
@@ -422,21 +440,7 @@ export class Gateway extends DurableObject<Env> {
         return;
       }
       this.clients.delete(clientId);
-      // Cleanup persisted client-routed tool calls for this disconnected client.
-      for (const [callId, route] of Object.entries(this.pendingToolCalls)) {
-        if (
-          typeof route === "object" &&
-          route.kind === "client" &&
-          route.clientId === clientId
-        ) {
-          delete this.pendingToolCalls[callId];
-        }
-      }
-      for (const [callId, route] of Object.entries(this.pendingLogCalls)) {
-        if (typeof route === "object" && route.clientId === clientId) {
-          delete this.pendingLogCalls[callId];
-        }
-      }
+      this.cleanupClientPendingOperations(clientId);
     } else if (mode === "node" && nodeId) {
       // Ignore close events from stale sockets that were replaced by reconnect.
       if (this.nodes.get(nodeId) !== ws) {
@@ -445,20 +449,7 @@ export class Gateway extends DurableObject<Env> {
       }
       this.nodes.delete(nodeId);
       delete this.toolRegistry[nodeId];
-      for (const [callId, route] of Object.entries(this.pendingLogCalls)) {
-        if (typeof route === "object" && route.nodeId === nodeId) {
-          const clientWs = this.clients.get(route.clientId);
-          if (clientWs && clientWs.readyState === WebSocket.OPEN) {
-            this.sendError(
-              clientWs,
-              route.frameId,
-              503,
-              `Node disconnected: ${nodeId}`,
-            );
-          }
-          delete this.pendingLogCalls[callId];
-        }
-      }
+      this.failPendingLogCallsForNode(nodeId);
       this.cancelInternalNodeLogRequestsForNode(
         nodeId,
         `Node disconnected during log request: ${nodeId}`,
@@ -467,7 +458,7 @@ export class Gateway extends DurableObject<Env> {
         nodeId,
         `Node disconnected during node probe: ${nodeId}`,
       );
-      failTransfersForNodeHandler(this, nodeId);
+      failTransfersForNode(this, nodeId);
       delete this.nodeRuntimeRegistry[nodeId];
       console.log(`[Gateway] Node ${nodeId} removed from registry`);
     } else if (mode === "channel" && channelKey) {
@@ -495,10 +486,10 @@ export class Gateway extends DurableObject<Env> {
     }
 
     // Track pending call for routing result back
-    this.pendingToolCalls[params.callId] = {
+    this.registerPendingToolCall(params.callId, {
       kind: "session",
       sessionKey: params.sessionKey,
-    };
+    });
 
     // Send tool.invoke event to node (with un-namespaced tool name)
     const evt: EventFrame<ToolInvokePayload> = {
@@ -706,30 +697,10 @@ export class Gateway extends DurableObject<Env> {
     return handleNodeExecEventHandler(this, nodeId, params);
   }
 
-  getTransferWs(nodeId: string): WebSocket | undefined {
-    return getTransferWsHandler(this, nodeId);
-  }
-
   async transferRequest(
     params: TransferRequestParams,
   ): Promise<{ ok: boolean; error?: string }> {
     return transferRequestHandler(this, params);
-  }
-
-  async streamR2ToDest(transfer: TransferState): Promise<void> {
-    return streamR2ToDestHandler(this, transfer);
-  }
-
-  async finalizeR2Upload(transfer: TransferState): Promise<void> {
-    return finalizeR2UploadHandler(this, transfer);
-  }
-
-  completeTransfer(transfer: TransferState, bytesTransferred: number): void {
-    completeTransferHandler(this, transfer, bytesTransferred);
-  }
-
-  failTransfer(transfer: TransferState, error: string): void {
-    failTransferHandler(this, transfer, error);
   }
 
   /**
@@ -938,6 +909,62 @@ export class Gateway extends DurableObject<Env> {
     };
   }
 
+  private resolvePendingToolTimeoutMs(): number {
+    const config = this.getFullConfig();
+    const configured = config.timeouts?.toolMs;
+    if (typeof configured === "number" && Number.isFinite(configured)) {
+      return Math.max(1_000, Math.floor(configured));
+    }
+    return DEFAULT_PENDING_TOOL_TIMEOUT_MS;
+  }
+
+  private resolvePendingLogTimeoutMs(): number {
+    const config = this.getFullConfig();
+    const configured = config.timeouts?.toolMs;
+    if (typeof configured === "number" && Number.isFinite(configured)) {
+      return Math.max(1_000, Math.floor(configured));
+    }
+    return DEFAULT_INTERNAL_LOG_TIMEOUT_MS;
+  }
+
+  private failExpiredPendingOperations(now: number): void {
+    const expired = this.pendingOperations.cleanupExpired(now);
+    for (const expiredTool of expired.toolCalls) {
+      if (expiredTool.route.kind !== "client") {
+        console.warn(
+          `[Gateway] Expired pending tool request (${expiredTool.callId}) for session ${expiredTool.route.sessionKey} without session result`,
+        );
+        continue;
+      }
+
+      const clientWs = this.clients.get(expiredTool.route.clientId);
+      if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      this.sendError(
+        clientWs,
+        expiredTool.route.frameId,
+        504,
+        "Tool request timed out",
+      );
+    }
+
+    for (const expiredLog of expired.logCalls) {
+      const clientWs = this.clients.get(expiredLog.route.clientId);
+      if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      this.sendError(
+        clientWs,
+        expiredLog.route.frameId,
+        504,
+        `logs.get timed out after ${this.resolvePendingLogTimeoutMs()}ms`,
+      );
+    }
+  }
+
   getAllTools(): ToolDefinition[] {
     console.log(`[Gateway] getAllTools called`);
     console.log(
@@ -1117,19 +1144,6 @@ export class Gateway extends DurableObject<Env> {
     sendChannelResponseHandler(this, channel, accountId, peer, replyToId, text);
   }
 
-  pendingChannelResponses = PersistedObject<
-    Record<
-      string,
-      {
-        channel: ChannelId;
-        accountId: string;
-        peer: PeerInfo;
-        inboundMessageId: string;
-        agentId?: string; // For heartbeat deduplication
-      }
-    >
-  >(this.ctx.storage.kv, { prefix: "pendingChannelResponses:" });
-
   canonicalizeSessionKey(sessionKey: string, agentIdHint?: string): string {
     const config = this.getFullConfig();
     const defaultAgentId = agentIdHint?.trim()
@@ -1288,25 +1302,88 @@ export class Gateway extends DurableObject<Env> {
 
   // ---- Heartbeat System ----
 
+  private getGatewayAlarmParticipants(
+    now: number = Date.now(),
+  ): GatewayAlarmParticipant[] {
+    return [
+      {
+        name: "heartbeat",
+        nextDueMs: nextHeartbeatDueAtMsHandler(this),
+        run: () => runDueHeartbeatsHandler(this, now),
+      },
+      {
+        name: "cron",
+        nextDueMs: this.getCronService().nextRunAtMs(),
+        run: async () => {
+          try {
+            const cronResult = await this.runCronJobs({ mode: "due" });
+            if (cronResult.ran > 0) {
+              console.log(
+                `[Gateway] Alarm executed ${cronResult.ran} due cron jobs`,
+              );
+            }
+          } catch (error) {
+            console.error(`[Gateway] Cron due run failed:`, error);
+          }
+        },
+      },
+      {
+        name: "probeTimeouts",
+        nextDueMs: nextPendingNodeProbeExpiryAtMsHandler(this),
+        run: async () => {
+          await handlePendingNodeProbeTimeoutsHandler(this);
+        },
+      },
+      {
+        name: "probeGc",
+        nextDueMs: nextPendingNodeProbeGcAtMsHandler(this),
+        run: async (params: { now: number }) => {
+          gcPendingNodeProbesHandler(this, params.now, "alarm");
+        },
+      },
+      {
+        name: "asyncExecGc",
+        nextDueMs: nextPendingAsyncExecSessionExpiryAtMsHandler(this),
+        run: async (params: { now: number }) => {
+          gcPendingAsyncExecSessionsHandler(this, params.now, "alarm");
+        },
+      },
+      {
+        name: "asyncExecDeliveryGc",
+        nextDueMs: nextPendingAsyncExecDeliveryAtMsHandler(this),
+        run: async (params: { now: number }) => {
+          gcPendingAsyncExecDeliveriesHandler(this, params.now, "alarm");
+        },
+      },
+      {
+        name: "asyncExecDeliveredGc",
+        nextDueMs: nextDeliveredAsyncExecEventGcAtMsHandler(this),
+        run: async (params: { now: number }) => {
+          gcDeliveredAsyncExecEventsHandler(this, params.now, "alarm");
+        },
+      },
+      {
+        name: "pendingOps",
+        nextDueMs: this.pendingOperations.getNextExpirationAtMs(),
+        run: async () => {},
+      },
+      {
+        name: "asyncExecDelivery",
+        nextDueMs: nextPendingAsyncExecDeliveryAtMsHandler(this),
+        run: async (params: { now: number }) => {
+          await deliverPendingAsyncExecDeliveriesHandler(this, params.now);
+        },
+      },
+    ];
+  }
+
   async scheduleGatewayAlarm(): Promise<void> {
-    const heartbeatNext = nextHeartbeatDueAtMsHandler(this);
-    const cronNext = this.getCronService().nextRunAtMs();
-    const probeTimeoutNext = nextPendingNodeProbeExpiryAtMsHandler(this);
-    const probeGcNext = nextPendingNodeProbeGcAtMsHandler(this);
-    const asyncExecGcNext = nextPendingAsyncExecSessionExpiryAtMsHandler(this);
-    const asyncExecDeliveryNext = nextPendingAsyncExecDeliveryAtMsHandler(this);
-    const asyncExecDeliveredGcNext =
-      nextDeliveredAsyncExecEventGcAtMsHandler(this);
+    const participants = this.getGatewayAlarmParticipants();
     let nextAlarm: number | undefined;
-    const candidates = [
-      heartbeatNext,
-      cronNext,
-      probeTimeoutNext,
-      probeGcNext,
-      asyncExecGcNext,
-      asyncExecDeliveryNext,
-      asyncExecDeliveredGcNext,
-    ].filter((value): value is number => typeof value === "number");
+    const candidates = participants
+      .map((participant) => participant.nextDueMs)
+      .filter((value): value is number => typeof value === "number");
+
     if (candidates.length > 0) {
       nextAlarm = Math.min(...candidates);
     }
@@ -1320,8 +1397,14 @@ export class Gateway extends DurableObject<Env> {
     }
 
     await this.ctx.storage.setAlarm(nextAlarm);
+    const participantLog = participants
+      .map(
+        (participant) =>
+          `${participant.name}=${participant.nextDueMs ?? "none"}`,
+      )
+      .join(", ");
     console.log(
-      `[Gateway] Alarm scheduled for ${new Date(nextAlarm).toISOString()} (heartbeat=${heartbeatNext ?? "none"}, cron=${cronNext ?? "none"}, probeTimeouts=${probeTimeoutNext ?? "none"}, probeGc=${probeGcNext ?? "none"}, asyncExecGc=${asyncExecGcNext ?? "none"}, asyncExecDelivery=${asyncExecDeliveryNext ?? "none"}, asyncExecDeliveredGc=${asyncExecDeliveredGcNext ?? "none"})`,
+      `[Gateway] Alarm scheduled for ${new Date(nextAlarm).toISOString()} (${participantLog})`,
     );
   }
 
@@ -1339,25 +1422,14 @@ export class Gateway extends DurableObject<Env> {
     console.log(`[Gateway] Alarm fired`);
 
     const now = Date.now();
+    this.failExpiredPendingOperations(now);
 
-    await runDueHeartbeatsHandler(this, now);
-
-    // Run due cron jobs.
-    try {
-      const cronResult = await this.runCronJobs({ mode: "due" });
-      if (cronResult.ran > 0) {
-        console.log(`[Gateway] Alarm executed ${cronResult.ran} due cron jobs`);
+    for (const participant of this.getGatewayAlarmParticipants(now)) {
+      if (participant.nextDueMs === undefined || participant.nextDueMs > now) {
+        continue;
       }
-    } catch (error) {
-      console.error(`[Gateway] Cron due run failed:`, error);
+      await participant.run({ now });
     }
-
-    gcPendingNodeProbesHandler(this, now, "alarm");
-    await handlePendingNodeProbeTimeoutsHandler(this);
-    gcPendingAsyncExecSessionsHandler(this, now, "alarm");
-    gcPendingAsyncExecDeliveriesHandler(this, now, "alarm");
-    gcDeliveredAsyncExecEventsHandler(this, now, "alarm");
-    await deliverPendingAsyncExecDeliveriesHandler(this, now);
 
     await this.scheduleGatewayAlarm();
   }
