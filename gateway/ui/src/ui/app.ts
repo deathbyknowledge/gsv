@@ -6,7 +6,14 @@ import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { GatewayClient, type ConnectionState } from "./gateway-client";
-import { loadSettings, saveSettings, applyTheme, getGatewayUrl, type UiSettings } from "./storage";
+import {
+  loadSettings,
+  saveSettings,
+  applyTheme,
+  applyShellStyle,
+  getGatewayUrl,
+  type UiSettings,
+} from "./storage";
 import { navigateTo, getCurrentTab } from "./navigation";
 import type {
   Tab,
@@ -40,6 +47,40 @@ import { renderDebug } from "./views/debug";
 const DEFAULT_CHANNEL_ACCOUNT_ID = "default";
 const CHANNEL_AUTO_REFRESH_MS = 10_000;
 const DEFAULT_CHANNELS = ["whatsapp", "discord"];
+
+function normalizeContentBlocks(content: unknown[]): ContentBlock[] {
+  return content.map((block) => {
+    if (!block || typeof block !== "object") {
+      return block as ContentBlock;
+    }
+
+    const candidate = block as Record<string, unknown>;
+    if (candidate.type === "thinking") {
+      return {
+        ...candidate,
+        type: "thinking",
+        text: typeof candidate.text === "string"
+          ? candidate.text
+          : typeof candidate.thinking === "string"
+            ? candidate.thinking
+            : "",
+      } as ContentBlock;
+    }
+
+    return candidate as ContentBlock;
+  });
+}
+
+function normalizeMessageContent(message: Message): Message {
+  if (!Array.isArray(message.content)) {
+    return message;
+  }
+
+  return {
+    ...message,
+    content: normalizeContentBlocks(message.content),
+  } as Message;
+}
 
 @customElement("gsv-app")
 export class GsvApp extends LitElement {
@@ -132,6 +173,7 @@ export class GsvApp extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     applyTheme(this.settings.theme);
+    applyShellStyle(this.settings.shellStyle);
 
     // Clock for status bar
     this.updateClock();
@@ -487,7 +529,9 @@ export class GsvApp extends LitElement {
       const res = await this.client.sessionPreview(this.settings.sessionKey, 100);
       if (res.ok && res.payload) {
         const data = res.payload as { messages: Message[] };
-        this.chatMessages = data.messages || [];
+        this.chatMessages = (data.messages || []).map((message) =>
+          normalizeMessageContent(message),
+        );
       }
     } catch (e) {
       console.error("Failed to load chat:", e);
@@ -531,7 +575,7 @@ export class GsvApp extends LitElement {
 
     return {
       role: "assistant",
-      content: candidate.content as ContentBlock[],
+      content: normalizeContentBlocks(candidate.content),
       timestamp:
         typeof candidate.timestamp === "number"
           ? candidate.timestamp
@@ -1134,6 +1178,9 @@ export class GsvApp extends LitElement {
     if (updates.theme) {
       applyTheme(updates.theme);
     }
+    if (updates.shellStyle) {
+      applyShellStyle(updates.shellStyle);
+    }
     
     if (updates.gatewayUrl || updates.token !== undefined) {
       this.startConnection();
@@ -1417,6 +1464,16 @@ function mergeAssistantMessages(
   };
 }
 
+function getThinkingText(block: { text?: unknown; thinking?: unknown }): string {
+  if (typeof block.text === "string") {
+    return block.text;
+  }
+  if (typeof block.thinking === "string") {
+    return block.thinking;
+  }
+  return "";
+}
+
 function isContentSuperset(
   maybeSuperset: ContentBlock[],
   maybeSubset: ContentBlock[],
@@ -1447,7 +1504,7 @@ function blockContains(
   }
 
   if (maybeSuperset.type === "thinking" && maybeSubset.type === "thinking") {
-    return maybeSuperset.text.startsWith(maybeSubset.text);
+    return getThinkingText(maybeSuperset).startsWith(getThinkingText(maybeSubset));
   }
 
   if (maybeSuperset.type === "toolCall" && maybeSubset.type === "toolCall") {
@@ -1495,12 +1552,17 @@ function mergeContentBlocks(
     }
 
     if (last?.type === "thinking" && block.type === "thinking") {
-      if (block.text.startsWith(last.text)) {
-        merged[merged.length - 1] = block;
-      } else if (!last.text.endsWith(block.text)) {
+      const lastText = getThinkingText(last);
+      const blockText = getThinkingText(block);
+      if (blockText.startsWith(lastText)) {
+        merged[merged.length - 1] = {
+          ...block,
+          text: blockText,
+        } as ContentBlock;
+      } else if (!lastText.endsWith(blockText)) {
         merged[merged.length - 1] = {
           ...last,
-          text: `${last.text}${block.text}`,
+          text: `${lastText}${blockText}`,
         };
       }
       continue;

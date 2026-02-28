@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { TAB_ICONS, TAB_LABELS, OS_DOCK_TABS, TAB_GROUPS, type Tab, type Surface } from "../../ui/types";
-import type { Wallpaper } from "../../ui/storage";
+import type { ShellStyle, Wallpaper } from "../../ui/storage";
 import { preloadTabView, TabView } from "../tabViews";
 import { WallpaperBg } from "./Wallpaper";
 import { useReactUiStore } from "../state/store";
@@ -82,21 +82,6 @@ function toEmbedUrl(raw: string): string {
   }
 }
 
-const TAB_ACCENTS: Record<Tab, string> = {
-  chat: "hsl(191 95% 58%)",
-  overview: "hsl(36 96% 60%)",
-  sessions: "hsl(164 80% 52%)",
-  channels: "hsl(9 88% 63%)",
-  nodes: "hsl(214 90% 62%)",
-  workspace: "hsl(152 70% 48%)",
-  cron: "hsl(48 98% 59%)",
-  logs: "hsl(2 88% 63%)",
-  pairing: "hsl(24 92% 64%)",
-  config: "hsl(205 68% 68%)",
-  debug: "hsl(337 84% 62%)",
-  settings: "hsl(220 60% 65%)",
-};
-
 const CLOCK_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
@@ -168,8 +153,10 @@ type OsShellProps = {
   connectionState: "connected" | "connecting" | "disconnected";
   theme: "dark" | "light" | "system";
   wallpaper: Wallpaper;
+  shellStyle: ShellStyle;
   onToggleTheme: () => void;
   onChangeWallpaper: (wallpaper: Wallpaper) => void;
+  onChangeShellStyle: (shellStyle: ShellStyle) => void;
   onDisconnect: () => void;
 };
 
@@ -411,8 +398,10 @@ export function OsShell({
   connectionState,
   theme,
   wallpaper,
+  shellStyle: shellVariant,
   onToggleTheme,
   onChangeWallpaper,
+  onChangeShellStyle,
   onDisconnect,
 }: OsShellProps) {
   // ── Surface protocol integration ──
@@ -493,15 +482,12 @@ export function OsShell({
       : "No focus";
   const totalWindowCount = windows.length;
   const visibleWindowCount = visibleWindows.length;
-  const shellFocusAccent = focusedTab
-    ? TAB_ACCENTS[focusedTab]
-    : "var(--accent-primary)";
-  const shellStyle = useMemo(
+  const shellInlineStyle = useMemo(
     () =>
       ({
-        "--os-focus-accent": shellFocusAccent,
+        "--os-focus-accent": "var(--text-primary)",
       }) as CSSProperties,
-    [shellFocusAccent],
+    [],
   );
   const connectionStateLabel = useMemo(() => {
     if (connectionState === "connected") {
@@ -1354,6 +1340,20 @@ export function OsShell({
       run: () => onToggleTheme(),
     });
     actions.push({
+      id: "shell-brutalist",
+      label: "Switch shell to hard brutalist",
+      hint: "square + flat",
+      keywords: ["shell", "style", "brutalist", "flat", "square"],
+      run: () => onChangeShellStyle("brutalist"),
+    });
+    actions.push({
+      id: "shell-futurist",
+      label: "Switch shell to neo futurist",
+      hint: "sleek + restrained glow",
+      keywords: ["shell", "style", "futurist", "sleek", "modern"],
+      run: () => onChangeShellStyle("futurist"),
+    });
+    actions.push({
       id: "disconnect",
       label: "Disconnect gateway",
       hint: "close websocket session",
@@ -1368,6 +1368,7 @@ export function OsShell({
     launchTabs,
     minimizeWindow,
     onDisconnect,
+    onChangeShellStyle,
     onToggleTheme,
     openWindow,
     restoreWindow,
@@ -1527,7 +1528,11 @@ export function OsShell({
   );
 
   return (
-    <div className="os-shell" style={shellStyle}>
+    <div
+      className={`os-shell os-shell-${shellVariant}`}
+      data-shell-style={shellVariant}
+      style={shellInlineStyle}
+    >
       {/* ── Wallpaper Background ── */}
       <WallpaperBg wallpaper={wallpaper} onChangeWallpaper={onChangeWallpaper} />
 
@@ -1569,9 +1574,6 @@ export function OsShell({
           const windowTitle = isUrlWindow
             ? (windowState.surfaceLabel ?? "Webview")
             : TAB_LABELS[windowState.tab];
-          const accentColor = isUrlWindow
-            ? "hsl(260 70% 62%)"
-            : TAB_ACCENTS[windowState.tab];
 
           return (
             <section
@@ -1581,7 +1583,6 @@ export function OsShell({
               } ${windowState.maximized ? "maximized" : ""}`}
               style={
                 {
-                  "--os-tab-accent": accentColor,
                   transform: `translate(${windowState.x}px, ${windowState.y}px)`,
                   width: `${windowState.width}px`,
                   height: `${windowState.height}px`,
@@ -1623,7 +1624,7 @@ export function OsShell({
                 </div>
               </div>
 
-              <div className="os-window-content">
+              <div className={`os-window-content ${isUrlWindow ? "iframe" : "app"}`}>
                 {isUrlWindow ? (
                   <div className="os-window-iframe-wrap">
                     <iframe

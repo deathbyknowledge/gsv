@@ -51,12 +51,14 @@ export function App() {
       connectionState={connectionState}
       theme={settings.theme}
       wallpaper={settings.wallpaper ?? "mesh"}
+      shellStyle={settings.shellStyle}
       onToggleTheme={() =>
         updateSettings({
           theme: settings.theme === "dark" ? "light" : "dark",
         })
       }
       onChangeWallpaper={(wp) => updateSettings({ wallpaper: wp })}
+      onChangeShellStyle={(shellStyle) => updateSettings({ shellStyle })}
       onDisconnect={disconnect}
     />
   );

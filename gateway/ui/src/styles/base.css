@@ -1,4 +1,42 @@
 /* ── Design Tokens ── */
+/* TODO(sjames): Remove bundled Berkeley Mono (@font-face + /public/fonts files) once final font strategy is decided. */
+@font-face {
+  font-family: "GSV Berkeley Mono";
+  src:
+    url("/fonts/BerkeleyMono-Regular.otf") format("opentype"),
+    local("Berkeley Mono Regular"),
+    local("Berkeley Mono"),
+    local("BerkeleyMono-Regular"),
+    local("BerkeleyMono");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GSV Berkeley Mono";
+  src:
+    url("/fonts/BerkeleyMono-Bold.otf") format("opentype"),
+    local("Berkeley Mono Bold"),
+    local("BerkeleyMono-Bold");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GSV Berkeley Mono";
+  src:
+    url("/fonts/BerkeleyMono-Oblique.otf") format("opentype"),
+    local("Berkeley Mono Oblique"),
+    local("BerkeleyMono-Oblique"),
+    local("Berkeley Mono Bold Oblique"),
+    local("BerkeleyMono-BoldOblique");
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   --bg-base: #0a0a0c;
   --glass-bg: rgba(255, 255, 255, 0.03);
@@ -16,8 +54,11 @@
   --accent-warning: #eab308;
   --accent-danger: #ef4444;
 
-  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-family: "GSV Berkeley Mono";
+  --font-mono: "GSV Berkeley Mono";
+  --font-sans: "GSV Berkeley Mono";
+  --default-font-family: "GSV Berkeley Mono";
+  --default-mono-font-family: "GSV Berkeley Mono";
 
   --font-size-xs: 0.6875rem;
   --font-size-sm: 0.8125rem;
@@ -33,10 +74,10 @@
   --space-6: 24px;
   --space-8: 32px;
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius-sm: 0px;
+  --radius-md: 1px;
+  --radius-lg: 1px;
+  --radius-xl: 2px;
   --radius-full: 9999px;
 
   /* Aliases consumed by view templates */
@@ -89,7 +130,7 @@ html, body {
 }
 
 body {
-  font-family: var(--font-family);
+  font-family: var(--font-family) !important;
   font-size: var(--font-size-base);
   line-height: 1.5;
   color: var(--text-main);

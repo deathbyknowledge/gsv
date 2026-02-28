@@ -3,7 +3,11 @@ import { Button } from "@cloudflare/kumo/components/button";
 import { Input, Textarea } from "@cloudflare/kumo/components/input";
 import { useReactUiStore } from "../state/store";
 
-export function DebugView() {
+type DebugViewProps = {
+  embedded?: boolean;
+};
+
+export function DebugView({ embedded = false }: DebugViewProps = {}) {
   const debugLog = useReactUiStore((s) => s.debugLog);
   const clearDebugLog = useReactUiStore((s) => s.clearDebugLog);
   const rpcRequest = useReactUiStore((s) => s.rpcRequest);
@@ -24,105 +28,124 @@ export function DebugView() {
   };
 
   return (
-    <div className="view-container">
-      <div className="section-header">
-        <h2 className="section-title">Debug</h2>
-        <Button size="sm" variant="secondary" onClick={() => clearDebugLog()}>
-          Clear Log
-        </Button>
-      </div>
-
-      <div className="card" style={{ marginBottom: "var(--space-4)" }}>
-        <div className="card-header">
-          <h3 className="card-title">RPC Tester</h3>
-        </div>
-        <div className="card-body">
-          <form onSubmit={onRpcSubmit}>
-            <div className="form-group">
-              <Input
-                label="Method"
-                type="text"
-                className="mono ui-input-fix"
-                size="lg"
-                placeholder="e.g., tools.list"
-                value={rpcMethod}
-                onChange={(event) => setRpcMethod(event.target.value)}
-              />
+    <div className={embedded ? undefined : "view-container"}>
+      <div className={embedded ? "app-list" : "app-shell"} data-app={embedded ? undefined : "debug"}>
+        {!embedded ? (
+          <section className="app-hero">
+            <div className="app-hero-content">
+              <div>
+                <h2 className="app-hero-title">Debug Console</h2>
+                <p className="app-hero-subtitle">
+                  Send raw RPC calls and inspect live gateway events flowing through
+                  this client connection.
+                </p>
+                <div className="app-hero-meta">
+                  <span className="app-badge-dot" />
+                  <span>{debugLog.length} event(s) captured</span>
+                </div>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => clearDebugLog()}>
+                Clear Log
+              </Button>
             </div>
-
-            <div className="form-group">
-              <Textarea
-                label="Params (JSON)"
-                className="mono ui-input-fix"
-                size="lg"
-                placeholder='{"sessionKey":"..."}'
-                rows={3}
-                value={rpcParams}
-                onValueChange={setRpcParams}
-              />
-            </div>
-
-            <Button type="submit" variant="primary">
-              Send Request
+          </section>
+        ) : (
+          <div className="app-actions" style={{ justifyContent: "flex-end" }}>
+            <Button size="sm" variant="secondary" onClick={() => clearDebugLog()}>
+              Clear Log
             </Button>
+          </div>
+        )}
 
-            <div className="form-group" style={{ marginTop: "var(--space-4)" }}>
-              <label className="form-label">Result</label>
-              <pre
-                style={{
-                  margin: 0,
-                  padding: "var(--space-3)",
-                  background: "var(--bg-tertiary)",
-                  borderRadius: "var(--radius-md)",
-                  fontSize: "var(--font-size-xs)",
-                  maxHeight: 300,
-                  overflow: "auto",
-                }}
-              >
-                <code>{rpcResult}</code>
-              </pre>
+        <section className="app-grid" style={{ flex: 1, minHeight: 0 }}>
+          <article className="app-panel app-col-5">
+            <header className="app-panel-head">
+              <h3 className="app-panel-title">RPC Tester</h3>
+              <span className="app-panel-meta">manual requests</span>
+            </header>
+            <div className="app-panel-body app-scroll">
+              <form onSubmit={onRpcSubmit} className="app-list" style={{ gap: "var(--space-4)" }}>
+                <div className="form-group">
+                  <Input
+                    label="Method"
+                    type="text"
+                    className="mono ui-input-fix"
+                    size="lg"
+                    placeholder="e.g., tools.list"
+                    value={rpcMethod}
+                    onChange={(event) => setRpcMethod(event.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <Textarea
+                    label="Params (JSON)"
+                    className="mono ui-input-fix"
+                    size="lg"
+                    placeholder='{"sessionKey":"..."}'
+                    rows={4}
+                    value={rpcParams}
+                    onValueChange={setRpcParams}
+                  />
+                </div>
+
+                <div className="app-actions">
+                  <Button type="submit" variant="primary">
+                    Send Request
+                  </Button>
+                </div>
+
+                <div>
+                  <label className="form-label">Result</label>
+                  <pre className="app-code-block" style={{ maxHeight: 320 }}>
+                    <code>{rpcResult}</code>
+                  </pre>
+                </div>
+              </form>
             </div>
-          </form>
-        </div>
-      </div>
+          </article>
 
-      <div className="card">
-        <div className="card-header">
-          <h3 className="card-title">Event Log</h3>
-          <span className="pill">{debugLog.length} events</span>
-        </div>
-        <div className="card-body" style={{ maxHeight: 400, overflowY: "auto" }}>
-          {debugLog.length === 0 ? (
-            <p className="muted">No events yet</p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-              {debugLog
-                .slice()
-                .reverse()
-                .map((entry, index) => (
-                  <div
-                    key={`${entry.time.getTime()}-${index}`}
-                    style={{
-                      padding: "var(--space-2)",
-                      background: "var(--bg-tertiary)",
-                      borderRadius: "var(--radius-md)",
-                      fontSize: "var(--font-size-xs)",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "var(--space-1)" }}>
-                      <span className="mono" style={{ color: "var(--accent-primary)" }}>
-                        {entry.type}
-                      </span>
-                      <span className="muted">{entry.time.toLocaleTimeString()}</span>
-                    </div>
-                    <pre style={{ margin: 0, overflowX: "auto" }}>
-                      <code>{JSON.stringify(entry.data, null, 2)}</code>
-                    </pre>
+          <article className="app-panel app-col-7">
+            <header className="app-panel-head">
+              <h3 className="app-panel-title">Event Stream</h3>
+              <span className="app-panel-meta">newest first</span>
+            </header>
+            <div className="app-panel-body app-scroll">
+              {debugLog.length === 0 ? (
+                <div className="app-empty" style={{ minHeight: 220 }}>
+                  <div>
+                    <div className="app-empty-icon">🧪</div>
+                    <div>No events yet</div>
                   </div>
-                ))}
+                </div>
+              ) : (
+                <div className="app-list">
+                  {debugLog
+                    .slice()
+                    .reverse()
+                    .map((entry, index) => (
+                      <div
+                        className="app-list-item"
+                        key={`${entry.time.getTime()}-${index}`}
+                      >
+                        <div className="app-list-head">
+                          <div>
+                            <div className="app-list-title mono">{entry.type}</div>
+                            <div className="app-list-subtitle">
+                              {entry.time.toLocaleTimeString()}
+                            </div>
+                          </div>
+                        </div>
+                        <pre className="app-code-block" style={{ marginTop: "var(--space-3)" }}>
+                          <code>{JSON.stringify(entry.data, null, 2)}</code>
+                        </pre>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </article>
+        </section>
       </div>
     </div>
   );

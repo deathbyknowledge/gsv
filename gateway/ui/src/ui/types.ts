@@ -173,6 +173,8 @@ export type ImageBlock = {
 export type ThinkingBlock = {
   type: "thinking";
   text: string;
+  thinking?: string;
+  thinkingSignature?: string;
 };
 
 // Chat event payload

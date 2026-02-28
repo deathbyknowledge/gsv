@@ -26,101 +26,130 @@ export function LogsView() {
         }
       }
     }
-    return Array.from(ids);
+    return Array.from(ids).sort();
   }, [tools]);
 
   return (
     <div className="view-container">
-      <div className="section-header">
-        <span className="section-title">Node Logs</span>
-      </div>
-
-      <div className="card" style={{ marginBottom: "var(--space-4)" }}>
-        <div
-          className="card-body"
-          style={{
-            display: "flex",
-            gap: "var(--space-4)",
-            alignItems: "flex-end",
-            flexWrap: "wrap",
-          }}
-        >
-          <div className="form-group" style={{ margin: 0, minWidth: 200 }}>
-            <Select<string>
-              label="Node"
-              hideLabel={false}
-              value={logsNodeId}
-              onValueChange={(value) => setLogsNodeId(String(value || ""))}
-            >
-              <Select.Option value="">All nodes</Select.Option>
-              {nodeIds.map((id) => (
-                <Select.Option value={id} key={id}>
-                  {id}
-                </Select.Option>
-              ))}
-            </Select>
+      <div className="app-shell" data-app="logs">
+        <section className="app-hero">
+          <div className="app-hero-content">
+            <div>
+              <h2 className="app-hero-title">Log Monitor</h2>
+              <p className="app-hero-subtitle">
+                Pull buffered node logs on demand for debugging execution issues and
+                runtime behavior.
+              </p>
+              <div className="app-hero-meta">
+                <span className="app-badge-dot" />
+                <span>{logsData ? `${logsData.count} line(s) loaded` : "No logs loaded"}</span>
+              </div>
+            </div>
           </div>
+        </section>
 
-          <div className="form-group" style={{ margin: 0, minWidth: 120 }}>
-            <Input
-              label="Lines"
-              type="number"
-              className="ui-input-fix"
-              size="lg"
-              value={logsLines}
-              min={1}
-              max={5000}
-              onChange={(event) => setLogsLines(parseInt(event.target.value || "200", 10))}
-              onBlur={(event) =>
-                setLogsLines(Math.max(1, Math.min(5000, parseInt(event.target.value || "200", 10))))
-              }
-            />
+        <section className="app-panel">
+          <header className="app-panel-head">
+            <h3 className="app-panel-title">Filters</h3>
+            <span className="app-panel-meta">query controls</span>
+          </header>
+          <div className="app-panel-body">
+            <div className="app-toolbar">
+              <div className="form-group" style={{ minWidth: 220 }}>
+                <Select<string>
+                  label="Node"
+                  hideLabel={false}
+                  value={logsNodeId}
+                  onValueChange={(value) => setLogsNodeId(String(value || ""))}
+                >
+                  <Select.Option value="">All nodes</Select.Option>
+                  {nodeIds.map((id) => (
+                    <Select.Option value={id} key={id}>
+                      {id}
+                    </Select.Option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="form-group" style={{ minWidth: 140 }}>
+                <Input
+                  label="Lines"
+                  type="number"
+                  className="ui-input-fix"
+                  size="lg"
+                  value={logsLines}
+                  min={1}
+                  max={5000}
+                  onChange={(event) =>
+                    setLogsLines(parseInt(event.target.value || "200", 10))
+                  }
+                  onBlur={(event) =>
+                    setLogsLines(
+                      Math.max(1, Math.min(5000, parseInt(event.target.value || "200", 10))),
+                    )
+                  }
+                />
+              </div>
+
+              <Button
+                variant="primary"
+                loading={logsLoading}
+                onClick={() => {
+                  void loadLogs();
+                }}
+              >
+                Fetch Logs
+              </Button>
+            </div>
+
+            {logsError ? (
+              <div className="app-list-item" style={{ marginTop: "var(--space-4)" }}>
+                <p className="text-danger">{logsError}</p>
+              </div>
+            ) : null}
           </div>
+        </section>
 
-          <Button
-            variant="primary"
-            loading={logsLoading}
-            onClick={() => {
-              void loadLogs();
-            }}
-          >
-            Fetch Logs
-          </Button>
-        </div>
-      </div>
-
-      {logsError ? (
-        <div className="connect-error" style={{ marginBottom: "var(--space-4)" }}>
-          {logsError}
-        </div>
-      ) : null}
-
-      {logsData ? (
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">
-              {logsData.nodeId || "All Nodes"} - {logsData.count} line
-              {logsData.count !== 1 ? "s" : ""}
-              {logsData.truncated ? (
-                <span className="pill pill-warning" style={{ marginLeft: "var(--space-2)" }}>
-                  Truncated
+        <section className="app-panel" style={{ flex: 1, minHeight: 0 }}>
+          <header className="app-panel-head">
+            <h3 className="app-panel-title">
+              {logsData ? logsData.nodeId || "All Nodes" : "Log Output"}
+            </h3>
+            {logsData ? (
+              <div className="app-actions">
+                <span className="pill">
+                  {logsData.count} line{logsData.count !== 1 ? "s" : ""}
                 </span>
-              ) : null}
-            </span>
+                {logsData.truncated ? <span className="pill pill-warning">truncated</span> : null}
+              </div>
+            ) : null}
+          </header>
+          <div className="app-panel-body" style={{ padding: "var(--space-3)" }}>
+            {logsData ? (
+              <pre className="app-code-block" style={{ height: "100%" }}>
+                {logsData.lines.join("\n")}
+              </pre>
+            ) : !logsLoading ? (
+              <div className="app-empty" style={{ minHeight: 260 }}>
+                <div>
+                  <div className="app-empty-icon">📜</div>
+                  <div>No logs loaded</div>
+                  <div className="text-secondary" style={{ marginTop: "var(--space-1)" }}>
+                    Select filters and fetch a new log snapshot.
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="app-empty" style={{ minHeight: 260 }}>
+                <div>
+                  <span className="spinner" />
+                  <div style={{ marginTop: "var(--space-2)" }}>Fetching logs...</div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="card-body" style={{ padding: 0 }}>
-            <pre className="logs-output">{logsData.lines.join("\n")}</pre>
-          </div>
-        </div>
-      ) : !logsLoading ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">📜</div>
-          <div className="empty-state-title">No Logs Loaded</div>
-          <div className="empty-state-description">
-            Select a node and click "Fetch Logs" to view output.
-          </div>
-        </div>
-      ) : null}
+        </section>
+      </div>
     </div>
   );
 }

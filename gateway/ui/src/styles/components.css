@@ -128,11 +128,20 @@
 .form-hint { font-size: var(--font-size-xs); color: var(--text-muted); margin-top: var(--space-1); }
 
 /* Kumo overrides */
-.ui-button-fix { border-radius: var(--radius-md) !important; }
-.ui-badge-fix { border-radius: var(--radius-full) !important; }
-.ui-input-fix { border-radius: var(--radius-md) !important; }
-textarea.ui-input-fix { border-radius: var(--radius-md) !important; }
-.ui-sensitive-fix { border-radius: var(--radius-md) !important; }
+.ui-button-fix { border-radius: var(--radius-sm) !important; }
+.ui-badge-fix { border-radius: var(--radius-sm) !important; }
+.ui-input-fix { border-radius: var(--radius-sm) !important; }
+textarea.ui-input-fix { border-radius: var(--radius-sm) !important; }
+.ui-sensitive-fix { border-radius: var(--radius-sm) !important; }
+
+/* Flatten Kumo defaults inside app windows (many components ship rounded-lg/full). */
+.os-window-content :where(button, input, textarea, select, [role="button"], [role="tab"], [role="menuitem"]) {
+  border-radius: var(--radius-sm);
+}
+
+.os-window-content :where([class*="rounded-"], [class~="rounded"]) {
+  border-radius: var(--radius-sm) !important;
+}
 
 /* ── Pills / Badges ── */
 .pill {
@@ -209,7 +218,7 @@ textarea.ui-input-fix { border-radius: var(--radius-md) !important; }
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 .tab:hover { color: var(--text-main); background: rgba(255,255,255,0.04); }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab.active { color: var(--text-main); border-bottom-color: var(--glass-border-active); }
 
 /* ── Logs ── */
 .logs-output {

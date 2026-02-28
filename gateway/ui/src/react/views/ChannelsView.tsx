@@ -68,7 +68,7 @@ function ChannelControls({
   const busy = Boolean(action) || connectionState !== "connected";
 
   return (
-    <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", marginTop: "var(--space-3)" }}>
+    <div className="app-actions" style={{ marginTop: "var(--space-3)" }}>
       <Button
         size="sm"
         variant="secondary"
@@ -133,7 +133,7 @@ function ChannelFeedback({
       {message ? (
         <p
           className={hasError ? "text-danger" : "text-secondary"}
-          style={{ marginTop: "var(--space-3)" }}
+          style={{ marginTop: "var(--space-3)", fontSize: "var(--font-size-sm)" }}
         >
           {message}
         </p>
@@ -166,57 +166,48 @@ function ConnectedChannelCard({ channel }: { channel: ChannelRegistryEntry }) {
   const icon = getChannelIcon(channel.channel);
 
   return (
-    <div className="card">
-      <div className="card-header">
-        <h3 className="card-title">
-          <span style={{ marginRight: "var(--space-2)" }}>{icon}</span>
-          {channel.channel}
-        </h3>
+    <article className="app-list-item">
+      <div className="app-list-head">
+        <div>
+          <div className="app-list-title">
+            <span style={{ marginRight: "var(--space-2)" }}>{icon}</span>
+            {channel.channel}
+          </div>
+          <div className="app-list-subtitle">account: {channel.accountId}</div>
+        </div>
         {renderStatusPill(status)}
       </div>
-      <div className="card-body">
-        <div className="kv-list">
-          <div className="kv-row">
-            <span className="kv-key">Account</span>
-            <span className="kv-value">{channel.accountId}</span>
-          </div>
-          <div className="kv-row">
-            <span className="kv-key">Connected At</span>
-            <span className="kv-value">{formatTime(channel.connectedAt)}</span>
-          </div>
-          {channel.lastMessageAt ? (
-            <div className="kv-row">
-              <span className="kv-key">Last Message</span>
-              <span className="kv-value">{formatTime(channel.lastMessageAt)}</span>
-            </div>
-          ) : null}
-          {status?.mode ? (
-            <div className="kv-row">
-              <span className="kv-key">Mode</span>
-              <span className="kv-value">{status.mode}</span>
-            </div>
-          ) : null}
-          {status?.lastActivity ? (
-            <div className="kv-row">
-              <span className="kv-key">Last Activity</span>
-              <span className="kv-value">{formatTime(status.lastActivity)}</span>
-            </div>
-          ) : null}
-        </div>
-        {status?.error ? (
-          <p className="text-danger" style={{ marginTop: "var(--space-3)" }}>
-            {status.error}
-          </p>
-        ) : null}
 
-        <ChannelControls
-          channel={channel.channel}
-          accountId={channel.accountId}
-          status={status}
-        />
-        <ChannelFeedback channel={channel.channel} accountId={channel.accountId} />
+      <div className="app-list-meta">
+        <div className="app-meta-row">
+          <div className="app-meta-label">Connected At</div>
+          <div className="app-meta-value">{formatTime(channel.connectedAt)}</div>
+        </div>
+        <div className="app-meta-row">
+          <div className="app-meta-label">Last Message</div>
+          <div className="app-meta-value">
+            {channel.lastMessageAt ? formatTime(channel.lastMessageAt) : "—"}
+          </div>
+        </div>
+        <div className="app-meta-row">
+          <div className="app-meta-label">Mode</div>
+          <div className="app-meta-value">{status?.mode || "default"}</div>
+        </div>
       </div>
-    </div>
+
+      {status?.error ? (
+        <p className="text-danger" style={{ marginTop: "var(--space-3)" }}>
+          {status.error}
+        </p>
+      ) : null}
+
+      <ChannelControls
+        channel={channel.channel}
+        accountId={channel.accountId}
+        status={status}
+      />
+      <ChannelFeedback channel={channel.channel} accountId={channel.accountId} />
+    </article>
   );
 }
 
@@ -228,41 +219,42 @@ function AvailableChannelCard({
   const status = useReactUiStore((s) => s.channelStatus(channel.id, DEFAULT_ACCOUNT_ID));
 
   return (
-    <div className="card">
-      <div className="card-header">
-        <h3 className="card-title">
-          <span style={{ marginRight: "var(--space-2)" }}>{channel.icon}</span>
-          {channel.name}
-        </h3>
+    <article className="app-list-item">
+      <div className="app-list-head">
+        <div>
+          <div className="app-list-title">
+            <span style={{ marginRight: "var(--space-2)" }}>{channel.icon}</span>
+            {channel.name}
+          </div>
+          <div className="app-list-subtitle">{channel.description}</div>
+        </div>
         {renderStatusPill(status)}
       </div>
-      <div className="card-body">
-        <p className="text-secondary" style={{ fontSize: "var(--font-size-sm)", marginBottom: "var(--space-3)" }}>
-          {channel.description}
-        </p>
-        <div className="kv-list" style={{ marginBottom: "var(--space-3)" }}>
-          <div className="kv-row">
-            <span className="kv-key">Account</span>
-            <span className="kv-value">{DEFAULT_ACCOUNT_ID}</span>
-          </div>
-          <div className="kv-row">
-            <span className="kv-key">Connected</span>
-            <span className="kv-value">{status?.connected ? "yes" : "no"}</span>
-          </div>
-          <div className="kv-row">
-            <span className="kv-key">Authenticated</span>
-            <span className="kv-value">{status?.authenticated ? "yes" : "no"}</span>
-          </div>
+
+      <div className="app-list-meta">
+        <div className="app-meta-row">
+          <div className="app-meta-label">Account</div>
+          <div className="app-meta-value">{DEFAULT_ACCOUNT_ID}</div>
         </div>
-        {status?.error ? (
-          <p className="text-danger" style={{ marginBottom: "var(--space-3)" }}>
-            {status.error}
-          </p>
-        ) : null}
-        <ChannelControls channel={channel.id} accountId={DEFAULT_ACCOUNT_ID} status={status} />
-        <ChannelFeedback channel={channel.id} accountId={DEFAULT_ACCOUNT_ID} />
+        <div className="app-meta-row">
+          <div className="app-meta-label">Connected</div>
+          <div className="app-meta-value">{status?.connected ? "yes" : "no"}</div>
+        </div>
+        <div className="app-meta-row">
+          <div className="app-meta-label">Authenticated</div>
+          <div className="app-meta-value">{status?.authenticated ? "yes" : "no"}</div>
+        </div>
       </div>
-    </div>
+
+      {status?.error ? (
+        <p className="text-danger" style={{ marginTop: "var(--space-3)" }}>
+          {status.error}
+        </p>
+      ) : null}
+
+      <ChannelControls channel={channel.id} accountId={DEFAULT_ACCOUNT_ID} status={status} />
+      <ChannelFeedback channel={channel.id} accountId={DEFAULT_ACCOUNT_ID} />
+    </article>
   );
 }
 
@@ -272,64 +264,94 @@ export function ChannelsView() {
   const channelsError = useReactUiStore((s) => s.channelsError);
   const refreshChannels = useReactUiStore((s) => s.refreshChannels);
 
+  const connectedCount = channels.length;
+
   return (
     <div className="view-container">
-      <div className="section-header">
-        <h2 className="section-title">Connected Channels</h2>
-        <Button
-          size="sm"
-          variant="secondary"
-          loading={channelsLoading}
-          onClick={() => {
-            void refreshChannels();
-          }}
-        >
-          Refresh
-        </Button>
-      </div>
-
-      {channelsError ? (
-        <div className="card" style={{ marginBottom: "var(--space-4)" }}>
-          <div className="card-body text-danger">{channelsError}</div>
-        </div>
-      ) : null}
-
-      {channelsLoading && channels.length === 0 ? (
-        <div className="card">
-          <div className="card-body">
-            <div className="thinking-indicator">
-              <span className="spinner"></span>
-              <span>Loading channels...</span>
+      <div className="app-shell" data-app="channels">
+        <section className="app-hero">
+          <div className="app-hero-content">
+            <div>
+              <h2 className="app-hero-title">Channel Hub</h2>
+              <p className="app-hero-subtitle">
+                Operate inbound/outbound integrations, monitor auth state, and trigger
+                channel login flows directly from the desktop.
+              </p>
+              <div className="app-hero-meta">
+                <span className="app-badge-dot" />
+                <span>{connectedCount} connected account(s)</span>
+              </div>
             </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={channelsLoading}
+              onClick={() => {
+                void refreshChannels();
+              }}
+            >
+              Refresh
+            </Button>
           </div>
-        </div>
-      ) : channels.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">📱</div>
-          <h3 className="empty-state-title">No channels connected</h3>
-          <p className="empty-state-description">
-            Start and authenticate a channel below.
-          </p>
-        </div>
-      ) : (
-        <div className="cards-grid">
-          {channels.map((channel) => (
-            <ConnectedChannelCard
-              key={`${channel.channel}:${channel.accountId}`}
-              channel={channel}
-            />
-          ))}
-        </div>
-      )}
+        </section>
 
-      <div className="section-header" style={{ marginTop: "var(--space-8)" }}>
-        <h2 className="section-title">Available Channels</h2>
-      </div>
+        {channelsError ? (
+          <div className="app-list-item">
+            <p className="text-danger">{channelsError}</p>
+          </div>
+        ) : null}
 
-      <div className="cards-grid">
-        {AVAILABLE_CHANNELS.map((channel) => (
-          <AvailableChannelCard key={channel.id} channel={channel} />
-        ))}
+        <section className="app-grid">
+          <article className="app-panel app-col-7">
+            <header className="app-panel-head">
+              <h3 className="app-panel-title">Connected Accounts</h3>
+              <span className="app-panel-meta">{channels.length} active</span>
+            </header>
+            <div className="app-panel-body">
+              {channelsLoading && channels.length === 0 ? (
+                <div className="app-empty">
+                  <div>
+                    <span className="spinner" />
+                    <div style={{ marginTop: "var(--space-2)" }}>Loading channels...</div>
+                  </div>
+                </div>
+              ) : channels.length === 0 ? (
+                <div className="app-empty">
+                  <div>
+                    <div className="app-empty-icon">📡</div>
+                    <div>No channels connected</div>
+                    <div className="text-secondary" style={{ marginTop: "var(--space-1)" }}>
+                      Start and authenticate a channel from the catalog.
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="app-list">
+                  {channels.map((channel) => (
+                    <ConnectedChannelCard
+                      key={`${channel.channel}:${channel.accountId}`}
+                      channel={channel}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </article>
+
+          <article className="app-panel app-col-5">
+            <header className="app-panel-head">
+              <h3 className="app-panel-title">Channel Catalog</h3>
+              <span className="app-panel-meta">{AVAILABLE_CHANNELS.length} available</span>
+            </header>
+            <div className="app-panel-body">
+              <div className="app-list">
+                {AVAILABLE_CHANNELS.map((channel) => (
+                  <AvailableChannelCard key={channel.id} channel={channel} />
+                ))}
+              </div>
+            </div>
+          </article>
+        </section>
       </div>
     </div>
   );

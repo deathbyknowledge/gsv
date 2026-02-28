@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { GatewayClient, type ConnectionState } from "../../ui/gateway-client";
 import { getCurrentTab, navigateTo } from "../../ui/navigation";
 import {
+  applyShellStyle,
   applyTheme,
   getGatewayUrl,
   loadSettings,
@@ -261,6 +262,46 @@ function normalizeWorkspacePath(path: string): string {
   return noTrailingSlash || "/";
 }
 
+function getThinkingText(block: { text?: unknown; thinking?: unknown }): string {
+  if (typeof block.text === "string") {
+    return block.text;
+  }
+  if (typeof block.thinking === "string") {
+    return block.thinking;
+  }
+  return "";
+}
+
+function normalizeContentBlocks(content: unknown[]): ContentBlock[] {
+  return content.map((block) => {
+    if (!block || typeof block !== "object") {
+      return block as ContentBlock;
+    }
+
+    const candidate = block as Record<string, unknown>;
+    if (candidate.type === "thinking") {
+      return {
+        ...candidate,
+        type: "thinking",
+        text: getThinkingText(candidate),
+      } as ContentBlock;
+    }
+
+    return candidate as ContentBlock;
+  });
+}
+
+function normalizeMessageContent(message: Message): Message {
+  if (!Array.isArray(message.content)) {
+    return message;
+  }
+
+  return {
+    ...message,
+    content: normalizeContentBlocks(message.content),
+  } as Message;
+}
+
 function normalizeAssistantMessage(message: unknown): AssistantMessage | null {
   if (!message || typeof message !== "object") {
     return null;
@@ -273,7 +314,7 @@ function normalizeAssistantMessage(message: unknown): AssistantMessage | null {
 
   return {
     role: "assistant",
-    content: candidate.content as ContentBlock[],
+    content: normalizeContentBlocks(candidate.content),
     timestamp:
       typeof candidate.timestamp === "number"
         ? candidate.timestamp
@@ -363,6 +404,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
     }
 
     applyTheme(get().settings.theme);
+    applyShellStyle(get().settings.shellStyle);
     const shouldAutoConnect = Boolean(
       get().settings.token || localStorage.getItem("gsv-connected-once"),
     );
@@ -588,7 +630,10 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
       const res = await client.sessionPreview(get().settings.sessionKey, 100);
       if (res.ok && res.payload) {
         const data = res.payload as { messages: Message[] };
-        set({ chatMessages: data.messages || [] });
+        const normalizedMessages = (data.messages || []).map((message) =>
+          normalizeMessageContent(message),
+        );
+        set({ chatMessages: normalizedMessages });
       }
     } finally {
       set({ chatLoading: false });
@@ -1146,6 +1191,9 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
     if (updates.theme) {
       applyTheme(updates.theme);
     }
+    if (updates.shellStyle) {
+      applyShellStyle(updates.shellStyle);
+    }
 
     if (updates.gatewayUrl || updates.token !== undefined) {
       get().startConnection();
@@ -1297,7 +1345,7 @@ function blockContains(
   }
 
   if (maybeSuperset.type === "thinking" && maybeSubset.type === "thinking") {
-    return maybeSuperset.text.startsWith(maybeSubset.text);
+    return getThinkingText(maybeSuperset).startsWith(getThinkingText(maybeSubset));
   }
 
   if (maybeSuperset.type === "toolCall" && maybeSubset.type === "toolCall") {
@@ -1345,12 +1393,17 @@ function mergeContentBlocks(
     }
 
     if (last?.type === "thinking" && block.type === "thinking") {
-      if (block.text.startsWith(last.text)) {
-        merged[merged.length - 1] = block;
-      } else if (!last.text.endsWith(block.text)) {
+      const lastText = getThinkingText(last);
+      const blockText = getThinkingText(block);
+      if (blockText.startsWith(lastText)) {
+        merged[merged.length - 1] = {
+          ...block,
+          text: blockText,
+        } as ContentBlock;
+      } else if (!lastText.endsWith(blockText)) {
         merged[merged.length - 1] = {
           ...last,
-          text: `${last.text}${block.text}`,
+          text: `${lastText}${blockText}`,
         };
       }
       continue;

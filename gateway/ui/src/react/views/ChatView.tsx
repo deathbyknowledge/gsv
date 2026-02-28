@@ -71,10 +71,11 @@ function MarkdownContent({ text }: { text: string }) {
 }
 
 function ThinkingContent({ block }: { block: ThinkingBlock }) {
+  const text = block.text || (block as ThinkingBlock & { thinking?: string }).thinking || "";
   return (
     <details className="chat-thinking">
       <summary>Thinking</summary>
-      <pre>{block.text}</pre>
+      <pre>{text}</pre>
     </details>
   );
 }
@@ -143,7 +144,8 @@ function ToolResultBubble({ message }: { message: ToolResultMessage }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="chat-msg chat-msg-assistant">
-      <div className="chat-tool">
+      <span className="chat-msg-label">tool</span>
+      <div className="chat-tool chat-tool-result">
         <button type="button" className="chat-tool-header" onClick={() => setOpen(!open)}>
           <span className="chat-tool-name">{message.toolName}</span>
           <span className={`chat-tool-badge ${message.isError ? "error" : ""}`}>
@@ -185,6 +187,7 @@ function MessageBubble({ message }: { message: Message }) {
 
   return (
     <div className={`chat-msg ${isUser ? "chat-msg-user" : "chat-msg-assistant"}`}>
+      <span className="chat-msg-label">{isUser ? "you" : "assistant"}</span>
       {visibleBlocks.length > 0 ? (
         <div className={`chat-bubble ${isUser ? "chat-bubble-user" : "chat-bubble-assistant"}`}>
           {visibleBlocks.map((block, index) => renderContentBlock(block, `content-${index}`))}
@@ -223,6 +226,13 @@ export function ChatView() {
     messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
   }, [chatMessages, chatStream, chatLoading, chatSending]);
 
+  const sessionLabel = settings.sessionKey.split(":").slice(-1)[0] || settings.sessionKey;
+  const connectionLabel =
+    connectionState === "connected"
+      ? "online"
+      : connectionState === "connecting"
+        ? "linking"
+        : "offline";
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const text = input.trim();
@@ -238,13 +248,17 @@ export function ChatView() {
 
   return (
     <div className="chat-shell">
-      {/* Session indicator — subtle, inline with the window */}
-      <div className="chat-session-hint">
-        <span className="mono">{settings.sessionKey.split(":").slice(-1)[0] || settings.sessionKey}</span>
-        <span className="chat-session-count">{chatMessages.length} msgs</span>
-      </div>
+      <header className="chat-topbar">
+        <div className="chat-topbar-main">
+          <span className="chat-topbar-title">Conversation</span>
+          <span className="chat-topbar-session mono">{sessionLabel}</span>
+        </div>
+        <div className="chat-topbar-meta">
+          <span className="chat-session-count">{chatMessages.length} msgs</span>
+          <span className={`chat-conn ${connectionState}`}>{connectionLabel}</span>
+        </div>
+      </header>
 
-      {/* Messages */}
       <div className="chat-scroll" ref={messagesRef}>
         {chatLoading ? (
           <div className="chat-status">
