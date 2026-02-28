@@ -2977,6 +2977,11 @@ async fn run_node(
 
     let transfer_coordinator = Arc::new(TransferCoordinator::new());
 
+    const CONNECT_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(30);
+    const INITIAL_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(3);
+    const MAX_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(300);
+    let mut retry_delay = INITIAL_RETRY_DELAY;
+
     loop {
         logger.info("connect.attempt", json!({ "url": url }));
 
@@ -2996,27 +3001,46 @@ async fn run_node(
         let tools_for_handler: Arc<Vec<Box<dyn Tool>>> =
             Arc::new(all_tools_with_workspace(workspace.clone()));
 
-        let conn = match Connection::connect_with_options(
-            url,
-            "node",
-            Some(tool_defs),
-            Some(node_runtime),
-            |_frame| {},
-            Some(node_id.clone()),
-            token.clone(),
+        let conn = match tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            Connection::connect_with_options(
+                url,
+                "node",
+                Some(tool_defs),
+                Some(node_runtime),
+                |_frame| {},
+                Some(node_id.clone()),
+                token.clone(),
+            ),
         )
         .await
         {
-            Ok(c) => c,
-            Err(e) => {
+            Ok(Ok(c)) => {
+                retry_delay = INITIAL_RETRY_DELAY;
+                c
+            }
+            Ok(Err(e)) => {
                 logger.error(
                     "connect.failed",
                     json!({
                         "error": e.to_string(),
-                        "retrySeconds": 3,
+                        "retrySeconds": retry_delay.as_secs(),
                     }),
                 );
-                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+                continue;
+            }
+            Err(_) => {
+                logger.error(
+                    "connect.timeout",
+                    json!({
+                        "timeoutSeconds": CONNECT_TIMEOUT.as_secs(),
+                        "retrySeconds": retry_delay.as_secs(),
+                    }),
+                );
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
                 continue;
             }
         };
