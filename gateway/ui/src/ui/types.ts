@@ -157,6 +157,17 @@ export type ChatEventPayload = {
   state: "partial" | "final" | "error";
   message?: AssistantMessage;
   error?: string;
+  channelContext?: {
+    channel: string;
+    accountId: string;
+    peer: {
+      kind: string;
+      id: string;
+      name?: string;
+    };
+    inboundMessageId: string;
+    agentId?: string;
+  };
 };
 
 // Config types

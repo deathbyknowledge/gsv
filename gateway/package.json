@@ -15,7 +15,7 @@
 		"cf-typegen": "wrangler types",
 		"test": "vitest",
 		"test:run": "vitest run",
-		"test:e2e": "bun test alchemy/e2e/"
+		"test:e2e": "bun test --concurrent --max-concurrency 8 alchemy/e2e/ "
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.34",

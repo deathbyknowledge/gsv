@@ -115,14 +115,6 @@ import type {
 import { GatewayRpcDispatcher } from "./rpc-dispatcher";
 import { GatewayPendingOperationsService } from "./pending-ops";
 
-type GatewayPendingChannelResponse = {
-  channel: ChannelId;
-  accountId: string;
-  peer: PeerInfo;
-  inboundMessageId: string;
-  agentId?: string;
-};
-
 type PendingNodeProbe = {
   nodeId: string;
   agentId: string;
@@ -241,10 +233,6 @@ export class Gateway extends DurableObject<Env> {
     prefix: "heartbeatScheduler:",
     defaults: { initialized: false },
   });
-
-  readonly pendingChannelResponses = PersistedObject<
-    Record<string, GatewayPendingChannelResponse>
-  >(this.ctx.storage.kv, { prefix: "pendingChannelResponses:" });
 
   private readonly cronStore = new CronStore(this.ctx.storage.sql);
   private readonly rpcDispatcher = new GatewayRpcDispatcher();
@@ -1257,16 +1245,15 @@ export class Gateway extends DurableObject<Env> {
       }
     }
 
-    // Look up channel context by runId (each message has unique runId)
-    const runId = payload.runId;
-    if (!runId) {
+    // Route back to channel for run-scoped responses when available.
+    if (!payload.runId) {
       // No runId means this is a WebSocket-only client, not a channel
       return;
     }
 
-    const channelContext = this.pendingChannelResponses[runId];
+    const channelContext = payload.channelContext;
     if (!channelContext) {
-      // No channel context - either WebSocket client or context already cleaned up
+      // No channel context - this run originated from WebSocket/client input.
       return;
     }
 
@@ -1294,9 +1281,6 @@ export class Gateway extends DurableObject<Env> {
       if (payload.state === "final" && payload.message) {
         routePayloadToChannel(this, sessionKey, channelContext, payload);
       }
-
-      // Clean up context for this runId
-      delete this.pendingChannelResponses[runId];
     }
   }
 

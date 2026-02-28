@@ -5,6 +5,7 @@ import type { RuntimeNodeInventory, ToolDefinition } from "../protocol/tools";
 import type {
   MediaAttachment,
   SessionChannelContext,
+  SessionOutputContext,
 } from "../protocol/channel";
 import type { GsvConfig } from "../config";
 import type { SkillSummary } from "../skills";
@@ -105,6 +106,7 @@ export type QueuedMessage = {
   tools?: ToolDefinition[];
   runtimeNodes?: RuntimeNodeInventory;
   media?: MediaAttachment[];
+  outputContext?: SessionOutputContext;
   messageOverrides?: {
     thinkLevel?: string;
     model?: { provider: string; id: string };
@@ -117,6 +119,7 @@ export type CurrentRun = {
   runId: string;
   tools: ToolDefinition[];
   runtimeNodes?: RuntimeNodeInventory;
+  outputContext?: SessionOutputContext;
   skillsSnapshot?: SkillSummary[];
   messageOverrides?: {
     thinkLevel?: string;
@@ -150,8 +153,6 @@ export type SessionMeta = {
     channel?: string;
     clientId?: string;
   };
-
-  channelContext?: SessionChannelContext; // last known, updated on inbound
   compactionCount?: number;
   lastCompactedAt?: number;
   lastInputTokens?: number;
@@ -744,16 +745,11 @@ export class Session extends DurableObject<Env> {
       model?: { provider: string; id: string };
     },
     media?: MediaAttachment[],
-    channelContext?: SessionChannelContext,
+    channelContext?: SessionOutputContext,
   ): Promise<ChatSendResult> {
     // Initialize session key if needed
     if (!this.meta.sessionKey) {
       this.meta.sessionKey = sessionKey;
-    }
-
-    // Update channel context if provided
-    if (channelContext) {
-      this.meta.channelContext = channelContext;
     }
 
     await this.ensureResetPolicyInitialized();
@@ -770,6 +766,9 @@ export class Session extends DurableObject<Env> {
           : undefined,
         media,
         messageOverrides,
+        outputContext: channelContext
+          ? JSON.parse(JSON.stringify(channelContext))
+          : undefined,
         queuedAt: Date.now(),
       };
 
@@ -787,7 +786,15 @@ export class Session extends DurableObject<Env> {
     }
 
     // Start processing this message (async - don't await!)
-    this.startRun(message, runId, tools, runtimeNodes, messageOverrides, media);
+    this.startRun(
+      message,
+      runId,
+      tools,
+      runtimeNodes,
+      channelContext,
+      messageOverrides,
+      media,
+    );
 
     return { ok: true, runId, started: true };
   }
@@ -801,6 +808,7 @@ export class Session extends DurableObject<Env> {
     runId: string,
     tools: ToolDefinition[],
     runtimeNodes: RuntimeNodeInventory | undefined,
+    channelContext?: SessionOutputContext,
     messageOverrides?: {
       thinkLevel?: string;
       model?: { provider: string; id: string };
@@ -815,6 +823,9 @@ export class Session extends DurableObject<Env> {
       tools,
       runtimeNodes: runtimeNodes
         ? JSON.parse(JSON.stringify(runtimeNodes))
+        : undefined,
+      outputContext: channelContext
+        ? JSON.parse(JSON.stringify(channelContext))
         : undefined,
       messageOverrides,
       startedAt,
@@ -1159,6 +1170,7 @@ export class Session extends DurableObject<Env> {
       next.runId,
       next.tools ?? [],
       next.runtimeNodes,
+      next.outputContext,
       next.messageOverrides,
       next.media,
     );
@@ -1431,7 +1443,7 @@ export class Session extends DurableObject<Env> {
       effectiveModel,
       this.currentRun?.tools ?? [],
       this.currentRun?.runtimeNodes,
-      this.meta.channelContext,
+      this.currentRun?.outputContext,
     );
 
     // Proactive compaction: estimate context size, compact if needed
@@ -1700,8 +1712,14 @@ export class Session extends DurableObject<Env> {
 
   private async broadcastToClients(payload: ChatEventPayload): Promise<void> {
     if (!this.meta.sessionKey) return;
+    const channelContext = this.currentRun?.outputContext
+      ? (snapshot(this.currentRun.outputContext))
+      : undefined;
     const gateway = this.env.GATEWAY.getByName("singleton");
-    gateway.broadcastToSession(this.meta.sessionKey, payload);
+    gateway.broadcastToSession(this.meta.sessionKey, {
+      ...payload,
+      channelContext,
+    });
   }
 
   private async requestToolExecution(toolCall: PendingToolCall): Promise<void> {

@@ -1,23 +1,18 @@
-import type { ChannelOutboundMessage, ChannelPeer } from "../channel-interface";
+import type { ChannelOutboundMessage } from "../channel-interface";
 import type { ChatEventPayload } from "../protocol/chat";
-import type { ChannelId, ChannelOutboundPayload, PeerInfo } from "../protocol/channel";
+import type {
+  ChannelOutboundPayload,
+  SessionOutputContext,
+} from "../protocol/channel";
 import type { EventFrame } from "../protocol/frames";
 import { trimLeadingBlankLines } from "../shared/utils";
 import { shouldDeliverResponse } from "./heartbeat";
 import type { Gateway } from "./do";
 
-export type PendingChannelResponseContext = {
-  channel: ChannelId;
-  accountId: string;
-  peer: PeerInfo;
-  inboundMessageId: string;
-  agentId?: string;
-};
-
 export function routePayloadToChannel(
   gw: Gateway,
   sessionKey: string,
-  context: PendingChannelResponseContext,
+  context: SessionOutputContext,
   payload: ChatEventPayload,
 ): void {
   // Extract text from response

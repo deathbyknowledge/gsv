@@ -11,7 +11,7 @@ import { env } from "cloudflare:workers";
 import type { HeartbeatConfig, GsvConfig } from "../config";
 import { parseDuration, getAgentConfig, getDefaultAgentId } from "../config/parsing";
 import { loadHeartbeatFile, isHeartbeatFileEmpty } from "../agents/loader";
-import type { ChannelId, PeerInfo } from "../protocol/channel";
+import type { SessionOutputContext } from "../protocol/channel";
 import type { Gateway } from "./do";
 
 // Token to indicate no action needed
@@ -311,11 +311,7 @@ export async function runHeartbeat(
 
   const target = config.target ?? "last";
   const sessionKey = `agent:${agentId}:heartbeat:system:internal`;
-  let deliveryContext: {
-    channel: ChannelId;
-    accountId: string;
-    peer: PeerInfo;
-  } | null = null;
+  let deliveryContext: SessionOutputContext | null = null;
 
   if (target === "none") {
     console.log(`[Gateway] Heartbeat target=none, running silently`);
@@ -325,6 +321,8 @@ export async function runHeartbeat(
         channel: lastActive.channel,
         accountId: lastActive.accountId,
         peer: lastActive.peer,
+        inboundMessageId: `heartbeat:${reason}:${Date.now()}`,
+        agentId,
       }),
     );
     console.log(
@@ -341,6 +339,8 @@ export async function runHeartbeat(
           channel: lastActive.channel,
           accountId: lastActive.accountId,
           peer: lastActive.peer,
+          inboundMessageId: `heartbeat:${reason}:${Date.now()}`,
+          agentId,
         }),
       );
       console.log(`[Gateway] Heartbeat target=${target}, matched last active`);
@@ -357,9 +357,16 @@ export async function runHeartbeat(
   const runId = crypto.randomUUID();
 
   if (deliveryContext) {
-    gw.pendingChannelResponses[runId] = {
+    gw.lastActiveContext[agentId] = {
+      agentId,
+      channel: deliveryContext.channel,
+      accountId: deliveryContext.accountId,
+      peer: deliveryContext.peer,
+      sessionKey,
+      timestamp: Date.now(),
+    };
+    deliveryContext = {
       ...deliveryContext,
-      inboundMessageId: `heartbeat:${reason}:${Date.now()}`,
       agentId,
     };
   }
@@ -381,6 +388,8 @@ export async function runHeartbeat(
             channel: deliveryContext.channel,
             accountId: deliveryContext.accountId,
             peer: deliveryContext.peer,
+            inboundMessageId: deliveryContext.inboundMessageId,
+            agentId: deliveryContext.agentId,
           }
         : undefined,
     );
@@ -388,9 +397,6 @@ export async function runHeartbeat(
   } catch (e) {
     console.error(`[Gateway] Heartbeat failed for ${agentId}:`, e);
     result.error = e instanceof Error ? e.message : String(e);
-    if (deliveryContext) {
-      delete gw.pendingChannelResponses[runId];
-    }
   }
 
   return result;

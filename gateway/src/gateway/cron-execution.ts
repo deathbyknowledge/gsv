@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import type { CronJob } from "../cron";
-import type { ChannelId, PeerInfo } from "../protocol/channel";
+import type { SessionOutputContext } from "../protocol/channel";
 import { formatTimeFull, resolveTimezone } from "../shared/time";
 import type { Gateway } from "./do";
 
@@ -28,11 +28,7 @@ export async function executeCronJob(
   const agentId = params.job.agentId;
   const session = env.SESSION.getByName(params.sessionKey);
 
-  let deliveryContext: {
-    channel: ChannelId;
-    accountId: string;
-    peer: PeerInfo;
-  } | null = null;
+  let deliveryContext: SessionOutputContext | null = null;
 
   const shouldDeliver = params.deliver !== false;
   if (shouldDeliver) {
@@ -42,29 +38,27 @@ export async function executeCronJob(
       deliveryContext = JSON.parse(JSON.stringify({
         channel: params.channel,
         accountId: lastActive.accountId,
-        peer: { kind: "dm" as const, id: params.to },
+        peer: { kind: "dm", id: params.to },
+        inboundMessageId: `cron:${params.job.id}:${Date.now()}`,
+        agentId,
       }));
     } else if (params.to && lastActive) {
       deliveryContext = JSON.parse(JSON.stringify({
         channel: lastActive.channel,
         accountId: lastActive.accountId,
-        peer: { kind: "dm" as const, id: params.to },
+        peer: { kind: "dm", id: params.to },
+        inboundMessageId: `cron:${params.job.id}:${Date.now()}`,
+        agentId,
       }));
     } else if (lastActive) {
       deliveryContext = JSON.parse(JSON.stringify({
         channel: lastActive.channel,
         accountId: lastActive.accountId,
         peer: lastActive.peer,
+        inboundMessageId: `cron:${params.job.id}:${Date.now()}`,
+        agentId,
       }));
     }
-  }
-
-  if (deliveryContext) {
-    gw.pendingChannelResponses[runId] = {
-      ...deliveryContext,
-      inboundMessageId: `cron:${params.job.id}:${Date.now()}`,
-      agentId,
-    };
   }
 
   if (deliveryContext) {
@@ -104,6 +98,8 @@ export async function executeCronJob(
               id: deliveryContext.peer.id,
               name: deliveryContext.peer.name,
             },
+            inboundMessageId: deliveryContext.inboundMessageId,
+            agentId: deliveryContext.agentId,
           }
         : undefined,
     );
@@ -112,9 +108,6 @@ export async function executeCronJob(
       summary: `queued to ${params.sessionKey}${deliveryContext ? ` (delivering to ${deliveryContext.channel}:${deliveryContext.peer.id})` : ""}`,
     };
   } catch (error) {
-    if (deliveryContext) {
-      delete gw.pendingChannelResponses[runId];
-    }
     return {
       status: "error",
       error: error instanceof Error ? error.message : String(error),

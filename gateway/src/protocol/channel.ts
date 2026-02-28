@@ -79,8 +79,13 @@ export type SessionChannelContext = {
   channel: ChannelId;
   accountId: string;
   peer: {
-    kind: string;
+    kind: ChatType;
     id: string;
     name?: string;
   };
+};
+
+export type SessionOutputContext = SessionChannelContext & {
+  inboundMessageId: string;
+  agentId?: string;
 };
