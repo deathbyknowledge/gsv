@@ -1,11 +1,16 @@
-import { snapshot, type Proxied } from "../shared/persisted-object";
+import {
+  snapshot,
+  type Proxied,
+  PersistedObject,
+} from "../shared/persisted-object";
 import type { EventFrame } from "../protocol/frames";
+import type { GsvConfig } from "../config";
 import type {
   NodeProbePayload,
   NodeProbeResultParams,
   NodeRuntimeInfo,
 } from "../protocol/tools";
-import type { Gateway } from "./do";
+import { Gateway } from "./do";
 
 const DEFAULT_SKILL_PROBE_TIMEOUT_MS = 15_000;
 const MAX_SKILL_PROBE_TIMEOUT_MS = 120_000;
@@ -26,47 +31,23 @@ type PendingNodeProbe = {
   expiresAt?: number;
 };
 
-export function canNodeProbeBins(gw: Gateway, nodeId: string): boolean {
-  const runtime = gw.nodeRuntimeRegistry[nodeId];
-  if (!runtime) {
-    return false;
-  }
-  return runtime.hostCapabilities.includes("shell.exec");
-}
+type PendingNodeProbeStore = ReturnType<
+  typeof PersistedObject<Record<string, PendingNodeProbe>>
+>;
 
-export function sanitizeSkillBinName(bin: string): string | null {
-  const trimmed = bin.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-  if (!/^[A-Za-z0-9._+-]+$/.test(trimmed)) {
-    return null;
-  }
-  return trimmed;
-}
+type GatewayNodeProbeStateBridge = {
+  pendingNodeProbes: PendingNodeProbeStore;
+  nodes: Map<string, WebSocket>;
+  nodeRuntimeRegistry: Proxied<Record<string, NodeRuntimeInfo>>;
 
-export function clampSkillProbeTimeoutMs(timeoutMs?: number): number {
-  const timeoutInput =
-    typeof timeoutMs === "number" && Number.isFinite(timeoutMs)
-      ? Math.floor(timeoutMs)
-      : DEFAULT_SKILL_PROBE_TIMEOUT_MS;
-  return Math.max(1000, Math.min(timeoutInput, MAX_SKILL_PROBE_TIMEOUT_MS));
-}
+  getFullConfig(): GsvConfig;
+  scheduleGatewayAlarm(): Promise<void>;
+};
 
-export function resolveSkillProbeMaxAgeMs(gw: Gateway): number {
-  const configured = gw.getFullConfig().timeouts.skillProbeMaxAgeMs;
-  if (typeof configured !== "number" || !Number.isFinite(configured)) {
-    return DEFAULT_SKILL_PROBE_MAX_AGE_MS;
-  }
-
-  const normalized = Math.floor(configured);
-  return Math.max(
-    MIN_SKILL_PROBE_MAX_AGE_MS,
-    Math.min(normalized, MAX_SKILL_PROBE_MAX_AGE_MS),
-  );
-}
-
-function collectPendingProbeBinsForNode(gw: Gateway, nodeId: string): Set<string> {
+function collectPendingProbeBinsForNode(
+  gw: GatewayNodeProbeStateBridge,
+  nodeId: string,
+): Set<string> {
   const bins = new Set<string>();
   for (const probe of Object.values(gw.pendingNodeProbes)) {
     if (probe.nodeId !== nodeId || probe.kind !== "bins") {
@@ -83,9 +64,7 @@ function cloneNodeRuntimeInfo(
   runtime: NodeRuntimeInfo,
   overrides?: Partial<NodeRuntimeInfo>,
 ): NodeRuntimeInfo {
-  const plainRuntime = snapshot(
-    runtime as unknown as Proxied<NodeRuntimeInfo>,
-  );
+  const plainRuntime = snapshot(runtime as unknown as Proxied<NodeRuntimeInfo>);
   const hostCapabilities =
     overrides?.hostCapabilities ?? plainRuntime.hostCapabilities;
   const toolCapabilities =
@@ -113,8 +92,7 @@ function cloneNodeRuntimeInfo(
         )
       : undefined,
     hostBinStatusUpdatedAt:
-      overrides?.hostBinStatusUpdatedAt ??
-      plainRuntime.hostBinStatusUpdatedAt,
+      overrides?.hostBinStatusUpdatedAt ?? plainRuntime.hostBinStatusUpdatedAt,
   };
 }
 
@@ -122,9 +100,7 @@ function clonePendingNodeProbe(
   probe: PendingNodeProbe,
   overrides?: Partial<PendingNodeProbe>,
 ): PendingNodeProbe {
-  const plainProbe = snapshot(
-    probe as unknown as Proxied<PendingNodeProbe>,
-  );
+  const plainProbe = snapshot(probe as unknown as Proxied<PendingNodeProbe>);
   const bins = overrides?.bins ?? plainProbe.bins;
   return {
     nodeId: overrides?.nodeId ?? plainProbe.nodeId,
@@ -140,7 +116,7 @@ function clonePendingNodeProbe(
 }
 
 function dispatchNodeProbe(
-  gw: Gateway,
+  gw: GatewayNodeProbeStateBridge,
   probeId: string,
   probe: PendingNodeProbe,
 ): boolean {
@@ -175,8 +151,51 @@ function dispatchNodeProbe(
   return true;
 }
 
+function resolveSkillProbeMaxAgeMs(gw: GatewayNodeProbeStateBridge): number {
+  const configured = gw.getFullConfig().timeouts.skillProbeMaxAgeMs;
+  if (typeof configured !== "number" || !Number.isFinite(configured)) {
+    return DEFAULT_SKILL_PROBE_MAX_AGE_MS;
+  }
+
+  const normalized = Math.floor(configured);
+  return Math.max(
+    MIN_SKILL_PROBE_MAX_AGE_MS,
+    Math.min(normalized, MAX_SKILL_PROBE_MAX_AGE_MS),
+  );
+}
+
+export function canNodeProbeBins(
+  gw: GatewayNodeProbeStateBridge,
+  nodeId: string,
+): boolean {
+  const runtime = gw.nodeRuntimeRegistry[nodeId];
+  if (!runtime) {
+    return false;
+  }
+  return runtime.hostCapabilities.includes("shell.exec");
+}
+
+export function sanitizeSkillBinName(bin: string): string | null {
+  const trimmed = bin.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (!/^[A-Za-z0-9._+-]+$/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+export function clampSkillProbeTimeoutMs(timeoutMs?: number): number {
+  const timeoutInput =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs)
+      ? Math.floor(timeoutMs)
+      : DEFAULT_SKILL_PROBE_TIMEOUT_MS;
+  return Math.max(1000, Math.min(timeoutInput, MAX_SKILL_PROBE_TIMEOUT_MS));
+}
+
 export function queueNodeBinProbe(
-  gw: Gateway,
+  gw: GatewayNodeProbeStateBridge,
   params: {
     nodeId: string;
     agentId: string;
@@ -213,7 +232,7 @@ export function queueNodeBinProbe(
 }
 
 export function markPendingNodeProbesAsQueued(
-  gw: Gateway,
+  gw: GatewayNodeProbeStateBridge,
   nodeId: string,
   reason: string,
 ): void {
@@ -227,17 +246,23 @@ export function markPendingNodeProbesAsQueued(
       expiresAt: undefined,
     });
   }
-  console.warn(`[Gateway] Marked pending node probes for ${nodeId} as queued: ${reason}`);
+  console.warn(
+    `[Gateway] Marked pending node probes for ${nodeId} as queued: ${reason}`,
+  );
 }
 
 export async function dispatchPendingNodeProbesForNode(
-  gw: Gateway,
+  gw: GatewayNodeProbeStateBridge,
   nodeId: string,
 ): Promise<number> {
   gcPendingNodeProbes(gw, Date.now(), `dispatch:${nodeId}`);
   let dispatched = 0;
   for (const [probeId, probe] of Object.entries(gw.pendingNodeProbes)) {
-    if (probe.nodeId !== nodeId || probe.sentAt || probe.attempts >= MAX_SKILL_PROBE_ATTEMPTS) {
+    if (
+      probe.nodeId !== nodeId ||
+      probe.sentAt ||
+      probe.attempts >= MAX_SKILL_PROBE_ATTEMPTS
+    ) {
       continue;
     }
     if (dispatchNodeProbe(gw, probeId, probe)) {
@@ -249,7 +274,7 @@ export async function dispatchPendingNodeProbesForNode(
 }
 
 export function nextPendingNodeProbeExpiryAtMs(
-  gw: Gateway,
+  gw: GatewayNodeProbeStateBridge,
 ): number | undefined {
   let next: number | undefined;
   for (const probe of Object.values(gw.pendingNodeProbes)) {
@@ -264,7 +289,7 @@ export function nextPendingNodeProbeExpiryAtMs(
 }
 
 export function nextPendingNodeProbeGcAtMs(
-  gw: Gateway,
+  gw: GatewayNodeProbeStateBridge,
   now = Date.now(),
 ): number | undefined {
   const maxAgeMs = resolveSkillProbeMaxAgeMs(gw);
@@ -280,7 +305,7 @@ export function nextPendingNodeProbeGcAtMs(
 }
 
 export function gcPendingNodeProbes(
-  gw: Gateway,
+  gw: GatewayNodeProbeStateBridge,
   now = Date.now(),
   reason?: string,
 ): number {
@@ -303,7 +328,7 @@ export function gcPendingNodeProbes(
 }
 
 export async function handlePendingNodeProbeTimeouts(
-  gw: Gateway,
+  gw: GatewayNodeProbeStateBridge,
 ): Promise<void> {
   const now = Date.now();
   gcPendingNodeProbes(gw, now, "timeout-scan");
@@ -335,7 +360,7 @@ export async function handlePendingNodeProbeTimeouts(
 }
 
 export async function handleNodeProbeResult(
-  gw: Gateway,
+  gw: GatewayNodeProbeStateBridge,
   nodeId: string,
   params: NodeProbeResultParams,
 ): Promise<{ ok: true; dropped?: true }> {
@@ -344,12 +369,16 @@ export async function handleNodeProbeResult(
     return { ok: true, dropped: true };
   }
   if (probe.nodeId !== nodeId) {
-    throw new Error(`Node ${nodeId} is not authorized for probe ${params.probeId}`);
+    throw new Error(
+      `Node ${nodeId} is not authorized for probe ${params.probeId}`,
+    );
   }
 
   if (probe.kind === "bins") {
     const reported =
-      params.bins && typeof params.bins === "object" && !Array.isArray(params.bins)
+      params.bins &&
+      typeof params.bins === "object" &&
+      !Array.isArray(params.bins)
         ? (params.bins as Record<string, unknown>)
         : {};
     const resultStatus = Object.fromEntries(
@@ -380,4 +409,85 @@ export async function handleNodeProbeResult(
   delete gw.pendingNodeProbes[params.probeId];
   await gw.scheduleGatewayAlarm();
   return { ok: true };
+}
+
+export class GatewayNodeProbeStateService implements GatewayNodeProbeStateBridge {
+  pendingNodeProbes: PendingNodeProbeStore;
+  #gateway: Gateway;
+
+  constructor(kv: SyncKvStorage, gw: Gateway) {
+    this.pendingNodeProbes = PersistedObject<Record<string, PendingNodeProbe>>(
+      kv,
+      { prefix: "pendingNodeProbes:" },
+    );
+    this.#gateway = gw;
+  }
+
+  get nodes(): Map<string, WebSocket> {
+    return this.#gateway.nodes;
+  }
+
+  get nodeRuntimeRegistry(): Proxied<Record<string, NodeRuntimeInfo>> {
+    return this.#gateway.nodeRuntimeRegistry;
+  }
+
+  getFullConfig(): GsvConfig {
+    return this.#gateway.getFullConfig();
+  }
+
+  async scheduleGatewayAlarm(): Promise<void> {
+    await this.#gateway.scheduleGatewayAlarm();
+  }
+
+  canNodeProbeBins(nodeId: string): boolean {
+    return canNodeProbeBins(this, nodeId);
+  }
+
+  sanitizeSkillBinName(bin: string): string | null {
+    return sanitizeSkillBinName(bin);
+  }
+
+  clampSkillProbeTimeoutMs(timeoutMs?: number): number {
+    return clampSkillProbeTimeoutMs(timeoutMs);
+  }
+
+  queueNodeBinProbe(params: {
+    nodeId: string;
+    agentId: string;
+    bins: string[];
+    timeoutMs: number;
+  }): { probeId?: string; bins: string[]; dispatched: boolean } {
+    return queueNodeBinProbe(this, params);
+  }
+
+  markPendingNodeProbesAsQueued(nodeId: string, reason: string): void {
+    return markPendingNodeProbesAsQueued(this, nodeId, reason);
+  }
+
+  async dispatchPendingNodeProbesForNode(nodeId: string): Promise<number> {
+    return dispatchPendingNodeProbesForNode(this, nodeId);
+  }
+
+  nextPendingNodeProbeExpiryAtMs(): number | undefined {
+    return nextPendingNodeProbeExpiryAtMs(this);
+  }
+
+  nextPendingNodeProbeGcAtMs(now = Date.now()): number | undefined {
+    return nextPendingNodeProbeGcAtMs(this, now);
+  }
+
+  gcPendingNodeProbes(now = Date.now(), reason?: string): number {
+    return gcPendingNodeProbes(this, now, reason);
+  }
+
+  async handlePendingNodeProbeTimeouts(): Promise<void> {
+    await handlePendingNodeProbeTimeouts(this);
+  }
+
+  async handleNodeProbeResult(
+    nodeId: string,
+    params: NodeProbeResultParams,
+  ): Promise<{ ok: true; dropped?: true }> {
+    return handleNodeProbeResult(this, nodeId, params);
+  }
 }

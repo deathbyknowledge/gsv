@@ -37,32 +37,8 @@ import {
   executeSessionsListTool as executeSessionsListToolHandler,
 } from "./tool-executors";
 import { executeCronJob as executeCronJobHandler } from "./cron-execution";
-import {
-  deliverPendingAsyncExecDeliveries as deliverPendingAsyncExecDeliveriesHandler,
-  gcDeliveredAsyncExecEvents as gcDeliveredAsyncExecEventsHandler,
-  gcPendingAsyncExecDeliveries as gcPendingAsyncExecDeliveriesHandler,
-  gcPendingAsyncExecSessions as gcPendingAsyncExecSessionsHandler,
-  handleNodeExecEvent as handleNodeExecEventHandler,
-  nextDeliveredAsyncExecEventGcAtMs as nextDeliveredAsyncExecEventGcAtMsHandler,
-  nextPendingAsyncExecDeliveryAtMs as nextPendingAsyncExecDeliveryAtMsHandler,
-  nextPendingAsyncExecSessionExpiryAtMs as nextPendingAsyncExecSessionExpiryAtMsHandler,
-  registerPendingAsyncExecSession as registerPendingAsyncExecSessionHandler,
-  type PendingAsyncExecDelivery,
-  type PendingAsyncExecSession,
-} from "./async-exec";
-import {
-  canNodeProbeBins as canNodeProbeBinsHandler,
-  clampSkillProbeTimeoutMs as clampSkillProbeTimeoutMsHandler,
-  dispatchPendingNodeProbesForNode as dispatchPendingNodeProbesForNodeHandler,
-  gcPendingNodeProbes as gcPendingNodeProbesHandler,
-  handleNodeProbeResult as handleNodeProbeResultHandler,
-  handlePendingNodeProbeTimeouts as handlePendingNodeProbeTimeoutsHandler,
-  markPendingNodeProbesAsQueued as markPendingNodeProbesAsQueuedHandler,
-  nextPendingNodeProbeExpiryAtMs as nextPendingNodeProbeExpiryAtMsHandler,
-  nextPendingNodeProbeGcAtMs as nextPendingNodeProbeGcAtMsHandler,
-  queueNodeBinProbe as queueNodeBinProbeHandler,
-  sanitizeSkillBinName as sanitizeSkillBinNameHandler,
-} from "./skill-probes";
+import { GatewayAsyncExecStateService } from "./async-exec";
+import { GatewayNodeProbeStateService } from "./skill-probes";
 import {
   handleChannelInboundRpc as handleChannelInboundRpcHandler,
   type ChannelInboundRpcResult,
@@ -115,18 +91,6 @@ import type {
 import { GatewayRpcDispatcher } from "./rpc-dispatcher";
 import { GatewayPendingOperationsService } from "./pending-ops";
 
-type PendingNodeProbe = {
-  nodeId: string;
-  agentId: string;
-  kind: "bins";
-  bins: string[];
-  timeoutMs: number;
-  attempts: number;
-  createdAt: number;
-  sentAt?: number;
-  expiresAt?: number;
-};
-
 type PendingInternalLogRequest = {
   nodeId: string;
   resolve: (result: LogsGetResult) => void;
@@ -154,6 +118,14 @@ export class Gateway extends DurableObject<Env> {
   readonly transferStateService = new GatewayTransferStateService(
     this.ctx.storage.kv,
   );
+  readonly asyncExecStateService = new GatewayAsyncExecStateService(
+    this.ctx.storage.kv,
+    this,
+  );
+  readonly nodeProbeStateService = new GatewayNodeProbeStateService(
+    this.ctx.storage.kv,
+    this,
+  );
   readonly toolRegistry = PersistedObject<Record<string, ToolDefinition[]>>(
     this.ctx.storage.kv,
     { prefix: "toolRegistry:" },
@@ -161,22 +133,6 @@ export class Gateway extends DurableObject<Env> {
   readonly nodeRuntimeRegistry = PersistedObject<
     Record<string, NodeRuntimeInfo>
   >(this.ctx.storage.kv, { prefix: "nodeRuntimeRegistry:" });
-
-  readonly pendingNodeProbes = PersistedObject<
-    Record<string, PendingNodeProbe>
-  >(this.ctx.storage.kv, { prefix: "pendingNodeProbes:" });
-  readonly pendingAsyncExecSessions = PersistedObject<
-    Record<string, PendingAsyncExecSession>
-  >(this.ctx.storage.kv, { prefix: "pendingAsyncExecSessions:" });
-  readonly pendingAsyncExecDeliveries = PersistedObject<
-    Record<string, PendingAsyncExecDelivery>
-  >(this.ctx.storage.kv, { prefix: "pendingAsyncExecDeliveries:" });
-  readonly deliveredAsyncExecEvents = PersistedObject<Record<string, number>>(
-    this.ctx.storage.kv,
-    {
-      prefix: "deliveredAsyncExecEvents:",
-    },
-  );
   private readonly pendingInternalLogCalls = new Map<
     string,
     PendingInternalLogRequest
@@ -659,30 +615,30 @@ export class Gateway extends DurableObject<Env> {
     sessionKey: string;
     callId: string;
   }): void {
-    registerPendingAsyncExecSessionHandler(this, params);
+    this.asyncExecStateService.registerPendingAsyncExecSession(params);
     this.ctx.waitUntil(this.scheduleGatewayAlarm());
   }
 
   markPendingNodeProbesAsQueued(nodeId: string, reason: string): void {
-    markPendingNodeProbesAsQueuedHandler(this, nodeId, reason);
+    this.nodeProbeStateService.markPendingNodeProbesAsQueued(nodeId, reason);
   }
 
   async dispatchPendingNodeProbesForNode(nodeId: string): Promise<number> {
-    return dispatchPendingNodeProbesForNodeHandler(this, nodeId);
+    return this.nodeProbeStateService.dispatchPendingNodeProbesForNode(nodeId);
   }
 
   async handleNodeProbeResult(
     nodeId: string,
     params: NodeProbeResultParams,
   ): Promise<{ ok: true; dropped?: true }> {
-    return handleNodeProbeResultHandler(this, nodeId, params);
+    return this.nodeProbeStateService.handleNodeProbeResult(nodeId, params);
   }
 
   async handleNodeExecEvent(
     nodeId: string,
     params: NodeExecEventParams,
   ): Promise<{ ok: true; dropped?: true }> {
-    return handleNodeExecEventHandler(this, nodeId, params);
+    return this.asyncExecStateService.handleNodeExecEvent(nodeId, params);
   }
 
   async transferRequest(
@@ -824,7 +780,7 @@ export class Gateway extends DurableObject<Env> {
         continue;
       }
       for (const bin of [...policy.requires.bins, ...policy.requires.anyBins]) {
-        const sanitized = sanitizeSkillBinNameHandler(bin);
+        const sanitized = this.nodeProbeStateService.sanitizeSkillBinName(bin);
         if (sanitized) {
           requiredBinsSet.add(sanitized);
         }
@@ -843,7 +799,9 @@ export class Gateway extends DurableObject<Env> {
       };
     }
 
-    const timeoutMs = clampSkillProbeTimeoutMsHandler(options?.timeoutMs);
+    const timeoutMs = this.nodeProbeStateService.clampSkillProbeTimeoutMs(
+      options?.timeoutMs,
+    );
     const now = Date.now();
     let updatedNodeCount = 0;
     const skippedNodeIds: string[] = [];
@@ -856,7 +814,7 @@ export class Gateway extends DurableObject<Env> {
         continue;
       }
 
-      if (!canNodeProbeBinsHandler(this, nodeId)) {
+      if (!this.nodeProbeStateService.canNodeProbeBins(nodeId)) {
         skippedNodeIds.push(nodeId);
         continue;
       }
@@ -874,7 +832,7 @@ export class Gateway extends DurableObject<Env> {
         continue;
       }
 
-      const probe = queueNodeBinProbeHandler(this, {
+      const probe = this.nodeProbeStateService.queueNodeBinProbe({
         nodeId,
         agentId: normalizedAgentId,
         bins: binsToProbe,
@@ -1313,37 +1271,49 @@ export class Gateway extends DurableObject<Env> {
       },
       {
         name: "probeTimeouts",
-        nextDueMs: nextPendingNodeProbeExpiryAtMsHandler(this),
+        nextDueMs: this.nodeProbeStateService.nextPendingNodeProbeExpiryAtMs(),
         run: async () => {
-          await handlePendingNodeProbeTimeoutsHandler(this);
+          await this.nodeProbeStateService.handlePendingNodeProbeTimeouts();
         },
       },
       {
         name: "probeGc",
-        nextDueMs: nextPendingNodeProbeGcAtMsHandler(this),
+        nextDueMs: this.nodeProbeStateService.nextPendingNodeProbeGcAtMs(),
         run: async (params: { now: number }) => {
-          gcPendingNodeProbesHandler(this, params.now, "alarm");
+          this.nodeProbeStateService.gcPendingNodeProbes(params.now, "alarm");
         },
       },
       {
         name: "asyncExecGc",
-        nextDueMs: nextPendingAsyncExecSessionExpiryAtMsHandler(this),
+        nextDueMs:
+          this.asyncExecStateService.nextPendingAsyncExecSessionExpiryAtMs(),
         run: async (params: { now: number }) => {
-          gcPendingAsyncExecSessionsHandler(this, params.now, "alarm");
+          this.asyncExecStateService.gcPendingAsyncExecSessions(
+            params.now,
+            "alarm",
+          );
         },
       },
       {
         name: "asyncExecDeliveryGc",
-        nextDueMs: nextPendingAsyncExecDeliveryAtMsHandler(this),
+        nextDueMs:
+          this.asyncExecStateService.nextPendingAsyncExecDeliveryAtMs(),
         run: async (params: { now: number }) => {
-          gcPendingAsyncExecDeliveriesHandler(this, params.now, "alarm");
+          this.asyncExecStateService.gcPendingAsyncExecDeliveries(
+            params.now,
+            "alarm",
+          );
         },
       },
       {
         name: "asyncExecDeliveredGc",
-        nextDueMs: nextDeliveredAsyncExecEventGcAtMsHandler(this),
+        nextDueMs:
+          this.asyncExecStateService.nextDeliveredAsyncExecEventGcAtMs(),
         run: async (params: { now: number }) => {
-          gcDeliveredAsyncExecEventsHandler(this, params.now, "alarm");
+          this.asyncExecStateService.gcDeliveredAsyncExecEvents(
+            params.now,
+            "alarm",
+          );
         },
       },
       {
@@ -1353,9 +1323,12 @@ export class Gateway extends DurableObject<Env> {
       },
       {
         name: "asyncExecDelivery",
-        nextDueMs: nextPendingAsyncExecDeliveryAtMsHandler(this),
+        nextDueMs:
+          this.asyncExecStateService.nextPendingAsyncExecDeliveryAtMs(),
         run: async (params: { now: number }) => {
-          await deliverPendingAsyncExecDeliveriesHandler(this, params.now);
+          await this.asyncExecStateService.deliverPendingAsyncExecDeliveries(
+            params.now,
+          );
         },
       },
     ];
