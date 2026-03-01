@@ -1,3 +1,4 @@
+use crate::build_info;
 use crate::protocol::{
     AuthParams, ClientInfo, ConnectParams, ErrorShape, Frame, NodeRuntimeInfo, RequestFrame,
     ResponseFrame, ToolDefinition,
@@ -184,7 +185,7 @@ impl Connection {
             max_protocol: 1,
             client: ClientInfo {
                 id,
-                version: env!("CARGO_PKG_VERSION").to_string(),
+                version: build_info::BUILD_VERSION.to_string(),
                 platform: std::env::consts::OS.to_string(),
                 mode: mode.to_string(),
             },

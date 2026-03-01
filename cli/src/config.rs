@@ -25,6 +25,10 @@ pub struct CliConfig {
     #[serde(default)]
     pub cloudflare: CloudflareConfig,
 
+    /// Release defaults (install/upgrade channel preference)
+    #[serde(default)]
+    pub release: ReleaseConfig,
+
     /// R2 storage settings (for mount command)
     #[serde(default)]
     pub r2: R2Config,
@@ -83,6 +87,12 @@ pub struct CloudflareConfig {
 
     /// Cloudflare API token
     pub api_token: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ReleaseConfig {
+    /// Preferred release channel for setup/upgrade defaults (`stable` or `dev`)
+    pub channel: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -180,6 +190,16 @@ impl CliConfig {
         self.gateway.token.clone()
     }
 
+    /// Get normalized release channel from config (`stable` or `dev`)
+    pub fn release_channel(&self) -> Option<String> {
+        self.release
+            .channel
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .filter(|value| matches!(value.as_str(), "stable" | "dev"))
+    }
+
     /// Get default session key
     pub fn default_session(&self) -> String {
         let raw = self
@@ -247,6 +267,10 @@ token = "your-token-here"
 # Used by 'gsv deploy' commands
 # account_id = "your-cloudflare-account-id"
 # api_token = "your-cloudflare-api-token"
+
+[release]
+# Preferred release channel for installer/setup/upgrade defaults (`stable` or `dev`)
+# channel = "stable"
 
 [r2]
 # Cloudflare R2 credentials (for 'gsv mount' command)
