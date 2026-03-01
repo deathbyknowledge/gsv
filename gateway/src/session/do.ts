@@ -869,6 +869,7 @@ export class Session extends DurableObject<Env> {
     if (!pendingCall) {
       this.pendingToolApproval = null;
       if (this.currentRun) {
+        this.removeToolCallFromDispatchQueue(pending.callId);
         this.currentRun.waitingForApproval = false;
       }
       return {
@@ -890,6 +891,8 @@ export class Session extends DurableObject<Env> {
           "No active run is waiting for approval anymore. You can continue normally.",
       };
     }
+
+    this.removeToolCallFromDispatchQueue(pending.callId);
 
     if (decision === "approve") {
       await this.dispatchToolExecution(pendingCall, true);
@@ -956,6 +959,16 @@ export class Session extends DurableObject<Env> {
       result: raw.result,
       error: raw.error,
     };
+  }
+
+  private removeToolCallFromDispatchQueue(callId: string): void {
+    if (!this.currentRun?.pendingToolDispatchQueue) {
+      return;
+    }
+    this.currentRun.pendingToolDispatchQueue =
+      this.currentRun.pendingToolDispatchQueue.filter(
+        (toolCall) => toolCall.id !== callId,
+      );
   }
 
   private async finalizeToolDispatchWaitState(): Promise<void> {

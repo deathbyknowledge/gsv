@@ -444,6 +444,9 @@ export class Gateway extends DurableObject<Env> {
     let disconnected = false;
     if (ws) {
       this.nodes.delete(nodeId);
+      // Force-forget removes the socket from this.nodes before close, so run
+      // transfer cleanup here instead of relying on webSocketClose().
+      failTransfersForNode(this, nodeId);
       ws.close(1000, "Forgotten from node registry");
       this.nodeService.markNodeDisconnected(nodeId);
       disconnected = true;
