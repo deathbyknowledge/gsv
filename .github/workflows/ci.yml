@@ -10,6 +10,10 @@ jobs:
   gateway-test:
     name: Gateway Tests
     runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      GSV_TEST_OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       
@@ -32,6 +36,14 @@ jobs:
         working-directory: gateway
         run: npm test
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Run e2e tests
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
+        working-directory: gateway
+        run: npm run test:e2e
+
   cli-build:
     name: CLI Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -51,5 +63,3 @@ jobs:
       - name: Run tests
         working-directory: cli
         run: cargo test
-
-
