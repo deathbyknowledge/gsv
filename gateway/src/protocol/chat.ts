@@ -1,7 +1,10 @@
+import type { SessionOutputContext } from "./channel";
+
 export type ChatEventPayload = {
   runId: string | null;
   sessionKey: string;
-  state: "partial" | "final" | "error";
+  state: "partial" | "final" | "error" | "paused";
   message?: unknown;
   error?: string;
+  channelContext?: SessionOutputContext;
 };

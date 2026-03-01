@@ -13,6 +13,7 @@ import {
   parseTransferBinaryFrame,
 } from "../protocol/transfer";
 import type { Gateway } from "./do";
+import { PersistedObject } from "../shared/persisted-object";
 
 export type TransferState = {
   transferId: number;
@@ -31,12 +32,6 @@ export type TransferR2 = {
   uploadPromise: Promise<R2Object>;
 };
 
-function nextTransferId(gw: Gateway): number {
-  const keys = Object.keys(gw.transfers);
-  if (keys.length === 0) return 1;
-  return Math.max(...keys.map(Number)) + 1;
-}
-
 export function getTransferWs(
   gw: Gateway,
   nodeId: string,
@@ -50,12 +45,15 @@ export async function transferRequest(
   gw: Gateway,
   params: TransferRequestParams,
 ): Promise<{ ok: boolean; error?: string }> {
-  const transferId = nextTransferId(gw);
+  const transferId = gw.transferStateService.nextTransferId();
   const sourceIsGsv = params.source.node === "gsv";
   const destIsGsv = params.destination.node === "gsv";
 
   if (!sourceIsGsv && !getTransferWs(gw, params.source.node)) {
-    return { ok: false, error: `Source node not connected: ${params.source.node}` };
+    return {
+      ok: false,
+      error: `Source node not connected: ${params.source.node}`,
+    };
   }
 
   if (!destIsGsv && !getTransferWs(gw, params.destination.node)) {
@@ -75,19 +73,19 @@ export async function transferRequest(
     bytesTransferred: 0,
   };
 
-  gw.transfers[String(transferId)] = transfer;
+  gw.transferStateService.setTransfer(transfer);
 
   if (sourceIsGsv) {
     const r2Object = await (env as Env).STORAGE.head(params.source.path);
     if (!r2Object) {
-      delete gw.transfers[String(transferId)];
+      gw.transferStateService.deleteTransfer(transferId);
       return { ok: false, error: `R2 object not found: ${params.source.path}` };
     }
     transfer.size = r2Object.size;
     transfer.mime = r2Object.httpMetadata?.contentType;
 
     if (destIsGsv) {
-      delete gw.transfers[String(transferId)];
+      gw.transferStateService.deleteTransfer(transferId);
       return { ok: false, error: "Cannot transfer from gsv to gsv" };
     }
 
@@ -101,9 +99,11 @@ export async function transferRequest(
         mime: transfer.mime,
       },
     };
-    getTransferWs(gw, params.destination.node)!.send(JSON.stringify(receiveEvt));
+    getTransferWs(gw, params.destination.node)!.send(
+      JSON.stringify(receiveEvt),
+    );
     transfer.state = "accept-wait";
-    gw.transfers[String(transferId)] = transfer;
+    gw.transferStateService.setTransfer(transfer);
   } else {
     const sendEvt: EventFrame<TransferSendPayload> = {
       type: "evt",
@@ -115,24 +115,27 @@ export async function transferRequest(
     };
     getTransferWs(gw, params.source.node)!.send(JSON.stringify(sendEvt));
     transfer.state = "meta-wait";
-    gw.transfers[String(transferId)] = transfer;
+    gw.transferStateService.setTransfer(transfer);
   }
 
   return { ok: true };
 }
 
-export function handleTransferBinaryFrame(gw: Gateway, data: ArrayBuffer): void {
+export function handleTransferBinaryFrame(
+  gw: Gateway,
+  data: ArrayBuffer,
+): void {
   const { transferId, chunk } = parseTransferBinaryFrame(data);
-  const transfer = gw.transfers[String(transferId)];
+  const transfer = gw.transferStateService.getTransfer(transferId);
   if (!transfer) return;
 
   transfer.bytesTransferred += chunk.byteLength;
-  gw.transfers[String(transferId)] = transfer;
+  gw.transferStateService.setTransfer(transfer);
 
   const destIsGsv = transfer.destination.node === "gsv";
 
   if (destIsGsv) {
-    const r2 = gw.transferR2.get(transferId);
+    const r2 = gw.transferStateService.getTransferR2(transferId);
     if (r2) {
       r2.writer.write(new Uint8Array(chunk)).catch((error) => {
         failTransfer(gw, transfer, `R2 write error: ${error}`);
@@ -153,7 +156,11 @@ export async function streamR2ToDest(
   try {
     const r2Object = await (env as Env).STORAGE.get(transfer.source.path);
     if (!r2Object) {
-      failTransfer(gw, transfer, `R2 object not found: ${transfer.source.path}`);
+      failTransfer(
+        gw,
+        transfer,
+        `R2 object not found: ${transfer.source.path}`,
+      );
       return;
     }
 
@@ -175,11 +182,13 @@ export async function streamR2ToDest(
       done = result.done;
       if (result.value) {
         transfer.bytesTransferred += result.value.byteLength;
-        destWs.send(buildTransferBinaryFrame(transfer.transferId, result.value));
+        destWs.send(
+          buildTransferBinaryFrame(transfer.transferId, result.value),
+        );
       }
     }
 
-    gw.transfers[String(transfer.transferId)] = transfer;
+    gw.transferStateService.setTransfer(transfer);
 
     const endEvt: EventFrame<TransferEndPayload> = {
       type: "evt",
@@ -188,7 +197,7 @@ export async function streamR2ToDest(
     };
     destWs.send(JSON.stringify(endEvt));
     transfer.state = "completing";
-    gw.transfers[String(transfer.transferId)] = transfer;
+    gw.transferStateService.setTransfer(transfer);
   } catch (error) {
     failTransfer(
       gw,
@@ -203,7 +212,7 @@ export async function finalizeR2Upload(
   transfer: TransferState,
 ): Promise<void> {
   try {
-    const r2 = gw.transferR2.get(transfer.transferId);
+    const r2 = gw.transferStateService.getTransferR2(transfer.transferId);
     if (!r2) {
       completeTransfer(gw, transfer, transfer.bytesTransferred);
       return;
@@ -239,8 +248,8 @@ export function completeTransfer(
     result: toolResult,
   });
 
-  gw.transferR2.delete(transfer.transferId);
-  delete gw.transfers[String(transfer.transferId)];
+  gw.transferStateService.deleteTransferR2(transfer.transferId);
+  gw.transferStateService.deleteTransfer(transfer.transferId);
 }
 
 export function failTransfer(
@@ -254,22 +263,89 @@ export function failTransfer(
     error,
   });
 
-  const r2 = gw.transferR2.get(transfer.transferId);
+  const r2 = gw.transferStateService.getTransferR2(transfer.transferId);
   if (r2) {
     try {
       r2.writer.close().catch(() => {});
     } catch {}
   }
 
-  gw.transferR2.delete(transfer.transferId);
-  delete gw.transfers[String(transfer.transferId)];
+  gw.transferStateService.deleteTransferR2(transfer.transferId);
+  gw.transferStateService.deleteTransfer(transfer.transferId);
 }
 
 export function failTransfersForNode(gw: Gateway, nodeId: string): void {
-  for (const key of Object.keys(gw.transfers)) {
-    const transfer = gw.transfers[key];
-    if (transfer.source.node === nodeId || transfer.destination.node === nodeId) {
-      failTransfer(gw, transfer, `Node disconnected: ${nodeId}`);
+  gw.transferStateService.forEachTransferInvolvingNode(nodeId, (transfer) => {
+    failTransfer(gw, transfer, `Node disconnected: ${nodeId}`);
+  });
+}
+
+type TransferId = number;
+
+type TransferStoreData = ReturnType<
+  typeof PersistedObject<Record<string, TransferState>>
+>;
+
+export class GatewayTransferStateService {
+  private readonly transfers: TransferStoreData;
+  private readonly transferR2: Map<TransferId, TransferR2> = new Map();
+
+  constructor(kv: SyncKvStorage) {
+    this.transfers = PersistedObject<Record<string, TransferState>>(kv, {
+      prefix: "transfers:",
+    });
+  }
+
+  private toKey(transferId: TransferId): string {
+    return String(transferId);
+  }
+
+  nextTransferId(): TransferId {
+    const keys = Object.keys(this.transfers);
+    if (keys.length === 0) {
+      return 1;
+    }
+    const ids = keys
+      .map((key) => Number(key))
+      .filter((id) => Number.isFinite(id));
+    return (ids.length === 0 ? 0 : Math.max(...ids)) + 1;
+  }
+
+  getTransfer(transferId: TransferId): TransferState | undefined {
+    return this.transfers[this.toKey(transferId)];
+  }
+
+  setTransfer(transfer: TransferState): void {
+    this.transfers[this.toKey(transfer.transferId)] = transfer;
+  }
+
+  deleteTransfer(transferId: TransferId): void {
+    delete this.transfers[this.toKey(transferId)];
+  }
+
+  getTransferR2(transferId: TransferId): TransferR2 | undefined {
+    return this.transferR2.get(transferId);
+  }
+
+  setTransferR2(transferId: TransferId, r2: TransferR2): void {
+    this.transferR2.set(transferId, r2);
+  }
+
+  deleteTransferR2(transferId: TransferId): void {
+    this.transferR2.delete(transferId);
+  }
+
+  forEachTransferInvolvingNode(
+    nodeId: string,
+    callback: (transfer: TransferState) => void,
+  ): void {
+    for (const transfer of Object.values(this.transfers)) {
+      if (
+        transfer.source.node === nodeId ||
+        transfer.destination.node === nodeId
+      ) {
+        callback(transfer);
+      }
     }
   }
 }

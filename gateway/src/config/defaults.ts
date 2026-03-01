@@ -9,7 +9,6 @@ export const DEFAULT_CONFIG: GsvConfig = {
   timeouts: {
     llmMs: 300_000, // 5 minutes
     toolMs: 60_000, // 1 minute
-    skillProbeMaxAgeMs: 10 * 60_000, // 10 minutes
   },
   auth: {},
   transcription: {
@@ -30,6 +29,10 @@ export const DEFAULT_CONFIG: GsvConfig = {
   },
   skills: {
     entries: {},
+  },
+  toolApproval: {
+    defaultDecision: "allow",
+    rules: [],
   },
   agents: {
     list: [],

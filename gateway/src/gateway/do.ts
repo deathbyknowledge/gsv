@@ -5,15 +5,9 @@ import type {
   Frame,
   EventFrame,
   ErrorShape,
-  RequestFrame,
   ResponseFrame,
 } from "../protocol/frames";
-import {
-  isWebSocketRequest,
-  validateFrame,
-  isWsConnected,
-  toErrorShape,
-} from "../shared/utils";
+import { isWebSocketRequest, validateFrame } from "../shared/utils";
 import { DEFAULT_CONFIG } from "../config/defaults";
 import { GsvConfig, GsvConfigInput, mergeConfig, PendingPair } from "../config";
 import { getDefaultAgentId } from "../config/parsing";
@@ -24,7 +18,6 @@ import {
   scheduleHeartbeat as scheduleHeartbeatHandler,
   triggerHeartbeat as triggerHeartbeatHandler,
 } from "./heartbeat";
-import { resolveEffectiveSkillPolicy } from "../agents/prompt";
 import {
   canonicalizeSessionKey as canonicalizeKey,
   normalizeAgentId,
@@ -32,10 +25,7 @@ import {
   resolveAgentIdFromSessionKey,
   resolveAgentMainSessionKey,
 } from "../session/routing";
-import { listWorkspaceSkills } from "../skills";
-import { getNativeToolDefinitions } from "../agents/tools";
 import type { TransferRequestParams } from "../protocol/transfer";
-import { listHostsByRole, pickExecutionHostId } from "./capabilities";
 import {
   executeCronTool as executeCronToolHandler,
   executeMessageTool as executeMessageToolHandler,
@@ -43,32 +33,7 @@ import {
   executeSessionsListTool as executeSessionsListToolHandler,
 } from "./tool-executors";
 import { executeCronJob as executeCronJobHandler } from "./cron-execution";
-import {
-  deliverPendingAsyncExecDeliveries as deliverPendingAsyncExecDeliveriesHandler,
-  gcDeliveredAsyncExecEvents as gcDeliveredAsyncExecEventsHandler,
-  gcPendingAsyncExecDeliveries as gcPendingAsyncExecDeliveriesHandler,
-  gcPendingAsyncExecSessions as gcPendingAsyncExecSessionsHandler,
-  handleNodeExecEvent as handleNodeExecEventHandler,
-  nextDeliveredAsyncExecEventGcAtMs as nextDeliveredAsyncExecEventGcAtMsHandler,
-  nextPendingAsyncExecDeliveryAtMs as nextPendingAsyncExecDeliveryAtMsHandler,
-  nextPendingAsyncExecSessionExpiryAtMs as nextPendingAsyncExecSessionExpiryAtMsHandler,
-  registerPendingAsyncExecSession as registerPendingAsyncExecSessionHandler,
-  type PendingAsyncExecDelivery,
-  type PendingAsyncExecSession,
-} from "./async-exec";
-import {
-  canNodeProbeBins as canNodeProbeBinsHandler,
-  clampSkillProbeTimeoutMs as clampSkillProbeTimeoutMsHandler,
-  dispatchPendingNodeProbesForNode as dispatchPendingNodeProbesForNodeHandler,
-  gcPendingNodeProbes as gcPendingNodeProbesHandler,
-  handleNodeProbeResult as handleNodeProbeResultHandler,
-  handlePendingNodeProbeTimeouts as handlePendingNodeProbeTimeoutsHandler,
-  markPendingNodeProbesAsQueued as markPendingNodeProbesAsQueuedHandler,
-  nextPendingNodeProbeExpiryAtMs as nextPendingNodeProbeExpiryAtMsHandler,
-  nextPendingNodeProbeGcAtMs as nextPendingNodeProbeGcAtMsHandler,
-  queueNodeBinProbe as queueNodeBinProbeHandler,
-  sanitizeSkillBinName as sanitizeSkillBinNameHandler,
-} from "./skill-probes";
+import { GatewayAsyncExecStateService } from "./async-exec";
 import {
   handleChannelInboundRpc as handleChannelInboundRpcHandler,
   type ChannelInboundRpcResult,
@@ -81,16 +46,10 @@ import {
   sendTypingToChannel as sendTypingToChannelHandler,
 } from "./channel-transport";
 import {
-  completeTransfer as completeTransferHandler,
-  failTransfer as failTransferHandler,
-  failTransfersForNode as failTransfersForNodeHandler,
-  finalizeR2Upload as finalizeR2UploadHandler,
-  getTransferWs as getTransferWsHandler,
-  handleTransferBinaryFrame as handleTransferBinaryFrameHandler,
-  streamR2ToDest as streamR2ToDestHandler,
+  failTransfersForNode,
+  handleTransferBinaryFrame,
   transferRequest as transferRequestHandler,
-  type TransferR2,
-  type TransferState,
+  GatewayTransferStateService,
 } from "./transfers";
 import {
   CronService,
@@ -109,131 +68,52 @@ import type {
   ChannelInboundParams,
 } from "../protocol/channel";
 import type {
-  LogsGetEventPayload,
   LogsGetParams,
   LogsGetResult,
-  LogsResultParams,
 } from "../protocol/logs";
 import type { SessionRegistryEntry } from "../protocol/session";
 import type {
   RuntimeNodeInventory,
   NodeExecEventParams,
-  NodeRuntimeInfo,
-  NodeProbeResultParams,
   ToolDefinition,
-  ToolInvokePayload,
   ToolRequestParams,
 } from "../protocol/tools";
-import {
-  DEFER_RESPONSE,
-  type DeferredResponse,
-  type Handler,
-  type RpcMethod,
-} from "../protocol/methods";
-import { buildRpcHandlers } from "./rpc-handlers/";
+import { GatewayRpcDispatcher } from "./rpc-dispatcher";
+import { GatewayNodeService } from "./node-service";
 
-export type PendingToolRoute =
-  | { kind: "session"; sessionKey: string }
-  | { kind: "client"; clientId: string; frameId: string; createdAt: number };
-
-export type PendingLogRoute = {
-  clientId: string;
-  frameId: string;
-  nodeId: string;
-  createdAt: number;
-};
-
-type PendingInternalLogRequest = {
-  nodeId: string;
-  resolve: (result: LogsGetResult) => void;
-  reject: (error: Error) => void;
-  timeoutHandle: ReturnType<typeof setTimeout>;
-};
-
-type PendingNodeProbe = {
-  nodeId: string;
-  agentId: string;
-  kind: "bins";
-  bins: string[];
-  timeoutMs: number;
-  attempts: number;
-  createdAt: number;
-  sentAt?: number;
-  expiresAt?: number;
-};
-
-const DEFAULT_LOG_LINES = 100;
-const MAX_LOG_LINES = 5000;
 const DEFAULT_INTERNAL_LOG_TIMEOUT_MS = 20_000;
-const MAX_INTERNAL_LOG_TIMEOUT_MS = 120_000;
-const SKILL_BIN_STATUS_TTL_MS = 5 * 60_000;
+const DEFAULT_PENDING_TOOL_TIMEOUT_MS = 60_000;
 
-type GatewayMethodHandlerContext = {
-  gw: Gateway;
-  ws: WebSocket;
-  frame: RequestFrame;
-  params: unknown;
+type GatewayAlarmParticipant = {
+  name: string;
+  nextDueMs: number | undefined;
+  run: (params: { now: number }) => Promise<void> | void;
 };
-
-type GatewayMethodHandler = (
-  ctx: GatewayMethodHandlerContext,
-) => Promise<unknown | DeferredResponse> | unknown | DeferredResponse;
 
 export class Gateway extends DurableObject<Env> {
   clients: Map<string, WebSocket> = new Map();
   nodes: Map<string, WebSocket> = new Map();
   channels: Map<string, WebSocket> = new Map();
-
-  readonly transfers = PersistedObject<Record<string, TransferState>>(
+  readonly transferStateService = new GatewayTransferStateService(
     this.ctx.storage.kv,
-    { prefix: "transfers:" },
   );
-  transferR2 = new Map<number, TransferR2>();
-
-  readonly toolRegistry = PersistedObject<Record<string, ToolDefinition[]>>(
+  readonly asyncExecStateService = new GatewayAsyncExecStateService(
     this.ctx.storage.kv,
-    { prefix: "toolRegistry:" },
+    this,
   );
-  readonly nodeRuntimeRegistry = PersistedObject<
-    Record<string, NodeRuntimeInfo>
-  >(this.ctx.storage.kv, { prefix: "nodeRuntimeRegistry:" });
-
-  readonly pendingToolCalls = PersistedObject<Record<string, PendingToolRoute>>(
+  readonly nodeService = new GatewayNodeService(
     this.ctx.storage.kv,
-    { prefix: "pendingToolCalls:" },
   );
-
-  readonly pendingLogCalls = PersistedObject<Record<string, PendingLogRoute>>(
-    this.ctx.storage.kv,
-    { prefix: "pendingLogCalls:" },
-  );
-  readonly pendingNodeProbes = PersistedObject<
-    Record<string, PendingNodeProbe>
-  >(this.ctx.storage.kv, { prefix: "pendingNodeProbes:" });
-  readonly pendingAsyncExecSessions = PersistedObject<
-    Record<string, PendingAsyncExecSession>
-  >(this.ctx.storage.kv, { prefix: "pendingAsyncExecSessions:" });
-  readonly pendingAsyncExecDeliveries = PersistedObject<
-    Record<string, PendingAsyncExecDelivery>
-  >(this.ctx.storage.kv, { prefix: "pendingAsyncExecDeliveries:" });
-  readonly deliveredAsyncExecEvents = PersistedObject<Record<string, number>>(
-    this.ctx.storage.kv,
-    { prefix: "deliveredAsyncExecEvents:" },
-  );
-  private readonly pendingInternalLogCalls = new Map<
-    string,
-    PendingInternalLogRequest
-  >();
 
   readonly configStore = PersistedObject<Record<string, unknown>>(
     this.ctx.storage.kv,
-    { prefix: "config:" },
+    {
+      prefix: "config:",
+    },
   );
-
   readonly sessionRegistry = PersistedObject<
     Record<string, SessionRegistryEntry>
   >(this.ctx.storage.kv, { prefix: "sessionRegistry:" });
-
   readonly channelRegistry = PersistedObject<
     Record<string, ChannelRegistryEntry>
   >(this.ctx.storage.kv, { prefix: "channelRegistry:" });
@@ -241,7 +121,9 @@ export class Gateway extends DurableObject<Env> {
   // Heartbeat state per agent
   readonly heartbeatState = PersistedObject<Record<string, HeartbeatState>>(
     this.ctx.storage.kv,
-    { prefix: "heartbeatState:" },
+    {
+      prefix: "heartbeatState:",
+    },
   );
 
   // Last active channel context per agent (for heartbeat delivery)
@@ -260,20 +142,23 @@ export class Gateway extends DurableObject<Env> {
   >(this.ctx.storage.kv, { prefix: "lastActiveContext:" });
 
   // Pending pairing requests (key: "channel:senderId")
-  pendingPairs = PersistedObject<Record<string, PendingPair>>(
+  readonly pendingPairs = PersistedObject<Record<string, PendingPair>>(
     this.ctx.storage.kv,
-    { prefix: "pendingPairs:" },
+    {
+      prefix: "pendingPairs:",
+    },
   );
 
   // Heartbeat scheduler state (persisted to survive DO eviction)
-  heartbeatScheduler = PersistedObject<{ initialized: boolean }>(
-    this.ctx.storage.kv,
-    { prefix: "heartbeatScheduler:", defaults: { initialized: false } },
-  );
+  readonly heartbeatScheduler: { initialized: boolean } = PersistedObject<{
+    initialized: boolean;
+  }>(this.ctx.storage.kv, {
+    prefix: "heartbeatScheduler:",
+    defaults: { initialized: false },
+  });
 
   private readonly cronStore = new CronStore(this.ctx.storage.sql);
-
-  private readonly handlers = buildRpcHandlers();
+  private readonly rpcDispatcher = new GatewayRpcDispatcher();
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
@@ -313,31 +198,49 @@ export class Gateway extends DurableObject<Env> {
     // Evict rehydrated nodes that lost their registry data (KV was
     // deleted but the WebSocket survived hibernation).
     const orphanedNodeIds = Array.from(this.nodes.keys()).filter(
-      (nodeId) => !this.toolRegistry[nodeId]?.length,
+      (nodeId) => !this.nodeService.hasRegisteredTools(nodeId),
     );
     for (const nodeId of orphanedNodeIds) {
       const ws = this.nodes.get(nodeId)!;
       this.nodes.delete(nodeId);
       ws.close(4000, "Missing tool registry after rehydration");
+      this.nodeService.markNodeDisconnected(nodeId);
       console.log(
         `[Gateway] Evicted orphaned node ${nodeId} (no tools in registry)`,
       );
     }
 
-    const detachedNodeIds = Object.keys(this.toolRegistry).filter(
-      (nodeId) => !this.nodes.has(nodeId),
+    const rehydratedAt = Date.now();
+    for (const nodeId of Array.from(this.nodes.keys())) {
+      this.nodeService.markNodeConnected(nodeId, { connectedAt: rehydratedAt });
+    }
+
+    const staleOnlineNodeIds = this.nodeService.listStaleOnlineNodeIds(
+      this.nodes.keys(),
+    );
+    for (const nodeId of staleOnlineNodeIds) {
+      this.nodeService.markNodeDisconnected(nodeId, rehydratedAt);
+    }
+    if (staleOnlineNodeIds.length > 0) {
+      console.log(
+        `[Gateway] Reconciled ${staleOnlineNodeIds.length} stale node presence entries to offline`,
+      );
+    }
+
+    const detachedNodeIds = this.nodeService.listDetachedToolNodeIds(
+      this.nodes.keys(),
     );
     if (detachedNodeIds.length > 0) {
       console.log(
-        `[Gateway] Preserving ${detachedNodeIds.length} detached registry entries until explicit disconnect`,
+        `[Gateway] Preserving ${detachedNodeIds.length} detached tool registry entries for known hosts`,
       );
     }
-    const detachedRuntimeNodeIds = Object.keys(this.nodeRuntimeRegistry).filter(
-      (nodeId) => !this.nodes.has(nodeId),
+    const detachedRuntimeNodeIds = this.nodeService.listDetachedRuntimeNodeIds(
+      this.nodes.keys(),
     );
     if (detachedRuntimeNodeIds.length > 0) {
       console.log(
-        `[Gateway] Preserving ${detachedRuntimeNodeIds.length} detached runtime entries until explicit disconnect`,
+        `[Gateway] Preserving ${detachedRuntimeNodeIds.length} detached runtime entries for known hosts`,
       );
     }
   }
@@ -355,7 +258,7 @@ export class Gateway extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
     if (typeof message !== "string") {
-      handleTransferBinaryFrameHandler(this, message as ArrayBuffer);
+      handleTransferBinaryFrame(this, message as ArrayBuffer);
       return;
     }
     try {
@@ -372,42 +275,61 @@ export class Gateway extends DurableObject<Env> {
 
   async handleFrame(ws: WebSocket, frame: Frame) {
     if (frame.type !== "req") return;
-
-    if (!isWsConnected(ws) && frame.method !== "connect") {
-      this.sendError(ws, frame.id, 101, "Not connected");
+    const requestFrame = frame;
+    const outcome = await this.rpcDispatcher.dispatch(this, ws, requestFrame);
+    if (outcome.kind === "ignore" || outcome.kind === "deferred") {
       return;
     }
 
-    const methodHandler = this.getMethodHandler(frame.method);
-    if (!methodHandler) {
-      this.sendError(ws, frame.id, 404, `Unknown method: ${frame.method}`);
+    if (outcome.kind === "ok") {
+      this.sendOk(ws, requestFrame.id, outcome.payload);
       return;
     }
 
-    try {
-      const payload = await methodHandler({
-        gw: this,
-        ws,
-        frame,
-        params: frame.params,
-      });
-      if (payload !== DEFER_RESPONSE) {
-        this.sendOk(ws, frame.id, payload);
+    this.sendErrorShape(ws, requestFrame.id, outcome.error);
+  }
+
+  failPendingLogCallsForNode(nodeId: string, message?: string): void {
+    const failureMessage = message ?? `Node disconnected: ${nodeId}`;
+    const failedCalls = this.nodeService.failPendingLogCallsForNode(nodeId);
+    for (const failedCall of failedCalls) {
+      const clientWs = this.clients.get(failedCall.clientId);
+      if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+        continue;
       }
-    } catch (error) {
-      this.sendErrorShape(ws, frame.id, toErrorShape(error));
+      this.sendError(clientWs, failedCall.frameId, 503, failureMessage);
     }
   }
 
-  private getMethodHandler(method: string): GatewayMethodHandler | undefined {
-    const handler = this.handlers[method as RpcMethod] as
-      | Handler<RpcMethod>
-      | undefined;
-    if (!handler) {
-      return undefined;
-    }
+  async failPendingToolCallsForNode(
+    nodeId: string,
+    message?: string,
+  ): Promise<void> {
+    const failureMessage = message ?? `Node disconnected: ${nodeId}`;
+    const failedCalls = this.nodeService.failPendingToolCallsForNode(nodeId);
+    for (const failedCall of failedCalls) {
+      if (failedCall.route.kind === "client") {
+        const clientWs = this.clients.get(failedCall.route.clientId);
+        if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+          continue;
+        }
+        this.sendError(clientWs, failedCall.route.frameId, 503, failureMessage);
+        continue;
+      }
 
-    return handler as unknown as GatewayMethodHandler;
+      const sessionStub = this.env.SESSION.getByName(failedCall.route.sessionKey);
+      try {
+        await sessionStub.toolResult({
+          callId: failedCall.callId,
+          error: failureMessage,
+        });
+      } catch (error) {
+        console.warn(
+          `[Gateway] Failed to deliver pending tool failure to session ${failedCall.route.sessionKey} (${failedCall.callId}):`,
+          error,
+        );
+      }
+    }
   }
 
   webSocketClose(ws: WebSocket) {
@@ -422,21 +344,7 @@ export class Gateway extends DurableObject<Env> {
         return;
       }
       this.clients.delete(clientId);
-      // Cleanup persisted client-routed tool calls for this disconnected client.
-      for (const [callId, route] of Object.entries(this.pendingToolCalls)) {
-        if (
-          typeof route === "object" &&
-          route.kind === "client" &&
-          route.clientId === clientId
-        ) {
-          delete this.pendingToolCalls[callId];
-        }
-      }
-      for (const [callId, route] of Object.entries(this.pendingLogCalls)) {
-        if (typeof route === "object" && route.clientId === clientId) {
-          delete this.pendingLogCalls[callId];
-        }
-      }
+      this.nodeService.cleanupClientPendingOperations(clientId);
     } else if (mode === "node" && nodeId) {
       // Ignore close events from stale sockets that were replaced by reconnect.
       if (this.nodes.get(nodeId) !== ws) {
@@ -444,32 +352,15 @@ export class Gateway extends DurableObject<Env> {
         return;
       }
       this.nodes.delete(nodeId);
-      delete this.toolRegistry[nodeId];
-      for (const [callId, route] of Object.entries(this.pendingLogCalls)) {
-        if (typeof route === "object" && route.nodeId === nodeId) {
-          const clientWs = this.clients.get(route.clientId);
-          if (clientWs && clientWs.readyState === WebSocket.OPEN) {
-            this.sendError(
-              clientWs,
-              route.frameId,
-              503,
-              `Node disconnected: ${nodeId}`,
-            );
-          }
-          delete this.pendingLogCalls[callId];
-        }
-      }
-      this.cancelInternalNodeLogRequestsForNode(
+      this.nodeService.markNodeDisconnected(nodeId);
+      this.ctx.waitUntil(this.failPendingToolCallsForNode(nodeId));
+      this.failPendingLogCallsForNode(nodeId);
+      this.nodeService.cancelInternalNodeLogRequestsForNode(
         nodeId,
         `Node disconnected during log request: ${nodeId}`,
       );
-      this.markPendingNodeProbesAsQueued(
-        nodeId,
-        `Node disconnected during node probe: ${nodeId}`,
-      );
-      failTransfersForNodeHandler(this, nodeId);
-      delete this.nodeRuntimeRegistry[nodeId];
-      console.log(`[Gateway] Node ${nodeId} removed from registry`);
+      failTransfersForNode(this, nodeId);
+      console.log(`[Gateway] Node ${nodeId} marked offline`);
     } else if (mode === "channel" && channelKey) {
       // Ignore close events from stale sockets that were replaced by reconnect.
       if (this.channels.get(channelKey) !== ws) {
@@ -484,35 +375,7 @@ export class Gateway extends DurableObject<Env> {
   async toolRequest(
     params: ToolRequestParams,
   ): Promise<{ ok: boolean; error?: string }> {
-    const resolved = this.findNodeForTool(params.tool);
-    if (!resolved) {
-      return { ok: false, error: `No node provides tool: ${params.tool}` };
-    }
-
-    const nodeWs = this.nodes.get(resolved.nodeId);
-    if (!nodeWs) {
-      return { ok: false, error: "Node not connected" };
-    }
-
-    // Track pending call for routing result back
-    this.pendingToolCalls[params.callId] = {
-      kind: "session",
-      sessionKey: params.sessionKey,
-    };
-
-    // Send tool.invoke event to node (with un-namespaced tool name)
-    const evt: EventFrame<ToolInvokePayload> = {
-      type: "evt",
-      event: "tool.invoke",
-      payload: {
-        callId: params.callId,
-        tool: resolved.toolName,
-        args: params.args ?? {},
-      },
-    };
-    nodeWs.send(JSON.stringify(evt));
-
-    return { ok: true };
+    return this.nodeService.requestToolForSession(params, this.nodes);
   }
 
   sendOk(ws: WebSocket, id: string, payload?: unknown) {
@@ -535,143 +398,10 @@ export class Gateway extends DurableObject<Env> {
     ws.send(JSON.stringify(res));
   }
 
-  private resolveLogLineLimit(input: number | undefined): number {
-    if (input === undefined) {
-      return DEFAULT_LOG_LINES;
-    }
-    if (!Number.isFinite(input) || input < 1) {
-      throw new Error("lines must be a positive number");
-    }
-    return Math.min(Math.floor(input), MAX_LOG_LINES);
-  }
-
-  private resolveTargetNodeForLogs(nodeId: string | undefined): string {
-    if (nodeId) {
-      if (!this.nodes.has(nodeId)) {
-        throw new Error(`Node not connected: ${nodeId}`);
-      }
-      return nodeId;
-    }
-
-    if (this.nodes.size === 1) {
-      return Array.from(this.nodes.keys())[0];
-    }
-
-    if (this.nodes.size === 0) {
-      throw new Error("No nodes connected");
-    }
-
-    throw new Error("nodeId required when multiple nodes are connected");
-  }
-
   async getNodeLogs(
     params?: LogsGetParams & { timeoutMs?: number },
   ): Promise<LogsGetResult> {
-    const lines = this.resolveLogLineLimit(params?.lines);
-    const nodeId = this.resolveTargetNodeForLogs(params?.nodeId);
-    const nodeWs = this.nodes.get(nodeId);
-    if (!nodeWs || nodeWs.readyState !== WebSocket.OPEN) {
-      throw new Error(`Node not connected: ${nodeId}`);
-    }
-
-    const timeoutInput =
-      typeof params?.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
-        ? Math.floor(params.timeoutMs)
-        : DEFAULT_INTERNAL_LOG_TIMEOUT_MS;
-    const timeoutMs = Math.max(
-      1000,
-      Math.min(timeoutInput, MAX_INTERNAL_LOG_TIMEOUT_MS),
-    );
-    const callId = crypto.randomUUID();
-
-    const responsePromise = new Promise<LogsGetResult>((resolve, reject) => {
-      const timeoutHandle = setTimeout(() => {
-        const pending = this.pendingInternalLogCalls.get(callId);
-        if (!pending) {
-          return;
-        }
-        this.pendingInternalLogCalls.delete(callId);
-        pending.reject(
-          new Error(
-            `logs.get timed out for node ${pending.nodeId} after ${timeoutMs}ms`,
-          ),
-        );
-      }, timeoutMs);
-
-      this.pendingInternalLogCalls.set(callId, {
-        nodeId,
-        resolve,
-        reject,
-        timeoutHandle,
-      });
-    });
-
-    try {
-      const evt: EventFrame<LogsGetEventPayload> = {
-        type: "evt",
-        event: "logs.get",
-        payload: {
-          callId,
-          lines,
-        },
-      };
-      nodeWs.send(JSON.stringify(evt));
-    } catch (error) {
-      const pending = this.pendingInternalLogCalls.get(callId);
-      if (pending) {
-        clearTimeout(pending.timeoutHandle);
-        this.pendingInternalLogCalls.delete(callId);
-      }
-      throw error;
-    }
-
-    return await responsePromise;
-  }
-
-  resolveInternalNodeLogResult(
-    nodeId: string,
-    params: LogsResultParams,
-  ): boolean {
-    const pending = this.pendingInternalLogCalls.get(params.callId);
-    if (!pending) {
-      return false;
-    }
-
-    this.pendingInternalLogCalls.delete(params.callId);
-    clearTimeout(pending.timeoutHandle);
-
-    if (pending.nodeId !== nodeId) {
-      pending.reject(
-        new Error("Node not authorized for this internal logs call"),
-      );
-      return true;
-    }
-
-    if (params.error) {
-      pending.reject(new Error(params.error));
-      return true;
-    }
-
-    const lines = params.lines ?? [];
-    pending.resolve({
-      nodeId,
-      lines,
-      count: lines.length,
-      truncated: Boolean(params.truncated),
-    });
-    return true;
-  }
-
-  cancelInternalNodeLogRequestsForNode(nodeId: string, reason: string): void {
-    for (const [callId, pending] of this.pendingInternalLogCalls.entries()) {
-      if (pending.nodeId !== nodeId) {
-        continue;
-      }
-
-      clearTimeout(pending.timeoutHandle);
-      this.pendingInternalLogCalls.delete(callId);
-      pending.reject(new Error(reason));
-    }
+    return await this.nodeService.getNodeLogs(this.nodes, params);
   }
 
   registerPendingAsyncExecSession(params: {
@@ -680,34 +410,15 @@ export class Gateway extends DurableObject<Env> {
     sessionKey: string;
     callId: string;
   }): void {
-    registerPendingAsyncExecSessionHandler(this, params);
+    this.asyncExecStateService.registerPendingAsyncExecSession(params);
     this.ctx.waitUntil(this.scheduleGatewayAlarm());
-  }
-
-  markPendingNodeProbesAsQueued(nodeId: string, reason: string): void {
-    markPendingNodeProbesAsQueuedHandler(this, nodeId, reason);
-  }
-
-  async dispatchPendingNodeProbesForNode(nodeId: string): Promise<number> {
-    return dispatchPendingNodeProbesForNodeHandler(this, nodeId);
-  }
-
-  async handleNodeProbeResult(
-    nodeId: string,
-    params: NodeProbeResultParams,
-  ): Promise<{ ok: true; dropped?: true }> {
-    return handleNodeProbeResultHandler(this, nodeId, params);
   }
 
   async handleNodeExecEvent(
     nodeId: string,
     params: NodeExecEventParams,
   ): Promise<{ ok: true; dropped?: true }> {
-    return handleNodeExecEventHandler(this, nodeId, params);
-  }
-
-  getTransferWs(nodeId: string): WebSocket | undefined {
-    return getTransferWsHandler(this, nodeId);
+    return this.asyncExecStateService.handleNodeExecEvent(nodeId, params);
   }
 
   async transferRequest(
@@ -716,226 +427,134 @@ export class Gateway extends DurableObject<Env> {
     return transferRequestHandler(this, params);
   }
 
-  async streamR2ToDest(transfer: TransferState): Promise<void> {
-    return streamR2ToDestHandler(this, transfer);
-  }
-
-  async finalizeR2Upload(transfer: TransferState): Promise<void> {
-    return finalizeR2UploadHandler(this, transfer);
-  }
-
-  completeTransfer(transfer: TransferState, bytesTransferred: number): void {
-    completeTransferHandler(this, transfer, bytesTransferred);
-  }
-
-  failTransfer(transfer: TransferState, error: string): void {
-    failTransferHandler(this, transfer, error);
-  }
-
-  /**
-   * Find the node for a namespaced tool name.
-   * Tool names are formatted as "{nodeId}__{toolName}"
-   */
-  findNodeForTool(
-    namespacedTool: string,
-  ): { nodeId: string; toolName: string } | null {
-    const separatorIndex = namespacedTool.indexOf("__");
-    if (separatorIndex <= 0 || separatorIndex === namespacedTool.length - 2) {
-      // Node tools must be explicitly namespaced: "<nodeId>__<toolName>"
-      return null;
+  async forgetNode(
+    nodeId: string,
+    options?: { force?: boolean },
+  ): Promise<{ ok: boolean; removed: boolean; disconnected: boolean; error?: string }> {
+    const ws = this.nodes.get(nodeId);
+    if (ws && !options?.force) {
+      return {
+        ok: false,
+        removed: false,
+        disconnected: false,
+        error: `Node ${nodeId} is still connected (use force=true to disconnect and forget)`,
+      };
     }
 
-    const nodeId = namespacedTool.slice(0, separatorIndex);
-    const toolName = namespacedTool.slice(separatorIndex + 2); // +2 for '__'
-
-    // Verify node exists and has this tool
-    if (!this.nodes.has(nodeId)) {
-      return null;
+    let disconnected = false;
+    if (ws) {
+      this.nodes.delete(nodeId);
+      // Force-forget removes the socket from this.nodes before close, so run
+      // transfer cleanup here instead of relying on webSocketClose().
+      failTransfersForNode(this, nodeId);
+      ws.close(1000, "Forgotten from node registry");
+      this.nodeService.markNodeDisconnected(nodeId);
+      disconnected = true;
     }
 
-    const hasTooled = this.toolRegistry[nodeId]?.some(
-      (t: ToolDefinition) => t.name === toolName,
-    );
-    if (!hasTooled) {
-      return null;
+    const forgotten = this.nodeService.forgetNode(nodeId);
+
+    for (const failedLogCall of forgotten.failedLogCalls) {
+      const clientWs = this.clients.get(failedLogCall.clientId);
+      if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      this.sendError(
+        clientWs,
+        failedLogCall.frameId,
+        503,
+        `Node removed from registry: ${nodeId}`,
+      );
     }
 
-    return { nodeId, toolName };
-  }
+    for (const failedToolCall of forgotten.failedToolCalls) {
+      if (failedToolCall.route.kind === "client") {
+        const clientWs = this.clients.get(failedToolCall.route.clientId);
+        if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+          continue;
+        }
+        this.sendError(
+          clientWs,
+          failedToolCall.route.frameId,
+          503,
+          `Node removed from registry: ${nodeId}`,
+        );
+        continue;
+      }
 
-  getExecutionHostId(): string | null {
-    return pickExecutionHostId({
-      nodeIds: Array.from(this.nodes.keys()),
-      runtimes: this.nodeRuntimeRegistry,
-    });
-  }
+      const sessionStub = this.env.SESSION.getByName(failedToolCall.route.sessionKey);
+      this.ctx.waitUntil(sessionStub.toolResult({
+        callId: failedToolCall.callId,
+        error: `Node removed from registry: ${nodeId}`,
+      }).catch((error) => {
+        console.warn(
+          `[Gateway] Failed to deliver node-forget tool failure for call ${failedToolCall.callId}:`,
+          error,
+        );
+      }));
+    }
 
-  getSpecializedHostIds(): string[] {
-    return listHostsByRole({
-      nodeIds: Array.from(this.nodes.keys()),
-      runtimes: this.nodeRuntimeRegistry,
-      role: "specialized",
-    });
+    return { ok: true, removed: forgotten.removed, disconnected };
   }
 
   getRuntimeNodeInventory(): RuntimeNodeInventory {
-    const nodeIds = Array.from(this.nodes.keys()).sort();
-    const hosts = nodeIds.map((nodeId) => {
-      const runtime = this.nodeRuntimeRegistry[nodeId];
-      const tools = (this.toolRegistry[nodeId] ?? [])
-        .map((tool) => tool.name)
-        .sort();
-
-      if (!runtime) {
-        return {
-          nodeId,
-          hostRole: "specialized" as const,
-          hostCapabilities: [],
-          toolCapabilities: {},
-          tools,
-          hostEnv: [],
-          hostBins: [],
-        };
-      }
-
-      const hostBinStatus = runtime.hostBinStatus
-        ? Object.fromEntries(
-            Object.entries(runtime.hostBinStatus).sort(([left], [right]) =>
-              left.localeCompare(right),
-            ),
-          )
-        : undefined;
-      const hostBins = hostBinStatus
-        ? Object.entries(hostBinStatus)
-            .filter(([, available]) => available)
-            .map(([bin]) => bin)
-            .sort()
-        : [];
-
-      return {
-        nodeId,
-        hostRole: runtime.hostRole,
-        hostCapabilities: [...runtime.hostCapabilities].sort(),
-        toolCapabilities: Object.fromEntries(
-          Object.entries(runtime.toolCapabilities)
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(([toolName, capabilities]) => [
-              toolName,
-              [...capabilities].sort(),
-            ]),
-        ),
-        tools,
-        hostOs: runtime.hostOs,
-        hostEnv: runtime.hostEnv ? [...runtime.hostEnv].sort() : [],
-        hostBins,
-        hostBinStatus,
-        hostBinStatusUpdatedAt: runtime.hostBinStatusUpdatedAt,
-      };
-    });
-
-    return {
-      executionHostId: this.getExecutionHostId(),
-      specializedHostIds: this.getSpecializedHostIds(),
-      hosts,
-    };
+    return this.nodeService.getRuntimeNodeInventory(this.nodes.keys());
   }
 
-  async refreshSkillRuntimeFacts(
-    agentId: string,
-    options?: { force?: boolean; timeoutMs?: number },
-  ): Promise<{
-    agentId: string;
-    refreshedAt: number;
-    requiredBins: string[];
-    updatedNodeCount: number;
-    skippedNodeIds: string[];
-    errors: string[];
-  }> {
-    const normalizedAgentId = normalizeAgentId(agentId || "main");
+  getPendingToolTimeoutMs(): number {
     const config = this.getFullConfig();
-    const workspaceSkills = await listWorkspaceSkills(
-      this.env.STORAGE,
-      normalizedAgentId,
-    );
+    const configured = config.timeouts?.toolMs;
+    if (typeof configured === "number" && Number.isFinite(configured)) {
+      return Math.max(1_000, Math.floor(configured));
+    }
+    return DEFAULT_PENDING_TOOL_TIMEOUT_MS;
+  }
 
-    const requiredBinsSet = new Set<string>();
-    for (const skill of workspaceSkills) {
-      const policy = resolveEffectiveSkillPolicy(skill, config.skills.entries);
-      if (!policy || policy.always || !policy.requires) {
+  getPendingLogTimeoutMs(): number {
+    const config = this.getFullConfig();
+    const configured = config.timeouts?.toolMs;
+    if (typeof configured === "number" && Number.isFinite(configured)) {
+      return Math.max(1_000, Math.floor(configured));
+    }
+    return DEFAULT_INTERNAL_LOG_TIMEOUT_MS;
+  }
+
+  private failExpiredPendingOperations(now: number): void {
+    const expired = this.nodeService.cleanupExpiredPendingOperations(now);
+    for (const expiredTool of expired.toolCalls) {
+      if (expiredTool.route.kind !== "client") {
+        console.warn(
+          `[Gateway] Expired pending tool request (${expiredTool.callId}) for session ${expiredTool.route.sessionKey} without session result`,
+        );
         continue;
       }
-      for (const bin of [...policy.requires.bins, ...policy.requires.anyBins]) {
-        const sanitized = sanitizeSkillBinNameHandler(bin);
-        if (sanitized) {
-          requiredBinsSet.add(sanitized);
-        }
+
+      const clientWs = this.clients.get(expiredTool.route.clientId);
+      if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+        continue;
       }
+
+      this.sendError(
+        clientWs,
+        expiredTool.route.frameId,
+        504,
+        "Tool request timed out",
+      );
     }
 
-    const requiredBins = Array.from(requiredBinsSet).sort();
-    if (requiredBins.length === 0) {
-      return {
-        agentId: normalizedAgentId,
-        refreshedAt: Date.now(),
-        requiredBins,
-        updatedNodeCount: 0,
-        skippedNodeIds: [],
-        errors: [],
-      };
+    for (const expiredLog of expired.logCalls) {
+      const clientWs = this.clients.get(expiredLog.route.clientId);
+      if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      this.sendError(
+        clientWs,
+        expiredLog.route.frameId,
+        504,
+        `logs.get timed out after ${this.getPendingLogTimeoutMs()}ms`,
+      );
     }
-
-    const timeoutMs = clampSkillProbeTimeoutMsHandler(options?.timeoutMs);
-    const now = Date.now();
-    let updatedNodeCount = 0;
-    const skippedNodeIds: string[] = [];
-    const errors: string[] = [];
-
-    for (const nodeId of Array.from(this.nodes.keys()).sort()) {
-      const runtime = this.nodeRuntimeRegistry[nodeId];
-      if (!runtime) {
-        skippedNodeIds.push(nodeId);
-        continue;
-      }
-
-      if (!canNodeProbeBinsHandler(this, nodeId)) {
-        skippedNodeIds.push(nodeId);
-        continue;
-      }
-
-      const existingStatus = runtime.hostBinStatus ?? {};
-      const isStale =
-        !runtime.hostBinStatusUpdatedAt ||
-        now - runtime.hostBinStatusUpdatedAt > SKILL_BIN_STATUS_TTL_MS;
-      const binsToProbe =
-        options?.force || isStale
-          ? requiredBins
-          : requiredBins.filter((bin) => !(bin in existingStatus));
-
-      if (binsToProbe.length === 0) {
-        continue;
-      }
-
-      const probe = queueNodeBinProbeHandler(this, {
-        nodeId,
-        agentId: normalizedAgentId,
-        bins: binsToProbe,
-        timeoutMs,
-      });
-      if (probe.bins.length > 0) {
-        updatedNodeCount += 1;
-      }
-    }
-
-    await this.scheduleGatewayAlarm();
-
-    return {
-      agentId: normalizedAgentId,
-      refreshedAt: Date.now(),
-      requiredBins,
-      updatedNodeCount,
-      skippedNodeIds,
-      errors,
-    };
   }
 
   getAllTools(): ToolDefinition[] {
@@ -944,23 +563,16 @@ export class Gateway extends DurableObject<Env> {
       `[Gateway]   nodes in memory: [${[...this.nodes.keys()].join(", ")}]`,
     );
     console.log(
-      `[Gateway]   toolRegistry keys: [${Object.keys(this.toolRegistry).join(", ")}]`,
+      `[Gateway]   toolRegistry keys: [${this.nodeService.listToolRegistryNodeIds().join(", ")}]`,
     );
 
-    // Start with native tools (always available)
-    const nativeTools = getNativeToolDefinitions();
-
-    // Add node tools namespaced as {nodeId}__{toolName}
-    const nodeTools = Array.from(this.nodes.keys()).flatMap((nodeId) =>
-      (this.toolRegistry[nodeId] ?? []).map((tool) => ({
-        ...tool,
-        name: `${nodeId}__${tool.name}`,
-      })),
+    const tools = this.nodeService.listTools(this.nodes.keys());
+    const nodeTools = tools.filter(
+      (tool) => tool.name.includes("__") && !tool.name.startsWith("gsv__"),
     );
-
-    const tools = [...nativeTools, ...nodeTools];
+    const nativeTools = tools.length - nodeTools.length;
     console.log(
-      `[Gateway]   returning ${tools.length} tools (${nativeTools.length} native + ${nodeTools.length} node): [${tools.map((t) => t.name).join(", ")}]`,
+      `[Gateway]   returning ${tools.length} tools (${nativeTools} native + ${nodeTools.length} node): [${tools.map((t) => t.name).join(", ")}]`,
     );
     return tools;
   }
@@ -1117,19 +729,6 @@ export class Gateway extends DurableObject<Env> {
     sendChannelResponseHandler(this, channel, accountId, peer, replyToId, text);
   }
 
-  pendingChannelResponses = PersistedObject<
-    Record<
-      string,
-      {
-        channel: ChannelId;
-        accountId: string;
-        peer: PeerInfo;
-        inboundMessageId: string;
-        agentId?: string; // For heartbeat deduplication
-      }
-    >
-  >(this.ctx.storage.kv, { prefix: "pendingChannelResponses:" });
-
   canonicalizeSessionKey(sessionKey: string, agentIdHint?: string): string {
     const config = this.getFullConfig();
     const defaultAgentId = agentIdHint?.trim()
@@ -1243,16 +842,15 @@ export class Gateway extends DurableObject<Env> {
       }
     }
 
-    // Look up channel context by runId (each message has unique runId)
-    const runId = payload.runId;
-    if (!runId) {
+    // Route back to channel for run-scoped responses when available.
+    if (!payload.runId) {
       // No runId means this is a WebSocket-only client, not a channel
       return;
     }
 
-    const channelContext = this.pendingChannelResponses[runId];
+    const channelContext = payload.channelContext;
     if (!channelContext) {
-      // No channel context - either WebSocket client or context already cleaned up
+      // No channel context - this run originated from WebSocket/client input.
       return;
     }
 
@@ -1261,6 +859,19 @@ export class Gateway extends DurableObject<Env> {
       // Route partial text to channel (e.g., "Let me check..." before tool execution)
       routePayloadToChannel(this, sessionKey, channelContext, payload);
       // Don't delete context - we'll need it for the final response
+      return;
+    }
+
+    if (payload.state === "paused" && payload.message) {
+      sendTypingToChannelHandler(
+        this,
+        channelContext.channel,
+        channelContext.accountId,
+        channelContext.peer,
+        sessionKey,
+        false,
+      );
+      routePayloadToChannel(this, sessionKey, channelContext, payload);
       return;
     }
 
@@ -1280,33 +891,94 @@ export class Gateway extends DurableObject<Env> {
       if (payload.state === "final" && payload.message) {
         routePayloadToChannel(this, sessionKey, channelContext, payload);
       }
-
-      // Clean up context for this runId
-      delete this.pendingChannelResponses[runId];
     }
   }
 
   // ---- Heartbeat System ----
 
+  private getGatewayAlarmParticipants(
+    now: number = Date.now(),
+  ): GatewayAlarmParticipant[] {
+    return [
+      {
+        name: "heartbeat",
+        nextDueMs: nextHeartbeatDueAtMsHandler(this),
+        run: () => runDueHeartbeatsHandler(this, now),
+      },
+      {
+        name: "cron",
+        nextDueMs: this.getCronService().nextRunAtMs(),
+        run: async () => {
+          try {
+            const cronResult = await this.runCronJobs({ mode: "due" });
+            if (cronResult.ran > 0) {
+              console.log(
+                `[Gateway] Alarm executed ${cronResult.ran} due cron jobs`,
+              );
+            }
+          } catch (error) {
+            console.error(`[Gateway] Cron due run failed:`, error);
+          }
+        },
+      },
+      {
+        name: "asyncExecGc",
+        nextDueMs:
+          this.asyncExecStateService.nextPendingAsyncExecSessionExpiryAtMs(),
+        run: async (params: { now: number }) => {
+          this.asyncExecStateService.gcPendingAsyncExecSessions(
+            params.now,
+            "alarm",
+          );
+        },
+      },
+      {
+        name: "asyncExecDeliveryGc",
+        nextDueMs:
+          this.asyncExecStateService.nextPendingAsyncExecDeliveryAtMs(),
+        run: async (params: { now: number }) => {
+          this.asyncExecStateService.gcPendingAsyncExecDeliveries(
+            params.now,
+            "alarm",
+          );
+        },
+      },
+      {
+        name: "asyncExecDeliveredGc",
+        nextDueMs:
+          this.asyncExecStateService.nextDeliveredAsyncExecEventGcAtMs(),
+        run: async (params: { now: number }) => {
+          this.asyncExecStateService.gcDeliveredAsyncExecEvents(
+            params.now,
+            "alarm",
+          );
+        },
+      },
+      {
+        name: "pendingOps",
+        nextDueMs: this.nodeService.getNextPendingOperationExpirationAtMs(),
+        run: async () => {},
+      },
+      {
+        name: "asyncExecDelivery",
+        nextDueMs:
+          this.asyncExecStateService.nextPendingAsyncExecDeliveryAtMs(),
+        run: async (params: { now: number }) => {
+          await this.asyncExecStateService.deliverPendingAsyncExecDeliveries(
+            params.now,
+          );
+        },
+      },
+    ];
+  }
+
   async scheduleGatewayAlarm(): Promise<void> {
-    const heartbeatNext = nextHeartbeatDueAtMsHandler(this);
-    const cronNext = this.getCronService().nextRunAtMs();
-    const probeTimeoutNext = nextPendingNodeProbeExpiryAtMsHandler(this);
-    const probeGcNext = nextPendingNodeProbeGcAtMsHandler(this);
-    const asyncExecGcNext = nextPendingAsyncExecSessionExpiryAtMsHandler(this);
-    const asyncExecDeliveryNext = nextPendingAsyncExecDeliveryAtMsHandler(this);
-    const asyncExecDeliveredGcNext =
-      nextDeliveredAsyncExecEventGcAtMsHandler(this);
+    const participants = this.getGatewayAlarmParticipants();
     let nextAlarm: number | undefined;
-    const candidates = [
-      heartbeatNext,
-      cronNext,
-      probeTimeoutNext,
-      probeGcNext,
-      asyncExecGcNext,
-      asyncExecDeliveryNext,
-      asyncExecDeliveredGcNext,
-    ].filter((value): value is number => typeof value === "number");
+    const candidates = participants
+      .map((participant) => participant.nextDueMs)
+      .filter((value): value is number => typeof value === "number");
+
     if (candidates.length > 0) {
       nextAlarm = Math.min(...candidates);
     }
@@ -1314,14 +986,20 @@ export class Gateway extends DurableObject<Env> {
     if (nextAlarm === undefined) {
       await this.ctx.storage.deleteAlarm();
       console.log(
-        `[Gateway] Alarm cleared (no heartbeat/cron/probe work scheduled)`,
+        `[Gateway] Alarm cleared (no scheduled gateway work)`,
       );
       return;
     }
 
     await this.ctx.storage.setAlarm(nextAlarm);
+    const participantLog = participants
+      .map(
+        (participant) =>
+          `${participant.name}=${participant.nextDueMs ?? "none"}`,
+      )
+      .join(", ");
     console.log(
-      `[Gateway] Alarm scheduled for ${new Date(nextAlarm).toISOString()} (heartbeat=${heartbeatNext ?? "none"}, cron=${cronNext ?? "none"}, probeTimeouts=${probeTimeoutNext ?? "none"}, probeGc=${probeGcNext ?? "none"}, asyncExecGc=${asyncExecGcNext ?? "none"}, asyncExecDelivery=${asyncExecDeliveryNext ?? "none"}, asyncExecDeliveredGc=${asyncExecDeliveredGcNext ?? "none"})`,
+      `[Gateway] Alarm scheduled for ${new Date(nextAlarm).toISOString()} (${participantLog})`,
     );
   }
 
@@ -1339,25 +1017,14 @@ export class Gateway extends DurableObject<Env> {
     console.log(`[Gateway] Alarm fired`);
 
     const now = Date.now();
+    this.failExpiredPendingOperations(now);
 
-    await runDueHeartbeatsHandler(this, now);
-
-    // Run due cron jobs.
-    try {
-      const cronResult = await this.runCronJobs({ mode: "due" });
-      if (cronResult.ran > 0) {
-        console.log(`[Gateway] Alarm executed ${cronResult.ran} due cron jobs`);
+    for (const participant of this.getGatewayAlarmParticipants(now)) {
+      if (participant.nextDueMs === undefined || participant.nextDueMs > now) {
+        continue;
       }
-    } catch (error) {
-      console.error(`[Gateway] Cron due run failed:`, error);
+      await participant.run({ now });
     }
-
-    gcPendingNodeProbesHandler(this, now, "alarm");
-    await handlePendingNodeProbeTimeoutsHandler(this);
-    gcPendingAsyncExecSessionsHandler(this, now, "alarm");
-    gcPendingAsyncExecDeliveriesHandler(this, now, "alarm");
-    gcDeliveredAsyncExecEventsHandler(this, now, "alarm");
-    await deliverPendingAsyncExecDeliveriesHandler(this, now);
 
     await this.scheduleGatewayAlarm();
   }

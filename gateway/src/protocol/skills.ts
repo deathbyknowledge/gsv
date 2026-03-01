@@ -1,14 +1,7 @@
-import type { CapabilityId, HostRole } from "./tools";
+import type { CapabilityId } from "./tools";
 
 export type SkillRequirementSnapshot = {
-  hostRoles: HostRole[];
   capabilities: CapabilityId[];
-  anyCapabilities: CapabilityId[];
-  bins: string[];
-  anyBins: string[];
-  env: string[];
-  config: string[];
-  os: string[];
 };
 
 export type SkillStatusEntry = {
@@ -24,26 +17,15 @@ export type SkillStatusEntry = {
 
 export type SkillNodeStatus = {
   nodeId: string;
-  hostRole: HostRole;
+  online: boolean;
   hostCapabilities: CapabilityId[];
-  hostOs?: string;
-  hostEnv: string[];
-  hostBins: string[];
-  hostBinStatusUpdatedAt?: number;
-  canProbeBins: boolean;
 };
 
 export type SkillsStatusResult = {
   agentId: string;
   refreshedAt: number;
-  requiredBins: string[];
   nodes: SkillNodeStatus[];
   skills: SkillStatusEntry[];
 };
 
-export type SkillsUpdateResult = SkillsStatusResult & {
-  updatedNodeCount: number;
-  skippedNodeIds: string[];
-  errors: string[];
-};
-
+export type SkillsUpdateResult = SkillsStatusResult;

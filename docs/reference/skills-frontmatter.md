@@ -101,18 +101,11 @@ Display emoji for the skill.
 
 #### `requires`
 
-An object specifying runtime requirements. All requirement arrays use AND semantics within a field (all entries must be satisfied) unless the field name starts with `any` (OR semantics — at least one must match).
+An object specifying runtime requirements.
 
 | Field | Type | Semantics | Description |
 |---|---|---|---|
-| `bins` | `string[]` | All required | Binary names that must be present on the host (checked via `hostBinStatus`) |
-| `anyBins` | `string[]` | At least one | Binary names where at least one must be present |
-| `env` | `string[]` | All required | Environment variable keys that must exist on the host |
-| `config` | `string[]` | All required | Dotted gateway config paths that must resolve to truthy values |
-| `os` | `string[]` | At least one | OS identifiers the host must match (e.g., `darwin`, `linux`, `windows`). Compared case-insensitively. |
-| `hostRoles` | `string[]` | At least one | Host roles the node must have. Valid values: `execution`, `specialized` |
-| `capabilities` | `string[]` | All required | Capability IDs the host must expose |
-| `anyCapabilities` | `string[]` | At least one | Capability IDs where at least one must be present |
+| `capabilities` | `string[]` | All required | Capability IDs the host must expose (actively enforced by prompt eligibility) |
 
 Valid capability IDs:
 
@@ -124,13 +117,6 @@ Valid capability IDs:
 | `filesystem.edit` | Edit files in place |
 | `text.search` | Search file contents |
 | `shell.exec` | Execute shell commands |
-
-Valid host roles:
-
-| Host Role | Description |
-|---|---|
-| `execution` | General-purpose execution host. Must have baseline capabilities: `filesystem.list`, `filesystem.read`, `filesystem.write`, `shell.exec`. |
-| `specialized` | Special-purpose host with a custom capability set |
 
 #### `install`
 
@@ -166,7 +152,7 @@ If a matching entry has `enabled: false`, the skill is excluded. Config entries 
 
 ### Stage 2: Requirement Validation
 
-Requirements are resolved from the config entry override (if present) or the skill's metadata. If any requirement array contains non-string entries, empty strings, or (for `capabilities`/`hostRoles`) unrecognized values, the skill is marked as having invalid requirements and is excluded — unless `always` is `true`.
+Requirements are resolved from the config entry override (if present) or the skill's metadata. If the `capabilities` array contains non-string entries, empty strings, or unrecognized capability IDs, the skill is marked as having invalid requirements and is excluded — unless `always` is `true`.
 
 ### Stage 3: Runtime Evaluation
 
@@ -174,17 +160,9 @@ For skills that are not `always: true` and have runtime requirements, the system
 
 1. **No requirements defined**: Skill is eligible.
 2. **No connected hosts**: Skill is ineligible.
-3. **Host filtering**: The candidate host set is progressively narrowed by each requirement:
-   - `hostRoles` — filter to hosts with a matching role
-   - `capabilities` — filter to hosts exposing all listed capabilities
-   - `anyCapabilities` — filter to hosts exposing at least one listed capability
-   - `os` — filter to hosts with a matching OS (case-insensitive)
-   - `env` — filter to hosts with all listed environment variable keys
-   - `bins` — filter to hosts where all listed binaries have `true` in `hostBinStatus`
-   - `anyBins` — filter to hosts where at least one listed binary has `true`
-4. **Config requirements** (`config`): Each dotted path is resolved against the gateway config root. A value is truthy if it is non-null, non-undefined, a non-empty string, a non-empty array, a non-empty object, or a boolean `true`.
+3. **Host filtering**: the candidate host set is narrowed by `capabilities` (host must expose all listed capability IDs).
 
-If the candidate host set is non-empty and all config requirements are satisfied, the skill is eligible.
+If the candidate host set is non-empty after capability filtering, the skill is eligible.
 
 ### Stage 4: Prompt Inclusion
 
@@ -217,7 +195,7 @@ Use this skill only when the user message includes the exact phrase:
 `E2E SKILL PROOF`
 ```
 
-### Skill with Binary Requirements
+### Skill with Capability Requirements
 
 ```markdown
 ---
@@ -228,7 +206,7 @@ metadata:
     "openclaw":
       {
         "emoji": "🐙",
-        "requires": { "bins": ["gh"] },
+        "requires": { "capabilities": ["shell.exec"] },
         "install":
           [
             {
@@ -247,7 +225,7 @@ metadata:
 ...
 ```
 
-### Skill with OR Binary Requirements
+### Skill with Capability Requirements (Node Must Support Search)
 
 ```markdown
 ---
@@ -255,7 +233,7 @@ name: coding-agent
 description: Run Codex CLI, Claude Code, OpenCode, or Pi Coding Agent via background shell sessions.
 metadata:
   {
-    "openclaw": { "emoji": "🧩", "requires": { "anyBins": ["claude", "codex", "opencode", "pi"] } },
+    "openclaw": { "emoji": "🧩", "requires": { "capabilities": ["text.search"] } },
   }
 ---
 
@@ -263,18 +241,16 @@ metadata:
 ...
 ```
 
-### Skill with OS and Binary Requirements
+### Skill with Capability Requirements
 
 ```markdown
 ---
 name: tmux
 description: Use tmux for interactive TUI applications.
 metadata:
-  { "gsv": { "emoji": "🖥️", "os": ["darwin", "linux"], "requires": { "bins": ["tmux"] } } }
+  { "gsv": { "emoji": "🖥️", "requires": { "capabilities": ["shell.exec"] } } }
 ---
 
 # tmux Skill
 ...
 ```
-
-Note: In the `tmux` example, the `os` field is placed at the top level of the `gsv` metadata object rather than inside `requires`. The eligibility evaluator reads `os` from within `requires`. Placement outside `requires` is not evaluated for eligibility purposes.

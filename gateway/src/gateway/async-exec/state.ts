@@ -1,21 +1,44 @@
 import { env } from "cloudflare:workers";
-import { snapshot, type Proxied } from "../../shared/persisted-object";
+import { snapshot, type Proxied, PersistedObject } from "../../shared/persisted-object";
 import type {
   AsyncExecCompletionInput,
   AsyncExecTerminalEventType,
 } from "../../protocol/async-exec";
-import type { NodeExecEventParams } from "../../protocol/tools";
-import type { Gateway } from "../do";
+import type {
+  NodeExecEventParams,
+  RuntimeNodeInventory,
+  ToolDefinition,
+} from "../../protocol/tools";
 import type {
   PendingAsyncExecDelivery,
   PendingAsyncExecSession,
 } from "./types";
+import {Gateway} from "../do";
 
 const ASYNC_EXEC_SESSION_TTL_MS = 24 * 60 * 60_000;
 const ASYNC_EXEC_DELIVERY_TTL_MS = 24 * 60 * 60_000;
 const ASYNC_EXEC_DELIVERY_RETRY_BASE_MS = 1000;
 const ASYNC_EXEC_DELIVERY_RETRY_MAX_MS = 60_000;
 const ASYNC_EXEC_EVENT_DEDUPE_TTL_MS = 24 * 60 * 60_000;
+
+type PendingAsyncExecSessionStore = ReturnType<
+  typeof PersistedObject<Record<string, PendingAsyncExecSession>>
+>;
+type PendingAsyncExecDeliveryStore = ReturnType<
+  typeof PersistedObject<Record<string, PendingAsyncExecDelivery>>
+>;
+type PendingAsyncExecEventDedupStore = ReturnType<
+  typeof PersistedObject<Record<string, number>>
+>;
+
+type GatewayAsyncExecStateBridge = {
+  pendingAsyncExecSessions: PendingAsyncExecSessionStore;
+  pendingAsyncExecDeliveries: PendingAsyncExecDeliveryStore;
+  deliveredAsyncExecEvents: PendingAsyncExecEventDedupStore;
+  listTools(): ToolDefinition[];
+  getNodeInventory(): RuntimeNodeInventory;
+  scheduleGatewayAlarm(): Promise<void>;
+};
 
 function asString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -91,7 +114,7 @@ function asPendingAsyncExecSession(
 }
 
 function getPendingAsyncExecSession(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   nodeId: string,
   sessionId: string,
 ): PendingAsyncExecSession | undefined {
@@ -108,7 +131,7 @@ function getPendingAsyncExecSession(
 }
 
 function deletePendingAsyncExecSession(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   nodeId: string,
   sessionId: string,
 ): void {
@@ -117,7 +140,7 @@ function deletePendingAsyncExecSession(
 }
 
 function touchPendingAsyncExecSession(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   nodeId: string,
   sessionId: string,
 ): void {
@@ -265,12 +288,16 @@ function asPendingAsyncExecDelivery(
 }
 
 function isAsyncExecEventDelivered(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   eventId: string,
   now = Date.now(),
 ): boolean {
   const expiresAt = gw.deliveredAsyncExecEvents[eventId];
-  if (typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt > now) {
+  if (
+    typeof expiresAt === "number" &&
+    Number.isFinite(expiresAt) &&
+    expiresAt > now
+  ) {
     return true;
   }
 
@@ -282,7 +309,7 @@ function isAsyncExecEventDelivered(
 }
 
 function markAsyncExecEventDelivered(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   eventId: string,
   now = Date.now(),
 ): void {
@@ -290,7 +317,7 @@ function markAsyncExecEventDelivered(
 }
 
 function getPendingAsyncExecDelivery(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   eventId: string,
 ): PendingAsyncExecDelivery | undefined {
   const rawValue = gw.pendingAsyncExecDeliveries[eventId];
@@ -314,7 +341,7 @@ function asyncExecDeliveryBackoffMs(attempts: number): number {
 }
 
 function queueAsyncExecDelivery(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   params: {
     eventId: string;
     nodeId: string;
@@ -358,7 +385,7 @@ function queueAsyncExecDelivery(
 }
 
 export function gcPendingAsyncExecSessions(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   now = Date.now(),
   reason?: string,
 ): number {
@@ -385,7 +412,7 @@ export function gcPendingAsyncExecSessions(
 }
 
 export function nextPendingAsyncExecSessionExpiryAtMs(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
 ): number | undefined {
   let next: number | undefined;
   for (const [key, rawValue] of Object.entries(gw.pendingAsyncExecSessions)) {
@@ -402,7 +429,7 @@ export function nextPendingAsyncExecSessionExpiryAtMs(
 }
 
 export function registerPendingAsyncExecSession(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   params: {
     nodeId: string;
     sessionId: string;
@@ -429,7 +456,7 @@ export function registerPendingAsyncExecSession(
 }
 
 export function gcPendingAsyncExecDeliveries(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   now = Date.now(),
   reason?: string,
 ): number {
@@ -452,7 +479,7 @@ export function gcPendingAsyncExecDeliveries(
 }
 
 export function nextPendingAsyncExecDeliveryAtMs(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   now = Date.now(),
 ): number | undefined {
   let next: number | undefined;
@@ -472,7 +499,7 @@ export function nextPendingAsyncExecDeliveryAtMs(
 }
 
 export function gcDeliveredAsyncExecEvents(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   now = Date.now(),
   reason?: string,
 ): number {
@@ -498,7 +525,7 @@ export function gcDeliveredAsyncExecEvents(
 }
 
 export function nextDeliveredAsyncExecEventGcAtMs(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   now = Date.now(),
 ): number | undefined {
   let next: number | undefined;
@@ -519,7 +546,7 @@ export function nextDeliveredAsyncExecEventGcAtMs(
 }
 
 export async function deliverPendingAsyncExecDeliveries(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   now = Date.now(),
 ): Promise<number> {
   gcDeliveredAsyncExecEvents(gw, now, "delivery-scan");
@@ -566,8 +593,8 @@ export async function deliverPendingAsyncExecDeliveries(
         outputTail: delivery.outputTail,
         startedAt: delivery.startedAt,
         endedAt: delivery.endedAt,
-        tools: JSON.parse(JSON.stringify(gw.getAllTools())),
-        runtimeNodes: JSON.parse(JSON.stringify(gw.getRuntimeNodeInventory())),
+        tools: JSON.parse(JSON.stringify(gw.listTools())),
+        runtimeNodes: JSON.parse(JSON.stringify(gw.getNodeInventory())),
       };
       await session.ingestAsyncExecCompletion(completion);
       markAsyncExecEventDelivered(gw, delivery.eventId, now);
@@ -575,13 +602,15 @@ export async function deliverPendingAsyncExecDeliveries(
       delivered += 1;
     } catch (error) {
       const attempts = delivery.attempts + 1;
-      gw.pendingAsyncExecDeliveries[delivery.eventId] =
-        clonePendingAsyncExecDelivery(delivery, {
+      gw.pendingAsyncExecDeliveries[delivery.eventId] = clonePendingAsyncExecDelivery(
+        delivery,
+        {
           attempts,
           updatedAt: now,
           nextAttemptAt: now + asyncExecDeliveryBackoffMs(attempts),
           lastError: error instanceof Error ? error.message : String(error),
-        });
+        },
+      );
     }
   }
 
@@ -589,7 +618,7 @@ export async function deliverPendingAsyncExecDeliveries(
 }
 
 export async function handleNodeExecEvent(
-  gw: Gateway,
+  gw: GatewayAsyncExecStateBridge,
   nodeId: string,
   params: NodeExecEventParams,
 ): Promise<{ ok: true; dropped?: true }> {
@@ -678,4 +707,94 @@ export async function handleNodeExecEvent(
   await gw.scheduleGatewayAlarm();
 
   return { ok: true };
+}
+
+export class GatewayAsyncExecStateService implements GatewayAsyncExecStateBridge {
+  pendingAsyncExecSessions: PendingAsyncExecSessionStore;
+  pendingAsyncExecDeliveries: PendingAsyncExecDeliveryStore;
+  deliveredAsyncExecEvents: PendingAsyncExecEventDedupStore;
+  #gateway: Gateway;
+
+  constructor(
+    kv: SyncKvStorage,
+    gw: Gateway
+  ) {
+    this.pendingAsyncExecSessions = PersistedObject<
+      Record<string, PendingAsyncExecSession>
+    >(kv, { prefix: "pendingAsyncExecSessions:" });
+    this.pendingAsyncExecDeliveries = PersistedObject<
+      Record<string, PendingAsyncExecDelivery>
+    >(kv, { prefix: "pendingAsyncExecDeliveries:" });
+    this.deliveredAsyncExecEvents = PersistedObject<Record<string, number>>(kv, {
+      prefix: "deliveredAsyncExecEvents:",
+    });
+    this.#gateway = gw;
+  }
+
+  listTools(): ToolDefinition[] {
+    return this.#gateway.nodeService.listTools(this.#gateway.nodes.keys());
+  }
+
+  getNodeInventory(): RuntimeNodeInventory {
+    return this.#gateway.nodeService.getRuntimeNodeInventory(
+      this.#gateway.nodes.keys(),
+    );
+  }
+
+  async scheduleGatewayAlarm(): Promise<void> {
+    await this.#gateway.scheduleGatewayAlarm();
+  }
+
+  registerPendingAsyncExecSession(params: {
+    nodeId: string;
+    sessionId: string;
+    sessionKey: string;
+    callId: string;
+  }): void {
+    registerPendingAsyncExecSession(this, params);
+  }
+
+  gcPendingAsyncExecSessions(
+    now = Date.now(),
+    reason?: string,
+  ): number {
+    return gcPendingAsyncExecSessions(this, now, reason);
+  }
+
+  nextPendingAsyncExecSessionExpiryAtMs(now = Date.now()): number | undefined {
+    return nextPendingAsyncExecSessionExpiryAtMs(this);
+  }
+
+  gcPendingAsyncExecDeliveries(
+    now = Date.now(),
+    reason?: string,
+  ): number {
+    return gcPendingAsyncExecDeliveries(this, now, reason);
+  }
+
+  nextPendingAsyncExecDeliveryAtMs(now = Date.now()): number | undefined {
+    return nextPendingAsyncExecDeliveryAtMs(this, now);
+  }
+
+  gcDeliveredAsyncExecEvents(
+    now = Date.now(),
+    reason?: string,
+  ): number {
+    return gcDeliveredAsyncExecEvents(this, now, reason);
+  }
+
+  nextDeliveredAsyncExecEventGcAtMs(now = Date.now()): number | undefined {
+    return nextDeliveredAsyncExecEventGcAtMs(this, now);
+  }
+
+  async deliverPendingAsyncExecDeliveries(now = Date.now()): Promise<number> {
+    return deliverPendingAsyncExecDeliveries(this, now);
+  }
+
+  handleNodeExecEvent(
+    nodeId: string,
+    params: NodeExecEventParams,
+  ): Promise<{ ok: true; dropped?: true }> {
+    return handleNodeExecEvent(this, nodeId, params);
+  }
 }

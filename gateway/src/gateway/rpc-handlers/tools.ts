@@ -1,11 +1,9 @@
 import { env } from "cloudflare:workers";
-import type { EventFrame } from "../../protocol/frames";
 import {
   DEFER_RESPONSE,
   type Handler,
 } from "../../protocol/methods";
 import { RpcError } from "../../shared/utils";
-import type { ToolInvokePayload } from "../../protocol/tools";
 
 function extractRunningSessionId(result: unknown): string | undefined {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
@@ -21,8 +19,18 @@ function extractRunningSessionId(result: unknown): string | undefined {
   return sessionId || undefined;
 }
 
+function toToolDispatchRpcError(message: string): RpcError {
+  if (message.startsWith("No node provides tool:")) {
+    return new RpcError(404, message);
+  }
+  if (message === "Node not connected") {
+    return new RpcError(503, message);
+  }
+  return new RpcError(500, message);
+}
+
 export const handleToolsList: Handler<"tools.list"> = ({ gw }) => ({
-  tools: gw.getAllTools(),
+  tools: gw.nodeService.listTools(gw.nodes.keys()),
 });
 
 export const handleToolRequest: Handler<"tool.request"> = ({ gw, params }) => {
@@ -30,32 +38,10 @@ export const handleToolRequest: Handler<"tool.request"> = ({ gw, params }) => {
     throw new RpcError(400, "callId, tool, and sessionKey required");
   }
 
-  const resolved = gw.findNodeForTool(params.tool);
-  if (!resolved) {
-    throw new RpcError(404, `No node provides tool: ${params.tool}`);
+  const result = gw.nodeService.requestToolForSession(params, gw.nodes);
+  if (!result.ok) {
+    throw toToolDispatchRpcError(result.error ?? "Failed to dispatch tool");
   }
-
-  const nodeWs = gw.nodes.get(resolved.nodeId);
-  if (!nodeWs) {
-    throw new RpcError(503, "Node not connected");
-  }
-
-  gw.pendingToolCalls[params.callId] = {
-    kind: "session",
-    sessionKey: params.sessionKey,
-  };
-
-  // Send the original (un-namespaced) tool name to the node
-  const evt: EventFrame<ToolInvokePayload> = {
-    type: "evt",
-    event: "tool.invoke",
-    payload: {
-      callId: params.callId,
-      tool: resolved.toolName,
-      args: params.args ?? {},
-    },
-  };
-  nodeWs.send(JSON.stringify(evt));
 
   return { status: "sent" };
 };
@@ -66,36 +52,28 @@ export const handleToolInvoke: Handler<"tool.invoke"> = (ctx) => {
     throw new RpcError(400, "tool required");
   }
 
-  const resolved = gw.findNodeForTool(params.tool);
-  if (!resolved) {
-    throw new RpcError(404, `No node provides tool: ${params.tool}`);
-  }
-
-  const nodeWs = gw.nodes.get(resolved.nodeId);
-  if (!nodeWs) {
-    throw new RpcError(503, "Node not connected");
-  }
-
   const attachment = ws.deserializeAttachment();
   const clientId = attachment.clientId as string | undefined;
   if (!clientId) {
     throw new RpcError(101, "Not connected");
   }
 
-  const callId = crypto.randomUUID();
-  gw.pendingToolCalls[callId] = {
-    kind: "client",
-    clientId,
-    frameId: frame.id,
-    createdAt: Date.now(),
-  };
-
-  const evt: EventFrame<ToolInvokePayload> = {
-    type: "evt",
-    event: "tool.invoke",
-    payload: { callId, tool: resolved.toolName, args: params.args ?? {} },
-  };
-  nodeWs.send(JSON.stringify(evt));
+  const result = gw.nodeService.requestToolFromClient(
+    {
+      clientId,
+      requestId: frame.id,
+      tool: params.tool,
+      args: params.args ?? {},
+    },
+    {
+      connectedNodes: gw.nodes,
+      pendingToolTtlMs: gw.getPendingToolTimeoutMs(),
+    },
+  );
+  if (!result.ok) {
+    throw toToolDispatchRpcError(result.error ?? "Failed to dispatch tool");
+  }
+  void gw.scheduleGatewayAlarm();
 
   return DEFER_RESPONSE;
 };
@@ -109,7 +87,13 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     throw new RpcError(400, "callId required");
   }
 
-  const route = gw.pendingToolCalls[params.callId];
+  const nodeAttachment = ws.deserializeAttachment();
+  const nodeId = nodeAttachment.nodeId as string | undefined;
+  if (!nodeId) {
+    throw new RpcError(403, "Node not authorized for this call");
+  }
+
+  const route = gw.nodeService.peekPendingToolCall(params.callId);
   if (!route) {
     throw new RpcError(404, "Unknown callId");
   }
@@ -118,9 +102,14 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     route === null ||
     (route.kind !== "client" && route.kind !== "session")
   ) {
-    delete gw.pendingToolCalls[params.callId];
     return { ok: true, dropped: true };
   }
+
+  if (route.nodeId !== nodeId) {
+    throw new RpcError(403, "Node not authorized for this call");
+  }
+
+  gw.nodeService.consumePendingToolCall(params.callId);
 
   if (route.kind === "client") {
     const clientWs = gw.clients.get(route.clientId);
@@ -128,7 +117,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
       console.log(
         `[Gateway] Dropping tool.result for disconnected client ${route.clientId} (callId=${params.callId})`,
       );
-      delete gw.pendingToolCalls[params.callId];
       return { ok: true, dropped: true };
     }
 
@@ -139,7 +127,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
         result: params.result,
       });
     }
-    delete gw.pendingToolCalls[params.callId];
     return { ok: true };
   }
 
@@ -150,12 +137,9 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     error: params.error,
   });
   if (!result.ok) {
-    delete gw.pendingToolCalls[params.callId];
     throw new RpcError(404, `Unknown session tool call: ${params.callId}`);
   }
 
-  const nodeAttachment = ws.deserializeAttachment();
-  const nodeId = nodeAttachment.nodeId as string | undefined;
   const runningSessionId = extractRunningSessionId(params.result);
   if (nodeId && runningSessionId) {
     gw.registerPendingAsyncExecSession({
@@ -166,22 +150,37 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     });
   }
 
-  delete gw.pendingToolCalls[params.callId];
 
   return { ok: true };
 };
 
-export const handleNodeProbeResult: Handler<"node.probe.result"> = async ({
-  ws,
+export const handleNodeForget: Handler<"node.forget"> = async ({
   gw,
   params,
 }) => {
-  const attachment = ws.deserializeAttachment();
-  const nodeId = attachment.nodeId as string | undefined;
-  if (!nodeId) {
-    throw new RpcError(403, "Only node clients can submit probe results");
+  if (!params?.nodeId || typeof params.nodeId !== "string") {
+    throw new RpcError(400, "nodeId required");
   }
-  return await gw.handleNodeProbeResult(nodeId, params);
+
+  const nodeId = params.nodeId.trim();
+  if (!nodeId) {
+    throw new RpcError(400, "nodeId required");
+  }
+
+  const result = await gw.forgetNode(nodeId, { force: params.force === true });
+  if (!result.ok) {
+    if (result.error?.includes("still connected")) {
+      throw new RpcError(409, result.error);
+    }
+    throw new RpcError(500, result.error ?? "Failed to forget node");
+  }
+
+  return {
+    ok: true as const,
+    nodeId,
+    removed: result.removed,
+    disconnected: result.disconnected,
+  };
 };
 
 export const handleNodeExecEvent: Handler<"node.exec.event"> = async ({

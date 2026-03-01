@@ -135,7 +135,11 @@ export async function handleChannelInboundRpc(
 
   const command = parseCommand(messageText);
   if (command) {
-    const commandResult = await executeChannelSlashCommand(gw, command, sessionKey);
+    const commandResult = await executeChannelSlashCommand(
+      gw,
+      command,
+      sessionKey,
+    );
 
     if (commandResult.handled) {
       sendChannelResponse(
@@ -220,7 +224,8 @@ export async function handleChannelInboundRpc(
       thinkLevel?: string;
       model?: { provider: string; id: string };
     } = {};
-    if (directives.thinkLevel) messageOverrides.thinkLevel = directives.thinkLevel;
+    if (directives.thinkLevel)
+      messageOverrides.thinkLevel = directives.thinkLevel;
     if (directives.model) messageOverrides.model = directives.model;
 
     let processedMedia = await processMediaWithTranscription(
@@ -240,7 +245,7 @@ export async function handleChannelInboundRpc(
       );
     }
 
-    gw.pendingChannelResponses[runId] = {
+    const channelContext = {
       channel: params.channel,
       accountId: params.accountId,
       peer: params.peer,
@@ -269,21 +274,42 @@ export async function handleChannelInboundRpc(
     const result = await sessionStub.chatSend(
       envelopedMessage,
       runId,
-      JSON.parse(JSON.stringify(gw.getAllTools())),
-      JSON.parse(JSON.stringify(gw.getRuntimeNodeInventory())),
+      JSON.parse(JSON.stringify(gw.nodeService.listTools(gw.nodes.keys()))),
+      JSON.parse(
+        JSON.stringify(gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys())),
+      ),
       sessionKey,
       messageOverrides,
       processedMedia.length > 0 ? processedMedia : undefined,
-      {
-        channel: params.channel,
-        accountId: params.accountId,
-        peer: {
-          kind: params.peer.kind,
-          id: params.peer.id,
-          name: params.peer.name,
-        },
-      },
+      channelContext,
     );
+
+    if (result.paused) {
+      sendTypingToChannel(
+        gw,
+        params.channel,
+        params.accountId,
+        params.peer,
+        sessionKey,
+        false,
+      );
+      sendChannelResponse(
+        gw,
+        params.channel,
+        params.accountId,
+        params.peer,
+        params.message.id,
+        result.response ??
+          "Run is paused waiting for tool approval. Reply yes/no.",
+      );
+      return {
+        ok: true,
+        sessionKey,
+        status: "paused",
+        runId: result.runId,
+        approvalId: result.approvalId,
+      };
+    }
 
     return {
       ok: true,
@@ -307,7 +333,6 @@ export async function handleChannelInboundRpc(
       sessionKey,
       false,
     );
-    delete gw.pendingChannelResponses[runId];
     return {
       ok: false,
       sessionKey,

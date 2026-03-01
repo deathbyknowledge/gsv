@@ -1,14 +1,7 @@
 export type CustomMetadata = {
   emoji?: string;
   requires?: {
-    bins?: string[];
-    anyBins?: string[];
-    env?: string[];
-    config?: string[];
-    os?: string[];
-    hostRoles?: string[];
     capabilities?: string[];
-    anyCapabilities?: string[];
   };
   install?: Array<{
     id?: string;

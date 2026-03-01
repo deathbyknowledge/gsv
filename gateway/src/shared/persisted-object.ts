@@ -20,7 +20,7 @@ export type Proxied<T> = T & { [__proxied]: true };
  * Deep-clone a Proxied object, stripping all Proxy wrappers.
  * Returns a plain T safe for structured clone / RPC.
  */
-export function snapshot<T extends Record<string, unknown>>(obj: Proxied<T>): T {
+export function snapshot<T extends Record<string, unknown>>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
 }
 

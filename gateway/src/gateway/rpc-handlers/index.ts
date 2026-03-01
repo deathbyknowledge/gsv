@@ -21,10 +21,10 @@ import {
 import {
   handleToolsList,
   handleNodeExecEvent,
-  handleNodeProbeResult,
   handleToolRequest,
   handleToolInvoke,
   handleToolResult,
+  handleNodeForget,
 } from "./tools";
 import { handleLogsGet, handleLogsResult } from "./logs";
 import { handlePairList, handlePairApprove, handlePairReject } from "./pairing";
@@ -64,7 +64,6 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     connect: handleConnect,
     "tool.invoke": handleToolInvoke,
     "tool.result": handleToolResult,
-    "node.probe.result": handleNodeProbeResult,
     "node.exec.event": handleNodeExecEvent,
     "tools.list": handleToolsList,
     "logs.get": handleLogsGet,
@@ -102,6 +101,7 @@ export function buildRpcHandlers(): Partial<{ [M in RpcMethod]: Handler<M> }> {
     "pair.approve": handlePairApprove,
     "pair.reject": handlePairReject,
     "tool.request": handleToolRequest,
+    "node.forget": handleNodeForget,
     "chat.send": handleChatSend,
     "workspace.list": handleWorkspaceList,
     "workspace.read": handleWorkspaceRead,

@@ -38,7 +38,6 @@ Timeout durations for LLM calls and tool execution.
 |-----|------|---------|-------------|
 | `timeouts.llmMs` | `number` | `300000` (5 min) | Maximum duration in milliseconds for a single LLM API call. |
 | `timeouts.toolMs` | `number` | `60000` (1 min) | Maximum duration in milliseconds for a single tool execution. |
-| `timeouts.skillProbeMaxAgeMs` | `number` | `600000` (10 min) | Maximum age in milliseconds for cached skill binary probe results. Optional. |
 
 ---
 
@@ -164,14 +163,75 @@ Each entry in `skills.entries` configures a single skill.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `hostRoles` | `string[]` | Restrict to hosts with these roles (`"execution"`, `"specialized"`). |
 | `capabilities` | `string[]` | Require all listed capabilities on the same host. Valid values: `"filesystem.list"`, `"filesystem.read"`, `"filesystem.write"`, `"filesystem.edit"`, `"text.search"`, `"shell.exec"`. |
-| `anyCapabilities` | `string[]` | Require at least one of these capabilities on the same host. Same valid values as `capabilities`. |
-| `bins` | `string[]` | Require all listed binaries to be available (probe status `true`) on the selected host. |
-| `anyBins` | `string[]` | Require at least one of these binaries on the selected host. |
-| `env` | `string[]` | Require all listed environment variable keys on the selected host. |
-| `config` | `string[]` | Require all dotted config paths to resolve to non-empty values in the runtime config. |
-| `os` | `string[]` | Restrict to hosts matching one of these OS identifiers (e.g. `"darwin"`, `"linux"`). Comparison is case-insensitive. |
+
+Current behavior: runtime skill eligibility enforcement uses `requires.capabilities` (plus node online state).
+
+---
+
+## Tool Approval
+
+Human-in-the-loop tool gating for session runs.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `toolApproval.defaultDecision` | `"allow" \| "ask" \| "deny"` | `"allow"` | Decision used when no rule matches. |
+| `toolApproval.rules` | `ToolApprovalRule[]` | `[]` | Ordered policy rules. First matching rule wins. |
+
+### ToolApprovalRule
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `id` | `string` | yes | Stable identifier for logs/debugging. |
+| `tool` | `string` | yes | Tool name pattern (supports `*` wildcard). |
+| `when` | `ToolApprovalArgCondition[]` | no | Arg predicates; all must match. |
+| `decision` | `"allow" \| "ask" \| "deny"` | yes | Rule decision. |
+| `reason` | `string` | no | Optional reason shown in pause/deny context. |
+
+### ToolApprovalArgCondition
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `path` | `string` | yes | Dot path into args (for example `command`, `options.force`, `steps.0.name`). |
+| `op` | `"equals" \| "contains" \| "startsWith" \| "regex"` | yes | Match operator. |
+| `value` | `string \| number \| boolean \| null` | yes | Match value (`string` required for `contains`, `startsWith`, `regex`). |
+| `flags` | `string` | no | Regex flags (`op: "regex"` only). |
+
+Example:
+
+```json
+{
+  "toolApproval": {
+    "defaultDecision": "allow",
+    "rules": [
+      {
+        "id": "deny-destructive-shell",
+        "tool": "gsv__Bash",
+        "when": [
+          {
+            "path": "command",
+            "op": "regex",
+            "value": "(^|\\s)rm\\s+-rf\\s+/"
+          }
+        ],
+        "decision": "deny",
+        "reason": "destructive command"
+      },
+      {
+        "id": "ask-all-shell",
+        "tool": "gsv__Bash",
+        "decision": "ask"
+      }
+    ]
+  }
+}
+```
+
+Behavior summary:
+
+- `allow`: dispatch immediately.
+- `ask`: pause run until user replies `yes` or `no`.
+- `deny`: do not dispatch; tool call is completed with a policy error.
 
 ---
 

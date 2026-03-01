@@ -154,9 +154,20 @@ export type ThinkingBlock = {
 export type ChatEventPayload = {
   runId: string | null;
   sessionKey: string;
-  state: "partial" | "final" | "error";
+  state: "partial" | "final" | "error" | "paused";
   message?: AssistantMessage;
   error?: string;
+  channelContext?: {
+    channel: string;
+    accountId: string;
+    peer: {
+      kind: string;
+      id: string;
+      name?: string;
+    };
+    inboundMessageId: string;
+    agentId?: string;
+  };
 };
 
 // Config types

@@ -1,32 +1,6 @@
 import { RpcError, timingSafeEqualStr } from "../../shared/utils";
 import type { ConnectResult, Handler } from "../../protocol/methods";
-import { normalizeAgentId } from "../../session/routing";
 import { validateNodeRuntimeInfo } from "../capabilities";
-import type { Gateway } from "../do";
-
-function getSkillProbeAgentIds(gw: Gateway): string[] {
-  const configured = gw
-    .getFullConfig()
-    .agents.list.map((agent) => normalizeAgentId(agent.id || "main"));
-  const unique = new Set(["main", ...configured]);
-  return Array.from(unique).sort();
-}
-
-function onNodeConnected(gw: Gateway, nodeId: string): void {
-  void (async () => {
-    try {
-      await gw.dispatchPendingNodeProbesForNode(nodeId);
-      for (const agentId of getSkillProbeAgentIds(gw)) {
-        await gw.refreshSkillRuntimeFacts(agentId, { force: false });
-      }
-    } catch (error) {
-      console.error(
-        `[Gateway] Failed to refresh skill runtime facts on node connect (${nodeId}):`,
-        error,
-      );
-    }
-  })();
-}
 
 export const handleConnect: Handler<"connect"> = async (ctx) => {
   const { ws, gw, params } = ctx;
@@ -85,39 +59,33 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
     if (existingWs && existingWs !== ws) {
       // Any in-flight logs.get requests targeted at the old socket cannot
       // complete after replacement; fail them before swapping the node entry.
-      for (const [callId, route] of Object.entries(gw.pendingLogCalls)) {
-        if (typeof route === "object" && route.nodeId === nodeId) {
-          const clientWs = gw.clients.get(route.clientId);
-          if (clientWs && clientWs.readyState === WebSocket.OPEN) {
-            gw.sendError(
-              clientWs,
-              route.frameId,
-              503,
-              `Node replaced during log request: ${nodeId}`,
-            );
-          }
-          delete gw.pendingLogCalls[callId];
-        }
-      }
-      gw.cancelInternalNodeLogRequestsForNode(
+      void gw.failPendingToolCallsForNode(
+        nodeId,
+        `Node replaced during tool request: ${nodeId}`,
+      );
+      gw.failPendingLogCallsForNode(
         nodeId,
         `Node replaced during log request: ${nodeId}`,
       );
-      gw.markPendingNodeProbesAsQueued(
+      gw.nodeService.cancelInternalNodeLogRequestsForNode(
         nodeId,
-        `Node replaced during node probe: ${nodeId}`,
+        `Node replaced during log request: ${nodeId}`,
       );
       existingWs.close(1000, "Replaced by newer node connection");
     }
 
     attachments.nodeId = nodeId;
     gw.nodes.set(nodeId, ws);
-    // Store tools with their original names (namespacing happens in getAllTools)
-    gw.toolRegistry[nodeId] = nodeTools;
-    gw.nodeRuntimeRegistry[nodeId] = runtime;
-    onNodeConnected(gw, nodeId);
+    gw.nodeService.registerNode(nodeId, {
+      tools: nodeTools,
+      runtime,
+      metadata: {
+        platform: params.client.platform,
+        version: params.client.version,
+      },
+    });
     console.log(
-      `[Gateway] Node connected: ${nodeId}, role=${runtime.hostRole}, tools: [${nodeTools.map((t) => `${nodeId}__${t.name}`).join(", ")}]`,
+      `[Gateway] Node connected: ${nodeId}, tools: [${nodeTools.map((t) => `${nodeId}__${t.name}`).join(", ")}]`,
     );
   } else if (mode === "channel") {
     const channel = params.client.channel;
@@ -177,8 +145,8 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         "cron.run",
         "cron.runs",
         "tool.request",
+        "node.forget",
         "tool.result",
-        "node.probe.result",
         "node.exec.event",
         "logs.result",
         "channel.inbound",
@@ -193,7 +161,6 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         "chat",
         "tool.invoke",
         "tool.result",
-        "node.probe",
         "logs.get",
         "channel.outbound",
       ],

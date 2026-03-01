@@ -26,7 +26,6 @@ import type {
   ToolDefinition,
   NodeRuntimeInfo,
   NodeExecEventParams,
-  NodeProbeResultParams,
   ToolRequestParams,
   ToolResultParams,
 } from "./tools";
@@ -99,11 +98,6 @@ export type RpcMethods = {
     result: { ok: true; dropped?: true };
   };
 
-  "node.probe.result": {
-    params: NodeProbeResultParams;
-    result: { ok: true; dropped?: true };
-  };
-
   "node.exec.event": {
     params: NodeExecEventParams;
     result: { ok: true; dropped?: true };
@@ -151,6 +145,12 @@ export type RpcMethods = {
             thinkLevel?: string;
             model?: { provider: string; id: string };
           };
+        }
+      | {
+          status: "paused";
+          runId: string;
+          response: string;
+          approvalId?: string;
         };
   };
 
@@ -174,13 +174,7 @@ export type RpcMethods = {
   };
 
   "skills.update": {
-    params:
-      | {
-          agentId?: string;
-          force?: boolean;
-          timeoutMs?: number;
-        }
-      | undefined;
+    params: { agentId?: string } | undefined;
     result: SkillsUpdateResult;
   };
 
@@ -436,6 +430,11 @@ export type RpcMethods = {
     result: {
       status: "sent";
     };
+  };
+
+  "node.forget": {
+    params: { nodeId: string; force?: boolean };
+    result: { ok: true; nodeId: string; removed: boolean; disconnected: boolean };
   };
 
   "transfer.meta": {

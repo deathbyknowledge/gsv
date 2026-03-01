@@ -4,19 +4,18 @@ use gsv::config::{self, CliConfig};
 use gsv::connection::Connection;
 use gsv::deploy;
 use gsv::protocol::{
-    Frame, LogsGetPayload, LogsResultParams, NodeExecEventParams, NodeProbePayload,
-    NodeProbeResultParams, NodeRuntimeInfo, ToolDefinition, ToolInvokePayload, ToolResultParams,
-    TransferEndPayload, TransferReceivePayload, TransferSendPayload, TransferStartPayload,
+    Frame, LogsGetPayload, LogsResultParams, NodeExecEventParams, NodeRuntimeInfo, ToolDefinition,
+    ToolInvokePayload, ToolResultParams, TransferEndPayload, TransferReceivePayload,
+    TransferSendPayload, TransferStartPayload,
 };
 use gsv::tools::{all_tools_with_workspace, subscribe_exec_events, Tool};
 use gsv::transfer::TransferCoordinator;
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::future::Future;
 use std::io::{self, BufRead, IsTerminal};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 mod commands;
@@ -349,19 +348,11 @@ enum SkillsAction {
         agent_id: String,
     },
 
-    /// Refresh node bin checks and show updated status
+    /// Refresh and show skill eligibility status
     Update {
         /// Agent ID (default: main)
         #[arg(default_value = "main")]
         agent_id: String,
-
-        /// Force re-probing even when cache is fresh
-        #[arg(long)]
-        force: bool,
-
-        /// Probe timeout in milliseconds
-        #[arg(long)]
-        timeout_ms: Option<u64>,
     },
 }
 
@@ -778,32 +769,6 @@ mod tests {
             started_at: Some(1),
             ended_at: Some(2),
         }
-    }
-
-    #[test]
-    fn test_normalize_host_env_keys_trims_and_dedups() {
-        let keys = vec![
-            OsString::from(" PATH "),
-            OsString::from("PATH"),
-            OsString::from("HOME"),
-            OsString::from(""),
-            OsString::from("   "),
-        ];
-
-        let normalized = normalize_host_env_keys(keys);
-        assert_eq!(normalized, vec!["HOME".to_string(), "PATH".to_string()]);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_normalize_host_env_keys_skips_non_utf8() {
-        use std::os::unix::ffi::OsStringExt;
-
-        let invalid = OsString::from_vec(vec![0xff, 0xfe, 0xfd]);
-        let keys = vec![OsString::from("FOO"), invalid, OsString::from("BAR")];
-
-        let normalized = normalize_host_env_keys(keys);
-        assert_eq!(normalized, vec!["BAR".to_string(), "FOO".to_string()]);
     }
 
     #[test]
@@ -2615,121 +2580,6 @@ fn capabilities_for_tool(tool_name: &str) -> Result<Vec<&'static str>, String> {
     }
 }
 
-fn is_valid_probe_bin(bin: &str) -> bool {
-    !bin.is_empty()
-        && bin
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '+' | '-'))
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        return fs::metadata(path)
-            .map(|meta| (meta.permissions().mode() & 0o111) != 0)
-            .unwrap_or(false);
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
-
-fn resolve_login_shell() -> String {
-    if let Ok(raw) = std::env::var("SHELL") {
-        let candidate = raw.trim();
-        if !candidate.is_empty() {
-            let path = Path::new(candidate);
-            if path.is_absolute() && is_executable_file(path) {
-                return candidate.to_string();
-            }
-        }
-    }
-    "/bin/sh".to_string()
-}
-
-fn probe_path_from_login_shell() -> Option<OsString> {
-    let shell = resolve_login_shell();
-    let output = std::process::Command::new(shell)
-        .arg("-lc")
-        .arg("env")
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    for line in output.stdout.split(|byte| *byte == b'\n') {
-        if let Some(path_bytes) = line.strip_prefix(b"PATH=") {
-            let path = String::from_utf8_lossy(path_bytes).to_string();
-            return Some(OsString::from(path));
-        }
-    }
-    None
-}
-
-fn is_bin_available_with_path(bin: &str, path_var: &OsStr) -> bool {
-    if bin.contains('/') || bin.contains('\\') {
-        return is_executable_file(Path::new(bin));
-    }
-
-    for dir in std::env::split_paths(path_var) {
-        if dir.as_os_str().is_empty() {
-            continue;
-        }
-        let candidate = dir.join(bin);
-        if is_executable_file(&candidate) {
-            return true;
-        }
-    }
-    false
-}
-
-fn is_bin_available(bin: &str) -> bool {
-    let Some(path_var) = std::env::var_os("PATH") else {
-        return false;
-    };
-    is_bin_available_with_path(bin, &path_var)
-}
-
-fn probe_node_bins(bins: &[String]) -> HashMap<String, bool> {
-    let login_shell_path = probe_path_from_login_shell();
-    let mut statuses = HashMap::new();
-    for raw_bin in bins {
-        let bin = raw_bin.trim();
-        if !is_valid_probe_bin(bin) {
-            continue;
-        }
-        let available = if let Some(path) = login_shell_path.as_deref() {
-            is_bin_available_with_path(bin, path)
-        } else {
-            is_bin_available(bin)
-        };
-        statuses.insert(bin.to_string(), available);
-    }
-    statuses
-}
-
-fn normalize_host_env_keys<I>(keys: I) -> Vec<String>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut env_keys: Vec<String> = keys
-        .into_iter()
-        .filter_map(|key| key.into_string().ok())
-        .map(|key| key.trim().to_string())
-        .filter(|key| !key.is_empty())
-        .collect();
-    env_keys.sort();
-    env_keys.dedup();
-    env_keys
-}
-
 fn build_execution_node_runtime(
     tool_defs: &[ToolDefinition],
 ) -> Result<NodeRuntimeInfo, Box<dyn std::error::Error>> {
@@ -2769,16 +2619,9 @@ fn build_execution_node_runtime(
     let mut normalized_host_capabilities: Vec<String> = host_capabilities.into_iter().collect();
     normalized_host_capabilities.sort();
 
-    let host_env = normalize_host_env_keys(std::env::vars_os().map(|(key, _)| key));
-
     Ok(NodeRuntimeInfo {
-        host_role: "execution".to_string(),
         host_capabilities: normalized_host_capabilities,
         tool_capabilities,
-        host_os: Some(std::env::consts::OS.to_string()),
-        host_env: Some(host_env),
-        host_bin_status: None,
-        host_bin_status_updated_at: None,
     })
 }
 
@@ -3202,67 +3045,6 @@ async fn run_node(
                                     "logs.result.send_failed",
                                     json!({
                                         "callId": response.call_id,
-                                        "error": e.to_string(),
-                                    }),
-                                );
-                            }
-                        }
-                    } else if evt.event == "node.probe" {
-                        if let Some(payload) = evt.payload {
-                            let request = match serde_json::from_value::<NodeProbePayload>(payload)
-                            {
-                                Ok(request) => request,
-                                Err(e) => {
-                                    logger.warn(
-                                        "node.probe.parse_failed",
-                                        json!({
-                                            "error": e.to_string(),
-                                        }),
-                                    );
-                                    return;
-                                }
-                            };
-
-                            logger.info(
-                                "node.probe",
-                                json!({
-                                    "probeId": request.probe_id.clone(),
-                                    "kind": request.kind.clone(),
-                                    "binsCount": request.bins.len(),
-                                }),
-                            );
-
-                            let response = if request.kind == "bins" {
-                                let statuses = probe_node_bins(&request.bins);
-                                NodeProbeResultParams {
-                                    probe_id: request.probe_id.clone(),
-                                    ok: true,
-                                    bins: Some(statuses),
-                                    error: None,
-                                }
-                            } else {
-                                NodeProbeResultParams {
-                                    probe_id: request.probe_id.clone(),
-                                    ok: false,
-                                    bins: None,
-                                    error: Some(format!(
-                                        "Unsupported probe kind: {}",
-                                        request.kind
-                                    )),
-                                }
-                            };
-
-                            if let Err(e) = conn
-                                .request(
-                                    "node.probe.result",
-                                    Some(serde_json::to_value(&response).unwrap()),
-                                )
-                                .await
-                            {
-                                logger.error(
-                                    "node.probe.result.send_failed",
-                                    json!({
-                                        "probeId": response.probe_id,
                                         "error": e.to_string(),
                                     }),
                                 );

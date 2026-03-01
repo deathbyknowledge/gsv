@@ -88,17 +88,8 @@ pub struct ToolDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeRuntimeInfo {
-    pub host_role: String,
     pub host_capabilities: Vec<String>,
     pub tool_capabilities: HashMap<String, Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub host_os: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub host_env: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub host_bin_status: Option<HashMap<String, bool>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub host_bin_status_updated_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,27 +98,6 @@ pub struct ToolInvokePayload {
     pub call_id: String,
     pub tool: String,
     pub args: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeProbePayload {
-    pub probe_id: String,
-    pub kind: String,
-    pub bins: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeProbeResultParams {
-    pub probe_id: String,
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bins: Option<HashMap<String, bool>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

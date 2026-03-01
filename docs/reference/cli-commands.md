@@ -84,7 +84,7 @@ When invoked without a subcommand or `--foreground`:
 - If the daemon service is already installed, starts (or restarts) it.
 - If not installed, runs `gsv node install` implicitly.
 
-When invoked with `--foreground`, runs the node in the current process with automatic reconnection. The node registers tools (Bash, Read, Write, Edit, Glob, Grep) and responds to `tool.invoke`, `logs.get`, and `node.probe` events from the gateway.
+When invoked with `--foreground`, runs the node in the current process with automatic reconnection. The node registers tools (Bash, Read, Write, Edit, Glob, Grep) and responds to `tool.invoke` and `logs.get` events from the gateway.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
@@ -493,16 +493,14 @@ Show skill eligibility status for an agent, including connected nodes and their 
 ### gsv skills update
 
 ```
-gsv skills update [AGENT_ID] [--force] [--timeout-ms MS]
+gsv skills update [AGENT_ID]
 ```
 
-Re-probe connected nodes for binary availability and show updated skill status.
+Refresh skill eligibility status and show updated results.
 
-| Argument/Flag | Type | Default | Description |
-|---------------|------|---------|-------------|
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
 | `agent_id` | `string` | `main` | Agent ID. |
-| `--force` | `bool` | `false` | Force re-probing even when cache is fresh. |
-| `--timeout-ms` | `integer` | *(none)* | Probe timeout in milliseconds. |
 
 ---
 

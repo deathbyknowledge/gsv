@@ -1,20 +1,5 @@
-import type { EventFrame } from "../../protocol/frames";
 import { DEFER_RESPONSE, type Handler } from "../../protocol/methods";
-import type { LogsGetEventPayload } from "../../protocol/logs";
 import { RpcError } from "../../shared/utils";
-
-const DEFAULT_LOG_LINES = 100;
-const MAX_LOG_LINES = 5000;
-
-function resolveLogLineLimit(input: number | undefined): number {
-  if (input === undefined) {
-    return DEFAULT_LOG_LINES;
-  }
-  if (!Number.isFinite(input) || input < 1) {
-    throw new RpcError(400, "lines must be a positive number");
-  }
-  return Math.min(Math.floor(input), MAX_LOG_LINES);
-}
 
 export const handleLogsGet: Handler<"logs.get"> = ({ gw, ws, frame, params }) => {
   const attachment = ws.deserializeAttachment();
@@ -23,48 +8,39 @@ export const handleLogsGet: Handler<"logs.get"> = ({ gw, ws, frame, params }) =>
     throw new RpcError(101, "Not connected");
   }
 
-  const lines = resolveLogLineLimit(params?.lines);
-
-  const nodeId = params?.nodeId;
-  let targetNodeId: string;
-  if (nodeId) {
-    if (!gw.nodes.has(nodeId)) {
-      throw new RpcError(503, `Node not connected: ${nodeId}`);
-    }
-    targetNodeId = nodeId;
-  } else if (gw.nodes.size === 1) {
-    targetNodeId = Array.from(gw.nodes.keys())[0];
-  } else if (gw.nodes.size === 0) {
-    throw new RpcError(503, "No nodes connected");
-  } else {
-    throw new RpcError(
-      400,
-      "nodeId required when multiple nodes are connected",
+  try {
+    const result = gw.nodeService.requestLogsFromClient(
+      {
+        clientId,
+        requestId: frame.id,
+        nodeId: params?.nodeId,
+        lines: params?.lines,
+      },
+      {
+        connectedNodes: gw.nodes,
+        pendingLogTtlMs: gw.getPendingLogTimeoutMs(),
+      },
     );
+    if (!result.ok) {
+      throw new Error(result.error ?? "Failed to request node logs");
+    }
+    void gw.scheduleGatewayAlarm();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === "lines must be a positive number") {
+      throw new RpcError(400, message);
+    }
+    if (
+      message.startsWith("Node not connected:") ||
+      message === "No nodes connected"
+    ) {
+      throw new RpcError(503, message);
+    }
+    if (message === "nodeId required when multiple nodes are connected") {
+      throw new RpcError(400, message);
+    }
+    throw new RpcError(500, message);
   }
-
-  const nodeWs = gw.nodes.get(targetNodeId);
-  if (!nodeWs) {
-    throw new RpcError(503, `Node not connected: ${targetNodeId}`);
-  }
-
-  const callId = crypto.randomUUID();
-  gw.pendingLogCalls[callId] = {
-    clientId,
-    frameId: frame.id,
-    nodeId: targetNodeId,
-    createdAt: Date.now(),
-  };
-
-  const evt: EventFrame<LogsGetEventPayload> = {
-    type: "evt",
-    event: "logs.get",
-    payload: {
-      callId,
-      lines,
-    },
-  };
-  nodeWs.send(JSON.stringify(evt));
 
   return DEFER_RESPONSE;
 };
@@ -80,9 +56,9 @@ export const handleLogsResult: Handler<"logs.result"> = ({ gw, ws, params }) => 
     throw new RpcError(403, "Node not authorized for this call");
   }
 
-  const route = gw.pendingLogCalls[params.callId];
+  const route = gw.nodeService.peekPendingLogCall(params.callId);
   if (!route) {
-    if (gw.resolveInternalNodeLogResult(nodeId, params)) {
+    if (gw.nodeService.resolveInternalNodeLogResult(nodeId, params)) {
       return { ok: true };
     }
     throw new RpcError(404, "Unknown callId");
@@ -92,9 +68,10 @@ export const handleLogsResult: Handler<"logs.result"> = ({ gw, ws, params }) => 
     throw new RpcError(403, "Node not authorized for this call");
   }
 
+  gw.nodeService.consumePendingLogCall(params.callId);
+
   const clientWs = gw.clients.get(route.clientId);
   if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
-    delete gw.pendingLogCalls[params.callId];
     return { ok: true, dropped: true };
   }
 
@@ -110,6 +87,5 @@ export const handleLogsResult: Handler<"logs.result"> = ({ gw, ws, params }) => 
     });
   }
 
-  delete gw.pendingLogCalls[params.callId];
   return { ok: true };
 };

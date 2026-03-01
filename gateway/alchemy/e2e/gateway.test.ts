@@ -250,7 +250,6 @@ const EXECUTION_BASELINE_CAPABILITIES = [
 
 function buildExecutionNodeRuntime(toolNames: string[]) {
   return {
-    hostRole: "execution",
     hostCapabilities: [...EXECUTION_BASELINE_CAPABILITIES],
     toolCapabilities: Object.fromEntries(
       toolNames.map((toolName) => [toolName, ["filesystem.read"]]),
@@ -318,6 +317,55 @@ function waitForRunTerminalState(
               typeof frame.payload.error === "string"
                 ? frame.payload.error
                 : undefined,
+          });
+          return;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+
+      if (typeof originalHandler === "function") {
+        originalHandler.call(ws, event);
+      }
+    };
+  });
+}
+
+function waitForRunState(
+  ws: WebSocket,
+  runId: string,
+  expectedState: string,
+  timeoutMs = 60000,
+): Promise<{ state: string; error?: string; message?: unknown }> {
+  return new Promise((resolve, reject) => {
+    const originalHandler = ws.onmessage;
+    const timeout = setTimeout(() => {
+      ws.onmessage = originalHandler;
+      reject(
+        new Error(
+          `Timed out waiting for run ${runId} state=${expectedState}`,
+        ),
+      );
+    }, timeoutMs);
+
+    ws.onmessage = (event) => {
+      try {
+        const frame = JSON.parse(event.data as string);
+        if (
+          frame.type === "evt" &&
+          frame.event === "chat" &&
+          frame.payload?.runId === runId &&
+          frame.payload?.state === expectedState
+        ) {
+          clearTimeout(timeout);
+          ws.onmessage = originalHandler;
+          resolve({
+            state: frame.payload.state,
+            error:
+              typeof frame.payload.error === "string"
+                ? frame.payload.error
+                : undefined,
+            message: frame.payload.message,
           });
           return;
         }
@@ -1054,7 +1102,7 @@ describe("Node Runtime Validation & Routing", () => {
 
   it("rejects unnamespaced shared tools", async () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
-    const sharedTool = "shared_route_tool";
+    const sharedTool = `shared_route_tool_${crypto.randomUUID().slice(0, 8)}`;
     const executionNodeId = `exec-node-${crypto.randomUUID().slice(0, 8)}`;
     const specializedNodeId = `spec-node-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -1098,7 +1146,6 @@ describe("Node Runtime Validation & Routing", () => {
         },
       ],
       nodeRuntime: {
-        hostRole: "specialized",
         hostCapabilities: ["text.search"],
         toolCapabilities: {
           [sharedTool]: ["text.search"],
@@ -1132,390 +1179,84 @@ describe("Node Runtime Validation & Routing", () => {
   }, 30000);
 });
 
-describe("Node Probe Lifecycle", () => {
-  it("dispatches node.probe on connect and persists probe results in skills status", async () => {
+describe("Node Registry Forget", () => {
+  it("requires force for connected nodes and removes node registry entries", async () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
-    const nodeId = `probe-node-${crypto.randomUUID().slice(0, 8)}`;
-    const requiredBin = "gh";
-    const toolName = `probe_tool_${crypto.randomUUID().slice(0, 8)}`;
-    const controlWs = await connectAndAuth(wsUrl);
+    const nodeId = `forget-node-${crypto.randomUUID().slice(0, 8)}`;
+    const toolName = `forget_tool_${crypto.randomUUID().slice(0, 8)}`;
+
     const nodeWs = await connectWebSocket(wsUrl);
-    const nodeEvents = attachGatewayEventCollector(nodeWs);
+    await sendRequest(nodeWs, "connect", {
+      minProtocol: 1,
+      client: {
+        mode: "node",
+        id: nodeId,
+      },
+      tools: [
+        {
+          name: toolName,
+          description: "Node forget test tool",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      ],
+      nodeRuntime: buildExecutionNodeRuntime([toolName]),
+    });
+
+    const clientWs = await connectAndAuth(wsUrl);
+    const beforeForget = await sendRequest(clientWs, "tools.list") as {
+      tools: Array<{ name: string }>;
+    };
+    expect(
+      beforeForget.tools.some((tool) => tool.name === `${nodeId}__${toolName}`),
+    ).toBe(true);
 
     try {
-      await sendRequest(nodeWs, "connect", {
-        minProtocol: 1,
-        client: {
-          mode: "node",
-          id: nodeId,
-        },
-        tools: [
-          {
-            name: toolName,
-            description: "Probe lifecycle test tool",
-            inputSchema: {
-              type: "object",
-              properties: {},
-              required: [],
-            },
-          },
-        ],
-        nodeRuntime: buildExecutionNodeRuntime([toolName]),
-      });
-
-      const probe = await nodeEvents.waitForEvent<{
-        probeId: string;
-        kind: string;
-        bins: string[];
-      }>("node.probe", {
-        timeoutMs: 15000,
-        description: "initial node.probe event",
-        predicate: (payload) =>
-          payload.kind === "bins" &&
-          Array.isArray(payload.bins) &&
-          payload.bins.includes(requiredBin),
-      });
-
-      expect(probe.kind).toBe("bins");
-      expect(probe.bins).toContain(requiredBin);
-
-      await sendRequest(nodeWs, "node.probe.result", {
-        probeId: probe.probeId,
-        ok: true,
-        bins: { [requiredBin]: true },
-      });
-
-      const status = await waitFor(async () => {
-        const result = await sendRequest(controlWs, "skills.status", {
-          agentId: "main",
-        }) as {
-          nodes?: Array<{
-            nodeId: string;
-            hostBins?: string[];
-            hostBinStatusUpdatedAt?: number;
-            canProbeBins?: boolean;
-          }>;
-          skills?: Array<{
-            name: string;
-            eligible: boolean;
-            eligibleHosts?: string[];
-          }>;
-        };
-
-        const node = result.nodes?.find((entry) => entry.nodeId === nodeId);
-        const github = result.skills?.find((entry) => entry.name === "github");
-        if (!node || !github) {
-          return null;
-        }
-        if (!Array.isArray(node.hostBins) || !node.hostBins.includes(requiredBin)) {
-          return null;
-        }
-        if (typeof node.hostBinStatusUpdatedAt !== "number") {
-          return null;
-        }
-        if (!github.eligible) {
-          return null;
-        }
-        if (!Array.isArray(github.eligibleHosts) || !github.eligibleHosts.includes(nodeId)) {
-          return null;
-        }
-        return { node, github };
-      }, {
-        timeout: 15000,
-        interval: 200,
-        description: "skills.status probe result update",
-      });
-
-      expect(status.node.canProbeBins).toBe(true);
-      expect(typeof status.node.hostBinStatusUpdatedAt).toBe("number");
-      expect(status.github.eligible).toBe(true);
-    } finally {
-      controlWs.close();
-      nodeWs.close();
+      await sendRequest(clientWs, "node.forget", { nodeId });
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("still connected");
     }
-  }, 60000);
 
-  it("re-queues probe on disconnect and re-dispatches it on reconnect", async () => {
-    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
-    const nodeId = `probe-replay-${crypto.randomUUID().slice(0, 8)}`;
-    const requiredBin = "gh";
-    const toolName = `probe_replay_tool_${crypto.randomUUID().slice(0, 8)}`;
-    const controlWs = await connectAndAuth(wsUrl);
+    const forceForget = await sendRequest(clientWs, "node.forget", {
+      nodeId,
+      force: true,
+    }) as {
+      ok: true;
+      nodeId: string;
+      removed: boolean;
+      disconnected: boolean;
+    };
+    expect(forceForget.ok).toBe(true);
+    expect(forceForget.nodeId).toBe(nodeId);
+    expect(forceForget.removed).toBe(true);
+    expect(forceForget.disconnected).toBe(true);
 
-    let firstNodeWs: WebSocket | null = null;
-    let secondNodeWs: WebSocket | null = null;
-
-    try {
-      firstNodeWs = await connectWebSocket(wsUrl);
-      const firstEvents = attachGatewayEventCollector(firstNodeWs);
-
-      await sendRequest(firstNodeWs, "connect", {
-        minProtocol: 1,
-        client: {
-          mode: "node",
-          id: nodeId,
-        },
-        tools: [
-          {
-            name: toolName,
-            description: "Probe replay lifecycle test tool",
-            inputSchema: {
-              type: "object",
-              properties: {},
-              required: [],
-            },
-          },
-        ],
-        nodeRuntime: buildExecutionNodeRuntime([toolName]),
-      });
-
-      const firstProbePromise = firstEvents.waitForEvent<{
-        probeId: string;
-        kind: string;
-        bins: string[];
-      }>("node.probe", {
-        timeoutMs: 15000,
-        description: "first node.probe event",
-        predicate: (payload) =>
-          payload.kind === "bins" &&
-          Array.isArray(payload.bins) &&
-          payload.bins.includes(requiredBin),
-      });
-
-      const firstProbe = await firstProbePromise;
-
-      firstNodeWs.close();
-      firstNodeWs = null;
-      await Bun.sleep(500);
-
-      secondNodeWs = await connectWebSocket(wsUrl);
-      const secondEvents = attachGatewayEventCollector(secondNodeWs);
-
-      await sendRequest(secondNodeWs, "connect", {
-        minProtocol: 1,
-        client: {
-          mode: "node",
-          id: nodeId,
-        },
-        tools: [
-          {
-            name: toolName,
-            description: "Probe replay lifecycle test tool",
-            inputSchema: {
-              type: "object",
-              properties: {},
-              required: [],
-            },
-          },
-        ],
-        nodeRuntime: buildExecutionNodeRuntime([toolName]),
-      });
-
-      const replayProbe = await secondEvents.waitForEvent<{
-        probeId: string;
-        kind: string;
-        bins: string[];
-      }>("node.probe", {
-        timeoutMs: 15000,
-        description: "replayed node.probe event",
-        predicate: (payload) =>
-          payload.kind === "bins" &&
-          Array.isArray(payload.bins) &&
-          payload.bins.includes(requiredBin),
-      });
-
-      expect(replayProbe.probeId).toBe(firstProbe.probeId);
-
-      await sendRequest(secondNodeWs, "node.probe.result", {
-        probeId: replayProbe.probeId,
-        ok: true,
-        bins: { [requiredBin]: true },
-      });
-
-      const updatedNode = await waitFor(async () => {
-        const result = await sendRequest(controlWs, "skills.status", {
-          agentId: "main",
-        }) as {
-          nodes?: Array<{
-            nodeId: string;
-            hostBins?: string[];
-          }>;
+    await waitFor(
+      async () => {
+        const toolsAfter = await sendRequest(clientWs, "tools.list") as {
+          tools: Array<{ name: string }>;
         };
-        const node = result.nodes?.find((entry) => entry.nodeId === nodeId);
-        if (!node) {
-          return null;
-        }
-        if (!Array.isArray(node.hostBins) || !node.hostBins.includes(requiredBin)) {
-          return null;
-        }
-        return node;
-      }, {
-        timeout: 15000,
+        const stillPresent = toolsAfter.tools.some(
+          (tool) => tool.name === `${nodeId}__${toolName}`,
+        );
+        return stillPresent ? null : true;
+      },
+      {
+        timeout: 10000,
         interval: 200,
-        description: "replayed probe result to show in skills.status",
-      });
+        description: "node tool removed after node.forget",
+      },
+    );
 
-      expect(updatedNode.hostBins).toContain(requiredBin);
-    } finally {
-      if (firstNodeWs) {
-        firstNodeWs.close();
-      }
-      if (secondNodeWs) {
-        secondNodeWs.close();
-      }
-      controlWs.close();
-    }
-  }, 70000);
-
-  it("GCs stale queued probes and allows fresh probes to be created", async () => {
-    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
-    const nodeId = `probe-gc-${crypto.randomUUID().slice(0, 8)}`;
-    const requiredBin = "gh";
-    const toolName = `probe_gc_tool_${crypto.randomUUID().slice(0, 8)}`;
-    const probeGcMaxAgeMs = 1200;
-    const defaultProbeGcMaxAgeMs = 10 * 60_000;
-    const controlWs = await connectAndAuth(wsUrl);
-
-    let firstNodeWs: WebSocket | null = null;
-    let secondNodeWs: WebSocket | null = null;
-
-    try {
-      await sendRequest(controlWs, "config.set", {
-        path: "timeouts.skillProbeMaxAgeMs",
-        value: probeGcMaxAgeMs,
-      });
-
-      firstNodeWs = await connectWebSocket(wsUrl);
-      const firstEvents = attachGatewayEventCollector(firstNodeWs);
-
-      await sendRequest(firstNodeWs, "connect", {
-        minProtocol: 1,
-        client: {
-          mode: "node",
-          id: nodeId,
-        },
-        tools: [
-          {
-            name: toolName,
-            description: "Probe GC lifecycle test tool",
-            inputSchema: {
-              type: "object",
-              properties: {},
-              required: [],
-            },
-          },
-        ],
-        nodeRuntime: buildExecutionNodeRuntime([toolName]),
-      });
-
-      const firstProbePromise = firstEvents.waitForEvent<{
-        probeId: string;
-        kind: string;
-        bins: string[];
-      }>("node.probe", {
-        timeoutMs: 15000,
-        description: "first node.probe event before GC",
-        predicate: (payload) =>
-          payload.kind === "bins" &&
-          Array.isArray(payload.bins) &&
-          payload.bins.includes(requiredBin),
-      });
-
-      const firstProbe = await firstProbePromise;
-
-      firstNodeWs.close();
-      firstNodeWs = null;
-
-      await Bun.sleep(probeGcMaxAgeMs + 2000);
-
-      secondNodeWs = await connectWebSocket(wsUrl);
-      const secondEvents = attachGatewayEventCollector(secondNodeWs);
-
-      await sendRequest(secondNodeWs, "connect", {
-        minProtocol: 1,
-        client: {
-          mode: "node",
-          id: nodeId,
-        },
-        tools: [
-          {
-            name: toolName,
-            description: "Probe GC lifecycle test tool",
-            inputSchema: {
-              type: "object",
-              properties: {},
-              required: [],
-            },
-          },
-        ],
-        nodeRuntime: buildExecutionNodeRuntime([toolName]),
-      });
-
-      const secondProbe = await secondEvents.waitForEvent<{
-        probeId: string;
-        kind: string;
-        bins: string[];
-      }>("node.probe", {
-        timeoutMs: 15000,
-        description: "node.probe event after stale probe GC",
-        predicate: (payload) =>
-          payload.kind === "bins" &&
-          Array.isArray(payload.bins) &&
-          payload.bins.includes(requiredBin),
-      });
-
-      // If stale probe wasn't GC'd, reconnect would replay the same probeId.
-      expect(secondProbe.probeId).not.toBe(firstProbe.probeId);
-
-      await sendRequest(secondNodeWs, "node.probe.result", {
-        probeId: secondProbe.probeId,
-        ok: true,
-        bins: { [requiredBin]: true },
-      });
-
-      const updatedNode = await waitFor(async () => {
-        const result = await sendRequest(controlWs, "skills.status", {
-          agentId: "main",
-        }) as {
-          nodes?: Array<{
-            nodeId: string;
-            hostBins?: string[];
-          }>;
-        };
-        const node = result.nodes?.find((entry) => entry.nodeId === nodeId);
-        if (!node) {
-          return null;
-        }
-        if (!Array.isArray(node.hostBins) || !node.hostBins.includes(requiredBin)) {
-          return null;
-        }
-        return node;
-      }, {
-        timeout: 15000,
-        interval: 200,
-        description: "post-GC probe result to show in skills.status",
-      });
-
-      expect(updatedNode.hostBins).toContain(requiredBin);
-    } finally {
-      try {
-        await sendRequest(controlWs, "config.set", {
-          path: "timeouts.skillProbeMaxAgeMs",
-          value: defaultProbeGcMaxAgeMs,
-        });
-      } catch {
-        // Best-effort cleanup
-      }
-      if (firstNodeWs) {
-        firstNodeWs.close();
-      }
-      if (secondNodeWs) {
-        secondNodeWs.close();
-      }
-      controlWs.close();
-    }
-  }, 80000);
+    nodeWs.close();
+    clientWs.close();
+  });
 });
+
 
 describe("Node Exec Event Routing", () => {
   it("rejects node.exec.event from non-node clients", async () => {
@@ -1532,7 +1273,7 @@ describe("Node Exec Event Routing", () => {
       expect(true).toBe(false);
     } catch (err) {
       expect((err as Error).message).toContain(
-        "Only node clients can submit exec events",
+        "Method node.exec.event not allowed for mode",
       );
     } finally {
       clientWs.close();
@@ -1729,6 +1470,264 @@ describe("Skills Config Runtime Visibility", () => {
   );
 });
 
+describe("Tool HIL Approval", () => {
+  it.skipIf(!OPENAI_API_KEY)(
+    "pauses run until approval, then dispatches tool and completes",
+    async () => {
+      const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+      const nodeId = `hil-node-${crypto.randomUUID().slice(0, 8)}`;
+      const toolName = `hil_tool_${crypto.randomUUID().slice(0, 8)}`;
+      const sessionKey = `hil-e2e-${crypto.randomUUID().slice(0, 8)}`;
+      const runId = crypto.randomUUID();
+
+      const nodeWs = await connectWebSocket(wsUrl);
+      await sendRequest(nodeWs, "connect", {
+        minProtocol: 1,
+        client: {
+          mode: "node",
+          id: nodeId,
+        },
+        tools: [
+          {
+            name: toolName,
+            description: "HIL approval test tool",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          },
+        ],
+        nodeRuntime: buildExecutionNodeRuntime([toolName]),
+      });
+      const nodeEvents = attachGatewayEventCollector(nodeWs);
+
+      const clientWs = await connectAndAuth(wsUrl);
+      const clientEvents = attachGatewayEventCollector(clientWs);
+      await sendRequest(clientWs, "config.set", {
+        path: "apiKeys.openai",
+        value: OPENAI_API_KEY,
+      });
+      await sendRequest(clientWs, "config.set", {
+        path: "model",
+        value: { provider: "openai", id: "gpt-4o-mini" },
+      });
+      await sendRequest(clientWs, "config.set", {
+        path: "toolApproval",
+        value: {
+          defaultDecision: "allow",
+          rules: [
+            {
+              id: "ask-hil-tool",
+              tool: `${nodeId}__${toolName}`,
+              decision: "ask",
+            },
+          ],
+        },
+      });
+
+      const sendResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        runId,
+        message: [
+          `Call ${nodeId}__${toolName} exactly once with an empty object.`,
+          "After the tool result returns, reply exactly: HIL_E2E_DONE",
+        ].join("\n"),
+      }) as { status: string; runId: string };
+      expect(sendResult.status).toBe("started");
+      expect(sendResult.runId).toBe(runId);
+
+      const pausedState = await clientEvents.waitForEvent<{
+        runId: string;
+        state: string;
+      }>("chat", {
+        timeoutMs: 60000,
+        description: "run paused for deny flow",
+        predicate: (payload) =>
+          payload.runId === runId && payload.state === "paused",
+      });
+      expect(pausedState.state).toBe("paused");
+
+      const invokeBeforeApproval = await waitForToolInvoke(nodeWs, 2500);
+      expect(invokeBeforeApproval).toBeNull();
+
+      const reminderResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        message: "still waiting?",
+      }) as { status: string; response?: string };
+      expect(reminderResult.status).toBe("paused");
+      expect((reminderResult.response ?? "").toLowerCase()).toContain("paused");
+
+      const approveResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        message: "yes",
+      }) as { status: string; response?: string };
+      expect(approveResult.status).toBe("paused");
+      expect((approveResult.response ?? "").toLowerCase()).toContain("approved");
+
+      const invokeAfterApproval = await nodeEvents.waitForEvent<{
+        callId: string;
+        tool: string;
+        args: unknown;
+      }>("tool.invoke", {
+        timeoutMs: 15000,
+        description: "tool.invoke after HIL approval",
+      });
+      expect(invokeAfterApproval).not.toBeNull();
+      expect(invokeAfterApproval.tool).toBe(toolName);
+
+      await sendRequest(nodeWs, "tool.result", {
+        callId: invokeAfterApproval.callId,
+        result:
+          "Tool completed. Reply to the user exactly with HIL_E2E_DONE and nothing else.",
+      });
+
+      const terminal = await waitForRunTerminalState(clientWs, runId, 60000);
+      expect(terminal.state).toBe("final");
+
+      const preview = await sendRequest(clientWs, "session.preview", {
+        sessionKey,
+        limit: 40,
+      }) as { messages: unknown[] };
+      const finalText = extractLatestAssistantText(preview.messages);
+      expect(finalText.toUpperCase()).toContain("HIL_E2E_DONE");
+
+      await sendRequest(clientWs, "config.set", {
+        path: "toolApproval",
+        value: {
+          defaultDecision: "allow",
+          rules: [],
+        },
+      });
+
+      nodeWs.close();
+      clientWs.close();
+    },
+    180000,
+  );
+
+  it.skipIf(!OPENAI_API_KEY)(
+    "denies tool when user rejects approval and completes without dispatch",
+    async () => {
+      const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+      const nodeId = `hil-deny-node-${crypto.randomUUID().slice(0, 8)}`;
+      const toolName = `hil_deny_tool_${crypto.randomUUID().slice(0, 8)}`;
+      const sessionKey = `hil-deny-e2e-${crypto.randomUUID().slice(0, 8)}`;
+      const runId = crypto.randomUUID();
+
+      const nodeWs = await connectWebSocket(wsUrl);
+      await sendRequest(nodeWs, "connect", {
+        minProtocol: 1,
+        client: {
+          mode: "node",
+          id: nodeId,
+        },
+        tools: [
+          {
+            name: toolName,
+            description: "HIL approval deny-path test tool",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          },
+        ],
+        nodeRuntime: buildExecutionNodeRuntime([toolName]),
+      });
+
+      const clientWs = await connectAndAuth(wsUrl);
+      const clientEvents = attachGatewayEventCollector(clientWs);
+      await sendRequest(clientWs, "config.set", {
+        path: "apiKeys.openai",
+        value: OPENAI_API_KEY,
+      });
+      await sendRequest(clientWs, "config.set", {
+        path: "model",
+        value: { provider: "openai", id: "gpt-4o-mini" },
+      });
+      await sendRequest(clientWs, "config.set", {
+        path: "toolApproval",
+        value: {
+          defaultDecision: "allow",
+          rules: [
+            {
+              id: "ask-hil-deny-tool",
+              tool: `${nodeId}__${toolName}`,
+              decision: "ask",
+            },
+          ],
+        },
+      });
+
+      const sendResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        runId,
+        message: [
+          `Call ${nodeId}__${toolName} exactly once with an empty object.`,
+          "If that tool is denied or fails, reply exactly: HIL_E2E_DENIED",
+          "Do not call any other tools.",
+        ].join("\n"),
+      }) as { status: string; runId: string };
+      expect(sendResult.status).toBe("started");
+      expect(sendResult.runId).toBe(runId);
+
+      const pausedState = await waitForRunState(clientWs, runId, "paused", 60000);
+      expect(pausedState.state).toBe("paused");
+
+      const invokeBeforeDecision = await waitForToolInvoke(nodeWs, 2500);
+      expect(invokeBeforeDecision).toBeNull();
+
+      const denyResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        message: "no",
+      }) as { status: string; response?: string };
+      expect(denyResult.status).toBe("paused");
+      expect((denyResult.response ?? "").toLowerCase()).toContain("denied");
+
+      const invokeAfterDeny = await waitForToolInvoke(nodeWs, 4000);
+      expect(invokeAfterDeny).toBeNull();
+
+      const nextState = await clientEvents.waitForEvent<{
+        runId: string;
+        state: string;
+        error?: string;
+      }>("chat", {
+        timeoutMs: 60000,
+        description: "post-deny run state",
+        predicate: (payload) =>
+          payload.runId === runId &&
+          (payload.state === "paused" ||
+            payload.state === "final" ||
+            payload.state === "error"),
+      });
+      expect(nextState.state).not.toBe("error");
+
+      if (nextState.state === "paused") {
+        const denyAgain = await sendRequest(clientWs, "chat.send", {
+          sessionKey,
+          message: "no",
+        }) as { status: string; response?: string };
+        expect(denyAgain.status).toBe("paused");
+        const invokeAfterSecondDeny = await waitForToolInvoke(nodeWs, 3000);
+        expect(invokeAfterSecondDeny).toBeNull();
+      }
+
+      await sendRequest(clientWs, "config.set", {
+        path: "toolApproval",
+        value: {
+          defaultDecision: "allow",
+          rules: [],
+        },
+      });
+
+      nodeWs.close();
+      clientWs.close();
+    },
+    180000,
+  );
+});
+
 // ============================================================================
 // Multi-Turn Agent Loop
 // ============================================================================
@@ -1738,6 +1737,7 @@ describe("Multi-Turn Agent Loop", () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
     const nodeId = `test-node-${crypto.randomUUID().slice(0, 8)}`;
     const sessionKey = `agent-loop-test-${crypto.randomUUID().slice(0, 8)}`;
+    const toolName = `get_next_instruction_${crypto.randomUUID().slice(0, 8)}`;
     
     // Track how many times the tool was called
     let toolCallCount = 0;
@@ -1754,7 +1754,7 @@ describe("Multi-Turn Agent Loop", () => {
       },
       // Tools are registered during connect
       tools: [{
-        name: "get_next_instruction",
+        name: toolName,
         description: "Returns the next instruction for the agent. ALWAYS call this tool when asked to complete the sequence.",
         inputSchema: {
           type: "object",
@@ -1762,7 +1762,7 @@ describe("Multi-Turn Agent Loop", () => {
           required: [],
         },
       }],
-      nodeRuntime: buildExecutionNodeRuntime(["get_next_instruction"]),
+      nodeRuntime: buildExecutionNodeRuntime([toolName]),
     });
     
     console.log(`   Node ${nodeId} registered with tool`);
@@ -1831,7 +1831,7 @@ describe("Multi-Turn Agent Loop", () => {
     const sendResult = await sendRequest(clientWs, "chat.send", {
       sessionKey,
       runId,
-      message: `You have access to get_next_instruction.
+      message: `You have access to ${toolName}.
 Call it now. Keep following its instructions.
 When it says all steps are complete, stop calling tools and reply exactly: "SEQUENCE_COMPLETE".`,
     }) as { status: string; runId: string };
@@ -1858,7 +1858,7 @@ When it says all steps are complete, stop calling tools and reply exactly: "SEQU
     expect(result.state).toBe("final");
     expect(toolCallCount).toBeGreaterThanOrEqual(MAX_TOOL_CALLS);
     expect(toolCallCount).toBeLessThanOrEqual(MAX_ALLOWED_TOOL_CALLS);
-    expect(toolRequests.every((req) => req.tool === "get_next_instruction")).toBe(
+    expect(toolRequests.every((req) => req.tool === toolName)).toBe(
       true,
     );
     
@@ -1948,9 +1948,8 @@ describe("Service Binding Inbound Messages", () => {
 });
 
 describe("Channel Message Recording", () => {
-  const accountId = `msg-record-${crypto.randomBytes(4).toString("hex")}`;
-  
   it("records inbound messages in test channel", async () => {
+    const accountId = `msg-record-in-${crypto.randomBytes(4).toString("hex")}`;
     // Start account
     await fetch(`${testChannelUrl}/test/start?accountId=${accountId}`, { method: "POST" });
     
@@ -1974,6 +1973,18 @@ describe("Channel Message Recording", () => {
   });
 
   it("can clear messages for an account", async () => {
+    const accountId = `msg-record-clear-${crypto.randomBytes(4).toString("hex")}`;
+    await fetch(`${testChannelUrl}/test/start?accountId=${accountId}`, { method: "POST" });
+    await fetch(`${testChannelUrl}/test/inbound`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        peer: { kind: "dm", id: "+15551230001" },
+        text: "Seed message for clear",
+      }),
+    });
+
     await fetch(`${testChannelUrl}/test/clear?accountId=${accountId}`, { method: "POST" });
     
     const res = await fetch(`${testChannelUrl}/test/messages?accountId=${accountId}`);
@@ -1982,7 +1993,19 @@ describe("Channel Message Recording", () => {
   });
 
   it("can reset all test channel state", async () => {
-    // Reset removes messages but requires accountId now (DO-backed)
+    const accountId = `msg-record-reset-${crypto.randomBytes(4).toString("hex")}`;
+    await fetch(`${testChannelUrl}/test/start?accountId=${accountId}`, { method: "POST" });
+    await fetch(`${testChannelUrl}/test/inbound`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        peer: { kind: "dm", id: "+15551230002" },
+        text: "Seed message for reset",
+      }),
+    });
+
+    // Reset removes messages for this account
     await fetch(`${testChannelUrl}/test/reset?accountId=${accountId}`, { method: "POST" });
     
     // Check messages were cleared
