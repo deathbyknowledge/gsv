@@ -127,6 +127,7 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
         // Durable Object for maintaining test state across requests
         TEST_CHANNEL_STATE: DurableObjectNamespace("test-channel-state", {
           className: "TestChannelState",
+          sqlite: true,
         }),
       },
       url: true,
