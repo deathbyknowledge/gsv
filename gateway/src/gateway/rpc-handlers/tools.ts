@@ -1,11 +1,9 @@
 import { env } from "cloudflare:workers";
-import type { EventFrame } from "../../protocol/frames";
 import {
   DEFER_RESPONSE,
   type Handler,
 } from "../../protocol/methods";
 import { RpcError } from "../../shared/utils";
-import type { ToolInvokePayload } from "../../protocol/tools";
 
 function extractRunningSessionId(result: unknown): string | undefined {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
@@ -21,8 +19,18 @@ function extractRunningSessionId(result: unknown): string | undefined {
   return sessionId || undefined;
 }
 
+function toToolDispatchRpcError(message: string): RpcError {
+  if (message.startsWith("No node provides tool:")) {
+    return new RpcError(404, message);
+  }
+  if (message === "Node not connected") {
+    return new RpcError(503, message);
+  }
+  return new RpcError(500, message);
+}
+
 export const handleToolsList: Handler<"tools.list"> = ({ gw }) => ({
-  tools: gw.getAllTools(),
+  tools: gw.nodeService.listTools(gw.nodes.keys()),
 });
 
 export const handleToolRequest: Handler<"tool.request"> = ({ gw, params }) => {
@@ -30,32 +38,10 @@ export const handleToolRequest: Handler<"tool.request"> = ({ gw, params }) => {
     throw new RpcError(400, "callId, tool, and sessionKey required");
   }
 
-  const resolved = gw.findNodeForTool(params.tool);
-  if (!resolved) {
-    throw new RpcError(404, `No node provides tool: ${params.tool}`);
+  const result = gw.nodeService.requestToolForSession(params, gw.nodes);
+  if (!result.ok) {
+    throw toToolDispatchRpcError(result.error ?? "Failed to dispatch tool");
   }
-
-  const nodeWs = gw.nodes.get(resolved.nodeId);
-  if (!nodeWs) {
-    throw new RpcError(503, "Node not connected");
-  }
-
-  gw.registerPendingToolCall(params.callId, {
-    kind: "session",
-    sessionKey: params.sessionKey,
-  });
-
-  // Send the original (un-namespaced) tool name to the node
-  const evt: EventFrame<ToolInvokePayload> = {
-    type: "evt",
-    event: "tool.invoke",
-    payload: {
-      callId: params.callId,
-      tool: resolved.toolName,
-      args: params.args ?? {},
-    },
-  };
-  nodeWs.send(JSON.stringify(evt));
 
   return { status: "sent" };
 };
@@ -66,36 +52,28 @@ export const handleToolInvoke: Handler<"tool.invoke"> = (ctx) => {
     throw new RpcError(400, "tool required");
   }
 
-  const resolved = gw.findNodeForTool(params.tool);
-  if (!resolved) {
-    throw new RpcError(404, `No node provides tool: ${params.tool}`);
-  }
-
-  const nodeWs = gw.nodes.get(resolved.nodeId);
-  if (!nodeWs) {
-    throw new RpcError(503, "Node not connected");
-  }
-
   const attachment = ws.deserializeAttachment();
   const clientId = attachment.clientId as string | undefined;
   if (!clientId) {
     throw new RpcError(101, "Not connected");
   }
 
-  const callId = crypto.randomUUID();
-  gw.registerPendingToolCall(callId, {
-    kind: "client",
-    clientId,
-    frameId: frame.id,
-    createdAt: Date.now(),
-  });
-
-  const evt: EventFrame<ToolInvokePayload> = {
-    type: "evt",
-    event: "tool.invoke",
-    payload: { callId, tool: resolved.toolName, args: params.args ?? {} },
-  };
-  nodeWs.send(JSON.stringify(evt));
+  const result = gw.nodeService.requestToolFromClient(
+    {
+      clientId,
+      requestId: frame.id,
+      tool: params.tool,
+      args: params.args ?? {},
+    },
+    {
+      connectedNodes: gw.nodes,
+      pendingToolTtlMs: gw.getPendingToolTimeoutMs(),
+    },
+  );
+  if (!result.ok) {
+    throw toToolDispatchRpcError(result.error ?? "Failed to dispatch tool");
+  }
+  void gw.scheduleGatewayAlarm();
 
   return DEFER_RESPONSE;
 };
@@ -109,7 +87,7 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     throw new RpcError(400, "callId required");
   }
 
-  const route = gw.consumePendingToolCall(params.callId);
+  const route = gw.nodeService.consumePendingToolCall(params.callId);
   if (!route) {
     throw new RpcError(404, "Unknown callId");
   }

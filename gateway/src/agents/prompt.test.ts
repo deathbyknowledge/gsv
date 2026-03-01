@@ -569,11 +569,12 @@ describe("buildSystemPromptFromWorkspace", () => {
     expect(prompt).toContain("Primary execution host: exec-node-1");
     expect(prompt).toContain("Execution hosts: exec-node-1, exec-node-2");
     expect(prompt).toContain("Specialized hosts: iphone-node");
+    expect(prompt).toContain("Known hosts: 3 (online: 3, offline: 0)");
     expect(prompt).toContain(
       "Capabilities are internal routing metadata. Do not call capability IDs as tools; call only listed tool names.",
     );
     expect(prompt).toContain(
-      "- exec-node-1 (execution) envKeys=0 bins=0 capabilities=[filesystem.list, filesystem.read, filesystem.write, shell.exec] tools=[Bash, Read, Write]",
+      "- exec-node-1 (execution, online) envKeys=0 bins=0 capabilities=[filesystem.list, filesystem.read, filesystem.write, shell.exec] tools=[Bash, Read, Write]",
     );
   });
 });

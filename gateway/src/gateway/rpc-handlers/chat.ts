@@ -244,8 +244,10 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
   const result = await sessionStub.chatSend(
     directives.cleaned, // Send cleaned message without directives
     params.runId ?? crypto.randomUUID(),
-    JSON.parse(JSON.stringify(gw.getAllTools())),
-    JSON.parse(JSON.stringify(gw.getRuntimeNodeInventory())),
+    JSON.parse(JSON.stringify(gw.nodeService.listTools(gw.nodes.keys()))),
+    JSON.parse(
+      JSON.stringify(gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys())),
+    ),
     canonicalSessionKey,
     messageOverrides,
   );

@@ -274,8 +274,10 @@ export async function handleChannelInboundRpc(
     const result = await sessionStub.chatSend(
       envelopedMessage,
       runId,
-      JSON.parse(JSON.stringify(gw.getAllTools())),
-      JSON.parse(JSON.stringify(gw.getRuntimeNodeInventory())),
+      JSON.parse(JSON.stringify(gw.nodeService.listTools(gw.nodes.keys()))),
+      JSON.parse(
+        JSON.stringify(gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys())),
+      ),
       sessionKey,
       messageOverrides,
       processedMedia.length > 0 ? processedMedia : undefined,

@@ -89,7 +89,7 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         nodeId,
         `Node replaced during log request: ${nodeId}`,
       );
-      gw.cancelInternalNodeLogRequestsForNode(
+      gw.nodeService.cancelInternalNodeLogRequestsForNode(
         nodeId,
         `Node replaced during log request: ${nodeId}`,
       );
@@ -102,9 +102,14 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
 
     attachments.nodeId = nodeId;
     gw.nodes.set(nodeId, ws);
-    // Store tools with their original names (namespacing happens in getAllTools)
-    gw.toolRegistry[nodeId] = nodeTools;
-    gw.nodeRuntimeRegistry[nodeId] = runtime;
+    gw.nodeService.registerNode(nodeId, {
+      tools: nodeTools,
+      runtime,
+      metadata: {
+        platform: params.client.platform,
+        version: params.client.version,
+      },
+    });
     onNodeConnected(gw, nodeId);
     console.log(
       `[Gateway] Node connected: ${nodeId}, role=${runtime.hostRole}, tools: [${nodeTools.map((t) => `${nodeId}__${t.name}`).join(", ")}]`,

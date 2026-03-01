@@ -27,9 +27,7 @@ import {
   resolveAgentMainSessionKey,
 } from "../session/routing";
 import { listWorkspaceSkills } from "../skills";
-import { getNativeToolDefinitions } from "../agents/tools";
 import type { TransferRequestParams } from "../protocol/transfer";
-import { listHostsByRole, pickExecutionHostId } from "./capabilities";
 import {
   executeCronTool as executeCronToolHandler,
   executeMessageTool as executeMessageToolHandler,
@@ -73,35 +71,21 @@ import type {
   ChannelInboundParams,
 } from "../protocol/channel";
 import type {
-  LogsGetEventPayload,
   LogsGetParams,
   LogsGetResult,
-  LogsResultParams,
 } from "../protocol/logs";
 import type { SessionRegistryEntry } from "../protocol/session";
 import type {
   RuntimeNodeInventory,
   NodeExecEventParams,
-  NodeRuntimeInfo,
   NodeProbeResultParams,
   ToolDefinition,
-  ToolInvokePayload,
   ToolRequestParams,
 } from "../protocol/tools";
 import { GatewayRpcDispatcher } from "./rpc-dispatcher";
-import { GatewayPendingOperationsService } from "./pending-ops";
+import { GatewayNodeService } from "./node-service";
 
-type PendingInternalLogRequest = {
-  nodeId: string;
-  resolve: (result: LogsGetResult) => void;
-  reject: (error: Error) => void;
-  timeoutHandle: ReturnType<typeof setTimeout>;
-};
-
-const DEFAULT_LOG_LINES = 100;
-const MAX_LOG_LINES = 5000;
 const DEFAULT_INTERNAL_LOG_TIMEOUT_MS = 20_000;
-const MAX_INTERNAL_LOG_TIMEOUT_MS = 120_000;
 const DEFAULT_PENDING_TOOL_TIMEOUT_MS = 60_000;
 const SKILL_BIN_STATUS_TTL_MS = 5 * 60_000;
 
@@ -126,17 +110,9 @@ export class Gateway extends DurableObject<Env> {
     this.ctx.storage.kv,
     this,
   );
-  readonly toolRegistry = PersistedObject<Record<string, ToolDefinition[]>>(
+  readonly nodeService = new GatewayNodeService(
     this.ctx.storage.kv,
-    { prefix: "toolRegistry:" },
   );
-  readonly nodeRuntimeRegistry = PersistedObject<
-    Record<string, NodeRuntimeInfo>
-  >(this.ctx.storage.kv, { prefix: "nodeRuntimeRegistry:" });
-  private readonly pendingInternalLogCalls = new Map<
-    string,
-    PendingInternalLogRequest
-  >();
 
   readonly configStore = PersistedObject<Record<string, unknown>>(
     this.ctx.storage.kv,
@@ -192,9 +168,6 @@ export class Gateway extends DurableObject<Env> {
 
   private readonly cronStore = new CronStore(this.ctx.storage.sql);
   private readonly rpcDispatcher = new GatewayRpcDispatcher();
-  readonly pendingOperations = new GatewayPendingOperationsService(
-    this.ctx.storage.kv,
-  );
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
@@ -234,31 +207,49 @@ export class Gateway extends DurableObject<Env> {
     // Evict rehydrated nodes that lost their registry data (KV was
     // deleted but the WebSocket survived hibernation).
     const orphanedNodeIds = Array.from(this.nodes.keys()).filter(
-      (nodeId) => !this.toolRegistry[nodeId]?.length,
+      (nodeId) => !this.nodeService.hasRegisteredTools(nodeId),
     );
     for (const nodeId of orphanedNodeIds) {
       const ws = this.nodes.get(nodeId)!;
       this.nodes.delete(nodeId);
       ws.close(4000, "Missing tool registry after rehydration");
+      this.nodeService.markNodeDisconnected(nodeId);
       console.log(
         `[Gateway] Evicted orphaned node ${nodeId} (no tools in registry)`,
       );
     }
 
-    const detachedNodeIds = Object.keys(this.toolRegistry).filter(
-      (nodeId) => !this.nodes.has(nodeId),
+    const rehydratedAt = Date.now();
+    for (const nodeId of Array.from(this.nodes.keys())) {
+      this.nodeService.markNodeConnected(nodeId, { connectedAt: rehydratedAt });
+    }
+
+    const staleOnlineNodeIds = this.nodeService.listStaleOnlineNodeIds(
+      this.nodes.keys(),
+    );
+    for (const nodeId of staleOnlineNodeIds) {
+      this.nodeService.markNodeDisconnected(nodeId, rehydratedAt);
+    }
+    if (staleOnlineNodeIds.length > 0) {
+      console.log(
+        `[Gateway] Reconciled ${staleOnlineNodeIds.length} stale node presence entries to offline`,
+      );
+    }
+
+    const detachedNodeIds = this.nodeService.listDetachedToolNodeIds(
+      this.nodes.keys(),
     );
     if (detachedNodeIds.length > 0) {
       console.log(
-        `[Gateway] Preserving ${detachedNodeIds.length} detached registry entries until explicit disconnect`,
+        `[Gateway] Preserving ${detachedNodeIds.length} detached tool registry entries for known hosts`,
       );
     }
-    const detachedRuntimeNodeIds = Object.keys(this.nodeRuntimeRegistry).filter(
-      (nodeId) => !this.nodes.has(nodeId),
+    const detachedRuntimeNodeIds = this.nodeService.listDetachedRuntimeNodeIds(
+      this.nodes.keys(),
     );
     if (detachedRuntimeNodeIds.length > 0) {
       console.log(
-        `[Gateway] Preserving ${detachedRuntimeNodeIds.length} detached runtime entries until explicit disconnect`,
+        `[Gateway] Preserving ${detachedRuntimeNodeIds.length} detached runtime entries for known hosts`,
       );
     }
   }
@@ -307,62 +298,9 @@ export class Gateway extends DurableObject<Env> {
     this.sendErrorShape(ws, requestFrame.id, outcome.error);
   }
 
-  registerPendingToolCall(
-    callId: string,
-    route: Parameters<GatewayPendingOperationsService["registerToolCall"]>[1],
-    options?: Parameters<
-      GatewayPendingOperationsService["registerToolCall"]
-    >[2],
-  ): void {
-    const merged = {
-      ...options,
-    };
-
-    if (merged.ttlMs === undefined && route.kind === "client") {
-      merged.ttlMs = this.resolvePendingToolTimeoutMs();
-    }
-
-    this.pendingOperations.registerToolCall(callId, route, merged);
-    if (merged.ttlMs !== undefined) {
-      this.ctx.waitUntil(this.scheduleGatewayAlarm());
-    }
-  }
-
-  consumePendingToolCall(
-    callId: string,
-  ): ReturnType<GatewayPendingOperationsService["consumeToolCall"]> {
-    return this.pendingOperations.consumeToolCall(callId);
-  }
-
-  registerPendingLogCall(
-    callId: string,
-    route: Parameters<GatewayPendingOperationsService["registerLogCall"]>[1],
-    options?: Parameters<GatewayPendingOperationsService["registerLogCall"]>[2],
-  ): void {
-    const merged = {
-      ttlMs: this.resolvePendingLogTimeoutMs(),
-      ...options,
-    };
-    this.pendingOperations.registerLogCall(callId, route, merged);
-    if (merged.ttlMs !== undefined) {
-      this.ctx.waitUntil(this.scheduleGatewayAlarm());
-    }
-  }
-
-  consumePendingLogCall(
-    callId: string,
-  ): ReturnType<GatewayPendingOperationsService["consumeLogCall"]> {
-    return this.pendingOperations.consumeLogCall(callId);
-  }
-
-  private cleanupClientPendingOperations(clientId: string): void {
-    this.pendingOperations.cleanupClientPendingOperations(clientId);
-  }
-
   failPendingLogCallsForNode(nodeId: string, message?: string): void {
     const failureMessage = message ?? `Node disconnected: ${nodeId}`;
-    const failedCalls =
-      this.pendingOperations.failPendingLogCallsForNode(nodeId);
+    const failedCalls = this.nodeService.failPendingLogCallsForNode(nodeId);
     for (const failedCall of failedCalls) {
       const clientWs = this.clients.get(failedCall.clientId);
       if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
@@ -384,7 +322,7 @@ export class Gateway extends DurableObject<Env> {
         return;
       }
       this.clients.delete(clientId);
-      this.cleanupClientPendingOperations(clientId);
+      this.nodeService.cleanupClientPendingOperations(clientId);
     } else if (mode === "node" && nodeId) {
       // Ignore close events from stale sockets that were replaced by reconnect.
       if (this.nodes.get(nodeId) !== ws) {
@@ -392,9 +330,9 @@ export class Gateway extends DurableObject<Env> {
         return;
       }
       this.nodes.delete(nodeId);
-      delete this.toolRegistry[nodeId];
+      this.nodeService.markNodeDisconnected(nodeId);
       this.failPendingLogCallsForNode(nodeId);
-      this.cancelInternalNodeLogRequestsForNode(
+      this.nodeService.cancelInternalNodeLogRequestsForNode(
         nodeId,
         `Node disconnected during log request: ${nodeId}`,
       );
@@ -403,8 +341,7 @@ export class Gateway extends DurableObject<Env> {
         `Node disconnected during node probe: ${nodeId}`,
       );
       failTransfersForNode(this, nodeId);
-      delete this.nodeRuntimeRegistry[nodeId];
-      console.log(`[Gateway] Node ${nodeId} removed from registry`);
+      console.log(`[Gateway] Node ${nodeId} marked offline`);
     } else if (mode === "channel" && channelKey) {
       // Ignore close events from stale sockets that were replaced by reconnect.
       if (this.channels.get(channelKey) !== ws) {
@@ -419,35 +356,7 @@ export class Gateway extends DurableObject<Env> {
   async toolRequest(
     params: ToolRequestParams,
   ): Promise<{ ok: boolean; error?: string }> {
-    const resolved = this.findNodeForTool(params.tool);
-    if (!resolved) {
-      return { ok: false, error: `No node provides tool: ${params.tool}` };
-    }
-
-    const nodeWs = this.nodes.get(resolved.nodeId);
-    if (!nodeWs) {
-      return { ok: false, error: "Node not connected" };
-    }
-
-    // Track pending call for routing result back
-    this.registerPendingToolCall(params.callId, {
-      kind: "session",
-      sessionKey: params.sessionKey,
-    });
-
-    // Send tool.invoke event to node (with un-namespaced tool name)
-    const evt: EventFrame<ToolInvokePayload> = {
-      type: "evt",
-      event: "tool.invoke",
-      payload: {
-        callId: params.callId,
-        tool: resolved.toolName,
-        args: params.args ?? {},
-      },
-    };
-    nodeWs.send(JSON.stringify(evt));
-
-    return { ok: true };
+    return this.nodeService.requestToolForSession(params, this.nodes);
   }
 
   sendOk(ws: WebSocket, id: string, payload?: unknown) {
@@ -470,143 +379,10 @@ export class Gateway extends DurableObject<Env> {
     ws.send(JSON.stringify(res));
   }
 
-  private resolveLogLineLimit(input: number | undefined): number {
-    if (input === undefined) {
-      return DEFAULT_LOG_LINES;
-    }
-    if (!Number.isFinite(input) || input < 1) {
-      throw new Error("lines must be a positive number");
-    }
-    return Math.min(Math.floor(input), MAX_LOG_LINES);
-  }
-
-  private resolveTargetNodeForLogs(nodeId: string | undefined): string {
-    if (nodeId) {
-      if (!this.nodes.has(nodeId)) {
-        throw new Error(`Node not connected: ${nodeId}`);
-      }
-      return nodeId;
-    }
-
-    if (this.nodes.size === 1) {
-      return Array.from(this.nodes.keys())[0];
-    }
-
-    if (this.nodes.size === 0) {
-      throw new Error("No nodes connected");
-    }
-
-    throw new Error("nodeId required when multiple nodes are connected");
-  }
-
   async getNodeLogs(
     params?: LogsGetParams & { timeoutMs?: number },
   ): Promise<LogsGetResult> {
-    const lines = this.resolveLogLineLimit(params?.lines);
-    const nodeId = this.resolveTargetNodeForLogs(params?.nodeId);
-    const nodeWs = this.nodes.get(nodeId);
-    if (!nodeWs || nodeWs.readyState !== WebSocket.OPEN) {
-      throw new Error(`Node not connected: ${nodeId}`);
-    }
-
-    const timeoutInput =
-      typeof params?.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
-        ? Math.floor(params.timeoutMs)
-        : DEFAULT_INTERNAL_LOG_TIMEOUT_MS;
-    const timeoutMs = Math.max(
-      1000,
-      Math.min(timeoutInput, MAX_INTERNAL_LOG_TIMEOUT_MS),
-    );
-    const callId = crypto.randomUUID();
-
-    const responsePromise = new Promise<LogsGetResult>((resolve, reject) => {
-      const timeoutHandle = setTimeout(() => {
-        const pending = this.pendingInternalLogCalls.get(callId);
-        if (!pending) {
-          return;
-        }
-        this.pendingInternalLogCalls.delete(callId);
-        pending.reject(
-          new Error(
-            `logs.get timed out for node ${pending.nodeId} after ${timeoutMs}ms`,
-          ),
-        );
-      }, timeoutMs);
-
-      this.pendingInternalLogCalls.set(callId, {
-        nodeId,
-        resolve,
-        reject,
-        timeoutHandle,
-      });
-    });
-
-    try {
-      const evt: EventFrame<LogsGetEventPayload> = {
-        type: "evt",
-        event: "logs.get",
-        payload: {
-          callId,
-          lines,
-        },
-      };
-      nodeWs.send(JSON.stringify(evt));
-    } catch (error) {
-      const pending = this.pendingInternalLogCalls.get(callId);
-      if (pending) {
-        clearTimeout(pending.timeoutHandle);
-        this.pendingInternalLogCalls.delete(callId);
-      }
-      throw error;
-    }
-
-    return await responsePromise;
-  }
-
-  resolveInternalNodeLogResult(
-    nodeId: string,
-    params: LogsResultParams,
-  ): boolean {
-    const pending = this.pendingInternalLogCalls.get(params.callId);
-    if (!pending) {
-      return false;
-    }
-
-    this.pendingInternalLogCalls.delete(params.callId);
-    clearTimeout(pending.timeoutHandle);
-
-    if (pending.nodeId !== nodeId) {
-      pending.reject(
-        new Error("Node not authorized for this internal logs call"),
-      );
-      return true;
-    }
-
-    if (params.error) {
-      pending.reject(new Error(params.error));
-      return true;
-    }
-
-    const lines = params.lines ?? [];
-    pending.resolve({
-      nodeId,
-      lines,
-      count: lines.length,
-      truncated: Boolean(params.truncated),
-    });
-    return true;
-  }
-
-  cancelInternalNodeLogRequestsForNode(nodeId: string, reason: string): void {
-    for (const [callId, pending] of this.pendingInternalLogCalls.entries()) {
-      if (pending.nodeId !== nodeId) {
-        continue;
-      }
-
-      clearTimeout(pending.timeoutHandle);
-      this.pendingInternalLogCalls.delete(callId);
-      pending.reject(new Error(reason));
-    }
+    return await this.nodeService.getNodeLogs(this.nodes, params);
   }
 
   registerPendingAsyncExecSession(params: {
@@ -647,112 +423,16 @@ export class Gateway extends DurableObject<Env> {
     return transferRequestHandler(this, params);
   }
 
-  /**
-   * Find the node for a namespaced tool name.
-   * Tool names are formatted as "{nodeId}__{toolName}"
-   */
-  findNodeForTool(
-    namespacedTool: string,
-  ): { nodeId: string; toolName: string } | null {
-    const separatorIndex = namespacedTool.indexOf("__");
-    if (separatorIndex <= 0 || separatorIndex === namespacedTool.length - 2) {
-      // Node tools must be explicitly namespaced: "<nodeId>__<toolName>"
-      return null;
-    }
-
-    const nodeId = namespacedTool.slice(0, separatorIndex);
-    const toolName = namespacedTool.slice(separatorIndex + 2); // +2 for '__'
-
-    // Verify node exists and has this tool
-    if (!this.nodes.has(nodeId)) {
-      return null;
-    }
-
-    const hasTooled = this.toolRegistry[nodeId]?.some(
-      (t: ToolDefinition) => t.name === toolName,
-    );
-    if (!hasTooled) {
-      return null;
-    }
-
-    return { nodeId, toolName };
-  }
-
   getExecutionHostId(): string | null {
-    return pickExecutionHostId({
-      nodeIds: Array.from(this.nodes.keys()),
-      runtimes: this.nodeRuntimeRegistry,
-    });
+    return this.nodeService.getExecutionHostId(this.nodes.keys());
   }
 
   getSpecializedHostIds(): string[] {
-    return listHostsByRole({
-      nodeIds: Array.from(this.nodes.keys()),
-      runtimes: this.nodeRuntimeRegistry,
-      role: "specialized",
-    });
+    return this.nodeService.getSpecializedHostIds(this.nodes.keys());
   }
 
   getRuntimeNodeInventory(): RuntimeNodeInventory {
-    const nodeIds = Array.from(this.nodes.keys()).sort();
-    const hosts = nodeIds.map((nodeId) => {
-      const runtime = this.nodeRuntimeRegistry[nodeId];
-      const tools = (this.toolRegistry[nodeId] ?? [])
-        .map((tool) => tool.name)
-        .sort();
-
-      if (!runtime) {
-        return {
-          nodeId,
-          hostRole: "specialized" as const,
-          hostCapabilities: [],
-          toolCapabilities: {},
-          tools,
-          hostEnv: [],
-          hostBins: [],
-        };
-      }
-
-      const hostBinStatus = runtime.hostBinStatus
-        ? Object.fromEntries(
-            Object.entries(runtime.hostBinStatus).sort(([left], [right]) =>
-              left.localeCompare(right),
-            ),
-          )
-        : undefined;
-      const hostBins = hostBinStatus
-        ? Object.entries(hostBinStatus)
-            .filter(([, available]) => available)
-            .map(([bin]) => bin)
-            .sort()
-        : [];
-
-      return {
-        nodeId,
-        hostRole: runtime.hostRole,
-        hostCapabilities: [...runtime.hostCapabilities].sort(),
-        toolCapabilities: Object.fromEntries(
-          Object.entries(runtime.toolCapabilities)
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(([toolName, capabilities]) => [
-              toolName,
-              [...capabilities].sort(),
-            ]),
-        ),
-        tools,
-        hostOs: runtime.hostOs,
-        hostEnv: runtime.hostEnv ? [...runtime.hostEnv].sort() : [],
-        hostBins,
-        hostBinStatus,
-        hostBinStatusUpdatedAt: runtime.hostBinStatusUpdatedAt,
-      };
-    });
-
-    return {
-      executionHostId: this.getExecutionHostId(),
-      specializedHostIds: this.getSpecializedHostIds(),
-      hosts,
-    };
+    return this.nodeService.getRuntimeNodeInventory(this.nodes.keys());
   }
 
   async refreshSkillRuntimeFacts(
@@ -808,13 +488,13 @@ export class Gateway extends DurableObject<Env> {
     const errors: string[] = [];
 
     for (const nodeId of Array.from(this.nodes.keys()).sort()) {
-      const runtime = this.nodeRuntimeRegistry[nodeId];
+      const runtime = this.nodeService.getNodeRuntime(nodeId);
       if (!runtime) {
         skippedNodeIds.push(nodeId);
         continue;
       }
 
-      if (!this.nodeProbeStateService.canNodeProbeBins(nodeId)) {
+      if (!this.nodeService.canNodeProbeBins(nodeId)) {
         skippedNodeIds.push(nodeId);
         continue;
       }
@@ -855,7 +535,7 @@ export class Gateway extends DurableObject<Env> {
     };
   }
 
-  private resolvePendingToolTimeoutMs(): number {
+  getPendingToolTimeoutMs(): number {
     const config = this.getFullConfig();
     const configured = config.timeouts?.toolMs;
     if (typeof configured === "number" && Number.isFinite(configured)) {
@@ -864,7 +544,7 @@ export class Gateway extends DurableObject<Env> {
     return DEFAULT_PENDING_TOOL_TIMEOUT_MS;
   }
 
-  private resolvePendingLogTimeoutMs(): number {
+  getPendingLogTimeoutMs(): number {
     const config = this.getFullConfig();
     const configured = config.timeouts?.toolMs;
     if (typeof configured === "number" && Number.isFinite(configured)) {
@@ -874,7 +554,7 @@ export class Gateway extends DurableObject<Env> {
   }
 
   private failExpiredPendingOperations(now: number): void {
-    const expired = this.pendingOperations.cleanupExpired(now);
+    const expired = this.nodeService.cleanupExpiredPendingOperations(now);
     for (const expiredTool of expired.toolCalls) {
       if (expiredTool.route.kind !== "client") {
         console.warn(
@@ -906,7 +586,7 @@ export class Gateway extends DurableObject<Env> {
         clientWs,
         expiredLog.route.frameId,
         504,
-        `logs.get timed out after ${this.resolvePendingLogTimeoutMs()}ms`,
+        `logs.get timed out after ${this.getPendingLogTimeoutMs()}ms`,
       );
     }
   }
@@ -917,23 +597,16 @@ export class Gateway extends DurableObject<Env> {
       `[Gateway]   nodes in memory: [${[...this.nodes.keys()].join(", ")}]`,
     );
     console.log(
-      `[Gateway]   toolRegistry keys: [${Object.keys(this.toolRegistry).join(", ")}]`,
+      `[Gateway]   toolRegistry keys: [${this.nodeService.listToolRegistryNodeIds().join(", ")}]`,
     );
 
-    // Start with native tools (always available)
-    const nativeTools = getNativeToolDefinitions();
-
-    // Add node tools namespaced as {nodeId}__{toolName}
-    const nodeTools = Array.from(this.nodes.keys()).flatMap((nodeId) =>
-      (this.toolRegistry[nodeId] ?? []).map((tool) => ({
-        ...tool,
-        name: `${nodeId}__${tool.name}`,
-      })),
+    const tools = this.nodeService.listTools(this.nodes.keys());
+    const nodeTools = tools.filter(
+      (tool) => tool.name.includes("__") && !tool.name.startsWith("gsv__"),
     );
-
-    const tools = [...nativeTools, ...nodeTools];
+    const nativeTools = tools.length - nodeTools.length;
     console.log(
-      `[Gateway]   returning ${tools.length} tools (${nativeTools.length} native + ${nodeTools.length} node): [${tools.map((t) => t.name).join(", ")}]`,
+      `[Gateway]   returning ${tools.length} tools (${nativeTools} native + ${nodeTools.length} node): [${tools.map((t) => t.name).join(", ")}]`,
     );
     return tools;
   }
@@ -1318,7 +991,7 @@ export class Gateway extends DurableObject<Env> {
       },
       {
         name: "pendingOps",
-        nextDueMs: this.pendingOperations.getNextExpirationAtMs(),
+        nextDueMs: this.nodeService.getNextPendingOperationExpirationAtMs(),
         run: async () => {},
       },
       {

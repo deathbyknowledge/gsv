@@ -8,7 +8,6 @@ import type { GsvConfig } from "../config";
 import type {
   NodeProbePayload,
   NodeProbeResultParams,
-  NodeRuntimeInfo,
 } from "../protocol/tools";
 import { Gateway } from "./do";
 
@@ -38,7 +37,12 @@ type PendingNodeProbeStore = ReturnType<
 type GatewayNodeProbeStateBridge = {
   pendingNodeProbes: PendingNodeProbeStore;
   nodes: Map<string, WebSocket>;
-  nodeRuntimeRegistry: Proxied<Record<string, NodeRuntimeInfo>>;
+  canNodeProbeBins(nodeId: string): boolean;
+  mergeNodeBinStatus(
+    nodeId: string,
+    statusByBin: Record<string, boolean>,
+    updatedAt?: number,
+  ): boolean;
 
   getFullConfig(): GsvConfig;
   scheduleGatewayAlarm(): Promise<void>;
@@ -58,42 +62,6 @@ function collectPendingProbeBinsForNode(
     }
   }
   return bins;
-}
-
-function cloneNodeRuntimeInfo(
-  runtime: NodeRuntimeInfo,
-  overrides?: Partial<NodeRuntimeInfo>,
-): NodeRuntimeInfo {
-  const plainRuntime = snapshot(runtime as unknown as Proxied<NodeRuntimeInfo>);
-  const hostCapabilities =
-    overrides?.hostCapabilities ?? plainRuntime.hostCapabilities;
-  const toolCapabilities =
-    overrides?.toolCapabilities ?? plainRuntime.toolCapabilities;
-  const hostEnv = overrides?.hostEnv ?? plainRuntime.hostEnv;
-  const hostBinStatus = overrides?.hostBinStatus ?? plainRuntime.hostBinStatus;
-
-  return {
-    hostRole: overrides?.hostRole ?? plainRuntime.hostRole,
-    hostCapabilities: [...hostCapabilities],
-    toolCapabilities: Object.fromEntries(
-      Object.entries(toolCapabilities).map(([toolName, capabilities]) => [
-        toolName,
-        [...capabilities],
-      ]),
-    ),
-    hostOs: overrides?.hostOs ?? plainRuntime.hostOs,
-    hostEnv: hostEnv ? [...hostEnv] : undefined,
-    hostBinStatus: hostBinStatus
-      ? Object.fromEntries(
-          Object.entries(hostBinStatus).map(([bin, available]) => [
-            bin,
-            available === true,
-          ]),
-        )
-      : undefined,
-    hostBinStatusUpdatedAt:
-      overrides?.hostBinStatusUpdatedAt ?? plainRuntime.hostBinStatusUpdatedAt,
-  };
 }
 
 function clonePendingNodeProbe(
@@ -168,11 +136,7 @@ export function canNodeProbeBins(
   gw: GatewayNodeProbeStateBridge,
   nodeId: string,
 ): boolean {
-  const runtime = gw.nodeRuntimeRegistry[nodeId];
-  if (!runtime) {
-    return false;
-  }
-  return runtime.hostCapabilities.includes("shell.exec");
+  return gw.canNodeProbeBins(nodeId);
 }
 
 export function sanitizeSkillBinName(bin: string): string | null {
@@ -391,19 +355,7 @@ export async function handleNodeProbeResult(
       }
     }
 
-    const runtime = gw.nodeRuntimeRegistry[nodeId];
-    if (runtime) {
-      const existingStatus = runtime.hostBinStatus ?? {};
-      gw.nodeRuntimeRegistry[nodeId] = cloneNodeRuntimeInfo(runtime, {
-        hostBinStatus: Object.fromEntries(
-          Object.entries({
-            ...existingStatus,
-            ...resultStatus,
-          }).sort(([left], [right]) => left.localeCompare(right)),
-        ),
-        hostBinStatusUpdatedAt: Date.now(),
-      });
-    }
+    gw.mergeNodeBinStatus(nodeId, resultStatus, Date.now());
   }
 
   delete gw.pendingNodeProbes[params.probeId];
@@ -427,8 +379,20 @@ export class GatewayNodeProbeStateService implements GatewayNodeProbeStateBridge
     return this.#gateway.nodes;
   }
 
-  get nodeRuntimeRegistry(): Proxied<Record<string, NodeRuntimeInfo>> {
-    return this.#gateway.nodeRuntimeRegistry;
+  canNodeProbeBins(nodeId: string): boolean {
+    return this.#gateway.nodeService.canNodeProbeBins(nodeId);
+  }
+
+  mergeNodeBinStatus(
+    nodeId: string,
+    statusByBin: Record<string, boolean>,
+    updatedAt?: number,
+  ): boolean {
+    return this.#gateway.nodeService.mergeNodeBinStatus(
+      nodeId,
+      statusByBin,
+      updatedAt,
+    );
   }
 
   getFullConfig(): GsvConfig {
@@ -437,10 +401,6 @@ export class GatewayNodeProbeStateService implements GatewayNodeProbeStateBridge
 
   async scheduleGatewayAlarm(): Promise<void> {
     await this.#gateway.scheduleGatewayAlarm();
-  }
-
-  canNodeProbeBins(nodeId: string): boolean {
-    return canNodeProbeBins(this, nodeId);
   }
 
   sanitizeSkillBinName(bin: string): string | null {

@@ -342,7 +342,10 @@ function buildRuntimeSection(
   }
 
   if (runtime.nodes) {
-    const executionHosts = runtime.nodes.hosts
+    const onlineHosts = runtime.nodes.hosts.filter(
+      (host) => host.online !== false,
+    );
+    const executionHosts = onlineHosts
       .filter((host) => host.hostRole === "execution")
       .map((host) => host.nodeId)
       .sort();
@@ -364,12 +367,16 @@ function buildRuntimeSection(
       `Specialized hosts: ${runtime.nodes.specializedHostIds.length > 0 ? runtime.nodes.specializedHostIds.join(", ") : "none"}`,
     );
     lines.push(
+      `Known hosts: ${runtime.nodes.hosts.length} (online: ${onlineHosts.length}, offline: ${runtime.nodes.hosts.length - onlineHosts.length})`,
+    );
+    lines.push(
       "Capabilities are internal routing metadata. Do not call capability IDs as tools; call only listed tool names.",
     );
 
     if (runtime.nodes.hosts.length > 0) {
-      lines.push("Connected hosts:");
+      lines.push("Host inventory:");
       for (const host of runtime.nodes.hosts) {
+        const status = host.online === false ? "offline" : "online";
         const capabilities =
           host.hostCapabilities.length > 0
             ? host.hostCapabilities.join(", ")
@@ -377,10 +384,16 @@ function buildRuntimeSection(
         const toolNames =
           host.tools.length > 0 ? host.tools.join(", ") : "none";
         const os = host.hostOs ? ` os=${host.hostOs}` : "";
+        const platform = host.clientPlatform
+          ? ` platform=${host.clientPlatform}`
+          : "";
+        const version = host.clientVersion
+          ? ` version=${host.clientVersion}`
+          : "";
         const envCount = host.hostEnv?.length ?? 0;
         const binCount = host.hostBins?.length ?? 0;
         lines.push(
-          `- ${host.nodeId} (${host.hostRole})${os} envKeys=${envCount} bins=${binCount} capabilities=[${capabilities}] tools=[${toolNames}]`,
+          `- ${host.nodeId} (${host.hostRole}, ${status})${os}${platform}${version} envKeys=${envCount} bins=${binCount} capabilities=[${capabilities}] tools=[${toolNames}]`,
         );
       }
     }
@@ -753,7 +766,10 @@ export function evaluateSkillEligibility(
     return { eligible: true, matchingHostIds: [], reasons: [] };
   }
 
-  if (!runtimeNodes || runtimeNodes.hosts.length === 0) {
+  const onlineHosts = runtimeNodes?.hosts.filter(
+    (host) => host.online !== false,
+  );
+  if (!onlineHosts || onlineHosts.length === 0) {
     return {
       eligible: false,
       matchingHostIds: [],
@@ -762,7 +778,7 @@ export function evaluateSkillEligibility(
   }
 
   const reasons: string[] = [];
-  let candidateHosts = runtimeNodes.hosts;
+  let candidateHosts = onlineHosts;
   if (requires.hostRoles.length > 0) {
     candidateHosts = candidateHosts.filter((host) =>
       requires.hostRoles.includes(host.hostRole),

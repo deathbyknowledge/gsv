@@ -29,6 +29,7 @@ export type NodeRuntimeInfo = {
 
 export type RuntimeHostInventoryEntry = {
   nodeId: string;
+  online: boolean;
   hostRole: HostRole;
   hostCapabilities: CapabilityId[];
   toolCapabilities: Record<string, CapabilityId[]>;
@@ -38,6 +39,12 @@ export type RuntimeHostInventoryEntry = {
   hostBins?: string[];
   hostBinStatus?: Record<string, boolean>;
   hostBinStatusUpdatedAt?: number;
+  firstSeenAt?: number;
+  lastSeenAt?: number;
+  lastConnectedAt?: number;
+  lastDisconnectedAt?: number;
+  clientPlatform?: string;
+  clientVersion?: string;
 };
 
 export type RuntimeNodeInventory = {

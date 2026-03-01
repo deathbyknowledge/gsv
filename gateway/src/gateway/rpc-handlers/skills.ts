@@ -24,18 +24,14 @@ function resolveTimeoutMs(input: unknown): number | undefined {
 }
 
 function canNodeProbeBins(gw: Gateway, nodeId: string): boolean {
-  const runtime = gw.nodeRuntimeRegistry[nodeId];
-  if (!runtime) {
-    return false;
-  }
-  return runtime.hostCapabilities.includes("shell.exec");
+  return gw.nodeService.canNodeProbeBins(nodeId);
 }
 
 async function collectSkillsStatus(gw: Gateway, agentId: string) {
   const normalizedAgentId = normalizeAgentId(agentId || "main");
   const config = gw.getFullConfig();
   const workspaceSkills = await listWorkspaceSkills(env.STORAGE, normalizedAgentId);
-  const runtimeInventory = gw.getRuntimeNodeInventory();
+  const runtimeInventory = gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys());
 
   const requiredBinsSet = new Set<string>();
   const skillEntries = workspaceSkills
@@ -76,13 +72,15 @@ async function collectSkillsStatus(gw: Gateway, agentId: string) {
   const nodeEntries = runtimeInventory.hosts
     .map((host) => ({
       nodeId: host.nodeId,
+      online: host.online !== false,
       hostRole: host.hostRole,
       hostCapabilities: host.hostCapabilities,
       hostOs: host.hostOs,
       hostEnv: host.hostEnv ?? [],
       hostBins: host.hostBins ?? [],
       hostBinStatusUpdatedAt: host.hostBinStatusUpdatedAt,
-      canProbeBins: canNodeProbeBins(gw, host.nodeId),
+      canProbeBins:
+        host.online !== false && canNodeProbeBins(gw, host.nodeId),
     }))
     .sort((left, right) => left.nodeId.localeCompare(right.nodeId));
 

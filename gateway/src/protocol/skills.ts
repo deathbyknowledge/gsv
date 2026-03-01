@@ -24,6 +24,7 @@ export type SkillStatusEntry = {
 
 export type SkillNodeStatus = {
   nodeId: string;
+  online: boolean;
   hostRole: HostRole;
   hostCapabilities: CapabilityId[];
   hostOs?: string;
@@ -46,4 +47,3 @@ export type SkillsUpdateResult = SkillsStatusResult & {
   skippedNodeIds: string[];
   errors: string[];
 };
-

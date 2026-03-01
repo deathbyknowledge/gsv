@@ -35,8 +35,8 @@ type GatewayAsyncExecStateBridge = {
   pendingAsyncExecSessions: PendingAsyncExecSessionStore;
   pendingAsyncExecDeliveries: PendingAsyncExecDeliveryStore;
   deliveredAsyncExecEvents: PendingAsyncExecEventDedupStore;
-  getAllTools(): ToolDefinition[];
-  getRuntimeNodeInventory(): RuntimeNodeInventory;
+  listTools(): ToolDefinition[];
+  getNodeInventory(): RuntimeNodeInventory;
   scheduleGatewayAlarm(): Promise<void>;
 };
 
@@ -593,8 +593,8 @@ export async function deliverPendingAsyncExecDeliveries(
         outputTail: delivery.outputTail,
         startedAt: delivery.startedAt,
         endedAt: delivery.endedAt,
-        tools: JSON.parse(JSON.stringify(gw.getAllTools())),
-        runtimeNodes: JSON.parse(JSON.stringify(gw.getRuntimeNodeInventory())),
+        tools: JSON.parse(JSON.stringify(gw.listTools())),
+        runtimeNodes: JSON.parse(JSON.stringify(gw.getNodeInventory())),
       };
       await session.ingestAsyncExecCompletion(completion);
       markAsyncExecEventDelivered(gw, delivery.eventId, now);
@@ -731,12 +731,14 @@ export class GatewayAsyncExecStateService implements GatewayAsyncExecStateBridge
     this.#gateway = gw;
   }
 
-  getAllTools(): ToolDefinition[] {
-    return this.#gateway.getAllTools();
+  listTools(): ToolDefinition[] {
+    return this.#gateway.nodeService.listTools(this.#gateway.nodes.keys());
   }
 
-  getRuntimeNodeInventory(): RuntimeNodeInventory {
-    return this.#gateway.getRuntimeNodeInventory();
+  getNodeInventory(): RuntimeNodeInventory {
+    return this.#gateway.nodeService.getRuntimeNodeInventory(
+      this.#gateway.nodes.keys(),
+    );
   }
 
   async scheduleGatewayAlarm(): Promise<void> {
