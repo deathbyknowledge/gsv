@@ -284,6 +284,33 @@ export async function handleChannelInboundRpc(
       channelContext,
     );
 
+    if (result.paused) {
+      sendTypingToChannel(
+        gw,
+        params.channel,
+        params.accountId,
+        params.peer,
+        sessionKey,
+        false,
+      );
+      sendChannelResponse(
+        gw,
+        params.channel,
+        params.accountId,
+        params.peer,
+        params.message.id,
+        result.response ??
+          "Run is paused waiting for tool approval. Reply yes/no.",
+      );
+      return {
+        ok: true,
+        sessionKey,
+        status: "paused",
+        runId: result.runId,
+        approvalId: result.approvalId,
+      };
+    }
+
     return {
       ok: true,
       sessionKey,

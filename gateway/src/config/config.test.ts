@@ -282,3 +282,34 @@ describe("session reset policy defaults", () => {
     expect(merged.session.defaultResetPolicy.idleMinutes).toBe(180);
   });
 });
+
+describe("tool approval config", () => {
+  it("defaults to allow with no rules", () => {
+    expect(DEFAULT_CONFIG.toolApproval.defaultDecision).toBe("allow");
+    expect(DEFAULT_CONFIG.toolApproval.rules).toEqual([]);
+  });
+
+  it("merges tool approval overrides", () => {
+    const merged = mergeConfig(DEFAULT_CONFIG, {
+      toolApproval: {
+        defaultDecision: "ask",
+        rules: [
+          {
+            id: "ask-bash",
+            tool: "gsv__Bash",
+            decision: "ask",
+          },
+        ],
+      },
+    });
+
+    expect(merged.toolApproval.defaultDecision).toBe("ask");
+    expect(merged.toolApproval.rules).toEqual([
+      {
+        id: "ask-bash",
+        tool: "gsv__Bash",
+        decision: "ask",
+      },
+    ]);
+  });
+});

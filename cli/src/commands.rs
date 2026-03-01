@@ -82,6 +82,18 @@ pub(crate) async fn run_client(
                                     }
                                     response_received_clone.store(true, Ordering::SeqCst);
                                 }
+                                "paused" => {
+                                    if let Some(msg) = payload.get("message") {
+                                        if let Some(content) = msg.get("content") {
+                                            println!("\nAssistant: {}", format_content(content));
+                                        }
+                                    } else {
+                                        println!(
+                                            "\nAssistant: Run is paused waiting for tool approval. Reply yes/no."
+                                        );
+                                    }
+                                    response_received_clone.store(true, Ordering::SeqCst);
+                                }
                                 _ => {}
                             }
                         }
@@ -1154,6 +1166,14 @@ async fn send_chat(
             "directive-only" => {
                 if let Some(response) = payload.get("response").and_then(|r| r.as_str()) {
                     println!("{}", response);
+                }
+                return Ok(true);
+            }
+            "paused" => {
+                if let Some(response) = payload.get("response").and_then(|r| r.as_str()) {
+                    println!("{}", response);
+                } else {
+                    println!("Run is paused waiting for tool approval. Reply yes/no.");
                 }
                 return Ok(true);
             }

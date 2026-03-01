@@ -301,6 +301,37 @@ export class Gateway extends DurableObject<Env> {
     }
   }
 
+  async failPendingToolCallsForNode(
+    nodeId: string,
+    message?: string,
+  ): Promise<void> {
+    const failureMessage = message ?? `Node disconnected: ${nodeId}`;
+    const failedCalls = this.nodeService.failPendingToolCallsForNode(nodeId);
+    for (const failedCall of failedCalls) {
+      if (failedCall.route.kind === "client") {
+        const clientWs = this.clients.get(failedCall.route.clientId);
+        if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+          continue;
+        }
+        this.sendError(clientWs, failedCall.route.frameId, 503, failureMessage);
+        continue;
+      }
+
+      const sessionStub = this.env.SESSION.getByName(failedCall.route.sessionKey);
+      try {
+        await sessionStub.toolResult({
+          callId: failedCall.callId,
+          error: failureMessage,
+        });
+      } catch (error) {
+        console.warn(
+          `[Gateway] Failed to deliver pending tool failure to session ${failedCall.route.sessionKey} (${failedCall.callId}):`,
+          error,
+        );
+      }
+    }
+  }
+
   webSocketClose(ws: WebSocket) {
     const { mode, clientId, nodeId, channelKey } = ws.deserializeAttachment();
     console.log(
@@ -322,6 +353,7 @@ export class Gateway extends DurableObject<Env> {
       }
       this.nodes.delete(nodeId);
       this.nodeService.markNodeDisconnected(nodeId);
+      this.ctx.waitUntil(this.failPendingToolCallsForNode(nodeId));
       this.failPendingLogCallsForNode(nodeId);
       this.nodeService.cancelInternalNodeLogRequestsForNode(
         nodeId,
@@ -393,6 +425,73 @@ export class Gateway extends DurableObject<Env> {
     params: TransferRequestParams,
   ): Promise<{ ok: boolean; error?: string }> {
     return transferRequestHandler(this, params);
+  }
+
+  async forgetNode(
+    nodeId: string,
+    options?: { force?: boolean },
+  ): Promise<{ ok: boolean; removed: boolean; disconnected: boolean; error?: string }> {
+    const ws = this.nodes.get(nodeId);
+    if (ws && !options?.force) {
+      return {
+        ok: false,
+        removed: false,
+        disconnected: false,
+        error: `Node ${nodeId} is still connected (use force=true to disconnect and forget)`,
+      };
+    }
+
+    let disconnected = false;
+    if (ws) {
+      this.nodes.delete(nodeId);
+      ws.close(1000, "Forgotten from node registry");
+      this.nodeService.markNodeDisconnected(nodeId);
+      disconnected = true;
+    }
+
+    const forgotten = this.nodeService.forgetNode(nodeId);
+
+    for (const failedLogCall of forgotten.failedLogCalls) {
+      const clientWs = this.clients.get(failedLogCall.clientId);
+      if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      this.sendError(
+        clientWs,
+        failedLogCall.frameId,
+        503,
+        `Node removed from registry: ${nodeId}`,
+      );
+    }
+
+    for (const failedToolCall of forgotten.failedToolCalls) {
+      if (failedToolCall.route.kind === "client") {
+        const clientWs = this.clients.get(failedToolCall.route.clientId);
+        if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {
+          continue;
+        }
+        this.sendError(
+          clientWs,
+          failedToolCall.route.frameId,
+          503,
+          `Node removed from registry: ${nodeId}`,
+        );
+        continue;
+      }
+
+      const sessionStub = this.env.SESSION.getByName(failedToolCall.route.sessionKey);
+      this.ctx.waitUntil(sessionStub.toolResult({
+        callId: failedToolCall.callId,
+        error: `Node removed from registry: ${nodeId}`,
+      }).catch((error) => {
+        console.warn(
+          `[Gateway] Failed to deliver node-forget tool failure for call ${failedToolCall.callId}:`,
+          error,
+        );
+      }));
+    }
+
+    return { ok: true, removed: forgotten.removed, disconnected };
   }
 
   getRuntimeNodeInventory(): RuntimeNodeInventory {
@@ -757,6 +856,19 @@ export class Gateway extends DurableObject<Env> {
       // Route partial text to channel (e.g., "Let me check..." before tool execution)
       routePayloadToChannel(this, sessionKey, channelContext, payload);
       // Don't delete context - we'll need it for the final response
+      return;
+    }
+
+    if (payload.state === "paused" && payload.message) {
+      sendTypingToChannelHandler(
+        this,
+        channelContext.channel,
+        channelContext.accountId,
+        channelContext.peer,
+        sessionKey,
+        false,
+      );
+      routePayloadToChannel(this, sessionKey, channelContext, payload);
       return;
     }
 

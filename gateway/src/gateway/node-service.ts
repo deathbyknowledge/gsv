@@ -18,6 +18,7 @@ import {
   GatewayPendingOperationsService,
   type ExpiredPendingOperations,
   type FailedLogOperation,
+  type FailedToolOperation,
   type PendingLogRoute,
   type PendingToolRoute,
 } from "./pending-ops";
@@ -295,8 +296,16 @@ export class GatewayNodeService {
     return this.pendingOperations.consumeToolCall(callId);
   }
 
+  peekPendingToolCall(callId: string): PendingToolRoute | undefined {
+    return this.pendingOperations.peekToolCall(callId);
+  }
+
   consumePendingLogCall(callId: string): PendingLogRoute | undefined {
     return this.pendingOperations.consumeLogCall(callId);
+  }
+
+  peekPendingLogCall(callId: string): PendingLogRoute | undefined {
+    return this.pendingOperations.peekLogCall(callId);
   }
 
   cleanupClientPendingOperations(clientId: string): void {
@@ -305,6 +314,10 @@ export class GatewayNodeService {
 
   failPendingLogCallsForNode(nodeId: string): FailedLogOperation[] {
     return this.pendingOperations.failPendingLogCallsForNode(nodeId);
+  }
+
+  failPendingToolCallsForNode(nodeId: string): FailedToolOperation[] {
+    return this.pendingOperations.failPendingToolCallsForNode(nodeId);
   }
 
   getNextPendingOperationExpirationAtMs(): number | undefined {
@@ -332,6 +345,7 @@ export class GatewayNodeService {
     this.pendingOperations.registerToolCall(params.callId, {
       kind: "session",
       sessionKey: params.sessionKey,
+      nodeId: resolved.nodeId,
     });
 
     const evt: EventFrame<ToolInvokePayload> = {
@@ -373,6 +387,7 @@ export class GatewayNodeService {
       clientId: input.clientId,
       frameId: input.requestId,
       createdAt: Date.now(),
+      nodeId: resolved.nodeId,
     }, {
       ttlMs: params.pendingToolTtlMs,
     });
@@ -538,6 +553,39 @@ export class GatewayNodeService {
       this.pendingInternalLogCalls.delete(callId);
       pending.reject(new Error(reason));
     }
+  }
+
+  forgetNode(nodeId: string): {
+    removed: boolean;
+    failedToolCalls: FailedToolOperation[];
+    failedLogCalls: FailedLogOperation[];
+  } {
+    const hadState = Boolean(
+      this.nodeCatalog[nodeId] ||
+        this.toolRegistry[nodeId] ||
+        this.nodeRuntimeRegistry[nodeId],
+    );
+
+    delete this.nodeCatalog[nodeId];
+    delete this.toolRegistry[nodeId];
+    delete this.nodeRuntimeRegistry[nodeId];
+
+    this.cancelInternalNodeLogRequestsForNode(
+      nodeId,
+      `Node forgotten while log request was pending: ${nodeId}`,
+    );
+    const failedToolCalls = this.pendingOperations.failPendingToolCallsForNode(
+      nodeId,
+    );
+    const failedLogCalls = this.pendingOperations.failPendingLogCallsForNode(
+      nodeId,
+    );
+
+    return {
+      removed: hadState,
+      failedToolCalls,
+      failedLogCalls,
+    };
   }
 
   listNodeTools(connectedNodeIds: Iterable<string>): ToolDefinition[] {

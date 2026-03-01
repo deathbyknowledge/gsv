@@ -62,6 +62,7 @@ describe("pending operations", () => {
           clientId: "client-1",
           frameId: "frame-1",
           createdAt: 1,
+          nodeId: "node-1",
         },
       },
     };
@@ -96,12 +97,14 @@ describe("pending operations", () => {
         clientId: "client-1",
         frameId: "frame-1",
         createdAt: 12,
+        nodeId: "node-1",
       }),
     ).toEqual({
       kind: "client",
       clientId: "client-1",
       frameId: "frame-1",
       createdAt: 12,
+      nodeId: "node-1",
     });
   });
 
@@ -126,6 +129,7 @@ describe("pending operations", () => {
     const route = {
       kind: "session" as const,
       sessionKey: "agent:main:abc",
+      nodeId: "node-1",
     };
 
     pending.registerToolCall("call-1", route);
@@ -154,6 +158,7 @@ describe("pending operations", () => {
       clientId: "client-1",
       frameId: "frame-1",
       createdAt: 1,
+      nodeId: "node-1",
     });
     pending.registerLogCall("log-call", {
       clientId: "client-1",
@@ -165,6 +170,45 @@ describe("pending operations", () => {
     pending.cleanupClientPendingOperations("client-1");
     expect(pending.consumeToolCall("tool-call")).toBeUndefined();
     expect(pending.consumeLogCall("log-call")).toBeUndefined();
+  });
+
+  it("peeks routes without consuming them", () => {
+    const pending = new GatewayPendingOperationsService(createMockKv());
+    pending.registerToolCall("tool-call", {
+      kind: "session",
+      sessionKey: "agent:main:abc",
+      nodeId: "node-1",
+    });
+    pending.registerLogCall("log-call", {
+      clientId: "client-1",
+      frameId: "frame-1",
+      nodeId: "node-1",
+      createdAt: 1,
+    });
+
+    expect(pending.peekToolCall("tool-call")).toEqual({
+      kind: "session",
+      sessionKey: "agent:main:abc",
+      nodeId: "node-1",
+    });
+    expect(pending.peekLogCall("log-call")).toEqual({
+      clientId: "client-1",
+      frameId: "frame-1",
+      nodeId: "node-1",
+      createdAt: 1,
+    });
+
+    expect(pending.consumeToolCall("tool-call")).toEqual({
+      kind: "session",
+      sessionKey: "agent:main:abc",
+      nodeId: "node-1",
+    });
+    expect(pending.consumeLogCall("log-call")).toEqual({
+      clientId: "client-1",
+      frameId: "frame-1",
+      nodeId: "node-1",
+      createdAt: 1,
+    });
   });
 
   it("collects failed log calls by node", () => {
@@ -206,6 +250,7 @@ describe("pending operations", () => {
       {
         kind: "session",
         sessionKey: "agent:main:abc",
+        nodeId: "node-1",
       },
       { ttlMs: 1_500 },
     );
@@ -231,6 +276,7 @@ describe("pending operations", () => {
         route: {
           kind: "session",
           sessionKey: "agent:main:abc",
+          nodeId: "node-1",
         },
       },
     ]);
@@ -251,6 +297,36 @@ describe("pending operations", () => {
     expect(pending.getNextExpirationAtMs()).toBeUndefined();
   });
 
+  it("does not clamp TTL to 120s when longer timeouts are configured", () => {
+    const pending = new GatewayPendingOperationsService(createMockKv());
+    const route = {
+      kind: "session" as const,
+      sessionKey: "agent:main:long",
+      nodeId: "node-long",
+    };
+
+    vi.setSystemTime(1_000);
+    pending.registerToolCall("long-call", route, { ttlMs: 300_000 });
+
+    expect(pending.getNextExpirationAtMs()).toBe(301_000);
+
+    vi.setSystemTime(200_000);
+    const stillPending = pending.cleanupExpired();
+    expect(stillPending.toolCalls).toEqual([]);
+    expect(stillPending.logCalls).toEqual([]);
+    expect(pending.peekToolCall("long-call")).toEqual(route);
+
+    vi.setSystemTime(302_000);
+    const expired = pending.cleanupExpired();
+    expect(expired.toolCalls).toEqual([
+      {
+        callId: "long-call",
+        route,
+      },
+    ]);
+    expect(pending.peekToolCall("long-call")).toBeUndefined();
+  });
+
   it("ignores invalid call entries during cleanup", () => {
     const mockKv = createMockKv();
     const pending = new GatewayPendingOperationsService(mockKv);
@@ -264,5 +340,41 @@ describe("pending operations", () => {
     }).not.toThrow();
 
     expect(store.has(brokenKey)).toBe(false);
+  });
+
+  it("fails pending tool calls by node", () => {
+    const pending = new GatewayPendingOperationsService(createMockKv());
+    pending.registerToolCall("tool-call-1", {
+      kind: "session",
+      sessionKey: "agent:main:abc",
+      nodeId: "node-1",
+    });
+    pending.registerToolCall("tool-call-2", {
+      kind: "client",
+      clientId: "client-1",
+      frameId: "frame-1",
+      createdAt: 1,
+      nodeId: "node-2",
+    });
+
+    const failed = pending.failPendingToolCallsForNode("node-1");
+    expect(failed).toEqual([
+      {
+        callId: "tool-call-1",
+        route: {
+          kind: "session",
+          sessionKey: "agent:main:abc",
+          nodeId: "node-1",
+        },
+      },
+    ]);
+
+    expect(pending.consumeToolCall("tool-call-2")).toEqual({
+      kind: "client",
+      clientId: "client-1",
+      frameId: "frame-1",
+      createdAt: 1,
+      nodeId: "node-2",
+    });
   });
 });

@@ -39,6 +39,9 @@ const DEFAULT_DESCRIPTOR_OVERRIDES: Partial<
   "tool.request": {
     allowedModes: ["client"],
   },
+  "node.forget": {
+    allowedModes: ["client"],
+  },
   "logs.get": {
     allowedModes: ["client"],
   },

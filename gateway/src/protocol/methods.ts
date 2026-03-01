@@ -145,6 +145,12 @@ export type RpcMethods = {
             thinkLevel?: string;
             model?: { provider: string; id: string };
           };
+        }
+      | {
+          status: "paused";
+          runId: string;
+          response: string;
+          approvalId?: string;
         };
   };
 
@@ -424,6 +430,11 @@ export type RpcMethods = {
     result: {
       status: "sent";
     };
+  };
+
+  "node.forget": {
+    params: { nodeId: string; force?: boolean };
+    result: { ok: true; nodeId: string; removed: boolean; disconnected: boolean };
   };
 
   "transfer.meta": {

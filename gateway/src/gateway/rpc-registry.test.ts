@@ -49,6 +49,8 @@ describe("rpc registry", () => {
     expect(isMethodAllowedForMode(registry["node.exec.event"], "node")).toBe(true);
     expect(isMethodAllowedForMode(registry["tool.invoke"], "node")).toBe(false);
     expect(isMethodAllowedForMode(registry["tool.request"], "client")).toBe(true);
+    expect(isMethodAllowedForMode(registry["node.forget"], "client")).toBe(true);
+    expect(isMethodAllowedForMode(registry["node.forget"], "node")).toBe(false);
     expect(isMethodAllowedForMode(registry["logs.get"], "client")).toBe(true);
   });
 });

@@ -252,6 +252,17 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
     messageOverrides,
   );
 
+  if (result.paused) {
+    return {
+      status: "paused",
+      runId: result.runId,
+      response:
+        result.response ??
+        "Run is paused waiting for tool approval. Reply yes/no.",
+      approvalId: result.approvalId,
+    };
+  }
+
   return {
     status: "started",
     runId: result.runId,

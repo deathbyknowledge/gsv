@@ -120,6 +120,39 @@ export interface SkillsConfig {
   entries: Record<string, SkillEntryConfig>;
 }
 
+export type ToolApprovalRuleDecision = "allow" | "ask" | "deny";
+
+export interface ToolApprovalArgCondition {
+  // Dot path into tool args (e.g. "command", "file.path", "steps.0.name").
+  path: string;
+  // Condition operator.
+  op: "equals" | "contains" | "startsWith" | "regex";
+  // Comparison value. String is required for contains/startsWith/regex.
+  value: string | number | boolean | null;
+  // Regex flags (only used when op === "regex").
+  flags?: string;
+}
+
+export interface ToolApprovalRule {
+  // Stable rule identifier for debugging/tracing.
+  id: string;
+  // Tool name pattern (supports "*" wildcard).
+  tool: string;
+  // Optional arg conditions. All conditions must match.
+  when?: ToolApprovalArgCondition[];
+  // Rule decision.
+  decision: ToolApprovalRuleDecision;
+  // Optional human-readable reason shown to the user.
+  reason?: string;
+}
+
+export interface ToolApprovalConfig {
+  // Fallback decision if no rule matches.
+  defaultDecision: ToolApprovalRuleDecision;
+  // Ordered rules; first matching rule wins.
+  rules: ToolApprovalRule[];
+}
+
 export interface AgentsConfig {
   // List of agent configurations
   list: AgentConfig[];
@@ -191,6 +224,9 @@ export interface GsvConfig {
 
   // Skill availability and runtime eligibility overrides
   skills: SkillsConfig;
+
+  // Human-in-the-loop tool approval policy
+  toolApproval: ToolApprovalConfig;
   
   // Multi-agent configuration
   agents: AgentsConfig;
@@ -224,6 +260,7 @@ export type GsvConfigInput = {
   skills?: {
     entries?: Record<string, SkillEntryConfig>;
   };
+  toolApproval?: Partial<ToolApprovalConfig>;
   agents?: {
     list?: AgentConfig[];
     bindings?: AgentBinding[];

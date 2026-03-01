@@ -59,6 +59,10 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
     if (existingWs && existingWs !== ws) {
       // Any in-flight logs.get requests targeted at the old socket cannot
       // complete after replacement; fail them before swapping the node entry.
+      void gw.failPendingToolCallsForNode(
+        nodeId,
+        `Node replaced during tool request: ${nodeId}`,
+      );
       gw.failPendingLogCallsForNode(
         nodeId,
         `Node replaced during log request: ${nodeId}`,
@@ -141,6 +145,7 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         "cron.run",
         "cron.runs",
         "tool.request",
+        "node.forget",
         "tool.result",
         "node.exec.event",
         "logs.result",

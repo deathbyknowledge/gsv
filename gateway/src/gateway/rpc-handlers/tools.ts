@@ -87,7 +87,13 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     throw new RpcError(400, "callId required");
   }
 
-  const route = gw.nodeService.consumePendingToolCall(params.callId);
+  const nodeAttachment = ws.deserializeAttachment();
+  const nodeId = nodeAttachment.nodeId as string | undefined;
+  if (!nodeId) {
+    throw new RpcError(403, "Node not authorized for this call");
+  }
+
+  const route = gw.nodeService.peekPendingToolCall(params.callId);
   if (!route) {
     throw new RpcError(404, "Unknown callId");
   }
@@ -98,6 +104,12 @@ export const handleToolResult: Handler<"tool.result"> = async ({
   ) {
     return { ok: true, dropped: true };
   }
+
+  if (route.nodeId !== nodeId) {
+    throw new RpcError(403, "Node not authorized for this call");
+  }
+
+  gw.nodeService.consumePendingToolCall(params.callId);
 
   if (route.kind === "client") {
     const clientWs = gw.clients.get(route.clientId);
@@ -128,8 +140,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     throw new RpcError(404, `Unknown session tool call: ${params.callId}`);
   }
 
-  const nodeAttachment = ws.deserializeAttachment();
-  const nodeId = nodeAttachment.nodeId as string | undefined;
   const runningSessionId = extractRunningSessionId(params.result);
   if (nodeId && runningSessionId) {
     gw.registerPendingAsyncExecSession({
@@ -142,6 +152,35 @@ export const handleToolResult: Handler<"tool.result"> = async ({
 
 
   return { ok: true };
+};
+
+export const handleNodeForget: Handler<"node.forget"> = async ({
+  gw,
+  params,
+}) => {
+  if (!params?.nodeId || typeof params.nodeId !== "string") {
+    throw new RpcError(400, "nodeId required");
+  }
+
+  const nodeId = params.nodeId.trim();
+  if (!nodeId) {
+    throw new RpcError(400, "nodeId required");
+  }
+
+  const result = await gw.forgetNode(nodeId, { force: params.force === true });
+  if (!result.ok) {
+    if (result.error?.includes("still connected")) {
+      throw new RpcError(409, result.error);
+    }
+    throw new RpcError(500, result.error ?? "Failed to forget node");
+  }
+
+  return {
+    ok: true as const,
+    nodeId,
+    removed: result.removed,
+    disconnected: result.disconnected,
+  };
 };
 
 export const handleNodeExecEvent: Handler<"node.exec.event"> = async ({

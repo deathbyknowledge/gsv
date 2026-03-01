@@ -30,6 +30,10 @@ export const DEFAULT_CONFIG: GsvConfig = {
   skills: {
     entries: {},
   },
+  toolApproval: {
+    defaultDecision: "allow",
+    rules: [],
+  },
   agents: {
     list: [],
     bindings: [],

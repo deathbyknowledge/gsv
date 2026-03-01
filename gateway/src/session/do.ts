@@ -59,6 +59,11 @@ import {
   type PendingAsyncExecCompletion,
 } from "./async-exec";
 import { buildUserMessage } from "./user-message";
+import {
+  evaluateToolApproval,
+  parseToolApprovalDecision,
+  type ToolApprovalEvaluation,
+} from "./tool-approval";
 
 type PendingToolCall = {
   id: string;
@@ -68,12 +73,26 @@ type PendingToolCall = {
   error?: string;
 };
 
+type PendingToolApproval = {
+  approvalId: string;
+  runId: string;
+  callId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  policyRuleId?: string;
+  policyReason?: string;
+  requestedAt: number;
+};
+
 type ChatSendResult = {
   ok: boolean;
   runId: string;
   queued?: boolean;
   queuePosition?: number;
   started?: boolean;
+  paused?: boolean;
+  response?: string;
+  approvalId?: string;
 };
 
 type ToolResultInput = {
@@ -128,6 +147,8 @@ export type CurrentRun = {
   startedAt: number;
   aborted?: boolean;
   compactionAttempted?: boolean;
+  pendingToolDispatchQueue?: PendingToolCall[];
+  waitingForApproval?: boolean;
 };
 
 // State stored in PersistedObject (small, no messages)
@@ -356,6 +377,16 @@ export class Session extends DurableObject<Env> {
     { prefix: "pendingToolCalls:" },
   );
 
+  private pendingToolApprovalState = PersistedObject<{
+    approval: PendingToolApproval | null;
+  }>(
+    this.ctx.storage.kv,
+    {
+      prefix: "pendingToolApproval:",
+      defaults: { approval: null },
+    },
+  );
+
   pendingAsyncExecCompletions = PersistedObject<
     Record<string, PendingAsyncExecCompletion>
   >(this.ctx.storage.kv, { prefix: "pendingAsyncExecCompletions:" });
@@ -382,6 +413,14 @@ export class Session extends DurableObject<Env> {
 
   private set currentRun(run: CurrentRun | null) {
     this._currentRun.run = run;
+  }
+
+  private get pendingToolApproval(): PendingToolApproval | null {
+    return this.pendingToolApprovalState.approval;
+  }
+
+  private set pendingToolApproval(approval: PendingToolApproval | null) {
+    this.pendingToolApprovalState.approval = approval;
   }
 
   // Message queue for sequential processing (wrapped in object for PersistedObject)
@@ -730,6 +769,215 @@ export class Session extends DurableObject<Env> {
     return { ok: true };
   }
 
+  private buildAssistantTextMessage(text: string): AssistantMessage {
+    return {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      timestamp: Date.now(),
+    } as AssistantMessage;
+  }
+
+  private serializeToolArgsForApproval(args: Record<string, unknown>): string {
+    try {
+      const raw = JSON.stringify(args);
+      if (raw.length <= 400) {
+        return raw;
+      }
+      return `${raw.slice(0, 397)}...`;
+    } catch {
+      return "{}";
+    }
+  }
+
+  private buildApprovalPromptText(approval: PendingToolApproval): string {
+    const args = this.serializeToolArgsForApproval(approval.args);
+    const lines = [
+      "Run paused: tool approval required.",
+      `Tool: ${approval.toolName}`,
+      `Args: ${args}`,
+    ];
+    if (approval.policyRuleId) {
+      lines.push(`Policy rule: ${approval.policyRuleId}`);
+    }
+    if (approval.policyReason) {
+      lines.push(`Reason: ${approval.policyReason}`);
+    }
+    lines.push('Reply with "yes" to approve or "no" to deny.');
+    return lines.join("\n");
+  }
+
+  private buildApprovalReminderText(approval: PendingToolApproval): string {
+    return [
+      `Run is paused waiting for tool approval (${approval.approvalId}) for ${approval.toolName}.`,
+      'Reply with "yes" to approve or "no" to deny.',
+    ].join("\n");
+  }
+
+  private async evaluateToolApprovalPolicy(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<ToolApprovalEvaluation> {
+    try {
+      const gateway = this.env.GATEWAY.get(
+        this.env.GATEWAY.idFromName("singleton"),
+      );
+      const config: GsvConfig = await gateway.getConfig();
+      return evaluateToolApproval(toolName, args, config.toolApproval);
+    } catch (error) {
+      console.warn(
+        `[Session] Failed to evaluate tool approval policy for ${toolName}`,
+        error,
+      );
+      return { decision: "allow" };
+    }
+  }
+
+  private async maybeHandlePendingToolApprovalInput(
+    message: string,
+    runId: string,
+  ): Promise<ChatSendResult | undefined> {
+    const pending = this.pendingToolApproval;
+    if (!pending) {
+      return undefined;
+    }
+
+    const parsed = parseToolApprovalDecision(message);
+    if (!parsed) {
+      return {
+        ok: true,
+        runId: pending.runId || runId,
+        paused: true,
+        response: this.buildApprovalReminderText(pending),
+        approvalId: pending.approvalId,
+      };
+    }
+
+    if (parsed.approvalId && parsed.approvalId !== pending.approvalId) {
+      return {
+        ok: true,
+        runId: pending.runId || runId,
+        paused: true,
+        response:
+          `Unknown approval id: ${parsed.approvalId}. ` +
+          this.buildApprovalReminderText(pending),
+        approvalId: pending.approvalId,
+      };
+    }
+
+    const decision = parsed.decision;
+    const pendingCall = this.pendingToolCalls[pending.callId];
+    if (!pendingCall) {
+      this.pendingToolApproval = null;
+      if (this.currentRun) {
+        this.currentRun.waitingForApproval = false;
+      }
+      return {
+        ok: true,
+        runId: pending.runId || runId,
+        paused: true,
+        response:
+          "No pending tool call found for approval. You can continue normally.",
+      };
+    }
+
+    if (!this.currentRun) {
+      this.pendingToolApproval = null;
+      return {
+        ok: true,
+        runId: pending.runId || runId,
+        paused: true,
+        response:
+          "No active run is waiting for approval anymore. You can continue normally.",
+      };
+    }
+
+    if (decision === "approve") {
+      await this.dispatchToolExecution(pendingCall, true);
+    } else {
+      pendingCall.error = "Tool execution denied by user";
+      this.pendingToolCalls[pendingCall.id] = pendingCall;
+    }
+
+    this.pendingToolApproval = null;
+    if (this.currentRun) {
+      this.currentRun.waitingForApproval = false;
+    }
+
+    this.ctx.waitUntil(this.resumeRunAfterToolApprovalDecision());
+
+    const response =
+      decision === "approve"
+        ? `Approved ${pending.toolName}. Continuing run.`
+        : `Denied ${pending.toolName}. Continuing run without executing it.`;
+
+    return {
+      ok: true,
+      runId: pending.runId || runId,
+      paused: true,
+      response,
+    };
+  }
+
+  private async resumeRunAfterToolApprovalDecision(): Promise<void> {
+    if (!this.currentRun || this.currentRun.aborted) {
+      return;
+    }
+
+    await this.dispatchPendingToolCalls();
+    await this.finalizeToolDispatchWaitState();
+  }
+
+  private async dispatchPendingToolCalls(): Promise<void> {
+    const run = this.currentRun;
+    if (!run || !run.pendingToolDispatchQueue) {
+      return;
+    }
+
+    while (run.pendingToolDispatchQueue.length > 0) {
+      const nextToolCall = this.normalizePendingToolCall(
+        run.pendingToolDispatchQueue[0],
+      );
+      const dispatchResult = await this.requestToolExecution(nextToolCall);
+      if (dispatchResult === "awaiting-approval") {
+        run.waitingForApproval = true;
+        return;
+      }
+
+      run.pendingToolDispatchQueue = run.pendingToolDispatchQueue.slice(1);
+      run.waitingForApproval = false;
+    }
+  }
+
+  private normalizePendingToolCall(raw: PendingToolCall): PendingToolCall {
+    return {
+      id: raw.id,
+      name: raw.name,
+      args: JSON.parse(JSON.stringify(raw.args ?? {})),
+      result: raw.result,
+      error: raw.error,
+    };
+  }
+
+  private async finalizeToolDispatchWaitState(): Promise<void> {
+    if (this.currentRun?.waitingForApproval) {
+      return;
+    }
+
+    if (this.allToolsResolved()) {
+      console.log(
+        `[Session] All tools resolved for run ${this.currentRun?.runId}, scheduling immediate continuation alarm`,
+      );
+      this.ctx.storage.setAlarm(Date.now() + 100);
+      return;
+    }
+
+    const toolTimeoutMs = await this.resolveToolTimeoutMs();
+    this.ctx.storage.setAlarm(Date.now() + toolTimeoutMs);
+    console.log(
+      `[Session] Waiting for pending tool results (timeout=${toolTimeoutMs}ms), run ${this.currentRun?.runId}`,
+    );
+  }
+
   /**
    * Send a message to the agent.
    * If another message is being processed, this will be queued.
@@ -753,6 +1001,14 @@ export class Session extends DurableObject<Env> {
     }
 
     await this.ensureResetPolicyInitialized();
+
+    const approvalResult = await this.maybeHandlePendingToolApprovalInput(
+      message,
+      runId,
+    );
+    if (approvalResult) {
+      return approvalResult;
+    }
 
     // If currently processing, queue this message
     if (this.isProcessing) {
@@ -1090,33 +1346,16 @@ export class Session extends DurableObject<Env> {
         });
       }
 
-      // Request tool executions (fire and forget - don't await results here)
-      for (const toolCall of toolCalls) {
-        await this.requestToolExecution({
+      if (this.currentRun) {
+        this.currentRun.pendingToolDispatchQueue = toolCalls.map((toolCall) => ({
           id: toolCall.id,
           name: toolCall.name,
           args: toolCall.arguments,
-        });
+        }));
       }
 
-      // Check if all tools already resolved (workspace tools complete synchronously)
-      if (this.allToolsResolved()) {
-        console.log(
-          `[Session] All ${toolCalls.length} tools already resolved (workspace tools), scheduling immediate continuation`,
-        );
-        // Schedule continuation via short alarm to reset DO timeouts/limits
-        // This prevents long-running agent loops from hitting Worker limits
-        this.ctx.storage.setAlarm(Date.now() + 100);
-        return;
-      }
-
-      // Some tools still pending (node tools) - set alarm and wait
-      const toolTimeoutMs = await this.resolveToolTimeoutMs();
-      this.ctx.storage.setAlarm(Date.now() + toolTimeoutMs);
-      // DO can now hibernate - will wake on toolResult() or alarm()
-      console.log(
-        `[Session] Waiting for ${toolCalls.length} tool results (timeout=${toolTimeoutMs}ms), run ${this.currentRun?.runId}`,
-      );
+      await this.dispatchPendingToolCalls();
+      await this.finalizeToolDispatchWaitState();
       return;
     }
 
@@ -1721,13 +1960,88 @@ export class Session extends DurableObject<Env> {
     });
   }
 
-  private async requestToolExecution(toolCall: PendingToolCall): Promise<void> {
+  private async requestToolExecution(
+    toolCall: PendingToolCall,
+  ): Promise<"dispatched" | "awaiting-approval"> {
     if (!this.meta.sessionKey) {
       console.error("[Session] Cannot request tool: sessionKey not set");
-      return;
+      toolCall.error = "Session not bound";
+      this.pendingToolCalls[toolCall.id] = toolCall;
+      return "dispatched";
     }
 
-    this.pendingToolCalls[toolCall.id] = toolCall;
+    const normalizedToolCall = this.normalizePendingToolCall(toolCall);
+    this.pendingToolCalls[normalizedToolCall.id] = normalizedToolCall;
+
+    const existingApproval = this.pendingToolApproval;
+    if (existingApproval?.callId === normalizedToolCall.id) {
+      return "awaiting-approval";
+    }
+
+    const approvalPolicy = await this.evaluateToolApprovalPolicy(
+      normalizedToolCall.name,
+      normalizedToolCall.args,
+    );
+
+    if (approvalPolicy.decision === "deny") {
+      const details = approvalPolicy.reason
+        ? approvalPolicy.reason
+        : approvalPolicy.ruleId
+          ? `rule ${approvalPolicy.ruleId}`
+          : undefined;
+      normalizedToolCall.error = details
+        ? `Tool execution denied by policy: ${details}`
+        : "Tool execution denied by policy";
+      this.pendingToolCalls[normalizedToolCall.id] = normalizedToolCall;
+      return "dispatched";
+    }
+
+    if (approvalPolicy.decision === "ask") {
+      const approval: PendingToolApproval = {
+        approvalId: crypto.randomUUID().slice(0, 8),
+        runId: this.currentRun?.runId ?? "",
+        callId: normalizedToolCall.id,
+        toolName: normalizedToolCall.name,
+        args: normalizedToolCall.args,
+        policyRuleId: approvalPolicy.ruleId,
+        policyReason: approvalPolicy.reason,
+        requestedAt: Date.now(),
+      };
+      this.pendingToolApproval = approval;
+      if (this.currentRun) {
+        this.currentRun.waitingForApproval = true;
+      }
+
+      await this.broadcastToClients({
+        runId: this.currentRun?.runId ?? null,
+        sessionKey: this.meta.sessionKey,
+        state: "paused",
+        message: this.buildAssistantTextMessage(
+          this.buildApprovalPromptText(approval),
+        ),
+      });
+      return "awaiting-approval";
+    }
+
+    await this.dispatchToolExecution(normalizedToolCall, true);
+    return "dispatched";
+  }
+
+  private async dispatchToolExecution(
+    toolCall: PendingToolCall,
+    persistResult: boolean,
+  ): Promise<void> {
+    const normalizedToolCall = this.normalizePendingToolCall(toolCall);
+    toolCall = normalizedToolCall;
+
+    if (!this.meta.sessionKey) {
+      console.error("[Session] Cannot request tool: sessionKey not set");
+      toolCall.error = "Session not bound";
+      if (persistResult) {
+        this.pendingToolCalls[toolCall.id] = toolCall;
+      }
+      return;
+    }
 
     if (toolCall.name === TRANSFER_TOOL_NAME) {
       try {
@@ -1746,12 +2060,16 @@ export class Session extends DurableObject<Env> {
 
         if (!result.ok) {
           toolCall.error = result.error || "Transfer request failed";
-          this.pendingToolCalls[toolCall.id] = toolCall;
+          if (persistResult) {
+            this.pendingToolCalls[toolCall.id] = toolCall;
+          }
         }
       } catch (err) {
         toolCall.error =
           err instanceof Error ? err.message : String(err);
-        this.pendingToolCalls[toolCall.id] = toolCall;
+        if (persistResult) {
+          this.pendingToolCalls[toolCall.id] = toolCall;
+        }
       }
       return;
     }
@@ -1780,7 +2098,9 @@ export class Session extends DurableObject<Env> {
       } else {
         toolCall.error = result.error || "Native tool failed";
       }
-      this.pendingToolCalls[toolCall.id] = toolCall;
+      if (persistResult) {
+        this.pendingToolCalls[toolCall.id] = toolCall;
+      }
       console.log(`[Session] Native tool ${toolCall.name} completed`);
       return;
     }
@@ -1799,11 +2119,20 @@ export class Session extends DurableObject<Env> {
 
     if (!result.ok) {
       toolCall.error = result.error || "Tool request failed";
-      this.pendingToolCalls[toolCall.id] = toolCall;
+      if (persistResult) {
+        this.pendingToolCalls[toolCall.id] = toolCall;
+      }
     }
   }
 
   async alarm(): Promise<void> {
+    if (this.currentRun?.waitingForApproval && this.pendingToolApproval) {
+      console.log(
+        `[Session] Alarm fired while awaiting tool approval (${this.pendingToolApproval.approvalId}); skipping tool timeouts`,
+      );
+      return;
+    }
+
     // Check if any tools are still pending (not resolved)
     let timedOutCount = 0;
     for (const callId of Object.keys(this.pendingToolCalls)) {
@@ -1986,6 +2315,11 @@ export class Session extends DurableObject<Env> {
     for (const callId of Object.keys(this.pendingToolCalls)) {
       delete this.pendingToolCalls[callId];
     }
+    this.pendingToolApproval = null;
+    if (this.currentRun) {
+      this.currentRun.waitingForApproval = false;
+      this.currentRun.pendingToolDispatchQueue = [];
+    }
 
     return {
       ok: true,
@@ -2027,6 +2361,9 @@ export class Session extends DurableObject<Env> {
     for (const callId of Object.keys(this.pendingToolCalls)) {
       delete this.pendingToolCalls[callId];
     }
+    this.pendingToolApproval = null;
+    this.currentRun.waitingForApproval = false;
+    this.currentRun.pendingToolDispatchQueue = [];
 
     // Clear any alarm (tool timeout)
     this.ctx.storage.deleteAlarm();

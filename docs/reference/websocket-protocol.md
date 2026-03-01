@@ -183,7 +183,7 @@ Send a message to the agent for processing.
 | `message` | `string` | yes | Message text. May contain slash commands or directives. |
 | `runId` | `string` | no | Client-generated run ID for correlation. |
 
-**Result:** One of three variants:
+**Result:** One of four variants:
 
 *Started (normal agent turn):*
 
@@ -211,6 +211,15 @@ Send a message to the agent for processing.
 | `status` | `"directive-only"` | Only directives were parsed; no message sent to agent. |
 | `response` | `string` | Acknowledgement text. |
 | `directives` | `object` | Parsed directives. |
+
+*Paused (human approval required):*
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `"paused"` | Run is paused awaiting tool approval. |
+| `runId` | `string` | Active run identifier. |
+| `response` | `string` | Prompt/reminder text instructing user to reply `yes` / `no`. |
+| `approvalId` | `string` | Optional approval identifier token. |
 
 ---
 
@@ -338,6 +347,30 @@ Request a tool invocation in the context of a session (used by the agent loop).
 | Field | Type | Description |
 |-------|------|-------------|
 | `status` | `"sent"` | Confirmation that the request was dispatched. |
+
+#### `node.forget`
+
+**Direction:** C -> G
+
+Remove a node from the persisted node registry.
+
+If the node is still connected, set `force=true` to disconnect and forget it.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `nodeId` | `string` | yes | Node ID to remove from registry. |
+| `force` | `boolean` | no | Disconnect live node before removal. |
+
+**Result:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ok` | `true` | Confirmation. |
+| `nodeId` | `string` | Removed node ID. |
+| `removed` | `boolean` | Whether persisted node state existed and was removed. |
+| `disconnected` | `boolean` | Whether an active node socket was disconnected. |
 
 ---
 
@@ -1347,7 +1380,7 @@ Emitted to clients during an agent turn.
 |-------|------|-------------|
 | `runId` | `string \| null` | Run identifier. |
 | `sessionKey` | `string` | Session key for filtering. |
-| `state` | `string` | Event state: `"partial"`, `"delta"`, `"final"`, or `"error"`. |
+| `state` | `string` | Event state: `"partial"`, `"delta"`, `"paused"`, `"final"`, or `"error"`. |
 | `message` | `unknown` | Full message object (on `"final"` state). |
 | `text` | `string` | Incremental text content (on `"delta"` / `"partial"` state). |
 | `error` | `string` | Error message (on `"error"` state). |

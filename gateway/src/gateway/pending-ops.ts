@@ -2,11 +2,16 @@ import { PersistedObject } from "../shared/persisted-object";
 
 export const PENDING_TOOL_RESULT_KIND = "tool.result";
 export const PENDING_LOGS_RESULT_KIND = "logs.result";
-const MAX_PENDING_OPERATION_TTL_MS = 120_000;
 
 export type PendingToolRoute =
-  | { kind: "session"; sessionKey: string }
-  | { kind: "client"; clientId: string; frameId: string; createdAt: number };
+  | { kind: "session"; sessionKey: string; nodeId: string }
+  | {
+    kind: "client";
+    clientId: string;
+    frameId: string;
+    createdAt: number;
+    nodeId: string;
+  };
 
 export type PendingLogRoute = {
   clientId: string;
@@ -58,6 +63,11 @@ export type FailedLogOperation = {
   frameId: string;
 };
 
+export type FailedToolOperation = {
+  callId: string;
+  route: PendingToolRoute;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -81,7 +91,7 @@ export function isPendingToolRoute(
 
   const routeKind = asString(value.kind);
   if (routeKind === "session") {
-    return Boolean(asString(value.sessionKey));
+    return Boolean(asString(value.sessionKey)) && Boolean(asString(value.nodeId));
   }
 
   if (routeKind !== "client") {
@@ -90,7 +100,8 @@ export function isPendingToolRoute(
 
   return Boolean(asString(value.clientId)) &&
     Boolean(asString(value.frameId)) &&
-    asNumber(value.createdAt) !== undefined;
+    asNumber(value.createdAt) !== undefined &&
+    Boolean(asString(value.nodeId));
 }
 
 export function isPendingLogRoute(value: unknown): value is PendingLogRoute {
@@ -138,7 +149,7 @@ export function isPendingLogOperation(
 
 export function sanitizePendingToolRoute(route: PendingToolRoute): PendingToolRoute {
   if (route.kind === "session") {
-    return { kind: "session", sessionKey: route.sessionKey };
+    return { kind: "session", sessionKey: route.sessionKey, nodeId: route.nodeId };
   }
 
   return {
@@ -146,6 +157,7 @@ export function sanitizePendingToolRoute(route: PendingToolRoute): PendingToolRo
     clientId: route.clientId,
     frameId: route.frameId,
     createdAt: route.createdAt,
+    nodeId: route.nodeId,
   };
 }
 
@@ -177,7 +189,7 @@ export class GatewayPendingOperationsService {
     }
 
     const normalized = Math.floor(ttlMs);
-    return Math.min(Math.max(1_000, normalized), MAX_PENDING_OPERATION_TTL_MS);
+    return Math.max(1_000, normalized);
   }
 
   registerToolCall(
@@ -209,6 +221,18 @@ export class GatewayPendingOperationsService {
     const route = raw.payload.route;
     delete this.pendingOperations[callId];
     return sanitizePendingToolRoute(route);
+  }
+
+  peekToolCall(callId: string): PendingToolRoute | undefined {
+    const raw = this.pendingOperations[callId];
+    if (!isPendingToolOperation(raw)) {
+      if (raw !== undefined) {
+        delete this.pendingOperations[callId];
+      }
+      return;
+    }
+
+    return sanitizePendingToolRoute(raw.payload.route);
   }
 
   registerLogCall(
@@ -307,6 +331,18 @@ export class GatewayPendingOperationsService {
     return sanitizePendingLogRoute(route);
   }
 
+  peekLogCall(callId: string): PendingLogRoute | undefined {
+    const raw = this.pendingOperations[callId];
+    if (!isPendingLogOperation(raw)) {
+      if (raw !== undefined) {
+        delete this.pendingOperations[callId];
+      }
+      return;
+    }
+
+    return sanitizePendingLogRoute(raw.payload.route);
+  }
+
   cleanupClientPendingOperations(clientId: string): void {
     for (const [callId, raw] of Object.entries(this.pendingOperations)) {
       if (isPendingToolOperation(raw) && raw.payload.route.kind === "client") {
@@ -339,6 +375,30 @@ export class GatewayPendingOperationsService {
         callId,
         clientId: raw.payload.route.clientId,
         frameId: raw.payload.route.frameId,
+      });
+
+      delete this.pendingOperations[callId];
+    }
+
+    return failed;
+  }
+
+  failPendingToolCallsForNode(
+    nodeId: string,
+  ): FailedToolOperation[] {
+    const failed: FailedToolOperation[] = [];
+
+    for (const [callId, raw] of Object.entries(this.pendingOperations)) {
+      if (!isPendingToolOperation(raw)) {
+        continue;
+      }
+      if (raw.payload.route.nodeId !== nodeId) {
+        continue;
+      }
+
+      failed.push({
+        callId,
+        route: sanitizePendingToolRoute(raw.payload.route),
       });
 
       delete this.pendingOperations[callId];

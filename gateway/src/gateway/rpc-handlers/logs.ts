@@ -56,7 +56,7 @@ export const handleLogsResult: Handler<"logs.result"> = ({ gw, ws, params }) => 
     throw new RpcError(403, "Node not authorized for this call");
   }
 
-  const route = gw.nodeService.consumePendingLogCall(params.callId);
+  const route = gw.nodeService.peekPendingLogCall(params.callId);
   if (!route) {
     if (gw.nodeService.resolveInternalNodeLogResult(nodeId, params)) {
       return { ok: true };
@@ -67,6 +67,8 @@ export const handleLogsResult: Handler<"logs.result"> = ({ gw, ws, params }) => 
   if (nodeId !== route.nodeId) {
     throw new RpcError(403, "Node not authorized for this call");
   }
+
+  gw.nodeService.consumePendingLogCall(params.callId);
 
   const clientWs = gw.clients.get(route.clientId);
   if (!clientWs || clientWs.readyState !== WebSocket.OPEN) {

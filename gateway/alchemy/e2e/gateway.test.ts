@@ -331,6 +331,55 @@ function waitForRunTerminalState(
   });
 }
 
+function waitForRunState(
+  ws: WebSocket,
+  runId: string,
+  expectedState: string,
+  timeoutMs = 60000,
+): Promise<{ state: string; error?: string; message?: unknown }> {
+  return new Promise((resolve, reject) => {
+    const originalHandler = ws.onmessage;
+    const timeout = setTimeout(() => {
+      ws.onmessage = originalHandler;
+      reject(
+        new Error(
+          `Timed out waiting for run ${runId} state=${expectedState}`,
+        ),
+      );
+    }, timeoutMs);
+
+    ws.onmessage = (event) => {
+      try {
+        const frame = JSON.parse(event.data as string);
+        if (
+          frame.type === "evt" &&
+          frame.event === "chat" &&
+          frame.payload?.runId === runId &&
+          frame.payload?.state === expectedState
+        ) {
+          clearTimeout(timeout);
+          ws.onmessage = originalHandler;
+          resolve({
+            state: frame.payload.state,
+            error:
+              typeof frame.payload.error === "string"
+                ? frame.payload.error
+                : undefined,
+            message: frame.payload.message,
+          });
+          return;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+
+      if (typeof originalHandler === "function") {
+        originalHandler.call(ws, event);
+      }
+    };
+  });
+}
+
 function extractLatestAssistantText(messages: unknown[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
@@ -1130,6 +1179,84 @@ describe("Node Runtime Validation & Routing", () => {
   }, 30000);
 });
 
+describe("Node Registry Forget", () => {
+  it("requires force for connected nodes and removes node registry entries", async () => {
+    const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+    const nodeId = `forget-node-${crypto.randomUUID().slice(0, 8)}`;
+    const toolName = `forget_tool_${crypto.randomUUID().slice(0, 8)}`;
+
+    const nodeWs = await connectWebSocket(wsUrl);
+    await sendRequest(nodeWs, "connect", {
+      minProtocol: 1,
+      client: {
+        mode: "node",
+        id: nodeId,
+      },
+      tools: [
+        {
+          name: toolName,
+          description: "Node forget test tool",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      ],
+      nodeRuntime: buildExecutionNodeRuntime([toolName]),
+    });
+
+    const clientWs = await connectAndAuth(wsUrl);
+    const beforeForget = await sendRequest(clientWs, "tools.list") as {
+      tools: Array<{ name: string }>;
+    };
+    expect(
+      beforeForget.tools.some((tool) => tool.name === `${nodeId}__${toolName}`),
+    ).toBe(true);
+
+    try {
+      await sendRequest(clientWs, "node.forget", { nodeId });
+      expect(true).toBe(false);
+    } catch (err) {
+      expect((err as Error).message).toContain("still connected");
+    }
+
+    const forceForget = await sendRequest(clientWs, "node.forget", {
+      nodeId,
+      force: true,
+    }) as {
+      ok: true;
+      nodeId: string;
+      removed: boolean;
+      disconnected: boolean;
+    };
+    expect(forceForget.ok).toBe(true);
+    expect(forceForget.nodeId).toBe(nodeId);
+    expect(forceForget.removed).toBe(true);
+    expect(forceForget.disconnected).toBe(true);
+
+    await waitFor(
+      async () => {
+        const toolsAfter = await sendRequest(clientWs, "tools.list") as {
+          tools: Array<{ name: string }>;
+        };
+        const stillPresent = toolsAfter.tools.some(
+          (tool) => tool.name === `${nodeId}__${toolName}`,
+        );
+        return stillPresent ? null : true;
+      },
+      {
+        timeout: 10000,
+        interval: 200,
+        description: "node tool removed after node.forget",
+      },
+    );
+
+    nodeWs.close();
+    clientWs.close();
+  });
+});
+
 
 describe("Node Exec Event Routing", () => {
   it("rejects node.exec.event from non-node clients", async () => {
@@ -1338,6 +1465,264 @@ describe("Skills Config Runtime Visibility", () => {
 
       controlWs.close();
       monitorWs.close();
+    },
+    180000,
+  );
+});
+
+describe("Tool HIL Approval", () => {
+  it.skipIf(!OPENAI_API_KEY)(
+    "pauses run until approval, then dispatches tool and completes",
+    async () => {
+      const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+      const nodeId = `hil-node-${crypto.randomUUID().slice(0, 8)}`;
+      const toolName = `hil_tool_${crypto.randomUUID().slice(0, 8)}`;
+      const sessionKey = `hil-e2e-${crypto.randomUUID().slice(0, 8)}`;
+      const runId = crypto.randomUUID();
+
+      const nodeWs = await connectWebSocket(wsUrl);
+      await sendRequest(nodeWs, "connect", {
+        minProtocol: 1,
+        client: {
+          mode: "node",
+          id: nodeId,
+        },
+        tools: [
+          {
+            name: toolName,
+            description: "HIL approval test tool",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          },
+        ],
+        nodeRuntime: buildExecutionNodeRuntime([toolName]),
+      });
+      const nodeEvents = attachGatewayEventCollector(nodeWs);
+
+      const clientWs = await connectAndAuth(wsUrl);
+      const clientEvents = attachGatewayEventCollector(clientWs);
+      await sendRequest(clientWs, "config.set", {
+        path: "apiKeys.openai",
+        value: OPENAI_API_KEY,
+      });
+      await sendRequest(clientWs, "config.set", {
+        path: "model",
+        value: { provider: "openai", id: "gpt-4o-mini" },
+      });
+      await sendRequest(clientWs, "config.set", {
+        path: "toolApproval",
+        value: {
+          defaultDecision: "allow",
+          rules: [
+            {
+              id: "ask-hil-tool",
+              tool: `${nodeId}__${toolName}`,
+              decision: "ask",
+            },
+          ],
+        },
+      });
+
+      const sendResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        runId,
+        message: [
+          `Call ${nodeId}__${toolName} exactly once with an empty object.`,
+          "After the tool result returns, reply exactly: HIL_E2E_DONE",
+        ].join("\n"),
+      }) as { status: string; runId: string };
+      expect(sendResult.status).toBe("started");
+      expect(sendResult.runId).toBe(runId);
+
+      const pausedState = await clientEvents.waitForEvent<{
+        runId: string;
+        state: string;
+      }>("chat", {
+        timeoutMs: 60000,
+        description: "run paused for deny flow",
+        predicate: (payload) =>
+          payload.runId === runId && payload.state === "paused",
+      });
+      expect(pausedState.state).toBe("paused");
+
+      const invokeBeforeApproval = await waitForToolInvoke(nodeWs, 2500);
+      expect(invokeBeforeApproval).toBeNull();
+
+      const reminderResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        message: "still waiting?",
+      }) as { status: string; response?: string };
+      expect(reminderResult.status).toBe("paused");
+      expect((reminderResult.response ?? "").toLowerCase()).toContain("paused");
+
+      const approveResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        message: "yes",
+      }) as { status: string; response?: string };
+      expect(approveResult.status).toBe("paused");
+      expect((approveResult.response ?? "").toLowerCase()).toContain("approved");
+
+      const invokeAfterApproval = await nodeEvents.waitForEvent<{
+        callId: string;
+        tool: string;
+        args: unknown;
+      }>("tool.invoke", {
+        timeoutMs: 15000,
+        description: "tool.invoke after HIL approval",
+      });
+      expect(invokeAfterApproval).not.toBeNull();
+      expect(invokeAfterApproval.tool).toBe(toolName);
+
+      await sendRequest(nodeWs, "tool.result", {
+        callId: invokeAfterApproval.callId,
+        result:
+          "Tool completed. Reply to the user exactly with HIL_E2E_DONE and nothing else.",
+      });
+
+      const terminal = await waitForRunTerminalState(clientWs, runId, 60000);
+      expect(terminal.state).toBe("final");
+
+      const preview = await sendRequest(clientWs, "session.preview", {
+        sessionKey,
+        limit: 40,
+      }) as { messages: unknown[] };
+      const finalText = extractLatestAssistantText(preview.messages);
+      expect(finalText.toUpperCase()).toContain("HIL_E2E_DONE");
+
+      await sendRequest(clientWs, "config.set", {
+        path: "toolApproval",
+        value: {
+          defaultDecision: "allow",
+          rules: [],
+        },
+      });
+
+      nodeWs.close();
+      clientWs.close();
+    },
+    180000,
+  );
+
+  it.skipIf(!OPENAI_API_KEY)(
+    "denies tool when user rejects approval and completes without dispatch",
+    async () => {
+      const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
+      const nodeId = `hil-deny-node-${crypto.randomUUID().slice(0, 8)}`;
+      const toolName = `hil_deny_tool_${crypto.randomUUID().slice(0, 8)}`;
+      const sessionKey = `hil-deny-e2e-${crypto.randomUUID().slice(0, 8)}`;
+      const runId = crypto.randomUUID();
+
+      const nodeWs = await connectWebSocket(wsUrl);
+      await sendRequest(nodeWs, "connect", {
+        minProtocol: 1,
+        client: {
+          mode: "node",
+          id: nodeId,
+        },
+        tools: [
+          {
+            name: toolName,
+            description: "HIL approval deny-path test tool",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          },
+        ],
+        nodeRuntime: buildExecutionNodeRuntime([toolName]),
+      });
+
+      const clientWs = await connectAndAuth(wsUrl);
+      const clientEvents = attachGatewayEventCollector(clientWs);
+      await sendRequest(clientWs, "config.set", {
+        path: "apiKeys.openai",
+        value: OPENAI_API_KEY,
+      });
+      await sendRequest(clientWs, "config.set", {
+        path: "model",
+        value: { provider: "openai", id: "gpt-4o-mini" },
+      });
+      await sendRequest(clientWs, "config.set", {
+        path: "toolApproval",
+        value: {
+          defaultDecision: "allow",
+          rules: [
+            {
+              id: "ask-hil-deny-tool",
+              tool: `${nodeId}__${toolName}`,
+              decision: "ask",
+            },
+          ],
+        },
+      });
+
+      const sendResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        runId,
+        message: [
+          `Call ${nodeId}__${toolName} exactly once with an empty object.`,
+          "If that tool is denied or fails, reply exactly: HIL_E2E_DENIED",
+          "Do not call any other tools.",
+        ].join("\n"),
+      }) as { status: string; runId: string };
+      expect(sendResult.status).toBe("started");
+      expect(sendResult.runId).toBe(runId);
+
+      const pausedState = await waitForRunState(clientWs, runId, "paused", 60000);
+      expect(pausedState.state).toBe("paused");
+
+      const invokeBeforeDecision = await waitForToolInvoke(nodeWs, 2500);
+      expect(invokeBeforeDecision).toBeNull();
+
+      const denyResult = await sendRequest(clientWs, "chat.send", {
+        sessionKey,
+        message: "no",
+      }) as { status: string; response?: string };
+      expect(denyResult.status).toBe("paused");
+      expect((denyResult.response ?? "").toLowerCase()).toContain("denied");
+
+      const invokeAfterDeny = await waitForToolInvoke(nodeWs, 4000);
+      expect(invokeAfterDeny).toBeNull();
+
+      const nextState = await clientEvents.waitForEvent<{
+        runId: string;
+        state: string;
+        error?: string;
+      }>("chat", {
+        timeoutMs: 60000,
+        description: "post-deny run state",
+        predicate: (payload) =>
+          payload.runId === runId &&
+          (payload.state === "paused" ||
+            payload.state === "final" ||
+            payload.state === "error"),
+      });
+      expect(nextState.state).not.toBe("error");
+
+      if (nextState.state === "paused") {
+        const denyAgain = await sendRequest(clientWs, "chat.send", {
+          sessionKey,
+          message: "no",
+        }) as { status: string; response?: string };
+        expect(denyAgain.status).toBe("paused");
+        const invokeAfterSecondDeny = await waitForToolInvoke(nodeWs, 3000);
+        expect(invokeAfterSecondDeny).toBeNull();
+      }
+
+      await sendRequest(clientWs, "config.set", {
+        path: "toolApproval",
+        value: {
+          defaultDecision: "allow",
+          rules: [],
+        },
+      });
+
+      nodeWs.close();
+      clientWs.close();
     },
     180000,
   );

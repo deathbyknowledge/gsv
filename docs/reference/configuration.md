@@ -169,6 +169,72 @@ Current behavior: runtime skill eligibility enforcement uses `requires.capabilit
 
 ---
 
+## Tool Approval
+
+Human-in-the-loop tool gating for session runs.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `toolApproval.defaultDecision` | `"allow" \| "ask" \| "deny"` | `"allow"` | Decision used when no rule matches. |
+| `toolApproval.rules` | `ToolApprovalRule[]` | `[]` | Ordered policy rules. First matching rule wins. |
+
+### ToolApprovalRule
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `id` | `string` | yes | Stable identifier for logs/debugging. |
+| `tool` | `string` | yes | Tool name pattern (supports `*` wildcard). |
+| `when` | `ToolApprovalArgCondition[]` | no | Arg predicates; all must match. |
+| `decision` | `"allow" \| "ask" \| "deny"` | yes | Rule decision. |
+| `reason` | `string` | no | Optional reason shown in pause/deny context. |
+
+### ToolApprovalArgCondition
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `path` | `string` | yes | Dot path into args (for example `command`, `options.force`, `steps.0.name`). |
+| `op` | `"equals" \| "contains" \| "startsWith" \| "regex"` | yes | Match operator. |
+| `value` | `string \| number \| boolean \| null` | yes | Match value (`string` required for `contains`, `startsWith`, `regex`). |
+| `flags` | `string` | no | Regex flags (`op: "regex"` only). |
+
+Example:
+
+```json
+{
+  "toolApproval": {
+    "defaultDecision": "allow",
+    "rules": [
+      {
+        "id": "deny-destructive-shell",
+        "tool": "gsv__Bash",
+        "when": [
+          {
+            "path": "command",
+            "op": "regex",
+            "value": "(^|\\s)rm\\s+-rf\\s+/"
+          }
+        ],
+        "decision": "deny",
+        "reason": "destructive command"
+      },
+      {
+        "id": "ask-all-shell",
+        "tool": "gsv__Bash",
+        "decision": "ask"
+      }
+    ]
+  }
+}
+```
+
+Behavior summary:
+
+- `allow`: dispatch immediately.
+- `ask`: pause run until user replies `yes` or `no`.
+- `deny`: do not dispatch; tool call is completed with a policy error.
+
+---
+
 ## Agents
 
 Multi-agent configuration: agent definitions, channel-to-agent bindings, and default heartbeat settings.
