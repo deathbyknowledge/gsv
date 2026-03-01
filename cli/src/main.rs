@@ -1066,6 +1066,15 @@ mod tests {
     }
 
     #[test]
+    fn test_select_service_path_falls_back_when_probed_path_is_blank() {
+        let selected = select_service_path(
+            Some(OsString::from("   ")),
+            Some(OsString::from("/env/bin:/usr/bin")),
+        );
+        assert_eq!(selected.as_deref(), Some("/env/bin:/usr/bin"));
+    }
+
+    #[test]
     fn test_select_service_path_rejects_empty_path() {
         let selected = select_service_path(Some(OsString::from("   ")), None);
         assert!(selected.is_none());
@@ -3204,10 +3213,18 @@ fn select_service_path(
     probed_path: Option<OsString>,
     env_path: Option<OsString>,
 ) -> Option<String> {
+    let normalize = |path: OsString| {
+        let trimmed = path.to_string_lossy().trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    };
+
     probed_path
-        .or(env_path)
-        .map(|path| path.to_string_lossy().trim().to_string())
-        .filter(|path| !path.is_empty())
+        .and_then(normalize)
+        .or_else(|| env_path.and_then(normalize))
 }
 
 fn node_service_path() -> Option<String> {
