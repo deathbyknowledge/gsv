@@ -262,8 +262,12 @@ impl GatewayClient {
         }
     }
 
-    pub async fn chat_send(&self, session_key: String, message: String) -> GatewayResult<Value> {
-        let run_id = uuid::Uuid::new_v4().to_string();
+    pub async fn chat_send(
+        &self,
+        session_key: String,
+        message: String,
+        run_id: String,
+    ) -> GatewayResult<Value> {
         self.request(
             "chat.send",
             Some(json!({
