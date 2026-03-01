@@ -328,14 +328,14 @@ Each node tool reports its capabilities to the Gateway. These capability IDs are
 
 ---
 
-## Host Roles
+## Host Capability Profiles
 
-Each node registers with a host role.
+Nodes are differentiated by their reported capabilities (not by a fixed role field).
 
-| Role | Description |
-|------|-------------|
-| `execution` | General-purpose execution host. Provides the standard tool set (Bash, Read, Write, Edit, Glob, Grep, Process). Selected as the primary execution host for tool dispatch. |
-| `specialized` | Hosts with specific capabilities or environments. Not selected as primary execution host. |
+| Example profile | Typical capabilities |
+|----------------|----------------------|
+| General-purpose shell node | `filesystem.list`, `filesystem.read`, `filesystem.write`, `filesystem.edit`, `text.search`, `shell.exec` |
+| Search-only node | `text.search` |
 
 ---
 
@@ -345,7 +345,5 @@ Nodes report additional runtime metadata to the Gateway:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `hostOs` | `string` | Operating system identifier (e.g. `"darwin"`, `"linux"`, `"windows"`). |
-| `hostEnv` | `string[]` | List of environment variable keys available on the host. |
-| `hostBinStatus` | `Record<string, boolean>` | Binary availability probed on demand. Key is binary name, value is whether it exists and is executable. |
-| `hostBinStatusUpdatedAt` | `number` | Timestamp (ms since epoch) of the last binary probe. |
+| `clientPlatform` | `string` | Client platform string from the node handshake (for example `darwin-arm64`, `linux-x64`). |
+| `clientVersion` | `string` | Node client version string. |

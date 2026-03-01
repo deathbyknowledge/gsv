@@ -11,7 +11,7 @@ metadata:
     "openclaw":
       {
         "emoji": "🐙",
-        "requires": { "bins": ["gh"], "env": ["GITHUB_TOKEN"] },
+        "requires": { "capabilities": ["shell.exec"] },
       },
   }
 ---
@@ -25,8 +25,9 @@ Use gh.
     expect(parsed.name).toBe("github");
     expect(parsed.metadata.description).toBe("GitHub integration");
     expect(parsed.metadata.openclaw?.emoji).toBe("🐙");
-    expect(parsed.metadata.openclaw?.requires?.bins).toEqual(["gh"]);
-    expect(parsed.metadata.openclaw?.requires?.env).toEqual(["GITHUB_TOKEN"]);
+    expect(parsed.metadata.openclaw?.requires?.capabilities).toEqual([
+      "shell.exec",
+    ]);
   });
 
   it("keeps body content intact after frontmatter", () => {
@@ -44,4 +45,3 @@ Hello.
     expect(body).toContain("Hello.");
   });
 });
-

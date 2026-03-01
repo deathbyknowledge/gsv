@@ -188,24 +188,11 @@ impl GatewayClient {
         }
     }
 
-    pub async fn skills_update(
-        &self,
-        agent_id: String,
-        force: bool,
-        timeout_ms: Option<u64>,
-    ) -> GatewayResult<Value> {
+    pub async fn skills_update(&self, agent_id: String) -> GatewayResult<Value> {
         let mut params = Map::new();
 
         if agent_id != "main" {
             params.insert("agentId".to_string(), json!(agent_id));
-        }
-
-        if force {
-            params.insert("force".to_string(), json!(true));
-        }
-
-        if let Some(timeout_ms) = timeout_ms {
-            params.insert("timeoutMs".to_string(), json!(timeout_ms));
         }
 
         if params.is_empty() {

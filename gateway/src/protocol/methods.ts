@@ -26,7 +26,6 @@ import type {
   ToolDefinition,
   NodeRuntimeInfo,
   NodeExecEventParams,
-  NodeProbeResultParams,
   ToolRequestParams,
   ToolResultParams,
 } from "./tools";
@@ -96,11 +95,6 @@ export type RpcMethods = {
 
   "tool.result": {
     params: ToolResultParams;
-    result: { ok: true; dropped?: true };
-  };
-
-  "node.probe.result": {
-    params: NodeProbeResultParams;
     result: { ok: true; dropped?: true };
   };
 
@@ -174,13 +168,7 @@ export type RpcMethods = {
   };
 
   "skills.update": {
-    params:
-      | {
-          agentId?: string;
-          force?: boolean;
-          timeoutMs?: number;
-        }
-      | undefined;
+    params: { agentId?: string } | undefined;
     result: SkillsUpdateResult;
   };
 

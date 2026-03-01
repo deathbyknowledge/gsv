@@ -18,7 +18,6 @@ import {
   scheduleHeartbeat as scheduleHeartbeatHandler,
   triggerHeartbeat as triggerHeartbeatHandler,
 } from "./heartbeat";
-import { resolveEffectiveSkillPolicy } from "../agents/prompt";
 import {
   canonicalizeSessionKey as canonicalizeKey,
   normalizeAgentId,
@@ -26,7 +25,6 @@ import {
   resolveAgentIdFromSessionKey,
   resolveAgentMainSessionKey,
 } from "../session/routing";
-import { listWorkspaceSkills } from "../skills";
 import type { TransferRequestParams } from "../protocol/transfer";
 import {
   executeCronTool as executeCronToolHandler,
@@ -36,7 +34,6 @@ import {
 } from "./tool-executors";
 import { executeCronJob as executeCronJobHandler } from "./cron-execution";
 import { GatewayAsyncExecStateService } from "./async-exec";
-import { GatewayNodeProbeStateService } from "./skill-probes";
 import {
   handleChannelInboundRpc as handleChannelInboundRpcHandler,
   type ChannelInboundRpcResult,
@@ -78,7 +75,6 @@ import type { SessionRegistryEntry } from "../protocol/session";
 import type {
   RuntimeNodeInventory,
   NodeExecEventParams,
-  NodeProbeResultParams,
   ToolDefinition,
   ToolRequestParams,
 } from "../protocol/tools";
@@ -87,7 +83,6 @@ import { GatewayNodeService } from "./node-service";
 
 const DEFAULT_INTERNAL_LOG_TIMEOUT_MS = 20_000;
 const DEFAULT_PENDING_TOOL_TIMEOUT_MS = 60_000;
-const SKILL_BIN_STATUS_TTL_MS = 5 * 60_000;
 
 type GatewayAlarmParticipant = {
   name: string;
@@ -103,10 +98,6 @@ export class Gateway extends DurableObject<Env> {
     this.ctx.storage.kv,
   );
   readonly asyncExecStateService = new GatewayAsyncExecStateService(
-    this.ctx.storage.kv,
-    this,
-  );
-  readonly nodeProbeStateService = new GatewayNodeProbeStateService(
     this.ctx.storage.kv,
     this,
   );
@@ -336,10 +327,6 @@ export class Gateway extends DurableObject<Env> {
         nodeId,
         `Node disconnected during log request: ${nodeId}`,
       );
-      this.markPendingNodeProbesAsQueued(
-        nodeId,
-        `Node disconnected during node probe: ${nodeId}`,
-      );
       failTransfersForNode(this, nodeId);
       console.log(`[Gateway] Node ${nodeId} marked offline`);
     } else if (mode === "channel" && channelKey) {
@@ -395,21 +382,6 @@ export class Gateway extends DurableObject<Env> {
     this.ctx.waitUntil(this.scheduleGatewayAlarm());
   }
 
-  markPendingNodeProbesAsQueued(nodeId: string, reason: string): void {
-    this.nodeProbeStateService.markPendingNodeProbesAsQueued(nodeId, reason);
-  }
-
-  async dispatchPendingNodeProbesForNode(nodeId: string): Promise<number> {
-    return this.nodeProbeStateService.dispatchPendingNodeProbesForNode(nodeId);
-  }
-
-  async handleNodeProbeResult(
-    nodeId: string,
-    params: NodeProbeResultParams,
-  ): Promise<{ ok: true; dropped?: true }> {
-    return this.nodeProbeStateService.handleNodeProbeResult(nodeId, params);
-  }
-
   async handleNodeExecEvent(
     nodeId: string,
     params: NodeExecEventParams,
@@ -423,116 +395,8 @@ export class Gateway extends DurableObject<Env> {
     return transferRequestHandler(this, params);
   }
 
-  getExecutionHostId(): string | null {
-    return this.nodeService.getExecutionHostId(this.nodes.keys());
-  }
-
-  getSpecializedHostIds(): string[] {
-    return this.nodeService.getSpecializedHostIds(this.nodes.keys());
-  }
-
   getRuntimeNodeInventory(): RuntimeNodeInventory {
     return this.nodeService.getRuntimeNodeInventory(this.nodes.keys());
-  }
-
-  async refreshSkillRuntimeFacts(
-    agentId: string,
-    options?: { force?: boolean; timeoutMs?: number },
-  ): Promise<{
-    agentId: string;
-    refreshedAt: number;
-    requiredBins: string[];
-    updatedNodeCount: number;
-    skippedNodeIds: string[];
-    errors: string[];
-  }> {
-    const normalizedAgentId = normalizeAgentId(agentId || "main");
-    const config = this.getFullConfig();
-    const workspaceSkills = await listWorkspaceSkills(
-      this.env.STORAGE,
-      normalizedAgentId,
-    );
-
-    const requiredBinsSet = new Set<string>();
-    for (const skill of workspaceSkills) {
-      const policy = resolveEffectiveSkillPolicy(skill, config.skills.entries);
-      if (!policy || policy.always || !policy.requires) {
-        continue;
-      }
-      for (const bin of [...policy.requires.bins, ...policy.requires.anyBins]) {
-        const sanitized = this.nodeProbeStateService.sanitizeSkillBinName(bin);
-        if (sanitized) {
-          requiredBinsSet.add(sanitized);
-        }
-      }
-    }
-
-    const requiredBins = Array.from(requiredBinsSet).sort();
-    if (requiredBins.length === 0) {
-      return {
-        agentId: normalizedAgentId,
-        refreshedAt: Date.now(),
-        requiredBins,
-        updatedNodeCount: 0,
-        skippedNodeIds: [],
-        errors: [],
-      };
-    }
-
-    const timeoutMs = this.nodeProbeStateService.clampSkillProbeTimeoutMs(
-      options?.timeoutMs,
-    );
-    const now = Date.now();
-    let updatedNodeCount = 0;
-    const skippedNodeIds: string[] = [];
-    const errors: string[] = [];
-
-    for (const nodeId of Array.from(this.nodes.keys()).sort()) {
-      const runtime = this.nodeService.getNodeRuntime(nodeId);
-      if (!runtime) {
-        skippedNodeIds.push(nodeId);
-        continue;
-      }
-
-      if (!this.nodeService.canNodeProbeBins(nodeId)) {
-        skippedNodeIds.push(nodeId);
-        continue;
-      }
-
-      const existingStatus = runtime.hostBinStatus ?? {};
-      const isStale =
-        !runtime.hostBinStatusUpdatedAt ||
-        now - runtime.hostBinStatusUpdatedAt > SKILL_BIN_STATUS_TTL_MS;
-      const binsToProbe =
-        options?.force || isStale
-          ? requiredBins
-          : requiredBins.filter((bin) => !(bin in existingStatus));
-
-      if (binsToProbe.length === 0) {
-        continue;
-      }
-
-      const probe = this.nodeProbeStateService.queueNodeBinProbe({
-        nodeId,
-        agentId: normalizedAgentId,
-        bins: binsToProbe,
-        timeoutMs,
-      });
-      if (probe.bins.length > 0) {
-        updatedNodeCount += 1;
-      }
-    }
-
-    await this.scheduleGatewayAlarm();
-
-    return {
-      agentId: normalizedAgentId,
-      refreshedAt: Date.now(),
-      requiredBins,
-      updatedNodeCount,
-      skippedNodeIds,
-      errors,
-    };
   }
 
   getPendingToolTimeoutMs(): number {
@@ -943,20 +807,6 @@ export class Gateway extends DurableObject<Env> {
         },
       },
       {
-        name: "probeTimeouts",
-        nextDueMs: this.nodeProbeStateService.nextPendingNodeProbeExpiryAtMs(),
-        run: async () => {
-          await this.nodeProbeStateService.handlePendingNodeProbeTimeouts();
-        },
-      },
-      {
-        name: "probeGc",
-        nextDueMs: this.nodeProbeStateService.nextPendingNodeProbeGcAtMs(),
-        run: async (params: { now: number }) => {
-          this.nodeProbeStateService.gcPendingNodeProbes(params.now, "alarm");
-        },
-      },
-      {
         name: "asyncExecGc",
         nextDueMs:
           this.asyncExecStateService.nextPendingAsyncExecSessionExpiryAtMs(),
@@ -1021,7 +871,7 @@ export class Gateway extends DurableObject<Env> {
     if (nextAlarm === undefined) {
       await this.ctx.storage.deleteAlarm();
       console.log(
-        `[Gateway] Alarm cleared (no heartbeat/cron/probe work scheduled)`,
+        `[Gateway] Alarm cleared (no scheduled gateway work)`,
       );
       return;
     }

@@ -343,28 +343,6 @@ Request a tool invocation in the context of a session (used by the agent loop).
 
 ### Node
 
-#### `node.probe.result`
-
-**Direction:** N -> G
-
-Return the result of a node probe (binary availability check).
-
-**Params: `NodeProbeResultParams`**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `probeId` | `string` | yes | Probe ID from the `node.probe` event. |
-| `ok` | `boolean` | yes | Whether the probe succeeded. |
-| `bins` | `Record<string, boolean>` | no | Map of binary name to availability. |
-| `error` | `string` | no | Error message if probe failed. |
-
-**Result:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ok` | `true` | Acknowledgement. |
-| `dropped` | `boolean` | `true` if the probe result was dropped. |
-
 #### `node.exec.event`
 
 **Direction:** N -> G
@@ -406,7 +384,7 @@ Request node logs. The gateway dispatches a `logs.get` event to the target node.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `nodeId` | `string` | no | Target node ID. If omitted, uses the execution host. |
+| `nodeId` | `string` | no | Target node ID. If omitted and exactly one node is connected, that node is used. If multiple nodes are connected, this is required. |
 | `lines` | `number` | no | Number of log lines to retrieve (default: 100, max: 5000). |
 
 **Result: `LogsGetResult`**
@@ -1225,7 +1203,6 @@ Get skill eligibility status.
 |-------|------|-------------|
 | `agentId` | `string` | Agent ID. |
 | `refreshedAt` | `number` | Timestamp of last refresh (epoch ms). |
-| `requiredBins` | `string[]` | Binaries required by any skill. |
 | `nodes` | `SkillNodeStatus[]` | Connected node statuses. |
 | `skills` | `SkillStatusEntry[]` | Skill eligibility entries. |
 
@@ -1234,13 +1211,8 @@ Get skill eligibility status.
 | Field | Type | Description |
 |-------|------|-------------|
 | `nodeId` | `string` | Node identifier. |
-| `hostRole` | `string` | `"execution"` or `"specialized"`. |
+| `online` | `boolean` | Whether the node is currently connected. |
 | `hostCapabilities` | `string[]` | Capability IDs. |
-| `hostOs` | `string` | Operating system. |
-| `hostEnv` | `string[]` | Environment variable names. |
-| `hostBins` | `string[]` | Available binaries. |
-| `hostBinStatusUpdatedAt` | `number` | Last bin probe timestamp (epoch ms). |
-| `canProbeBins` | `boolean` | Whether the node supports bin probing. |
 
 **`SkillStatusEntry`:**
 
@@ -1259,25 +1231,16 @@ Get skill eligibility status.
 
 **Direction:** C -> G
 
-Re-probe nodes and refresh skill eligibility.
+Refresh skill eligibility status.
 
 **Params:**
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `agentId` | `string` | no | Agent ID (default: `"main"`). |
-| `force` | `boolean` | no | Force re-probing even when cache is fresh. |
-| `timeoutMs` | `number` | no | Probe timeout in milliseconds. |
 
 **Result: `SkillsUpdateResult`**
-
-Extends `SkillsStatusResult` with:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `updatedNodeCount` | `number` | Number of nodes that were probed. |
-| `skippedNodeIds` | `string[]` | Node IDs skipped (fresh cache). |
-| `errors` | `string[]` | Probe errors. |
+Same shape as `SkillsStatusResult`.
 
 ---
 
@@ -1372,7 +1335,7 @@ Delete a file from the agent workspace.
 
 ## Events
 
-Events are sent from the gateway to connected clients/nodes as `evt` frames. The node does not receive `chat` events; the client does not receive `tool.invoke` or `node.probe` events.
+Events are sent from the gateway to connected clients/nodes as `evt` frames. The node does not receive `chat` events; the client does not receive node-directed events such as `tool.invoke` or `logs.get`.
 
 ### `chat`
 
@@ -1411,19 +1374,6 @@ Emitted to a node to request log lines.
 |-------|------|-------------|
 | `callId` | `string` | Call identifier. The node must return this in `logs.result`. |
 | `lines` | `number` | Requested number of lines. |
-
-### `node.probe`
-
-Emitted to a node to check binary availability.
-
-**Payload: `NodeProbePayload`**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `probeId` | `string` | Probe identifier. The node must return this in `node.probe.result`. |
-| `kind` | `string` | Probe kind. Currently only `"bins"`. |
-| `bins` | `string[]` | Binary names to check. |
-| `timeoutMs` | `number` | Probe timeout in milliseconds. |
 
 ### Transfer Events
 
@@ -1549,10 +1499,5 @@ Provided by nodes during the `connect` handshake.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `hostRole` | `string` | `"execution"` or `"specialized"`. |
 | `hostCapabilities` | `string[]` | Capability IDs: `"filesystem.list"`, `"filesystem.read"`, `"filesystem.write"`, `"filesystem.edit"`, `"text.search"`, `"shell.exec"`. |
 | `toolCapabilities` | `Record<string, string[]>` | Map of tool name to its capability IDs. |
-| `hostOs` | `string` | Operating system (e.g., `"macos"`, `"linux"`). |
-| `hostEnv` | `string[]` | Environment variable names present on the host. |
-| `hostBinStatus` | `Record<string, boolean>` | Map of binary name to availability. |
-| `hostBinStatusUpdatedAt` | `number` | Timestamp of last bin probe (epoch ms). |

@@ -46,9 +46,6 @@ describe("rpc registry", () => {
     expect(isMethodAllowedForMode(registry["tool.result"], "client")).toBe(false);
     expect(isMethodAllowedForMode(registry["logs.result"], "node")).toBe(true);
     expect(isMethodAllowedForMode(registry["logs.result"], "channel")).toBe(false);
-    expect(isMethodAllowedForMode(registry["node.probe.result"], "node")).toBe(
-      true,
-    );
     expect(isMethodAllowedForMode(registry["node.exec.event"], "node")).toBe(true);
     expect(isMethodAllowedForMode(registry["tool.invoke"], "node")).toBe(false);
     expect(isMethodAllowedForMode(registry["tool.request"], "client")).toBe(true);

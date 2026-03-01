@@ -17,7 +17,7 @@ metadata:
     "openclaw":
       {
         "emoji": "🐙",
-        "requires": { "bins": ["gh"] },
+        "requires": { "capabilities": ["shell.exec"] },
         "install":
           [
             {
@@ -48,7 +48,7 @@ Notice the structure:
 
 For this tutorial, we will create a skill called `docker` that teaches the agent how to use Docker commands. The skill will:
 
-- Require the `docker` binary to be available on a connected node
+- Require shell execution capability on a connected node
 - Provide the agent with instructions for common Docker operations
 
 ## 3. Create the SKILL.md file
@@ -70,7 +70,7 @@ metadata:
     "gsv":
       {
         "emoji": "🐳",
-        "requires": { "bins": ["docker"] },
+        "requires": { "capabilities": ["shell.exec"] },
         "install":
           [
             {
@@ -136,7 +136,7 @@ Let's walk through the frontmatter fields:
 - **`description`** -- a short summary shown in skill listings.
 - **`metadata`** -- a JSON object under the `gsv` key (this is the platform identifier). Inside it:
   - **`emoji`** -- a visual identifier for the skill.
-  - **`requires.bins`** -- an array of binaries that must exist on a connected node for this skill to be eligible. GSV probes connected nodes to check if these binaries are available.
+  - **`requires.capabilities`** -- an array of capabilities that must be present on at least one connected node for this skill to be eligible.
   - **`install`** -- optional instructions GSV can show for installing missing dependencies.
 
 The body after the frontmatter closing `---` is markdown that gets injected into the agent's system prompt when the skill is active. Write it as instructions the agent should follow.
@@ -163,7 +163,7 @@ cp /tmp/gsv-skills/docker/SKILL.md ~/.gsv/r2/agents/main/skills/docker/SKILL.md
 
 ## 5. Make sure a node satisfies the skill's requirements
 
-Our docker skill requires the `docker` binary. GSV checks connected nodes to see if the required binaries are available.
+Our docker skill requires the `shell.exec` capability.
 
 First, verify Docker is installed on your machine:
 
@@ -171,19 +171,15 @@ First, verify Docker is installed on your machine:
 docker --version
 ```
 
-If Docker is installed, your connected node should already satisfy the requirement. Trigger a skill eligibility refresh:
+If Docker is installed and your node is connected, you can verify current skill eligibility:
 
 ```bash
-gsv skills update
+gsv skills status
 ```
 
-You should see output listing all skills and their eligibility status. Look for the `docker` skill:
+You should see output listing all skills and their eligibility status. Look for the `docker` skill as `eligible`.
 
-```
-docker: eligible (bins: docker ✓)
-```
-
-If it shows as ineligible, make sure your node is running and that `docker` is in the node's `PATH`.
+If it shows as ineligible, make sure your node is running and advertises `shell.exec` in its host capabilities.
 
 ## 6. Verify the skill is loaded
 
@@ -207,7 +203,7 @@ This shows all skills the agent has access to, their eligibility, and which node
 
 You created a custom skill that:
 
-- Declares its binary requirements in frontmatter metadata
+- Declares capability requirements in frontmatter metadata
 - Provides structured instructions to the agent in the markdown body
 - Is stored in the agent's workspace in R2
 - Is automatically loaded into the agent's prompt when a connected node satisfies the requirements
@@ -219,12 +215,7 @@ Here is a summary of the metadata fields available under the `gsv` key in `metad
 | Field | Type | Purpose |
 |---|---|---|
 | `emoji` | string | Visual identifier |
-| `requires.bins` | string[] | All listed binaries must be found on a node |
-| `requires.anyBins` | string[] | At least one listed binary must be found |
-| `requires.env` | string[] | Required environment variables |
-| `requires.os` | string[] | Required OS (e.g., `darwin`, `linux`) |
-| `requires.capabilities` | string[] | All listed capabilities required |
-| `requires.anyCapabilities` | string[] | At least one capability required |
+| `requires.capabilities` | string[] | All listed capabilities required (actively enforced) |
 | `install` | array | Dependency install instructions |
 
 Each entry in `install` has:
@@ -237,7 +228,7 @@ Each entry in `install` has:
 | `bins` | string[] | Binaries provided by this install |
 | `label` | string | Human-readable description |
 
-You can also set `always: true` in the frontmatter (outside of `metadata`) to make the skill always load regardless of node availability -- useful for skills that don't require any binaries.
+You can also set `always: true` in the frontmatter (outside of `metadata`) to make the skill always load regardless of node availability.
 
 From here, you can:
 

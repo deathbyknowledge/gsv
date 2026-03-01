@@ -45,9 +45,6 @@ const DEFAULT_DESCRIPTOR_OVERRIDES: Partial<
   "logs.result": {
     allowedModes: ["node"],
   },
-  "node.probe.result": {
-    allowedModes: ["node"],
-  },
   "node.exec.event": {
     allowedModes: ["node"],
   },

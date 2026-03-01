@@ -102,22 +102,8 @@ export interface SessionConfig {
 }
 
 export interface SkillRequirementsConfig {
-  // Restrict to hosts with these roles.
-  hostRoles?: string[];
   // Require all of these capabilities on the same host.
   capabilities?: string[];
-  // Require at least one of these capabilities on the same host.
-  anyCapabilities?: string[];
-  // Require all binaries to be available on the selected host.
-  bins?: string[];
-  // Require at least one of these binaries on the selected host.
-  anyBins?: string[];
-  // Require all environment variable keys to exist on the selected host.
-  env?: string[];
-  // Require all dotted config paths to resolve to non-empty values.
-  config?: string[];
-  // Restrict to hosts matching one of these OS identifiers (e.g. darwin, linux).
-  os?: string[];
 }
 
 export interface SkillEntryConfig {
@@ -184,7 +170,6 @@ export interface GsvConfig {
   timeouts: {
     llmMs: number;
     toolMs: number;
-    skillProbeMaxAgeMs?: number;
   };
 
   // Auth settings

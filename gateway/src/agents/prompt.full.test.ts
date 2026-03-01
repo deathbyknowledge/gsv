@@ -81,12 +81,7 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
           metadata: {
             gsv: {
               requires: {
-                hostRoles: ["execution"],
                 capabilities: ["shell.exec"],
-                bins: ["git"],
-                env: ["OPENAI_API_KEY"],
-                config: ["apiKeys.openai"],
-                os: ["darwin"],
               },
             },
           },
@@ -98,7 +93,6 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
           metadata: {
             gsv: {
               requires: {
-                hostRoles: ["specialized"],
                 capabilities: ["text.search"],
               },
             },
@@ -125,13 +119,10 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
     };
 
     const nodes: RuntimeNodeInventory = {
-      executionHostId: "macbook",
-      specializedHostIds: [],
       hosts: [
         {
           nodeId: "macbook",
           online: true,
-          hostRole: "execution",
           hostCapabilities: [
             "filesystem.list",
             "filesystem.read",
@@ -144,15 +135,6 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
             Write: ["filesystem.write"],
           },
           tools: ["Bash", "Read", "Write"],
-          hostOs: "darwin",
-          hostEnv: ["GITHUB_TOKEN", "OPENAI_API_KEY"],
-          hostBins: ["gh", "git"],
-          hostBinStatus: {
-            docker: false,
-            gh: true,
-            git: true,
-          },
-          hostBinStatusUpdatedAt: 1700000000000,
           firstSeenAt: 1699990000000,
           lastSeenAt: 1700001000000,
           lastConnectedAt: 1700000900000,
@@ -162,7 +144,6 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
         {
           nodeId: "homelab",
           online: false,
-          hostRole: "execution",
           hostCapabilities: [
             "filesystem.list",
             "filesystem.read",
@@ -173,14 +154,6 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
             Bash: ["shell.exec"],
           },
           tools: ["Bash"],
-          hostOs: "linux",
-          hostEnv: ["CI"],
-          hostBins: ["docker", "git"],
-          hostBinStatus: {
-            docker: true,
-            git: true,
-          },
-          hostBinStatusUpdatedAt: 1690000000000,
           firstSeenAt: 1680000000000,
           lastSeenAt: 1700000000000,
           lastDisconnectedAt: 1700000000000,
@@ -190,17 +163,11 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
         {
           nodeId: "iphone",
           online: false,
-          hostRole: "specialized",
           hostCapabilities: ["text.search"],
           toolCapabilities: {
             SearchMessages: ["text.search"],
           },
           tools: ["SearchMessages"],
-          hostOs: "ios",
-          hostEnv: [],
-          hostBins: [],
-          hostBinStatus: {},
-          hostBinStatusUpdatedAt: 1700000500000,
           firstSeenAt: 1695000000000,
           lastSeenAt: 1700000500000,
           lastDisconnectedAt: 1700000200000,
@@ -218,11 +185,6 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
         heartbeatPrompt: "Check for stale follow-ups and urgent notices.",
         skillEntries: {
           "disabled-skill": { enabled: false },
-        },
-        configRoot: {
-          apiKeys: {
-            openai: "sk-live",
-          },
         },
         runtime: {
           agentId: "main",
@@ -360,7 +322,7 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
       Constraints: read at most one skill up front; only read after selecting.
       Config filter: 1 skill(s) hidden by skills.entries policy.
       Requirement filter: 1 skill(s) hidden due invalid runtime requirement identifiers.
-      Runtime filter: 1 skill(s) hidden due unmet runtime capability requirements.
+      Runtime filter: 1 skill(s) hidden due unmet runtime requirements.
 
       <available_skills>
         <skill name="deploy-checklist">
@@ -379,15 +341,11 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
       Model: anthropic/claude-sonnet-4
       Timezone: America/Los_Angeles
       Channel: discord
-      Primary execution host: macbook
-      Execution hosts: macbook
-      Specialized hosts: none
-      Known hosts: 3 (online: 1, offline: 2)
-      Capabilities are internal routing metadata. Do not call capability IDs as tools; call only listed tool names.
-      Host inventory:
-      - macbook (execution, online) os=darwin platform=darwin-arm64 version=0.2.1 envKeys=2 bins=2 capabilities=[filesystem.list, filesystem.read, filesystem.write, shell.exec] tools=[Bash, Read, Write]
-      - homelab (execution, offline) os=linux platform=linux-x64 version=0.2.0 envKeys=1 bins=2 capabilities=[filesystem.list, filesystem.read, filesystem.write, shell.exec] tools=[Bash]
-      - iphone (specialized, offline) os=ios platform=ios version=0.1.0 envKeys=0 bins=0 capabilities=[text.search] tools=[SearchMessages]"
+      Known nodes: 3 (online: 1, offline: 2)
+      Node inventory:
+      - macbook (online, platform=darwin-arm64) tools=[Bash, Read, Write]
+      - homelab (offline, platform=linux-x64) tools=[Bash]
+      - iphone (offline, platform=ios) tools=[SearchMessages]"
     `);
   });
 });

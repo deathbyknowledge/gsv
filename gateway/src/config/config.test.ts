@@ -246,12 +246,7 @@ describe("skills config", () => {
           "search-skill": {
             enabled: false,
             requires: {
-              hostRoles: ["execution"],
               capabilities: ["shell.exec"],
-              bins: ["gh"],
-              env: ["GITHUB_TOKEN"],
-              config: ["apiKeys.openai"],
-              os: ["darwin"],
             },
           },
         },
@@ -259,24 +254,9 @@ describe("skills config", () => {
     });
 
     expect(merged.skills.entries["search-skill"]?.enabled).toBe(false);
-    expect(merged.skills.entries["search-skill"]?.requires?.hostRoles).toEqual([
-      "execution",
-    ]);
     expect(
       merged.skills.entries["search-skill"]?.requires?.capabilities,
     ).toEqual(["shell.exec"]);
-    expect(merged.skills.entries["search-skill"]?.requires?.bins).toEqual([
-      "gh",
-    ]);
-    expect(merged.skills.entries["search-skill"]?.requires?.env).toEqual([
-      "GITHUB_TOKEN",
-    ]);
-    expect(merged.skills.entries["search-skill"]?.requires?.config).toEqual([
-      "apiKeys.openai",
-    ]);
-    expect(merged.skills.entries["search-skill"]?.requires?.os).toEqual([
-      "darwin",
-    ]);
   });
 });
 

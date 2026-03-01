@@ -1697,7 +1697,6 @@ export class Session extends DurableObject<Env> {
       tools: runTools,
       heartbeatPrompt,
       skillEntries: config.skills.entries,
-      configRoot: config,
       runtime: {
         agentId,
         sessionKey: this.meta.sessionKey,

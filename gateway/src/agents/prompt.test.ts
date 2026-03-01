@@ -95,7 +95,6 @@ describe("buildSystemPromptFromWorkspace", () => {
           metadata: {
             gsv: {
               requires: {
-                hostRoles: ["execution"],
                 capabilities: ["shell.exec"],
               },
             },
@@ -108,7 +107,6 @@ describe("buildSystemPromptFromWorkspace", () => {
           metadata: {
             gsv: {
               requires: {
-                hostRoles: ["specialized"],
                 capabilities: ["text.search"],
               },
             },
@@ -123,12 +121,9 @@ describe("buildSystemPromptFromWorkspace", () => {
         agentId: "main",
         isMainSession: true,
         nodes: {
-          executionHostId: "exec-1",
-          specializedHostIds: [],
           hosts: [
             {
               nodeId: "exec-1",
-              hostRole: "execution",
               hostCapabilities: [
                 "filesystem.list",
                 "filesystem.read",
@@ -146,11 +141,11 @@ describe("buildSystemPromptFromWorkspace", () => {
     expect(prompt).toContain('<skill name="exec-skill">');
     expect(prompt).not.toContain('<skill name="ios-skill">');
     expect(prompt).toContain(
-      "Runtime filter: 1 skill(s) hidden due unmet runtime capability requirements.",
+      "Runtime filter: 1 skill(s) hidden due unmet runtime requirements.",
     );
   });
 
-  it("supports openclaw-style bins/env/config/os requirements", () => {
+  it("ignores legacy bins/env/config/os requirement fields", () => {
     const tools: ToolDefinition[] = [
       {
         name: "gsv__ReadFile",
@@ -169,10 +164,7 @@ describe("buildSystemPromptFromWorkspace", () => {
           metadata: {
             openclaw: {
               requires: {
-                bins: ["gh"],
-                env: ["GITHUB_TOKEN"],
-                config: ["apiKeys.openai"],
-                os: ["darwin"],
+                capabilities: ["shell.exec"],
               },
             },
           },
@@ -180,23 +172,15 @@ describe("buildSystemPromptFromWorkspace", () => {
       ],
     };
 
-    const visiblePrompt = buildSystemPromptFromWorkspace("Base", workspace, {
+    const prompt = buildSystemPromptFromWorkspace("Base", workspace, {
       tools,
-      configRoot: {
-        apiKeys: {
-          openai: "sk-test",
-        },
-      },
       runtime: {
         agentId: "main",
         isMainSession: true,
         nodes: {
-          executionHostId: "exec-1",
-          specializedHostIds: [],
           hosts: [
             {
               nodeId: "exec-1",
-              hostRole: "execution",
               hostCapabilities: [
                 "filesystem.list",
                 "filesystem.read",
@@ -205,50 +189,13 @@ describe("buildSystemPromptFromWorkspace", () => {
               ],
               toolCapabilities: {},
               tools: ["Bash"],
-              hostOs: "darwin",
-              hostEnv: ["GITHUB_TOKEN"],
-              hostBinStatus: { gh: true },
             },
           ],
         },
       },
     });
 
-    expect(visiblePrompt).toContain('<skill name="github">');
-
-    const hiddenPrompt = buildSystemPromptFromWorkspace("Base", workspace, {
-      tools,
-      configRoot: {
-        apiKeys: {},
-      },
-      runtime: {
-        agentId: "main",
-        isMainSession: true,
-        nodes: {
-          executionHostId: "exec-1",
-          specializedHostIds: [],
-          hosts: [
-            {
-              nodeId: "exec-1",
-              hostRole: "execution",
-              hostCapabilities: [
-                "filesystem.list",
-                "filesystem.read",
-                "filesystem.write",
-                "shell.exec",
-              ],
-              toolCapabilities: {},
-              tools: ["Bash"],
-              hostOs: "darwin",
-              hostEnv: ["GITHUB_TOKEN"],
-              hostBinStatus: { gh: true },
-            },
-          ],
-        },
-      },
-    });
-
-    expect(hiddenPrompt).not.toContain('<skill name="github">');
+    expect(prompt).toContain('<skill name="github">');
   });
 
   it("filters skills by config entries policy", () => {
@@ -309,7 +256,6 @@ describe("buildSystemPromptFromWorkspace", () => {
           metadata: {
             gsv: {
               requires: {
-                hostRoles: ["specialized"],
                 capabilities: ["text.search"],
               },
             },
@@ -323,7 +269,6 @@ describe("buildSystemPromptFromWorkspace", () => {
       skillEntries: {
         "search-skill": {
           requires: {
-            hostRoles: ["execution"],
             capabilities: ["shell.exec"],
           },
         },
@@ -332,12 +277,9 @@ describe("buildSystemPromptFromWorkspace", () => {
         agentId: "main",
         isMainSession: true,
         nodes: {
-          executionHostId: "exec-1",
-          specializedHostIds: [],
           hosts: [
             {
               nodeId: "exec-1",
-              hostRole: "execution",
               hostCapabilities: [
                 "filesystem.list",
                 "filesystem.read",
@@ -394,12 +336,9 @@ describe("buildSystemPromptFromWorkspace", () => {
         agentId: "main",
         isMainSession: true,
         nodes: {
-          executionHostId: "exec-1",
-          specializedHostIds: [],
           hosts: [
             {
               nodeId: "exec-1",
-              hostRole: "execution",
               hostCapabilities: [
                 "filesystem.list",
                 "filesystem.read",
@@ -440,7 +379,6 @@ describe("buildSystemPromptFromWorkspace", () => {
           metadata: {
             gsv: {
               requires: {
-                hostRoles: ["execution"],
                 capabilities: ["shell.exec"],
               },
             },
@@ -467,12 +405,9 @@ describe("buildSystemPromptFromWorkspace", () => {
         agentId: "main",
         isMainSession: true,
         nodes: {
-          executionHostId: "exec-1",
-          specializedHostIds: [],
           hosts: [
             {
               nodeId: "exec-1",
-              hostRole: "execution",
               hostCapabilities: [
                 "filesystem.list",
                 "filesystem.read",
@@ -496,12 +431,9 @@ describe("buildSystemPromptFromWorkspace", () => {
 
   it("includes heartbeat guidance from config and HEARTBEAT.md", () => {
     const nodes: RuntimeNodeInventory = {
-      executionHostId: "exec-node-1",
-      specializedHostIds: ["iphone-node"],
       hosts: [
         {
           nodeId: "exec-node-1",
-          hostRole: "execution",
           hostCapabilities: [
             "filesystem.list",
             "filesystem.read",
@@ -515,7 +447,6 @@ describe("buildSystemPromptFromWorkspace", () => {
         },
         {
           nodeId: "exec-node-2",
-          hostRole: "execution",
           hostCapabilities: [
             "filesystem.list",
             "filesystem.read",
@@ -529,7 +460,6 @@ describe("buildSystemPromptFromWorkspace", () => {
         },
         {
           nodeId: "iphone-node",
-          hostRole: "specialized",
           hostCapabilities: ["text.search"],
           toolCapabilities: {
             SearchMessages: ["text.search"],
@@ -566,15 +496,10 @@ describe("buildSystemPromptFromWorkspace", () => {
     expect(prompt).toContain("Agent: main");
     expect(prompt).toContain("Session: main");
     expect(prompt).toContain("Model: anthropic/claude");
-    expect(prompt).toContain("Primary execution host: exec-node-1");
-    expect(prompt).toContain("Execution hosts: exec-node-1, exec-node-2");
-    expect(prompt).toContain("Specialized hosts: iphone-node");
-    expect(prompt).toContain("Known hosts: 3 (online: 3, offline: 0)");
+    expect(prompt).toContain("Known nodes: 3 (online: 3, offline: 0)");
+    expect(prompt).toContain("Node inventory:");
     expect(prompt).toContain(
-      "Capabilities are internal routing metadata. Do not call capability IDs as tools; call only listed tool names.",
-    );
-    expect(prompt).toContain(
-      "- exec-node-1 (execution, online) envKeys=0 bins=0 capabilities=[filesystem.list, filesystem.read, filesystem.write, shell.exec] tools=[Bash, Read, Write]",
+      "- exec-node-1 (online) tools=[Bash, Read, Write]",
     );
   });
 });

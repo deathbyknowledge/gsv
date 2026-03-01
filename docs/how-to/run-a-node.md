@@ -98,7 +98,7 @@ gsv node install
 
 ## Node capabilities and skills
 
-Nodes report their OS, available environment variables, and installed binaries to the gateway. Skills (loadable agent capabilities) can declare runtime requirements like specific binaries or OS types. If a skill requires `docker` and no connected node has it, that skill won't appear in the agent's prompt.
+Nodes report capabilities and runtime metadata to the gateway. Skill eligibility is currently based on capability requirements plus node online/offline status.
 
 To check which skills are eligible given your current nodes:
 
@@ -106,10 +106,10 @@ To check which skills are eligible given your current nodes:
 gsv skills status
 ```
 
-To re-probe node capabilities and refresh eligibility:
+To refresh eligibility status:
 
 ```bash
-gsv skills update --force
+gsv skills update
 ```
 
 ## Node logs

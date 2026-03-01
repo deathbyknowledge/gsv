@@ -144,19 +144,6 @@ export const handleToolResult: Handler<"tool.result"> = async ({
   return { ok: true };
 };
 
-export const handleNodeProbeResult: Handler<"node.probe.result"> = async ({
-  ws,
-  gw,
-  params,
-}) => {
-  const attachment = ws.deserializeAttachment();
-  const nodeId = attachment.nodeId as string | undefined;
-  if (!nodeId) {
-    throw new RpcError(403, "Only node clients can submit probe results");
-  }
-  return await gw.handleNodeProbeResult(nodeId, params);
-};
-
 export const handleNodeExecEvent: Handler<"node.exec.event"> = async ({
   ws,
   gw,

@@ -675,58 +675,15 @@ pub(crate) async fn run_skills(
     action: SkillsAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = GatewayClient::connect(url, token).await?;
-    let (payload, is_update) = match action {
-        SkillsAction::Status { agent_id } => (client.skills_status(agent_id).await?, false),
-        SkillsAction::Update {
-            agent_id,
-            force,
-            timeout_ms,
-        } => (
-            client.skills_update(agent_id, force, timeout_ms).await?,
-            true,
-        ),
+    let payload = match action {
+        SkillsAction::Status { agent_id } => client.skills_status(agent_id).await?,
+        SkillsAction::Update { agent_id } => client.skills_update(agent_id).await?,
     };
     let agent_id = payload
         .get("agentId")
         .and_then(|v| v.as_str())
         .unwrap_or("main");
     println!("Agent: {}", agent_id);
-
-    let required_bins = payload
-        .get("requiredBins")
-        .and_then(|v| v.as_array())
-        .map(|bins| {
-            bins.iter()
-                .filter_map(|entry| entry.as_str())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    println!(
-        "Required bins: {}",
-        if required_bins.is_empty() {
-            "none".to_string()
-        } else {
-            required_bins.join(", ")
-        }
-    );
-
-    if is_update {
-        let updated_nodes = payload
-            .get("updatedNodeCount")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        println!("Updated nodes: {}", updated_nodes);
-        if let Some(errors) = payload.get("errors").and_then(|v| v.as_array()) {
-            if !errors.is_empty() {
-                println!("Probe errors:");
-                for error in errors {
-                    if let Some(msg) = error.as_str() {
-                        println!("  - {}", msg);
-                    }
-                }
-            }
-        }
-    }
 
     if let Some(nodes) = payload.get("nodes").and_then(|v| v.as_array()) {
         println!("\nNodes:");
@@ -735,27 +692,29 @@ pub(crate) async fn run_skills(
         } else {
             for node in nodes {
                 let node_id = node.get("nodeId").and_then(|v| v.as_str()).unwrap_or("?");
-                let role = node.get("hostRole").and_then(|v| v.as_str()).unwrap_or("?");
-                let os = node
-                    .get("hostOs")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                let bins = node
-                    .get("hostBins")
-                    .and_then(|v| v.as_array())
-                    .map(|entries| entries.len())
-                    .unwrap_or(0);
-                let can_probe = node
-                    .get("canProbeBins")
+                let online = node
+                    .get("online")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let capabilities = node
+                    .get("hostCapabilities")
+                    .and_then(|v| v.as_array())
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .filter_map(|entry| entry.as_str())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
                 println!(
-                    "  - {} ({}) os={} bins={} probe={}",
+                    "  - {} ({}) capabilities={}",
                     node_id,
-                    role,
-                    os,
-                    bins,
-                    if can_probe { "yes" } else { "no" }
+                    if online { "online" } else { "offline" },
+                    if capabilities.is_empty() {
+                        "none".to_string()
+                    } else {
+                        capabilities.join(", ")
+                    }
                 );
             }
         }

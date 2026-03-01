@@ -38,7 +38,6 @@ Timeout durations for LLM calls and tool execution.
 |-----|------|---------|-------------|
 | `timeouts.llmMs` | `number` | `300000` (5 min) | Maximum duration in milliseconds for a single LLM API call. |
 | `timeouts.toolMs` | `number` | `60000` (1 min) | Maximum duration in milliseconds for a single tool execution. |
-| `timeouts.skillProbeMaxAgeMs` | `number` | `600000` (10 min) | Maximum age in milliseconds for cached skill binary probe results. Optional. |
 
 ---
 
@@ -164,14 +163,9 @@ Each entry in `skills.entries` configures a single skill.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `hostRoles` | `string[]` | Restrict to hosts with these roles (`"execution"`, `"specialized"`). |
 | `capabilities` | `string[]` | Require all listed capabilities on the same host. Valid values: `"filesystem.list"`, `"filesystem.read"`, `"filesystem.write"`, `"filesystem.edit"`, `"text.search"`, `"shell.exec"`. |
-| `anyCapabilities` | `string[]` | Require at least one of these capabilities on the same host. Same valid values as `capabilities`. |
-| `bins` | `string[]` | Require all listed binaries to be available (probe status `true`) on the selected host. |
-| `anyBins` | `string[]` | Require at least one of these binaries on the selected host. |
-| `env` | `string[]` | Require all listed environment variable keys on the selected host. |
-| `config` | `string[]` | Require all dotted config paths to resolve to non-empty values in the runtime config. |
-| `os` | `string[]` | Restrict to hosts matching one of these OS identifiers (e.g. `"darwin"`, `"linux"`). Comparison is case-insensitive. |
+
+Current behavior: runtime skill eligibility enforcement uses `requires.capabilities` (plus node online state).
 
 ---
 

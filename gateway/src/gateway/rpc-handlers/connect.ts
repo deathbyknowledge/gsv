@@ -1,32 +1,6 @@
 import { RpcError, timingSafeEqualStr } from "../../shared/utils";
 import type { ConnectResult, Handler } from "../../protocol/methods";
-import { normalizeAgentId } from "../../session/routing";
 import { validateNodeRuntimeInfo } from "../capabilities";
-import type { Gateway } from "../do";
-
-function getSkillProbeAgentIds(gw: Gateway): string[] {
-  const configured = gw
-    .getFullConfig()
-    .agents.list.map((agent) => normalizeAgentId(agent.id || "main"));
-  const unique = new Set(["main", ...configured]);
-  return Array.from(unique).sort();
-}
-
-function onNodeConnected(gw: Gateway, nodeId: string): void {
-  void (async () => {
-    try {
-      await gw.dispatchPendingNodeProbesForNode(nodeId);
-      for (const agentId of getSkillProbeAgentIds(gw)) {
-        await gw.refreshSkillRuntimeFacts(agentId, { force: false });
-      }
-    } catch (error) {
-      console.error(
-        `[Gateway] Failed to refresh skill runtime facts on node connect (${nodeId}):`,
-        error,
-      );
-    }
-  })();
-}
 
 export const handleConnect: Handler<"connect"> = async (ctx) => {
   const { ws, gw, params } = ctx;
@@ -93,10 +67,6 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         nodeId,
         `Node replaced during log request: ${nodeId}`,
       );
-      gw.markPendingNodeProbesAsQueued(
-        nodeId,
-        `Node replaced during node probe: ${nodeId}`,
-      );
       existingWs.close(1000, "Replaced by newer node connection");
     }
 
@@ -110,9 +80,8 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         version: params.client.version,
       },
     });
-    onNodeConnected(gw, nodeId);
     console.log(
-      `[Gateway] Node connected: ${nodeId}, role=${runtime.hostRole}, tools: [${nodeTools.map((t) => `${nodeId}__${t.name}`).join(", ")}]`,
+      `[Gateway] Node connected: ${nodeId}, tools: [${nodeTools.map((t) => `${nodeId}__${t.name}`).join(", ")}]`,
     );
   } else if (mode === "channel") {
     const channel = params.client.channel;
@@ -173,7 +142,6 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         "cron.runs",
         "tool.request",
         "tool.result",
-        "node.probe.result",
         "node.exec.event",
         "logs.result",
         "channel.inbound",
@@ -188,7 +156,6 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
         "chat",
         "tool.invoke",
         "tool.result",
-        "node.probe",
         "logs.get",
         "channel.outbound",
       ],

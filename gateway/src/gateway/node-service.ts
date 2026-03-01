@@ -1,9 +1,5 @@
 import { getNativeToolDefinitions } from "../agents/tools";
 import { PersistedObject, snapshot, type Proxied } from "../shared/persisted-object";
-import {
-  listHostsByRole,
-  pickExecutionHostId,
-} from "./capabilities";
 import type { EventFrame } from "../protocol/frames";
 import type {
   LogsGetEventPayload,
@@ -54,11 +50,8 @@ export function cloneNodeRuntimeInfo(
     overrides?.hostCapabilities ?? plainRuntime.hostCapabilities;
   const toolCapabilities =
     overrides?.toolCapabilities ?? plainRuntime.toolCapabilities;
-  const hostEnv = overrides?.hostEnv ?? plainRuntime.hostEnv;
-  const hostBinStatus = overrides?.hostBinStatus ?? plainRuntime.hostBinStatus;
 
   return {
-    hostRole: overrides?.hostRole ?? plainRuntime.hostRole,
     hostCapabilities: [...hostCapabilities],
     toolCapabilities: Object.fromEntries(
       Object.entries(toolCapabilities).map(([toolName, capabilities]) => [
@@ -66,18 +59,6 @@ export function cloneNodeRuntimeInfo(
         [...capabilities],
       ]),
     ),
-    hostOs: overrides?.hostOs ?? plainRuntime.hostOs,
-    hostEnv: hostEnv ? [...hostEnv] : undefined,
-    hostBinStatus: hostBinStatus
-      ? Object.fromEntries(
-          Object.entries(hostBinStatus).map(([bin, available]) => [
-            bin,
-            available === true,
-          ]),
-        )
-      : undefined,
-    hostBinStatusUpdatedAt:
-      overrides?.hostBinStatusUpdatedAt ?? plainRuntime.hostBinStatusUpdatedAt,
   };
 }
 
@@ -282,37 +263,6 @@ export class GatewayNodeService {
 
   setNodeRuntime(nodeId: string, runtime: NodeRuntimeInfo): void {
     this.nodeRuntimeRegistry[nodeId] = cloneNodeRuntimeInfo(runtime);
-  }
-
-  canNodeProbeBins(nodeId: string): boolean {
-    const runtime = this.nodeRuntimeRegistry[nodeId];
-    if (!runtime) {
-      return false;
-    }
-    return runtime.hostCapabilities.includes("shell.exec");
-  }
-
-  mergeNodeBinStatus(
-    nodeId: string,
-    statusByBin: Record<string, boolean>,
-    updatedAt: number = Date.now(),
-  ): boolean {
-    const runtime = this.nodeRuntimeRegistry[nodeId];
-    if (!runtime) {
-      return false;
-    }
-
-    const existingStatus = runtime.hostBinStatus ?? {};
-    this.nodeRuntimeRegistry[nodeId] = cloneNodeRuntimeInfo(runtime, {
-      hostBinStatus: Object.fromEntries(
-        Object.entries({
-          ...existingStatus,
-          ...statusByBin,
-        }).sort(([left], [right]) => left.localeCompare(right)),
-      ),
-      hostBinStatusUpdatedAt: Math.floor(updatedAt),
-    });
-    return true;
   }
 
   resolveTool(
@@ -606,21 +556,6 @@ export class GatewayNodeService {
     return [...getNativeToolDefinitions(), ...this.listNodeTools(connectedNodeIds)];
   }
 
-  getExecutionHostId(connectedNodeIds: Iterable<string>): string | null {
-    return pickExecutionHostId({
-      nodeIds: Array.from(connectedNodeIds),
-      runtimes: this.nodeRuntimeRegistry,
-    });
-  }
-
-  getSpecializedHostIds(connectedNodeIds: Iterable<string>): string[] {
-    return listHostsByRole({
-      nodeIds: Array.from(connectedNodeIds),
-      runtimes: this.nodeRuntimeRegistry,
-      role: "specialized",
-    });
-  }
-
   getRuntimeNodeInventory(
     connectedNodeIds: Iterable<string>,
   ): RuntimeNodeInventory {
@@ -638,12 +573,9 @@ export class GatewayNodeService {
         return {
           nodeId,
           online,
-          hostRole: "specialized" as const,
           hostCapabilities: [],
           toolCapabilities: {},
           tools,
-          hostEnv: [],
-          hostBins: [],
           firstSeenAt: catalog?.firstSeenAt,
           lastSeenAt: catalog?.lastSeenAt,
           lastConnectedAt: catalog?.lastConnectedAt,
@@ -653,24 +585,9 @@ export class GatewayNodeService {
         };
       }
 
-      const hostBinStatus = runtime.hostBinStatus
-        ? Object.fromEntries(
-            Object.entries(runtime.hostBinStatus).sort(([left], [right]) =>
-              left.localeCompare(right),
-            ),
-          )
-        : undefined;
-      const hostBins = hostBinStatus
-        ? Object.entries(hostBinStatus)
-            .filter(([, available]) => available)
-            .map(([bin]) => bin)
-            .sort()
-        : [];
-
       return {
         nodeId,
         online,
-        hostRole: runtime.hostRole,
         hostCapabilities: [...runtime.hostCapabilities].sort(),
         toolCapabilities: Object.fromEntries(
           Object.entries(runtime.toolCapabilities)
@@ -681,11 +598,6 @@ export class GatewayNodeService {
             ]),
         ),
         tools,
-        hostOs: runtime.hostOs,
-        hostEnv: runtime.hostEnv ? [...runtime.hostEnv].sort() : [],
-        hostBins,
-        hostBinStatus,
-        hostBinStatusUpdatedAt: runtime.hostBinStatusUpdatedAt,
         firstSeenAt: catalog?.firstSeenAt,
         lastSeenAt: catalog?.lastSeenAt,
         lastConnectedAt: catalog?.lastConnectedAt,
@@ -696,8 +608,6 @@ export class GatewayNodeService {
     });
 
     return {
-      executionHostId: this.getExecutionHostId(connected),
-      specializedHostIds: this.getSpecializedHostIds(connected),
       hosts,
     };
   }

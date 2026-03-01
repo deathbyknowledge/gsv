@@ -16,24 +16,12 @@ function resolveAgentId(input: unknown): string {
   return trimmed.length > 0 ? trimmed : "main";
 }
 
-function resolveTimeoutMs(input: unknown): number | undefined {
-  if (typeof input !== "number" || !Number.isFinite(input)) {
-    return undefined;
-  }
-  return Math.floor(input);
-}
-
-function canNodeProbeBins(gw: Gateway, nodeId: string): boolean {
-  return gw.nodeService.canNodeProbeBins(nodeId);
-}
-
 async function collectSkillsStatus(gw: Gateway, agentId: string) {
   const normalizedAgentId = normalizeAgentId(agentId || "main");
   const config = gw.getFullConfig();
   const workspaceSkills = await listWorkspaceSkills(env.STORAGE, normalizedAgentId);
   const runtimeInventory = gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys());
 
-  const requiredBinsSet = new Set<string>();
   const skillEntries = workspaceSkills
     .map((skill) => {
       const policy = resolveEffectiveSkillPolicy(skill, config.skills.entries);
@@ -49,13 +37,7 @@ async function collectSkillsStatus(gw: Gateway, agentId: string) {
         };
       }
 
-      if (policy.requires) {
-        for (const bin of [...policy.requires.bins, ...policy.requires.anyBins]) {
-          requiredBinsSet.add(bin);
-        }
-      }
-
-      const evaluation = evaluateSkillEligibility(policy, runtimeInventory, config);
+      const evaluation = evaluateSkillEligibility(policy, runtimeInventory);
       return {
         name: skill.name,
         description: skill.description,
@@ -73,21 +55,13 @@ async function collectSkillsStatus(gw: Gateway, agentId: string) {
     .map((host) => ({
       nodeId: host.nodeId,
       online: host.online !== false,
-      hostRole: host.hostRole,
       hostCapabilities: host.hostCapabilities,
-      hostOs: host.hostOs,
-      hostEnv: host.hostEnv ?? [],
-      hostBins: host.hostBins ?? [],
-      hostBinStatusUpdatedAt: host.hostBinStatusUpdatedAt,
-      canProbeBins:
-        host.online !== false && canNodeProbeBins(gw, host.nodeId),
     }))
     .sort((left, right) => left.nodeId.localeCompare(right.nodeId));
 
   return {
     agentId: normalizedAgentId,
     refreshedAt: Date.now(),
-    requiredBins: Array.from(requiredBinsSet).sort(),
     nodes: nodeEntries,
     skills: skillEntries,
   };
@@ -106,16 +80,5 @@ export const handleSkillsUpdate: Handler<"skills.update"> = async ({
   params,
 }) => {
   const agentId = resolveAgentId(params?.agentId);
-  const refreshed = await gw.refreshSkillRuntimeFacts(agentId, {
-    force: params?.force === true,
-    timeoutMs: resolveTimeoutMs(params?.timeoutMs),
-  });
-  const status = await collectSkillsStatus(gw, agentId);
-
-  return {
-    ...status,
-    updatedNodeCount: refreshed.updatedNodeCount,
-    skippedNodeIds: refreshed.skippedNodeIds,
-    errors: refreshed.errors,
-  };
+  return await collectSkillsStatus(gw, agentId);
 };
