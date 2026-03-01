@@ -16,6 +16,7 @@ const TAB_PATHS: Record<Tab, string> = {
   pairing: "/pairing",
   config: "/config",
   debug: "/debug",
+  settings: "/settings",
 };
 
 const PATH_TABS: Record<string, Tab> = Object.fromEntries(

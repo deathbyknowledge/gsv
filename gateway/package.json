@@ -4,14 +4,10 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"deploy": "bun alchemy/cli.ts",
-		"deploy:up": "bun alchemy/cli.ts up",
-		"deploy:wizard": "bun alchemy/cli.ts wizard",
-		"deploy:destroy": "bun alchemy/cli.ts destroy",
-		"deploy:status": "bun alchemy/cli.ts status",
-		"deploy:wrangler": "wrangler deploy",
+		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
+		"build:ui": "cd ui && npm run build",
 		"cf-typegen": "wrangler types",
 		"test": "vitest",
 		"test:run": "vitest run",
@@ -29,7 +25,8 @@
 	},
 	"dependencies": {
 		"@clack/prompts": "^1.0.0",
-		"@mariozechner/pi-ai": "^0.54.0",
+		"@mariozechner/pi-ai": "^0.55.1",
+		"agents": "^0.5.1",
 		"picocolors": "^1.1.1",
 		"ws": "^8.19.0"
 	}

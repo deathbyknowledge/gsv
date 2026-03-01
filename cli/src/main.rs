@@ -64,6 +64,16 @@ enum Commands {
         #[arg(long)]
         foreground: bool,
 
+        /// Enable display server mode: open native webview windows for surfaces.
+        /// Requires --foreground. Compile with --features display.
+        #[arg(long)]
+        display: bool,
+
+        /// Directory for persistent browser profiles (cookies, localStorage).
+        /// Default: ~/.gsv/browser-profiles
+        #[arg(long)]
+        profile_dir: Option<PathBuf>,
+
         /// Node ID (default: hostname) - used as namespace prefix for tools
         #[arg(long)]
         id: Option<String>,
@@ -799,16 +809,417 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("Failed to install rustls crypto provider");
     }
 
-    // Now start tokio runtime and run async main
+    // Parse CLI early to detect display mode (needs main thread for tao event loop)
+    let cli = Cli::parse();
+
+    // Display mode: tao event loop on main thread, tokio on background thread.
+    // Must be handled before creating the tokio runtime because macOS Cocoa
+    // requires the event loop to run on the main thread.
+    #[cfg(feature = "display")]
+    if let Commands::Node {
+        display: true,
+        profile_dir,
+        id,
+        workspace,
+        action: None,
+        ..
+    } = &cli.command
+    {
+        let cfg = CliConfig::load();
+        let url = cli
+            .url
+            .clone()
+            .unwrap_or_else(|| cfg.gateway_url());
+        let token = cli.token.clone().or_else(|| cfg.gateway_token());
+        let node_id = resolve_node_id(id.clone(), &cfg);
+        let workspace_path = resolve_node_workspace(workspace.clone(), &cfg);
+        let profile_path = profile_dir.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".gsv")
+                .join("browser-profiles")
+        });
+        return run_node_display_main(&url, token, node_id, workspace_path, profile_path);
+    }
+
+    // Standard path: tokio runtime on main thread
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(async_main())
+        .block_on(async_main_with(cli))
 }
 
-async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+/// Display mode entry point: tao event loop on main thread, tokio on background thread.
+/// This function never returns normally (tao's event loop diverges).
+#[cfg(feature = "display")]
+fn run_node_display_main(
+    url: &str,
+    token: Option<String>,
+    node_id: String,
+    workspace: PathBuf,
+    profile_dir: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gsv::display::{create_display, run_display_loop};
+    use gsv::protocol::SurfaceEvalResultPayload;
 
+    let (display_handle, event_loop, eval_result_rx) = create_display(profile_dir.clone());
+
+    eprintln!(
+        "[display] Starting display node '{}' -> {} (profiles: {:?})",
+        node_id, url, profile_dir
+    );
+
+    // Spawn tokio runtime on a background thread.
+    // The main thread is reserved for the tao/wry event loop (macOS requirement).
+    let url_owned = url.to_string();
+    let display_for_thread = display_handle.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to build tokio runtime for display node");
+
+        rt.block_on(async move {
+            // Channel for surface events from the node event handler
+            let (surface_tx, mut surface_rx) =
+                tokio::sync::mpsc::unbounded_channel::<(String, Option<serde_json::Value>)>();
+
+            // Bridge: std mpsc (main thread IPC) → tokio mpsc (async runtime).
+            // Eval results from webview IPC handlers flow from the main thread
+            // back to the tokio runtime via this channel.
+            // Convert display::EvalResult → protocol::SurfaceEvalResultPayload.
+            let (eval_bridge_tx, eval_bridge_rx) =
+                tokio::sync::mpsc::unbounded_channel::<SurfaceEvalResultPayload>();
+            std::thread::spawn(move || {
+                while let Ok(result) = eval_result_rx.recv() {
+                    let payload = SurfaceEvalResultPayload {
+                        eval_id: result.eval_id,
+                        surface_id: result.surface_id,
+                        ok: result.ok,
+                        result: result.result.and_then(|s| serde_json::from_str(&s).ok()),
+                        error: result.error,
+                    };
+                    if eval_bridge_tx.send(payload).is_err() {
+                        break; // tokio receiver dropped
+                    }
+                }
+            });
+
+            // Task that receives surface events and forwards to tao display loop
+            let display = display_for_thread.clone();
+            let gw_url = url_owned.clone();
+            tokio::spawn(async move {
+                while let Some((event_name, payload)) = surface_rx.recv().await {
+                    process_surface_event(&display, &gw_url, &event_name, payload).await;
+                }
+            });
+
+            if let Err(e) = run_node(
+                &url_owned,
+                token,
+                node_id,
+                workspace,
+                true,
+                Some(surface_tx),
+                Some(eval_bridge_rx),
+            )
+            .await
+            {
+                eprintln!("[display] Node error: {}", e);
+                display_for_thread.shutdown();
+            }
+        });
+    });
+
+    // Run tao event loop on main thread (blocks forever)
+    run_display_loop(event_loop, profile_dir);
+}
+
+/// Process a surface event from the gateway and forward to the display handle.
+/// For webview surfaces with profiles, handles downloading the R2 snapshot
+/// before opening the webview (so the profile data is present on disk).
+#[cfg(feature = "display")]
+async fn process_surface_event(
+    display: &gsv::display::DisplayHandle,
+    gateway_url: &str,
+    event_name: &str,
+    payload: Option<serde_json::Value>,
+) {
+    use gsv::display::{gateway_http_url, resolve_surface_url};
+    use gsv::protocol::{
+        FsAuthorizeResult, SurfaceClosedPayload, SurfaceOpenedPayload, SurfaceUpdatedPayload,
+    };
+
+    let Some(payload) = payload else {
+        return;
+    };
+
+    match event_name {
+        "surface.opened" => {
+            // Extract the pre-fetched fs read token (if any) before deserializing
+            let fs_token = payload
+                .get("fsReadToken")
+                .and_then(|v| serde_json::from_value::<FsAuthorizeResult>(v.clone()).ok());
+
+            if let Ok(data) = serde_json::from_value::<SurfaceOpenedPayload>(payload) {
+                // If this is a webview with a profile and we have an fs token,
+                // try to download the R2 snapshot to hydrate the local profile
+                if let (Some(ref profile_id), Some(ref token_result)) =
+                    (&data.surface.profile_id, &fs_token)
+                {
+                    let profile_dir = display.profile_dir.join(profile_id);
+                    let snapshot_path = profile_dir.join("__snapshot.tar.gz");
+
+                    // Only download if local profile doesn't exist yet
+                    if !profile_dir.exists() {
+                        let http_base = gateway_http_url(gateway_url);
+                        let snapshot_url = format!(
+                            "{}/fs/browser-profiles/{}/snapshot.tar.gz",
+                            http_base, profile_id
+                        );
+                        eprintln!(
+                            "[display] Downloading profile snapshot for {} ...",
+                            profile_id
+                        );
+                        match download_profile_snapshot(
+                            &snapshot_url,
+                            &token_result.token,
+                            &snapshot_path,
+                        )
+                        .await
+                        {
+                            Ok(true) => {
+                                // Extract the snapshot
+                                if let Err(e) =
+                                    extract_profile_snapshot(&snapshot_path, &profile_dir)
+                                {
+                                    eprintln!(
+                                        "[display] Failed to extract profile {}: {}",
+                                        profile_id, e
+                                    );
+                                }
+                                // Clean up the snapshot file
+                                let _ = std::fs::remove_file(&snapshot_path);
+                                eprintln!(
+                                    "[display] Profile {} hydrated from R2",
+                                    profile_id
+                                );
+                            }
+                            Ok(false) => {
+                                // No snapshot in R2 — start fresh
+                                eprintln!(
+                                    "[display] No R2 snapshot for profile {}, starting fresh",
+                                    profile_id
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[display] Profile download failed for {}: {}",
+                                    profile_id, e
+                                );
+                            }
+                        }
+                    }
+                }
+
+                let url = resolve_surface_url(
+                    gateway_url,
+                    &data.surface.kind,
+                    &data.surface.content_ref,
+                );
+                display.open_surface(
+                    data.surface.surface_id,
+                    url,
+                    data.surface.label,
+                    data.surface.profile_id,
+                );
+            }
+        }
+        "surface.closed" => {
+            // Extract the pre-fetched fs write token before deserializing
+            let fs_write_token = payload
+                .get("fsWriteToken")
+                .and_then(|v| serde_json::from_value::<FsAuthorizeResult>(v.clone()).ok());
+
+            if let Ok(data) = serde_json::from_value::<SurfaceClosedPayload>(payload) {
+                // Close the webview window first
+                display.close_surface(data.surface_id);
+
+                // Upload profile snapshot to R2 if this surface had a profile
+                if let (Some(ref profile_id), Some(ref token_result)) =
+                    (&data.profile_id, &fs_write_token)
+                {
+                    let profile_dir = display.profile_dir.join(profile_id);
+                    if profile_dir.exists() {
+                        let http_base = gateway_http_url(gateway_url);
+                        let upload_url = format!(
+                            "{}/fs/browser-profiles/{}/snapshot.tar.gz",
+                            http_base, profile_id
+                        );
+
+                        // Small delay to let the webview flush its data
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                        eprintln!(
+                            "[display] Uploading profile snapshot for {} ...",
+                            profile_id
+                        );
+                        match create_and_upload_profile(
+                            &profile_dir,
+                            &upload_url,
+                            &token_result.token,
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                eprintln!(
+                                    "[display] Profile {} uploaded to R2",
+                                    profile_id
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[display] Profile upload failed for {}: {}",
+                                    profile_id, e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "surface.updated" => {
+            if let Ok(data) = serde_json::from_value::<SurfaceUpdatedPayload>(payload) {
+                let label = Some(data.surface.label.clone());
+                display.update_surface(data.surface.surface_id, label);
+            }
+        }
+        "surface.eval" => {
+            // Forward eval request to the display's webview for JS execution.
+            // The result comes back via the IPC handler → eval result channel.
+            if let Ok(data) =
+                serde_json::from_value::<gsv::protocol::SurfaceEvalRequestPayload>(payload)
+            {
+                display.eval_script(data.surface_id, data.eval_id, data.script);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Download a profile snapshot from the /fs/ endpoint.
+/// Returns Ok(true) if downloaded, Ok(false) if 404 (no snapshot), Err on failure.
+#[cfg(feature = "display")]
+async fn download_profile_snapshot(
+    url: &str,
+    token: &str,
+    dest: &std::path::Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await?;
+
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()).into());
+    }
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let bytes = resp.bytes().await?;
+    std::fs::write(dest, &bytes)?;
+    Ok(true)
+}
+
+/// Extract a tar.gz snapshot into the profile directory.
+#[cfg(feature = "display")]
+fn extract_profile_snapshot(
+    archive_path: &std::path::Path,
+    dest_dir: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let file = std::fs::File::open(archive_path)?;
+    let gz = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(gz);
+    std::fs::create_dir_all(dest_dir)?;
+    archive.unpack(dest_dir)?;
+    Ok(())
+}
+
+/// Create a tar.gz snapshot of a profile directory and upload it to R2 via /fs/.
+#[cfg(feature = "display")]
+async fn create_and_upload_profile(
+    profile_dir: &std::path::Path,
+    upload_url: &str,
+    token: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Create tar.gz in memory
+    let tar_gz_bytes = tokio::task::spawn_blocking({
+        let profile_dir = profile_dir.to_path_buf();
+        move || -> Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            {
+                let enc = flate2::write::GzEncoder::new(&mut buf, flate2::Compression::fast());
+                let mut tar_builder = tar::Builder::new(enc);
+                tar_builder
+                    .append_dir_all(".", &profile_dir)
+                    .map_err(|e| format!("tar: {}", e))?;
+                let enc = tar_builder.into_inner().map_err(|e| format!("tar finish: {}", e))?;
+                enc.finish().map_err(|e| format!("gzip: {}", e))?;
+            }
+            Ok(buf)
+        }
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking: {}", e))?
+    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+    let size_mb = tar_gz_bytes.len() as f64 / (1024.0 * 1024.0);
+    if tar_gz_bytes.len() > 50 * 1024 * 1024 {
+        return Err(format!(
+            "Profile snapshot too large ({:.1} MB, limit 50 MB)",
+            size_mb
+        )
+        .into());
+    }
+    eprintln!(
+        "[display] Profile snapshot: {:.1} MB compressed",
+        size_mb
+    );
+
+    // Upload via HTTP PUT
+    let client = reqwest::Client::new();
+    let resp = client
+        .put(upload_url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Content-Type", "application/gzip")
+        .header(
+            "X-R2-Meta",
+            serde_json::json!({
+                "version": "1",
+                "uploadedAt": chrono::Utc::now().to_rfc3339(),
+            })
+            .to_string(),
+        )
+        .body(tar_gz_bytes)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Upload failed: HTTP {} - {}", status, body).into());
+    }
+
+    Ok(())
+}
+
+async fn async_main_with(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // Load config from file
     let cfg = CliConfig::load();
 
@@ -831,10 +1242,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Node {
             foreground,
+            display,
+            profile_dir: _,
             id,
             workspace,
             action,
         } => {
+            if display && !foreground {
+                return Err("--display requires --foreground".into());
+            }
+            #[cfg(not(feature = "display"))]
+            if display {
+                return Err(
+                    "--display requires the 'display' feature. Rebuild with: cargo build --features display".into(),
+                );
+            }
             if let Some(action) = action {
                 if foreground {
                     return Err(
@@ -850,7 +1272,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             } else if foreground {
                 let node_id = resolve_node_id(id, &cfg);
                 let workspace = resolve_node_workspace(workspace, &cfg);
-                run_node(&url, token, node_id, workspace).await
+                run_node(&url, token, node_id, workspace, display, None, None).await
             } else {
                 run_node_default_managed(
                     &cfg,
@@ -3077,6 +3499,7 @@ fn capabilities_for_tool(tool_name: &str) -> Result<Vec<&'static str>, String> {
 
 fn build_execution_node_runtime(
     tool_defs: &[ToolDefinition],
+    display: bool,
 ) -> Result<NodeRuntimeInfo, Box<dyn std::error::Error>> {
     let mut seen_tool_names = HashSet::new();
     let mut host_capabilities = HashSet::new();
@@ -3109,6 +3532,11 @@ fn build_execution_node_runtime(
         "shell.exec",
     ] {
         host_capabilities.insert(capability.to_string());
+    }
+
+    // Advertise display capability when running with --display
+    if display {
+        host_capabilities.insert("display.surface".to_string());
     }
 
     let mut normalized_host_capabilities: Vec<String> = host_capabilities.into_iter().collect();
@@ -3267,6 +3695,9 @@ async fn run_node(
     token: Option<String>,
     node_id: String,
     workspace: PathBuf,
+    display_mode: bool,
+    surface_tx: Option<tokio::sync::mpsc::UnboundedSender<(String, Option<serde_json::Value>)>>,
+    eval_result_rx: Option<tokio::sync::mpsc::UnboundedReceiver<gsv::protocol::SurfaceEvalResultPayload>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let logger = NodeLogger::new(&node_id, &workspace)?;
     let log_path = logger::node_log_path()?;
@@ -3319,6 +3750,73 @@ async fn run_node(
     const INITIAL_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(3);
     const MAX_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(300);
     let mut retry_delay = INITIAL_RETRY_DELAY;
+    // Shared "current connection" reference for the eval result forwarder.
+    // Updated on each reconnect so the forwarder always uses the latest connection.
+    let current_conn: Arc<tokio::sync::Mutex<Option<Arc<Connection>>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+
+    // Spawn eval result forwarder task (runs for the lifetime of the node).
+    // Reads eval results from the display IPC bridge and sends them back
+    // to the gateway as surface.eval.result RPCs.
+    let _eval_result_task = if let Some(mut rx) = eval_result_rx {
+        let conn_ref = current_conn.clone();
+        let logger_for_eval = logger.clone();
+        Some(tokio::spawn(async move {
+            while let Some(result) = rx.recv().await {
+                let params = serde_json::to_value(&result).unwrap_or_default();
+                let conn_guard = conn_ref.lock().await;
+                let Some(ref conn) = *conn_guard else {
+                    logger_for_eval.warn(
+                        "surface.eval.result.no_conn",
+                        json!({ "evalId": result.eval_id }),
+                    );
+                    continue;
+                };
+                let conn = conn.clone();
+                drop(conn_guard); // Release lock before awaiting RPC
+
+                match conn
+                    .request_with_timeout(
+                        "surface.eval.result",
+                        Some(params),
+                        std::time::Duration::from_secs(10),
+                    )
+                    .await
+                {
+                    Ok(res) if res.ok => {
+                        logger_for_eval.info(
+                            "surface.eval.result.sent",
+                            json!({
+                                "evalId": result.eval_id,
+                                "surfaceId": result.surface_id,
+                                "ok": result.ok,
+                            }),
+                        );
+                    }
+                    Ok(res) => {
+                        logger_for_eval.warn(
+                            "surface.eval.result.failed",
+                            json!({
+                                "evalId": result.eval_id,
+                                "error": res.error,
+                            }),
+                        );
+                    }
+                    Err(e) => {
+                        logger_for_eval.warn(
+                            "surface.eval.result.send_error",
+                            json!({
+                                "evalId": result.eval_id,
+                                "error": e.to_string(),
+                            }),
+                        );
+                    }
+                }
+            }
+        }))
+    } else {
+        None
+    };
 
     loop {
         logger.info("connect.attempt", json!({ "url": url }));
@@ -3326,13 +3824,14 @@ async fn run_node(
         let tools = all_tools_with_workspace(workspace.clone());
         let tool_defs: Vec<_> = tools.iter().map(|t| t.definition()).collect();
         let tool_names: Vec<String> = tool_defs.iter().map(|t| t.name.clone()).collect();
-        let node_runtime = build_execution_node_runtime(&tool_defs)?;
+        let node_runtime = build_execution_node_runtime(&tool_defs, display_mode)?;
 
         logger.info(
             "tools.register",
             json!({
                 "toolCount": tool_names.len(),
                 "tools": tool_names,
+                "displayMode": display_mode,
             }),
         );
 
@@ -3395,6 +3894,7 @@ async fn run_node(
         let logger_clone = logger.clone();
         let coordinator_for_events = transfer_coordinator.clone();
         let workspace_for_transfers = workspace.clone();
+        let surface_tx_clone = surface_tx.clone();
 
         conn.set_event_handler(move |frame| {
             let conn = conn_clone.clone();
@@ -3402,6 +3902,7 @@ async fn run_node(
             let logger = logger_clone.clone();
             let coordinator = coordinator_for_events.clone();
             let transfer_workspace = workspace_for_transfers.clone();
+            let surface_tx = surface_tx_clone.clone();
 
             tokio::spawn(async move {
                 if let Frame::Evt(evt) = frame {
@@ -3659,11 +4160,157 @@ async fn run_node(
                                 }
                             }
                         }
+                    } else if evt.event.starts_with("surface.") {
+                        // Forward surface events to display module (if active).
+                        // For surface.opened with a profileId, pre-fetch an fs read
+                        // token so the display task can download the profile snapshot.
+                        if let Some(ref tx) = surface_tx {
+                            let event_name = evt.event.clone();
+                            let mut extra = serde_json::Map::new();
+
+                            // Pre-fetch fs tokens for profile sync:
+                            // - surface.opened: read token (download snapshot)
+                            // - surface.closed: write token (upload snapshot)
+
+                            if event_name == "surface.closed" {
+                                if let Some(ref payload_val) = evt.payload {
+                                    if let Some(profile_id) = payload_val
+                                        .get("profileId")
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        let prefix = format!(
+                                            "browser-profiles/{}/",
+                                            profile_id
+                                        );
+                                        let params = json!({
+                                            "pathPrefix": prefix,
+                                            "mode": "write"
+                                        });
+                                        match conn
+                                            .request_with_timeout(
+                                                "fs.authorize",
+                                                Some(params),
+                                                std::time::Duration::from_secs(5),
+                                            )
+                                            .await
+                                        {
+                                            Ok(res) if res.ok => {
+                                                if let Some(payload) = res.payload {
+                                                    extra.insert(
+                                                        "fsWriteToken".to_string(),
+                                                        payload,
+                                                    );
+                                                }
+                                            }
+                                            Ok(res) => {
+                                                logger.warn(
+                                                    "surface.fs_authorize_write.failed",
+                                                    json!({
+                                                        "error": res.error,
+                                                        "profileId": profile_id,
+                                                    }),
+                                                );
+                                            }
+                                            Err(e) => {
+                                                logger.warn(
+                                                    "surface.fs_authorize_write.error",
+                                                    json!({
+                                                        "error": e.to_string(),
+                                                        "profileId": profile_id,
+                                                    }),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if event_name == "surface.opened" {
+                                if let Some(ref payload_val) = evt.payload {
+                                    if let Some(profile_id) = payload_val
+                                        .get("surface")
+                                        .and_then(|s| s.get("profileId"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        let prefix = format!(
+                                            "browser-profiles/{}/",
+                                            profile_id
+                                        );
+                                        let params = json!({
+                                            "pathPrefix": prefix,
+                                            "mode": "read"
+                                        });
+                                        match conn
+                                            .request_with_timeout(
+                                                "fs.authorize",
+                                                Some(params),
+                                                std::time::Duration::from_secs(5),
+                                            )
+                                            .await
+                                        {
+                                            Ok(res) if res.ok => {
+                                                if let Some(payload) = res.payload {
+                                                    extra.insert(
+                                                        "fsReadToken".to_string(),
+                                                        payload,
+                                                    );
+                                                }
+                                            }
+                                            Ok(res) => {
+                                                logger.warn(
+                                                    "surface.fs_authorize.failed",
+                                                    json!({
+                                                        "error": res.error,
+                                                        "profileId": profile_id,
+                                                    }),
+                                                );
+                                            }
+                                            Err(e) => {
+                                                logger.warn(
+                                                    "surface.fs_authorize.error",
+                                                    json!({
+                                                        "error": e.to_string(),
+                                                        "profileId": profile_id,
+                                                    }),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            let send_val = if extra.is_empty() {
+                                evt.payload.clone()
+                            } else {
+                                // Merge extra fields into the payload
+                                let mut merged = evt
+                                    .payload
+                                    .as_ref()
+                                    .and_then(|v| v.as_object().cloned())
+                                    .unwrap_or_default();
+                                merged.extend(extra);
+                                Some(serde_json::Value::Object(merged))
+                            };
+
+                            if let Err(e) = tx.send((event_name.clone(), send_val)) {
+                                logger.warn(
+                                    "surface.event.forward_failed",
+                                    json!({
+                                        "event": event_name,
+                                        "error": e.to_string(),
+                                    }),
+                                );
+                            }
+                        }
                     }
                 }
             });
         })
         .await;
+
+        // Update the shared connection reference so the eval result forwarder
+        // uses the latest connection after each reconnect.
+        *current_conn.lock().await = Some(conn.clone());
 
         let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox, &logger).await;
         if flushed > 0 {

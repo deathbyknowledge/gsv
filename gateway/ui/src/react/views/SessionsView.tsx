@@ -11,6 +11,10 @@ function formatRelativeTime(ts: number): string {
   return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
+function formatAbsoluteTime(ts: number): string {
+  return new Date(ts).toLocaleString();
+}
+
 export function SessionsView() {
   const sessions = useReactUiStore((s) => s.sessions);
   const sessionsLoading = useReactUiStore((s) => s.sessionsLoading);
@@ -21,106 +25,127 @@ export function SessionsView() {
 
   return (
     <div className="view-container">
-      <div className="section-header">
-        <h2 className="section-title">Active Sessions</h2>
-        <Button
-          size="sm"
-          variant="secondary"
-          loading={sessionsLoading}
-          onClick={() => {
-            void loadSessions();
-          }}
-        >
-          Refresh
-        </Button>
-      </div>
-
-      {sessionsLoading && sessions.length === 0 ? (
-        <div className="card">
-          <div className="card-body">
-            <div className="thinking-indicator">
-              <span className="spinner"></span>
-              <span>Loading sessions...</span>
+      <div className="app-shell" data-app="sessions">
+        <section className="app-hero">
+          <div className="app-hero-content">
+            <div>
+              <h2 className="app-hero-title">Session Console</h2>
+              <p className="app-hero-subtitle">
+                Browse active histories, switch the focused conversation, or reset a
+                thread to archive and restart context.
+              </p>
+              <div className="app-hero-meta">
+                <span className="app-badge-dot" />
+                <span>{sessions.length} tracked sessions</span>
+              </div>
+            </div>
+            <div className="app-actions">
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={sessionsLoading}
+                onClick={() => {
+                  void loadSessions();
+                }}
+              >
+                Refresh
+              </Button>
             </div>
           </div>
-        </div>
-      ) : sessions.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">📋</div>
-          <h3 className="empty-state-title">No sessions</h3>
-          <p className="empty-state-description">
-            Sessions are created when you or others start conversations.
-          </p>
-        </div>
-      ) : (
-        <div className="card">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Session Key</th>
-                <th>Label</th>
-                <th>Last Active</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((session) => {
-                const isCurrentSession = session.sessionKey === settings.sessionKey;
-                return (
-                  <tr key={session.sessionKey}>
-                    <td>
-                      <code className="mono" style={{ fontSize: "var(--font-size-xs)" }}>
-                        {session.sessionKey}
-                      </code>
-                      {isCurrentSession ? (
-                        <span
-                          className="pill pill-success"
-                          style={{ marginLeft: "var(--space-2)" }}
-                        >
-                          current
-                        </span>
-                      ) : null}
-                    </td>
-                    <td>{session.label || <span className="muted">—</span>}</td>
-                    <td>{formatRelativeTime(session.lastActiveAt)}</td>
-                    <td>{formatRelativeTime(session.createdAt)}</td>
-                    <td>
-                      <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            void selectSession(session.sessionKey);
-                          }}
-                          disabled={isCurrentSession}
-                        >
-                          Open
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            if (
-                              confirm(
-                                `Reset session ${session.sessionKey}? This will archive all messages.`,
-                              )
-                            ) {
-                              void resetSession(session.sessionKey);
-                            }
-                          }}
-                        >
-                          Reset
-                        </Button>
+        </section>
+
+        <section className="app-panel app-col-12">
+          <header className="app-panel-head">
+            <h3 className="app-panel-title">Active Sessions</h3>
+            <span className="app-panel-meta">{sessions.length} entries</span>
+          </header>
+          <div className="app-panel-body">
+            {sessionsLoading && sessions.length === 0 ? (
+              <div className="app-empty">
+                <div>
+                  <span className="spinner" />
+                  <div style={{ marginTop: "var(--space-2)" }}>Loading sessions...</div>
+                </div>
+              </div>
+            ) : sessions.length === 0 ? (
+              <div className="app-empty">
+                <div>
+                  <div className="app-empty-icon">📋</div>
+                  <div>No sessions yet</div>
+                  <div className="text-secondary" style={{ marginTop: "var(--space-1)" }}>
+                    Sessions appear after a chat run starts.
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="app-list">
+                {sessions.map((session) => {
+                  const isCurrent = session.sessionKey === settings.sessionKey;
+                  return (
+                    <article className="app-list-item" key={session.sessionKey}>
+                      <div className="app-list-head">
+                        <div>
+                          <div className="app-list-title mono">{session.sessionKey}</div>
+                          <div className="app-list-subtitle">
+                            {session.label ? session.label : "Unlabeled session"}
+                          </div>
+                        </div>
+                        <div className="app-actions">
+                          {isCurrent ? <span className="pill pill-success">current</span> : null}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              void selectSession(session.sessionKey);
+                            }}
+                            disabled={isCurrent}
+                          >
+                            Open
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  `Reset session ${session.sessionKey}? This will archive all messages.`,
+                                )
+                              ) {
+                                void resetSession(session.sessionKey);
+                              }
+                            }}
+                          >
+                            Reset
+                          </Button>
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+
+                      <div className="app-list-meta">
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Last Active</div>
+                          <div className="app-meta-value" title={formatAbsoluteTime(session.lastActiveAt)}>
+                            {formatRelativeTime(session.lastActiveAt)}
+                          </div>
+                        </div>
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Created</div>
+                          <div className="app-meta-value" title={formatAbsoluteTime(session.createdAt)}>
+                            {formatRelativeTime(session.createdAt)}
+                          </div>
+                        </div>
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Status</div>
+                          <div className="app-meta-value">{isCurrent ? "In focus" : "Idle"}</div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

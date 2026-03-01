@@ -3,3 +3,5 @@
 @import "./styles/layout.css";
 @import "./styles/components.css";
 @import "./styles/chat.css";
+@import "./styles/apps.css";
+@import "./styles/os-shell.css";

@@ -22,55 +22,13 @@ function groupToolsByNode(tools: ToolDefinition[]): NodeInfo[] {
     nodeMap.get(nodeId)!.push(tool);
   }
 
-  return Array.from(nodeMap.entries()).map(([id, toolsForNode]) => ({
-    id,
-    tools: toolsForNode,
-  }));
+  return Array.from(nodeMap.entries())
+    .map(([id, toolsForNode]) => ({ id, tools: toolsForNode }))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function ToolList({
-  tools,
-  showShortName,
-}: {
-  tools: ToolDefinition[];
-  showShortName: boolean;
-}) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-      {tools.map((tool) => {
-        const displayName = showShortName
-          ? tool.name.split("__")[1] || tool.name
-          : tool.name;
-        return (
-          <div
-            key={tool.name}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              padding: "var(--space-2)",
-              background: "var(--bg-tertiary)",
-              borderRadius: "var(--radius-md)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-              <code style={{ fontSize: "var(--font-size-sm)", color: "var(--accent-primary)" }}>
-                {displayName}
-              </code>
-            </div>
-            <p
-              style={{
-                fontSize: "var(--font-size-xs)",
-                color: "var(--text-muted)",
-                marginTop: "var(--space-1)",
-              }}
-            >
-              {tool.description}
-            </p>
-          </div>
-        );
-      })}
-    </div>
-  );
+function toolShortName(toolName: string): string {
+  return toolName.split("__")[1] || toolName;
 }
 
 export function NodesView() {
@@ -79,74 +37,104 @@ export function NodesView() {
   const loadTools = useReactUiStore((s) => s.loadTools);
 
   const nodes = groupToolsByNode(tools);
-  const nativeTools = tools.filter((t) => t.name.startsWith("gsv__"));
+  const nativeTools = tools.filter((tool) => tool.name.startsWith("gsv__"));
 
   return (
     <div className="view-container">
-      <div className="section-header">
-        <h2 className="section-title">Connected Nodes</h2>
-        <Button
-          size="sm"
-          variant="secondary"
-          loading={toolsLoading}
-          onClick={() => {
-            void loadTools();
-          }}
-        >
-          Refresh
-        </Button>
-      </div>
-
-      {toolsLoading && tools.length === 0 ? (
-        <div className="card">
-          <div className="card-body">
-            <div className="thinking-indicator">
-              <span className="spinner"></span>
-              <span>Loading nodes...</span>
+      <div className="app-shell" data-app="nodes">
+        <section className="app-hero">
+          <div className="app-hero-content">
+            <div>
+              <h2 className="app-hero-title">Node Inventory</h2>
+              <p className="app-hero-subtitle">
+                Inspect active execution hosts and the tools each host currently
+                exposes to the gateway runtime.
+              </p>
+              <div className="app-hero-meta">
+                <span className="app-badge-dot" />
+                <span>{nodes.length} node(s) online</span>
+                <span className="app-mono-pill mono">{tools.length} total tools</span>
+              </div>
             </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={toolsLoading}
+              onClick={() => {
+                void loadTools();
+              }}
+            >
+              Refresh
+            </Button>
           </div>
-        </div>
-      ) : nodes.length === 0 && nativeTools.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">🖥️</div>
-          <h3 className="empty-state-title">No nodes connected</h3>
-          <p className="empty-state-description">
-            Connect a node using: <code>gsv node</code>
-          </p>
-        </div>
-      ) : (
-        <>
-          {nativeTools.length > 0 ? (
-            <div className="card" style={{ marginBottom: "var(--space-4)" }}>
-              <div className="card-header">
-                <h3 className="card-title">
-                  <span style={{ marginRight: "var(--space-2)" }}>🚀</span>
-                  Native Tools (Gateway)
-                </h3>
-                <span className="pill">{nativeTools.length} tools</span>
-              </div>
-              <div className="card-body">
-                <ToolList tools={nativeTools} showShortName={false} />
-              </div>
-            </div>
-          ) : null}
+        </section>
 
-          {nodes.map((node) => (
-            <div className="card" style={{ marginBottom: "var(--space-4)" }} key={node.id}>
-              <div className="card-header">
-                <h3 className="card-title">
-                  <span style={{ marginRight: "var(--space-2)" }}>🖥️</span>
-                  {node.id}
-                </h3>
-                <span className="pill pill-success">{node.tools.length} tools</span>
-              </div>
-              <div className="card-body">
-                <ToolList tools={node.tools} showShortName={true} />
+        {toolsLoading && tools.length === 0 ? (
+          <section className="app-panel">
+            <div className="app-panel-body app-empty">
+              <div>
+                <span className="spinner" />
+                <div style={{ marginTop: "var(--space-2)" }}>Loading node inventory...</div>
               </div>
             </div>
-          ))}
-        </>
-      )}
+          </section>
+        ) : nodes.length === 0 && nativeTools.length === 0 ? (
+          <section className="app-panel">
+            <div className="app-panel-body app-empty">
+              <div>
+                <div className="app-empty-icon">🖥️</div>
+                <div>No nodes connected</div>
+                <div className="text-secondary" style={{ marginTop: "var(--space-1)" }}>
+                  Connect one with <code>gsv node --foreground</code>.
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : (
+          <section className="app-grid">
+            {nativeTools.length > 0 ? (
+              <article className="app-panel app-col-12">
+                <header className="app-panel-head">
+                  <h3 className="app-panel-title">Gateway Native Tools</h3>
+                  <span className="app-panel-meta">{nativeTools.length}</span>
+                </header>
+                <div className="app-panel-body">
+                  <div className="app-list">
+                    {nativeTools.map((tool) => (
+                      <div className="app-list-item" key={tool.name}>
+                        <div className="app-list-title mono">{tool.name}</div>
+                        <div className="app-list-subtitle">{tool.description}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </article>
+            ) : null}
+
+            {nodes.map((node) => (
+              <article className="app-panel app-col-6" key={node.id}>
+                <header className="app-panel-head">
+                  <h3 className="app-panel-title">
+                    <span style={{ marginRight: "var(--space-2)" }}>🖥️</span>
+                    {node.id}
+                  </h3>
+                  <span className="pill pill-success">{node.tools.length} tools</span>
+                </header>
+                <div className="app-panel-body">
+                  <div className="app-list">
+                    {node.tools.map((tool) => (
+                      <div className="app-list-item" key={tool.name}>
+                        <div className="app-list-title mono">{toolShortName(tool.name)}</div>
+                        <div className="app-list-subtitle">{tool.description}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </section>
+        )}
+      </div>
     </div>
   );
 }

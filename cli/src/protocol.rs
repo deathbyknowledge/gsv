@@ -230,6 +230,153 @@ pub struct TransferDoneParams {
     pub error: Option<String>,
 }
 
+// ── Surface Protocol ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceProfileLock {
+    pub node_id: String,
+    pub surface_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Surface {
+    pub surface_id: String,
+    pub kind: String, // "app" | "media" | "component" | "webview"
+    pub label: String,
+    pub content_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_data: Option<Value>,
+    pub target_client_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_session_key: Option<String>,
+    pub state: String, // "open" | "minimized" | "closed"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rect: Option<SurfaceRect>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub z_index: Option<i64>,
+    pub created_at: f64,
+    pub updated_at: f64,
+    // Browser profile persistence
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_version: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_lock: Option<SurfaceProfileLock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceOpenParams {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub content_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_data: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rect: Option<SurfaceRect>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceCloseParams {
+    pub surface_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceUpdateParams {
+    pub surface_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rect: Option<SurfaceRect>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub z_index: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_data: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceOpenedPayload {
+    pub surface: Surface,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceClosedPayload {
+    pub surface_id: String,
+    pub target_client_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceUpdatedPayload {
+    pub surface: Surface,
+}
+
+// ── Surface Eval Protocol ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceEvalRequestPayload {
+    pub eval_id: String,
+    pub surface_id: String,
+    pub script: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceEvalResultPayload {
+    pub eval_id: String,
+    pub surface_id: String,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+// ── Filesystem Token Protocol ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FsAuthorizeParams {
+    pub path_prefix: String,
+    pub mode: String, // "read" | "write"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FsAuthorizeResult {
+    pub token: String,
+    pub expires_at: f64,
+    pub path_prefix: String,
+}
+
 impl RequestFrame {
     pub fn new(method: &str, params: Option<Value>) -> Self {
         Self {

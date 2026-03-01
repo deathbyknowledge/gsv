@@ -36,6 +36,21 @@ import type {
   TransferDoneParams,
 } from "./transfer";
 import type {
+  SurfaceOpenParams,
+  SurfaceOpenResult,
+  SurfaceCloseParams,
+  SurfaceCloseResult,
+  SurfaceUpdateParams,
+  SurfaceUpdateResult,
+  SurfaceFocusParams,
+  SurfaceFocusResult,
+  SurfaceListParams,
+  SurfaceListResult,
+  SurfaceEvalParams,
+  SurfaceEvalResult,
+} from "./surface";
+import type { FsAuthorizeParams, FsAuthorizeResult } from "./fs";
+import type {
   CronJob,
   CronJobCreate,
   CronJobPatch,
@@ -425,6 +440,41 @@ export type RpcMethods = {
     };
   };
 
+  "surface.open": {
+    params: SurfaceOpenParams;
+    result: SurfaceOpenResult;
+  };
+
+  "surface.close": {
+    params: SurfaceCloseParams;
+    result: SurfaceCloseResult;
+  };
+
+  "surface.update": {
+    params: SurfaceUpdateParams;
+    result: SurfaceUpdateResult;
+  };
+
+  "surface.focus": {
+    params: SurfaceFocusParams;
+    result: SurfaceFocusResult;
+  };
+
+  "surface.list": {
+    params: SurfaceListParams;
+    result: SurfaceListResult;
+  };
+
+  "surface.eval": {
+    params: SurfaceEvalParams;
+    result: SurfaceEvalResult;
+  };
+
+  "surface.eval.result": {
+    params: SurfaceEvalResult;
+    result: { ok: true };
+  };
+
   "tool.request": {
     params: ToolRequestParams;
     result: {
@@ -456,10 +506,15 @@ export type RpcMethods = {
     params: TransferDoneParams;
     result: { ok: true };
   };
+
+  "fs.authorize": {
+    params: FsAuthorizeParams;
+    result: FsAuthorizeResult;
+  };
 };
 
 export type RpcMethod = keyof RpcMethods;
-export type DeferrableMethod = "tool.invoke" | "logs.get";
+export type DeferrableMethod = "tool.invoke" | "logs.get" | "surface.eval";
 export type ParamsOf<M extends RpcMethod> = RpcMethods[M]["params"];
 export type ResultOf<M extends RpcMethod> = RpcMethods[M]["result"];
 export type HandlerResult<M extends RpcMethod> =

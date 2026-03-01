@@ -4,7 +4,6 @@ import { Button } from "@cloudflare/kumo/components/button";
 import { Checkbox } from "@cloudflare/kumo/components/checkbox";
 import { Input, Textarea } from "@cloudflare/kumo/components/input";
 import { Select } from "@cloudflare/kumo/components/select";
-import { Tabs } from "@cloudflare/kumo/components/tabs";
 import { useReactUiStore } from "../state/store";
 
 type CronSchedule =
@@ -127,36 +126,33 @@ function CreateCronForm() {
   const [deleteAfterRun, setDeleteAfterRun] = useState(false);
 
   return (
-    <div className="card" style={{ maxWidth: 600 }}>
-      <div className="card-header">
-        <span className="card-title">Create Cron Job</span>
+    <div className="app-list" style={{ gap: "var(--space-4)", maxWidth: 760 }}>
+      <div className="form-group">
+        <Input
+          label="Name"
+          type="text"
+          className="ui-input-fix"
+          size="lg"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="daily-report"
+        />
       </div>
-      <div className="card-body">
-        <div className="form-group">
-          <Input
-            label="Name"
-            type="text"
-            className="ui-input-fix"
-            size="lg"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="daily-report"
-          />
-        </div>
 
-        <div className="form-group">
-          <Input
-            label="Description"
-            type="text"
-            className="ui-input-fix"
-            size="lg"
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="Optional description"
-          />
-        </div>
+      <div className="form-group">
+        <Input
+          label="Description"
+          type="text"
+          className="ui-input-fix"
+          size="lg"
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          placeholder="Optional description"
+        />
+      </div>
 
-        <div className="form-group">
+      <div className="app-grid" style={{ gap: "var(--space-3)" }}>
+        <div className="app-col-6 form-group">
           <Select<string>
             label="Schedule Type"
             hideLabel={false}
@@ -171,23 +167,7 @@ function CreateCronForm() {
           </Select>
         </div>
 
-        <div className="form-group">
-          <Input
-            label="Schedule Value"
-            type="text"
-            className="mono ui-input-fix"
-            size="lg"
-            value={scheduleValue}
-            onChange={(event) => setScheduleValue(event.target.value)}
-            placeholder="30 (minutes) or */5 * * * * (cron) or ISO date"
-          />
-          <p className="form-hint">
-            For "every": interval in minutes. For "cron": cron expression. For
-            "at": ISO date.
-          </p>
-        </div>
-
-        <div className="form-group">
+        <div className="app-col-6 form-group">
           <Select<string>
             label="Mode"
             hideLabel={false}
@@ -197,32 +177,47 @@ function CreateCronForm() {
             }
           >
             <Select.Option value="task">Task (isolated session)</Select.Option>
-            <Select.Option value="systemEvent">
-              System Event (inject into main session)
-            </Select.Option>
+            <Select.Option value="systemEvent">System Event (main session)</Select.Option>
           </Select>
         </div>
+      </div>
 
-        <div className="form-group">
-          <Textarea
-            label="Message / Text"
-            className="ui-input-fix"
-            size="lg"
-            rows={3}
-            value={message}
-            onValueChange={setMessage}
-            placeholder="The prompt or message for the agent"
-          />
-        </div>
+      <div className="form-group">
+        <Input
+          label="Schedule Value"
+          type="text"
+          className="mono ui-input-fix"
+          size="lg"
+          value={scheduleValue}
+          onChange={(event) => setScheduleValue(event.target.value)}
+          placeholder="30 (minutes) | */5 * * * * | 2026-03-01T10:00:00Z"
+        />
+        <p className="form-hint" style={{ marginTop: "var(--space-1)" }}>
+          Interval expects minutes. Cron expects expression. One-time expects ISO timestamp.
+        </p>
+      </div>
 
-        <div className="form-group">
-          <Checkbox
-            label="Delete after run (one-shot)"
-            checked={deleteAfterRun}
-            onCheckedChange={setDeleteAfterRun}
-          />
-        </div>
+      <div className="form-group">
+        <Textarea
+          label="Message / Text"
+          className="ui-input-fix"
+          size="lg"
+          rows={3}
+          value={message}
+          onValueChange={setMessage}
+          placeholder="The prompt or event text to run"
+        />
+      </div>
 
+      <div className="form-group">
+        <Checkbox
+          label="Delete after run (one-shot)"
+          checked={deleteAfterRun}
+          onCheckedChange={setDeleteAfterRun}
+        />
+      </div>
+
+      <div className="app-actions">
         <Button
           variant="primary"
           onClick={async () => {
@@ -296,260 +291,251 @@ export function CronView() {
 
   const stats = useMemo(
     () => [
-      { label: "Total Jobs", value: cronStatus?.count ?? 0 },
-      { label: "Due Now", value: cronStatus?.dueCount ?? 0 },
+      { label: "Jobs", value: cronStatus?.count ?? 0 },
+      { label: "Due", value: cronStatus?.dueCount ?? 0 },
       { label: "Running", value: cronStatus?.runningCount ?? 0 },
+      { label: "Engine", value: cronStatus?.enabled ? "On" : "Off" },
+      {
+        label: "Next Tick",
+        value: cronStatus?.nextRunAtMs ? relativeTime(cronStatus.nextRunAtMs) : "—",
+      },
     ],
     [cronStatus],
   );
 
   return (
     <div className="view-container">
-      {cronStatus ? (
-        <div className="cards-grid" style={{ marginBottom: "var(--space-6)" }}>
-          {stats.map((item) => (
-            <div className="card" key={item.label}>
-              <div className="card-body stat">
-                <div className="stat-value">{item.value}</div>
-                <div className="stat-label">{item.label}</div>
-              </div>
+      <div className="app-shell" data-app="cron">
+        <section className="app-hero">
+          <div className="app-hero-content">
+            <div>
+              <h2 className="app-hero-title">Scheduler</h2>
+              <p className="app-hero-subtitle">
+                Manage recurring and one-shot agent jobs, inspect execution history,
+                and trigger immediate runs.
+              </p>
             </div>
-          ))}
-          <div className="card">
-            <div className="card-body stat">
-              <div className="stat-value">
-                {cronStatus.enabled ? (
-                  <span style={{ color: "var(--accent-success)" }}>On</span>
-                ) : (
-                  <span style={{ color: "var(--accent-danger)" }}>Off</span>
-                )}
-              </div>
-              <div className="stat-label">Cron Engine</div>
+            <div className="app-actions">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  void loadCron();
+                }}
+              >
+                Refresh
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  if (confirm("Run all due cron jobs now?")) {
+                    void cronRun({ mode: "due" });
+                  }
+                }}
+              >
+                Run Due
+              </Button>
             </div>
           </div>
-        </div>
-      ) : null}
+        </section>
 
-      <Tabs
-        value={cronTab}
-        onValueChange={(value) => {
-          const nextTab = value as "jobs" | "runs" | "create";
-          setCronTab(nextTab);
-          if (nextTab === "runs") {
-            void loadCronRuns();
-          }
-        }}
-        tabs={[
-          { value: "jobs", label: "Jobs" },
-          { value: "runs", label: "Run History" },
-          { value: "create", label: "+ New Job" },
-        ]}
-        className="tabs"
-      />
+        {cronStatus ? (
+          <section className="app-kpis">
+            {stats.map((item) => (
+              <article className="app-kpi" key={item.label}>
+                <span className="app-kpi-label">{item.label}</span>
+                <span className="app-kpi-value">{item.value}</span>
+              </article>
+            ))}
+          </section>
+        ) : null}
 
-      {cronLoading ? (
-        <div className="empty-state">
-          <span className="spinner"></span> Loading...
-        </div>
-      ) : cronTab === "jobs" ? (
-        cronJobs.length ? (
-          <>
-            <div className="section-header">
-              <span className="section-title">Jobs ({cronJobs.length})</span>
-              <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                <Button
-                  size="sm"
-                  variant="secondary"
+        <section className="app-panel" style={{ flex: 1, minHeight: 0 }}>
+          <header className="app-panel-head">
+            <div className="app-tabs" role="tablist" aria-label="Cron sections">
+              {[
+                { value: "jobs", label: "Jobs" },
+                { value: "runs", label: "Run History" },
+                { value: "create", label: "New Job" },
+              ].map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  className={`app-tab ${cronTab === tab.value ? "active" : ""}`}
                   onClick={() => {
-                    void loadCron();
-                  }}
-                >
-                  Refresh
-                </Button>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={() => {
-                    if (confirm("Run all due cron jobs now?")) {
-                      void cronRun({ mode: "due" });
+                    const nextTab = tab.value as "jobs" | "runs" | "create";
+                    setCronTab(nextTab);
+                    if (nextTab === "runs") {
+                      void loadCronRuns();
                     }
                   }}
                 >
-                  Run Due
-                </Button>
-              </div>
+                  {tab.label}
+                </button>
+              ))}
             </div>
+            <span className="app-panel-meta">{cronLoading ? "loading" : "ready"}</span>
+          </header>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-              {cronJobs.map((job) => (
-                <div className="card" key={job.id}>
-                  <div className="card-header">
-                    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-                      <span className="card-title">{job.name}</span>
-                      <Badge variant={job.enabled ? "primary" : "outline"}>
-                        {job.enabled ? "Enabled" : "Disabled"}
-                      </Badge>
-                      <StatusPill status={job.state.lastStatus} />
-                      {job.deleteAfterRun ? (
-                        <Badge variant="outline">One-shot</Badge>
-                      ) : null}
-                    </div>
-                    <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          void cronUpdate(job.id, { enabled: !job.enabled });
-                        }}
-                      >
-                        {job.enabled ? "Disable" : "Enable"}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          void cronRun({ id: job.id, mode: "force" });
-                        }}
-                      >
-                        Run Now
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => {
-                          if (confirm(`Delete job "${job.name}"?`)) {
-                            void cronRemove(job.id);
-                          }
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="card-body">
-                    <div className="kv-list">
-                      {job.description ? (
-                        <div className="kv-row">
-                          <span className="kv-key">Description</span>
-                          <span className="kv-value">{job.description}</span>
+          <div className="app-panel-body app-scroll">
+            {cronLoading ? (
+              <div className="app-empty" style={{ minHeight: 220 }}>
+                <div>
+                  <span className="spinner" />
+                  <div style={{ marginTop: "var(--space-2)" }}>Loading scheduler data...</div>
+                </div>
+              </div>
+            ) : cronTab === "jobs" ? (
+              cronJobs.length ? (
+                <div className="app-list">
+                  {cronJobs.map((job) => (
+                    <article className="app-list-item" key={job.id}>
+                      <div className="app-list-head">
+                        <div>
+                          <div className="app-list-title">{job.name}</div>
+                          <div className="app-list-subtitle">
+                            {job.description || "No description"}
+                          </div>
                         </div>
+                        <div className="app-actions">
+                          <Badge variant={job.enabled ? "primary" : "outline"}>
+                            {job.enabled ? "enabled" : "disabled"}
+                          </Badge>
+                          <StatusPill status={job.state.lastStatus} />
+                          {job.deleteAfterRun ? <Badge variant="outline">one-shot</Badge> : null}
+                        </div>
+                      </div>
+
+                      <div className="app-list-meta">
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Agent</div>
+                          <div className="app-meta-value mono">{job.agentId}</div>
+                        </div>
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Schedule</div>
+                          <div className="app-meta-value mono">{formatSchedule(job.schedule)}</div>
+                        </div>
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Mode</div>
+                          <div className="app-meta-value">{job.spec.mode}</div>
+                        </div>
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Next Run</div>
+                          <div className="app-meta-value">
+                            {job.state.nextRunAtMs ? relativeTime(job.state.nextRunAtMs) : "—"}
+                          </div>
+                        </div>
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Last Run</div>
+                          <div className="app-meta-value">
+                            {job.state.lastRunAtMs ? relativeTime(job.state.lastRunAtMs) : "—"}
+                          </div>
+                        </div>
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Message</div>
+                          <div className="app-meta-value">
+                            {job.spec.mode === "task" ? job.spec.message : job.spec.text}
+                          </div>
+                        </div>
+                      </div>
+
+                      {job.state.lastError ? (
+                        <p className="text-danger" style={{ marginTop: "var(--space-3)" }}>
+                          Last error: {job.state.lastError}
+                        </p>
                       ) : null}
-                      <div className="kv-row">
-                        <span className="kv-key">Agent</span>
-                        <span className="kv-value mono">{job.agentId}</span>
-                      </div>
-                      <div className="kv-row">
-                        <span className="kv-key">Schedule</span>
-                        <span className="kv-value mono">{formatSchedule(job.schedule)}</span>
-                      </div>
-                      <div className="kv-row">
-                        <span className="kv-key">Mode</span>
-                        <span className="kv-value">{job.spec.mode}</span>
-                      </div>
-                      <div className="kv-row">
-                        <span className="kv-key">Message</span>
-                        <span
-                          className="kv-value"
-                          style={{
-                            maxWidth: 400,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
+
+                      <div className="app-actions" style={{ marginTop: "var(--space-3)" }}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            void cronUpdate(job.id, { enabled: !job.enabled });
                           }}
                         >
-                          {job.spec.mode === "task" ? job.spec.message : job.spec.text}
-                        </span>
+                          {job.enabled ? "Disable" : "Enable"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            void cronRun({ id: job.id, mode: "force" });
+                          }}
+                        >
+                          Run Now
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => {
+                            if (confirm(`Delete job "${job.name}"?`)) {
+                              void cronRemove(job.id);
+                            }
+                          }}
+                        >
+                          Delete
+                        </Button>
                       </div>
-                      {job.state.nextRunAtMs ? (
-                        <div className="kv-row">
-                          <span className="kv-key">Next Run</span>
-                          <span className="kv-value">{relativeTime(job.state.nextRunAtMs)}</span>
-                        </div>
-                      ) : null}
-                      {job.state.lastRunAtMs ? (
-                        <div className="kv-row">
-                          <span className="kv-key">Last Run</span>
-                          <span className="kv-value">{relativeTime(job.state.lastRunAtMs)}</span>
-                        </div>
-                      ) : null}
-                      {job.state.lastError ? (
-                        <div className="kv-row">
-                          <span className="kv-key">Last Error</span>
-                          <span className="kv-value" style={{ color: "var(--accent-danger)" }}>
-                            {job.state.lastError}
-                          </span>
-                        </div>
-                      ) : null}
-                    </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="app-empty" style={{ minHeight: 220 }}>
+                  <div>
+                    <div className="app-empty-icon">⏰</div>
+                    <div>No cron jobs</div>
                   </div>
                 </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-state-icon">⏰</div>
-            <div className="empty-state-title">No Cron Jobs</div>
-            <div className="empty-state-description">
-              Create a scheduled job to run agent tasks on a timer.
-            </div>
+              )
+            ) : cronTab === "runs" ? (
+              cronRuns.length ? (
+                <div className="app-list">
+                  {cronRuns.map((run) => (
+                    <article className="app-list-item" key={`${run.id}-${run.ts}`}>
+                      <div className="app-list-head">
+                        <div>
+                          <div className="app-list-title mono">{run.jobId}</div>
+                          <div className="app-list-subtitle">{relativeTime(run.ts)}</div>
+                        </div>
+                        <div className="app-actions">
+                          <StatusPill status={run.status} />
+                        </div>
+                      </div>
+
+                      <div className="app-list-meta">
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Duration</div>
+                          <div className="app-meta-value">
+                            {run.durationMs != null ? `${(run.durationMs / 1000).toFixed(1)}s` : "—"}
+                          </div>
+                        </div>
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Summary</div>
+                          <div className="app-meta-value">{run.summary || "—"}</div>
+                        </div>
+                        <div className="app-meta-row">
+                          <div className="app-meta-label">Error</div>
+                          <div className="app-meta-value">{run.error || "—"}</div>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="app-empty" style={{ minHeight: 220 }}>
+                  <div>
+                    <div className="app-empty-icon">📄</div>
+                    <div>No run history yet</div>
+                  </div>
+                </div>
+              )
+            ) : (
+              <CreateCronForm />
+            )}
           </div>
-        )
-      ) : cronTab === "runs" ? (
-        cronRuns.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Job ID</th>
-                <th>Status</th>
-                <th>Time</th>
-                <th>Duration</th>
-                <th>Summary</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cronRuns.map((run) => (
-                <tr key={`${run.id}-${run.ts}`}>
-                  <td className="mono" style={{ fontSize: "var(--font-size-xs)" }}>
-                    {run.jobId.slice(0, 12)}
-                  </td>
-                  <td>
-                    <StatusPill status={run.status} />
-                  </td>
-                  <td>{relativeTime(run.ts)}</td>
-                  <td>
-                    {run.durationMs != null ? `${(run.durationMs / 1000).toFixed(1)}s` : "-"}
-                  </td>
-                  <td
-                    style={{
-                      maxWidth: 300,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {run.error ? (
-                      <span style={{ color: "var(--accent-danger)" }}>{run.error}</span>
-                    ) : (
-                      run.summary || "-"
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-state-icon">📄</div>
-            <div className="empty-state-title">No Run History</div>
-            <div className="empty-state-description">
-              Cron job runs will appear here after execution.
-            </div>
-          </div>
-        )
-      ) : (
-        <CreateCronForm />
-      )}
+        </section>
+      </div>
     </div>
   );
 }

@@ -23,6 +23,16 @@ type PendingRequest = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
+const CLIENT_ID_KEY = "gsv-client-id";
+
+function getOrCreateClientId(): string {
+  const existing = localStorage.getItem(CLIENT_ID_KEY);
+  if (existing) return existing;
+  const id = `web-${crypto.randomUUID().slice(0, 8)}`;
+  localStorage.setItem(CLIENT_ID_KEY, id);
+  return id;
+}
+
 export class GatewayClient {
   private ws: WebSocket | null = null;
   private pending = new Map<string, PendingRequest>();
@@ -33,8 +43,12 @@ export class GatewayClient {
   private _state: ConnectionState = "disconnected";
   private options: GatewayClientOptions;
 
+  /** Stable client identity — persisted in localStorage across reloads. */
+  readonly clientId: string;
+
   constructor(options: GatewayClientOptions) {
     this.options = options;
+    this.clientId = getOrCreateClientId();
   }
 
   get state(): ConnectionState {
@@ -135,7 +149,7 @@ export class GatewayClient {
         minProtocol: 1,
         maxProtocol: 1,
         client: {
-          id: `web-${crypto.randomUUID().slice(0, 8)}`,
+          id: this.clientId,
           version: "0.1.0",
           platform: "web",
           mode: "client",
@@ -371,5 +385,42 @@ export class GatewayClient {
 
   async pairReject(channel: string, senderId: string): Promise<ResponseFrame> {
     return this.request("pair.reject", { channel, senderId });
+  }
+
+  // ---- Surfaces ----
+
+  async surfaceOpen(params: {
+    kind: string;
+    contentRef: string;
+    label?: string;
+    contentData?: unknown;
+    targetClientId?: string;
+    state?: string;
+    rect?: { x: number; y: number; width: number; height: number };
+  }): Promise<ResponseFrame> {
+    return this.request("surface.open", params);
+  }
+
+  async surfaceClose(surfaceId: string): Promise<ResponseFrame> {
+    return this.request("surface.close", { surfaceId });
+  }
+
+  async surfaceUpdate(params: {
+    surfaceId: string;
+    state?: string;
+    rect?: { x: number; y: number; width: number; height: number };
+    label?: string;
+    zIndex?: number;
+    contentData?: unknown;
+  }): Promise<ResponseFrame> {
+    return this.request("surface.update", params);
+  }
+
+  async surfaceFocus(surfaceId: string): Promise<ResponseFrame> {
+    return this.request("surface.focus", { surfaceId });
+  }
+
+  async surfaceList(targetClientId?: string): Promise<ResponseFrame> {
+    return this.request("surface.list", targetClientId ? { targetClientId } : undefined);
   }
 }

@@ -48,6 +48,12 @@ rpassword = "7"
 # Only needed when rustls feature is enabled
 rustls_crate = { package = "rustls", version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 
+# Display feature: native webview windows for surface rendering
+tao = { version = "0.34", optional = true }
+wry = { version = "0.54", optional = true, default-features = false, features = ["fullscreen"] }
+url = { version = "2", optional = true }
+urlencoding = { version = "2", optional = true }
+
 [profile.release]
 strip = true
 lto = true
@@ -70,3 +76,6 @@ rustls = [
     "reqwest/rustls-tls",
     "rustls_crate",
 ]
+
+# Enable native webview display for node surfaces (--display flag)
+display = ["dep:tao", "dep:wry", "dep:url", "dep:urlencoding"]
