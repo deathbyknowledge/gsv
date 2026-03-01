@@ -14,6 +14,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
       GSV_TEST_OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ALCHEMY_CI_STATE_STORE_CHECK: "false"
     steps:
       - uses: actions/checkout@v4
       
