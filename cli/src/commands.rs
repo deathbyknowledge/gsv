@@ -1239,7 +1239,7 @@ async fn send_chat(
                 } else {
                     println!("Run is paused waiting for tool approval. Reply yes/no.");
                 }
-                return Ok(true);
+                return Ok(ChatSendResult::NoWait);
             }
             _ => {}
         }
