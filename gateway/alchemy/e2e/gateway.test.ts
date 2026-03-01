@@ -1053,7 +1053,7 @@ describe("Node Runtime Validation & Routing", () => {
 
   it("rejects unnamespaced shared tools", async () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
-    const sharedTool = "shared_route_tool";
+    const sharedTool = `shared_route_tool_${crypto.randomUUID().slice(0, 8)}`;
     const executionNodeId = `exec-node-${crypto.randomUUID().slice(0, 8)}`;
     const specializedNodeId = `spec-node-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -1352,6 +1352,7 @@ describe("Multi-Turn Agent Loop", () => {
     const wsUrl = gatewayUrl.replace("https://", "wss://") + "/ws";
     const nodeId = `test-node-${crypto.randomUUID().slice(0, 8)}`;
     const sessionKey = `agent-loop-test-${crypto.randomUUID().slice(0, 8)}`;
+    const toolName = `get_next_instruction_${crypto.randomUUID().slice(0, 8)}`;
     
     // Track how many times the tool was called
     let toolCallCount = 0;
@@ -1368,7 +1369,7 @@ describe("Multi-Turn Agent Loop", () => {
       },
       // Tools are registered during connect
       tools: [{
-        name: "get_next_instruction",
+        name: toolName,
         description: "Returns the next instruction for the agent. ALWAYS call this tool when asked to complete the sequence.",
         inputSchema: {
           type: "object",
@@ -1376,7 +1377,7 @@ describe("Multi-Turn Agent Loop", () => {
           required: [],
         },
       }],
-      nodeRuntime: buildExecutionNodeRuntime(["get_next_instruction"]),
+      nodeRuntime: buildExecutionNodeRuntime([toolName]),
     });
     
     console.log(`   Node ${nodeId} registered with tool`);
@@ -1445,7 +1446,7 @@ describe("Multi-Turn Agent Loop", () => {
     const sendResult = await sendRequest(clientWs, "chat.send", {
       sessionKey,
       runId,
-      message: `You have access to get_next_instruction.
+      message: `You have access to ${toolName}.
 Call it now. Keep following its instructions.
 When it says all steps are complete, stop calling tools and reply exactly: "SEQUENCE_COMPLETE".`,
     }) as { status: string; runId: string };
@@ -1472,7 +1473,7 @@ When it says all steps are complete, stop calling tools and reply exactly: "SEQU
     expect(result.state).toBe("final");
     expect(toolCallCount).toBeGreaterThanOrEqual(MAX_TOOL_CALLS);
     expect(toolCallCount).toBeLessThanOrEqual(MAX_ALLOWED_TOOL_CALLS);
-    expect(toolRequests.every((req) => req.tool === "get_next_instruction")).toBe(
+    expect(toolRequests.every((req) => req.tool === toolName)).toBe(
       true,
     );
     
@@ -1562,9 +1563,8 @@ describe("Service Binding Inbound Messages", () => {
 });
 
 describe("Channel Message Recording", () => {
-  const accountId = `msg-record-${crypto.randomBytes(4).toString("hex")}`;
-  
   it("records inbound messages in test channel", async () => {
+    const accountId = `msg-record-in-${crypto.randomBytes(4).toString("hex")}`;
     // Start account
     await fetch(`${testChannelUrl}/test/start?accountId=${accountId}`, { method: "POST" });
     
@@ -1588,6 +1588,18 @@ describe("Channel Message Recording", () => {
   });
 
   it("can clear messages for an account", async () => {
+    const accountId = `msg-record-clear-${crypto.randomBytes(4).toString("hex")}`;
+    await fetch(`${testChannelUrl}/test/start?accountId=${accountId}`, { method: "POST" });
+    await fetch(`${testChannelUrl}/test/inbound`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        peer: { kind: "dm", id: "+15551230001" },
+        text: "Seed message for clear",
+      }),
+    });
+
     await fetch(`${testChannelUrl}/test/clear?accountId=${accountId}`, { method: "POST" });
     
     const res = await fetch(`${testChannelUrl}/test/messages?accountId=${accountId}`);
@@ -1596,7 +1608,19 @@ describe("Channel Message Recording", () => {
   });
 
   it("can reset all test channel state", async () => {
-    // Reset removes messages but requires accountId now (DO-backed)
+    const accountId = `msg-record-reset-${crypto.randomBytes(4).toString("hex")}`;
+    await fetch(`${testChannelUrl}/test/start?accountId=${accountId}`, { method: "POST" });
+    await fetch(`${testChannelUrl}/test/inbound`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId,
+        peer: { kind: "dm", id: "+15551230002" },
+        text: "Seed message for reset",
+      }),
+    });
+
+    // Reset removes messages for this account
     await fetch(`${testChannelUrl}/test/reset?accountId=${accountId}`, { method: "POST" });
     
     // Check messages were cleared
