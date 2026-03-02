@@ -1,4 +1,4 @@
-export type AdapterKind = "whatsapp" | "discord";
+export type AdapterKind = "whatsapp" | "discord" | "telegram";
 
 export type AdapterAccount = {
   accountId: string;
