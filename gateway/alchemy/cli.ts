@@ -43,12 +43,14 @@ interface DeployState {
   options: {
     withWhatsApp: boolean;
     withDiscord: boolean;
+    withTelegram: boolean;
     withTemplates: boolean;
     withUI: boolean;
   };
   /** Secrets (only stored if user opts in) */
   secrets?: {
     discordBotToken?: string;
+    telegramBotToken?: string;
   };
   /** LLM config */
   llm?: {
@@ -60,6 +62,7 @@ interface DeployState {
     gateway?: string;
     whatsapp?: string;
     discord?: string;
+    telegram?: string;
   };
   /** Last deployment timestamp */
   deployedAt?: string;
@@ -133,11 +136,13 @@ async function commandWizard(stackName: string, quick: boolean): Promise<void> {
     options: {
       withWhatsApp: result.channels.whatsapp,
       withDiscord: result.channels.discord,
+      withTelegram: result.channels.telegram,
       withTemplates: result.deployTemplates,
       withUI: result.deployUI,
     },
     secrets: {
       discordBotToken: result.channels.discordBotToken,
+      telegramBotToken: result.channels.telegramBotToken,
     },
     llm: {
       provider: result.llm.provider,
@@ -147,6 +152,7 @@ async function commandWizard(stackName: string, quick: boolean): Promise<void> {
       gateway: result.deployment?.gatewayUrl,
       whatsapp: result.deployment?.whatsappUrl,
       discord: result.deployment?.discordUrl,
+      telegram: result.deployment?.telegramUrl,
     },
     deployedAt: new Date().toISOString(),
   };
@@ -175,6 +181,7 @@ async function commandUp(stackName: string): Promise<void> {
   console.log(`  Stack:      ${state.stackName}`);
   console.log(`  WhatsApp:   ${state.options.withWhatsApp ? "yes" : "no"}`);
   console.log(`  Discord:    ${state.options.withDiscord ? "yes" : "no"}`);
+  console.log(`  Telegram:   ${state.options.withTelegram ? "yes" : "no"}`);
   console.log(`  Web UI:     ${state.options.withUI ? "yes" : "no"}`);
   console.log(`  Templates:  ${state.options.withTemplates ? "yes" : "no"}`);
   if (state.deployedAt) {
@@ -196,10 +203,12 @@ async function commandUp(stackName: string): Promise<void> {
       url: true,
       withWhatsApp: state.options.withWhatsApp,
       withDiscord: state.options.withDiscord,
+      withTelegram: state.options.withTelegram,
       withTemplates: state.options.withTemplates,
       withUI: state.options.withUI,
       secrets: {
         discordBotToken: state.secrets?.discordBotToken,
+        telegramBotToken: state.secrets?.telegramBotToken,
       },
     });
     
@@ -210,6 +219,7 @@ async function commandUp(stackName: string): Promise<void> {
       gateway: await infra.gateway.url,
       whatsapp: infra.whatsappChannel ? await infra.whatsappChannel.url : undefined,
       discord: infra.discordChannel ? await infra.discordChannel.url : undefined,
+      telegram: infra.telegramChannel ? await infra.telegramChannel.url : undefined,
     };
     state.deployedAt = new Date().toISOString();
     saveDeployState(state);
@@ -226,6 +236,9 @@ async function commandUp(stackName: string): Promise<void> {
     }
     if (state.urls.discord) {
       console.log(`  Discord:  ${state.urls.discord}`);
+    }
+    if (state.urls.telegram) {
+      console.log(`  Telegram: ${state.urls.telegram}`);
     }
     console.log("");
     
@@ -254,6 +267,9 @@ async function commandDestroy(stackName: string): Promise<void> {
   }
   if (state.urls?.discord) {
     console.log(`  Discord:    ${state.urls.discord}`);
+  }
+  if (state.urls?.telegram) {
+    console.log(`  Telegram:   ${state.urls.telegram}`);
   }
   console.log("");
   
@@ -287,6 +303,7 @@ async function commandDestroy(stackName: string): Promise<void> {
       url: true,
       withWhatsApp: state.options.withWhatsApp,
       withDiscord: state.options.withDiscord,
+      withTelegram: state.options.withTelegram,
       withTemplates: state.options.withTemplates,
       withUI: state.options.withUI,
     });
@@ -331,10 +348,14 @@ async function commandStatus(stackName: string): Promise<void> {
   if (state.urls?.discord) {
     console.log(`    Discord:  ${state.urls.discord}`);
   }
+  if (state.urls?.telegram) {
+    console.log(`    Telegram: ${state.urls.telegram}`);
+  }
   console.log("");
   console.log(pc.bold("  Options:"));
   console.log(`    WhatsApp channel: ${state.options.withWhatsApp ? "yes" : "no"}`);
   console.log(`    Discord channel:  ${state.options.withDiscord ? "yes" : "no"}`);
+  console.log(`    Telegram channel: ${state.options.withTelegram ? "yes" : "no"}`);
   console.log(`    Web UI:           ${state.options.withUI ? "yes" : "no"}`);
   console.log(`    Templates:        ${state.options.withTemplates ? "yes" : "no"}`);
   if (state.llm) {
@@ -389,6 +410,7 @@ ${pc.bold("Examples:")}
 
 ${pc.bold("Environment Variables:")}
   DISCORD_BOT_TOKEN   Discord bot token
+  TELEGRAM_BOT_TOKEN  Telegram bot token
   ANTHROPIC_API_KEY   Anthropic API key
 
 ${pc.bold("Discord Bot Requirements:")}

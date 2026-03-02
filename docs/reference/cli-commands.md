@@ -249,7 +249,7 @@ Prints the config file path and whether it exists.
 
 Cloudflare deployment commands. Manages worker deployment via the Cloudflare API.
 
-Valid components: `gateway`, `channel-whatsapp`, `channel-discord`.
+Valid components: `gateway`, `channel-whatsapp`, `channel-discord`, `channel-telegram`.
 
 ### gsv deploy up
 
@@ -276,6 +276,7 @@ Fetches prebuilt bundles from GitHub releases (or a local directory), then deplo
 | `--llm-model` | `string` | | Provider default | LLM model ID. |
 | `--llm-api-key` | `string` | | Provider env var | LLM API key. |
 | `--discord-bot-token` | `string` | `DISCORD_BOT_TOKEN` | *(none)* | Discord bot token to upload as worker secret. |
+| `--telegram-bot-token` | `string` | `TELEGRAM_BOT_TOKEN` | *(none)* | Telegram bot token to upload as worker secret. |
 
 Default models by provider:
 
@@ -659,6 +660,40 @@ gsv channel discord status [ACCOUNT_ID]
 ```
 gsv channel discord stop [ACCOUNT_ID]
 ```
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `account_id` | `string` | `default` | Account ID. |
+
+### gsv channel telegram start
+
+```
+gsv channel telegram start [ACCOUNT_ID]
+```
+
+Start Telegram webhook delivery for the bot. Uses channel worker secrets (`TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_BASE_URL`).
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `account_id` | `string` | `default` | Arbitrary name for this Telegram bot. |
+
+### gsv channel telegram status
+
+```
+gsv channel telegram status [ACCOUNT_ID]
+```
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `account_id` | `string` | `default` | Account ID. |
+
+### gsv channel telegram stop
+
+```
+gsv channel telegram stop [ACCOUNT_ID]
+```
+
+Stop Telegram webhook delivery and delete the configured webhook.
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|

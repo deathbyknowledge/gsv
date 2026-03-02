@@ -16,6 +16,7 @@ export interface DeploymentResult {
   gatewayUrl?: string;
   whatsappUrl?: string;
   discordUrl?: string;
+  telegramUrl?: string;
   error?: string;
 }
 
@@ -44,10 +45,12 @@ export async function deployStep(
       url: true,  // Enable public URL for testing
       withWhatsApp: state.channels.whatsapp,
       withDiscord: state.channels.discord,
+      withTelegram: state.channels.telegram,
       withTemplates: state.deployTemplates,
       withUI: state.deployUI,
       secrets: {
         discordBotToken: state.channels.discordBotToken,
+        telegramBotToken: state.channels.telegramBotToken,
       },
     });
 
@@ -57,6 +60,7 @@ export async function deployStep(
     const gatewayUrl = await infra.gateway.url;
     const whatsappUrl = infra.whatsappChannel ? await infra.whatsappChannel.url : undefined;
     const discordUrl = infra.discordChannel ? await infra.discordChannel.url : undefined;
+    const telegramUrl = infra.telegramChannel ? await infra.telegramChannel.url : undefined;
 
     // Finalize Alchemy
     await app.finalize();
@@ -68,6 +72,7 @@ export async function deployStep(
       gatewayUrl,
       whatsappUrl,
       discordUrl,
+      telegramUrl,
     };
   } catch (error) {
     spinner.stop(pc.red("Deployment failed"));

@@ -21,6 +21,12 @@ const AVAILABLE_CHANNELS: Array<{
     icon: "🎮",
     description: "Discord server integration",
   },
+  {
+    id: "telegram",
+    name: "Telegram",
+    icon: "✈️",
+    description: "Telegram bot integration",
+  },
 ];
 
 function renderStatusPill(status: ChannelAccountStatus | null) {
@@ -42,6 +48,7 @@ function renderStatusPill(status: ChannelAccountStatus | null) {
 function getChannelIcon(channelId: string): string {
   if (channelId === "whatsapp") return "📱";
   if (channelId === "discord") return "🎮";
+  if (channelId === "telegram") return "✈️";
   return "💬";
 }
 

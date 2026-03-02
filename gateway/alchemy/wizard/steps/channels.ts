@@ -7,7 +7,7 @@ import type { WizardMode, ChannelConfig } from "../types";
 import { isCancelled, handleCancel } from "../prompter";
 import pc from "picocolors";
 
-type ChannelId = "whatsapp" | "discord";
+type ChannelId = "whatsapp" | "discord" | "telegram";
 const DISCORD_INVITE_PERMISSIONS = 101376; // View Channels + Send Messages + Attach Files + Read Message History
 
 export async function channelsStep(
@@ -35,6 +35,11 @@ export async function channelsStep(
         label: "Discord",
         hint: "Requires bot token",
       },
+      {
+        value: "telegram",
+        label: "Telegram",
+        hint: "Requires bot token",
+      },
     ],
     required: false,
   });
@@ -46,6 +51,7 @@ export async function channelsStep(
   const config: ChannelConfig = {
     whatsapp: channels.includes("whatsapp"),
     discord: channels.includes("discord"),
+    telegram: channels.includes("telegram"),
   };
 
   // Get Discord bot token if selected
@@ -88,6 +94,36 @@ export async function channelsStep(
     }
 
     config.discordBotToken = token;
+  }
+
+  if (config.telegram) {
+    p.note(
+      `${pc.bold("1. Create Telegram Bot")}\n` +
+      `   Open Telegram and chat with ${pc.cyan("@BotFather")}\n` +
+      `   Run ${pc.cyan("/newbot")} and follow prompts\n` +
+      `   Copy the bot token BotFather returns\n\n` +
+      `${pc.bold("2. Webhook Setup")}\n` +
+      `   GSV will configure the webhook endpoint automatically on deploy`,
+      "Telegram Bot Setup",
+    );
+
+    const token = await p.password({
+      message: "Enter your Telegram bot token",
+      validate: (value) => {
+        if (!value) {
+          return "Bot token is required for Telegram";
+        }
+        if (!value.includes(":")) {
+          return "Token format should look like <id>:<secret>";
+        }
+      },
+    });
+
+    if (isCancelled(token)) {
+      handleCancel();
+    }
+
+    config.telegramBotToken = token;
   }
 
   return config;

@@ -36,6 +36,8 @@ export type GsvInfraOptions = {
   withWhatsApp?: boolean;
   /** Deploy Discord channel */
   withDiscord?: boolean;
+  /** Deploy Telegram channel */
+  withTelegram?: boolean;
   /** Upload workspace templates */
   withTemplates?: boolean;
   /** Upload global skill templates only (without workspace templates) */
@@ -45,6 +47,7 @@ export type GsvInfraOptions = {
   /** Secrets to configure */
   secrets?: {
     discordBotToken?: string;
+    telegramBotToken?: string;
   };
 };
 
@@ -56,6 +59,7 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
     withTestChannel = false,
     withWhatsApp = false,
     withDiscord = false,
+    withTelegram = false,
     withTemplates = false,
     withSkillTemplates = false,
     withUI = false,
@@ -196,6 +200,34 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
     });
   }
 
+  // Deploy Telegram channel
+  let telegramChannel: Awaited<ReturnType<typeof Worker>> | undefined;
+
+  if (withTelegram) {
+    telegramChannel = await Worker(`${name}-channel-telegram`, {
+      name: `${name}-channel-telegram`,
+      entrypoint: path.join(CHANNELS_DIR, "telegram/src/index.ts"),
+      adopt: true,
+      bindings: {
+        TELEGRAM_ACCOUNT: DurableObjectNamespace("telegram-account", {
+          className: "TelegramAccount",
+          sqlite: true,
+        }),
+        GATEWAY: {
+          type: "service" as const,
+          service: name,
+          __entrypoint__: "GatewayEntrypoint",
+        },
+        ...(secrets.telegramBotToken
+          ? { TELEGRAM_BOT_TOKEN: secrets.telegramBotToken }
+          : {}),
+      },
+      url: true,
+      compatibilityDate: "2026-01-28",
+      compatibilityFlags: ["nodejs_compat"],
+    });
+  }
+
   // =========================================================================
   // Deploy Gateway AFTER channels (so service bindings can resolve)
   // =========================================================================
@@ -253,13 +285,29 @@ export async function createGsvInfra(opts: GsvInfraOptions) {
             },
           }
         : {}),
+      ...(withTelegram
+        ? {
+            CHANNEL_TELEGRAM: {
+              type: "service" as const,
+              service: `${name}-channel-telegram`,
+              __entrypoint__: "TelegramChannel",
+            },
+          }
+        : {}),
     },
     url,
     compatibilityDate: "2025-09-01",
     compatibilityFlags: ["nodejs_compat"],
   });
 
-  return { gateway, storage, whatsappChannel, testChannel, discordChannel };
+  return {
+    gateway,
+    storage,
+    whatsappChannel,
+    testChannel,
+    discordChannel,
+    telegramChannel,
+  };
 }
 
 /**

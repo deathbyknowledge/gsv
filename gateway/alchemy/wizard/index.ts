@@ -134,6 +134,7 @@ export async function runWizard(options: WizardOptions = {}): Promise<WizardStat
     `${pc.bold("Channels:")} ${[
       state.channels.whatsapp && "WhatsApp",
       state.channels.discord && "Discord",
+      state.channels.telegram && "Telegram",
     ].filter(Boolean).join(", ") || "None"}\n` +
     `${pc.bold("Web UI:")}   ${state.deployUI ? "Yes" : "No"}\n` +
     `${pc.bold("Templates:")} ${state.deployTemplates ? "Yes" : "No"}`,
@@ -162,6 +163,7 @@ export async function runWizard(options: WizardOptions = {}): Promise<WizardStat
     gatewayUrl: deployment.gatewayUrl,
     whatsappUrl: deployment.whatsappUrl,
     discordUrl: deployment.discordUrl,
+    telegramUrl: deployment.telegramUrl,
   };
 
   // Step 8: Configure Gateway via WebSocket
@@ -174,7 +176,7 @@ export async function runWizard(options: WizardOptions = {}): Promise<WizardStat
   await saveCliConfig(p, state);
 
   // Step 11: Show channel setup instructions
-  if (state.channels.whatsapp || state.channels.discord) {
+  if (state.channels.whatsapp || state.channels.discord || state.channels.telegram) {
     await channelSetupStep(p, state);
   }
 
@@ -190,6 +192,9 @@ export async function runWizard(options: WizardOptions = {}): Promise<WizardStat
   if (state.channels.discord) {
     nextSteps.push(`${pc.cyan("gsv channel discord start")} - Start Discord bot`);
   }
+  if (state.channels.telegram) {
+    nextSteps.push(`${pc.cyan("gsv channel telegram start")} - Start Telegram bot`);
+  }
 
   // Build status lines
   const statusLines = [
@@ -197,6 +202,7 @@ export async function runWizard(options: WizardOptions = {}): Promise<WizardStat
     state.deployUI ? `${pc.bold("Web UI:")}     ${state.deployment.gatewayUrl}` : null,
     state.deployment.whatsappUrl ? `${pc.bold("WhatsApp:")}   ${state.deployment.whatsappUrl}` : null,
     state.deployment.discordUrl ? `${pc.bold("Discord:")}    ${state.deployment.discordUrl}` : null,
+    state.deployment.telegramUrl ? `${pc.bold("Telegram:")}  ${state.deployment.telegramUrl}` : null,
     ``,
     `${pc.bold("LLM:")} ${configSuccess ? pc.green("Configured") : pc.yellow("Manual config needed")}`,
     `${pc.bold("CLI:")} ${cliResult.installed ? pc.green("Installed") : pc.yellow("Manual install needed")}`,

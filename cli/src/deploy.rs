@@ -21,17 +21,20 @@ const REPO_NAME: &str = "gsv";
 const COMPONENT_GATEWAY: &str = "gateway";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
+const COMPONENT_CHANNEL_TELEGRAM: &str = "channel-telegram";
 const COMPONENT_CHANNEL_TEST: &str = "channel-test";
 
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
 const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
 const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
+const BUNDLE_CHANNEL_TELEGRAM: &str = "gsv-cloudflare-channel-telegram.tar.gz";
 const BUNDLE_CHANNEL_TEST: &str = "gsv-cloudflare-channel-test.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
 const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
+const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
 const SCRIPT_CHANNEL_TEST: &str = "gsv-channel-test";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
@@ -309,6 +312,7 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
         COMPONENT_GATEWAY => Some(BUNDLE_GATEWAY),
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(BUNDLE_CHANNEL_DISCORD),
+        COMPONENT_CHANNEL_TELEGRAM => Some(BUNDLE_CHANNEL_TELEGRAM),
         COMPONENT_CHANNEL_TEST => Some(BUNDLE_CHANNEL_TEST),
         _ => None,
     }
@@ -319,6 +323,7 @@ fn component_to_script_name(component: &str) -> Option<&'static str> {
         COMPONENT_GATEWAY => Some(SCRIPT_GATEWAY),
         COMPONENT_CHANNEL_WHATSAPP => Some(SCRIPT_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(SCRIPT_CHANNEL_DISCORD),
+        COMPONENT_CHANNEL_TELEGRAM => Some(SCRIPT_CHANNEL_TELEGRAM),
         COMPONENT_CHANNEL_TEST => Some(SCRIPT_CHANNEL_TEST),
         _ => None,
     }
@@ -329,6 +334,7 @@ pub fn available_components() -> &'static [&'static str] {
         COMPONENT_GATEWAY,
         COMPONENT_CHANNEL_WHATSAPP,
         COMPONENT_CHANNEL_DISCORD,
+        COMPONENT_CHANNEL_TELEGRAM,
     ]
 }
 
@@ -1567,7 +1573,8 @@ fn deploy_order(component: &str) -> usize {
     match component {
         COMPONENT_CHANNEL_WHATSAPP => 1,
         COMPONENT_CHANNEL_DISCORD => 2,
-        COMPONENT_CHANNEL_TEST => 3,
+        COMPONENT_CHANNEL_TELEGRAM => 3,
+        COMPONENT_CHANNEL_TEST => 4,
         COMPONENT_GATEWAY => 10,
         _ => 100,
     }
@@ -2995,4 +3002,43 @@ pub async fn set_discord_bot_token_secret(
         bot_token,
     )
     .await
+}
+
+pub async fn set_telegram_bot_token_secret(
+    account_id: &str,
+    api_token: &str,
+    bot_token: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    set_worker_secret(
+        &client,
+        account_id,
+        api_token,
+        SCRIPT_CHANNEL_TELEGRAM,
+        "TELEGRAM_BOT_TOKEN",
+        bot_token,
+    )
+    .await
+}
+
+pub async fn set_telegram_webhook_base_url_secret(
+    account_id: &str,
+    api_token: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let subdomain = fetch_account_workers_subdomain(&client, account_id, api_token).await?;
+    let workers_domain = workers_dev_domain(&subdomain);
+    let base_url = format!("https://{}.{}", SCRIPT_CHANNEL_TELEGRAM, workers_domain);
+
+    set_worker_secret(
+        &client,
+        account_id,
+        api_token,
+        SCRIPT_CHANNEL_TELEGRAM,
+        "TELEGRAM_WEBHOOK_BASE_URL",
+        &base_url,
+    )
+    .await?;
+
+    Ok(base_url)
 }

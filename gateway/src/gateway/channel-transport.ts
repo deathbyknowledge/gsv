@@ -24,6 +24,8 @@ export function getChannelBinding(
       return (env as any).CHANNEL_WHATSAPP as Fetcher & ChannelWorkerInterface;
     case "discord":
       return (env as any).CHANNEL_DISCORD as Fetcher & ChannelWorkerInterface;
+    case "telegram":
+      return (env as any).CHANNEL_TELEGRAM as Fetcher & ChannelWorkerInterface;
     case "test":
       return (env as any).CHANNEL_TEST as Fetcher & ChannelWorkerInterface;
     default:

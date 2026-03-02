@@ -16,7 +16,7 @@ export async function channelSetupStep(
   p: Prompter,
   state: WizardState
 ): Promise<ChannelSetupResult> {
-  if (!state.channels.whatsapp && !state.channels.discord) {
+  if (!state.channels.whatsapp && !state.channels.discord && !state.channels.telegram) {
     return { instructionsShown: false };
   }
 
@@ -36,6 +36,15 @@ export async function channelSetupStep(
       `${pc.bold("Discord")}`,
       `  Start:  ${pc.cyan("gsv channel discord start")}`,
       `  Status: ${pc.cyan("gsv channel discord status")}`,
+      ``
+    );
+  }
+
+  if (state.channels.telegram) {
+    instructions.push(
+      `${pc.bold("Telegram")}`,
+      `  Start:  ${pc.cyan("gsv channel telegram start")}`,
+      `  Status: ${pc.cyan("gsv channel telegram status")}`,
       ``
     );
   }

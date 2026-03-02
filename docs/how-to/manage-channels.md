@@ -1,6 +1,6 @@
 # How to Manage Channels
 
-Channels connect GSV to messaging platforms. Each channel runs as a separate Cloudflare Worker with its own Durable Object for maintaining persistent connections. The gateway communicates with channels via Service Bindings.
+Channels connect GSV to messaging platforms. Each channel runs as a separate Cloudflare Worker with its own Durable Object for account/runtime state. The gateway communicates with channels via Service Bindings.
 
 ## Deploy channels
 
@@ -15,9 +15,10 @@ Or deploy a specific channel:
 ```bash
 gsv deploy up -c channel-whatsapp
 gsv deploy up -c channel-discord
+gsv deploy up -c channel-telegram
 ```
 
-Both WhatsApp and Discord channels require an always-on Durable Object. The free Cloudflare tier supports one always-on DO. Running multiple channels or multiple accounts within a channel requires a paid Workers plan.
+WhatsApp, Discord, and Telegram channels require Durable Object state for account/session management. WhatsApp and Discord keep persistent gateway connections; Telegram uses webhook delivery and wakes on demand. Running multiple always-on channel accounts may require a paid Workers plan.
 
 ## WhatsApp
 
@@ -104,6 +105,40 @@ gsv channel discord status
 gsv channel discord stop
 ```
 
+## Telegram
+
+### Set up a Telegram bot
+
+1. Open Telegram and message [@BotFather](https://t.me/BotFather)
+2. Run `/newbot` and follow the prompts
+3. Copy the bot token
+
+Pass the bot token during deployment:
+
+```bash
+gsv deploy up -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
+```
+
+### Start Telegram webhook delivery
+
+```bash
+gsv channel telegram start
+```
+
+The Telegram channel configures a webhook on start using the worker URL.
+
+### Check Telegram status
+
+```bash
+gsv channel telegram status
+```
+
+### Stop Telegram
+
+```bash
+gsv channel telegram stop
+```
+
 ## Configure channel access control
 
 Each channel has a DM policy that controls who can message the agent.
@@ -132,12 +167,13 @@ gsv config set channels.whatsapp.dmPolicy "allowlist"
 gsv config set channels.whatsapp.allowFrom '["+1234567890", "+0987654321"]'
 ```
 
-### Open mode (default for Discord)
+### Open mode (default for Discord/Telegram)
 
 Anyone can message. Use with caution:
 
 ```bash
 gsv config set channels.discord.dmPolicy "open"
+gsv config set channels.telegram.dmPolicy "open"
 ```
 
 ## Monitor channel status
@@ -166,5 +202,7 @@ gsv channel list
 **WhatsApp disconnects frequently:** The DO may be hibernating and failing to resume. Check `gsv channel whatsapp status` for the connection state. Try `gsv channel whatsapp logout` then `gsv channel whatsapp login` for a fresh session.
 
 **Discord bot not responding:** Verify the bot has the MESSAGE CONTENT INTENT enabled and is invited to the server with correct permissions. Check `gsv channel discord status`.
+
+**Telegram bot not responding:** Verify your bot token is correct and webhook is configured. Check `gsv channel telegram status` for `connected`, `authenticated`, and `webhookUrl`.
 
 **Messages from unknown senders are blocked:** Check your DM policy. In `pairing` mode, senders need explicit approval. In `allowlist` mode, add the sender's ID to the allowlist. Run `gsv pair list` to see pending requests.

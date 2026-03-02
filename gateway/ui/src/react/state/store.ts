@@ -25,7 +25,7 @@ import type {
 
 const DEFAULT_CHANNEL_ACCOUNT_ID = "default";
 const CHANNEL_AUTO_REFRESH_MS = 10_000;
-const DEFAULT_CHANNELS = ["whatsapp", "discord"];
+const DEFAULT_CHANNELS = ["whatsapp", "discord", "telegram"];
 
 type DebugEvent = {
   time: Date;

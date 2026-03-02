@@ -79,7 +79,7 @@ Audio-to-text transcription settings for voice messages received from channels.
 
 ## Channels
 
-Per-channel access control and DM policy settings. Each key in the `channels` object is a channel name (e.g. `"whatsapp"`, `"discord"`).
+Per-channel access control and DM policy settings. Each key in the `channels` object is a channel name (e.g. `"whatsapp"`, `"discord"`, `"telegram"`).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -92,6 +92,7 @@ Per-channel access control and DM policy settings. Each key in the `channels` ob
 |---------|-----------|-------------|
 | `whatsapp` | `"pairing"` | `[]` |
 | `discord` | `"open"` | `[]` |
+| `telegram` | `"open"` | `[]` |
 
 Channels not listed in the config default to allowing all senders.
 

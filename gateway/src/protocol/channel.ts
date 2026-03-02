@@ -1,6 +1,7 @@
 export type ChannelId =
   | "whatsapp"
   | "discord"
+  | "telegram"
   | (string & {});
 
 export type ChatType = "dm" | "group" | "channel" | "thread";
