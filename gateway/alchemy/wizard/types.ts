@@ -15,7 +15,9 @@ export interface LLMProviderConfig {
 export interface ChannelConfig {
   whatsapp: boolean;
   discord: boolean;
+  telegram: boolean;
   discordBotToken?: string;
+  telegramBotToken?: string;
 }
 
 export interface WizardState {
@@ -45,6 +47,7 @@ export interface WizardState {
     gatewayUrl?: string;
     whatsappUrl?: string;
     discordUrl?: string;
+    telegramUrl?: string;
   };
 }
 
@@ -60,6 +63,7 @@ export const DEFAULT_STATE: WizardState = {
   channels: {
     whatsapp: false,
     discord: false,
+    telegram: false,
   },
   deployTemplates: true,
   deployUI: true,

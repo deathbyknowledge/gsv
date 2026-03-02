@@ -10,7 +10,7 @@ use serde_json::json;
 
 use crate::{
     ChannelAction, ConfigAction, DiscordAction, HeartbeatAction, PairAction, SessionAction,
-    SkillsAction, ToolsAction, WhatsAppAction,
+    SkillsAction, TelegramAction, ToolsAction, WhatsAppAction,
 };
 
 enum ChatSendResult {
@@ -433,6 +433,7 @@ pub(crate) async fn run_channel(
     match action {
         ChannelAction::Whatsapp { action } => run_whatsapp_via_gateway(url, token, action).await,
         ChannelAction::Discord { action } => run_discord_via_gateway(url, token, action).await,
+        ChannelAction::Telegram { action } => run_telegram_via_gateway(url, token, action).await,
         ChannelAction::List => run_channels_list(url, token).await,
     }
 }
@@ -648,6 +649,93 @@ pub(crate) async fn run_discord_via_gateway(
             println!("Stopping Discord bot account: {}", account_id);
             client
                 .channel_stop("discord".to_string(), account_id)
+                .await?;
+            println!("Stopped.");
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn run_telegram_via_gateway(
+    url: &str,
+    token: Option<String>,
+    action: TelegramAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = GatewayClient::connect(url, token).await?;
+
+    match action {
+        TelegramAction::Start { account_id } => {
+            println!("Starting Telegram bot account: {}", account_id);
+            client
+                .channel_start("telegram".to_string(), account_id)
+                .await?;
+            println!("Telegram bot started successfully.");
+            println!(
+                "\nWebhook base URL is expected from TELEGRAM_WEBHOOK_BASE_URL on the channel worker.",
+            );
+        }
+        TelegramAction::Status { account_id } => {
+            let payload = client
+                .channel_status("telegram".to_string(), account_id)
+                .await?;
+
+            if let Some(accounts) = payload.get("accounts").and_then(|a| a.as_array()) {
+                if accounts.is_empty() {
+                    println!("No Telegram accounts found");
+                } else {
+                    for acc in accounts {
+                        let acc_id = acc.get("accountId").and_then(|a| a.as_str()).unwrap_or("?");
+                        let connected = acc
+                            .get("connected")
+                            .and_then(|c| c.as_bool())
+                            .unwrap_or(false);
+                        let authenticated = acc
+                            .get("authenticated")
+                            .and_then(|a| a.as_bool())
+                            .unwrap_or(false);
+
+                        println!("Telegram account: {}", acc_id);
+                        println!("  Connected: {}", connected);
+                        println!("  Authenticated: {}", authenticated);
+
+                        if let Some(error) = acc.get("error").and_then(|e| e.as_str()) {
+                            println!("  Error: {}", error);
+                        }
+
+                        if let Some(extra) = acc.get("extra") {
+                            if let Some(bot_username) =
+                                extra.get("botUsername").and_then(|u| u.as_str())
+                            {
+                                println!(
+                                    "  Bot username: @{}",
+                                    bot_username.trim_start_matches('@')
+                                );
+                            }
+                            if let Some(bot_id) = extra.get("botUserId").and_then(|id| id.as_i64())
+                            {
+                                println!("  Bot ID: {}", bot_id);
+                            }
+                            if let Some(webhook_url) =
+                                extra.get("webhookUrl").and_then(|u| u.as_str())
+                            {
+                                println!("  Webhook URL: {}", webhook_url);
+                            }
+                        }
+
+                        if let Some(last) = acc.get("lastActivity").and_then(|t| t.as_i64()) {
+                            if let Some(dt) = chrono::DateTime::from_timestamp_millis(last) {
+                                println!("  Last activity: {}", dt.format("%Y-%m-%d %H:%M:%S"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        TelegramAction::Stop { account_id } => {
+            println!("Stopping Telegram bot account: {}", account_id);
+            client
+                .channel_stop("telegram".to_string(), account_id)
                 .await?;
             println!("Stopped.");
         }

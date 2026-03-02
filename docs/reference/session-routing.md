@@ -67,6 +67,7 @@ Common channel values:
 | `cli` | CLI client connections |
 | `whatsapp` | WhatsApp channel worker |
 | `discord` | Discord channel worker |
+| `telegram` | Telegram channel worker |
 
 ### `accountId`
 
@@ -95,7 +96,7 @@ Identifies the type of conversation. The value `dm` activates DM-specific routin
 | Default | `unknown` |
 | Normalization | Lowercased. Invalid characters replaced with `_`. |
 
-Identifies the remote peer. For WhatsApp, this is the phone number JID (e.g., `31628552611@s.whatsapp.net`). For Discord, the user or channel ID.
+Identifies the remote peer. For WhatsApp, this is the phone number JID (e.g., `31628552611@s.whatsapp.net`). For Discord and Telegram, this is the user/chat/channel ID.
 
 ### `mainKey`
 

@@ -17,6 +17,7 @@ export const DEFAULT_CONFIG: GsvConfig = {
   channels: {
     whatsapp: { dmPolicy: "pairing", allowFrom: [] },
     discord: { dmPolicy: "open", allowFrom: [] },
+    telegram: { dmPolicy: "open", allowFrom: [] },
   },
   session: {
     defaultResetPolicy: {

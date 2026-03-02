@@ -27,6 +27,7 @@ function relativeTime(ms: number): string {
 function channelIcon(channel: string): string {
   if (channel.includes("whatsapp")) return "\uD83D\uDCF1";
   if (channel.includes("discord")) return "\uD83C\uDFAE";
+  if (channel.includes("telegram")) return "\u2708\uFE0F";
   return "\uD83D\uDD17";
 }
 

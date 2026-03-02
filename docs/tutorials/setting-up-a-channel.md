@@ -1,15 +1,16 @@
 # Connecting a Channel
 
-In this tutorial, we will connect a messaging platform to your GSV agent so you can chat with it from WhatsApp or Discord. By the end, you will be able to send a message on your chosen platform and receive a response from your agent.
+In this tutorial, we will connect a messaging platform to your GSV agent so you can chat with it from WhatsApp, Discord, or Telegram. By the end, you will be able to send a message on your chosen platform and receive a response from your agent.
 
 This tutorial assumes you have already completed [Getting Started with GSV](getting-started.md) and have a deployed gateway.
 
 ## Choose your channel
 
-GSV supports two messaging channels. Pick the one you want to set up:
+GSV supports three messaging channels. Pick the one you want to set up:
 
 - **[WhatsApp](#whatsapp)** -- uses QR code authentication, connects to your personal WhatsApp account
 - **[Discord](#discord)** -- uses a bot token, runs as a Discord bot in your server
+- **[Telegram](#telegram)** -- uses a bot token and webhook delivery
 
 ---
 
@@ -177,6 +178,59 @@ You should see a Discord session in the list.
 
 ---
 
+## Telegram
+
+### 1. Create a Telegram bot
+
+In Telegram, open a chat with [@BotFather](https://t.me/BotFather):
+
+1. Send `/newbot`
+2. Choose a bot name and username
+3. Copy the bot token BotFather returns
+
+### 2. Deploy the Telegram channel worker
+
+Deploy the channel with your bot token:
+
+```bash
+gsv deploy up -c channel-telegram --telegram-bot-token "your-telegram-bot-token"
+```
+
+This deploys the Telegram channel worker and uploads bot/webhook secrets.
+
+### 3. Start the Telegram bot channel
+
+```bash
+gsv channel telegram start
+```
+
+Check status:
+
+```bash
+gsv channel telegram status
+```
+
+You should see `connected: true` and a webhook URL in the channel status output.
+
+### 4. Send a test message
+
+Open your bot in Telegram and send:
+
+```
+Hello from Telegram
+```
+
+The agent should reply in the same chat.
+
+As with other channels, your DM policy may require pairing approval:
+
+```bash
+gsv pair list
+gsv pair approve telegram "your-telegram-user-id"
+```
+
+---
+
 ## What we accomplished
 
 You now have a messaging channel connected to your GSV agent:
@@ -187,8 +241,8 @@ You now have a messaging channel connected to your GSV agent:
 
 A few things to note:
 
-- Each channel requires an always-on Durable Object. The Cloudflare free tier supports one always-on DO, so running multiple channels may require a paid plan.
-- You can connect both WhatsApp and Discord to the same gateway -- the agent maintains separate sessions for each conversation.
+- Each channel uses Durable Object state. WhatsApp and Discord keep always-on connections; Telegram is webhook-driven and wakes on demand. The Cloudflare free tier supports one always-on DO, so multiple always-on channel accounts may require a paid plan.
+- You can connect WhatsApp, Discord, and Telegram to the same gateway -- the agent maintains separate sessions for each conversation.
 - Channel sessions are independent from your CLI session. The agent has separate message history for each.
 
 From here, you can:

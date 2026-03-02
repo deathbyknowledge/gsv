@@ -150,6 +150,10 @@ enum Commands {
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
         discord_bot_token: Option<String>,
 
+        /// Telegram bot token to upload as worker secret (`TELEGRAM_BOT_TOKEN`)
+        #[arg(long, env = "TELEGRAM_BOT_TOKEN")]
+        telegram_bot_token: Option<String>,
+
         /// Node ID to persist in local config (used by node daemon)
         #[arg(long)]
         id: Option<String>,
@@ -216,6 +220,10 @@ enum Commands {
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
         discord_bot_token: Option<String>,
+
+        /// Telegram bot token to upload as worker secret (`TELEGRAM_BOT_TOKEN`)
+        #[arg(long, env = "TELEGRAM_BOT_TOKEN")]
+        telegram_bot_token: Option<String>,
     },
 
     /// Uninstall deployment and optionally remove local node daemon
@@ -353,6 +361,12 @@ enum ChannelAction {
         action: DiscordAction,
     },
 
+    /// Telegram channel management
+    Telegram {
+        #[command(subcommand)]
+        action: TelegramAction,
+    },
+
     /// List all channel accounts
     List,
 }
@@ -405,6 +419,30 @@ enum DiscordAction {
     },
 
     /// Stop Discord bot connection
+    Stop {
+        /// Account ID
+        #[arg(default_value = "default")]
+        account_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TelegramAction {
+    /// Start Telegram bot webhook connection
+    Start {
+        /// Account ID (arbitrary name for this Telegram bot)
+        #[arg(default_value = "default")]
+        account_id: String,
+    },
+
+    /// Check Telegram bot status
+    Status {
+        /// Account ID
+        #[arg(default_value = "default")]
+        account_id: String,
+    },
+
+    /// Stop Telegram bot webhook connection
     Stop {
         /// Account ID
         #[arg(default_value = "default")]
@@ -608,6 +646,10 @@ enum DeployAction {
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
         discord_bot_token: Option<String>,
+
+        /// Telegram bot token to upload as worker secret (`TELEGRAM_BOT_TOKEN`)
+        #[arg(long, env = "TELEGRAM_BOT_TOKEN")]
+        telegram_bot_token: Option<String>,
     },
 
     /// Tear down deployed Cloudflare workers for selected components
@@ -879,6 +921,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             llm_model,
             llm_api_key,
             discord_bot_token,
+            telegram_bot_token,
             id,
             workspace,
             skip_node,
@@ -898,6 +941,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 llm_model,
                 llm_api_key,
                 discord_bot_token,
+                telegram_bot_token,
                 id,
                 workspace,
                 skip_node,
@@ -918,6 +962,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             llm_model,
             llm_api_key,
             discord_bot_token,
+            telegram_bot_token,
         } => {
             run_upgrade(
                 &cfg,
@@ -934,6 +979,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 llm_model,
                 llm_api_key,
                 discord_bot_token,
+                telegram_bot_token,
             )
             .await
         }
@@ -1437,6 +1483,9 @@ fn prompt_up_components(
     if default_all || component_is_selected(default_components, "channel-discord") {
         defaults.push("channel-discord".to_string());
     }
+    if default_all || component_is_selected(default_components, "channel-telegram") {
+        defaults.push("channel-telegram".to_string());
+    }
 
     let mut prompt = multiselect("Select components to deploy")
         .item(
@@ -1453,6 +1502,11 @@ fn prompt_up_components(
             "channel-discord".to_string(),
             "channel-discord",
             "Discord channel worker",
+        )
+        .item(
+            "channel-telegram".to_string(),
+            "channel-telegram",
+            "Telegram channel worker",
         )
         .required(true);
     if !defaults.is_empty() {
@@ -1475,6 +1529,9 @@ fn prompt_down_components(
     if component_is_selected(default_components, "channel-discord") {
         defaults.push("channel-discord".to_string());
     }
+    if component_is_selected(default_components, "channel-telegram") {
+        defaults.push("channel-telegram".to_string());
+    }
 
     let mut prompt = multiselect("Select components to tear down")
         .item(
@@ -1491,6 +1548,11 @@ fn prompt_down_components(
             "channel-discord".to_string(),
             "channel-discord",
             "Discord channel worker",
+        )
+        .item(
+            "channel-telegram".to_string(),
+            "channel-telegram",
+            "Telegram channel worker",
         )
         .required(true);
     if !defaults.is_empty() {
@@ -1626,6 +1688,7 @@ async fn run_setup(
     llm_model: Option<String>,
     llm_api_key: Option<String>,
     discord_bot_token: Option<String>,
+    telegram_bot_token: Option<String>,
     node_id: Option<String>,
     node_workspace: Option<PathBuf>,
     skip_node: bool,
@@ -1657,6 +1720,7 @@ async fn run_setup(
             llm_model,
             llm_api_key,
             discord_bot_token,
+            telegram_bot_token,
         },
         cfg,
     )
@@ -1693,6 +1757,7 @@ async fn run_upgrade(
     llm_model: Option<String>,
     llm_api_key: Option<String>,
     discord_bot_token: Option<String>,
+    telegram_bot_token: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (version, version_channel_source) = resolve_channel_aware_version(cfg, &version);
     if let Some(source) = version_channel_source {
@@ -1722,6 +1787,7 @@ async fn run_upgrade(
             llm_model,
             llm_api_key,
             discord_bot_token,
+            telegram_bot_token,
         },
         cfg,
     )
@@ -1795,6 +1861,7 @@ async fn run_deploy(
             llm_model,
             llm_api_key,
             discord_bot_token,
+            telegram_bot_token,
         } => {
             if all && !component.is_empty() {
                 return Err("Use either --all or one/more --component values, not both".into());
@@ -1850,6 +1917,7 @@ async fn run_deploy(
             let deploying_gateway = components.iter().any(|c| c == "gateway");
             let deploying_whatsapp = components.iter().any(|c| c == "channel-whatsapp");
             let deploying_discord = components.iter().any(|c| c == "channel-discord");
+            let deploying_telegram = components.iter().any(|c| c == "channel-telegram");
 
             if wizard_mode && interactive {
                 note(
@@ -1898,6 +1966,7 @@ async fn run_deploy(
             let mut resolved_llm_model = llm_model;
             let mut resolved_llm_api_key = llm_api_key;
             let mut resolved_discord_bot_token = discord_bot_token;
+            let mut resolved_telegram_bot_token = telegram_bot_token;
             let explicit_gateway_auth_token = gateway_auth_token.clone();
             let mut desired_gateway_auth_token = explicit_gateway_auth_token.clone();
             let connect_gateway_auth_token = explicit_gateway_auth_token
@@ -1991,6 +2060,23 @@ async fn run_deploy(
                 }
             }
 
+            if deploying_telegram
+                && resolved_telegram_bot_token.is_none()
+                && wizard_mode
+                && interactive
+            {
+                note(
+                    "Telegram setup checklist",
+                    "1. Open Telegram and message @BotFather\n2. Create a bot with /newbot and copy its token\n3. Keep the token handy for deploy\n4. After deploy run: gsv channel telegram start",
+                )?;
+                if prompt_yes_no(
+                    "Configure Telegram bot token on deployed channel worker now?",
+                    true,
+                )? {
+                    resolved_telegram_bot_token = prompt_secret("Telegram bot token")?;
+                }
+            }
+
             if wizard_mode && interactive {
                 let mut summary = format!(
                     "Account: {}\nComponents: {}",
@@ -2010,6 +2096,16 @@ async fn run_deploy(
                     summary.push_str(&format!(
                         "\nDiscord bot token: {}",
                         if resolved_discord_bot_token.is_some() {
+                            "provided"
+                        } else {
+                            "not provided"
+                        }
+                    ));
+                }
+                if deploying_telegram {
+                    summary.push_str(&format!(
+                        "\nTelegram bot token: {}",
+                        if resolved_telegram_bot_token.is_some() {
                             "provided"
                         } else {
                             "not provided"
@@ -2152,6 +2248,26 @@ async fn run_deploy(
                     println!("Note: Discord bot token not configured.");
                     println!(
                         "Tip: rerun deploy with --discord-bot-token (or DISCORD_BOT_TOKEN env) before `gsv channel discord start`."
+                    );
+                }
+            }
+
+            if deploying_telegram {
+                println!("Setting TELEGRAM_WEBHOOK_BASE_URL secret on Telegram channel worker...");
+                let webhook_base_url =
+                    deploy::set_telegram_webhook_base_url_secret(&resolved_account_id, &token)
+                        .await?;
+                println!("Configured TELEGRAM_WEBHOOK_BASE_URL: {}", webhook_base_url);
+
+                if let Some(bot_token) = resolved_telegram_bot_token.as_deref() {
+                    println!("Setting TELEGRAM_BOT_TOKEN secret on Telegram channel worker...");
+                    deploy::set_telegram_bot_token_secret(&resolved_account_id, &token, bot_token)
+                        .await?;
+                    println!("Configured TELEGRAM_BOT_TOKEN.");
+                } else {
+                    println!("Note: Telegram bot token not configured.");
+                    println!(
+                        "Tip: rerun deploy with --telegram-bot-token (or TELEGRAM_BOT_TOKEN env) before `gsv channel telegram start`."
                     );
                 }
             }

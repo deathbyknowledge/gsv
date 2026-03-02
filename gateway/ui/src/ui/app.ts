@@ -38,7 +38,7 @@ import { renderDebug } from "./views/debug";
 
 const DEFAULT_CHANNEL_ACCOUNT_ID = "default";
 const CHANNEL_AUTO_REFRESH_MS = 10_000;
-const DEFAULT_CHANNELS = ["whatsapp", "discord"];
+const DEFAULT_CHANNELS = ["whatsapp", "discord", "telegram"];
 
 @customElement("gsv-app")
 export class GsvApp extends LitElement {

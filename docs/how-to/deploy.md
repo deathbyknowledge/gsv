@@ -25,10 +25,10 @@ The wizard prompts for:
 
 1. **Cloudflare API token** (if not already configured)
 2. **Cloudflare account** (auto-selected if you only have one)
-3. **Components** to deploy (gateway, channel-whatsapp, channel-discord)
+3. **Components** to deploy (gateway, channel-whatsapp, channel-discord, channel-telegram)
 4. **LLM provider and model** (defaults to Anthropic / Claude Sonnet)
 5. **LLM API key**
-6. **Discord bot token** (if deploying the Discord channel)
+6. **Channel bot tokens** (Discord and/or Telegram, if deploying those channels)
 
 On completion, the wizard saves the gateway URL and auth token to your local config so `gsv client` and `gsv node` work immediately.
 
@@ -59,7 +59,7 @@ Deploy the gateway and WhatsApp channel:
 gsv deploy up -c gateway -c channel-whatsapp
 ```
 
-Available components: `gateway`, `channel-whatsapp`, `channel-discord`.
+Available components: `gateway`, `channel-whatsapp`, `channel-discord`, `channel-telegram`.
 
 ## Deploy from local bundles
 
@@ -90,6 +90,7 @@ For channel worker secrets (like Discord bot tokens), pass them during deploy:
 
 ```bash
 gsv deploy up -c channel-discord --discord-bot-token "$DISCORD_BOT_TOKEN"
+gsv deploy up -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
 ```
 
 ## Check deployment status

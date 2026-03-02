@@ -14,6 +14,7 @@ declare namespace Cloudflare {
 		SESSION: DurableObjectNamespace<import("./src/index").Session>;
 		CHANNEL_WHATSAPP: Service /* entrypoint WhatsAppChannel from gsv-channel-whatsapp */;
 		CHANNEL_DISCORD: Service /* entrypoint DiscordChannel from gsv-channel-discord */;
+		CHANNEL_TELEGRAM: Service /* entrypoint TelegramChannel from gsv-channel-telegram */;
 	}
 }
 interface Env extends Cloudflare.Env {}

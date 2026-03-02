@@ -70,10 +70,11 @@ Connect messaging apps during the wizard or later:
 ```bash
 gsv channel whatsapp login    # Scan QR code
 gsv channel discord start     # Start Discord bot
+gsv channel telegram start    # Start Telegram bot
 ```
 
 > [!NOTE]
-> Both WhatsApp and Discord channels require an always-on Durable Object to run. While the Workers free tier fits 1 always-on DO, having multiple channels or multiple accounts in a single channel will require a paid plan (or you'll experience downtime).
+> All channels use Durable Object state. WhatsApp and Discord keep persistent gateway connections (effectively always-on), while Telegram is webhook-driven and wakes on inbound/outbound traffic. On the free Workers tier, running multiple always-on channel accounts may require a paid plan.
 
 
 ## Architecture
@@ -127,7 +128,7 @@ gsv channel discord start     # Start Discord bot
 - **Gateway** - Central brain running on Cloudflare. Routes messages, manages tools, stores config.
 - **Sessions** - Each conversation is a Durable Object with persistent history and its own agent loop.
 - **Nodes** - Your devices running the CLI, providing tools (Bash, Read, Write, Edit, Glob, Grep).
-- **Channels** - Bridges to WhatsApp, Discord, etc. Each runs as a separate Worker.
+- **Channels** - Bridges to WhatsApp, Discord, Telegram, etc. Each runs as a separate Worker.
 
 ## Tool Namespacing
 
@@ -189,6 +190,8 @@ gsv channel whatsapp login            # Connect WhatsApp
 gsv channel whatsapp logout           # Disconnect
 gsv channel discord start             # Start Discord bot
 gsv channel discord stop              # Stop bot
+gsv channel telegram start            # Start Telegram bot
+gsv channel telegram stop             # Stop bot
 
 # Access control
 gsv pair list                         # List pending pair requests

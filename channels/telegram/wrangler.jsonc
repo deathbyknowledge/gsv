@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-channel-telegram",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TELEGRAM_ACCOUNT",
+        "class_name": "TelegramAccount"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TelegramAccount"]
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "gsv",
+      "entrypoint": "GatewayEntrypoint"
+    }
+  ]
+}

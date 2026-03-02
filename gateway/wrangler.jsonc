@@ -60,6 +60,11 @@
 			"binding": "CHANNEL_DISCORD",
 			"service": "gsv-channel-discord",
 			"entrypoint": "DiscordChannel"
+		},
+		{
+			"binding": "CHANNEL_TELEGRAM",
+			"service": "gsv-channel-telegram",
+			"entrypoint": "TelegramChannel"
 		}
 	]
 	/**
