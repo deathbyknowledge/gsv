@@ -294,7 +294,7 @@ jobs:
             INSTALL_CMD='curl -sSL https://install.gsv.space | bash'
           else
             TITLE="GSV (dev)"
-            INSTALL_CMD='GSV_CHANNEL=dev curl -sSL https://install.gsv.space | bash'
+            INSTALL_CMD='curl -sSL https://install.gsv.space | GSV_CHANNEL=dev bash'
           fi
 
           cat > body.md <<BODY
@@ -311,7 +311,7 @@ jobs:
           Pin a specific release tag:
 
           \`\`\`bash
-          GSV_VERSION=${RELEASE_TAG} curl -sSL https://install.gsv.space | bash
+          curl -sSL https://install.gsv.space | GSV_VERSION=${RELEASE_TAG} bash
           \`\`\`
 
           ### Cloudflare Bundles
