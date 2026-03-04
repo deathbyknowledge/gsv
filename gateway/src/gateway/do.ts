@@ -61,6 +61,7 @@ import {
   type CronRunResult,
 } from "../cron";
 import type { ChatEventPayload } from "../protocol/chat";
+import type { RunProgressEventPayload } from "../protocol/run-events";
 import type {
   ChannelRegistryEntry,
   ChannelId,
@@ -890,6 +891,25 @@ export class Gateway extends DurableObject<Env> {
       // Route the response to the channel
       if (payload.state === "final" && payload.message) {
         routePayloadToChannel(this, sessionKey, channelContext, payload);
+      }
+    }
+  }
+
+  broadcastRunEventToSession(
+    sessionKey: string,
+    payload: RunProgressEventPayload,
+  ): void {
+    void sessionKey;
+    const evt: EventFrame<RunProgressEventPayload> = {
+      type: "evt",
+      event: "run.progress",
+      payload,
+    };
+    const message = JSON.stringify(evt);
+
+    for (const ws of this.clients.values()) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
       }
     }
   }
