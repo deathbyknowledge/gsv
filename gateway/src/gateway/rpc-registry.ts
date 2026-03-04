@@ -51,6 +51,60 @@ const DEFAULT_DESCRIPTOR_OVERRIDES: Partial<
   "node.exec.event": {
     allowedModes: ["node"],
   },
+  "principal.profile.get": {
+    allowedModes: ["client"],
+  },
+  "principal.profile.list": {
+    allowedModes: ["client"],
+  },
+  "principal.profile.put": {
+    allowedModes: ["client"],
+  },
+  "principal.profile.delete": {
+    allowedModes: ["client"],
+  },
+  "space.members.list": {
+    allowedModes: ["client"],
+  },
+  "space.member.put": {
+    allowedModes: ["client"],
+  },
+  "space.member.remove": {
+    allowedModes: ["client"],
+  },
+  "conversation.bindings.list": {
+    allowedModes: ["client"],
+  },
+  "conversation.binding.put": {
+    allowedModes: ["client"],
+  },
+  "conversation.binding.remove": {
+    allowedModes: ["client"],
+  },
+  "invite.create": {
+    allowedModes: ["client"],
+  },
+  "invite.list": {
+    allowedModes: ["client"],
+  },
+  "invite.revoke": {
+    allowedModes: ["client"],
+  },
+  "invite.claim": {
+    allowedModes: ["client"],
+  },
+  "pending.bindings.list": {
+    allowedModes: ["client"],
+  },
+  "pending.binding.resolve": {
+    allowedModes: ["client"],
+  },
+  "registry.backfill": {
+    allowedModes: ["client"],
+  },
+  "registry.repair": {
+    allowedModes: ["client"],
+  },
 };
 
 export function buildRpcRegistry(

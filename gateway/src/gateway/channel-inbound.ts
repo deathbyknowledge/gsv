@@ -1,8 +1,6 @@
 import { env } from "cloudflare:workers";
 import {
   isAllowedSender,
-  normalizeE164,
-  resolveAgentIdFromBinding,
 } from "../config/parsing";
 import {
   formatDirectiveAck,
@@ -16,15 +14,35 @@ import { processInboundMedia } from "../storage/media";
 import { parseCommand } from "./commands";
 import { executeChannelSlashCommand } from "./tool-executors";
 import {
-  buildSessionKeyFromChannel,
   sendChannelResponse,
   sendTypingToChannel,
 } from "./channel-transport";
 import type { Gateway } from "./do";
+import { claimInviteForPrincipal } from "./invites";
+import {
+  buildChannelPrincipalId,
+  normalizeChannelSenderId,
+  normalizeId,
+} from "./identity";
+
+function parseInviteClaimCode(messageText: string | undefined): string | undefined {
+  const trimmed = (messageText ?? "").trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const match = /^(?:\/)?(?:claim|invite|register)\s+([a-zA-Z0-9-]{4,64})$/i.exec(
+    trimmed,
+  );
+  const code = match?.[1]?.trim();
+  return code || undefined;
+}
 
 export type ChannelInboundRpcResult = {
   ok: boolean;
   sessionKey?: string;
+  threadId?: string;
+  stateId?: string;
   status?: string;
   error?: string;
   [key: string]: unknown;
@@ -59,12 +77,20 @@ export async function handleChannelInboundRpc(
 
   if (!allowCheck.allowed) {
     if (allowCheck.needsPairing) {
-      const pairKey = `${params.channel}:${normalizeE164(senderId)}`;
+      const normalizedSenderId = normalizeChannelSenderId(senderId);
+      const pairKey = `${normalizeId(params.channel)}:${normalizedSenderId}`;
       if (!gw.pendingPairs[pairKey]) {
         gw.pendingPairs[pairKey] = {
-          channel: params.channel,
-          senderId: normalizeE164(senderId),
+          channel: normalizeId(params.channel),
+          accountId: normalizeId(params.accountId),
+          senderId: normalizedSenderId,
+          principalId: buildChannelPrincipalId(
+            params.channel,
+            params.accountId,
+            normalizedSenderId,
+          ),
           senderName: senderName,
+          stage: "pairing",
           requestedAt: Date.now(),
           firstMessage: params.message.text?.slice(0, 200),
         };
@@ -84,7 +110,7 @@ export async function handleChannelInboundRpc(
       return {
         ok: true,
         status: "pending_pairing",
-        senderId: normalizeE164(senderId),
+        senderId: normalizedSenderId,
       };
     }
 
@@ -98,20 +124,81 @@ export async function handleChannelInboundRpc(
     };
   }
 
-  const agentId = resolveAgentIdFromBinding(
-    config,
-    params.channel,
-    params.accountId,
-    params.peer,
-  );
-  const sessionKey = buildSessionKeyFromChannel(
-    gw,
-    agentId,
-    params.channel,
-    params.accountId,
-    params.peer,
-    senderId,
-  );
+  const route = await gw.resolveInboundThreadRoute(params);
+  if (route.status !== "ok") {
+    if (route.state === "allowed_unbound") {
+      const claimCode = parseInviteClaimCode(params.message.text);
+      if (claimCode && route.principalId) {
+        const claim = claimInviteForPrincipal(gw, {
+          code: claimCode,
+          principalId: route.principalId,
+          channel: params.channel,
+          senderId,
+        });
+        if (claim.ok) {
+          sendChannelResponse(
+            gw,
+            params.channel,
+            params.accountId,
+            params.peer,
+            params.message.id,
+            "Invite claimed successfully. You are now registered. Send your message again to continue.",
+          );
+          return {
+            ok: true,
+            status: "invite_claimed",
+            principalId: claim.principalId,
+            homeSpaceId: claim.homeSpaceId,
+            role: claim.role,
+          };
+        }
+
+        sendChannelResponse(
+          gw,
+          params.channel,
+          params.accountId,
+          params.peer,
+          params.message.id,
+          claim.message,
+        );
+        return {
+          ok: true,
+          status: "invite_claim_failed",
+          reason: claim.reason,
+          principalId: route.principalId,
+          surfaceId: route.surfaceId,
+        };
+      }
+
+      const reason = route.reason === "conversation-not-bound"
+        ? "This conversation is not yet bound to a space. Please ask an admin to configure it."
+        : route.reason === "not-a-member-of-space"
+          ? "Your account is not yet a member of the target space. Please ask an admin to grant access."
+          : "Your account is approved but not yet assigned to a profile/space. Send `/claim <invite_code>` or ask an admin to complete setup.";
+      sendChannelResponse(
+        gw,
+        params.channel,
+        params.accountId,
+        params.peer,
+        params.message.id,
+        reason,
+      );
+    }
+
+    return {
+      ok: true,
+      status: route.state,
+      reason: route.reason,
+      principalId: route.principalId,
+      surfaceId: route.surfaceId,
+    };
+  }
+
+  const agentId = route.agentId;
+  const threadId = route.threadId;
+  const stateId = route.stateId;
+  const sessionDoName = route.stateDoName;
+  const sessionKey = route.legacySessionKey || sessionDoName;
 
   const channelKey = `${params.channel}:${params.accountId}`;
   const existing = gw.channelRegistry[channelKey];
@@ -127,7 +214,7 @@ export async function handleChannelInboundRpc(
     channel: params.channel,
     accountId: params.accountId,
     peer: params.peer,
-    sessionKey,
+    sessionKey: sessionDoName,
     timestamp: Date.now(),
   };
 
@@ -138,7 +225,7 @@ export async function handleChannelInboundRpc(
     const commandResult = await executeChannelSlashCommand(
       gw,
       command,
-      sessionKey,
+      sessionDoName,
     );
 
     if (commandResult.handled) {
@@ -153,6 +240,8 @@ export async function handleChannelInboundRpc(
       return {
         ok: true,
         sessionKey,
+        threadId,
+        stateId,
         status: "command",
         command: command.name,
         response: commandResult.response,
@@ -161,7 +250,7 @@ export async function handleChannelInboundRpc(
   }
 
   const fullConfig = gw.getFullConfig();
-  const sessionStub = env.SESSION.getByName(sessionKey);
+  const sessionStub = env.SESSION.getByName(sessionDoName);
 
   let directives = parseDirectives(messageText);
   const needsProviderFallback =
@@ -178,7 +267,7 @@ export async function handleChannelInboundRpc(
       directives = parseDirectives(messageText, fallbackProvider);
     } catch (e) {
       console.warn(
-        `[Gateway] Failed to resolve session model provider for ${sessionKey}, using global default:`,
+        `[Gateway] Failed to resolve session model provider for ${sessionDoName}, using global default:`,
         e,
       );
       directives = parseDirectives(messageText, fullConfig.model.provider);
@@ -200,6 +289,8 @@ export async function handleChannelInboundRpc(
     return {
       ok: true,
       sessionKey,
+      threadId,
+      stateId,
       status: "directive-only",
       directives: {
         thinkLevel: directives.thinkLevel,
@@ -212,6 +303,11 @@ export async function handleChannelInboundRpc(
   const existingSession = gw.sessionRegistry[sessionKey];
   gw.sessionRegistry[sessionKey] = {
     sessionKey,
+    threadId,
+    stateId,
+    spaceId: route.spaceId,
+    principalId: route.principalId,
+    agentId,
     createdAt: existingSession?.createdAt ?? now,
     lastActiveAt: now,
     label: existingSession?.label ?? params.peer.name,
@@ -241,7 +337,10 @@ export async function handleChannelInboundRpc(
       processedMedia = await processInboundMedia(
         processedMedia,
         env.STORAGE,
-        sessionKey,
+        {
+          threadId,
+          sessionKey,
+        },
       );
     }
 
@@ -278,7 +377,7 @@ export async function handleChannelInboundRpc(
       JSON.parse(
         JSON.stringify(gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys())),
       ),
-      sessionKey,
+      sessionDoName,
       messageOverrides,
       processedMedia.length > 0 ? processedMedia : undefined,
       channelContext,
@@ -305,6 +404,8 @@ export async function handleChannelInboundRpc(
       return {
         ok: true,
         sessionKey,
+        threadId,
+        stateId,
         status: "paused",
         runId: result.runId,
         approvalId: result.approvalId,
@@ -314,6 +415,8 @@ export async function handleChannelInboundRpc(
     return {
       ok: true,
       sessionKey,
+      threadId,
+      stateId,
       status: "started",
       runId: result.runId,
       directives:
@@ -336,6 +439,8 @@ export async function handleChannelInboundRpc(
     return {
       ok: false,
       sessionKey,
+      threadId,
+      stateId,
       error: e instanceof Error ? e.message : String(e),
     };
   }

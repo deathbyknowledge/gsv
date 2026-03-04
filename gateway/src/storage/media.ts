@@ -1,19 +1,23 @@
 /**
  * R2 Storage helpers for GSV
  *
- * Storage structure (matching clawdbot pattern):
+ * Storage structure:
  * gsv-storage/
- * └── agents/{agentId}/
- *     └── sessions/
- *         └── {sessionId}.jsonl.gz    # Archived transcript for a reset session
+ * └── media/{threadId|legacySessionKey}/{uuid}.{ext}
  *
  */
 
 import type { MediaAttachment } from "../protocol/channel";
+import { resolveMediaDeletePrefixes, resolveMediaStoreKey } from "./paths";
 
 export const MAX_MEDIA_SIZE_BYTES = 25 * 1024 * 1024; // 25MB limit
 
 const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000; // 4KB (avoids argument-list stack overflows)
+
+export type MediaStorageScope = {
+  threadId?: string;
+  sessionKey?: string;
+};
 
 function uint8ArrayToBase64(data: Uint8Array): string {
   if (data.length === 0) return "";
@@ -29,7 +33,7 @@ function uint8ArrayToBase64(data: Uint8Array): string {
 export async function storeMediaInR2(
   attachment: MediaAttachment,
   bucket: R2Bucket,
-  sessionKey: string,
+  scope: MediaStorageScope,
 ): Promise<string> {
   if (!attachment.data) {
     throw new Error("Media attachment missing base64 data");
@@ -42,8 +46,11 @@ export async function storeMediaInR2(
   }
 
   const ext = getExtensionFromMime(attachment.mimeType);
-  const uuid = crypto.randomUUID();
-  const r2Key = `media/${sessionKey}/${uuid}.${ext}`;
+  const r2Key = resolveMediaStoreKey({
+    ext,
+    threadId: scope.threadId,
+    legacySessionKey: scope.sessionKey,
+  });
 
   await bucket.put(r2Key, binaryData, {
     httpMetadata: {
@@ -52,7 +59,8 @@ export async function storeMediaInR2(
     customMetadata: {
       originalFilename: attachment.filename || "",
       uploadedAt: Date.now().toString(),
-      sessionKey,
+      sessionKey: scope.sessionKey || "",
+      threadId: scope.threadId || "",
     },
   });
 
@@ -80,27 +88,32 @@ export async function fetchMediaFromR2(
 
 export async function deleteSessionMedia(
   bucket: R2Bucket,
-  sessionKey: string,
+  scope: MediaStorageScope,
 ): Promise<number> {
-  const prefix = `media/${sessionKey}/`;
+  const prefixes = resolveMediaDeletePrefixes({
+    threadId: scope.threadId,
+    legacySessionKey: scope.sessionKey,
+  });
   let deleted = 0;
-  let cursor: string | undefined;
 
-  // List and delete all objects with this prefix
-  do {
-    const listed = await bucket.list({ prefix, cursor });
-    
-    if (listed.objects.length > 0) {
-      const keys = listed.objects.map(obj => obj.key);
-      await bucket.delete(keys);
-      deleted += keys.length;
-    }
-    
-    cursor = listed.truncated ? listed.cursor : undefined;
-  } while (cursor);
+  for (const prefix of prefixes) {
+    let cursor: string | undefined;
+    do {
+      const listed = await bucket.list({ prefix, cursor });
+
+      if (listed.objects.length > 0) {
+        const keys = listed.objects.map((obj) => obj.key);
+        await bucket.delete(keys);
+        deleted += keys.length;
+      }
+
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+  }
 
   if (deleted > 0) {
-    console.log(`[MediaStore] Deleted ${deleted} media files for session ${sessionKey}`);
+    const scopeLabel = scope.threadId || scope.sessionKey || "unknown";
+    console.log(`[MediaStore] Deleted ${deleted} media files for ${scopeLabel}`);
   }
   return deleted;
 }
@@ -108,7 +121,7 @@ export async function deleteSessionMedia(
 export async function processInboundMedia(
   media: MediaAttachment[] | undefined,
   bucket: R2Bucket,
-  sessionKey: string,
+  scope: MediaStorageScope,
 ): Promise<MediaAttachment[]> {
   if (!media || media.length === 0) {
     return [];
@@ -130,7 +143,7 @@ export async function processInboundMedia(
     }
 
     try {
-      const r2Key = await storeMediaInR2(attachment, bucket, sessionKey);
+      const r2Key = await storeMediaInR2(attachment, bucket, scope);
       
       // Return attachment with r2Key, strip base64 data
       processed.push({

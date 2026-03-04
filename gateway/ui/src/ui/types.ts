@@ -63,9 +63,29 @@ export type TokenUsage = {
 
 export type SessionRegistryEntry = {
   sessionKey: string;
+  threadId?: string;
+  stateId?: string;
   createdAt: number;
   lastActiveAt: number;
   label?: string;
+};
+
+export type InviteStatus = "active" | "claimed" | "revoked" | "expired";
+
+export type InviteRecord = {
+  inviteId: string;
+  code: string;
+  homeSpaceId: string;
+  homeAgentId?: string;
+  role: string;
+  principalId?: string;
+  status: InviteStatus;
+  createdAt: number;
+  updatedAt: number;
+  expiresAt?: number;
+  claimedAt?: number;
+  claimedBy?: string;
+  revokedAt?: number;
 };
 
 // Channel types
@@ -154,6 +174,8 @@ export type ThinkingBlock = {
 export type ChatEventPayload = {
   runId: string | null;
   sessionKey: string;
+  threadId?: string;
+  stateId?: string;
   state: "partial" | "final" | "error" | "paused";
   message?: AssistantMessage;
   error?: string;

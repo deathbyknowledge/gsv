@@ -209,35 +209,68 @@ export class GatewayClient {
 
   // ---- Convenience methods ----
 
-  async chatSend(sessionKey: string, message: string, runId?: string): Promise<ResponseFrame> {
-    return this.request("chat.send", {
-      sessionKey,
+  async chatSend(
+    sessionKey: string,
+    message: string,
+    runId?: string,
+    threadRef?: string,
+  ): Promise<ResponseFrame> {
+    const params: Record<string, unknown> = {
       message,
       runId: runId || crypto.randomUUID(),
-    });
+    };
+    if (threadRef) {
+      params.threadRef = threadRef;
+    } else {
+      params.sessionKey = sessionKey;
+    }
+    return this.request("chat.send", params);
   }
 
   async sessionsList(limit = 100, offset = 0): Promise<ResponseFrame> {
     return this.request("sessions.list", { limit, offset });
   }
 
-  async sessionGet(sessionKey: string): Promise<ResponseFrame> {
+  async sessionGet(sessionKey: string, threadRef?: string): Promise<ResponseFrame> {
+    if (threadRef) {
+      return this.request("session.get", { threadRef });
+    }
     return this.request("session.get", { sessionKey });
   }
 
-  async sessionStats(sessionKey: string): Promise<ResponseFrame> {
+  async sessionStats(sessionKey: string, threadRef?: string): Promise<ResponseFrame> {
+    if (threadRef) {
+      return this.request("session.stats", { threadRef });
+    }
     return this.request("session.stats", { sessionKey });
   }
 
-  async sessionReset(sessionKey: string): Promise<ResponseFrame> {
+  async sessionReset(sessionKey: string, threadRef?: string): Promise<ResponseFrame> {
+    if (threadRef) {
+      return this.request("session.reset", { threadRef });
+    }
     return this.request("session.reset", { sessionKey });
   }
 
-  async sessionCompact(sessionKey: string, keepMessages = 20): Promise<ResponseFrame> {
+  async sessionCompact(
+    sessionKey: string,
+    keepMessages = 20,
+    threadRef?: string,
+  ): Promise<ResponseFrame> {
+    if (threadRef) {
+      return this.request("session.compact", { threadRef, keepMessages });
+    }
     return this.request("session.compact", { sessionKey, keepMessages });
   }
 
-  async sessionPreview(sessionKey: string, limit = 50): Promise<ResponseFrame> {
+  async sessionPreview(
+    sessionKey: string,
+    limit = 50,
+    threadRef?: string,
+  ): Promise<ResponseFrame> {
+    if (threadRef) {
+      return this.request("session.preview", { threadRef, limit });
+    }
     return this.request("session.preview", { sessionKey, limit });
   }
 
@@ -283,11 +316,21 @@ export class GatewayClient {
 
   // ---- Session (extended) ----
 
-  async sessionPatch(sessionKey: string, patch: Record<string, unknown>): Promise<ResponseFrame> {
+  async sessionPatch(
+    sessionKey: string,
+    patch: Record<string, unknown>,
+    threadRef?: string,
+  ): Promise<ResponseFrame> {
+    if (threadRef) {
+      return this.request("session.patch", { threadRef, ...patch });
+    }
     return this.request("session.patch", { sessionKey, ...patch });
   }
 
-  async sessionHistory(sessionKey: string): Promise<ResponseFrame> {
+  async sessionHistory(sessionKey: string, threadRef?: string): Promise<ResponseFrame> {
+    if (threadRef) {
+      return this.request("session.history", { threadRef });
+    }
     return this.request("session.history", { sessionKey });
   }
 
@@ -371,5 +414,40 @@ export class GatewayClient {
 
   async pairReject(channel: string, senderId: string): Promise<ResponseFrame> {
     return this.request("pair.reject", { channel, senderId });
+  }
+
+  // ---- Invites ----
+
+  async inviteList(params?: {
+    offset?: number;
+    limit?: number;
+    includeInactive?: boolean;
+  }): Promise<ResponseFrame> {
+    return this.request("invite.list", params);
+  }
+
+  async inviteCreate(params: {
+    homeSpaceId: string;
+    code?: string;
+    homeAgentId?: string;
+    role?: string;
+    principalId?: string;
+    ttlMinutes?: number;
+  }): Promise<ResponseFrame> {
+    return this.request("invite.create", params);
+  }
+
+  async inviteRevoke(inviteId: string): Promise<ResponseFrame> {
+    return this.request("invite.revoke", { inviteId });
+  }
+
+  async inviteClaim(params: {
+    code: string;
+    principalId?: string;
+    channel?: string;
+    accountId?: string;
+    senderId?: string;
+  }): Promise<ResponseFrame> {
+    return this.request("invite.claim", params);
   }
 }

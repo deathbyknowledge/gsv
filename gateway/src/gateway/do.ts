@@ -80,6 +80,25 @@ import type {
 } from "../protocol/tools";
 import { GatewayRpcDispatcher } from "./rpc-dispatcher";
 import { GatewayNodeService } from "./node-service";
+import {
+  GatewayRegistryStore,
+  type ConversationBinding,
+  type InviteRecord,
+  type PrincipalProfile,
+  type SpaceMember,
+  type StoredThreadRoute,
+  type ThreadMeta,
+} from "./registry-store";
+import {
+  resolveInboundThreadRoute as resolveInboundThreadRouteHandler,
+  type InboundThreadRouteResult,
+} from "./thread-routing";
+import {
+  authorizeSessionCapability as authorizeSessionCapabilityHandler,
+  authorizeSessionTool as authorizeSessionToolHandler,
+  type PolicyCapability,
+} from "./authz";
+import { resolveSessionTarget } from "./rpc-handlers/session-target";
 
 const DEFAULT_INTERNAL_LOG_TIMEOUT_MS = 20_000;
 const DEFAULT_PENDING_TOOL_TIMEOUT_MS = 60_000;
@@ -114,6 +133,28 @@ export class Gateway extends DurableObject<Env> {
   readonly sessionRegistry = PersistedObject<
     Record<string, SessionRegistryEntry>
   >(this.ctx.storage.kv, { prefix: "sessionRegistry:" });
+  readonly principalProfiles = PersistedObject<
+    Record<string, PrincipalProfile>
+  >(this.ctx.storage.kv, { prefix: "principalProfiles:" });
+  readonly spaceMembers = PersistedObject<
+    Record<string, Record<string, SpaceMember>>
+  >(this.ctx.storage.kv, { prefix: "spaceMembers:" });
+  readonly conversationBindings = PersistedObject<
+    Record<string, ConversationBinding>
+  >(this.ctx.storage.kv, { prefix: "conversationBindings:" });
+  readonly threadRoutes = PersistedObject<
+    Record<string, StoredThreadRoute>
+  >(this.ctx.storage.kv, { prefix: "threadRoutes:" });
+  readonly threadMeta = PersistedObject<
+    Record<string, ThreadMeta>
+  >(this.ctx.storage.kv, { prefix: "threadMeta:" });
+  readonly legacyThreadIndex = PersistedObject<Record<string, string>>(
+    this.ctx.storage.kv,
+    { prefix: "legacyThreadIndex:" },
+  );
+  readonly invites = PersistedObject<
+    Record<string, InviteRecord>
+  >(this.ctx.storage.kv, { prefix: "invites:" });
   readonly channelRegistry = PersistedObject<
     Record<string, ChannelRegistryEntry>
   >(this.ctx.storage.kv, { prefix: "channelRegistry:" });
@@ -155,6 +196,15 @@ export class Gateway extends DurableObject<Env> {
   }>(this.ctx.storage.kv, {
     prefix: "heartbeatScheduler:",
     defaults: { initialized: false },
+  });
+  readonly registryStore = new GatewayRegistryStore({
+    principalProfiles: this.principalProfiles,
+    spaceMembers: this.spaceMembers,
+    conversationBindings: this.conversationBindings,
+    threadRoutes: this.threadRoutes,
+    threadMeta: this.threadMeta,
+    legacyThreadIndex: this.legacyThreadIndex,
+    invites: this.invites,
   });
 
   private readonly cronStore = new CronStore(this.ctx.storage.sql);
@@ -317,7 +367,17 @@ export class Gateway extends DurableObject<Env> {
         continue;
       }
 
-      const sessionStub = this.env.SESSION.getByName(failedCall.route.sessionKey);
+      let sessionDoName = failedCall.route.sessionKey;
+      try {
+        const target = resolveSessionTarget(this, {
+          sessionKey: failedCall.route.sessionKey,
+        });
+        sessionDoName = target.sessionDoName;
+      } catch {
+        // Keep best-effort fallback for stale/legacy pending entries.
+      }
+
+      const sessionStub = this.env.SESSION.getByName(sessionDoName);
       try {
         await sessionStub.toolResult({
           callId: failedCall.callId,
@@ -325,7 +385,7 @@ export class Gateway extends DurableObject<Env> {
         });
       } catch (error) {
         console.warn(
-          `[Gateway] Failed to deliver pending tool failure to session ${failedCall.route.sessionKey} (${failedCall.callId}):`,
+          `[Gateway] Failed to deliver pending tool failure to session ${sessionDoName} (${failedCall.callId}):`,
           error,
         );
       }
@@ -375,7 +435,33 @@ export class Gateway extends DurableObject<Env> {
   async toolRequest(
     params: ToolRequestParams,
   ): Promise<{ ok: boolean; error?: string }> {
-    return this.nodeService.requestToolForSession(params, this.nodes);
+    let target: ReturnType<typeof resolveSessionTarget>;
+    try {
+      target = resolveSessionTarget(this, { sessionKey: params.sessionKey });
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const authz = this.authorizeSessionTool({
+      sessionKey: target.sessionKey,
+      toolName: params.tool,
+    });
+    if (!authz.ok) {
+      return {
+        ok: false,
+        error: authz.reason ?? "Tool execution denied by policy",
+      };
+    }
+    return this.nodeService.requestToolForSession(
+      {
+        ...params,
+        sessionKey: target.sessionDoName,
+      },
+      this.nodes,
+    );
   }
 
   sendOk(ws: WebSocket, id: string, payload?: unknown) {
@@ -424,6 +510,16 @@ export class Gateway extends DurableObject<Env> {
   async transferRequest(
     params: TransferRequestParams,
   ): Promise<{ ok: boolean; error?: string }> {
+    const authz = this.authorizeSessionCapability({
+      sessionKey: params.sessionKey,
+      capability: "transfer.execute",
+    });
+    if (!authz.ok) {
+      return {
+        ok: false,
+        error: authz.reason ?? "Transfer denied by policy",
+      };
+    }
     return transferRequestHandler(this, params);
   }
 
@@ -482,7 +578,17 @@ export class Gateway extends DurableObject<Env> {
         continue;
       }
 
-      const sessionStub = this.env.SESSION.getByName(failedToolCall.route.sessionKey);
+      let sessionDoName = failedToolCall.route.sessionKey;
+      try {
+        const target = resolveSessionTarget(this, {
+          sessionKey: failedToolCall.route.sessionKey,
+        });
+        sessionDoName = target.sessionDoName;
+      } catch {
+        // Keep best-effort fallback for stale/legacy pending entries.
+      }
+
+      const sessionStub = this.env.SESSION.getByName(sessionDoName);
       this.ctx.waitUntil(sessionStub.toolResult({
         callId: failedToolCall.callId,
         error: `Node removed from registry: ${nodeId}`,
@@ -689,8 +795,9 @@ export class Gateway extends DurableObject<Env> {
 
   async executeSessionsListTool(
     args: Record<string, unknown>,
+    callerContext?: { sessionKey?: string; spaceId?: string },
   ): Promise<unknown> {
-    return executeSessionsListToolHandler(this, args);
+    return executeSessionsListToolHandler(this, args, callerContext);
   }
 
   // ---------------------------------------------------------------------------
@@ -700,8 +807,14 @@ export class Gateway extends DurableObject<Env> {
   async executeSessionSendTool(
     callerAgentId: string,
     args: Record<string, unknown>,
+    callerContext?: { sessionKey?: string; spaceId?: string },
   ): Promise<unknown> {
-    return executeSessionSendToolHandler(this, callerAgentId, args);
+    return executeSessionSendToolHandler(
+      this,
+      callerAgentId,
+      args,
+      callerContext,
+    );
   }
 
   /**
@@ -727,6 +840,50 @@ export class Gateway extends DurableObject<Env> {
     text: string,
   ): void {
     sendChannelResponseHandler(this, channel, accountId, peer, replyToId, text);
+  }
+
+  async resolveInboundThreadRoute(
+    params: ChannelInboundParams,
+  ): Promise<InboundThreadRouteResult> {
+    return await resolveInboundThreadRouteHandler(this, params);
+  }
+
+  authorizeSessionCapability(params: {
+    sessionKey?: string;
+    capability: PolicyCapability;
+  }): {
+    ok: boolean;
+    capability?: PolicyCapability;
+    reason?: string;
+    sessionKey?: string;
+    spaceId?: string;
+    principalId?: string;
+    role?: string;
+  } {
+    return authorizeSessionCapabilityHandler({
+      gw: this,
+      sessionKey: params.sessionKey,
+      capability: params.capability,
+    });
+  }
+
+  authorizeSessionTool(params: {
+    sessionKey?: string;
+    toolName: string;
+  }): {
+    ok: boolean;
+    capability?: PolicyCapability;
+    reason?: string;
+    sessionKey?: string;
+    spaceId?: string;
+    principalId?: string;
+    role?: string;
+  } {
+    return authorizeSessionToolHandler({
+      gw: this,
+      sessionKey: params.sessionKey,
+      toolName: params.toolName,
+    });
   }
 
   canonicalizeSessionKey(sessionKey: string, agentIdHint?: string): string {
@@ -828,11 +985,24 @@ export class Gateway extends DurableObject<Env> {
     return this.getFullConfig();
   }
 
+  getSessionRegistryEntry(
+    sessionKey: string,
+  ): SessionRegistryEntry | undefined {
+    return this.sessionRegistry[sessionKey];
+  }
+
   broadcastToSession(sessionKey: string, payload: ChatEventPayload): void {
+    const sessionEntry = this.getSessionRegistryEntry(sessionKey);
+    const enrichedPayload: ChatEventPayload = {
+      ...payload,
+      threadId: payload.threadId ?? sessionEntry?.threadId,
+      stateId: payload.stateId ?? sessionEntry?.stateId,
+    };
+
     const evt: EventFrame<ChatEventPayload> = {
       type: "evt",
       event: "chat",
-      payload,
+      payload: enrichedPayload,
     };
     const message = JSON.stringify(evt);
 
@@ -843,26 +1013,26 @@ export class Gateway extends DurableObject<Env> {
     }
 
     // Route back to channel for run-scoped responses when available.
-    if (!payload.runId) {
+    if (!enrichedPayload.runId) {
       // No runId means this is a WebSocket-only client, not a channel
       return;
     }
 
-    const channelContext = payload.channelContext;
+    const channelContext = enrichedPayload.channelContext;
     if (!channelContext) {
       // No channel context - this run originated from WebSocket/client input.
       return;
     }
 
     // Handle partial state: route text to channel but keep context for final response
-    if (payload.state === "partial" && payload.message) {
+    if (enrichedPayload.state === "partial" && enrichedPayload.message) {
       // Route partial text to channel (e.g., "Let me check..." before tool execution)
-      routePayloadToChannel(this, sessionKey, channelContext, payload);
+      routePayloadToChannel(this, sessionKey, channelContext, enrichedPayload);
       // Don't delete context - we'll need it for the final response
       return;
     }
 
-    if (payload.state === "paused" && payload.message) {
+    if (enrichedPayload.state === "paused" && enrichedPayload.message) {
       sendTypingToChannelHandler(
         this,
         channelContext.channel,
@@ -871,12 +1041,12 @@ export class Gateway extends DurableObject<Env> {
         sessionKey,
         false,
       );
-      routePayloadToChannel(this, sessionKey, channelContext, payload);
+      routePayloadToChannel(this, sessionKey, channelContext, enrichedPayload);
       return;
     }
 
     // Handle final/error state: route to channel, stop typing, and clean up
-    if (payload.state === "final" || payload.state === "error") {
+    if (enrichedPayload.state === "final" || enrichedPayload.state === "error") {
       // Stop typing indicator
       sendTypingToChannelHandler(
         this,
@@ -888,8 +1058,8 @@ export class Gateway extends DurableObject<Env> {
       );
 
       // Route the response to the channel
-      if (payload.state === "final" && payload.message) {
-        routePayloadToChannel(this, sessionKey, channelContext, payload);
+      if (enrichedPayload.state === "final" && enrichedPayload.message) {
+        routePayloadToChannel(this, sessionKey, channelContext, enrichedPayload);
       }
     }
   }

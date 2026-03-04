@@ -14,6 +14,7 @@ import {
 } from "../protocol/transfer";
 import type { Gateway } from "./do";
 import { PersistedObject } from "../shared/persisted-object";
+import { resolveSessionTarget } from "./rpc-handlers/session-target";
 
 export type TransferState = {
   transferId: number;
@@ -46,6 +47,16 @@ export async function transferRequest(
   params: TransferRequestParams,
 ): Promise<{ ok: boolean; error?: string }> {
   const transferId = gw.transferStateService.nextTransferId();
+  let resolvedSessionKey = params.sessionKey;
+  try {
+    const target = resolveSessionTarget(gw, { sessionKey: params.sessionKey });
+    resolvedSessionKey = target.sessionDoName;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
   const sourceIsGsv = params.source.node === "gsv";
   const destIsGsv = params.destination.node === "gsv";
 
@@ -66,7 +77,7 @@ export async function transferRequest(
   const transfer: TransferState = {
     transferId,
     callId: params.callId,
-    sessionKey: params.sessionKey,
+    sessionKey: resolvedSessionKey,
     source: params.source,
     destination: params.destination,
     state: "init",

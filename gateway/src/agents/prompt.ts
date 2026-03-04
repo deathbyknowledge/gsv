@@ -13,6 +13,8 @@ import type { SessionChannelContext } from "../protocol/channel";
 
 export type PromptRuntimeInfo = {
   agentId: string;
+  spaceId?: string;
+  workspaceRoot?: string;
   sessionKey?: string;
   isMainSession: boolean;
   model?: {
@@ -68,7 +70,9 @@ export function buildSystemPromptFromWorkspace(
   sections.push(buildToolingSection(options?.tools));
   sections.push(buildToolCallStyleSection());
   sections.push(buildSafetySection());
-  sections.push(buildWorkspaceSection(workspace.agentId));
+  sections.push(
+    buildWorkspaceSection(workspace.agentId, options?.runtime?.workspaceRoot),
+  );
   sections.push(buildWorkspaceFilesSection());
 
   // BOOTSTRAP.md - First run commissioning ceremony
@@ -260,13 +264,14 @@ function buildSafetySection(): string {
   ].join("\n");
 }
 
-function buildWorkspaceSection(agentId: string): string {
+function buildWorkspaceSection(agentId: string, workspaceRoot?: string): string {
+  const resolvedRoot = workspaceRoot || `agents/${agentId}`;
   return [
     "## Workspace",
-    `Agent workspace root: agents/${agentId}/`,
+    `Agent workspace root: ${resolvedRoot}/`,
     "Use workspace tools for persistent agent files, memory notes, and local skill overrides.",
     "Virtual skill paths are under skills/. Reads resolve agent override first, then global skills fallback.",
-    "Writes to skills/* always create or update agent-local overrides under agents/<agentId>/skills/*.",
+    "Writes to skills/* always create or update agent-local overrides under <workspaceRoot>/skills/*.",
   ].join("\n");
 }
 
@@ -320,6 +325,10 @@ function buildRuntimeSection(
     `Agent: ${runtime.agentId}`,
     `Session: ${runtime.isMainSession ? "main" : "non-main"}`,
   ];
+
+  if (runtime.spaceId) {
+    lines.push(`Space: ${runtime.spaceId}`);
+  }
 
   if (runtime.sessionKey) {
     lines.push(`Session key: ${runtime.sessionKey}`);

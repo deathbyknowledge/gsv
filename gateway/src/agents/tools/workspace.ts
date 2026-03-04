@@ -5,7 +5,8 @@
  * directly through R2, without requiring a connected node.
  *
  * Tools are prefixed with "gsv__" to distinguish from node-provided tools.
- * The agent's workspace is scoped to: agents/{agentId}/
+ * The agent's workspace is scoped to: spaces/{spaceId}/agents/{agentId}/
+ * with compatibility fallback to legacy agents/{agentId}/ paths.
  */
 
 import { NATIVE_TOOLS } from "./constants";

@@ -3,11 +3,13 @@ import type { CronJob } from "../cron";
 import type { SessionOutputContext } from "../protocol/channel";
 import { formatTimeFull, resolveTimezone } from "../shared/time";
 import type { Gateway } from "./do";
+import { resolveSessionTarget } from "./rpc-handlers/session-target";
 
 export type ExecuteCronJobParams = {
   job: CronJob;
   text: string;
   sessionKey: string;
+  threadRef?: string;
   deliver?: boolean;
   channel?: string;
   to?: string;
@@ -26,7 +28,11 @@ export async function executeCronJob(
 ): Promise<ExecuteCronJobResult> {
   const runId = crypto.randomUUID();
   const agentId = params.job.agentId;
-  const session = env.SESSION.getByName(params.sessionKey);
+  const target = resolveSessionTarget(gw, {
+    sessionKey: params.sessionKey,
+    threadRef: params.threadRef,
+  });
+  const session = env.SESSION.getByName(target.sessionDoName);
 
   let deliveryContext: SessionOutputContext | null = null;
 
@@ -67,7 +73,7 @@ export async function executeCronJob(
       channel: deliveryContext.channel,
       accountId: deliveryContext.accountId,
       peer: deliveryContext.peer,
-      sessionKey: params.sessionKey,
+      sessionKey: target.sessionDoName,
       timestamp: Date.now(),
     };
   }
@@ -88,7 +94,7 @@ export async function executeCronJob(
       JSON.parse(
         JSON.stringify(gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys())),
       ),
-      params.sessionKey,
+      target.sessionDoName,
       undefined,
       undefined,
       deliveryContext
@@ -107,7 +113,10 @@ export async function executeCronJob(
     );
     return {
       status: "ok",
-      summary: `queued to ${params.sessionKey}${deliveryContext ? ` (delivering to ${deliveryContext.channel}:${deliveryContext.peer.id})` : ""}`,
+      summary:
+        `queued to ${target.sessionKey}` +
+        `${target.threadId ? ` [id:${target.threadId}]` : ""}` +
+        `${deliveryContext ? ` (delivering to ${deliveryContext.channel}:${deliveryContext.peer.id})` : ""}`,
     };
   } catch (error) {
     return {

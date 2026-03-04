@@ -42,6 +42,13 @@ import type {
   CronRun,
   CronRunResult,
 } from "../cron";
+import type {
+  ConversationBinding,
+  GroupMode,
+  InviteRecord,
+  PrincipalProfile,
+  SpaceMember,
+} from "../gateway/registry-store";
 
 export const DEFER_RESPONSE = Symbol("defer-response");
 export type DeferredResponse = typeof DEFER_RESPONSE;
@@ -121,10 +128,18 @@ export type RpcMethods = {
   };
 
   "chat.send": {
-    params: { sessionKey: string; message: string; runId?: string };
+    params: {
+      sessionKey?: string;
+      threadRef?: string;
+      message: string;
+      runId?: string;
+    };
     result:
       | {
           status: "started";
+          sessionKey: string;
+          threadId?: string;
+          stateId?: string;
           runId: string;
           queued?: false;
           directives?: {
@@ -134,12 +149,18 @@ export type RpcMethods = {
         }
       | {
           status: "command";
+          sessionKey: string;
+          threadId?: string;
+          stateId?: string;
           command: string;
           response?: string;
           error?: string;
         }
       | {
           status: "directive-only";
+          sessionKey: string;
+          threadId?: string;
+          stateId?: string;
           response?: string;
           directives?: {
             thinkLevel?: string;
@@ -148,6 +169,9 @@ export type RpcMethods = {
         }
       | {
           status: "paused";
+          sessionKey: string;
+          threadId?: string;
+          stateId?: string;
           runId: string;
           response: string;
           approvalId?: string;
@@ -179,15 +203,17 @@ export type RpcMethods = {
   };
 
   "session.stats": {
-    params: { sessionKey: string };
-    result: SessionStats;
+    params: { sessionKey?: string; threadRef?: string };
+    result: SessionStats & { threadId?: string; stateId?: string };
   };
 
   "session.get": {
-    params: { sessionKey: string };
+    params: { sessionKey?: string; threadRef?: string };
     result: {
       sessionId: string;
       sessionKey: string;
+      threadId?: string;
+      stateId?: string;
       createdAt: number;
       updatedAt: number;
       messageCount: number;
@@ -201,7 +227,7 @@ export type RpcMethods = {
   };
 
   "session.patch": {
-    params: SessionPatchParams & { sessionKey: string };
+    params: SessionPatchParams & { sessionKey?: string; threadRef?: string };
     result: { ok: boolean };
   };
 
@@ -211,14 +237,17 @@ export type RpcMethods = {
   };
 
   "session.reset": {
-    params: { sessionKey: string };
-    result: ResetResult;
+    params: { sessionKey?: string; threadRef?: string };
+    result: ResetResult & { threadId?: string; stateId?: string };
   };
 
   "session.compact": {
-    params: { sessionKey: string; keepMessages?: number };
+    params: { sessionKey?: string; threadRef?: string; keepMessages?: number };
     result: {
       ok: boolean;
+      sessionKey: string;
+      threadId?: string;
+      stateId?: string;
       trimmedMessages: number;
       keptMessages: number;
       archivedTo?: string;
@@ -226,18 +255,22 @@ export type RpcMethods = {
   };
 
   "session.history": {
-    params: { sessionKey: string };
+    params: { sessionKey?: string; threadRef?: string };
     result: {
       sessionKey: string;
+      threadId?: string;
+      stateId?: string;
       currentSessionId: string;
       previousSessionIds: string[];
     };
   };
 
   "session.preview": {
-    params: { sessionKey: string; limit?: number };
+    params: { sessionKey?: string; threadRef?: string; limit?: number };
     result: {
       sessionKey: string;
+      threadId?: string;
+      stateId?: string;
       sessionId: string;
       messageCount: number;
       messages: unknown[]; // TS2589
@@ -381,7 +414,12 @@ export type RpcMethods = {
 
   "pair.approve": {
     params: { channel: string; senderId: string };
-    result: { approved: true; senderId: string; senderName?: string };
+    result: {
+      approved: true;
+      senderId: string;
+      senderName?: string;
+      requiresBinding?: boolean;
+    };
   };
 
   "pair.reject": {
@@ -389,8 +427,219 @@ export type RpcMethods = {
     result: { rejected: true; senderId: string };
   };
 
+  "principal.profile.get": {
+    params: { principalId: string };
+    result: { principalId: string; profile?: PrincipalProfile };
+  };
+
+  "principal.profile.list": {
+    params: { offset?: number; limit?: number } | undefined;
+    result: {
+      profiles: Array<{ principalId: string; profile: PrincipalProfile }>;
+      count: number;
+    };
+  };
+
+  "principal.profile.put": {
+    params: {
+      principalId: string;
+      homeSpaceId: string;
+      homeAgentId?: string;
+      status?: "bound" | "allowed_unbound";
+    };
+    result: {
+      ok: true;
+      principalId: string;
+      profile: PrincipalProfile;
+    };
+  };
+
+  "principal.profile.delete": {
+    params: { principalId: string };
+    result: { ok: true; principalId: string; removed: boolean };
+  };
+
+  "space.members.list": {
+    params: { spaceId?: string; offset?: number; limit?: number } | undefined;
+    result: {
+      members: Array<{ spaceId: string; principalId: string; member: SpaceMember }>;
+      count: number;
+    };
+  };
+
+  "space.member.put": {
+    params: { spaceId: string; principalId: string; role: string };
+    result: {
+      ok: true;
+      spaceId: string;
+      principalId: string;
+      member: SpaceMember;
+    };
+  };
+
+  "space.member.remove": {
+    params: { spaceId: string; principalId: string };
+    result: { ok: true; spaceId: string; principalId: string; removed: boolean };
+  };
+
+  "conversation.bindings.list": {
+    params: { offset?: number; limit?: number } | undefined;
+    result: {
+      bindings: Array<{ surfaceId: string; binding: ConversationBinding }>;
+      count: number;
+    };
+  };
+
+  "conversation.binding.put": {
+    params: {
+      surfaceId: string;
+      spaceId: string;
+      agentId?: string;
+      groupMode?: GroupMode;
+    };
+    result: {
+      ok: true;
+      surfaceId: string;
+      binding: ConversationBinding;
+    };
+  };
+
+  "conversation.binding.remove": {
+    params: { surfaceId: string };
+    result: { ok: true; surfaceId: string; removed: boolean };
+  };
+
+  "invite.create": {
+    params: {
+      code?: string;
+      homeSpaceId: string;
+      homeAgentId?: string;
+      role?: string;
+      principalId?: string;
+      ttlMinutes?: number;
+    };
+    result: {
+      ok: true;
+      invite: InviteRecord;
+    };
+  };
+
+  "invite.list": {
+    params:
+      | {
+          offset?: number;
+          limit?: number;
+          includeInactive?: boolean;
+        }
+      | undefined;
+    result: {
+      invites: Array<{ inviteId: string; invite: InviteRecord }>;
+      count: number;
+    };
+  };
+
+  "invite.revoke": {
+    params: { inviteId: string };
+    result: {
+      ok: true;
+      inviteId: string;
+      revoked: boolean;
+      invite?: InviteRecord;
+    };
+  };
+
+  "invite.claim": {
+    params: {
+      code: string;
+      principalId?: string;
+      channel?: string;
+      accountId?: string;
+      senderId?: string;
+    };
+    result: {
+      ok: true;
+      inviteId: string;
+      code: string;
+      principalId: string;
+      homeSpaceId: string;
+      homeAgentId?: string;
+      role: string;
+    };
+  };
+
+  "pending.bindings.list": {
+    params: undefined;
+    result: {
+      pending: Array<{ key: string; pair: PendingPair }>;
+      count: number;
+    };
+  };
+
+  "pending.binding.resolve": {
+    params: {
+      channel: string;
+      senderId: string;
+      action: "approve" | "reject";
+      accountId?: string;
+      principalId?: string;
+      homeSpaceId?: string;
+      homeAgentId?: string;
+      role?: string;
+    };
+    result: {
+      ok: true;
+      action: "approve" | "reject";
+      senderId: string;
+      accountId?: string;
+      principalId?: string;
+      homeSpaceId?: string;
+      role?: string;
+    };
+  };
+
+  "registry.backfill": {
+    params:
+      | {
+          dryRun?: boolean;
+          limit?: number;
+        }
+      | undefined;
+    result: {
+      ok: true;
+      dryRun: boolean;
+      scanned: number;
+      migrated: number;
+      createdThreadMeta: number;
+      updatedSessions: number;
+      addedLegacyIndex: number;
+      skipped: number;
+    };
+  };
+
+  "registry.repair": {
+    params:
+      | {
+          dryRun?: boolean;
+          pruneDanglingRoutes?: boolean;
+          pruneDanglingLegacyIndex?: boolean;
+        }
+      | undefined;
+    result: {
+      ok: true;
+      dryRun: boolean;
+      scannedSessions: number;
+      scannedThreadRoutes: number;
+      scannedLegacyIndex: number;
+      createdThreadMeta: number;
+      updatedSessions: number;
+      addedLegacyIndex: number;
+      removedDanglingRoutes: number;
+      removedDanglingLegacyIndex: number;
+    };
+  };
+
   "workspace.list": {
-    params: { path?: string; agentId?: string };
+    params: { path?: string; agentId?: string; spaceId?: string };
     result: {
       path: string;
       files: string[];
@@ -399,7 +648,7 @@ export type RpcMethods = {
   };
 
   "workspace.read": {
-    params: { path: string; agentId?: string };
+    params: { path: string; agentId?: string; spaceId?: string };
     result: {
       path: string;
       content: string;
@@ -409,7 +658,7 @@ export type RpcMethods = {
   };
 
   "workspace.write": {
-    params: { path: string; content: string; agentId?: string };
+    params: { path: string; content: string; agentId?: string; spaceId?: string };
     result: {
       path: string;
       size: number;
@@ -418,7 +667,7 @@ export type RpcMethods = {
   };
 
   "workspace.delete": {
-    params: { path: string; agentId?: string };
+    params: { path: string; agentId?: string; spaceId?: string };
     result: {
       path: string;
       deleted: true;

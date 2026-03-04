@@ -35,6 +35,7 @@ import {
   deleteSessionMedia,
   storeMediaInR2,
 } from "../storage/media";
+import { resolveDailyMemoryKeyFromBasePath, resolveWorkspacePathSetForRuntime } from "../storage/paths";
 import { loadAgentWorkspace } from "../agents/loader";
 import { isMainSessionKey } from "./routing";
 import { buildSystemPromptFromWorkspace } from "../agents/prompt";
@@ -99,6 +100,15 @@ type ToolResultInput = {
   callId: string;
   result?: unknown;
   error?: string;
+};
+
+type SessionStorageScope = {
+  sessionKey: string;
+  agentId: string;
+  spaceId?: string;
+  threadId?: string;
+  workspaceBasePath: string;
+  workspaceFallbackBasePath?: string;
 };
 
 export type SessionSettings = {
@@ -291,6 +301,8 @@ class MediaCache {
 }
 
 export class Session extends DurableObject<Env> {
+  private storageScopeCache: SessionStorageScope | null = null;
+
   private static generateSessionId(): string {
     return crypto.randomUUID();
   }
@@ -311,6 +323,65 @@ export class Session extends DurableObject<Env> {
     }
 
     return "main";
+  }
+
+  private normalizeOptionalId(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+      return undefined;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized || undefined;
+  }
+
+  private invalidateStorageScopeCache(): void {
+    this.storageScopeCache = null;
+  }
+
+  private async resolveSessionStorageScope(): Promise<SessionStorageScope> {
+    const sessionKey = this.meta.sessionKey || "";
+    if (
+      this.storageScopeCache &&
+      this.storageScopeCache.sessionKey === sessionKey
+    ) {
+      return this.storageScopeCache;
+    }
+
+    let agentId = this.getAgentId();
+    let spaceId: string | undefined;
+    let threadId: string | undefined;
+
+    if (sessionKey) {
+      try {
+        const gateway = this.env.GATEWAY.getByName("singleton");
+        const sessionEntry = await gateway.getSessionRegistryEntry(sessionKey);
+        const mappedAgentId = this.normalizeOptionalId(sessionEntry?.agentId);
+        if (mappedAgentId) {
+          agentId = mappedAgentId;
+        }
+        spaceId = this.normalizeOptionalId(sessionEntry?.spaceId);
+        threadId = this.normalizeOptionalId(sessionEntry?.threadId);
+      } catch (error) {
+        console.warn(
+          `[Session] Failed to resolve session storage scope from gateway: ${error}`,
+        );
+      }
+    }
+
+    const pathSet = await resolveWorkspacePathSetForRuntime(
+      this.env.STORAGE,
+      agentId,
+      spaceId,
+    );
+    const scope: SessionStorageScope = {
+      sessionKey,
+      agentId,
+      spaceId,
+      threadId,
+      workspaceBasePath: pathSet.primaryBasePath,
+      workspaceFallbackBasePath: pathSet.fallbackBasePath,
+    };
+    this.storageScopeCache = scope;
+    return scope;
   }
 
   private async loadRuntimeNodeInventory(): Promise<
@@ -1008,9 +1079,12 @@ export class Session extends DurableObject<Env> {
     media?: MediaAttachment[],
     channelContext?: SessionOutputContext,
   ): Promise<ChatSendResult> {
+    this.invalidateStorageScopeCache();
+
     // Initialize session key if needed
     if (!this.meta.sessionKey) {
       this.meta.sessionKey = sessionKey;
+      this.invalidateStorageScopeCache();
     }
 
     await this.ensureResetPolicyInitialized();
@@ -1170,6 +1244,7 @@ export class Session extends DurableObject<Env> {
     const pendingCallIds = Object.keys(this.pendingToolCalls);
     const hadPendingToolCalls = pendingCallIds.length > 0;
     if (pendingCallIds.length > 0) {
+      const storageScope = await this.resolveSessionStorageScope();
       for (const callId of pendingCallIds) {
         const call = this.pendingToolCalls[callId];
         if (!call) {
@@ -1200,7 +1275,10 @@ export class Session extends DurableObject<Env> {
                     data: block.data as string,
                   },
                   this.env.STORAGE,
-                  this.meta.sessionKey,
+                  {
+                    threadId: storageScope.threadId,
+                    sessionKey: this.meta.sessionKey,
+                  },
                 );
                 processedBlocks.push({
                   type: "image",
@@ -1522,6 +1600,7 @@ export class Session extends DurableObject<Env> {
     effectiveModel: { provider: string; id: string },
     contextWindow: number,
   ): Promise<boolean> {
+    const storageScope = await this.resolveSessionStorageScope();
     const messages = this.getMessages();
 
     if (!shouldCompact(messages, contextWindow, config.compaction)) {
@@ -1544,14 +1623,26 @@ export class Session extends DurableObject<Env> {
     let existingMemory: string | undefined;
     if (config.compaction.extractMemories) {
       try {
-        const agentId = this.getAgentId();
         const today = new Date().toISOString().split("T")[0];
-        const memoryObj = await this.env.STORAGE.get(
-          `agents/${agentId}/memory/${today}.md`,
-        );
-        if (memoryObj) {
+        const memoryPaths = [
+          resolveDailyMemoryKeyFromBasePath(storageScope.workspaceBasePath, today),
+          storageScope.workspaceFallbackBasePath
+            ? resolveDailyMemoryKeyFromBasePath(
+                storageScope.workspaceFallbackBasePath,
+                today,
+              )
+            : undefined,
+        ].filter((path): path is string => Boolean(path));
+        for (const path of memoryPaths) {
+          const memoryObj = await this.env.STORAGE.get(path);
+          if (!memoryObj) {
+            continue;
+          }
           const text = await memoryObj.text();
-          if (text.trim()) existingMemory = text;
+          if (text.trim()) {
+            existingMemory = text;
+            break;
+          }
         }
       } catch (e) {
         console.warn(
@@ -1583,14 +1674,17 @@ export class Session extends DurableObject<Env> {
     if (result.archivedMessages && result.archivedMessages.length > 0) {
       try {
         const partNumber = Date.now();
-        const agentId = this.getAgentId();
         const archiveKey = await archivePartialMessages(
           this.env.STORAGE,
           this.meta.sessionKey,
           this.meta.sessionId,
           result.archivedMessages,
           partNumber,
-          agentId,
+          storageScope.agentId,
+          {
+            spaceId: storageScope.spaceId,
+            threadId: storageScope.threadId,
+          },
         );
         console.log(
           `[Session] Compaction archived ${result.archivedMessages.length} messages to ${archiveKey}`,
@@ -1634,9 +1728,12 @@ export class Session extends DurableObject<Env> {
     memories: string,
     dateOverride?: string,
   ): Promise<void> {
-    const agentId = this.getAgentId();
+    const storageScope = await this.resolveSessionStorageScope();
     const dateStr = dateOverride ?? new Date().toISOString().split("T")[0];
-    const path = `agents/${agentId}/memory/${dateStr}.md`;
+    const path = resolveDailyMemoryKeyFromBasePath(
+      storageScope.workspaceBasePath,
+      dateStr,
+    );
 
     // Load existing content
     const existing = await this.env.STORAGE.get(path);
@@ -1886,7 +1983,8 @@ export class Session extends DurableObject<Env> {
     runRuntimeNodes: RuntimeNodeInventory | undefined,
     channelContext?: SessionChannelContext,
   ): Promise<string> {
-    const agentId = this.getAgentId();
+    const storageScope = await this.resolveSessionStorageScope();
+    const agentId = storageScope.agentId;
 
     // Check if this is main session (for MEMORY.md security)
     const mainSession = isMainSessionKey({
@@ -1904,6 +2002,9 @@ export class Session extends DurableObject<Env> {
       this.env.STORAGE,
       agentId,
       mainSession,
+      {
+        spaceId: storageScope.spaceId,
+      },
     );
 
     if (this.currentRun?.skillsSnapshot) {
@@ -1951,6 +2052,8 @@ export class Session extends DurableObject<Env> {
       skillEntries: config.skills.entries,
       runtime: {
         agentId,
+        spaceId: storageScope.spaceId,
+        workspaceRoot: storageScope.workspaceBasePath,
         sessionKey: this.meta.sessionKey,
         isMainSession: mainSession,
         model: effectiveModel,
@@ -2056,6 +2159,19 @@ export class Session extends DurableObject<Env> {
       return;
     }
 
+    const gateway = this.env.GATEWAY.getByName("singleton");
+    const authz = await gateway.authorizeSessionTool({
+      sessionKey: this.meta.sessionKey,
+      toolName: toolCall.name,
+    });
+    if (!authz.ok) {
+      toolCall.error = authz.reason || "Tool execution denied by policy";
+      if (persistResult) {
+        this.pendingToolCalls[toolCall.id] = toolCall;
+      }
+      return;
+    }
+
     if (toolCall.name === TRANSFER_TOOL_NAME) {
       try {
         const source = parseTransferEndpoint(toolCall.args.source as string);
@@ -2063,7 +2179,6 @@ export class Session extends DurableObject<Env> {
           toolCall.args.destination as string,
         );
 
-        const gateway = this.env.GATEWAY.getByName("singleton");
         const result = await gateway.transferRequest({
           callId: toolCall.id,
           sessionKey: this.meta.sessionKey,
@@ -2089,17 +2204,20 @@ export class Session extends DurableObject<Env> {
 
     // Native tools (gsv__*) are handled locally in Session.
     if (isNativeTool(toolCall.name)) {
-      const agentId = this.getAgentId();
+      const storageScope = await this.resolveSessionStorageScope();
+      const agentId = storageScope.agentId;
 
       console.log(
         `[Session] Executing native tool ${toolCall.name} for agent ${agentId}`,
       );
 
-      const gateway = this.env.GATEWAY.getByName("singleton");
       const result = await executeNativeTool(
         {
           bucket: this.env.STORAGE,
           agentId,
+          sessionKey: this.meta.sessionKey,
+          spaceId: storageScope.spaceId,
+          basePath: storageScope.workspaceBasePath,
           gateway,
         },
         toolCall.name,
@@ -2119,11 +2237,11 @@ export class Session extends DurableObject<Env> {
     }
 
     // Node tool - dispatch to Gateway for routing to appropriate node
-    const gateway = this.env.GATEWAY.get(
+    const gatewayById = this.env.GATEWAY.get(
       this.env.GATEWAY.idFromName("singleton"),
     );
     // Fire and forget - don't await the tool execution, just the request dispatch
-    const result = await gateway.toolRequest({
+    const result = await gatewayById.toolRequest({
       callId: toolCall.id,
       tool: toolCall.name,
       args: toolCall.args,
@@ -2179,6 +2297,7 @@ export class Session extends DurableObject<Env> {
   private async doReset(options?: {
     preserveCurrentRun?: boolean;
   }): Promise<ResetResult> {
+    const storageScope = await this.resolveSessionStorageScope();
     const oldSessionId = this.meta.sessionId;
     const sessionKey = this.meta.sessionKey;
     const messageCount = this.getMessageCount();
@@ -2195,14 +2314,17 @@ export class Session extends DurableObject<Env> {
     if (messageCount > 0 && sessionKey) {
       try {
         const messages = this.getMessages();
-        const agentId = this.getAgentId();
         archivedTo = await archiveSession(
           this.env.STORAGE,
           sessionKey,
           oldSessionId,
           messages,
           tokensCleared,
-          agentId,
+          storageScope.agentId,
+          {
+            spaceId: storageScope.spaceId,
+            threadId: storageScope.threadId,
+          },
         );
         console.log(
           `[Session] Archived ${messageCount} messages to ${archivedTo}`,
@@ -2223,7 +2345,6 @@ export class Session extends DurableObject<Env> {
         const config: GsvConfig = await gateway.getConfig();
 
         if (config.compaction.enabled && config.compaction.extractMemories) {
-          const agentId = this.getAgentId();
           const effectiveModel = this.meta.settings.model || config.model;
           const provider = effectiveModel.provider;
           const apiKey = (config.apiKeys as Record<string, string | undefined>)[
@@ -2239,12 +2360,29 @@ export class Session extends DurableObject<Env> {
               const conversationDate = new Date(this.meta.updatedAt)
                 .toISOString()
                 .split("T")[0];
-              const memoryObj = await this.env.STORAGE.get(
-                `agents/${agentId}/memory/${conversationDate}.md`,
-              );
-              if (memoryObj) {
+              const memoryPaths = [
+                resolveDailyMemoryKeyFromBasePath(
+                  storageScope.workspaceBasePath,
+                  conversationDate,
+                ),
+                storageScope.workspaceFallbackBasePath
+                  ? resolveDailyMemoryKeyFromBasePath(
+                      storageScope.workspaceFallbackBasePath,
+                      conversationDate,
+                    )
+                  : undefined,
+              ].filter((path): path is string => Boolean(path));
+
+              for (const path of memoryPaths) {
+                const memoryObj = await this.env.STORAGE.get(path);
+                if (!memoryObj) {
+                  continue;
+                }
                 const text = await memoryObj.text();
-                if (text.trim()) existingMemory = text;
+                if (text.trim()) {
+                  existingMemory = text;
+                  break;
+                }
               }
 
               const messages = this.getMessages();
@@ -2287,7 +2425,10 @@ export class Session extends DurableObject<Env> {
     // Delete media from R2
     if (sessionKey) {
       try {
-        mediaDeleted = await deleteSessionMedia(this.env.STORAGE, sessionKey);
+        mediaDeleted = await deleteSessionMedia(this.env.STORAGE, {
+          threadId: storageScope.threadId,
+          sessionKey,
+        });
       } catch (e) {
         console.error(`[Session] Failed to delete media: ${e}`);
       }
@@ -2502,15 +2643,19 @@ export class Session extends DurableObject<Env> {
     let archivedTo: string | undefined;
     if (messagesToArchive.length > 0 && this.meta.sessionKey) {
       try {
+        const storageScope = await this.resolveSessionStorageScope();
         const partNumber = Date.now();
-        const agentId = this.getAgentId();
         archivedTo = await archivePartialMessages(
           this.env.STORAGE,
           this.meta.sessionKey,
           this.meta.sessionId,
           messagesToArchive,
           partNumber,
-          agentId,
+          storageScope.agentId,
+          {
+            spaceId: storageScope.spaceId,
+            threadId: storageScope.threadId,
+          },
         );
         console.log(
           `[Session] Compacted: archived ${trimCount} messages to ${archivedTo}`,

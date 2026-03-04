@@ -9,7 +9,9 @@ use gsv::protocol::Frame;
 use serde_json::json;
 
 use crate::{
-    ChannelAction, ConfigAction, DiscordAction, HeartbeatAction, PairAction, SessionAction,
+    ChannelAction, ConfigAction, DiscordAction, HeartbeatAction, PairAction, RegistryAction,
+    RegistryConversationAction, RegistryInviteAction, RegistryMaintenanceAction,
+    RegistryMemberAction, RegistryPendingAction, RegistryPrincipalAction, SessionAction,
     SkillsAction, ToolsAction, WhatsAppAction,
 };
 
@@ -20,7 +22,8 @@ enum ChatSendResult {
 
 fn chat_event_matches_request(
     payload: &serde_json::Value,
-    requested_session_key: &str,
+    requested_session_key: Option<&str>,
+    requested_thread_id: Option<&str>,
     expected_run_id: Option<&str>,
 ) -> bool {
     if let Some(run_id) = expected_run_id {
@@ -31,11 +34,23 @@ fn chat_event_matches_request(
             .unwrap_or(false);
     }
 
-    payload
-        .get("sessionKey")
-        .and_then(|s| s.as_str())
-        .map(|event_session| event_session == requested_session_key)
-        .unwrap_or(true)
+    if let Some(thread_id) = requested_thread_id {
+        return payload
+            .get("threadId")
+            .and_then(|t| t.as_str())
+            .map(|event_thread_id| event_thread_id == thread_id)
+            .unwrap_or(false);
+    }
+
+    if let Some(session_key) = requested_session_key {
+        return payload
+            .get("sessionKey")
+            .and_then(|s| s.as_str())
+            .map(|event_session| event_session == session_key)
+            .unwrap_or(false);
+    }
+
+    true
 }
 
 async fn wait_for_chat_response(response_received: &AtomicBool) {
@@ -65,20 +80,62 @@ fn truncate_for_display(text: &str, max_bytes: usize) -> String {
     format!("{}...", &text[..end])
 }
 
+fn normalize_optional_input(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn thread_id_from_ref(thread_ref: Option<&str>) -> Option<String> {
+    let thread_ref = thread_ref?.trim();
+    if thread_ref.is_empty() {
+        return None;
+    }
+
+    if let Some(id) = thread_ref.strip_prefix("id:") {
+        let normalized = id.trim();
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized.to_string())
+        }
+    } else {
+        Some(thread_ref.to_string())
+    }
+}
+
 pub(crate) async fn run_client(
     url: &str,
     token: Option<String>,
     message: Option<String>,
-    session_key: &str,
+    session_key: Option<String>,
+    thread_ref: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let session_key = normalize_optional_input(session_key);
+    let thread_ref = normalize_optional_input(thread_ref);
+    if session_key.is_none() && thread_ref.is_none() {
+        return Err("sessionKey or threadRef required".into());
+    }
+
     println!("Connecting to {}...", url);
+    if let Some(thread_ref) = thread_ref.as_deref() {
+        println!("Target thread: {}", thread_ref);
+    } else if let Some(session_key) = session_key.as_deref() {
+        println!("Target session: {}", session_key);
+    }
 
     // Flag to track when we've received a final/error response
     let response_received = Arc::new(AtomicBool::new(false));
     let response_received_clone = response_received.clone();
     let expected_run_id = Arc::new(Mutex::new(None::<String>));
     let expected_run_id_clone = expected_run_id.clone();
-    let session_key_owned = session_key.to_string();
+    let session_key_owned = session_key.clone();
+    let thread_id_owned = thread_id_from_ref(thread_ref.as_deref());
 
     let conn = Connection::connect_with_options(
         url,
@@ -99,7 +156,8 @@ pub(crate) async fn run_client(
                         // Fall back to sessionKey filtering for older payloads.
                         if !chat_event_matches_request(
                             &payload,
-                            &session_key_owned,
+                            session_key_owned.as_deref(),
+                            thread_id_owned.as_deref(),
                             expected_run_id.as_deref(),
                         ) {
                             return;
@@ -172,7 +230,15 @@ pub(crate) async fn run_client(
             *expected = Some(run_id.clone());
         }
 
-        match send_chat(&gateway, session_key, &msg, &run_id).await? {
+        match send_chat(
+            &gateway,
+            session_key.clone(),
+            thread_ref.clone(),
+            &msg,
+            &run_id,
+        )
+        .await?
+        {
             ChatSendResult::NoWait => {
                 if let Ok(mut expected) = expected_run_id.lock() {
                     *expected = None;
@@ -215,7 +281,15 @@ pub(crate) async fn run_client(
                 *expected = Some(run_id.clone());
             }
 
-            match send_chat(&gateway, session_key, line, &run_id).await? {
+            match send_chat(
+                &gateway,
+                session_key.clone(),
+                thread_ref.clone(),
+                line,
+                &run_id,
+            )
+            .await?
+            {
                 ChatSendResult::NoWait => {
                     if let Ok(mut expected) = expected_run_id.lock() {
                         *expected = None;
@@ -398,6 +472,10 @@ pub(crate) async fn run_pair(
         PairAction::Approve { channel, sender_id } => {
             let requested_sender_id = sender_id.clone();
             let payload = client.pair_approve(channel, sender_id).await?;
+            let requires_binding = payload
+                .get("requiresBinding")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             let approved_id = payload
                 .get("senderId")
@@ -413,12 +491,593 @@ pub(crate) async fn run_pair(
             } else {
                 println!("Approved {} - they can now message the bot", approved_id);
             }
+
+            if requires_binding {
+                println!(
+                    "Profile binding is still required. Run: gsv registry pending approve <channel> <sender_id>"
+                );
+            }
         }
 
         PairAction::Reject { channel, sender_id } => {
             client.pair_reject(channel, sender_id).await?;
             println!("Rejected request removed");
         }
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn run_registry(
+    url: &str,
+    token: Option<String>,
+    action: RegistryAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = GatewayClient::connect(url, token).await?;
+
+    match action {
+        RegistryAction::Principal { action } => match action {
+            RegistryPrincipalAction::List { offset, limit } => {
+                let payload = client
+                    .principal_profile_list(Some(offset), Some(limit))
+                    .await?;
+
+                let profiles = payload.get("profiles").and_then(|v| v.as_array());
+                let count = payload.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+                if let Some(profiles) = profiles {
+                    if profiles.is_empty() {
+                        println!("No principal profiles found");
+                    } else {
+                        println!("Principal profiles ({}):", count);
+                        for entry in profiles {
+                            let principal_id = entry
+                                .get("principalId")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let home_space = entry
+                                .get("profile")
+                                .and_then(|v| v.get("homeSpaceId"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let home_agent = entry
+                                .get("profile")
+                                .and_then(|v| v.get("homeAgentId"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("main");
+                            let status = entry
+                                .get("profile")
+                                .and_then(|v| v.get("status"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("bound");
+                            println!(
+                                "  {} -> space={}, agent={}, status={}",
+                                principal_id, home_space, home_agent, status
+                            );
+                        }
+                    }
+                }
+            }
+            RegistryPrincipalAction::Get { principal_id } => {
+                let payload = client.principal_profile_get(principal_id.clone()).await?;
+                if let Some(profile) = payload.get("profile") {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json!({
+                            "principalId": payload
+                                .get("principalId")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(principal_id.as_str()),
+                            "profile": profile
+                        }))?
+                    );
+                } else {
+                    println!("Principal profile not found: {}", principal_id);
+                }
+            }
+            RegistryPrincipalAction::Put {
+                principal_id,
+                home_space_id,
+                home_agent_id,
+                status,
+            } => {
+                if let Some(status) = status.as_deref() {
+                    if status != "bound" && status != "allowed_unbound" {
+                        eprintln!("status must be 'bound' or 'allowed_unbound'");
+                        return Ok(());
+                    }
+                }
+
+                let payload = client
+                    .principal_profile_put(
+                        principal_id.clone(),
+                        home_space_id.clone(),
+                        home_agent_id,
+                        status,
+                    )
+                    .await?;
+
+                println!(
+                    "Upserted principal profile: {} -> {}",
+                    payload
+                        .get("principalId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(principal_id.as_str()),
+                    payload
+                        .get("profile")
+                        .and_then(|v| v.get("homeSpaceId"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(home_space_id.as_str())
+                );
+            }
+            RegistryPrincipalAction::Delete { principal_id } => {
+                let payload = client
+                    .principal_profile_delete(principal_id.clone())
+                    .await?;
+                let removed = payload
+                    .get("removed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if removed {
+                    println!("Removed principal profile: {}", principal_id);
+                } else {
+                    println!("No principal profile removed for: {}", principal_id);
+                }
+            }
+        },
+        RegistryAction::Member { action } => match action {
+            RegistryMemberAction::List {
+                space_id,
+                offset,
+                limit,
+            } => {
+                let payload = client
+                    .space_members_list(space_id.clone(), Some(offset), Some(limit))
+                    .await?;
+                let members = payload.get("members").and_then(|v| v.as_array());
+                let count = payload.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+                if let Some(members) = members {
+                    if members.is_empty() {
+                        if let Some(space_id) = space_id {
+                            println!("No members found for space '{}'", space_id);
+                        } else {
+                            println!("No space members found");
+                        }
+                    } else {
+                        println!("Space members ({}):", count);
+                        for entry in members {
+                            let space_id =
+                                entry.get("spaceId").and_then(|v| v.as_str()).unwrap_or("?");
+                            let principal_id = entry
+                                .get("principalId")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let role = entry
+                                .get("member")
+                                .and_then(|v| v.get("role"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("member");
+                            println!("  {} <- {} ({})", space_id, principal_id, role);
+                        }
+                    }
+                }
+            }
+            RegistryMemberAction::Put {
+                space_id,
+                principal_id,
+                role,
+            } => {
+                client
+                    .space_member_put(space_id.clone(), principal_id.clone(), role.clone())
+                    .await?;
+                println!(
+                    "Set member: space={} principal={} role={}",
+                    space_id, principal_id, role
+                );
+            }
+            RegistryMemberAction::Remove {
+                space_id,
+                principal_id,
+            } => {
+                let payload = client
+                    .space_member_remove(space_id.clone(), principal_id.clone())
+                    .await?;
+                let removed = payload
+                    .get("removed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if removed {
+                    println!(
+                        "Removed member: space={} principal={}",
+                        space_id, principal_id
+                    );
+                } else {
+                    println!(
+                        "No member removed: space={} principal={}",
+                        space_id, principal_id
+                    );
+                }
+            }
+        },
+        RegistryAction::Conversation { action } => match action {
+            RegistryConversationAction::List { offset, limit } => {
+                let payload = client
+                    .conversation_bindings_list(Some(offset), Some(limit))
+                    .await?;
+                let bindings = payload.get("bindings").and_then(|v| v.as_array());
+                let count = payload.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+                if let Some(bindings) = bindings {
+                    if bindings.is_empty() {
+                        println!("No conversation bindings found");
+                    } else {
+                        println!("Conversation bindings ({}):", count);
+                        for entry in bindings {
+                            let surface_id = entry
+                                .get("surfaceId")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let space_id = entry
+                                .get("binding")
+                                .and_then(|v| v.get("spaceId"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let agent_id = entry
+                                .get("binding")
+                                .and_then(|v| v.get("agentId"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("main");
+                            let group_mode = entry
+                                .get("binding")
+                                .and_then(|v| v.get("groupMode"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("group-shared");
+                            println!(
+                                "  {} -> space={}, agent={}, mode={}",
+                                surface_id, space_id, agent_id, group_mode
+                            );
+                        }
+                    }
+                }
+            }
+            RegistryConversationAction::Put {
+                surface_id,
+                space_id,
+                agent_id,
+                group_mode,
+            } => {
+                if let Some(mode) = group_mode.as_deref() {
+                    if mode != "group-shared" && mode != "per-user-in-group" && mode != "hybrid" {
+                        eprintln!(
+                            "group-mode must be one of: group-shared, per-user-in-group, hybrid"
+                        );
+                        return Ok(());
+                    }
+                }
+                client
+                    .conversation_binding_put(
+                        surface_id.clone(),
+                        space_id.clone(),
+                        agent_id.clone(),
+                        group_mode.clone(),
+                    )
+                    .await?;
+                println!(
+                    "Set conversation binding: {} -> space={}{}{}",
+                    surface_id,
+                    space_id,
+                    agent_id
+                        .as_ref()
+                        .map(|v| format!(", agent={}", v))
+                        .unwrap_or_default(),
+                    group_mode
+                        .as_ref()
+                        .map(|v| format!(", mode={}", v))
+                        .unwrap_or_default(),
+                );
+            }
+            RegistryConversationAction::Remove { surface_id } => {
+                let payload = client
+                    .conversation_binding_remove(surface_id.clone())
+                    .await?;
+                let removed = payload
+                    .get("removed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if removed {
+                    println!("Removed conversation binding: {}", surface_id);
+                } else {
+                    println!("No conversation binding removed for: {}", surface_id);
+                }
+            }
+        },
+        RegistryAction::Pending { action } => match action {
+            RegistryPendingAction::List => {
+                let payload = client.pending_bindings_list().await?;
+                let pending = payload.get("pending").and_then(|v| v.as_array());
+                let count = payload.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+                if let Some(pending) = pending {
+                    if pending.is_empty() {
+                        println!("No pending bindings");
+                    } else {
+                        println!("Pending bindings ({}):", count);
+                        for entry in pending {
+                            let key = entry.get("key").and_then(|v| v.as_str()).unwrap_or("?");
+                            let stage = entry
+                                .get("pair")
+                                .and_then(|v| v.get("stage"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("pairing");
+                            let account_id = entry
+                                .get("pair")
+                                .and_then(|v| v.get("accountId"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("default");
+                            let principal_id = entry
+                                .get("pair")
+                                .and_then(|v| v.get("principalId"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("-");
+                            let sender_name = entry
+                                .get("pair")
+                                .and_then(|v| v.get("senderName"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let first_message = entry
+                                .get("pair")
+                                .and_then(|v| v.get("firstMessage"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            println!(
+                                "  {} ({}) stage={} account={} principal={}",
+                                key, sender_name, stage, account_id, principal_id
+                            );
+                            if !first_message.is_empty() {
+                                println!("    msg: {}", first_message);
+                            }
+                        }
+                    }
+                }
+            }
+            RegistryPendingAction::Approve {
+                channel,
+                sender_id,
+                account_id,
+                principal_id,
+                home_space_id,
+                home_agent_id,
+                role,
+            } => {
+                let payload = client
+                    .pending_binding_resolve(
+                        channel.clone(),
+                        sender_id.clone(),
+                        "approve".to_string(),
+                        account_id,
+                        principal_id,
+                        home_space_id,
+                        home_agent_id,
+                        role,
+                    )
+                    .await?;
+
+                println!(
+                    "Approved pending binding for {}",
+                    payload
+                        .get("senderId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(sender_id.as_str())
+                );
+                if let Some(principal_id) = payload.get("principalId").and_then(|v| v.as_str()) {
+                    println!("  principalId: {}", principal_id);
+                }
+                if let Some(home_space_id) = payload.get("homeSpaceId").and_then(|v| v.as_str()) {
+                    println!("  homeSpaceId: {}", home_space_id);
+                }
+                if let Some(role) = payload.get("role").and_then(|v| v.as_str()) {
+                    println!("  role: {}", role);
+                }
+            }
+            RegistryPendingAction::Reject { channel, sender_id } => {
+                client
+                    .pending_binding_resolve(
+                        channel,
+                        sender_id.clone(),
+                        "reject".to_string(),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await?;
+                println!("Rejected pending binding for {}", sender_id);
+            }
+        },
+        RegistryAction::Invite { action } => match action {
+            RegistryInviteAction::List {
+                include_inactive,
+                offset,
+                limit,
+            } => {
+                let payload = client
+                    .invite_list(Some(offset), Some(limit), Some(include_inactive))
+                    .await?;
+                let invites = payload.get("invites").and_then(|v| v.as_array());
+                let count = payload.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+                if let Some(invites) = invites {
+                    if invites.is_empty() {
+                        println!("No invites found");
+                    } else {
+                        println!("Invites ({}):", count);
+                        for entry in invites {
+                            let invite_id = entry
+                                .get("inviteId")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let code = entry
+                                .get("invite")
+                                .and_then(|v| v.get("code"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let status = entry
+                                .get("invite")
+                                .and_then(|v| v.get("status"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let home_space = entry
+                                .get("invite")
+                                .and_then(|v| v.get("homeSpaceId"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let role = entry
+                                .get("invite")
+                                .and_then(|v| v.get("role"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("member");
+                            println!(
+                                "  {} code={} status={} space={} role={}",
+                                invite_id, code, status, home_space, role
+                            );
+                        }
+                    }
+                }
+            }
+            RegistryInviteAction::Create {
+                home_space_id,
+                code,
+                home_agent_id,
+                role,
+                principal_id,
+                ttl_minutes,
+            } => {
+                let payload = client
+                    .invite_create(
+                        home_space_id.clone(),
+                        code,
+                        home_agent_id,
+                        role,
+                        principal_id,
+                        ttl_minutes,
+                    )
+                    .await?;
+                let invite = payload.get("invite").cloned().unwrap_or_else(|| json!({}));
+                println!("{}", serde_json::to_string_pretty(&invite)?);
+            }
+            RegistryInviteAction::Revoke { invite_id } => {
+                let payload = client.invite_revoke(invite_id.clone()).await?;
+                let revoked = payload
+                    .get("revoked")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if revoked {
+                    println!("Revoked invite {}", invite_id);
+                } else {
+                    println!("No invite revoked for {}", invite_id);
+                }
+            }
+            RegistryInviteAction::Claim {
+                code,
+                principal_id,
+                channel,
+                account_id,
+                sender_id,
+            } => {
+                let payload = client
+                    .invite_claim(code.clone(), principal_id, channel, account_id, sender_id)
+                    .await?;
+                println!(
+                    "Claimed invite {} for {}",
+                    payload
+                        .get("inviteId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?"),
+                    payload
+                        .get("principalId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                );
+                if let Some(space) = payload.get("homeSpaceId").and_then(|v| v.as_str()) {
+                    println!("  homeSpaceId: {}", space);
+                }
+                if let Some(role) = payload.get("role").and_then(|v| v.as_str()) {
+                    println!("  role: {}", role);
+                }
+            }
+        },
+        RegistryAction::Maintenance { action } => match action {
+            RegistryMaintenanceAction::Backfill { dry_run, limit } => {
+                let payload = client.registry_backfill(Some(dry_run), limit).await?;
+
+                println!(
+                    "Registry backfill (dryRun={}): scanned={}, migrated={}, threadMetaCreated={}, sessionsUpdated={}, legacyIndexAdded={}, skipped={}",
+                    payload.get("dryRun").and_then(|v| v.as_bool()).unwrap_or(dry_run),
+                    payload.get("scanned").and_then(|v| v.as_i64()).unwrap_or(0),
+                    payload.get("migrated").and_then(|v| v.as_i64()).unwrap_or(0),
+                    payload
+                        .get("createdThreadMeta")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload
+                        .get("updatedSessions")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload
+                        .get("addedLegacyIndex")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload.get("skipped").and_then(|v| v.as_i64()).unwrap_or(0),
+                );
+            }
+            RegistryMaintenanceAction::Repair {
+                dry_run,
+                prune_dangling_routes,
+                prune_dangling_legacy_index,
+            } => {
+                let payload = client
+                    .registry_repair(
+                        Some(dry_run),
+                        Some(prune_dangling_routes),
+                        Some(prune_dangling_legacy_index),
+                    )
+                    .await?;
+
+                println!(
+                    "Registry repair (dryRun={}): sessionsScanned={}, routesScanned={}, legacyScanned={}, threadMetaCreated={}, sessionsUpdated={}, legacyIndexAdded={}, routesRemoved={}, legacyRemoved={}",
+                    payload.get("dryRun").and_then(|v| v.as_bool()).unwrap_or(dry_run),
+                    payload
+                        .get("scannedSessions")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload
+                        .get("scannedThreadRoutes")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload
+                        .get("scannedLegacyIndex")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload
+                        .get("createdThreadMeta")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload
+                        .get("updatedSessions")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload
+                        .get("addedLegacyIndex")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload
+                        .get("removedDanglingRoutes")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    payload
+                        .get("removedDanglingLegacyIndex")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                );
+            }
+        },
     }
 
     Ok(())
@@ -826,6 +1485,21 @@ pub(crate) async fn run_skills(
     Ok(())
 }
 
+fn resolve_session_target(
+    session_key: String,
+    thread_ref: Option<String>,
+) -> (Option<String>, Option<String>, String) {
+    let normalized_thread_ref = normalize_optional_input(thread_ref);
+    if let Some(thread_ref) = normalized_thread_ref {
+        let label = format!("thread {}", thread_ref);
+        return (None, Some(thread_ref), label);
+    }
+
+    let normalized_session = config::normalize_session_key(&session_key);
+    let label = format!("session {}", normalized_session);
+    (Some(normalized_session), None, label)
+}
+
 pub(crate) async fn run_session(
     url: &str,
     token: Option<String>,
@@ -848,6 +1522,7 @@ pub(crate) async fn run_session(
                             .get("sessionKey")
                             .and_then(|k| k.as_str())
                             .unwrap_or("?");
+                        let thread_id = session.get("threadId").and_then(|t| t.as_str());
                         let label = session.get("label").and_then(|l| l.as_str());
                         let last_active = session.get("lastActiveAt").and_then(|t| t.as_i64());
 
@@ -856,19 +1531,32 @@ pub(crate) async fn run_session(
                             .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                             .unwrap_or_else(|| "?".to_string());
 
+                        let thread_suffix = thread_id
+                            .map(|id| format!(" [id:{}]", id))
+                            .unwrap_or_default();
                         if let Some(label) = label {
-                            println!("  {} ({}) - last active: {}", key, label, last_active_str);
+                            println!(
+                                "  {}{} ({}) - last active: {}",
+                                key, thread_suffix, label, last_active_str
+                            );
                         } else {
-                            println!("  {} - last active: {}", key, last_active_str);
+                            println!(
+                                "  {}{} - last active: {}",
+                                key, thread_suffix, last_active_str
+                            );
                         }
                     }
                 }
             }
         }
 
-        SessionAction::Reset { session_key } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_reset(session_key.clone()).await?;
+        SessionAction::Reset {
+            session_key,
+            thread_ref,
+        } => {
+            let (session_key, thread_ref, target_label) =
+                resolve_session_target(session_key, thread_ref);
+            let payload = client.session_reset(session_key, thread_ref).await?;
             let old_id = payload
                 .get("oldSessionId")
                 .and_then(|s| s.as_str())
@@ -885,7 +1573,13 @@ pub(crate) async fn run_session(
             let tokens = payload.get("tokensCleared").unwrap_or(&empty_obj);
             let total_tokens = tokens.get("total").and_then(|t| t.as_i64()).unwrap_or(0);
 
-            println!("Reset session '{}'", session_key);
+            println!("Reset {}", target_label);
+            if let Some(resolved_session_key) = payload.get("sessionKey").and_then(|s| s.as_str()) {
+                println!("  Session key: {}", resolved_session_key);
+            }
+            if let Some(thread_id) = payload.get("threadId").and_then(|t| t.as_str()) {
+                println!("  Thread ref: id:{}", thread_id);
+            }
             println!("  Old session ID: {}", &old_id[..8.min(old_id.len())]);
             println!("  New session ID: {}", &new_id[..8.min(new_id.len())]);
             println!("  Archived {} messages ({} tokens)", archived, total_tokens);
@@ -894,10 +1588,20 @@ pub(crate) async fn run_session(
             }
         }
 
-        SessionAction::Get { session_key } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_get(session_key.clone()).await?;
-            println!("Session: {}", session_key);
+        SessionAction::Get {
+            session_key,
+            thread_ref,
+        } => {
+            let (session_key, thread_ref, target_label) =
+                resolve_session_target(session_key, thread_ref);
+            let payload = client.session_get(session_key, thread_ref).await?;
+            println!("Target: {}", target_label);
+            if let Some(resolved_session_key) = payload.get("sessionKey").and_then(|s| s.as_str()) {
+                println!("  Session key: {}", resolved_session_key);
+            }
+            if let Some(thread_id) = payload.get("threadId").and_then(|t| t.as_str()) {
+                println!("  Thread ref: id:{}", thread_id);
+            }
             println!(
                 "  Session ID: {}",
                 payload
@@ -962,10 +1666,20 @@ pub(crate) async fn run_session(
                 }
             }
         }
-        SessionAction::Stats { session_key } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_stats(session_key.clone()).await?;
-            println!("Session stats: {}", session_key);
+        SessionAction::Stats {
+            session_key,
+            thread_ref,
+        } => {
+            let (session_key, thread_ref, target_label) =
+                resolve_session_target(session_key, thread_ref);
+            let payload = client.session_stats(session_key, thread_ref).await?;
+            println!("Session stats: {}", target_label);
+            if let Some(resolved_session_key) = payload.get("sessionKey").and_then(|s| s.as_str()) {
+                println!("  Session key: {}", resolved_session_key);
+            }
+            if let Some(thread_id) = payload.get("threadId").and_then(|t| t.as_str()) {
+                println!("  Thread ref: id:{}", thread_id);
+            }
             println!(
                 "  Messages: {}",
                 payload
@@ -992,19 +1706,28 @@ pub(crate) async fn run_session(
 
         SessionAction::Set {
             session_key,
+            thread_ref,
             path,
             value,
         } => {
-            let session_key = config::normalize_session_key(&session_key);
+            let (session_key, thread_ref, target_label) =
+                resolve_session_target(session_key, thread_ref);
             // Build the patch params based on the path
             let parsed_value: serde_json::Value = serde_json::from_str(&value)
                 .unwrap_or_else(|_| serde_json::Value::String(value.clone()));
 
-            let params = match path.as_str() {
-                "label" => json!({
-                    "sessionKey": session_key,
-                    "label": parsed_value
-                }),
+            let mut params = json!({});
+            if let Some(session_key) = session_key {
+                params["sessionKey"] = json!(session_key);
+            }
+            if let Some(thread_ref) = thread_ref {
+                params["threadRef"] = json!(thread_ref);
+            }
+
+            match path.as_str() {
+                "label" => {
+                    params["label"] = parsed_value;
+                }
                 p if p.starts_with("settings.")
                     || p.starts_with("model.")
                     || p == "thinkingLevel"
@@ -1027,10 +1750,7 @@ pub(crate) async fn run_session(
                         settings[parts[0]] = json!({ parts[1]: parsed_value });
                     }
 
-                    json!({
-                        "sessionKey": session_key,
-                        "settings": settings
-                    })
+                    params["settings"] = settings;
                 }
                 p if p.starts_with("resetPolicy.") || p == "resetPolicy" => {
                     let policy_path = if p.starts_with("resetPolicy.") {
@@ -1042,25 +1762,29 @@ pub(crate) async fn run_session(
                     let mut policy = json!({});
                     policy[policy_path] = parsed_value;
 
-                    json!({
-                        "sessionKey": session_key,
-                        "resetPolicy": policy
-                    })
+                    params["resetPolicy"] = policy;
                 }
                 _ => {
                     eprintln!("Unknown setting path: {}", path);
                     eprintln!("Valid paths: label, model.provider, model.id, thinkingLevel, systemPrompt, maxTokens, resetPolicy.mode, resetPolicy.atHour, resetPolicy.idleMinutes");
                     return Ok(());
                 }
-            };
+            }
 
             client.session_patch(params).await?;
-            println!("Updated {} = {} for session '{}'", path, value, session_key);
+            println!("Updated {} = {} for {}", path, value, target_label);
         }
 
-        SessionAction::Compact { session_key, keep } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_compact(session_key.clone(), keep).await?;
+        SessionAction::Compact {
+            session_key,
+            thread_ref,
+            keep,
+        } => {
+            let (session_key, thread_ref, target_label) =
+                resolve_session_target(session_key, thread_ref);
+            let payload = client
+                .session_compact(session_key, thread_ref, keep)
+                .await?;
             let trimmed = payload
                 .get("trimmedMessages")
                 .and_then(|c| c.as_i64())
@@ -1071,29 +1795,39 @@ pub(crate) async fn run_session(
                 .unwrap_or(0);
 
             if trimmed > 0 {
-                println!("Compacted session '{}'", session_key);
+                println!("Compacted {}", target_label);
+                if let Some(thread_id) = payload.get("threadId").and_then(|t| t.as_str()) {
+                    println!("  Thread ref: id:{}", thread_id);
+                }
                 println!("  Trimmed {} messages, kept {}", trimmed, kept);
                 if let Some(path) = payload.get("archivedTo").and_then(|p| p.as_str()) {
                     println!("  Archived to: {}", path);
                 }
             } else {
                 println!(
-                    "Session '{}' has {} messages (no compaction needed)",
-                    session_key, kept
+                    "{} has {} messages (no compaction needed)",
+                    target_label, kept
                 );
             }
         }
 
-        SessionAction::History { session_key } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_history(session_key.clone()).await?;
+        SessionAction::History {
+            session_key,
+            thread_ref,
+        } => {
+            let (session_key, thread_ref, target_label) =
+                resolve_session_target(session_key, thread_ref);
+            let payload = client.session_history(session_key, thread_ref).await?;
             let current = payload
                 .get("currentSessionId")
                 .and_then(|s| s.as_str())
                 .unwrap_or("?");
             let previous = payload.get("previousSessionIds").and_then(|p| p.as_array());
 
-            println!("Session history: {}", session_key);
+            println!("Session history: {}", target_label);
+            if let Some(thread_id) = payload.get("threadId").and_then(|t| t.as_str()) {
+                println!("  Thread ref: id:{}", thread_id);
+            }
             println!("  Current session: {}", &current[..8.min(current.len())]);
 
             if let Some(ids) = previous {
@@ -1113,16 +1847,23 @@ pub(crate) async fn run_session(
             }
         }
 
-        SessionAction::Preview { session_key, limit } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_preview(session_key.clone(), limit).await?;
+        SessionAction::Preview {
+            session_key,
+            thread_ref,
+            limit,
+        } => {
+            let (session_key, thread_ref, target_label) =
+                resolve_session_target(session_key, thread_ref);
+            let payload = client
+                .session_preview(session_key, thread_ref, limit)
+                .await?;
             let msg_count = payload
                 .get("messageCount")
                 .and_then(|c| c.as_i64())
                 .unwrap_or(0);
             let messages = payload.get("messages").and_then(|m| m.as_array());
 
-            println!("Session: {} ({} messages total)\n", session_key, msg_count);
+            println!("Session: {} ({} messages total)\n", target_label, msg_count);
 
             if let Some(msgs) = messages {
                 for msg in msgs {
@@ -1204,17 +1945,25 @@ pub(crate) async fn run_session(
 
 async fn send_chat(
     client: &GatewayClient,
-    session_key: &str,
+    session_key: Option<String>,
+    thread_ref: Option<String>,
     message: &str,
     run_id: &str,
 ) -> Result<ChatSendResult, Box<dyn std::error::Error>> {
     let payload = client
         .chat_send(
-            session_key.to_string(),
+            session_key,
+            thread_ref,
             message.to_string(),
             run_id.to_string(),
         )
         .await?;
+
+    if let Some(session_key) = payload.get("sessionKey").and_then(|s| s.as_str()) {
+        if let Some(thread_id) = payload.get("threadId").and_then(|t| t.as_str()) {
+            println!("Session: {}  Thread: id:{}", session_key, thread_id);
+        }
+    }
 
     if let Some(status) = payload.get("status").and_then(|s| s.as_str()) {
         match status {
@@ -1306,7 +2055,8 @@ mod tests {
         });
         assert!(chat_event_matches_request(
             &payload,
-            "agent:main:cli:dm:main",
+            Some("agent:main:cli:dm:main"),
+            None,
             Some("run-123"),
         ));
     }
@@ -1319,7 +2069,8 @@ mod tests {
         });
         assert!(!chat_event_matches_request(
             &payload,
-            "agent:main:cli:dm:main",
+            Some("agent:main:cli:dm:main"),
+            None,
             Some("run-123"),
         ));
     }
@@ -1331,7 +2082,8 @@ mod tests {
         });
         assert!(chat_event_matches_request(
             &payload,
-            "agent:main:cli:dm:main",
+            Some("agent:main:cli:dm:main"),
+            None,
             None,
         ));
     }
@@ -1343,7 +2095,21 @@ mod tests {
         });
         assert!(!chat_event_matches_request(
             &payload,
-            "agent:main:cli:dm:main",
+            Some("agent:main:cli:dm:main"),
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn chat_event_matches_thread_id_without_run_id() {
+        let payload = json!({
+            "threadId": "01abc",
+        });
+        assert!(chat_event_matches_request(
+            &payload,
+            None,
+            Some("01abc"),
             None,
         ));
     }

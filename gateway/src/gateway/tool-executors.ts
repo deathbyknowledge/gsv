@@ -15,6 +15,12 @@ import {
   parseModelSelection,
 } from "./commands";
 import type { Gateway } from "./do";
+import {
+  authorizeCrossSpaceSessionOperation,
+  resolveSessionPolicyContext,
+} from "./authz";
+import { resolveSessionTarget } from "./rpc-handlers/session-target";
+import { sessionDoNameFromStateId } from "./thread-state";
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -41,6 +47,29 @@ function asNumber(value: unknown): number | undefined {
 function asMode(value: unknown): "due" | "force" | undefined {
   if (value === "due" || value === "force") {
     return value;
+  }
+  return undefined;
+}
+
+type NativeToolCallerContext = {
+  sessionKey?: string;
+  spaceId?: string;
+};
+
+function resolveSessionEntrySpaceId(
+  gw: Gateway,
+  sessionKey: string,
+): string | undefined {
+  const entry = gw.sessionRegistry[sessionKey];
+  if (!entry) {
+    return undefined;
+  }
+  if (entry.spaceId?.trim()) {
+    return entry.spaceId.trim().toLowerCase();
+  }
+  if (entry.threadId) {
+    const threadSpace = gw.registryStore.getThreadMeta(entry.threadId)?.spaceId;
+    return threadSpace?.trim().toLowerCase();
   }
   return undefined;
 }
@@ -282,12 +311,27 @@ export async function executeMessageTool(
 export async function executeSessionsListTool(
   gw: Gateway,
   args: Record<string, unknown>,
+  callerContext?: NativeToolCallerContext,
 ): Promise<unknown> {
   const limit = Math.min(Math.max(asNumber(args.limit) ?? 20, 1), 100);
   const offset = Math.max(asNumber(args.offset) ?? 0, 0);
   const messageLimit = Math.min(Math.max(asNumber(args.messageLimit) ?? 0, 0), 20);
 
-  const allSessions = Object.values(gw.sessionRegistry).sort(
+  const callerPolicy = resolveSessionPolicyContext({
+    gw,
+    sessionKey: callerContext?.sessionKey,
+    fallbackSpaceId: callerContext?.spaceId,
+  });
+
+  const filteredSessions = Object.values(gw.sessionRegistry).filter((entry) => {
+    if (!callerPolicy.spaceId || callerPolicy.isOwner) {
+      return true;
+    }
+    const entrySpaceId = resolveSessionEntrySpaceId(gw, entry.sessionKey);
+    return entrySpaceId === callerPolicy.spaceId;
+  });
+
+  const allSessions = filteredSessions.sort(
     (a, b) => b.lastActiveAt - a.lastActiveAt,
   );
 
@@ -297,6 +341,8 @@ export async function executeSessionsListTool(
   for (const entry of page) {
     const row: Record<string, unknown> = {
       sessionKey: entry.sessionKey,
+      threadId: entry.threadId,
+      stateId: entry.stateId,
       label: entry.label,
       lastActiveAt: entry.lastActiveAt,
       createdAt: entry.createdAt,
@@ -304,7 +350,10 @@ export async function executeSessionsListTool(
 
     if (messageLimit > 0) {
       try {
-        const sessionStub = env.SESSION.getByName(entry.sessionKey);
+        const sessionDoName = entry.stateId
+          ? sessionDoNameFromStateId(entry.stateId)
+          : entry.sessionKey;
+        const sessionStub = env.SESSION.getByName(sessionDoName);
         const preview = await sessionStub.preview(messageLimit);
         row.messageCount = preview.messageCount;
         row.messages = preview.messages;
@@ -330,10 +379,12 @@ export async function executeSessionSendTool(
   gw: Gateway,
   _callerAgentId: string,
   args: Record<string, unknown>,
+  callerContext?: NativeToolCallerContext,
 ): Promise<unknown> {
   const rawSessionKey = asString(args.sessionKey);
-  if (!rawSessionKey) {
-    throw new Error("sessionKey is required");
+  const threadRef = asString(args.threadRef);
+  if (!rawSessionKey && !threadRef) {
+    throw new Error("sessionKey or threadRef is required");
   }
   const message = asString(args.message);
   if (!message) {
@@ -341,9 +392,28 @@ export async function executeSessionSendTool(
   }
   const waitSeconds = Math.min(Math.max(asNumber(args.waitSeconds) ?? 30, 0), 120);
 
-  const sessionKey = gw.canonicalizeSessionKey(rawSessionKey);
+  const target = resolveSessionTarget(gw, {
+    sessionKey: rawSessionKey,
+    threadRef,
+  });
+  const crossSpaceAuthz = authorizeCrossSpaceSessionOperation({
+    gw,
+    operation: "session-send",
+    sourceSessionKey: callerContext?.sessionKey,
+    sourceSpaceId: callerContext?.spaceId,
+    targetSessionKey: target.sessionKey,
+    targetThreadId: target.threadId,
+  });
+  if (!crossSpaceAuthz.ok) {
+    throw new Error(crossSpaceAuthz.reason ?? "cross-space session send denied");
+  }
+
+  const sessionKey = target.sessionKey;
+  const sessionDoName = target.sessionDoName;
+  const resolvedThreadId = target.threadId;
+  const resolvedStateId = target.stateId;
   const runId = crypto.randomUUID();
-  const sessionStub = env.SESSION.getByName(sessionKey);
+  const sessionStub = env.SESSION.getByName(sessionDoName);
 
   const tools = JSON.parse(JSON.stringify(gw.nodeService.listTools(gw.nodes.keys())));
   const runtimeNodes = JSON.parse(
@@ -355,7 +425,7 @@ export async function executeSessionSendTool(
     runId,
     tools,
     runtimeNodes,
-    sessionKey,
+    sessionDoName,
   );
 
   if (!result.ok) {
@@ -367,6 +437,8 @@ export async function executeSessionSendTool(
       status: "accepted",
       runId,
       sessionKey,
+      threadId: resolvedThreadId,
+      stateId: resolvedStateId,
       queued: result.queued ?? false,
     };
   }
@@ -401,6 +473,8 @@ export async function executeSessionSendTool(
             status: "ok",
             runId,
             sessionKey,
+            threadId: resolvedThreadId,
+            stateId: resolvedStateId,
             reply,
           };
         }
@@ -414,6 +488,8 @@ export async function executeSessionSendTool(
     status: "timeout",
     runId,
     sessionKey,
+    threadId: resolvedThreadId,
+    stateId: resolvedStateId,
     waitedSeconds: waitSeconds,
   };
 }

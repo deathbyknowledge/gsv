@@ -260,6 +260,7 @@ export function ChatView() {
   const chatSending = useReactUiStore((s) => s.chatSending);
   const chatStream = useReactUiStore((s) => s.chatStream);
   const connectionState = useReactUiStore((s) => s.connectionState);
+  const currentThreadId = useReactUiStore((s) => s.currentThreadId);
   const sendMessage = useReactUiStore((s) => s.sendMessage);
 
   const [input, setInput] = useState("");
@@ -291,6 +292,11 @@ export function ChatView() {
       <div className="session-bar">
         <span className="session-key">{settings.sessionKey}</span>
         <div className="session-stats">
+          {currentThreadId ? (
+            <span>
+              thread <code className="mono">id:{currentThreadId}</code>
+            </span>
+          ) : null}
           <span>{chatMessages.length} messages</span>
         </div>
       </div>
