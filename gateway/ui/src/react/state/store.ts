@@ -16,8 +16,8 @@ import type {
   ChannelStatusResult,
   ChatEventPayload,
   ContentBlock,
-  EventFrame,
   Message,
+  RunProgressEventPayload,
   SessionRegistryEntry,
   Tab,
   ToolDefinition,
@@ -104,6 +104,12 @@ type ReactUiStore = {
   chatSending: boolean;
   chatStream: AssistantMessage | null;
   currentRunId: string | null;
+  runStatus: {
+    phase: RunProgressEventPayload["phase"];
+    message?: string;
+    tool?: RunProgressEventPayload["tool"];
+    timestamp: number;
+  } | null;
 
   sessions: SessionRegistryEntry[];
   sessionsLoading: boolean;
@@ -264,6 +270,28 @@ function normalizeAssistantMessage(message: unknown): AssistantMessage | null {
   };
 }
 
+function buildToolResultMessageFromRunProgress(
+  payload: RunProgressEventPayload,
+): Message | null {
+  if (payload.phase !== "tool_result" || !payload.tool) {
+    return null;
+  }
+
+  return {
+    role: "toolResult",
+    toolCallId: payload.tool.callId,
+    toolName: payload.tool.name,
+    content: [{
+      type: "text",
+      text: payload.tool.error
+        ? `Error: ${payload.tool.error}`
+        : "Tool execution completed.",
+    }],
+    isError: Boolean(payload.tool.isError),
+    timestamp: payload.timestamp,
+  };
+}
+
 function syncChannelsAutoRefresh(get: () => ReactUiStore) {
   const state = get();
   const shouldRefresh =
@@ -297,6 +325,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
   chatSending: false,
   chatStream: null,
   currentRunId: null,
+  runStatus: null,
 
   sessions: [],
   sessionsLoading: false,
@@ -454,7 +483,13 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
         }));
         if (event.event === "chat") {
           const payload = event.payload as ChatEventPayload;
-          if (payload.sessionKey !== get().settings.sessionKey) {
+          const sessionMatches =
+            payload.sessionKey === get().settings.sessionKey;
+          const runMatches =
+            payload.runId &&
+            get().currentRunId &&
+            payload.runId === get().currentRunId;
+          if (!sessionMatches && !runMatches) {
             return;
           }
 
@@ -490,6 +525,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
               chatStream: null,
               chatSending: matchesCurrentRun ? false : get().chatSending,
               currentRunId: matchesCurrentRun ? null : get().currentRunId,
+              runStatus: matchesCurrentRun ? null : get().runStatus,
             });
             void get().loadChatHistory();
           } else if (payload.state === "error") {
@@ -497,6 +533,58 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
               chatStream: null,
               chatSending: matchesCurrentRun ? false : get().chatSending,
               currentRunId: matchesCurrentRun ? null : get().currentRunId,
+              runStatus: matchesCurrentRun ? null : get().runStatus,
+            });
+          }
+        } else if (event.event === "run.progress") {
+          const payload = event.payload as RunProgressEventPayload;
+          const sessionMatches =
+            payload.sessionKey === get().settings.sessionKey;
+          const runMatches =
+            payload.runId &&
+            get().currentRunId &&
+            payload.runId === get().currentRunId;
+          if (!sessionMatches && !runMatches) {
+            return;
+          }
+
+          const matchesCurrentRun =
+            !get().currentRunId ||
+            !payload.runId ||
+            payload.runId === get().currentRunId;
+
+          set({
+            runStatus: matchesCurrentRun
+              ? {
+                  phase: payload.phase,
+                  message: payload.message,
+                  tool: payload.tool,
+                  timestamp: payload.timestamp,
+                }
+              : get().runStatus,
+          });
+
+          const toolResultMessage = buildToolResultMessageFromRunProgress(payload);
+          if (toolResultMessage) {
+            set((state) => ({
+              chatMessages: [...state.chatMessages, toolResultMessage],
+            }));
+          }
+
+          if (payload.phase === "run_finished") {
+            set({
+              chatStream: null,
+              chatSending: matchesCurrentRun ? false : get().chatSending,
+              currentRunId: matchesCurrentRun ? null : get().currentRunId,
+              runStatus: matchesCurrentRun ? null : get().runStatus,
+            });
+            void get().loadChatHistory();
+          } else if (payload.phase === "run_error" || payload.phase === "run_aborted") {
+            set({
+              chatStream: null,
+              chatSending: matchesCurrentRun ? false : get().chatSending,
+              currentRunId: matchesCurrentRun ? null : get().currentRunId,
+              runStatus: matchesCurrentRun ? null : get().runStatus,
             });
           }
         }
@@ -597,6 +685,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
       chatSending: true,
       currentRunId: runId,
       chatStream: null,
+      runStatus: null,
       chatMessages: [
         ...state.chatMessages,
         {
