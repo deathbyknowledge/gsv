@@ -6,7 +6,7 @@ use gsv::config;
 use gsv::connection::Connection;
 use gsv::gateway_client::GatewayClient;
 use gsv::protocol::Frame;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::{
     ChannelAction, ConfigAction, DiscordAction, HeartbeatAction, PairAction, SessionAction,
@@ -63,6 +63,13 @@ fn truncate_for_display(text: &str, max_bytes: usize) -> String {
     }
 
     format!("{}...", &text[..end])
+}
+
+fn tool_from_run_progress(payload: &Value) -> Option<(&str, &str)> {
+    let tool = payload.get("tool")?;
+    let call_id = tool.get("callId")?.as_str()?;
+    let name = tool.get("name")?.as_str()?;
+    Some((call_id, name))
 }
 
 pub(crate) async fn run_client(
@@ -144,6 +151,82 @@ pub(crate) async fn run_client(
                                         println!(
                                             "\nAssistant: Run is paused waiting for tool approval. Reply yes/no."
                                         );
+                                    }
+                                    response_received_clone.store(true, Ordering::SeqCst);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                } else if evt.event == "run.progress" {
+                    if let Some(payload) = evt.payload {
+                        let expected_run_id = expected_run_id_clone
+                            .lock()
+                            .ok()
+                            .and_then(|run_id| run_id.clone());
+
+                        if !chat_event_matches_request(
+                            &payload,
+                            &session_key_owned,
+                            expected_run_id.as_deref(),
+                        ) {
+                            return;
+                        }
+
+                        if let Some(phase) = payload.get("phase").and_then(|s| s.as_str()) {
+                            match phase {
+                                "tool_dispatched" => {
+                                    if let Some((call_id, name)) = tool_from_run_progress(&payload)
+                                    {
+                                        println!("\n[Tool dispatch] {} ({})", name, call_id);
+                                    }
+                                }
+                                "tool_result" => {
+                                    if let Some((call_id, name)) = tool_from_run_progress(&payload)
+                                    {
+                                        let error = payload
+                                            .get("tool")
+                                            .and_then(|tool| tool.get("error"))
+                                            .and_then(|e| e.as_str());
+                                        if let Some(error) = error {
+                                            println!(
+                                                "\n[Tool result] {} ({}) error: {}",
+                                                name, call_id, error
+                                            );
+                                        } else {
+                                            println!("\n[Tool result] {} ({}) ok", name, call_id);
+                                        }
+                                    }
+                                }
+                                "paused" => {
+                                    println!("\n[Run] paused (tool approval required)");
+                                }
+                                "resumed" => {
+                                    println!("\n[Run] resumed");
+                                }
+                                "run_error" => {
+                                    if let Some(message) =
+                                        payload.get("message").and_then(|m| m.as_str())
+                                    {
+                                        eprintln!("\n[Run error] {}", message);
+                                    } else {
+                                        eprintln!("\n[Run error]");
+                                    }
+                                    if let Ok(mut run_id) = expected_run_id_clone.lock() {
+                                        *run_id = None;
+                                    }
+                                    response_received_clone.store(true, Ordering::SeqCst);
+                                }
+                                "run_aborted" => {
+                                    if let Some(message) =
+                                        payload.get("message").and_then(|m| m.as_str())
+                                    {
+                                        eprintln!("\n[Run aborted] {}", message);
+                                    } else {
+                                        eprintln!("\n[Run aborted]");
+                                    }
+                                    if let Ok(mut run_id) = expected_run_id_clone.lock() {
+                                        *run_id = None;
                                     }
                                     response_received_clone.store(true, Ordering::SeqCst);
                                 }
