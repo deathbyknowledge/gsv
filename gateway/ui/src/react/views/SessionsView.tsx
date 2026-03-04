@@ -58,6 +58,7 @@ export function SessionsView() {
             <thead>
               <tr>
                 <th>Session Key</th>
+                <th>Thread</th>
                 <th>Label</th>
                 <th>Last Active</th>
                 <th>Created</th>
@@ -82,6 +83,15 @@ export function SessionsView() {
                         </span>
                       ) : null}
                     </td>
+                    <td>
+                      {session.threadId ? (
+                        <code className="mono" style={{ fontSize: "var(--font-size-xs)" }}>
+                          id:{session.threadId}
+                        </code>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
                     <td>{session.label || <span className="muted">—</span>}</td>
                     <td>{formatRelativeTime(session.lastActiveAt)}</td>
                     <td>{formatRelativeTime(session.createdAt)}</td>
@@ -91,7 +101,7 @@ export function SessionsView() {
                           size="sm"
                           variant="ghost"
                           onClick={() => {
-                            void selectSession(session.sessionKey);
+                            void selectSession(session.sessionKey, session.threadId);
                           }}
                           disabled={isCurrentSession}
                         >
@@ -106,7 +116,7 @@ export function SessionsView() {
                                 `Reset session ${session.sessionKey}? This will archive all messages.`,
                               )
                             ) {
-                              void resetSession(session.sessionKey);
+                              void resetSession(session.sessionKey, session.threadId);
                             }
                           }}
                         >

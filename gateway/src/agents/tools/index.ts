@@ -18,6 +18,7 @@ import {
   workspaceNativeToolHandlers,
 } from "./workspace";
 import { getTransferToolDefinitions } from "./transfer";
+import { resolveWorkspacePathSetForRuntime } from "../../storage/paths";
 import type {
   NativeToolExecutionContext,
   NativeToolHandlerMap,
@@ -64,6 +65,9 @@ export async function executeNativeTool(
   context: {
     bucket: R2Bucket;
     agentId: string;
+    sessionKey?: string;
+    spaceId?: string;
+    basePath?: string;
     gateway?: NativeToolExecutionContext["gateway"];
   },
   toolName: string,
@@ -74,9 +78,19 @@ export async function executeNativeTool(
     return { ok: false, error: `Unknown native tool: ${toolName}` };
   }
 
+  const basePath =
+    context.basePath ??
+    (
+      await resolveWorkspacePathSetForRuntime(
+        context.bucket,
+        context.agentId,
+        context.spaceId,
+      )
+    ).primaryBasePath;
+
   const executionContext: NativeToolExecutionContext = {
     ...context,
-    basePath: `agents/${context.agentId}`,
+    basePath,
   };
 
   try {

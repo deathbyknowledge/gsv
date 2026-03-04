@@ -1,3 +1,8 @@
+import {
+  resolveWorkspacePathSet,
+  type WorkspacePathSet,
+} from "../storage/paths";
+
 export type CustomMetadata = {
   emoji?: string;
   requires?: {
@@ -302,17 +307,30 @@ async function loadSkillSummaryFromKey(
 export async function listWorkspaceSkills(
   bucket: R2Bucket,
   agentId: string,
+  options?: {
+    spaceId?: string;
+    pathSet?: WorkspacePathSet;
+  },
 ): Promise<SkillSummary[]> {
   const skills: SkillSummary[] = [];
   const agentSkillNames = new Set<string>();
 
-  const agentSkills = await bucket.list({ prefix: `agents/${agentId}/skills/` });
-  for (const obj of agentSkills.objects) {
-    const loaded = await loadSkillSummaryFromKey(bucket, obj.key);
-    if (!loaded) continue;
+  const pathSet =
+    options?.pathSet ?? resolveWorkspacePathSet(agentId, options?.spaceId);
+  const workspaceSkillPrefixes = [
+    `${pathSet.primaryBasePath}/skills/`,
+    ...(pathSet.fallbackBasePath ? [`${pathSet.fallbackBasePath}/skills/`] : []),
+  ];
 
-    agentSkillNames.add(loaded.skillName);
-    skills.push(loaded.summary);
+  for (const prefix of workspaceSkillPrefixes) {
+    const agentSkills = await bucket.list({ prefix });
+    for (const obj of agentSkills.objects) {
+      const loaded = await loadSkillSummaryFromKey(bucket, obj.key);
+      if (!loaded || agentSkillNames.has(loaded.skillName)) continue;
+
+      agentSkillNames.add(loaded.skillName);
+      skills.push(loaded.summary);
+    }
   }
 
   const globalSkills = await bucket.list({ prefix: "skills/" });

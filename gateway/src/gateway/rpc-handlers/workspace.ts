@@ -8,18 +8,23 @@ import {
   writeFile,
   deleteFile,
 } from "../../agents/tools/workspace";
+import { resolveWorkspacePathSet } from "../../storage/paths";
 import type { Gateway } from "../do";
 
-function resolveBasePath(gw: Gateway, agentId?: string): string {
+function resolveBasePath(gw: Gateway, agentId?: string, spaceId?: string): string {
   const id = agentId || getDefaultAgentId(gw.getConfig());
-  return `agents/${id}`;
+  const normalizedSpaceId =
+    typeof spaceId === "string" && spaceId.trim()
+      ? spaceId.trim().toLowerCase()
+      : undefined;
+  return resolveWorkspacePathSet(id, normalizedSpaceId).primaryBasePath;
 }
 
 export const handleWorkspaceList: Handler<"workspace.list"> = async ({
   gw,
   params,
 }) => {
-  const basePath = resolveBasePath(gw, params?.agentId);
+  const basePath = resolveBasePath(gw, params?.agentId, params?.spaceId);
   const result = await listFiles(env.STORAGE, basePath, params?.path);
   if (!result.ok) {
     throw new RpcError(500, result.error || "Failed to list files");
@@ -38,7 +43,7 @@ export const handleWorkspaceRead: Handler<"workspace.read"> = async ({
   if (!params?.path) {
     throw new RpcError(400, "path is required");
   }
-  const basePath = resolveBasePath(gw, params?.agentId);
+  const basePath = resolveBasePath(gw, params?.agentId, params?.spaceId);
   const result = await readFile(env.STORAGE, basePath, params.path);
   if (!result.ok) {
     throw new RpcError(404, result.error || "File not found");
@@ -61,7 +66,7 @@ export const handleWorkspaceWrite: Handler<"workspace.write"> = async ({
   if (params.content === undefined || params.content === null) {
     throw new RpcError(400, "content is required");
   }
-  const basePath = resolveBasePath(gw, params?.agentId);
+  const basePath = resolveBasePath(gw, params?.agentId, params?.spaceId);
   const result = await writeFile(
     env.STORAGE,
     basePath,
@@ -85,7 +90,7 @@ export const handleWorkspaceDelete: Handler<"workspace.delete"> = async ({
   if (!params?.path) {
     throw new RpcError(400, "path is required");
   }
-  const basePath = resolveBasePath(gw, params?.agentId);
+  const basePath = resolveBasePath(gw, params?.agentId, params?.spaceId);
   const result = await deleteFile(env.STORAGE, basePath, params.path);
   if (!result.ok) {
     throw new RpcError(404, result.error || "File not found");

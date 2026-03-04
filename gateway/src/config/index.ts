@@ -67,8 +67,11 @@ export interface ChannelConfig {
 // Pending pairing request
 export interface PendingPair {
   channel: string;
+  accountId?: string;
   senderId: string;
+  principalId?: string;
   senderName?: string;
+  stage?: "pairing" | "binding";
   requestedAt: number;
   firstMessage?: string;
 }

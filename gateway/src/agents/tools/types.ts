@@ -5,6 +5,8 @@ export type NativeToolResult = { ok: boolean; result?: unknown; error?: string }
 export type NativeToolExecutionContext = {
   bucket: R2Bucket;
   agentId: string;
+  sessionKey?: string;
+  spaceId?: string;
   basePath: string;
   gateway?: DurableObjectStub<Gateway>;
 };

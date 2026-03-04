@@ -1,5 +1,11 @@
 import { listWorkspaceSkills, type SkillSummary } from "../skills";
 import { isMainSessionKey, type DmScope } from "../session/routing";
+import {
+  resolveWorkspaceFileCandidates,
+  resolveWorkspacePathSet,
+  resolveWorkspacePathSetForRuntime,
+  type WorkspacePathSet,
+} from "../storage/paths";
 
 export type WorkspaceFile = {
   path: string;
@@ -37,15 +43,40 @@ async function loadR2File(
   return { path, content, exists: true };
 }
 
+async function loadR2FileWithFallback(
+  bucket: R2Bucket,
+  paths: string[],
+): Promise<WorkspaceFile> {
+  for (const path of paths) {
+    const loaded = await loadR2File(bucket, path);
+    if (loaded.exists) {
+      return loaded;
+    }
+  }
+  return {
+    path: paths[0] ?? "",
+    content: "",
+    exists: false,
+  };
+}
+
 /**
  * Load HEARTBEAT.md for an agent
  */
 export async function loadHeartbeatFile(
   bucket: R2Bucket,
   agentId: string,
+  spaceId?: string,
 ): Promise<WorkspaceFile> {
-  const path = `agents/${agentId}/HEARTBEAT.md`;
-  return loadR2File(bucket, path);
+  const pathSet = await resolveWorkspacePathSetForRuntime(
+    bucket,
+    agentId,
+    spaceId,
+  );
+  return loadR2FileWithFallback(
+    bucket,
+    resolveWorkspaceFileCandidates("HEARTBEAT.md", pathSet),
+  );
 }
 
 /**
@@ -99,19 +130,29 @@ export async function loadAgentWorkspace(
   bucket: R2Bucket,
   agentId: string,
   isMainSession: boolean = false,
+  options?: {
+    spaceId?: string;
+    pathSet?: WorkspacePathSet;
+  },
 ): Promise<AgentWorkspace> {
-  const basePath = `agents/${agentId}`;
+  const pathSet =
+    options?.pathSet ??
+    (options?.spaceId
+      ? await resolveWorkspacePathSetForRuntime(bucket, agentId, options.spaceId)
+      : resolveWorkspacePathSet(agentId));
+  const fileCandidates = (fileName: string): string[] =>
+    resolveWorkspaceFileCandidates(fileName, pathSet);
 
   // Load core files in parallel
   const [agents, soul, identity, user, tools, heartbeat, bootstrap] =
     await Promise.all([
-      loadR2File(bucket, `${basePath}/AGENTS.md`),
-      loadR2File(bucket, `${basePath}/SOUL.md`),
-      loadR2File(bucket, `${basePath}/IDENTITY.md`),
-      loadR2File(bucket, `${basePath}/USER.md`),
-      loadR2File(bucket, `${basePath}/TOOLS.md`),
-      loadR2File(bucket, `${basePath}/HEARTBEAT.md`),
-      loadR2File(bucket, `${basePath}/BOOTSTRAP.md`),
+      loadR2FileWithFallback(bucket, fileCandidates("AGENTS.md")),
+      loadR2FileWithFallback(bucket, fileCandidates("SOUL.md")),
+      loadR2FileWithFallback(bucket, fileCandidates("IDENTITY.md")),
+      loadR2FileWithFallback(bucket, fileCandidates("USER.md")),
+      loadR2FileWithFallback(bucket, fileCandidates("TOOLS.md")),
+      loadR2FileWithFallback(bucket, fileCandidates("HEARTBEAT.md")),
+      loadR2FileWithFallback(bucket, fileCandidates("BOOTSTRAP.md")),
     ]);
 
   const workspace: AgentWorkspace = {
@@ -127,7 +168,7 @@ export async function loadAgentWorkspace(
 
   // Load MEMORY.md only in main session (security: contains personal context)
   if (isMainSession) {
-    const memory = await loadR2File(bucket, `${basePath}/MEMORY.md`);
+    const memory = await loadR2FileWithFallback(bucket, fileCandidates("MEMORY.md"));
     if (memory.exists) {
       workspace.memory = memory;
     }
@@ -138,8 +179,8 @@ export async function loadAgentWorkspace(
   const yesterday = getDateString(-1);
 
   const [dailyMemory, yesterdayMemory] = await Promise.all([
-    loadR2File(bucket, `${basePath}/memory/${today}.md`),
-    loadR2File(bucket, `${basePath}/memory/${yesterday}.md`),
+    loadR2FileWithFallback(bucket, fileCandidates(`memory/${today}.md`)),
+    loadR2FileWithFallback(bucket, fileCandidates(`memory/${yesterday}.md`)),
   ]);
 
   if (dailyMemory.exists) {
@@ -150,7 +191,7 @@ export async function loadAgentWorkspace(
   }
 
   // Load available skills
-  const skills = await listWorkspaceSkills(bucket, agentId);
+  const skills = await listWorkspaceSkills(bucket, agentId, { pathSet });
   if (skills.length > 0) {
     workspace.skills = skills;
   }

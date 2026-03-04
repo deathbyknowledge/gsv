@@ -17,6 +17,7 @@ import type {
   ChatEventPayload,
   ContentBlock,
   EventFrame,
+  InviteRecord,
   Message,
   SessionRegistryEntry,
   Tab,
@@ -57,6 +58,23 @@ type PendingPair = {
   senderName?: string;
   requestedAt: number;
   message?: string;
+};
+
+type CreateInviteInput = {
+  homeSpaceId: string;
+  code?: string;
+  homeAgentId?: string;
+  role?: string;
+  principalId?: string;
+  ttlMinutes?: number;
+};
+
+type ClaimInviteInput = {
+  code: string;
+  principalId?: string;
+  channel?: string;
+  accountId?: string;
+  senderId?: string;
 };
 
 type CronSchedule =
@@ -104,6 +122,8 @@ type ReactUiStore = {
   chatSending: boolean;
   chatStream: AssistantMessage | null;
   currentRunId: string | null;
+  currentThreadId: string | null;
+  currentStateId: string | null;
 
   sessions: SessionRegistryEntry[];
   sessionsLoading: boolean;
@@ -143,6 +163,8 @@ type ReactUiStore = {
 
   pairingRequests: PendingPair[];
   pairingLoading: boolean;
+  invites: InviteRecord[];
+  invitesLoading: boolean;
 
   client: GatewayClient | null;
 
@@ -168,8 +190,8 @@ type ReactUiStore = {
   sendMessage: (text: string) => Promise<void>;
 
   loadSessions: () => Promise<void>;
-  selectSession: (sessionKey: string) => Promise<void>;
-  resetSession: (sessionKey: string) => Promise<void>;
+  selectSession: (sessionKey: string, threadId?: string) => Promise<void>;
+  resetSession: (sessionKey: string, threadId?: string) => Promise<void>;
 
   refreshChannels: () => Promise<void>;
   loadChannels: (showLoading?: boolean) => Promise<void>;
@@ -213,6 +235,10 @@ type ReactUiStore = {
   loadPairing: () => Promise<void>;
   pairApprove: (channel: string, senderId: string) => Promise<void>;
   pairReject: (channel: string, senderId: string) => Promise<void>;
+  loadInvites: (params?: { includeInactive?: boolean }) => Promise<void>;
+  createInvite: (input: CreateInviteInput) => Promise<InviteRecord>;
+  revokeInvite: (inviteId: string) => Promise<boolean>;
+  claimInvite: (input: ClaimInviteInput) => Promise<unknown>;
 
   updateSettings: (updates: Partial<UiSettings>) => void;
 
@@ -297,6 +323,8 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
   chatSending: false,
   chatStream: null,
   currentRunId: null,
+  currentThreadId: null,
+  currentStateId: null,
 
   sessions: [],
   sessionsLoading: false,
@@ -336,6 +364,8 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
 
   pairingRequests: [],
   pairingLoading: false,
+  invites: [],
+  invitesLoading: false,
 
   client: null,
 
@@ -454,8 +484,24 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
         }));
         if (event.event === "chat") {
           const payload = event.payload as ChatEventPayload;
-          if (payload.sessionKey !== get().settings.sessionKey) {
+          const currentThreadId = get().currentThreadId;
+          if (currentThreadId) {
+            if (payload.threadId) {
+              if (payload.threadId !== currentThreadId) {
+                return;
+              }
+            } else if (payload.sessionKey !== get().settings.sessionKey) {
+              return;
+            }
+          } else if (payload.sessionKey !== get().settings.sessionKey) {
             return;
+          }
+
+          if (payload.threadId || payload.stateId) {
+            set((state) => ({
+              currentThreadId: payload.threadId ?? state.currentThreadId,
+              currentStateId: payload.stateId ?? state.currentStateId,
+            }));
           }
 
           const matchesCurrentRun =
@@ -562,7 +608,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
         await get().loadCron();
         break;
       case "pairing":
-        await get().loadPairing();
+        await Promise.all([get().loadPairing(), get().loadInvites()]);
         break;
       default:
         break;
@@ -576,10 +622,20 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
     }
     set({ chatLoading: true });
     try {
-      const res = await client.sessionPreview(get().settings.sessionKey, 100);
+      const currentThreadId = get().currentThreadId;
+      const threadRef = currentThreadId ? `id:${currentThreadId}` : undefined;
+      const res = await client.sessionPreview(get().settings.sessionKey, 100, threadRef);
       if (res.ok && res.payload) {
-        const data = res.payload as { messages: Message[] };
-        set({ chatMessages: data.messages || [] });
+        const data = res.payload as {
+          messages: Message[];
+          threadId?: string;
+          stateId?: string;
+        };
+        set({
+          chatMessages: data.messages || [],
+          currentThreadId: data.threadId ?? null,
+          currentStateId: data.stateId ?? null,
+        });
       }
     } finally {
       set({ chatLoading: false });
@@ -608,7 +664,54 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
     }));
 
     try {
-      await client.chatSend(get().settings.sessionKey, text, runId);
+      const currentThreadId = get().currentThreadId;
+      const threadRef = currentThreadId ? `id:${currentThreadId}` : undefined;
+      const res = await client.chatSend(
+        get().settings.sessionKey,
+        text,
+        runId,
+        threadRef,
+      );
+      if (res.ok && res.payload) {
+        const payload = res.payload as {
+          status?: string;
+          sessionKey?: string;
+          threadId?: string;
+          stateId?: string;
+        };
+
+        const resolvedSessionKey = payload.sessionKey;
+        if (
+          resolvedSessionKey &&
+          resolvedSessionKey !== get().settings.sessionKey
+        ) {
+          set((state) => ({
+            settings: {
+              ...state.settings,
+              sessionKey: resolvedSessionKey,
+            },
+          }));
+          saveSettings({ sessionKey: resolvedSessionKey });
+        }
+
+        if (payload.threadId || payload.stateId) {
+          set((state) => ({
+            currentThreadId: payload.threadId ?? state.currentThreadId,
+            currentStateId: payload.stateId ?? state.currentStateId,
+          }));
+        }
+
+        if (
+          payload.status === "command" ||
+          payload.status === "directive-only" ||
+          payload.status === "paused"
+        ) {
+          set({
+            chatSending: false,
+            currentRunId: null,
+          });
+        }
+      }
     } catch {
       set({
         chatSending: false,
@@ -634,23 +737,32 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
     }
   },
 
-  selectSession: async (sessionKey) => {
+  selectSession: async (sessionKey, threadId) => {
     const settings = { ...get().settings, sessionKey };
-    set({ settings });
+    set({
+      settings,
+      currentThreadId: threadId ?? null,
+      currentStateId: null,
+    });
     saveSettings({ sessionKey });
     get().switchTab("chat");
     await get().loadChatHistory();
   },
 
-  resetSession: async (sessionKey) => {
+  resetSession: async (sessionKey, threadId) => {
     const client = get().client;
     if (!client) {
       return;
     }
-    await client.sessionReset(sessionKey);
+    const threadRef = threadId ? `id:${threadId}` : undefined;
+    await client.sessionReset(sessionKey, threadRef);
     await get().loadSessions();
     if (sessionKey === get().settings.sessionKey) {
-      set({ chatMessages: [] });
+      set({
+        chatMessages: [],
+        chatStream: null,
+      });
+      await get().loadChatHistory();
     }
   },
 
@@ -1101,7 +1213,9 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
             senderId: (pair.senderId as string) || key,
             senderName: pair.senderName as string | undefined,
             requestedAt: (pair.requestedAt as number) || Date.now(),
-            message: pair.message as string | undefined,
+            message:
+              (pair.firstMessage as string | undefined) ||
+              (pair.message as string | undefined),
           };
         });
         set({ pairingRequests: pairs });
@@ -1117,7 +1231,7 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
       return;
     }
     await client.pairApprove(channel, senderId);
-    await get().loadPairing();
+    await Promise.all([get().loadPairing(), get().loadInvites()]);
   },
 
   pairReject: async (channel, senderId) => {
@@ -1127,6 +1241,76 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
     }
     await client.pairReject(channel, senderId);
     await get().loadPairing();
+  },
+
+  loadInvites: async (params) => {
+    const client = get().client;
+    if (!client) {
+      return;
+    }
+    set({ invitesLoading: true });
+    try {
+      const res = await client.inviteList({
+        includeInactive: params?.includeInactive,
+      });
+      if (res.ok && res.payload) {
+        const data = res.payload as {
+          invites?: Array<{ inviteId: string; invite: InviteRecord }>;
+        };
+        const invites = (data.invites || []).map((entry) => ({
+          ...entry.invite,
+          inviteId: entry.inviteId,
+        }));
+        set({ invites });
+      }
+    } finally {
+      set({ invitesLoading: false });
+    }
+  },
+
+  createInvite: async (input) => {
+    const client = get().client;
+    if (!client) {
+      throw new Error("Not connected");
+    }
+    const res = await client.inviteCreate(input);
+    if (!res.ok || !res.payload) {
+      throw new Error(res.error?.message || "Failed to create invite");
+    }
+    const data = res.payload as { invite?: InviteRecord };
+    const invite = data.invite;
+    if (!invite) {
+      throw new Error("Missing invite in response");
+    }
+    await get().loadInvites({ includeInactive: true });
+    return invite;
+  },
+
+  revokeInvite: async (inviteId) => {
+    const client = get().client;
+    if (!client) {
+      throw new Error("Not connected");
+    }
+    const res = await client.inviteRevoke(inviteId);
+    if (!res.ok || !res.payload) {
+      throw new Error(res.error?.message || "Failed to revoke invite");
+    }
+    const payload = res.payload as { revoked?: boolean };
+    await get().loadInvites({ includeInactive: true });
+    return payload.revoked === true;
+  },
+
+  claimInvite: async (input) => {
+    const client = get().client;
+    if (!client) {
+      throw new Error("Not connected");
+    }
+    const res = await client.inviteClaim(input);
+    if (!res.ok) {
+      throw new Error(res.error?.message || "Failed to claim invite");
+    }
+    await Promise.all([get().loadInvites({ includeInactive: true }), get().loadPairing()]);
+    return res.payload;
   },
 
   updateSettings: (updates) => {

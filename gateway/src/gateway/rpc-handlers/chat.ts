@@ -14,6 +14,7 @@ import {
 import type { Handler } from "../../protocol/methods";
 import { RpcError } from "../../shared/utils";
 import type { Gateway } from "../do";
+import { resolveSessionTarget } from "./session-target";
 
 type SlashCommandResult = {
   handled: boolean;
@@ -24,9 +25,10 @@ type SlashCommandResult = {
 async function handleSlashCommandForChat(
   gw: Gateway,
   command: { name: string; args: string },
-  sessionKey: string,
+  sessionDoName: string,
+  sessionLabel: string,
 ): Promise<SlashCommandResult> {
-  const sessionStub = env.SESSION.getByName(sessionKey);
+  const sessionStub = env.SESSION.getByName(sessionDoName);
 
   try {
     switch (command.name) {
@@ -73,7 +75,7 @@ async function handleSlashCommandForChat(
         const config = gw.getFullConfig();
 
         const lines = [
-          `Session: ${sessionKey}`,
+          `Session: ${sessionLabel}`,
           `Messages: ${info.messageCount}`,
           `Tokens: ${stats.tokens.input} in / ${stats.tokens.output} out`,
           `Model: ${config.model.provider}/${config.model.id}`,
@@ -152,11 +154,18 @@ async function handleSlashCommandForChat(
 }
 
 export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
-  if (!params?.sessionKey || !params?.message) {
-    throw new RpcError(400, "sessionKey and message required");
+  if (!params?.message) {
+    throw new RpcError(400, "message required");
   }
 
-  const canonicalSessionKey = gw.canonicalizeSessionKey(params.sessionKey);
+  const resolved = resolveSessionTarget(gw, {
+    sessionKey: params?.sessionKey,
+    threadRef: params?.threadRef,
+  });
+  const canonicalSessionKey = resolved.sessionKey;
+  const sessionDoName = resolved.sessionDoName;
+  const threadId = resolved.threadId;
+  const stateId = resolved.stateId;
 
   const messageText = params.message;
 
@@ -166,12 +175,16 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
     const commandResult = await handleSlashCommandForChat(
       gw,
       command,
+      sessionDoName,
       canonicalSessionKey,
     );
 
     if (commandResult.handled) {
       return {
         status: "command",
+        sessionKey: canonicalSessionKey,
+        threadId,
+        stateId,
         command: command.name,
         response: commandResult.response,
         error: commandResult.error,
@@ -180,7 +193,7 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
   }
 
   const fullConfig = gw.getFullConfig();
-  const sessionStub = env.SESSION.getByName(canonicalSessionKey);
+  const sessionStub = env.SESSION.getByName(sessionDoName);
 
   // Parse inline directives. For provider-less model selectors (e.g. /m:o3),
   // resolve against the session's current provider, not the global default.
@@ -199,7 +212,7 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
       directives = parseDirectives(messageText, fallbackProvider);
     } catch (e) {
       console.warn(
-        `[Gateway] Failed to resolve session model provider for ${canonicalSessionKey}, using global default:`,
+        `[Gateway] Failed to resolve session model provider for ${sessionDoName}, using global default:`,
         e,
       );
       directives = parseDirectives(messageText, fullConfig.model.provider);
@@ -211,6 +224,9 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
     const ack = formatDirectiveAck(directives);
     return {
       status: "directive-only",
+      sessionKey: canonicalSessionKey,
+      threadId,
+      stateId,
       response: ack,
       directives: {
         thinkLevel: directives.thinkLevel,
@@ -223,6 +239,11 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
   const existing = gw.sessionRegistry[canonicalSessionKey];
   gw.sessionRegistry[canonicalSessionKey] = {
     sessionKey: canonicalSessionKey,
+    threadId: threadId ?? existing?.threadId,
+    stateId: stateId ?? existing?.stateId,
+    spaceId: existing?.spaceId,
+    principalId: existing?.principalId,
+    agentId: existing?.agentId,
     createdAt: existing?.createdAt ?? now,
     lastActiveAt: now,
     label: existing?.label,
@@ -248,13 +269,16 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
     JSON.parse(
       JSON.stringify(gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys())),
     ),
-    canonicalSessionKey,
+    sessionDoName,
     messageOverrides,
   );
 
   if (result.paused) {
     return {
       status: "paused",
+      sessionKey: canonicalSessionKey,
+      threadId,
+      stateId,
       runId: result.runId,
       response:
         result.response ??
@@ -265,6 +289,9 @@ export const handleChatSend: Handler<"chat.send"> = async ({ gw, params }) => {
 
   return {
     status: "started",
+    sessionKey: canonicalSessionKey,
+    threadId,
+    stateId,
     runId: result.runId,
     directives:
       directives.hasThinkDirective || directives.hasModelDirective

@@ -244,7 +244,7 @@ describe("buildSystemPromptFromWorkspace full fixture", () => {
       Agent workspace root: agents/main/
       Use workspace tools for persistent agent files, memory notes, and local skill overrides.
       Virtual skill paths are under skills/. Reads resolve agent override first, then global skills fallback.
-      Writes to skills/* always create or update agent-local overrides under agents/<agentId>/skills/*.
+      Writes to skills/* always create or update agent-local overrides under <workspaceRoot>/skills/*.
 
       ---
 

@@ -4,6 +4,7 @@ import {
   type Handler,
 } from "../../protocol/methods";
 import { RpcError } from "../../shared/utils";
+import { resolveSessionTarget } from "./session-target";
 
 function extractRunningSessionId(result: unknown): string | undefined {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
@@ -26,6 +27,9 @@ function toToolDispatchRpcError(message: string): RpcError {
   if (message === "Node not connected") {
     return new RpcError(503, message);
   }
+  if (message.includes("denied by policy") || message.includes("capability")) {
+    return new RpcError(403, message);
+  }
   return new RpcError(500, message);
 }
 
@@ -33,12 +37,12 @@ export const handleToolsList: Handler<"tools.list"> = ({ gw }) => ({
   tools: gw.nodeService.listTools(gw.nodes.keys()),
 });
 
-export const handleToolRequest: Handler<"tool.request"> = ({ gw, params }) => {
+export const handleToolRequest: Handler<"tool.request"> = async ({ gw, params }) => {
   if (!params?.callId || !params?.tool || !params?.sessionKey) {
     throw new RpcError(400, "callId, tool, and sessionKey required");
   }
 
-  const result = gw.nodeService.requestToolForSession(params, gw.nodes);
+  const result = await gw.toolRequest(params);
   if (!result.ok) {
     throw toToolDispatchRpcError(result.error ?? "Failed to dispatch tool");
   }
@@ -130,7 +134,10 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     return { ok: true };
   }
 
-  const sessionStub = env.SESSION.getByName(route.sessionKey);
+  const resolvedTarget = resolveSessionTarget(gw, {
+    sessionKey: route.sessionKey,
+  });
+  const sessionStub = env.SESSION.getByName(resolvedTarget.sessionDoName);
   const result = await sessionStub.toolResult({
     callId: params.callId,
     result: params.result,
@@ -145,7 +152,7 @@ export const handleToolResult: Handler<"tool.result"> = async ({
     gw.registerPendingAsyncExecSession({
       nodeId,
       sessionId: runningSessionId,
-      sessionKey: route.sessionKey,
+      sessionKey: resolvedTarget.sessionDoName,
       callId: params.callId,
     });
   }

@@ -1,4 +1,9 @@
 import type { Message } from "@mariozechner/pi-ai";
+import {
+  resolvePartialArchiveKey,
+  resolveSessionArchiveKey,
+  resolveSessionArchivePrefix,
+} from "./paths";
 
 // Types for archived session info (stored in DO state, not R2)
 export type ArchivedSessionInfo = {
@@ -82,8 +87,14 @@ function jsonlToMessages(jsonl: string): Message[] {
 function resolveSessionTranscriptKey(
   sessionId: string,
   agentId: string,
+  options?: { spaceId?: string; threadId?: string },
 ): string {
-  return `agents/${agentId}/sessions/${sessionId}.jsonl.gz`;
+  return resolveSessionArchiveKey({
+    agentId,
+    sessionId,
+    spaceId: options?.spaceId,
+    threadId: options?.threadId,
+  });
 }
 
 /**
@@ -103,6 +114,7 @@ export async function archiveSession(
   messages: Message[],
   tokens: { input: number; output: number; total: number },
   agentId: string,
+  options?: { spaceId?: string; threadId?: string },
 ): Promise<string> {
   if (messages.length === 0) {
     return "";
@@ -111,12 +123,14 @@ export async function archiveSession(
   const jsonl = messagesToJsonl(messages);
   const compressed = await gzipCompress(jsonl);
 
-  const key = resolveSessionTranscriptKey(sessionId, agentId);
+  const key = resolveSessionTranscriptKey(sessionId, agentId, options);
   await storage.put(key, compressed, {
     customMetadata: {
       sessionKey,
       sessionId,
       agentId,
+      spaceId: options?.spaceId ?? "",
+      threadId: options?.threadId ?? "",
       messageCount: messages.length.toString(),
       archivedAt: Date.now().toString(),
       inputTokens: tokens.input.toString(),
@@ -132,8 +146,9 @@ export async function getArchivedTranscript(
   storage: R2Bucket,
   sessionId: string,
   agentId: string,
+  options?: { spaceId?: string; threadId?: string },
 ): Promise<Message[] | null> {
-  const key = resolveSessionTranscriptKey(sessionId, agentId);
+  const key = resolveSessionTranscriptKey(sessionId, agentId, options);
   const obj = await storage.get(key);
 
   if (!obj) {
@@ -149,8 +164,9 @@ export async function deleteArchivedSession(
   storage: R2Bucket,
   sessionId: string,
   agentId: string,
+  options?: { spaceId?: string; threadId?: string },
 ): Promise<boolean> {
-  const key = resolveSessionTranscriptKey(sessionId, agentId);
+  const key = resolveSessionTranscriptKey(sessionId, agentId, options);
   await storage.delete(key);
   return true;
 }
@@ -158,17 +174,24 @@ export async function deleteArchivedSession(
 export async function listArchivedSessions(
   storage: R2Bucket,
   agentId: string,
+  options?: { spaceId?: string; threadId?: string },
 ): Promise<ArchivedSessionInfo[]> {
-  const prefix = `agents/${agentId}/sessions/`;
+  const prefix = resolveSessionArchivePrefix({
+    agentId,
+    spaceId: options?.spaceId,
+    threadId: options?.threadId,
+  });
   const list = await storage.list({ prefix });
 
   const sessions: ArchivedSessionInfo[] = [];
   for (const obj of list.objects) {
-    // Extract sessionId from key: agents/{agentId}/sessions/{sessionId}.jsonl.gz
+    // Extract sessionId from key:
+    // - agents/{agentId}/sessions/{sessionId}.jsonl.gz (legacy)
+    // - spaces/{spaceId}/agents/{agentId}/threads/{threadId}/archives/{sessionId}.jsonl.gz
     const match = obj.key.match(/\/sessions\/(.+)\.jsonl\.gz$/);
-    if (!match) continue;
-
-    const sessionId = match[1];
+    const threadMatch = obj.key.match(/\/archives\/(.+)\.jsonl\.gz$/);
+    const sessionId = match?.[1] ?? threadMatch?.[1];
+    if (!sessionId) continue;
     const meta = obj.customMetadata || {};
 
     sessions.push({
@@ -198,6 +221,7 @@ export async function archivePartialMessages(
   messages: Message[],
   partNumber: number,
   agentId: string,
+  options?: { spaceId?: string; threadId?: string },
 ): Promise<string> {
   if (messages.length === 0) {
     return "";
@@ -206,13 +230,20 @@ export async function archivePartialMessages(
   const jsonl = messagesToJsonl(messages);
   const compressed = await gzipCompress(jsonl);
 
-  // Partial archives get a -part{N} suffix
-  const key = `agents/${agentId}/sessions/${sessionId}-part${partNumber}.jsonl.gz`;
+  const key = resolvePartialArchiveKey({
+    agentId,
+    sessionId,
+    partNumber,
+    spaceId: options?.spaceId,
+    threadId: options?.threadId,
+  });
   await storage.put(key, compressed, {
     customMetadata: {
       sessionKey,
       sessionId,
       agentId,
+      spaceId: options?.spaceId ?? "",
+      threadId: options?.threadId ?? "",
       partNumber: partNumber.toString(),
       messageCount: messages.length.toString(),
       archivedAt: Date.now().toString(),
