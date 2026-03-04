@@ -40,7 +40,12 @@ export const getSessionsToolDefinitions = (): ToolDefinition[] => [
         sessionKey: {
           type: "string",
           description:
-            "Target session key (e.g., 'main', 'agent:helper:main'). Required.",
+            "Target legacy session key (e.g., 'main', 'agent:helper:main'). Optional when threadRef is provided.",
+        },
+        threadRef: {
+          type: "string",
+          description:
+            "Target thread reference, currently id:{threadId}. Optional when sessionKey is provided.",
         },
         message: {
           type: "string",
@@ -52,7 +57,7 @@ export const getSessionsToolDefinitions = (): ToolDefinition[] => [
             "Seconds to wait for a reply (0 = fire-and-forget). Default 30, max 120.",
         },
       },
-      required: ["sessionKey", "message"],
+      required: ["message"],
     },
   },
 ];
@@ -66,7 +71,10 @@ export const sessionsNativeToolHandlers: NativeToolHandlerMap = {
       };
     }
 
-    const payload = await context.gateway.executeSessionsListTool(args);
+    const payload = await context.gateway.executeSessionsListTool(args, {
+      sessionKey: context.sessionKey,
+      spaceId: context.spaceId,
+    });
     return {
       ok: true,
       result: payload,
@@ -84,6 +92,10 @@ export const sessionsNativeToolHandlers: NativeToolHandlerMap = {
     const payload = await context.gateway.executeSessionSendTool(
       context.agentId,
       args,
+      {
+        sessionKey: context.sessionKey,
+        spaceId: context.spaceId,
+      },
     );
     return {
       ok: true,

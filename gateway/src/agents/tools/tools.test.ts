@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { executeNativeTool, NATIVE_TOOLS } from "./";
+import { executeNativeTool, NATIVE_TOOLS, getSessionsToolDefinitions } from "./";
 
 type StoredEntry = {
   content: string;
@@ -94,6 +94,48 @@ class MockBucket {
 }
 
 describe("workspace tools: global skills routing", () => {
+  it("falls back to legacy workspace when space workspace is not provisioned yet", async () => {
+    const bucket = new MockBucket();
+    bucket.seed("agents/main/notes.md", "legacy notes");
+
+    const result = await executeNativeTool(
+      {
+        bucket: bucket as unknown as R2Bucket,
+        agentId: "main",
+        spaceId: "owner",
+      },
+      NATIVE_TOOLS.READ_FILE,
+      { path: "notes.md" },
+    );
+
+    expect(result.ok).toBe(true);
+    const payload = result.result as Record<string, unknown>;
+    expect(payload.content).toBe("legacy notes");
+    expect(payload.path).toBe("notes.md");
+  });
+
+  it("uses space workspace when core files are present", async () => {
+    const bucket = new MockBucket();
+    bucket.seed("spaces/owner/agents/main/SOUL.md", "space soul");
+    bucket.seed("spaces/owner/agents/main/notes.md", "space notes");
+    bucket.seed("agents/main/notes.md", "legacy notes");
+
+    const result = await executeNativeTool(
+      {
+        bucket: bucket as unknown as R2Bucket,
+        agentId: "main",
+        spaceId: "owner",
+      },
+      NATIVE_TOOLS.READ_FILE,
+      { path: "notes.md" },
+    );
+
+    expect(result.ok).toBe(true);
+    const payload = result.result as Record<string, unknown>;
+    expect(payload.content).toBe("space notes");
+    expect(payload.path).toBe("notes.md");
+  });
+
   it("reads a global skill when no agent override exists", async () => {
     const bucket = new MockBucket();
     bucket.seed("skills/demo/SKILL.md", "global demo");
@@ -338,5 +380,23 @@ describe("workspace tools: edit file", () => {
     const globalObject = await bucket.get("skills/demo/SKILL.md");
     expect(globalObject).toBeTruthy();
     expect(await globalObject!.text()).toBe("global demo");
+  });
+});
+
+describe("sessions tools", () => {
+  it("defines SessionSend target as sessionKey or threadRef", () => {
+    const sessionSend = getSessionsToolDefinitions().find(
+      (definition) => definition.name === NATIVE_TOOLS.SESSION_SEND,
+    );
+    expect(sessionSend).toBeDefined();
+
+    const schema = sessionSend!.inputSchema as {
+      required?: string[];
+      properties?: Record<string, unknown>;
+    };
+
+    expect(schema.required).toEqual(["message"]);
+    expect(schema.properties?.sessionKey).toBeDefined();
+    expect(schema.properties?.threadRef).toBeDefined();
   });
 });
