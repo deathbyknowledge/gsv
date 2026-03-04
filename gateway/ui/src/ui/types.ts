@@ -170,6 +170,31 @@ export type ChatEventPayload = {
   };
 };
 
+export type RunProgressPhase =
+  | "run_started"
+  | "tool_dispatched"
+  | "tool_result"
+  | "paused"
+  | "resumed"
+  | "run_finished"
+  | "run_error"
+  | "run_aborted";
+
+export type RunProgressEventPayload = {
+  runId: string | null;
+  sessionKey: string;
+  phase: RunProgressPhase;
+  timestamp: number;
+  tool?: {
+    callId: string;
+    name: string;
+    args?: Record<string, unknown>;
+    isError?: boolean;
+    error?: string;
+  };
+  message?: string;
+};
+
 // Config types
 export type GsvConfig = {
   model: { provider: string; id: string };

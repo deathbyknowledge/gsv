@@ -159,6 +159,7 @@ export const handleConnect: Handler<"connect"> = async (ctx) => {
       ],
       events: [
         "chat",
+        "run.progress",
         "tool.invoke",
         "tool.result",
         "logs.get",

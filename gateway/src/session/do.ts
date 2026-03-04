@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { PersistedObject, snapshot } from "../shared/persisted-object";
 import type { ChatEventPayload } from "../protocol/chat";
+import type { RunProgressEventPayload } from "../protocol/run-events";
 import type { RuntimeNodeInventory, ToolDefinition } from "../protocol/tools";
 import type {
   MediaAttachment,
@@ -899,12 +900,32 @@ export class Session extends DurableObject<Env> {
     } else {
       pendingCall.error = "Tool execution denied by user";
       this.pendingToolCalls[pendingCall.id] = pendingCall;
+      await this.broadcastRunProgress({
+        runId: pending.runId || runId,
+        phase: "tool_result",
+        tool: {
+          callId: pendingCall.id,
+          name: pendingCall.name,
+          isError: true,
+          error: pendingCall.error,
+        },
+      });
     }
 
     this.pendingToolApproval = null;
     if (this.currentRun) {
       this.currentRun.waitingForApproval = false;
     }
+
+    await this.broadcastRunProgress({
+      runId: pending.runId || runId,
+      phase: "resumed",
+      tool: {
+        callId: pending.callId,
+        name: pending.toolName,
+      },
+      message: decision === "approve" ? "Tool approved" : "Tool denied",
+    });
 
     this.ctx.waitUntil(this.resumeRunAfterToolApprovalDecision());
 
@@ -1101,6 +1122,10 @@ export class Session extends DurableObject<Env> {
     };
 
     console.log(`[Session] Starting run ${runId}`);
+    this.ctx.waitUntil(this.broadcastRunProgress({
+      runId,
+      phase: "run_started",
+    }));
 
     // Build user message and evaluate freshness before touching updatedAt
     const userMessage = buildUserMessage(message, media);
@@ -1142,14 +1167,20 @@ export class Session extends DurableObject<Env> {
 
       await this.continueAgentLoop();
     } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
       console.error(`[Session] Agent loop error:`, e);
       await this.broadcastToClients({
         runId: this.currentRun?.runId ?? null,
         sessionKey: this.meta.sessionKey,
         state: "error",
-        error: e instanceof Error ? e.message : String(e),
+        error: errorMessage,
       });
-      this.finishRun();
+      await this.broadcastRunProgress({
+        runId: this.currentRun?.runId ?? null,
+        phase: "run_error",
+        message: errorMessage,
+      });
+      this.finishRun({ emitFinishedEvent: false });
     }
   }
 
@@ -1293,6 +1324,7 @@ export class Session extends DurableObject<Env> {
     try {
       response = await this.callLlm();
     } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
       if (runForLlm) {
         runForLlm.messageOverrides = originalMessageOverrides;
       }
@@ -1302,9 +1334,14 @@ export class Session extends DurableObject<Env> {
         runId: this.currentRun?.runId ?? null,
         sessionKey: this.meta.sessionKey,
         state: "error",
-        error: e instanceof Error ? e.message : String(e),
+        error: errorMessage,
       });
-      this.finishRun();
+      await this.broadcastRunProgress({
+        runId: this.currentRun?.runId ?? null,
+        phase: "run_error",
+        message: errorMessage,
+      });
+      this.finishRun({ emitFinishedEvent: false });
       return;
     }
 
@@ -1332,7 +1369,12 @@ export class Session extends DurableObject<Env> {
         state: "error",
         error: errorDetail,
       });
-      this.finishRun();
+      await this.broadcastRunProgress({
+        runId: this.currentRun?.runId ?? null,
+        phase: "run_error",
+        message: errorDetail,
+      });
+      this.finishRun({ emitFinishedEvent: false });
       return;
     }
 
@@ -1383,10 +1425,19 @@ export class Session extends DurableObject<Env> {
   }
 
   /**
-   * Clean up after a run completes (success or error)
+   * Clean up after a run completes.
    */
-  private finishRun(): void {
+  private finishRun(options?: { emitFinishedEvent?: boolean }): void {
+    const emitFinishedEvent = options?.emitFinishedEvent !== false;
     const runId = this.currentRun?.runId;
+
+    if (emitFinishedEvent && runId) {
+      this.ctx.waitUntil(this.broadcastRunProgress({
+        runId,
+        phase: "run_finished",
+      }));
+    }
+
     this.currentRun = null;
     console.log(`[Session] Finished run ${runId}`);
 
@@ -1468,6 +1519,16 @@ export class Session extends DurableObject<Env> {
     console.log(
       `[Session] Tool result received for ${input.callId} (${toolCall.name})`,
     );
+    this.ctx.waitUntil(this.broadcastRunProgress({
+      runId: this.currentRun?.runId ?? null,
+      phase: "tool_result",
+      tool: {
+        callId: input.callId,
+        name: toolCall.name,
+        isError: Boolean(input.error),
+        error: input.error,
+      },
+    }));
 
     if (this.allToolsResolved()) {
       this.ctx.storage.deleteAlarm();
@@ -1973,6 +2034,20 @@ export class Session extends DurableObject<Env> {
     });
   }
 
+  private async broadcastRunProgress(
+    payload: Omit<RunProgressEventPayload, "sessionKey" | "timestamp">,
+  ): Promise<void> {
+    if (!this.meta.sessionKey) {
+      return;
+    }
+    const gateway = this.env.GATEWAY.getByName("singleton");
+    gateway.broadcastRunEventToSession(this.meta.sessionKey, {
+      ...payload,
+      sessionKey: this.meta.sessionKey,
+      timestamp: Date.now(),
+    });
+  }
+
   private async requestToolExecution(
     toolCall: PendingToolCall,
   ): Promise<"dispatched" | "awaiting-approval"> {
@@ -2006,6 +2081,16 @@ export class Session extends DurableObject<Env> {
         ? `Tool execution denied by policy: ${details}`
         : "Tool execution denied by policy";
       this.pendingToolCalls[normalizedToolCall.id] = normalizedToolCall;
+      await this.broadcastRunProgress({
+        runId: this.currentRun?.runId ?? null,
+        phase: "tool_result",
+        tool: {
+          callId: normalizedToolCall.id,
+          name: normalizedToolCall.name,
+          isError: true,
+          error: normalizedToolCall.error,
+        },
+      });
       return "dispatched";
     }
 
@@ -2033,6 +2118,14 @@ export class Session extends DurableObject<Env> {
           this.buildApprovalPromptText(approval),
         ),
       });
+      await this.broadcastRunProgress({
+        runId: this.currentRun?.runId ?? null,
+        phase: "paused",
+        tool: {
+          callId: normalizedToolCall.id,
+          name: normalizedToolCall.name,
+        },
+      });
       return "awaiting-approval";
     }
 
@@ -2056,6 +2149,15 @@ export class Session extends DurableObject<Env> {
       return;
     }
 
+    await this.broadcastRunProgress({
+      runId: this.currentRun?.runId ?? null,
+      phase: "tool_dispatched",
+      tool: {
+        callId: toolCall.id,
+        name: toolCall.name,
+      },
+    });
+
     if (toolCall.name === TRANSFER_TOOL_NAME) {
       try {
         const source = parseTransferEndpoint(toolCall.args.source as string);
@@ -2076,6 +2178,16 @@ export class Session extends DurableObject<Env> {
           if (persistResult) {
             this.pendingToolCalls[toolCall.id] = toolCall;
           }
+          await this.broadcastRunProgress({
+            runId: this.currentRun?.runId ?? null,
+            phase: "tool_result",
+            tool: {
+              callId: toolCall.id,
+              name: toolCall.name,
+              isError: true,
+              error: toolCall.error,
+            },
+          });
         }
       } catch (err) {
         toolCall.error =
@@ -2083,6 +2195,16 @@ export class Session extends DurableObject<Env> {
         if (persistResult) {
           this.pendingToolCalls[toolCall.id] = toolCall;
         }
+        await this.broadcastRunProgress({
+          runId: this.currentRun?.runId ?? null,
+          phase: "tool_result",
+          tool: {
+            callId: toolCall.id,
+            name: toolCall.name,
+            isError: true,
+            error: toolCall.error,
+          },
+        });
       }
       return;
     }
@@ -2114,6 +2236,16 @@ export class Session extends DurableObject<Env> {
       if (persistResult) {
         this.pendingToolCalls[toolCall.id] = toolCall;
       }
+      await this.broadcastRunProgress({
+        runId: this.currentRun?.runId ?? null,
+        phase: "tool_result",
+        tool: {
+          callId: toolCall.id,
+          name: toolCall.name,
+          isError: !result.ok,
+          error: result.ok ? undefined : toolCall.error,
+        },
+      });
       console.log(`[Session] Native tool ${toolCall.name} completed`);
       return;
     }
@@ -2135,6 +2267,16 @@ export class Session extends DurableObject<Env> {
       if (persistResult) {
         this.pendingToolCalls[toolCall.id] = toolCall;
       }
+      await this.broadcastRunProgress({
+        runId: this.currentRun?.runId ?? null,
+        phase: "tool_result",
+        tool: {
+          callId: toolCall.id,
+          name: toolCall.name,
+          isError: true,
+          error: toolCall.error,
+        },
+      });
     }
   }
 
@@ -2392,9 +2534,14 @@ export class Session extends DurableObject<Env> {
       state: "error",
       error: "Run cancelled by user",
     });
+    await this.broadcastRunProgress({
+      runId,
+      phase: "run_aborted",
+      message: "Run cancelled by user",
+    });
 
     // Clean up run state
-    this.finishRun();
+    this.finishRun({ emitFinishedEvent: false });
 
     return {
       ok: true,

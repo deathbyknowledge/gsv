@@ -12,6 +12,7 @@ import type {
   EventFrame,
   SessionRegistryEntry,
   ChatEventPayload,
+  RunProgressEventPayload,
   Message,
   AssistantMessage,
   ToolDefinition,
@@ -293,9 +294,11 @@ export class GsvApp extends LitElement {
 
   private handleEvent(event: EventFrame) {
     this.debugLog = [...this.debugLog.slice(-99), { time: new Date(), type: event.event, data: event.payload }];
-    
+
     if (event.event === "chat") {
       this.handleChatEvent(event.payload as ChatEventPayload);
+    } else if (event.event === "run.progress") {
+      this.handleRunProgressEvent(event.payload as RunProgressEventPayload);
     }
   }
 
@@ -453,6 +456,48 @@ export class GsvApp extends LitElement {
         this.currentRunId = null;
       }
       console.error("Chat error:", payload.error);
+    }
+  }
+
+  private handleRunProgressEvent(payload: RunProgressEventPayload) {
+    if (payload.sessionKey !== this.settings.sessionKey) return;
+    const matchesCurrentRun =
+      !this.currentRunId || !payload.runId || payload.runId === this.currentRunId;
+
+    if (payload.phase === "tool_result" && payload.tool) {
+      this.chatMessages = [
+        ...this.chatMessages,
+        {
+          role: "toolResult",
+          toolCallId: payload.tool.callId,
+          toolName: payload.tool.name,
+          content: [{
+            type: "text",
+            text: payload.tool.error
+              ? `Error: ${payload.tool.error}`
+              : "Tool execution completed.",
+          }],
+          isError: Boolean(payload.tool.isError),
+          timestamp: payload.timestamp,
+        },
+      ];
+    }
+
+    if (payload.phase === "run_error" || payload.phase === "run_aborted") {
+      if (matchesCurrentRun) {
+        this.chatStream = null;
+        this.chatStreamRunId = null;
+        this.chatSending = false;
+        this.currentRunId = null;
+      }
+    } else if (payload.phase === "run_finished") {
+      this.chatStream = null;
+      this.chatStreamRunId = null;
+      if (matchesCurrentRun) {
+        this.chatSending = false;
+        this.currentRunId = null;
+      }
+      void this.loadChatHistory();
     }
   }
 

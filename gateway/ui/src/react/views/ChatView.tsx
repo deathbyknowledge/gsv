@@ -259,6 +259,7 @@ export function ChatView() {
   const chatLoading = useReactUiStore((s) => s.chatLoading);
   const chatSending = useReactUiStore((s) => s.chatSending);
   const chatStream = useReactUiStore((s) => s.chatStream);
+  const runStatus = useReactUiStore((s) => s.runStatus);
   const connectionState = useReactUiStore((s) => s.connectionState);
   const sendMessage = useReactUiStore((s) => s.sendMessage);
 
@@ -271,7 +272,7 @@ export function ChatView() {
       return;
     }
     messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-  }, [chatMessages, chatStream, chatLoading, chatSending]);
+  }, [chatMessages, chatStream, chatLoading, chatSending, runStatus]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -330,7 +331,19 @@ export function ChatView() {
                     <span className="thinking-dot"></span>
                     <span className="thinking-dot"></span>
                   </div>
-                  <span>Thinking...</span>
+                  <span>
+                    {runStatus?.phase === "run_started"
+                      ? "Run started…"
+                      : runStatus?.phase === "tool_dispatched" && runStatus?.tool
+                        ? `Running: ${runStatus.tool.name}…`
+                        : runStatus?.phase === "tool_result" && runStatus?.tool
+                          ? `Tool done: ${runStatus.tool.name}`
+                          : runStatus?.phase === "paused"
+                            ? "Paused (awaiting approval)"
+                            : runStatus?.message
+                              ? runStatus.message
+                              : "Thinking…"}
+                  </span>
                 </div>
               </div>
             ) : null}
