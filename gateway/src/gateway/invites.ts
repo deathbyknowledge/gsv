@@ -33,13 +33,6 @@ function generateInviteCode(length: number = INVITE_CODE_LENGTH): string {
   return code;
 }
 
-function hasInviteCodeCollision(
-  invites: Record<string, InviteRecord>,
-  code: string,
-): boolean {
-  return Object.values(invites).some((invite) => invite.code === code);
-}
-
 function ensureSenderAllowedForChannel(
   gw: Gateway,
   channel: string,
@@ -127,10 +120,13 @@ export function createInvite(gw: Gateway, input: CreateInviteInput): InviteRecor
     : undefined;
 
   const invites = gw.registryStore.listInvites();
+  const existingCodes = new Set(
+    Object.values(invites).map((invite) => invite.code),
+  );
   let code = input.code ? normalizeInviteCode(input.code) : "";
 
   if (code) {
-    if (hasInviteCodeCollision(invites, code)) {
+    if (existingCodes.has(code)) {
       throw new Error(`Invite code already exists: ${code}`);
     }
   } else {
@@ -138,9 +134,9 @@ export function createInvite(gw: Gateway, input: CreateInviteInput): InviteRecor
     do {
       code = generateInviteCode();
       attempts += 1;
-    } while (hasInviteCodeCollision(invites, code) && attempts < 16);
+    } while (existingCodes.has(code) && attempts < 16);
 
-    if (hasInviteCodeCollision(invites, code)) {
+    if (existingCodes.has(code)) {
       throw new Error("Could not allocate unique invite code");
     }
   }

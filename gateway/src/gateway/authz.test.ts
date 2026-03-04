@@ -179,6 +179,34 @@ describe("authorizeSessionCapability", () => {
     expect(writeResult.ok).toBe(false);
     expect(readResult.ok).toBe(true);
   });
+
+  it("denies capabilities for non-owner principals removed from space membership", () => {
+    const principalId = "channel:whatsapp:default:+1555";
+    const gw = buildGatewayStub({
+      sessionRegistry: {
+        thread1: {
+          sessionKey: "thread1",
+          spaceId: "household",
+          principalId,
+          createdAt: 1,
+          lastActiveAt: 2,
+        },
+      },
+      memberships: {
+        // principal intentionally missing from household map
+        household: {},
+      },
+    });
+
+    const result = authorizeSessionCapability({
+      gw,
+      sessionKey: "thread1",
+      capability: "workspace.read",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("not a member of space");
+  });
 });
 
 describe("resolveSessionPolicyContext", () => {

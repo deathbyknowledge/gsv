@@ -1,4 +1,4 @@
-import { normalizeE164, resolveAgentIdFromBinding } from "../config/parsing";
+import { resolveAgentIdFromBinding } from "../config/parsing";
 import type { ChannelInboundParams, ChatType, PeerInfo } from "../protocol/channel";
 import type { Gateway } from "./do";
 import type { GroupMode, RouteTupleV1, ThreadMode } from "./registry-store";
@@ -8,6 +8,12 @@ import {
   stateIdFromLegacySessionKey,
 } from "./thread-state";
 import { buildSessionKeyFromChannel } from "./channel-transport";
+import {
+  buildChannelPrincipalId,
+  buildPendingBindingKey,
+  normalizeId,
+  normalizeChannelSenderId,
+} from "./identity";
 
 const SUPPORTED_PEER_KINDS: ReadonlySet<ChatType> = new Set([
   "dm",
@@ -45,10 +51,6 @@ export type InboundThreadRouteResult =
   | ResolvedInboundRoute
   | BlockedInboundRoute;
 
-function normalizeId(value: string): string {
-  return value.trim().toLowerCase();
-}
-
 function normalizeOptionalId(value: string | undefined | null): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -70,20 +72,7 @@ function buildPrincipalId(
   accountId: string,
   senderId: string,
 ): string {
-  const normalizedSender = normalizeE164(senderId) || senderId;
-  return `channel:${normalizeId(channel)}:${normalizeId(accountId)}:${normalizeId(normalizedSender)}`;
-}
-
-function normalizeSenderForPending(senderId: string): string {
-  const normalized = normalizeE164(senderId);
-  if (normalized) {
-    return normalized;
-  }
-  return normalizeId(senderId);
-}
-
-function buildPendingBindingKey(channel: string, senderId: string): string {
-  return `${normalizeId(channel)}:${normalizeSenderForPending(senderId)}`;
+  return buildChannelPrincipalId(channel, accountId, senderId);
 }
 
 function ensurePendingBinding(
@@ -97,7 +86,7 @@ function ensurePendingBinding(
   gw.pendingPairs[key] = {
     channel: normalizeId(params.channel),
     accountId: normalizeId(params.accountId),
-    senderId: normalizeSenderForPending(senderId),
+    senderId: normalizeChannelSenderId(senderId),
     principalId: normalizeId(principalId),
     senderName: existing?.senderName ?? params.sender?.name ?? params.peer.name,
     stage: "binding",
@@ -352,6 +341,20 @@ export async function resolveInboundThreadRoute(
     };
   }
 
+  if (
+    peerKind !== "dm" &&
+    !boundConversation &&
+    requiresConversationBinding(gw, params.channel, peerKind)
+  ) {
+    return {
+      status: "blocked",
+      state: "allowed_unbound",
+      reason: "conversation-not-bound",
+      principalId,
+      surfaceId,
+    };
+  }
+
   const selectedSpaceId =
     normalizeOptionalId(
       modeHint === "me"
@@ -381,20 +384,6 @@ export async function resolveInboundThreadRoute(
       status: "blocked",
       state: "allowed_unbound",
       reason: "not-a-member-of-space",
-      principalId,
-      surfaceId,
-    };
-  }
-
-  if (
-    peerKind !== "dm" &&
-    !boundConversation &&
-    requiresConversationBinding(gw, params.channel, peerKind)
-  ) {
-    return {
-      status: "blocked",
-      state: "allowed_unbound",
-      reason: "conversation-not-bound",
       principalId,
       surfaceId,
     };

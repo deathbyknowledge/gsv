@@ -1,10 +1,14 @@
-import { normalizeE164, resolveAgentIdFromBinding } from "../../config/parsing";
+import { resolveAgentIdFromBinding } from "../../config/parsing";
 import type { SpaceMember } from "../registry-store";
 import type { PeerInfo } from "../../protocol/channel";
 import type { Handler } from "../../protocol/methods";
 import { RpcError } from "../../shared/utils";
 import { claimInviteForPrincipal, createInvite } from "../invites";
 import { runRegistryBackfill, runRegistryRepair } from "../registry-maintenance";
+import {
+  buildChannelPrincipalId,
+  normalizeChannelSenderId,
+} from "../identity";
 
 function normalizeId(value: string): string {
   return value.trim().toLowerCase();
@@ -46,8 +50,7 @@ function buildPrincipalIdFromChannel(
   accountId: string,
   senderId: string,
 ): string {
-  const normalizedSender = normalizeId(normalizeE164(senderId) || senderId);
-  return `channel:${normalizeId(channel)}:${normalizeId(accountId)}:${normalizedSender}`;
+  return buildChannelPrincipalId(channel, accountId, senderId);
 }
 
 export const handlePrincipalProfileGet: Handler<"principal.profile.get"> = ({
@@ -345,7 +348,7 @@ export const handlePendingBindingResolve: Handler<"pending.binding.resolve"> = (
     throw new RpcError(400, "action must be approve or reject");
   }
 
-  const normalizedSender = normalizeId(normalizeE164(senderId) || senderId);
+  const normalizedSender = normalizeChannelSenderId(senderId);
   const pairKey = `${channel}:${normalizedSender}`;
   const pending = gw.pendingPairs[pairKey];
   if (!pending) {

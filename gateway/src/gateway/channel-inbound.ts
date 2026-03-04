@@ -1,7 +1,6 @@
 import { env } from "cloudflare:workers";
 import {
   isAllowedSender,
-  normalizeE164,
 } from "../config/parsing";
 import {
   formatDirectiveAck,
@@ -20,26 +19,11 @@ import {
 } from "./channel-transport";
 import type { Gateway } from "./do";
 import { claimInviteForPrincipal } from "./invites";
-
-function normalizeId(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function normalizeSenderForPending(senderId: string): string {
-  const normalized = normalizeE164(senderId);
-  if (normalized) {
-    return normalized;
-  }
-  return normalizeId(senderId);
-}
-
-function buildPrincipalId(
-  channel: string,
-  accountId: string,
-  senderId: string,
-): string {
-  return `channel:${normalizeId(channel)}:${normalizeId(accountId)}:${normalizeId(senderId)}`;
-}
+import {
+  buildChannelPrincipalId,
+  normalizeChannelSenderId,
+  normalizeId,
+} from "./identity";
 
 function parseInviteClaimCode(messageText: string | undefined): string | undefined {
   const trimmed = (messageText ?? "").trim();
@@ -93,14 +77,14 @@ export async function handleChannelInboundRpc(
 
   if (!allowCheck.allowed) {
     if (allowCheck.needsPairing) {
-      const normalizedSenderId = normalizeSenderForPending(senderId);
+      const normalizedSenderId = normalizeChannelSenderId(senderId);
       const pairKey = `${normalizeId(params.channel)}:${normalizedSenderId}`;
       if (!gw.pendingPairs[pairKey]) {
         gw.pendingPairs[pairKey] = {
           channel: normalizeId(params.channel),
           accountId: normalizeId(params.accountId),
           senderId: normalizedSenderId,
-          principalId: buildPrincipalId(
+          principalId: buildChannelPrincipalId(
             params.channel,
             params.accountId,
             normalizedSenderId,

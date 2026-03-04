@@ -344,7 +344,8 @@ export function runRegistryRepair(
     }
   }
 
-  for (const [routeHash, route] of Object.entries(gw.threadRoutes)) {
+  const threadRouteEntries = Object.entries(gw.threadRoutes);
+  for (const [routeHash, route] of threadRouteEntries) {
     scannedThreadRoutes += 1;
     const threadId = normalizeOptionalId((route as { threadId?: string }).threadId);
     if (!threadId) {
@@ -365,7 +366,8 @@ export function runRegistryRepair(
     }
   }
 
-  for (const [legacySessionKey, threadId] of Object.entries(gw.legacyThreadIndex)) {
+  const legacyIndexEntries = Object.entries(gw.legacyThreadIndex);
+  for (const [legacySessionKey, threadId] of legacyIndexEntries) {
     scannedLegacyIndex += 1;
     if (!gw.registryStore.getThreadMeta(threadId)) {
       if (pruneDanglingLegacyIndex) {

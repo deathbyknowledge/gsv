@@ -1,19 +1,11 @@
-import { normalizeE164 } from "../../config/parsing";
 import type { Handler } from "../../protocol/methods";
 import { RpcError } from "../../shared/utils";
 import type { Gateway } from "../do";
-
-function normalizeId(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function normalizeSenderId(value: string): string {
-  const normalized = normalizeE164(value);
-  if (normalized) {
-    return normalized;
-  }
-  return normalizeId(value);
-}
+import {
+  buildChannelPrincipalId,
+  normalizeChannelSenderId,
+  normalizeId,
+} from "../identity";
 
 function findChannelForMessage(gw: Gateway, channel: string): string | null {
   const normalizedChannel = normalizeId(channel);
@@ -61,7 +53,7 @@ export const handlePairApprove: Handler<"pair.approve"> = ({ gw, params }) => {
   }
 
   const normalizedChannel = normalizeId(params.channel);
-  const normalizedId = normalizeSenderId(params.senderId);
+  const normalizedId = normalizeChannelSenderId(params.senderId);
   const pairKey = `${normalizedChannel}:${normalizedId}`;
 
   const pending = gw.pendingPairs[pairKey];
@@ -92,7 +84,7 @@ export const handlePairApprove: Handler<"pair.approve"> = ({ gw, params }) => {
       senderId: normalizedId,
       principalId:
         pending.principalId ||
-        `channel:${normalizedChannel}:${normalizeId(accountId)}:${normalizeId(normalizedId)}`,
+        buildChannelPrincipalId(normalizedChannel, accountId, normalizedId),
       stage: "binding",
       requestedAt: pending.requestedAt || Date.now(),
     };
@@ -134,7 +126,7 @@ export const handlePairReject: Handler<"pair.reject"> = ({ gw, params }) => {
   }
 
   const normalizedChannel = normalizeId(params.channel);
-  const normalizedId = normalizeSenderId(params.senderId);
+  const normalizedId = normalizeChannelSenderId(params.senderId);
   const pairKey = `${normalizedChannel}:${normalizedId}`;
 
   if (!gw.pendingPairs[pairKey]) {

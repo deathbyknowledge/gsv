@@ -255,6 +255,11 @@ export function authorizeSessionCapability(params: {
 
   const spaceId = session.spaceId ? normalizeId(session.spaceId) : undefined;
   if (!spaceId) {
+    if (gw.getConfigPath("roles") !== undefined || gw.getConfigPath("spaces.entries") !== undefined) {
+      console.warn(
+        `[Authz] Session '${sessionKey}' missing spaceId; allowing capability '${capability}' in compatibility mode`,
+      );
+    }
     return { ok: true, capability, sessionKey };
   }
 
@@ -265,6 +270,17 @@ export function authorizeSessionCapability(params: {
   const membership = principalId
     ? gw.registryStore.getSpaceMembers(spaceId)[principalId]
     : undefined;
+  if (principalId && !isOwner && !membership) {
+    return {
+      ok: false,
+      capability,
+      sessionKey,
+      spaceId,
+      principalId,
+      reason:
+        `capability denied: principal '${principalId}' is not a member of space '${spaceId}'`,
+    };
+  }
   const role = normalizeId(membership?.role ?? (isOwner ? "owner" : "member"));
 
   const roleAllow = asCapabilitySet(

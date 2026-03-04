@@ -1314,8 +1314,22 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
   },
 
   updateSettings: (updates) => {
-    const nextSettings = { ...get().settings, ...updates };
-    set({ settings: nextSettings });
+    const currentSettings = get().settings;
+    const sessionKeyChanged =
+      typeof updates.sessionKey === "string" &&
+      updates.sessionKey.trim().length > 0 &&
+      updates.sessionKey !== currentSettings.sessionKey;
+    const nextSettings = { ...currentSettings, ...updates };
+    set({
+      settings: nextSettings,
+      ...(sessionKeyChanged
+        ? {
+            currentThreadId: null,
+            currentStateId: null,
+            chatStream: null,
+          }
+        : {}),
+    });
     saveSettings(updates);
 
     if (updates.theme) {
@@ -1324,6 +1338,9 @@ export const useReactUiStore = create<ReactUiStore>((set, get) => ({
 
     if (updates.gatewayUrl || updates.token !== undefined) {
       get().startConnection();
+    }
+    if (sessionKeyChanged && get().connectionState === "connected") {
+      void get().loadChatHistory();
     }
   },
 
