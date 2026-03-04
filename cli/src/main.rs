@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use cliclack::{confirm, input, intro, log, multiselect, note, outro_cancel, password, select};
 use gsv::config::{self, CliConfig};
 use gsv::connection::Connection;
@@ -56,6 +56,10 @@ enum Commands {
         /// Session key (default from config or "agent:main:cli:dm:main")
         #[arg(short, long)]
         session: Option<String>,
+
+        /// Thread reference (for example: id:01H...)
+        #[arg(long = "thread-ref")]
+        thread_ref: Option<String>,
     },
 
     /// Run as a tool-providing node
@@ -288,6 +292,12 @@ enum Commands {
         action: PairAction,
     },
 
+    /// Manage registry bindings (principals, space members, conversations, pending)
+    Registry {
+        #[command(subcommand)]
+        action: RegistryAction,
+    },
+
     /// Manage channel accounts (WhatsApp, Discord, etc.)
     Channel {
         #[command(subcommand)]
@@ -335,6 +345,275 @@ enum PairAction {
 
         /// Sender ID (e.g., "+1234567890")
         sender_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RegistryAction {
+    /// Manage principal profiles
+    Principal {
+        #[command(subcommand)]
+        action: RegistryPrincipalAction,
+    },
+
+    /// Manage space memberships
+    Member {
+        #[command(subcommand)]
+        action: RegistryMemberAction,
+    },
+
+    /// Manage conversation bindings
+    Conversation {
+        #[command(subcommand)]
+        action: RegistryConversationAction,
+    },
+
+    /// Manage pending bindings / pairing requests
+    Pending {
+        #[command(subcommand)]
+        action: RegistryPendingAction,
+    },
+
+    /// Manage onboarding invites
+    Invite {
+        #[command(subcommand)]
+        action: RegistryInviteAction,
+    },
+
+    /// Maintenance operations for thread/registry migration
+    Maintenance {
+        #[command(subcommand)]
+        action: RegistryMaintenanceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum RegistryPrincipalAction {
+    /// List principal profiles
+    List {
+        /// Result offset
+        #[arg(long, default_value = "0")]
+        offset: i64,
+        /// Max results
+        #[arg(long, default_value = "100")]
+        limit: i64,
+    },
+
+    /// Get principal profile
+    Get {
+        /// Principal ID (e.g., channel:whatsapp:default:+15551234567)
+        principal_id: String,
+    },
+
+    /// Create/update principal profile
+    Put {
+        /// Principal ID
+        principal_id: String,
+        /// Home space ID
+        home_space_id: String,
+        /// Optional home agent ID
+        #[arg(long)]
+        home_agent_id: Option<String>,
+        /// Status: bound|allowed_unbound
+        #[arg(long)]
+        status: Option<String>,
+    },
+
+    /// Delete principal profile
+    Delete {
+        /// Principal ID
+        principal_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RegistryMemberAction {
+    /// List space members
+    List {
+        /// Optional space ID filter
+        #[arg(long)]
+        space_id: Option<String>,
+        /// Result offset
+        #[arg(long, default_value = "0")]
+        offset: i64,
+        /// Max results
+        #[arg(long, default_value = "100")]
+        limit: i64,
+    },
+
+    /// Add/update member role in a space
+    Put {
+        /// Space ID
+        space_id: String,
+        /// Principal ID
+        principal_id: String,
+        /// Role (owner/member/guest)
+        role: String,
+    },
+
+    /// Remove member from a space
+    Remove {
+        /// Space ID
+        space_id: String,
+        /// Principal ID
+        principal_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RegistryConversationAction {
+    /// List conversation bindings
+    List {
+        /// Result offset
+        #[arg(long, default_value = "0")]
+        offset: i64,
+        /// Max results
+        #[arg(long, default_value = "100")]
+        limit: i64,
+    },
+
+    /// Create/update conversation binding
+    Put {
+        /// Surface ID (channel:{channel}:{accountId}:{peerKind}:{peerId})
+        surface_id: String,
+        /// Space ID
+        space_id: String,
+        /// Optional agent ID override
+        #[arg(long)]
+        agent_id: Option<String>,
+        /// Optional group mode: group-shared|per-user-in-group|hybrid
+        #[arg(long)]
+        group_mode: Option<String>,
+    },
+
+    /// Remove conversation binding
+    Remove {
+        /// Surface ID
+        surface_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RegistryPendingAction {
+    /// List pending bindings
+    List,
+
+    /// Approve pending sender and bind to profile/space
+    Approve {
+        /// Channel name (e.g., whatsapp)
+        channel: String,
+        /// Sender ID (e.g., +15551234567)
+        sender_id: String,
+        /// Channel account ID (default: default)
+        #[arg(long)]
+        account_id: Option<String>,
+        /// Optional principal ID override
+        #[arg(long)]
+        principal_id: Option<String>,
+        /// Optional home space ID override
+        #[arg(long)]
+        home_space_id: Option<String>,
+        /// Optional home agent ID override
+        #[arg(long)]
+        home_agent_id: Option<String>,
+        /// Optional membership role (default: member)
+        #[arg(long)]
+        role: Option<String>,
+    },
+
+    /// Reject pending sender
+    Reject {
+        /// Channel name (e.g., whatsapp)
+        channel: String,
+        /// Sender ID (e.g., +15551234567)
+        sender_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RegistryInviteAction {
+    /// List invites
+    List {
+        /// Include claimed/revoked/expired invites
+        #[arg(long, default_value_t = false)]
+        include_inactive: bool,
+        /// Result offset
+        #[arg(long, default_value = "0")]
+        offset: i64,
+        /// Max results
+        #[arg(long, default_value = "100")]
+        limit: i64,
+    },
+
+    /// Create invite
+    Create {
+        /// Home space ID for bound profile
+        home_space_id: String,
+        /// Optional invite code (auto-generated when omitted)
+        #[arg(long)]
+        code: Option<String>,
+        /// Optional home agent ID
+        #[arg(long)]
+        home_agent_id: Option<String>,
+        /// Optional role (default: member)
+        #[arg(long)]
+        role: Option<String>,
+        /// Optional principal restriction
+        #[arg(long)]
+        principal_id: Option<String>,
+        /// Optional invite TTL in minutes
+        #[arg(long)]
+        ttl_minutes: Option<i64>,
+    },
+
+    /// Revoke invite
+    Revoke {
+        /// Invite ID
+        invite_id: String,
+    },
+
+    /// Claim invite for a principal
+    Claim {
+        /// Invite code
+        code: String,
+        /// Principal ID (or provide channel + sender-id)
+        #[arg(long)]
+        principal_id: Option<String>,
+        /// Optional channel for principal derivation and pending cleanup
+        #[arg(long)]
+        channel: Option<String>,
+        /// Optional account ID (default: default)
+        #[arg(long)]
+        account_id: Option<String>,
+        /// Optional sender ID for principal derivation and pending cleanup
+        #[arg(long)]
+        sender_id: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RegistryMaintenanceAction {
+    /// Backfill thread/state metadata from legacy session registry entries
+    Backfill {
+        /// Preview changes without mutating storage
+        #[arg(long, default_value_t = true, action = ArgAction::Set)]
+        dry_run: bool,
+        /// Optional max number of session entries to scan
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+
+    /// Repair registry consistency (meta/index/routes)
+    Repair {
+        /// Preview changes without mutating storage
+        #[arg(long, default_value_t = true, action = ArgAction::Set)]
+        dry_run: bool,
+        /// Remove threadRoutes that point to missing threadMeta
+        #[arg(long, default_value_t = true, action = ArgAction::Set)]
+        prune_dangling_routes: bool,
+        /// Remove legacyThreadIndex entries that point to missing threadMeta
+        #[arg(long, default_value_t = true, action = ArgAction::Set)]
+        prune_dangling_legacy_index: bool,
     },
 }
 
@@ -741,23 +1020,36 @@ enum SessionAction {
         /// Session key (default: "agent:main:cli:dm:main")
         #[arg(default_value = "agent:main:cli:dm:main")]
         session_key: String,
+        /// Thread reference (for example: id:01H...)
+        #[arg(long = "thread-ref")]
+        thread_ref: Option<String>,
     },
     /// Get session info
     Get {
         /// Session key (default: "agent:main:cli:dm:main")
         #[arg(default_value = "agent:main:cli:dm:main")]
         session_key: String,
+        /// Thread reference (for example: id:01H...)
+        #[arg(long = "thread-ref")]
+        thread_ref: Option<String>,
     },
     /// Get session stats (token usage)
     Stats {
         /// Session key (default: "agent:main:cli:dm:main")
         #[arg(default_value = "agent:main:cli:dm:main")]
         session_key: String,
+        /// Thread reference (for example: id:01H...)
+        #[arg(long = "thread-ref")]
+        thread_ref: Option<String>,
     },
     /// Update session settings
     Set {
-        /// Session key
+        /// Session key (default: "agent:main:cli:dm:main")
+        #[arg(default_value = "agent:main:cli:dm:main")]
         session_key: String,
+        /// Thread reference (for example: id:01H...)
+        #[arg(long = "thread-ref")]
+        thread_ref: Option<String>,
         /// Path to set (e.g., "model.provider", "thinkingLevel", "resetPolicy.mode")
         path: String,
         /// Value to set
@@ -768,6 +1060,9 @@ enum SessionAction {
         /// Session key (default: "agent:main:cli:dm:main")
         #[arg(default_value = "agent:main:cli:dm:main")]
         session_key: String,
+        /// Thread reference (for example: id:01H...)
+        #[arg(long = "thread-ref")]
+        thread_ref: Option<String>,
         /// Number of messages to keep (default: 20)
         #[arg(short, long, default_value = "20")]
         keep: i64,
@@ -777,12 +1072,18 @@ enum SessionAction {
         /// Session key (default: "agent:main:cli:dm:main")
         #[arg(default_value = "agent:main:cli:dm:main")]
         session_key: String,
+        /// Thread reference (for example: id:01H...)
+        #[arg(long = "thread-ref")]
+        thread_ref: Option<String>,
     },
     /// Preview session messages
     Preview {
         /// Session key (default: "agent:main:cli:dm:main")
         #[arg(default_value = "agent:main:cli:dm:main")]
         session_key: String,
+        /// Thread reference (for example: id:01H...)
+        #[arg(long = "thread-ref")]
+        thread_ref: Option<String>,
         /// Number of messages to show (default: all)
         #[arg(short, long)]
         limit: Option<i64>,
@@ -824,10 +1125,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Init { force } => run_init(force),
-        Commands::Client { message, session } => {
-            let session = session.unwrap_or_else(|| cfg.default_session());
-            let session = config::normalize_session_key(&session);
-            commands::run_client(&url, token, message, &session).await
+        Commands::Client {
+            message,
+            session,
+            thread_ref,
+        } => {
+            let session_key = if thread_ref.is_some() {
+                None
+            } else {
+                let session = session.unwrap_or_else(|| cfg.default_session());
+                Some(config::normalize_session_key(&session))
+            };
+            commands::run_client(&url, token, message, session_key, thread_ref).await
         }
         Commands::Node {
             foreground,
@@ -965,6 +1274,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Mount { action } => run_mount(action, &cfg).await,
         Commands::Heartbeat { action } => commands::run_heartbeat(&url, token, action).await,
         Commands::Pair { action } => commands::run_pair(&url, token, action).await,
+        Commands::Registry { action } => commands::run_registry(&url, token, action).await,
         Commands::Channel { action } => commands::run_channel(action, &url, token, &cfg).await,
         Commands::Version => run_version(),
     }
