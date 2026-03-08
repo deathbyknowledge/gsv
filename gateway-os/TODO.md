@@ -9,17 +9,17 @@ Items are grouped by subsystem and ordered roughly by dependency.
 
 Use classic Linux flat-file formats so LLM agents can read/parse them naturally.
 
-- [ ] Define the in-memory types for passwd entries (uid, gid, username, home, shell)
-- [ ] Define the in-memory types for shadow entries (username, hashed password)
-- [ ] Define the in-memory types for group entries (group name, gid, member list)
-- [ ] Write parser: `/etc/passwd` colon-delimited format → typed entries
-- [ ] Write parser: `/etc/shadow` colon-delimited format → typed entries
-- [ ] Write parser: `/etc/group` colon-delimited format → typed entries
-- [ ] Write serializer for each (typed entries → flat-file format, for writes)
-- [ ] Implement first-boot provisioning: if `/etc/passwd` doesn't exist in R2, create it with `root:x:0:0:root:/home/root:/bin/sh`
-- [ ] Implement first-boot provisioning: create `/etc/shadow` with root entry (no password or a configured token hash)
-- [ ] Implement first-boot provisioning: create `/etc/group` with `root:x:0:root` and default groups (`users`, `drivers`, `services`)
-- [ ] Create `/home/root/` directory marker on first boot
+- [x] Define the in-memory types for passwd entries (uid, gid, username, home, shell)
+- [x] Define the in-memory types for shadow entries (username, hashed password)
+- [x] Define the in-memory types for group entries (group name, gid, member list)
+- [x] Write parser: `/etc/passwd` colon-delimited format → typed entries
+- [x] Write parser: `/etc/shadow` colon-delimited format → typed entries
+- [x] Write parser: `/etc/group` colon-delimited format → typed entries
+- [x] Write serializer for each (typed entries → flat-file format, for writes)
+- [x] Implement first-boot provisioning: if `/etc/passwd` doesn't exist in R2, create it with `root:x:0:0:root:/root:/bin/sh`
+- [x] Implement first-boot provisioning: create `/etc/shadow` with root entry (token hash or locked; supports both password and token schemes)
+- [x] Implement first-boot provisioning: create `/etc/group` with `root:x:0:root` and default groups (`users`, `drivers`, `services`)
+- [ ] Create `/root/` directory marker on first boot
 
 ## Group-based capabilities (kernel SQLite)
 
@@ -39,15 +39,15 @@ Capabilities are NOT hardcoded — root can modify them. Stored in kernel DO SQL
 
 Replace the current string-based `owner`/`permissions` customMetadata with numeric Unix permissions.
 
-- [ ] Change R2 `customMetadata` to store: `uid` (number), `gid` (number), `mode` (octal string, e.g. `"755"`)
-- [ ] Update `R2FS` constructor to accept `uid: number`, `gid: number`, `gids: number[]` instead of `user: string`
-- [ ] Rewrite `canRead()`: check mode bits — owner read if `uid` matches, group read if `gid` matches any of user's gids, other read otherwise. uid 0 always passes.
-- [ ] Rewrite `canWrite()`: same logic for write bits. uid 0 always passes.
-- [ ] Update `write()` to stamp `uid`, `gid`, `mode` on new files (default mode `"644"`)
-- [ ] Update `edit()` and `delete()` to use the new `canWrite()`
-- [ ] Add `chmod(path, mode)` method to R2FS
-- [ ] Add `chown(path, uid, gid)` method to R2FS (uid 0 only)
-- [ ] Update first-boot `/etc/*` files to have `uid: 0, gid: 0, mode: "644"` (readable by all, writable by root)
+- [x] Change R2 `customMetadata` to store: `uid` (number), `gid` (number), `mode` (octal string, e.g. `"755"`)
+- [x] Update `R2FS` constructor to accept `ProcessIdentity` (uid, gid, gids, username, home) instead of `user: string`
+- [x] Rewrite `canRead()`: check mode bits — owner read if `uid` matches, group read if `gid` matches any of user's gids, other read otherwise. uid 0 always passes.
+- [x] Rewrite `canWrite()`: same logic for write bits. uid 0 always passes.
+- [x] Update `write()` to stamp `uid`, `gid`, `mode` on new files (default mode `"644"`)
+- [x] Update `edit()` and `delete()` to use the new `canWrite()`
+- [x] Add `chmod(path, mode)` method to R2FS (owner or root only)
+- [x] Add `chown(path, uid, gid)` method to R2FS (uid 0 only)
+- [x] Update first-boot `/etc/*` files to have proper modes: passwd/group `644`, shadow `640`
 
 ## `sys.connect` handler (kernel)
 

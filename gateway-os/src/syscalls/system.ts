@@ -1,27 +1,34 @@
 import type { ToolDefinition } from ".";
 
+export type ProcessIdentity = {
+  uid: number;
+  gid: number;
+  gids: number[];
+  username: string;
+  home: string;
+};
+
 export type ConnectionIdentity = UserIdentity | NodeIdentity | ServiceIdentity;
 
 export type UserIdentity = {
-  uid: string;
   role: "user";
+  process: ProcessIdentity;
   capabilities: string[];
-}
+};
 
 export type NodeIdentity = {
-  uid: string;
   role: "driver";
+  process: ProcessIdentity;
   capabilities: string[];
   node: string;
-}
+};
 
 export type ServiceIdentity = {
-  uid: string;
   role: "service";
+  process: ProcessIdentity;
   capabilities: string[];
   channel: string;
-}
-
+};
 
 export type ConnectArgs = {
   protocol: number;
@@ -35,6 +42,8 @@ export type ConnectArgs = {
   };
   tools?: ToolDefinition[];
   auth?: {
+    username: string;
+    password?: string;
     token?: string;
   };
 };
@@ -51,7 +60,7 @@ export type ConnectResult = {
 };
 
 export type UserPermissions = {
-  uid: string;
+  uid: number;
   grants: string[];
   denials: string[];
 };
