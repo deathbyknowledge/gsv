@@ -68,63 +68,63 @@ export default {
  * This provides a secure, type-safe interface for channels to deliver
  * inbound messages to the Gateway.
  */
-export class GatewayEntrypoint
-  extends WorkerEntrypoint<Env>
-  implements GatewayChannelInterface
-{
-  /**
-   * Receive an inbound message from a channel.
-   * Routes to the appropriate session based on peer info.
-   */
-  async channelInbound(
-    channelId: string,
-    accountId: string,
-    message: ChannelInboundMessage,
-  ): Promise<{ ok: boolean; sessionKey?: string; error?: string }> {
-    try {
-      const kernel = await getAgentByName(this.env.KERNEL, "singleton");
+// export class GatewayEntrypoint
+//   extends WorkerEntrypoint<Env>
+//   implements GatewayChannelInterface
+// {
+//   /**
+//    * Receive an inbound message from a channel.
+//    * Routes to the appropriate session based on peer info.
+//    */
+//   async channelInbound(
+//     channelId: string,
+//     accountId: string,
+//     message: ChannelInboundMessage,
+//   ): Promise<{ ok: boolean; sessionKey?: string; error?: string }> {
+//     try {
+//       const kernel = await getAgentByName(this.env.KERNEL, "singleton");
 
-      // Convert to the format Gateway expects
-      const result = await kernel.handleChannelInboundRpc({
-        channel: channelId,
-        accountId,
-        peer: message.peer,
-        sender: message.sender,
-        message: {
-          id: message.messageId,
-          text: message.text,
-          timestamp: message.timestamp,
-          replyToId: message.replyToId,
-          replyToText: message.replyToText,
-          media: message.media,
-        },
-        wasMentioned: message.wasMentioned,
-      });
+//       // Convert to the format Gateway expects
+//       const result = await kernel.handleChannelInboundRpc({
+//         channel: channelId,
+//         accountId,
+//         peer: message.peer,
+//         sender: message.sender,
+//         message: {
+//           id: message.messageId,
+//           text: message.text,
+//           timestamp: message.timestamp,
+//           replyToId: message.replyToId,
+//           replyToText: message.replyToText,
+//           media: message.media,
+//         },
+//         wasMentioned: message.wasMentioned,
+//       });
 
-      return result;
-    } catch (e) {
-      console.error(`[GatewayEntrypoint] channelInbound failed:`, e);
-      return {
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-      };
-    }
-  }
+//       return result;
+//     } catch (e) {
+//       console.error(`[GatewayEntrypoint] channelInbound failed:`, e);
+//       return {
+//         ok: false,
+//         error: e instanceof Error ? e.message : String(e),
+//       };
+//     }
+//   }
 
-  /**
-   * Notify Gateway that a channel's status changed.
-   * Used for monitoring and health checks.
-   */
-  async channelStatusChanged(
-    channelId: string,
-    accountId: string,
-    status: ChannelAccountStatus,
-  ): Promise<void> {
-    try {
-      const kernel = await getAgentByName(this.env.KERNEL, "singleton");
-      await kernel.handleChannelStatusChanged(channelId, accountId, status);
-    } catch (e) {
-      console.error(`[GatewayEntrypoint] channelStatusChanged failed:`, e);
-    }
-  }
-}
+//   /**
+//    * Notify Gateway that a channel's status changed.
+//    * Used for monitoring and health checks.
+//    */
+//   async channelStatusChanged(
+//     channelId: string,
+//     accountId: string,
+//     status: ChannelAccountStatus,
+//   ): Promise<void> {
+//     try {
+//       const kernel = await getAgentByName(this.env.KERNEL, "singleton");
+//       await kernel.handleChannelStatusChanged(channelId, accountId, status);
+//     } catch (e) {
+//       console.error(`[GatewayEntrypoint] channelStatusChanged failed:`, e);
+//     }
+//   }
+// }

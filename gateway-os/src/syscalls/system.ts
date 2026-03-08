@@ -1,5 +1,3 @@
-import type { ToolDefinition } from ".";
-
 export type ProcessIdentity = {
   uid: number;
   gid: number;
@@ -8,7 +6,7 @@ export type ProcessIdentity = {
   home: string;
 };
 
-export type ConnectionIdentity = UserIdentity | NodeIdentity | ServiceIdentity;
+export type ConnectionIdentity = UserIdentity | DeviceIdentity | ServiceIdentity;
 
 export type UserIdentity = {
   role: "user";
@@ -16,11 +14,12 @@ export type UserIdentity = {
   capabilities: string[];
 };
 
-export type NodeIdentity = {
+export type DeviceIdentity = {
   role: "driver";
   process: ProcessIdentity;
   capabilities: string[];
-  node: string;
+  device: string;
+  implements: string[];
 };
 
 export type ServiceIdentity = {
@@ -37,10 +36,11 @@ export type ConnectArgs = {
     version: string;
     platform: string;
     role: "user" | "driver" | "service";
-    node?: string;
     channel?: string;
   };
-  tools?: ToolDefinition[];
+  driver?: {
+    implements: string[];
+  };
   auth?: {
     username: string;
     password?: string;

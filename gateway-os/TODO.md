@@ -54,16 +54,19 @@ Replace the current string-based `owner`/`permissions` customMetadata with numer
 
 The first syscall any connection must make.
 
-- [ ] Read `/etc/passwd` and `/etc/shadow` from R2 on connect
-- [ ] Authenticate: match provided token/password against shadow entry
-- [ ] Resolve uid, gid, supplementary gids from passwd + group files
-- [ ] Build `ConnectionIdentity` with uid, role, resolved capabilities (from group_capabilities table)
-- [ ] Store identity in `connection.setState()` (Agents SDK attachment)
-- [ ] Handle first-boot: if `/etc/passwd` doesn't exist, auto-provision and grant uid 0
-- [ ] Handle driver connections: validate tools, register in node registry
-- [ ] Handle service connections: validate channel, register in channel registry
-- [ ] Return `ConnectResult` with identity, available syscalls, available signals
-- [ ] Reject all other syscalls if connection hasn't completed `sys.connect`
+- [x] Read `/etc/passwd` and `/etc/shadow` from R2 on connect
+- [x] Authenticate: match provided token/password against shadow entry (supports both PBKDF2-SHA-512 passwords and SHA-256 tokens)
+- [x] Resolve uid, gid, supplementary gids from passwd + group files
+- [x] Build `ConnectionIdentity` with uid, role, resolved capabilities (from group_capabilities table)
+- [x] Store identity in `connection.setState()` (Agents SDK attachment)
+- [x] Handle first-boot: if `/etc/passwd` doesn't exist, auto-provision and grant uid 0
+- [x] Handle setup mode: if root account is locked (`!`), grant root without auth (persists until root sets a password)
+- [x] Handle reconnect: same uid + client.id replaces old connection
+- [x] Handle driver connections: validate implements patterns, register in device registry (SQLite)
+- [x] Handle service connections: validate channel field
+- [x] Return `ConnectResult` with identity, available syscalls, available signals
+- [x] Reject all other syscalls if connection hasn't completed `sys.connect`
+- [x] Capability check on every req frame before dispatch
 
 ## Kernel syscall dispatcher
 
@@ -125,16 +128,21 @@ Wire R2FS methods as the native handler for `fs.*` syscalls when `target` is `"g
 - [ ] `fs.search` → implement text search over R2 objects (list + filter + regex match)
 - [ ] Register native handlers in the syscall dispatcher
 
-## Node driver registration & tool routing
+## Device registry & driver routing
 
-Handle nodes (physical machines) connecting as drivers.
+Handle devices (physical machines) connecting as drivers.
 
-- [ ] On driver `sys.connect`: register node's tools in a node registry (kernel KV or in-memory map)
-- [ ] Build the tool → node resolution logic (which node provides which syscall implementations)
-- [ ] When a syscall targets a node: forward as bidirectional `req` to the driver connection
-- [ ] Handle node disconnect: fail pending requests, mark node offline in registry
-- [ ] Handle node reconnect: re-register tools, reconcile stale state
-- [ ] Implement `intoSyscallTool()` to inject `target` param for LLM-facing tool definitions
+- [x] `DeviceRegistry` class backed by kernel SQLite (`devices` + `device_access` tables)
+- [x] On driver `sys.connect`: register device with implements list, platform, version
+- [x] Device access ACL: `device_access (device_id, gid)` — owner + group-based access, uid 0 bypasses
+- [x] `canHandle(deviceId, syscall)` — check if device implements a syscall (reuses `hasCapability` matching)
+- [x] `findDevice(syscall, uid, gids)` — find an accessible online device that implements a syscall
+- [x] `grantAccess` / `revokeAccess` / `listAccess` for managing device ACLs
+- [x] Handle device disconnect: mark offline in registry
+- [x] Handle device reconnect: update implements/platform/version, mark online
+- [ ] When a syscall targets a device: forward as bidirectional `req` to the driver connection
+- [ ] Handle timeout for driver-routed syscalls (driver doesn't respond)
+- [ ] Fail pending requests on device disconnect
 
 ## IPC (channel integration)
 
@@ -174,8 +182,23 @@ Port the cron system.
 
 ## Signal infrastructure
 
-- [ ] Define signal types: `chat.chunk`, `chat.complete`, `process.exit`, `node.status`, `channel.status`
+Signals are bidirectional fire-and-forget messages. The kernel both sends and receives them.
+
+### Kernel → client (outbound)
+- [ ] `chat.chunk` — LLM token streaming to user connections
+- [ ] `chat.complete` — LLM response finished
+- [ ] `process.exit` — a Process DO terminated (to user connections)
+- [ ] `device.status` — device came online/offline (to user connections)
+- [ ] `channel.status` — channel connected/disconnected (to user connections)
+
+### Client → kernel (inbound)
+- [ ] `process.exit` — device notifies kernel that a background process exited
+- [ ] `device.heartbeat` — periodic health check from device
+- [ ] Define additional inbound signals as needed
+
+### Plumbing
 - [ ] Implement signal delivery in kernel: `sendSignal(connection, signal, payload)`
+- [ ] Implement inbound signal routing in `onMessage` for `sig` frames
 - [ ] Wire LLM streaming as `chat.chunk` signals to the attached user connection
 - [ ] Wire process lifecycle events as `process.exit` signals
 

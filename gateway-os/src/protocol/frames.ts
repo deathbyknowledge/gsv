@@ -1,3 +1,6 @@
+import { ArgsOf, SyscallDomain, SyscallName } from "../syscalls";
+import type { ConnectArgs } from "../syscalls/system";
+
 // base error shape used in responses
 export type ErrorShape = {
   code: number;
@@ -7,12 +10,9 @@ export type ErrorShape = {
 };
 
 // generic request frame with method and params
-export type RequestFrame<Method extends string = string, Params = unknown> = {
-  type: "req";
-  id: string;
-  call: Method;
-  args?: Params;
-};
+export type RequestFrame<S extends SyscallName = SyscallName> = {
+  [K in S]: { type: "req"; id: string; call: K; args: ArgsOf<K> };
+}[S];
 
 // successful response frame with result
 export type ResponseOkFrame<Payload = unknown> = {
