@@ -25,14 +25,15 @@ Use classic Linux flat-file formats so LLM agents can read/parse them naturally.
 
 Capabilities are NOT hardcoded — root can modify them. Stored in kernel DO SQLite.
 
-- [ ] Design the `group_capabilities` table schema: `(group_name TEXT, capability TEXT, PRIMARY KEY (group_name, capability))`
-- [ ] Seed default capabilities on first boot:
-  - `root` → `["*"]`
-  - `users` → `["fs.*", "session.*", "proc.exec", "proc.list"]`
-  - `drivers` → `["fs.*", "proc.*"]`
-  - `services` → `["ipc.*"]`
-- [ ] Implement `getCapabilitiesForGids(gids: number[]): string[]` — union of all capabilities across groups
-- [ ] Add syscalls for root to manage capabilities: list, add, remove capabilities for a group
+- [x] Design the `group_capabilities` table schema: `(gid INTEGER, capability TEXT, PRIMARY KEY (gid, capability))`
+- [x] Seed default capabilities on first boot:
+  - gid 0 (root) → `["*"]`
+  - gid 100 (users) → `["fs.*", "session.*", "proc.exec", "proc.list"]`
+  - gid 101 (drivers) → `["fs.*", "proc.*"]`
+  - gid 102 (services) → `["ipc.*"]`
+- [x] Implement `getCapabilitiesForGids(gids: number[]): string[]` — union of all capabilities across groups
+- [x] Implement `hasCapability(capabilities, syscall)` — matching logic (`*`, `domain.*`, exact)
+- [x] Implement `grantCapability` / `revokeCapability` / `listCapabilities` with format validation
 - [ ] Wire capabilities into `ConnectResult.identity.capabilities` during `sys.connect`
 
 ## R2FS permission model upgrade (uid/gid/mode)
