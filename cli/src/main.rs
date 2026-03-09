@@ -1,17 +1,14 @@
 use clap::{Parser, Subcommand};
 use cliclack::{confirm, input, intro, log, multiselect, note, outro_cancel, password, select};
 use gsv::config::{self, CliConfig};
-use gsv::connection::Connection;
+use gsv::connection::{Connection, ConnectOptions};
 use gsv::deploy;
 use gsv::protocol::{
-    Frame, LogsGetPayload, LogsResultParams, NodeExecEventParams, NodeRuntimeInfo, ToolDefinition,
-    ToolInvokePayload, ToolResultParams, TransferEndPayload, TransferReceivePayload,
-    TransferSendPayload, TransferStartPayload,
+    ErrorShape, Frame, NodeExecEventParams, RequestFrame, ResponseFrame, SignalFrame,
 };
 use gsv::tools::{all_tools_with_workspace, subscribe_exec_events, Tool};
-use gsv::transfer::TransferCoordinator;
 use serde_json::json;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
 use std::future::Future;
@@ -76,6 +73,17 @@ enum Commands {
         /// Optional daemon management action (install/start/stop/status/logs)
         #[command(subcommand)]
         action: Option<NodeAction>,
+    },
+
+    /// Interactive shell connected to the gateway OS
+    Shell {
+        /// Username for authentication (omit for setup mode)
+        #[arg(short, long)]
+        user: Option<String>,
+
+        /// Password for authentication
+        #[arg(short, long)]
+        password: Option<String>,
     },
 
     /// Get or set gateway configuration (remote)
@@ -861,6 +869,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     cli_token_override.as_deref(),
                 )
             }
+        }
+        Commands::Shell { user, password } => {
+            run_shell(&url, user, password).await
         }
         Commands::Config { action } => commands::run_config(&url, token, action).await,
         Commands::LocalConfig { action } => run_local_config(action),
@@ -3140,24 +3151,6 @@ fn launchd_status_service() -> Result<(), Box<dyn std::error::Error>> {
     )
 }
 
-#[allow(dead_code)]
-fn capabilities_for_tool(tool_name: &str) -> Result<Vec<&'static str>, String> {
-    match tool_name {
-        "Read" => Ok(vec!["filesystem.read"]),
-        "Write" => Ok(vec!["filesystem.write"]),
-        "Edit" => Ok(vec![
-            "filesystem.edit",
-            "filesystem.read",
-            "filesystem.write",
-        ]),
-        "Glob" => Ok(vec!["filesystem.list"]),
-        "Grep" => Ok(vec!["text.search", "filesystem.read"]),
-        "Bash" => Ok(vec!["shell.exec"]),
-        "Process" => Ok(vec!["shell.exec"]),
-        _ => Err(format!("No capability mapping for tool '{}'", tool_name)),
-    }
-}
-
 fn is_executable_file(path: &Path) -> bool {
     if !path.is_file() {
         return false;
@@ -3229,51 +3222,6 @@ fn select_service_path(
 
 fn node_service_path() -> Option<String> {
     select_service_path(probe_path_from_login_shell(), std::env::var_os("PATH"))
-}
-
-fn build_execution_node_runtime(
-    tool_defs: &[ToolDefinition],
-) -> Result<NodeRuntimeInfo, Box<dyn std::error::Error>> {
-    let mut seen_tool_names = HashSet::new();
-    let mut host_capabilities = HashSet::new();
-    let mut tool_capabilities: HashMap<String, Vec<String>> = HashMap::new();
-
-    for tool in tool_defs {
-        if !seen_tool_names.insert(tool.name.clone()) {
-            return Err(format!("Duplicate tool name: {}", tool.name).into());
-        }
-
-        let capabilities = capabilities_for_tool(&tool.name)?;
-        for capability in &capabilities {
-            host_capabilities.insert((*capability).to_string());
-        }
-
-        let mut normalized_caps: Vec<String> = capabilities
-            .into_iter()
-            .map(|capability| capability.to_string())
-            .collect();
-        normalized_caps.sort();
-        normalized_caps.dedup();
-        tool_capabilities.insert(tool.name.clone(), normalized_caps);
-    }
-
-    // Ensure execution baseline exists for strict node runtime validation.
-    for capability in [
-        "filesystem.list",
-        "filesystem.read",
-        "filesystem.write",
-        "shell.exec",
-    ] {
-        host_capabilities.insert(capability.to_string());
-    }
-
-    let mut normalized_host_capabilities: Vec<String> = host_capabilities.into_iter().collect();
-    normalized_host_capabilities.sort();
-
-    Ok(NodeRuntimeInfo {
-        host_capabilities: normalized_host_capabilities,
-        tool_capabilities,
-    })
 }
 
 fn exec_event_outbox_len(outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>) -> usize {
@@ -3397,25 +3345,217 @@ async fn flush_exec_event_outbox(
     flush_exec_event_outbox_with_sender(outbox, logger, |event| {
         let conn = Arc::clone(conn);
         async move {
-            let params = match serde_json::to_value(&event) {
+            let payload = match serde_json::to_value(&event) {
                 Ok(value) => value,
                 Err(error) => return ExecEventSendOutcome::Drop(error.to_string()),
             };
 
-            match conn.request("node.exec.event", Some(params)).await {
-                Ok(response) if response.ok => ExecEventSendOutcome::Sent,
-                Ok(response) => {
-                    let message = response
-                        .error
-                        .map(|error| error.message)
-                        .unwrap_or_else(|| "unknown response".to_string());
-                    ExecEventSendOutcome::Retry(message)
-                }
-                Err(error) => ExecEventSendOutcome::Retry(error.to_string()),
+            let frame = Frame::Sig(SignalFrame {
+                signal: "exec.status".to_string(),
+                payload: Some(payload),
+                seq: None,
+            });
+
+            match serde_json::to_string(&frame) {
+                Ok(text) => match conn.send_raw(text).await {
+                    Ok(_) => ExecEventSendOutcome::Sent,
+                    Err(error) => ExecEventSendOutcome::Retry(error.to_string()),
+                },
+                Err(error) => ExecEventSendOutcome::Drop(error.to_string()),
             }
         }
     })
     .await
+}
+
+fn syscall_to_tool_name(call: &str) -> Option<&'static str> {
+    match call {
+        "fs.read" => Some("Read"),
+        "fs.write" => Some("Write"),
+        "fs.edit" => Some("Edit"),
+        "fs.search" => Some("Grep"),
+        "fs.delete" => None,
+        "shell.exec" => Some("Bash"),
+        "shell.signal" => None,
+        "shell.list" => None,
+        _ => None,
+    }
+}
+
+async fn handle_driver_request(
+    conn: &Arc<Connection>,
+    tools: &[Box<dyn Tool>],
+    req: &RequestFrame,
+    logger: &NodeLogger,
+) {
+    let args = req.args.clone().unwrap_or(serde_json::Value::Null);
+
+    let result: Result<serde_json::Value, String> = match req.call.as_str() {
+        "fs.delete" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            match std::fs::remove_file(path) {
+                Ok(_) => Ok(json!({ "ok": true })),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        "shell.signal" => {
+            let tool_args = json!({
+                "action": "kill",
+                "pid": args.get("pid"),
+                "signal": args.get("signal"),
+            });
+            execute_tool_by_name(tools, "Process", tool_args).await
+        }
+        "shell.list" => {
+            let tool_args = json!({ "action": "list" });
+            execute_tool_by_name(tools, "Process", tool_args).await
+        }
+        call => {
+            if let Some(tool_name) = syscall_to_tool_name(call) {
+                execute_tool_by_name(tools, tool_name, args).await
+            } else {
+                Err(format!("unknown syscall: {}", call))
+            }
+        }
+    };
+
+    let response = match result {
+        Ok(data) => Frame::Res(ResponseFrame {
+            id: req.id.clone(),
+            ok: true,
+            data: Some(data),
+            error: None,
+        }),
+        Err(message) => Frame::Res(ResponseFrame {
+            id: req.id.clone(),
+            ok: false,
+            data: None,
+            error: Some(ErrorShape {
+                code: -1,
+                message: message.clone(),
+                details: None,
+                retryable: None,
+            }),
+        }),
+    };
+
+    match serde_json::to_string(&response) {
+        Ok(text) => {
+            if let Err(e) = conn.send_raw(text).await {
+                logger.error(
+                    "driver.response.send_failed",
+                    json!({
+                        "requestId": req.id,
+                        "call": req.call,
+                        "error": e.to_string(),
+                    }),
+                );
+            }
+        }
+        Err(e) => {
+            logger.error(
+                "driver.response.serialize_failed",
+                json!({
+                    "requestId": req.id,
+                    "call": req.call,
+                    "error": e.to_string(),
+                }),
+            );
+        }
+    }
+}
+
+async fn execute_tool_by_name(
+    tools: &[Box<dyn Tool>],
+    name: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    for tool in tools {
+        if tool.definition().name == name {
+            return tool.execute(args).await;
+        }
+    }
+    Err(format!("tool not found: {}", name))
+}
+
+async fn run_shell(
+    url: &str,
+    user: Option<String>,
+    password: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let opts = ConnectOptions {
+        url: url.to_string(),
+        role: "user".to_string(),
+        client_id: None,
+        implements: None,
+        auth_username: user.clone(),
+        auth_password: password,
+        auth_token: None,
+    };
+
+    let conn = Connection::connect(opts, |frame| {
+        if let Frame::Sig(sig) = frame {
+            eprintln!("[signal] {}: {:?}", sig.signal, sig.payload);
+        }
+    })
+    .await?;
+
+    let username = user.unwrap_or_else(|| "root".to_string());
+    println!("Connected to GSV OS as {}", username);
+    println!("Type commands to execute, or :quit to exit");
+    println!();
+
+    let stdin = io::stdin();
+
+    loop {
+        eprint!("gsv$ ");
+        {
+            use std::io::Write;
+            std::io::stderr().flush().ok();
+        }
+
+        let mut line = String::new();
+        if stdin.read_line(&mut line)? == 0 {
+            break;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == ":quit" || trimmed == ":exit" || trimmed == ":q" {
+            break;
+        }
+
+        let res = conn
+            .request("shell.exec", Some(json!({ "command": trimmed })))
+            .await?;
+
+        if res.ok {
+            if let Some(data) = &res.data {
+                if let Some(stdout) = data.get("stdout").and_then(|v| v.as_str()) {
+                    if !stdout.is_empty() {
+                        print!("{}", stdout);
+                    }
+                }
+                if let Some(stderr) = data.get("stderr").and_then(|v| v.as_str()) {
+                    if !stderr.is_empty() {
+                        eprint!("{}", stderr);
+                    }
+                }
+                if let Some(exit_code) = data.get("exitCode").and_then(|v| v.as_i64()) {
+                    if exit_code != 0 {
+                        eprintln!("[exit {}]", exit_code);
+                    }
+                }
+            }
+        } else if let Some(err) = &res.error {
+            eprintln!("error [{}]: {}", err.code, err.message);
+        }
+    }
+
+    println!("bye");
+    Ok(())
 }
 
 async fn run_node(
@@ -3469,8 +3609,6 @@ async fn run_node(
         }
     });
 
-    let transfer_coordinator = Arc::new(TransferCoordinator::new());
-
     const CONNECT_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(30);
     const INITIAL_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(3);
     const MAX_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(300);
@@ -3479,32 +3617,22 @@ async fn run_node(
     loop {
         logger.info("connect.attempt", json!({ "url": url }));
 
-        let tools = all_tools_with_workspace(workspace.clone());
-        let tool_defs: Vec<_> = tools.iter().map(|t| t.definition()).collect();
-        let tool_names: Vec<String> = tool_defs.iter().map(|t| t.name.clone()).collect();
-        let node_runtime = build_execution_node_runtime(&tool_defs)?;
-
-        logger.info(
-            "tools.register",
-            json!({
-                "toolCount": tool_names.len(),
-                "tools": tool_names,
-            }),
-        );
-
         let tools_for_handler: Arc<Vec<Box<dyn Tool>>> =
             Arc::new(all_tools_with_workspace(workspace.clone()));
 
         let conn = match tokio::time::timeout(
             CONNECT_TIMEOUT,
-            Connection::connect_with_options(
-                url,
-                "node",
-                Some(tool_defs),
-                Some(node_runtime),
+            Connection::connect(
+                ConnectOptions {
+                    url: url.to_string(),
+                    role: "driver".to_string(),
+                    client_id: Some(node_id.clone()),
+                    implements: Some(vec!["fs.*".to_string(), "shell.*".to_string()]),
+                    auth_username: None,
+                    auth_password: None,
+                    auth_token: token.clone(),
+                },
                 |_frame| {},
-                Some(node_id.clone()),
-                token.clone(),
             ),
         )
         .await
@@ -3538,284 +3666,30 @@ async fn run_node(
                 continue;
             }
         };
-        let conn = Arc::new(conn);
 
-        let coordinator_for_binary = transfer_coordinator.clone();
-        conn.set_binary_handler(move |data| {
-            coordinator_for_binary.route_binary_frame(&data);
-        })
-        .await;
+        logger.info(
+            "connect.ok",
+            json!({
+                "implements": ["fs.*", "shell.*"],
+            }),
+        );
+
+        let conn = Arc::new(conn);
 
         let conn_clone = conn.clone();
         let tools_clone = tools_for_handler.clone();
         let logger_clone = logger.clone();
-        let coordinator_for_events = transfer_coordinator.clone();
-        let workspace_for_transfers = workspace.clone();
 
-        conn.set_event_handler(move |frame| {
+        // In the new OS architecture, the kernel sends req frames directly to
+        // the driver. We dispatch based on `call` and respond with a res frame.
+        conn.set_frame_handler(move |frame| {
             let conn = conn_clone.clone();
             let tools = tools_clone.clone();
             let logger = logger_clone.clone();
-            let coordinator = coordinator_for_events.clone();
-            let transfer_workspace = workspace_for_transfers.clone();
 
             tokio::spawn(async move {
-                if let Frame::Evt(evt) = frame {
-                    if evt.event == "tool.invoke" {
-                        if let Some(payload) = evt.payload {
-                            let invoke = match serde_json::from_value::<ToolInvokePayload>(payload)
-                            {
-                                Ok(invoke) => invoke,
-                                Err(e) => {
-                                    logger.warn(
-                                        "tool.invoke.parse_failed",
-                                        json!({
-                                            "error": e.to_string(),
-                                        }),
-                                    );
-                                    return;
-                                }
-                            };
-
-                            let tool_name = invoke.tool.clone();
-                            let call_id = invoke.call_id.clone();
-                            logger.info(
-                                "tool.invoke",
-                                json!({
-                                    "tool": tool_name.clone(),
-                                    "callId": call_id.clone(),
-                                }),
-                            );
-
-                            let result =
-                                match tools.iter().find(|t| t.definition().name == invoke.tool) {
-                                    Some(tool) => tool.execute(invoke.args.clone()).await,
-                                    None => Err(format!("Tool not found: {}", invoke.tool)),
-                                };
-
-                            match &result {
-                                Ok(_) => {
-                                    logger.info(
-                                        "tool.execute.ok",
-                                        json!({
-                                            "tool": tool_name.clone(),
-                                            "callId": call_id.clone(),
-                                        }),
-                                    );
-                                }
-                                Err(err) => {
-                                    logger.warn(
-                                        "tool.execute.error",
-                                        json!({
-                                            "tool": tool_name.clone(),
-                                            "callId": call_id.clone(),
-                                            "error": err,
-                                        }),
-                                    );
-                                }
-                            }
-
-                            let params = match result {
-                                Ok(res) => ToolResultParams {
-                                    call_id: invoke.call_id,
-                                    result: Some(res),
-                                    error: None,
-                                },
-                                Err(e) => ToolResultParams {
-                                    call_id: invoke.call_id,
-                                    result: None,
-                                    error: Some(e),
-                                },
-                            };
-
-                            if let Err(e) = conn
-                                .request(
-                                    "tool.result",
-                                    Some(serde_json::to_value(&params).unwrap()),
-                                )
-                                .await
-                            {
-                                logger.error(
-                                    "tool.result.send_failed",
-                                    json!({
-                                        "tool": tool_name,
-                                        "callId": call_id,
-                                        "error": e.to_string(),
-                                    }),
-                                );
-                            }
-                        }
-                    } else if evt.event == "logs.get" {
-                        if let Some(payload) = evt.payload {
-                            let request = match serde_json::from_value::<LogsGetPayload>(payload) {
-                                Ok(request) => request,
-                                Err(e) => {
-                                    logger.warn(
-                                        "logs.get.parse_failed",
-                                        json!({
-                                            "error": e.to_string(),
-                                        }),
-                                    );
-                                    return;
-                                }
-                            };
-
-                            let requested_lines =
-                                request.lines.unwrap_or(DEFAULT_NODE_LOG_GET_LINES);
-                            let resolved_lines = resolve_logs_get_line_limit(request.lines);
-                            if requested_lines != resolved_lines {
-                                logger.warn(
-                                    "logs.get.limit_clamped",
-                                    json!({
-                                        "callId": request.call_id,
-                                        "requestedLines": requested_lines,
-                                        "resolvedLines": resolved_lines,
-                                        "maxLines": MAX_NODE_LOG_GET_LINES,
-                                    }),
-                                );
-                            }
-
-                            logger.info(
-                                "logs.get",
-                                json!({
-                                    "callId": request.call_id,
-                                    "requestedLines": requested_lines,
-                                    "resolvedLines": resolved_lines,
-                                }),
-                            );
-
-                            let response = match read_recent_node_log_lines(resolved_lines) {
-                                Ok((lines, truncated)) => LogsResultParams {
-                                    call_id: request.call_id.clone(),
-                                    lines: Some(lines),
-                                    truncated: Some(truncated),
-                                    error: None,
-                                },
-                                Err(error) => LogsResultParams {
-                                    call_id: request.call_id.clone(),
-                                    lines: None,
-                                    truncated: None,
-                                    error: Some(error),
-                                },
-                            };
-
-                            if let Some(error) = response.error.clone() {
-                                logger.warn(
-                                    "logs.get.error",
-                                    json!({
-                                        "callId": request.call_id,
-                                        "error": error,
-                                    }),
-                                );
-                            }
-
-                            if let Err(e) = conn
-                                .request(
-                                    "logs.result",
-                                    Some(serde_json::to_value(&response).unwrap()),
-                                )
-                                .await
-                            {
-                                logger.error(
-                                    "logs.result.send_failed",
-                                    json!({
-                                        "callId": response.call_id,
-                                        "error": e.to_string(),
-                                    }),
-                                );
-                            }
-                        }
-                    } else if evt.event == "transfer.send" {
-                        if let Some(payload) = evt.payload {
-                            match serde_json::from_value::<TransferSendPayload>(payload) {
-                                Ok(send_payload) => {
-                                    let conn = conn.clone();
-                                    let ws = transfer_workspace.clone();
-                                    let coord = coordinator.clone();
-                                    let log = logger.clone();
-                                    tokio::spawn(async move {
-                                        gsv::transfer::handle_transfer_send(
-                                            conn,
-                                            send_payload,
-                                            ws,
-                                            coord,
-                                            log,
-                                        )
-                                        .await;
-                                    });
-                                }
-                                Err(e) => {
-                                    logger.error(
-                                        "transfer.send.parse_failed",
-                                        json!({ "error": e.to_string() }),
-                                    );
-                                }
-                            }
-                        }
-                    } else if evt.event == "transfer.receive" {
-                        if let Some(payload) = evt.payload {
-                            match serde_json::from_value::<TransferReceivePayload>(payload) {
-                                Ok(receive_payload) => {
-                                    let conn = conn.clone();
-                                    let ws = transfer_workspace.clone();
-                                    let coord = coordinator.clone();
-                                    let log = logger.clone();
-                                    tokio::spawn(async move {
-                                        gsv::transfer::handle_transfer_receive(
-                                            conn,
-                                            receive_payload,
-                                            ws,
-                                            coord,
-                                            log,
-                                        )
-                                        .await;
-                                    });
-                                }
-                                Err(e) => {
-                                    logger.error(
-                                        "transfer.receive.parse_failed",
-                                        json!({ "error": e.to_string() }),
-                                    );
-                                }
-                            }
-                        }
-                    } else if evt.event == "transfer.start" {
-                        if let Some(payload) = evt.payload {
-                            match serde_json::from_value::<TransferStartPayload>(payload) {
-                                Ok(start_payload) => {
-                                    logger.info(
-                                        "transfer.start",
-                                        json!({ "transferId": start_payload.transfer_id }),
-                                    );
-                                    coordinator.fire_start_signal(start_payload.transfer_id);
-                                }
-                                Err(e) => {
-                                    logger.error(
-                                        "transfer.start.parse_failed",
-                                        json!({ "error": e.to_string() }),
-                                    );
-                                }
-                            }
-                        }
-                    } else if evt.event == "transfer.end" {
-                        if let Some(payload) = evt.payload {
-                            match serde_json::from_value::<TransferEndPayload>(payload) {
-                                Ok(end_payload) => {
-                                    logger.info(
-                                        "transfer.end",
-                                        json!({ "transferId": end_payload.transfer_id }),
-                                    );
-                                    coordinator.close_chunk_sender(end_payload.transfer_id);
-                                }
-                                Err(e) => {
-                                    logger.error(
-                                        "transfer.end.parse_failed",
-                                        json!({ "error": e.to_string() }),
-                                    );
-                                }
-                            }
-                        }
-                    }
+                if let Frame::Req(req) = frame {
+                    handle_driver_request(&conn, &tools, &req, &logger).await;
                 }
             });
         })

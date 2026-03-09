@@ -1,21 +1,24 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+
+// ---------------------------------------------------------------------------
+//  Core frame types — mirrors gateway-os/src/protocol/frames.ts
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Frame {
     Req(RequestFrame),
     Res(ResponseFrame),
-    Evt(EventFrame),
+    Sig(SignalFrame),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestFrame {
     pub id: String,
-    pub method: String,
+    pub call: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<Value>,
+    pub args: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,14 +26,14 @@ pub struct ResponseFrame {
     pub id: String,
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub payload: Option<Value>,
+    pub data: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorShape>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventFrame {
-    pub event: String,
+pub struct SignalFrame {
+    pub signal: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,26 +50,19 @@ pub struct ErrorShape {
     pub retryable: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthParams {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
-}
+// ---------------------------------------------------------------------------
+//  sys.connect payload — mirrors gateway-os/src/syscalls/system.ts
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConnectParams {
-    pub min_protocol: u32,
-    pub max_protocol: u32,
+pub struct ConnectArgs {
+    pub protocol: u32,
     pub client: ClientInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<ToolDefinition>>,
+    pub driver: Option<DriverInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_runtime: Option<NodeRuntimeInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth: Option<AuthParams>,
+    pub auth: Option<AuthInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,31 +70,48 @@ pub struct ClientInfo {
     pub id: String,
     pub version: String,
     pub platform: String,
-    pub mode: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriverInfo {
+    pub implements: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthInfo {
+    pub username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+//  sys.connect result
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectResult {
+    pub protocol: u32,
+    pub server: ServerInfo,
+    pub identity: Value,
+    pub syscalls: Vec<String>,
+    pub signals: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
+pub struct ServerInfo {
+    pub version: String,
+    pub connection_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeRuntimeInfo {
-    pub host_capabilities: Vec<String>,
-    pub tool_capabilities: HashMap<String, Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolInvokePayload {
-    pub call_id: String,
-    pub tool: String,
-    pub args: Value,
-}
+// ---------------------------------------------------------------------------
+//  Exec event (node → gateway signal for background process status)
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -120,35 +133,9 @@ pub struct NodeExecEventParams {
     pub ended_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolResultParams {
-    pub call_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LogsGetPayload {
-    pub call_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lines: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LogsResultParams {
-    pub call_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lines: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncated: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
+// ---------------------------------------------------------------------------
+//  Binary transfer (kept for future use)
+// ---------------------------------------------------------------------------
 
 pub const TRANSFER_BINARY_TAG_BYTES: usize = 4;
 
@@ -166,6 +153,36 @@ pub fn parse_transfer_binary_frame(data: &[u8]) -> Option<(u32, &[u8])> {
     let transfer_id = u32::from_le_bytes(data[..4].try_into().ok()?);
     Some((transfer_id, &data[4..]))
 }
+
+// ---------------------------------------------------------------------------
+//  Tool definition (used by local driver tool implementations)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: Value,
+}
+
+// ---------------------------------------------------------------------------
+//  Helpers
+// ---------------------------------------------------------------------------
+
+impl RequestFrame {
+    pub fn new(call: &str, args: Option<Value>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            call: call.to_string(),
+            args,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Legacy transfer types (kept for transfer.rs, will be replaced by syscalls)
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,19 +222,7 @@ pub struct TransferAcceptParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TransferStartPayload {
-    pub transfer_id: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TransferCompleteParams {
-    pub transfer_id: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TransferEndPayload {
     pub transfer_id: u32,
 }
 
@@ -228,14 +233,4 @@ pub struct TransferDoneParams {
     pub bytes_written: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-impl RequestFrame {
-    pub fn new(method: &str, params: Option<Value>) -> Self {
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            method: method.to_string(),
-            params,
-        }
-    }
 }

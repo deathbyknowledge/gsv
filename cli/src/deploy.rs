@@ -2837,14 +2837,17 @@ async fn connect_gateway_with_retry(
     let mut last_error: Option<Box<dyn std::error::Error>> = None;
 
     for attempt in 1..=max_attempts {
-        match Connection::connect_with_options(
-            ws_url,
-            "client",
-            None,
-            None,
+        match Connection::connect(
+            crate::connection::ConnectOptions {
+                url: ws_url.to_string(),
+                role: "user".to_string(),
+                client_id: Some("deploy-bootstrap".to_string()),
+                implements: None,
+                auth_username: None,
+                auth_password: None,
+                auth_token: auth_token.map(|t| t.to_string()),
+            },
             |_| {},
-            Some("deploy-bootstrap".to_string()),
-            auth_token.map(|token| token.to_string()),
         )
         .await
         {

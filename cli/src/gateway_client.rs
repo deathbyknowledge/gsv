@@ -1,4 +1,4 @@
-use crate::connection::Connection;
+use crate::connection::{Connection, ConnectOptions};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
@@ -14,31 +14,42 @@ impl GatewayClient {
     }
 
     pub async fn connect(url: &str, token: Option<String>) -> GatewayResult<Self> {
-        let conn = Connection::connect_with_options(url, "client", None, None, |_| {}, None, token)
-            .await?;
+        let conn = Connection::connect(
+            ConnectOptions {
+                url: url.to_string(),
+                role: "user".to_string(),
+                client_id: None,
+                implements: None,
+                auth_username: None,
+                auth_password: None,
+                auth_token: token,
+            },
+            |_| {},
+        )
+        .await?;
 
         Ok(Self::new(conn))
     }
 
     async fn request<TParams: Serialize>(
         &self,
-        method: &'static str,
+        call: &'static str,
         params: Option<TParams>,
     ) -> GatewayResult<Value> {
-        let params = params.map(serde_json::to_value).transpose()?;
-        let response = self.conn.request(method, params).await?;
+        let args = params.map(serde_json::to_value).transpose()?;
+        let response = self.conn.request(call, args).await?;
 
         if !response.ok {
             let message = response
                 .error
                 .as_ref()
-                .map(|error| format!("{} (code {}): {}", method, error.code, error.message))
-                .unwrap_or_else(|| format!("{} failed", method));
+                .map(|error| format!("{} (code {}): {}", call, error.code, error.message))
+                .unwrap_or_else(|| format!("{} failed", call));
 
             return Err(message.into());
         }
 
-        Ok(response.payload.unwrap_or_else(|| json!({})))
+        Ok(response.data.unwrap_or_else(|| json!({})))
     }
 
     pub fn connection(&self) -> &Connection {
