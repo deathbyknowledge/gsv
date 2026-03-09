@@ -123,7 +123,7 @@ export async function ensureBootstrapped(
   }
 
   const passwd = serializePasswd([
-    { username: "root", uid: 0, gid: 0, gecos: "root", home: "/root", shell: "/bin/sh" },
+    { username: "root", uid: 0, gid: 0, gecos: "root", home: "/root", shell: "/bin/init" },
   ]);
 
   const hash = rootToken ? await hashToken(rootToken) : "!";

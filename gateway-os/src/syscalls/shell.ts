@@ -1,10 +1,10 @@
 import type { ToolDefinition } from ".";
-import { PROC_EXEC, SYSCALL_TOOL_NAMES } from "./constants";
+import { SHELL_EXEC, SYSCALL_TOOL_NAMES } from "./constants";
 
-export const PROC_EXEC_DEFINITION: ToolDefinition = {
-  name: SYSCALL_TOOL_NAMES[PROC_EXEC],
+export const SHELL_EXEC_DEFINITION: ToolDefinition = {
+  name: SYSCALL_TOOL_NAMES[SHELL_EXEC],
   description:
-    "Execute shell commands. Supports async background mode with session tracking.",
+    "Execute shell commands on a device. Supports async background mode with session tracking.",
   inputSchema: {
     type: "object",
     properties: {
@@ -34,7 +34,7 @@ export const PROC_EXEC_DEFINITION: ToolDefinition = {
   },
 };
 
-export type ExecArgs = {
+export type ShellExecArgs = {
   command: string;
   workdir?: string;
   timeout?: number;
@@ -42,7 +42,7 @@ export type ExecArgs = {
   yieldMs?: number;
 };
 
-export type ExecResult =
+export type ShellExecResult =
   | {
       ok: true;
       pid: number;
@@ -57,10 +57,21 @@ export type ExecResult =
     }
   | { ok: false; error: string };
 
-export type ProcessInfo = {
+export type ShellSignalArgs = {
+  pid: number;
+  signal: string;
+};
+
+export type ShellSignalResult = { ok: true } | { ok: false; error: string };
+
+export type ShellProcessInfo = {
   pid: number;
   command: string;
   running: boolean;
   startedAt: number;
   exitCode?: number;
+};
+
+export type ShellListResult = {
+  processes: ShellProcessInfo[];
 };

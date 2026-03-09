@@ -180,7 +180,8 @@ describe("CapabilityStore", () => {
     expect(userCaps.map((r) => r.capability)).toEqual([
       "fs.*",
       "proc.*",
-      "session.*",
+      "sched.*",
+      "shell.*",
     ]);
   });
 
@@ -197,7 +198,7 @@ describe("CapabilityStore", () => {
 
     const caps = store.resolve([100, 101]);
     expect(caps).toContain("fs.*");
-    expect(caps).toContain("session.*");
+    expect(caps).toContain("shell.*");
     expect(caps).toContain("proc.*");
   });
 
@@ -269,9 +270,9 @@ describe("CapabilityStore", () => {
   it("end-to-end: grant + check capability", () => {
     store.seed();
 
-    store.grant(100, "sched.list");
+    store.grant(100, "ipc.send");
     const caps = store.resolve([100]);
-    expect(hasCapability(caps, "sched.list")).toBe(true);
-    expect(hasCapability(caps, "sched.add")).toBe(false);
+    expect(hasCapability(caps, "ipc.send")).toBe(true);
+    expect(hasCapability(caps, "ipc.status")).toBe(false);
   });
 });

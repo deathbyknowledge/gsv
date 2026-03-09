@@ -113,7 +113,6 @@ function makeCtx(sql: ReturnType<typeof createMockSql>): KernelContext {
     caps,
     devices,
     connection: mockConnection,
-    connectionId: "test-conn-1",
     serverVersion: "0.0.1-test",
   };
 }
@@ -213,7 +212,6 @@ describe("handleConnect", () => {
       expect(result.identity.process.uid).toBe(0);
       expect(result.identity.capabilities).toContain("*");
       expect(result.result.protocol).toBe(1);
-      expect(result.result.server.connectionId).toBe("test-conn-1");
     }
   });
 

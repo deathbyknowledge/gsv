@@ -3,8 +3,27 @@ import type { FsWriteArgs, FsWriteResult } from "./write";
 import type { FsEditArgs, FsEditResult } from "./edit";
 import type { FsDeleteArgs, FsDeleteResult } from "./delete";
 import type { FsSearchArgs, FsSearchResult } from "./search";
-import type { ExecArgs, ExecResult, ProcessInfo } from "./exec";
-import type { SessionSendResult, ResetResult, HistoryResult } from "./session";
+import type {
+  ShellExecArgs,
+  ShellExecResult,
+  ShellSignalArgs,
+  ShellSignalResult,
+  ShellListResult,
+} from "./shell";
+import type {
+  ProcSpawnArgs,
+  ProcSpawnResult,
+  ProcKillArgs,
+  ProcKillResult,
+  ProcSendArgs,
+  ProcSendResult,
+  ProcHistoryArgs,
+  ProcHistoryResult,
+  ProcResetArgs,
+  ProcResetResult,
+  ProcListArgs,
+  ProcListResult,
+} from "./proc";
 import type { ConnectArgs, ConnectResult } from "./system";
 import type {
   SchedulerListArgs,
@@ -30,15 +49,18 @@ export type SyscallDomains = {
   "fs.delete": { args: FsDeleteArgs; result: FsDeleteResult };
   "fs.search": { args: FsSearchArgs; result: FsSearchResult };
 
-  // Process management
-  "proc.exec": { args: ExecArgs; result: ExecResult };
-  "proc.signal": { args: { pid: number; signal: string }; result: { ok: true } };
-  "proc.list": { args: Record<string, never>; result: { processes: ProcessInfo[] } };
+  // Shell (device commands)
+  "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
+  "shell.signal": { args: ShellSignalArgs; result: ShellSignalResult };
+  "shell.list": { args: Record<string, never>; result: ShellListResult };
 
-  // Session (process-level agent state)
-  "session.send": { args: { message: string }; result: SessionSendResult };
-  "session.reset": { args: Record<string, never>; result: ResetResult };
-  "session.history": { args: { limit?: number }; result: HistoryResult };
+  // Process management (OS-level agent processes)
+  "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
+  "proc.kill": { args: ProcKillArgs; result: ProcKillResult };
+  "proc.list": { args: ProcListArgs; result: ProcListResult };
+  "proc.send": { args: ProcSendArgs; result: ProcSendResult };
+  "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
+  "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
@@ -63,8 +85,8 @@ export type ResultOf<S extends SyscallName> = SyscallDomains[S]["result"];
 
 export type SyscallDomain =
   | "fs"
+  | "shell"
   | "proc"
-  | "session"
   | "sys"
   | "sched"
   | "ipc";
@@ -73,9 +95,23 @@ export function domainOf(syscall: SyscallName): SyscallDomain {
   return syscall.split(".")[0] as SyscallDomain;
 }
 
+/**
+ * Domains that support device routing via the `target` field.
+ * `shell` always requires a device target. `fs` can be native (R2) or device.
+ * `proc` is kernel-internal (no device routing).
+ */
+const ROUTABLE_DOMAINS: SyscallDomain[] = ["fs", "shell"];
+
+/**
+ * Inject a `target` property into a tool definition so the LLM can choose
+ * where to execute the syscall. Only applicable to routable domains (fs, shell).
+ *
+ * @param tool - The base tool definition (without target)
+ * @param devices - List of accessible online device IDs for this user
+ */
 export function intoSyscallTool(
   tool: ToolDefinition,
-  nodes: string[],
+  devices: string[],
 ): ToolDefinition {
   const required = tool.inputSchema.required as string[];
   const properties = tool.inputSchema.properties as Record<string, unknown>;
@@ -88,6 +124,8 @@ export function intoSyscallTool(
     );
   }
 
+  const deviceList = devices.length > 0 ? devices.join(", ") : "none";
+
   return {
     name: tool.name,
     description: tool.description,
@@ -97,10 +135,14 @@ export function intoSyscallTool(
         ...properties,
         target: {
           type: "string",
-          description: `Target node to execute on. Use "gsv" to execute on the cloud or use one of the online nodes: ${nodes.join(", ")}`,
+          description: `Target device to execute on. Use "gsv" to execute on the cloud or use one of the accessible online devices: ${deviceList}`,
         },
       },
       required: [...required, "target"],
     },
   };
+}
+
+export function isRoutableSyscall(call: SyscallName): boolean {
+  return ROUTABLE_DOMAINS.includes(domainOf(call));
 }

@@ -80,16 +80,20 @@ pub(crate) async fn run_client(
     let expected_run_id_clone = expected_run_id.clone();
     let session_key_owned = session_key.to_string();
 
-    let conn = Connection::connect_with_options(
-        url,
-        "client",
-        None,
-        None,
+    let conn = Connection::connect(
+        gsv::connection::ConnectOptions {
+            url: url.to_string(),
+            role: "user".to_string(),
+            client_id: None,
+            implements: None,
+            auth_username: None,
+            auth_password: None,
+            auth_token: token.map(|t| t.to_string()),
+        },
         move |frame| {
-            // Handle incoming events
-            if let Frame::Evt(evt) = frame {
-                if evt.event == "chat" {
-                    if let Some(payload) = evt.payload {
+            if let Frame::Sig(sig) = frame {
+                if sig.signal == "chat" {
+                    if let Some(payload) = sig.payload {
                         let expected_run_id = expected_run_id_clone
                             .lock()
                             .ok()
@@ -154,8 +158,6 @@ pub(crate) async fn run_client(
                 }
             }
         },
-        None,
-        token,
     )
     .await?;
     let gateway = GatewayClient::new(conn);

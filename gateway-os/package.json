@@ -31,7 +31,7 @@
 		"@clack/prompts": "^1.0.0",
 		"@mariozechner/pi-ai": "^0.54.0",
 		"agents": "^0.7.5",
-		"just-bash": "^2.11.11",
+		"just-bash": "^2.12.6",
 		"picocolors": "^1.1.1",
 		"ws": "^8.19.0"
 	}
