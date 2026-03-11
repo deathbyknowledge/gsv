@@ -5,13 +5,12 @@
  * resolves identity + capabilities, registers devices/services,
  * and returns what the connection is allowed to do.
  *
+ * Auth data lives in kernel SQLite (AuthStore), not R2.
  * Setup mode: if root's shadow entry is locked ("!"), any connection
  * is granted root (uid 0) without auth. This persists until root
  * sets a password via sys.passwd.
  */
 
-import { authenticate, ensureBootstrapped } from "../auth";
-import { isLocked, parseShadow, findByUsername as findShadowUser } from "../auth/shadow";
 import type {
   ConnectArgs,
   ConnectResult,
@@ -29,10 +28,8 @@ export async function handleConnect(
   args: ConnectArgs,
   ctx: KernelContext,
 ): Promise<ConnectOutcome> {
-  const { env, caps, devices, serverVersion } = ctx;
-  const bucket = env.STORAGE;
+  const { auth, caps, devices, serverVersion } = ctx;
 
-  // Validate protocol
   if (args.protocol !== 1) {
     return { ok: false, code: 102, message: "Unsupported protocol version" };
   }
@@ -42,14 +39,14 @@ export async function handleConnect(
     return { ok: false, code: 103, message: "Invalid client role" };
   }
 
-  // First-boot provisioning
-  const { bootstrapped } = await ensureBootstrapped(bucket);
+  // First-boot provisioning (SQLite, no R2)
+  const bootstrapped = await auth.bootstrap();
   if (bootstrapped) {
     caps.seed();
   }
 
   // Authentication
-  const process = await resolveIdentity(args, bucket);
+  const process = await resolveIdentity(args, ctx);
   if (!process.ok) {
     return { ok: false, code: 401, message: process.error };
   }
@@ -125,7 +122,6 @@ export async function handleConnect(
       return { ok: false, code: 103, message: "Invalid client role" };
   }
 
-  // Build result
   const result: ConnectResult = {
     protocol: 1,
     server: {
@@ -146,20 +142,15 @@ type IdentityOutcome =
 
 async function resolveIdentity(
   args: ConnectArgs,
-  bucket: R2Bucket,
+  ctx: KernelContext,
 ): Promise<IdentityOutcome> {
+  const { auth } = ctx;
+
   if (!args.auth) {
-    const setupMode = await isSetupMode(bucket);
-    if (setupMode) {
+    if (auth.isSetupMode()) {
       return {
         ok: true,
-        identity: {
-          uid: 0,
-          gid: 0,
-          gids: [0],
-          username: "root",
-          home: "/root",
-        },
+        identity: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root" },
       };
     }
     return { ok: false, error: "Authentication required" };
@@ -168,32 +159,13 @@ async function resolveIdentity(
   const { username } = args.auth;
   const credential = args.auth.token ?? args.auth.password;
 
-  if (!username) {
-    return { ok: false, error: "Username required" };
-  }
+  if (!username) return { ok: false, error: "Username required" };
+  if (!credential) return { ok: false, error: "Password or token required" };
 
-  if (!credential) {
-    return { ok: false, error: "Password or token required" };
-  }
-
-  const result = await authenticate(bucket, username, credential);
-  if (!result.ok) {
-    return { ok: false, error: result.error };
-  }
+  const result = await auth.authenticate(username, credential);
+  if (!result.ok) return { ok: false, error: result.error };
 
   return { ok: true, identity: result.identity };
-}
-
-async function isSetupMode(bucket: R2Bucket): Promise<boolean> {
-  const obj = await bucket.get("/etc/shadow");
-  if (!obj) return true;
-
-  const raw = await obj.text();
-  const entries = parseShadow(raw);
-  const root = findShadowUser(entries, "root");
-  if (!root) return true;
-
-  return isLocked(root);
 }
 
 function buildSignalList(role: string): string[] {

@@ -9,6 +9,8 @@ Items are grouped by subsystem and ordered roughly by dependency.
 
 Use classic Linux flat-file formats so LLM agents can read/parse them naturally.
 The `shell` field in `/etc/passwd` is `/bin/init` — the user's persistent root AI process.
+Auth data lives in kernel SQLite (`AuthStore`), exposed at `/etc/*` via GsvFs virtual paths.
+No R2 round-trips for auth, no credentials in object storage.
 
 - [x] Define the in-memory types for passwd entries (uid, gid, username, home, shell)
 - [x] Define the in-memory types for shadow entries (username, hashed password)
@@ -17,9 +19,16 @@ The `shell` field in `/etc/passwd` is `/bin/init` — the user's persistent root
 - [x] Write parser: `/etc/shadow` colon-delimited format → typed entries
 - [x] Write parser: `/etc/group` colon-delimited format → typed entries
 - [x] Write serializer for each (typed entries → flat-file format, for writes)
-- [x] Implement first-boot provisioning: create `/etc/passwd` with `root:x:0:0:root:/root:/bin/init`
-- [x] Implement first-boot provisioning: create `/etc/shadow` with root entry (token hash or locked)
-- [x] Implement first-boot provisioning: create `/etc/group` with `root:x:0:root` and default groups
+- [x] `AuthStore` class: SQLite tables for passwd, shadow, groups
+- [x] `AuthStore.bootstrap()` — seed root user + default groups on first boot
+- [x] `AuthStore.authenticate()` — verify credentials from SQLite (no R2)
+- [x] `AuthStore.serialize*()` — produce flat-file format for virtual FS reads
+- [x] `AuthStore.import*()` — parse flat-file writes back into SQLite
+- [x] `AuthStore.uidToName()` / `gidToName()` — name resolution for ls/stat
+- [x] Wire into `KernelContext`, initialize in Kernel DO
+- [x] GsvFs routes `/etc/passwd`, `/etc/shadow`, `/etc/group` as virtual paths (read/write)
+- [x] `/etc/shadow` read restricted to uid 0, stat shows mode 0640
+- [x] `sys.connect` uses `AuthStore` instead of R2 for auth
 - [ ] Create `/root/` directory marker on first boot
 
 ## Identity links (channel → uid mapping)
@@ -51,8 +60,10 @@ Capabilities are NOT hardcoded — root can modify them. Stored in kernel DO SQL
 
 ## R2FS permission model upgrade (uid/gid/mode)
 
+Merged into unified `GsvFs`. The R2 permission logic now lives in `GsvFs` alongside virtual paths.
+
 - [x] `customMetadata`: `uid`, `gid`, `mode` (octal string)
-- [x] `R2FS` constructor accepts `ProcessIdentity`
+- [x] `GsvFs` constructor accepts `ProcessIdentity` + optional kernel registries
 - [x] `canRead()` / `canWrite()` — check mode bits, uid 0 bypasses
 - [x] `write()` stamps `uid`/`gid`/`mode` on new files
 - [x] `edit()` and `delete()` use `checkMode()`
@@ -157,8 +168,15 @@ Replaces old `proc.*` for device-level shell execution. Always routable (require
 - [x] Types in `syscalls/shell.ts`
 - [x] Constants in `syscalls/constants.ts`
 - [x] Dispatch wired (device routing + native `shell.exec` via `just-bash`)
-- [x] Native driver: `R2BashFs` (R2-backed `IFileSystem`), virtual `/proc` + `/dev` mounts
+- [x] Native driver: unified `GsvFs` (R2 + virtual `/proc`, `/dev`, `/sys` mounts)
 - [x] Custom bash commands: `whoami`, `id`, `hostname`, `uname`, `chown`, `chmod`, `ps`
+- [x] Network access: `curl`/`wget` enabled via `dangerouslyAllowFullInternetAccess` (Workers are sandboxed)
+- [x] Shell limits/timeout/network read from `ConfigStore` at runtime
+- [x] `processInfo` wired with real uid/gid from identity
+- [x] Deleted obsolete `r2-bash-fs.ts` (fully replaced by `GsvFs`)
+- [x] Custom `ls` command: uses real mode bits, uid/gid from `statExtended`, resolves names via `AuthStore`
+- [x] Custom `stat` command: uses real mode/uid/gid, supports `-c FORMAT`
+- [x] Name cache (`uidToName`/`gidToName`) reads directly from `AuthStore` (no FS round-trip)
 
 ## Syscall domain: `proc.*` (OS process management)
 
@@ -211,7 +229,7 @@ First-boot experience when the system has no users. Setup mode walks through con
 
 - [ ] Detect setup mode: `/etc/passwd` doesn't exist or root shadow is locked
 - [ ] Onboarding steps: timezone → username/password → optional model config
-- [ ] Model config stored as user-private file (e.g. `/home/{user}/.config/gsv.yaml`)
+- [ ] Model config stored in `/sys/users/{uid}/ai/*` (kernel SQLite via `ConfigStore`)
 - [ ] On completion: create user, create home dir, spawn init process, set password
 - [ ] Exit setup mode (root shadow no longer locked)
 
@@ -244,11 +262,59 @@ Uses agents SDK `schedule()` / `scheduleEvery()`.
 - [ ] Cron execution: spawn `cron:{jobId}` process as child of user's init, run, archive, destroy
 - [ ] `scheduleEvery()` for periodic cron evaluation
 
+## Unified filesystem: `GsvFs` (`fs/gsv-fs.ts`)
+
+Single `IFileSystem` implementation used by both `fs.*` syscall handlers and the bash shell driver.
+Replaces the old separate `R2FS`, `R2BashFs`, `composeMounts`, and `InMemoryFs` setup.
+
+Routes paths internally:
+- `/proc/*` → reads from `ProcessRegistry` (kernel SQLite)
+- `/dev/*`  → inline device nodes
+- `/sys/*`  → reads/writes `ConfigStore` + `DeviceRegistry` + `CapabilityStore` (kernel SQLite)
+- `/*`      → R2 bucket (with uid/gid/mode permission checks)
+
+- [x] Create `GsvFs` class implementing `IFileSystem` with virtual path routing + R2 fallback
+- [x] `/proc/{pid}/status`, `/proc/{pid}/identity`, `/proc/self/*` — from `ProcessRegistry`
+- [x] `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`
+- [x] `/sys/config/*` — read/write from `ConfigStore`
+- [x] `/sys/users/{uid}/*` — per-user config from `ConfigStore`
+- [x] `/sys/devices/*` — read-only from `DeviceRegistry`
+- [x] `/sys/capabilities/*` — read-only from `CapabilityStore`
+- [x] Permission enforcement: root reads/writes all `/sys/`, non-root only own `/sys/users/{uid}/`
+- [x] Wire into shell driver (replace `R2BashFs` + `composeMounts` + `InMemoryFs`)
+- [x] Wire into `fs.*` syscall handlers (replace `R2FS`)
+- [ ] `readdir` for virtual directories (`/proc/`, `/sys/`, `/sys/devices/`, etc.)
+- [ ] Unit tests
+
+## ConfigStore (`kernel/config.ts`)
+
+SQLite key-value store for runtime config exposed at `/sys/config/*` and `/sys/users/{uid}/*`.
+System config is the runtime truth — R2 dotfiles (`/etc/gsv/config`, `~/.config/gsv/config`)
+are seed files loaded on first connect (like `sysctl -p` loading `/etc/sysctl.conf`).
+
+- [x] `config_kv` table: `(key TEXT PRIMARY KEY, value TEXT NOT NULL)`
+- [x] `get(key)`, `set(key, value)`, `delete(key)`, `list(prefix)`
+- [x] `seed(defaults)` — populate defaults on first boot
+- [x] Add to `KernelContext`, initialize in Kernel DO alongside other registries
+- [x] Explicit `SYSTEM_CONFIG_DEFAULTS` with documented fields (ai, server, shell, process)
+- [x] `USER_OVERRIDABLE_PREFIXES` restricts which config keys users can override
+- [x] Kernel seeds defaults on init (INSERT OR IGNORE — never overwrites)
+- [ ] Reconciliation: on `sys.connect`, read R2 dotfiles and seed into ConfigStore if not populated
+- [ ] `sys.config.get` / `sys.config.set` syscall handlers
+
 ## System config (`sys.config.*`)
 
-- [ ] Config storage (R2 at `/etc/gsv/config` or similar)
-- [ ] `sys.config.get` / `sys.config.set` handlers
-- [ ] Port config schema and defaults from old gateway
+- [ ] `sys.config.get` / `sys.config.set` handlers — thin wrappers around `ConfigStore` + permission checks
+
+## File transfer (`fs.transfer`)
+
+Orchestrated binary streaming between R2 and devices. Future work — port from old Transfer protocol.
+
+- [ ] `fs.transfer` syscall types: `{ source: string, destination: string }` with `device:path` format
+- [ ] Multi-step handshake: metadata → accept → stream chunks → complete
+- [ ] R2 → Device, Device → R2, Device → Device routing
+- [ ] Wire binary stream frames for chunk relay
+- [ ] Bash command: `transfer` / `cp` with cross-device syntax
 
 ## User management syscalls
 

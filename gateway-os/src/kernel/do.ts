@@ -6,7 +6,9 @@ import {
 } from "agents";
 import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protocol/frames";
 import type { ConnectionIdentity, ProcessIdentity } from "../syscalls/system";
+import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
+import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
 import { DeviceRegistry } from "./devices";
 import { RoutingTable, type RouteOrigin } from "./routing";
 import { ProcessRegistry } from "./processes";
@@ -23,7 +25,9 @@ type ConnectionState = {
 };
 
 export class Kernel extends Host<Env> {
+  private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
+  private readonly config: ConfigStore;
   private readonly devices: DeviceRegistry;
   private readonly routes: RoutingTable;
   private readonly procs: ProcessRegistry;
@@ -32,8 +36,15 @@ export class Kernel extends Host<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
 
+    this.auth = new AuthStore(ctx.storage.sql);
+    this.auth.init();
+
     this.caps = new CapabilityStore(ctx.storage.sql);
     this.caps.init();
+
+    this.config = new ConfigStore(ctx.storage.sql);
+    this.config.init();
+    this.config.seed(SYSTEM_CONFIG_DEFAULTS);
 
     this.devices = new DeviceRegistry(ctx.storage.sql);
     this.devices.init();
@@ -141,7 +152,9 @@ export class Kernel extends Host<Env> {
 
     const ctx: KernelContext = {
       env: this.env,
+      auth: this.auth,
       caps: this.caps,
+      config: this.config,
       devices: this.devices,
       procs: this.procs,
       connection: null as unknown as Connection,
@@ -164,7 +177,9 @@ export class Kernel extends Host<Env> {
     if (!state) throw new Error("Connection state is missing");
     return {
       env: this.env,
+      auth: this.auth,
       caps: this.caps,
+      config: this.config,
       devices: this.devices,
       procs: this.procs,
       connection,

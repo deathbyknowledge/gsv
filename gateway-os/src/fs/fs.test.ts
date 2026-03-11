@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
-import { R2FS, parseMode, isValidMode } from "./index";
+import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { ProcessIdentity } from "../syscalls/system";
 
 const ROOT: ProcessIdentity = {
@@ -36,6 +36,10 @@ function putFile(
     httpMetadata: { contentType: "text/plain" },
     customMetadata: meta,
   });
+}
+
+function makeFs(identity: ProcessIdentity): GsvFs {
+  return new GsvFs(env.STORAGE, identity);
 }
 
 describe("parseMode", () => {
@@ -86,8 +90,8 @@ describe("isValidMode", () => {
   });
 });
 
-describe("R2FS permissions", () => {
-  const TEST_PREFIX = "/test/perms/";
+describe("GsvFs permissions", () => {
+  const TEST_PREFIX = "test/perms/";
 
   beforeEach(async () => {
     const listed = await env.STORAGE.list({ prefix: TEST_PREFIX });
@@ -98,155 +102,116 @@ describe("R2FS permissions", () => {
 
   it("root (uid 0) can read any file", async () => {
     await putFile(`${TEST_PREFIX}secret.txt`, "top secret", {
-      uid: "1000",
-      gid: "1000",
-      mode: "600",
+      uid: "1000", gid: "1000", mode: "600",
     });
 
-    const fs = new R2FS(env.STORAGE, ROOT);
-    const result = await fs.read({ path: `${TEST_PREFIX}secret.txt` });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(ROOT);
+    const content = await fs.readFile(`/${TEST_PREFIX}secret.txt`);
+    expect(content).toBe("top secret");
   });
 
   it("owner can read their own 600 file", async () => {
     await putFile(`${TEST_PREFIX}mine.txt`, "my data", {
-      uid: "1000",
-      gid: "1000",
-      mode: "600",
+      uid: "1000", gid: "1000", mode: "600",
     });
 
-    const fs = new R2FS(env.STORAGE, SAM);
-    const result = await fs.read({ path: `${TEST_PREFIX}mine.txt` });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(SAM);
+    const content = await fs.readFile(`/${TEST_PREFIX}mine.txt`);
+    expect(content).toBe("my data");
   });
 
   it("non-owner is denied reading a 600 file", async () => {
     await putFile(`${TEST_PREFIX}private.txt`, "secret", {
-      uid: "1000",
-      gid: "1000",
-      mode: "600",
+      uid: "1000", gid: "1000", mode: "600",
     });
 
-    const fs = new R2FS(env.STORAGE, ALICE);
-    const result = await fs.read({ path: `${TEST_PREFIX}private.txt` });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("Permission denied");
+    const fs = makeFs(ALICE);
+    await expect(fs.readFile(`/${TEST_PREFIX}private.txt`)).rejects.toThrow("EACCES");
   });
 
   it("group member can read a 640 file", async () => {
     await putFile(`${TEST_PREFIX}group-read.txt`, "group data", {
-      uid: "1000",
-      gid: "100",
-      mode: "640",
+      uid: "1000", gid: "100", mode: "640",
     });
 
-    // ALICE has gid 100 in her gids
-    const fs = new R2FS(env.STORAGE, ALICE);
-    const result = await fs.read({ path: `${TEST_PREFIX}group-read.txt` });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(ALICE);
+    const content = await fs.readFile(`/${TEST_PREFIX}group-read.txt`);
+    expect(content).toBe("group data");
   });
 
   it("non-group member is denied reading a 640 file", async () => {
     await putFile(`${TEST_PREFIX}group-only.txt`, "group data", {
-      uid: "999",
-      gid: "999",
-      mode: "640",
+      uid: "999", gid: "999", mode: "640",
     });
 
-    const fs = new R2FS(env.STORAGE, SAM);
-    const result = await fs.read({ path: `${TEST_PREFIX}group-only.txt` });
-    expect(result.ok).toBe(false);
+    const fs = makeFs(SAM);
+    await expect(fs.readFile(`/${TEST_PREFIX}group-only.txt`)).rejects.toThrow("EACCES");
   });
 
   it("anyone can read a 644 file", async () => {
     await putFile(`${TEST_PREFIX}public.txt`, "hello world", {
-      uid: "0",
-      gid: "0",
-      mode: "644",
+      uid: "0", gid: "0", mode: "644",
     });
 
-    const fs = new R2FS(env.STORAGE, ALICE);
-    const result = await fs.read({ path: `${TEST_PREFIX}public.txt` });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(ALICE);
+    const content = await fs.readFile(`/${TEST_PREFIX}public.txt`);
+    expect(content).toBe("hello world");
   });
 
   it("non-owner is denied writing a 644 file", async () => {
     await putFile(`${TEST_PREFIX}readonly.txt`, "original", {
-      uid: "0",
-      gid: "0",
-      mode: "644",
+      uid: "0", gid: "0", mode: "644",
     });
 
-    const fs = new R2FS(env.STORAGE, SAM);
-    const result = await fs.edit({
-      path: `${TEST_PREFIX}readonly.txt`,
-      oldString: "original",
-      newString: "modified",
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("Permission denied");
+    const fs = makeFs(SAM);
+    await expect(fs.writeFile(`/${TEST_PREFIX}readonly.txt`, "modified")).rejects.toThrow("EACCES");
   });
 
   it("owner can write their own 644 file", async () => {
     await putFile(`${TEST_PREFIX}owner-edit.txt`, "original", {
-      uid: "1000",
-      gid: "1000",
-      mode: "644",
+      uid: "1000", gid: "1000", mode: "644",
     });
 
-    const fs = new R2FS(env.STORAGE, SAM);
-    const result = await fs.edit({
-      path: `${TEST_PREFIX}owner-edit.txt`,
-      oldString: "original",
-      newString: "modified",
-    });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(SAM);
+    await fs.writeFile(`/${TEST_PREFIX}owner-edit.txt`, "modified");
+    const content = await fs.readFile(`/${TEST_PREFIX}owner-edit.txt`);
+    expect(content).toBe("modified");
   });
 
   it("root can write any file", async () => {
     await putFile(`${TEST_PREFIX}root-edit.txt`, "original", {
-      uid: "1000",
-      gid: "1000",
-      mode: "600",
+      uid: "1000", gid: "1000", mode: "600",
     });
 
-    const fs = new R2FS(env.STORAGE, ROOT);
-    const result = await fs.edit({
-      path: `${TEST_PREFIX}root-edit.txt`,
-      oldString: "original",
-      newString: "modified",
-    });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(ROOT);
+    await fs.writeFile(`/${TEST_PREFIX}root-edit.txt`, "modified");
+    const content = await fs.readFile(`/${TEST_PREFIX}root-edit.txt`);
+    expect(content).toBe("modified");
   });
 
   it("root can delete any file", async () => {
     await putFile(`${TEST_PREFIX}root-del.txt`, "bye", {
-      uid: "1000",
-      gid: "1000",
-      mode: "600",
+      uid: "1000", gid: "1000", mode: "600",
     });
 
-    const fs = new R2FS(env.STORAGE, ROOT);
-    const result = await fs.delete({ path: `${TEST_PREFIX}root-del.txt` });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(ROOT);
+    await fs.rm(`/${TEST_PREFIX}root-del.txt`);
+    const exists = await fs.exists(`/${TEST_PREFIX}root-del.txt`);
+    expect(exists).toBe(false);
   });
 
   it("non-owner is denied deleting a file", async () => {
     await putFile(`${TEST_PREFIX}no-del.txt`, "stay", {
-      uid: "1000",
-      gid: "1000",
-      mode: "644",
+      uid: "1000", gid: "1000", mode: "644",
     });
 
-    const fs = new R2FS(env.STORAGE, ALICE);
-    const result = await fs.delete({ path: `${TEST_PREFIX}no-del.txt` });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("Permission denied");
+    const fs = makeFs(ALICE);
+    await expect(fs.rm(`/${TEST_PREFIX}no-del.txt`)).rejects.toThrow("EACCES");
   });
 });
 
-describe("R2FS write metadata", () => {
-  const TEST_PREFIX = "/test/meta/";
+describe("GsvFs write metadata", () => {
+  const TEST_PREFIX = "test/meta/";
 
   beforeEach(async () => {
     const listed = await env.STORAGE.list({ prefix: TEST_PREFIX });
@@ -256,8 +221,8 @@ describe("R2FS write metadata", () => {
   });
 
   it("write stamps uid, gid, and mode 644 on new files", async () => {
-    const fs = new R2FS(env.STORAGE, SAM);
-    await fs.write({ path: `${TEST_PREFIX}new.txt`, content: "hello" });
+    const fs = makeFs(SAM);
+    await fs.writeFile(`/${TEST_PREFIX}new.txt`, "hello");
 
     const head = await env.STORAGE.head(`${TEST_PREFIX}new.txt`);
     expect(head?.customMetadata?.uid).toBe("1000");
@@ -266,8 +231,8 @@ describe("R2FS write metadata", () => {
   });
 });
 
-describe("R2FS chmod", () => {
-  const TEST_PREFIX = "/test/chmod/";
+describe("GsvFs chmod", () => {
+  const TEST_PREFIX = "test/chmod/";
 
   beforeEach(async () => {
     const listed = await env.STORAGE.list({ prefix: TEST_PREFIX });
@@ -278,14 +243,11 @@ describe("R2FS chmod", () => {
 
   it("owner can chmod their file", async () => {
     await putFile(`${TEST_PREFIX}myfile.txt`, "data", {
-      uid: "1000",
-      gid: "1000",
-      mode: "644",
+      uid: "1000", gid: "1000", mode: "644",
     });
 
-    const fs = new R2FS(env.STORAGE, SAM);
-    const result = await fs.chmod({ path: `${TEST_PREFIX}myfile.txt`, mode: "600" });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(SAM);
+    await fs.chmod(`/${TEST_PREFIX}myfile.txt`, 0o600);
 
     const head = await env.STORAGE.head(`${TEST_PREFIX}myfile.txt`);
     expect(head?.customMetadata?.mode).toBe("600");
@@ -293,52 +255,33 @@ describe("R2FS chmod", () => {
 
   it("root can chmod any file", async () => {
     await putFile(`${TEST_PREFIX}anyfile.txt`, "data", {
-      uid: "1000",
-      gid: "1000",
-      mode: "644",
+      uid: "1000", gid: "1000", mode: "644",
     });
 
-    const fs = new R2FS(env.STORAGE, ROOT);
-    const result = await fs.chmod({ path: `${TEST_PREFIX}anyfile.txt`, mode: "755" });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(ROOT);
+    await fs.chmod(`/${TEST_PREFIX}anyfile.txt`, 0o755);
+
+    const head = await env.STORAGE.head(`${TEST_PREFIX}anyfile.txt`);
+    expect(head?.customMetadata?.mode).toBe("755");
   });
 
   it("non-owner non-root is denied chmod", async () => {
     await putFile(`${TEST_PREFIX}notmine.txt`, "data", {
-      uid: "1000",
-      gid: "1000",
-      mode: "644",
+      uid: "1000", gid: "1000", mode: "644",
     });
 
-    const fs = new R2FS(env.STORAGE, ALICE);
-    const result = await fs.chmod({ path: `${TEST_PREFIX}notmine.txt`, mode: "777" });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("Permission denied");
-  });
-
-  it("rejects invalid mode strings", async () => {
-    await putFile(`${TEST_PREFIX}valid.txt`, "data", {
-      uid: "1000",
-      gid: "1000",
-      mode: "644",
-    });
-
-    const fs = new R2FS(env.STORAGE, SAM);
-    const result = await fs.chmod({ path: `${TEST_PREFIX}valid.txt`, mode: "abc" });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("Invalid mode");
+    const fs = makeFs(ALICE);
+    await expect(fs.chmod(`/${TEST_PREFIX}notmine.txt`, 0o777)).rejects.toThrow("EPERM");
   });
 
   it("returns error for nonexistent file", async () => {
-    const fs = new R2FS(env.STORAGE, ROOT);
-    const result = await fs.chmod({ path: `${TEST_PREFIX}ghost.txt`, mode: "644" });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("not found");
+    const fs = makeFs(ROOT);
+    await expect(fs.chmod(`/${TEST_PREFIX}ghost.txt`, 0o644)).rejects.toThrow("ENOENT");
   });
 });
 
-describe("R2FS chown", () => {
-  const TEST_PREFIX = "/test/chown/";
+describe("GsvFs chown", () => {
+  const TEST_PREFIX = "test/chown/";
 
   beforeEach(async () => {
     const listed = await env.STORAGE.list({ prefix: TEST_PREFIX });
@@ -349,18 +292,11 @@ describe("R2FS chown", () => {
 
   it("root can chown a file", async () => {
     await putFile(`${TEST_PREFIX}transfer.txt`, "data", {
-      uid: "1000",
-      gid: "1000",
-      mode: "644",
+      uid: "1000", gid: "1000", mode: "644",
     });
 
-    const fs = new R2FS(env.STORAGE, ROOT);
-    const result = await fs.chown({
-      path: `${TEST_PREFIX}transfer.txt`,
-      uid: 1001,
-      gid: 100,
-    });
-    expect(result.ok).toBe(true);
+    const fs = makeFs(ROOT);
+    await fs.chown(`/${TEST_PREFIX}transfer.txt`, 1001, 100);
 
     const head = await env.STORAGE.head(`${TEST_PREFIX}transfer.txt`);
     expect(head?.customMetadata?.uid).toBe("1001");
@@ -369,65 +305,82 @@ describe("R2FS chown", () => {
 
   it("non-root is denied chown", async () => {
     await putFile(`${TEST_PREFIX}nochange.txt`, "data", {
-      uid: "1000",
-      gid: "1000",
-      mode: "644",
+      uid: "1000", gid: "1000", mode: "644",
     });
 
-    const fs = new R2FS(env.STORAGE, SAM);
-    const result = await fs.chown({
-      path: `${TEST_PREFIX}nochange.txt`,
-      uid: 1001,
-      gid: 100,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("only root");
+    const fs = makeFs(SAM);
+    await expect(fs.chown(`/${TEST_PREFIX}nochange.txt`, 1001, 100)).rejects.toThrow("EPERM");
   });
 
   it("returns error for nonexistent file", async () => {
-    const fs = new R2FS(env.STORAGE, ROOT);
-    const result = await fs.chown({
-      path: `${TEST_PREFIX}ghost.txt`,
-      uid: 0,
-      gid: 0,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("not found");
+    const fs = makeFs(ROOT);
+    await expect(fs.chown(`/${TEST_PREFIX}ghost.txt`, 0, 0)).rejects.toThrow("ENOENT");
   });
 });
 
-describe("R2FS normalizePath", () => {
+describe("resolveUserPath", () => {
   it("resolves ~ to home", () => {
-    const fs = new R2FS(env.STORAGE, SAM);
-    expect(fs.normalizePath("~")).toBe("/home/sam");
-    expect(fs.normalizePath("~/docs/file.md")).toBe("/home/sam/docs/file.md");
+    expect(resolveUserPath("~", "/home/sam", "/home/sam")).toBe("/home/sam");
+    expect(resolveUserPath("~/docs/file.md", "/home/sam", "/home/sam")).toBe("/home/sam/docs/file.md");
   });
 
   it("resolves ~ for root to /root", () => {
-    const fs = new R2FS(env.STORAGE, ROOT);
-    expect(fs.normalizePath("~")).toBe("/root");
-    expect(fs.normalizePath("~/file.txt")).toBe("/root/file.txt");
+    expect(resolveUserPath("~", "/root", "/root")).toBe("/root");
+    expect(resolveUserPath("~/file.txt", "/root", "/root")).toBe("/root/file.txt");
   });
 
   it("resolves relative paths against cwd", () => {
-    const fs = new R2FS(env.STORAGE, SAM);
-    expect(fs.normalizePath("file.txt")).toBe("/home/sam/file.txt");
+    expect(resolveUserPath("file.txt", "/home/sam", "/home/sam")).toBe("/home/sam/file.txt");
   });
 
   it("resolves .. segments", () => {
-    const fs = new R2FS(env.STORAGE, SAM);
-    expect(fs.normalizePath("/home/sam/docs/../file.txt")).toBe(
-      "/home/sam/file.txt",
-    );
+    expect(resolveUserPath("/home/sam/docs/../file.txt", "/home/sam", "/home/sam")).toBe("/home/sam/file.txt");
   });
 
   it("absolute paths are used as-is", () => {
-    const fs = new R2FS(env.STORAGE, SAM);
-    expect(fs.normalizePath("/etc/passwd")).toBe("/etc/passwd");
+    expect(resolveUserPath("/etc/passwd", "/home/sam", "/home/sam")).toBe("/etc/passwd");
   });
 
   it("respects custom cwd", () => {
-    const fs = new R2FS(env.STORAGE, SAM, "/projects/myapp");
-    expect(fs.normalizePath("src/main.ts")).toBe("/projects/myapp/src/main.ts");
+    expect(resolveUserPath("src/main.ts", "/home/sam", "/projects/myapp")).toBe("/projects/myapp/src/main.ts");
+  });
+});
+
+describe("GsvFs virtual /dev", () => {
+  it("reads /dev/null as empty string", async () => {
+    const fs = makeFs(SAM);
+    const content = await fs.readFile("/dev/null");
+    expect(content).toBe("");
+  });
+
+  it("writes to /dev/null are discarded", async () => {
+    const fs = makeFs(SAM);
+    await fs.writeFile("/dev/null", "discarded");
+  });
+
+  it("reads /dev/zero as null bytes", async () => {
+    const fs = makeFs(SAM);
+    const content = await fs.readFile("/dev/zero");
+    expect(content.length).toBe(256);
+  });
+
+  it("reads /dev/random as random data", async () => {
+    const fs = makeFs(SAM);
+    const buf = await fs.readFileBuffer("/dev/random");
+    expect(buf.length).toBe(256);
+  });
+
+  it("lists /dev directory", async () => {
+    const fs = new GsvFs(env.STORAGE, SAM, {
+      procs: null as never,
+      devices: null as never,
+      caps: null as never,
+      config: null as never,
+    });
+    const entries = await fs.readdir("/dev");
+    expect(entries).toContain("null");
+    expect(entries).toContain("zero");
+    expect(entries).toContain("random");
+    expect(entries).toContain("urandom");
   });
 });

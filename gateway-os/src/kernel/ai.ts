@@ -2,16 +2,13 @@
  * ai.* syscall handlers.
  *
  * ai.tools — returns available tool schemas + online devices accessible to caller.
- * ai.config — reads model/provider/apiKey from R2 config files.
+ * ai.config — reads model/provider/apiKey from /sys/ (kernel SQLite via ConfigStore).
  *
  * Config resolution order:
- *   /etc/gsv/config (system defaults) → ~/.config/gsv/config (user overrides)
+ *   /sys/config/ai/* (system defaults) → /sys/users/{uid}/ai/* (user overrides)
  *
- * Config format (line-based key=value, like shell env files):
- *   provider=anthropic
- *   model=claude-sonnet-4-20250514
- *   api_key=sk-...
- *   reasoning=medium
+ * System config is seeded from R2 dotfiles (/etc/gsv/config, ~/.config/gsv/config)
+ * on first connect (reconciliation), then runtime reads are pure SQLite.
  */
 
 import type { KernelContext } from "./context";
@@ -79,41 +76,35 @@ export async function handleAiTools(
 export async function handleAiConfig(
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
-  const bucket = ctx.env.STORAGE;
-  const home = ctx.identity?.process.home ?? "/root";
+  const config = ctx.config;
+  const uid = ctx.identity?.process.uid ?? 0;
 
-  const systemConfig = await readConfigFile(bucket, "/etc/gsv/config");
-  const userConfig = await readConfigFile(bucket, `${home}/.config/gsv/config`);
+  const provider =
+    config.get(`users/${uid}/ai/provider`) ??
+    config.get("config/ai/provider") ??
+    "anthropic";
 
-  const merged = { ...systemConfig, ...userConfig };
+  const model =
+    config.get(`users/${uid}/ai/model`) ??
+    config.get("config/ai/model") ??
+    "claude-sonnet-4-20250514";
 
-  return {
-    provider: merged.provider ?? "anthropic",
-    model: merged.model ?? "claude-sonnet-4-20250514",
-    apiKey: merged.api_key ?? "",
-    reasoning: merged.reasoning,
-  };
-}
+  const apiKey =
+    config.get(`users/${uid}/ai/api_key`) ??
+    config.get("config/ai/api_key") ??
+    "";
 
-async function readConfigFile(
-  bucket: R2Bucket,
-  path: string,
-): Promise<Record<string, string>> {
-  const obj = await bucket.get(path);
-  if (!obj) return {};
+  const reasoning =
+    config.get(`users/${uid}/ai/reasoning`) ??
+    config.get("config/ai/reasoning") ??
+    undefined;
 
-  const text = await obj.text();
-  const config: Record<string, string> = {};
+  const maxTokens = parseInt(
+    config.get(`users/${uid}/ai/max_tokens`) ??
+    config.get("config/ai/max_tokens") ??
+    "8192",
+    10,
+  );
 
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx < 1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    const value = trimmed.slice(eqIdx + 1).trim();
-    config[key] = value;
-  }
-
-  return config;
+  return { provider, model, apiKey, reasoning, maxTokens };
 }

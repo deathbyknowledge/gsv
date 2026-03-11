@@ -31,4 +31,5 @@ export type AiConfigResult = {
   model: string;
   apiKey: string;
   reasoning?: string;
+  maxTokens: number;
 };

@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
 import { handleConnect } from "./connect";
 import type { KernelContext } from "./context";
+import { AuthStore } from "./auth-store";
 import { CapabilityStore } from "./capabilities";
+import { ConfigStore } from "./config";
 import { DeviceRegistry } from "./devices";
-import { ensureBootstrapped } from "../auth";
-import { hashToken, hashPassword } from "../auth/shadow";
+import { ProcessRegistry } from "./processes";
+import { hashToken, hashPassword, makeShadowEntry } from "../auth/shadow";
 
 type Row = Record<string, unknown>;
 
@@ -27,7 +29,7 @@ function createMockSql() {
     }
 
     // CapabilityStore queries
-    if (q.startsWith("SELECT COUNT")) {
+    if (q.startsWith("SELECT COUNT") && q.includes("group_capabilities")) {
       const table = getTable("group_capabilities");
       return { toArray: () => [{ cnt: table.length }] as T[] };
     }
@@ -88,6 +90,124 @@ function createMockSql() {
       return { toArray: () => rows as T[] };
     }
 
+    // AuthStore - passwd
+    if (q.startsWith("SELECT COUNT") && q.includes("passwd")) {
+      const table = getTable("passwd");
+      return { toArray: () => [{ c: table.length }] as T[] };
+    }
+
+    if (q.startsWith("INSERT INTO passwd")) {
+      const table = getTable("passwd");
+      const [username, uid, gid, gecos, home, shell] = bindings as [string, number, number, string, string, string];
+      table.push({ username, uid, gid, gecos, home, shell });
+      return { toArray: () => [] as T[] };
+    }
+
+    if (q.includes("FROM passwd WHERE username")) {
+      const table = getTable("passwd");
+      const [username] = bindings as [string];
+      return { toArray: () => table.filter(r => r.username === username) as T[] };
+    }
+
+    if (q.includes("FROM passwd WHERE uid")) {
+      const table = getTable("passwd");
+      const [uid] = bindings as [number];
+      return { toArray: () => table.filter(r => r.uid === uid) as T[] };
+    }
+
+    if (q.includes("FROM passwd ORDER BY")) {
+      const table = getTable("passwd");
+      return { toArray: () => [...table].sort((a, b) => (a.uid as number) - (b.uid as number)) as T[] };
+    }
+
+    if (q.includes("MAX(uid)")) {
+      const table = getTable("passwd");
+      const max = table.reduce((m, r) => Math.max(m, r.uid as number), 0);
+      return { toArray: () => [{ m: table.length > 0 ? max : null }] as T[] };
+    }
+
+    // AuthStore - shadow
+    if (q.startsWith("INSERT OR REPLACE INTO shadow")) {
+      const table = getTable("shadow");
+      const [username, hash, lastchanged, min, max, warn, inactive, expire, reserved] =
+        bindings as string[];
+      const existing = table.findIndex(r => r.username === username);
+      const entry = { username, hash, lastchanged, min, max, warn, inactive, expire, reserved };
+      if (existing >= 0) table[existing] = entry;
+      else table.push(entry);
+      return { toArray: () => [] as T[] };
+    }
+
+    if (q.includes("FROM shadow WHERE username")) {
+      const table = getTable("shadow");
+      const [username] = bindings as [string];
+      return { toArray: () => table.filter(r => r.username === username) as T[] };
+    }
+
+    if (q.includes("FROM shadow ORDER BY")) {
+      const table = getTable("shadow");
+      return { toArray: () => [...table] as T[] };
+    }
+
+    if (q.includes("UPDATE shadow SET")) {
+      const table = getTable("shadow");
+      const [hash, lastchanged, username] = bindings as [string, string, string];
+      const entry = table.find(r => r.username === username);
+      if (entry) { entry.hash = hash; entry.lastchanged = lastchanged; }
+      return { toArray: () => [] as T[] };
+    }
+
+    // AuthStore - groups
+    if (q.startsWith("INSERT INTO groups")) {
+      const table = getTable("groups");
+      const [name, gid, members] = bindings as [string, number, string];
+      table.push({ name, gid, members });
+      return { toArray: () => [] as T[] };
+    }
+
+    if (q.includes("FROM groups WHERE name")) {
+      const table = getTable("groups");
+      const [name] = bindings as [string];
+      return { toArray: () => table.filter(r => r.name === name) as T[] };
+    }
+
+    if (q.includes("FROM groups WHERE gid")) {
+      const table = getTable("groups");
+      const [gid] = bindings as [number];
+      return { toArray: () => table.filter(r => r.gid === gid) as T[] };
+    }
+
+    if (q.includes("FROM groups ORDER BY")) {
+      const table = getTable("groups");
+      return { toArray: () => [...table].sort((a, b) => (a.gid as number) - (b.gid as number)) as T[] };
+    }
+
+    if (q.includes("MAX(gid)")) {
+      const table = getTable("groups");
+      const max = table.reduce((m, r) => Math.max(m, r.gid as number), 0);
+      return { toArray: () => [{ m: table.length > 0 ? max : null }] as T[] };
+    }
+
+    // DELETE
+    if (q.startsWith("DELETE FROM")) {
+      const tableMatch = q.match(/DELETE FROM (\w+)/);
+      if (tableMatch) {
+        const table = getTable(tableMatch[1]);
+        if (q.includes("WHERE username")) {
+          const [username] = bindings as [string];
+          const idx = table.findIndex(r => r.username === username);
+          if (idx >= 0) table.splice(idx, 1);
+        } else if (q.includes("WHERE name")) {
+          const [name] = bindings as [string];
+          const idx = table.findIndex(r => r.name === name);
+          if (idx >= 0) table.splice(idx, 1);
+        } else {
+          table.length = 0;
+        }
+      }
+      return { toArray: () => [] as T[] };
+    }
+
     return { toArray: () => [] as T[] };
   }
 
@@ -97,31 +217,37 @@ function createMockSql() {
 const mockConnection = {
   send: () => {},
   close: () => {},
+  id: "test-conn-1",
   state: {},
   setState: () => {},
 } as any;
 
 function makeCtx(sql: ReturnType<typeof createMockSql>): KernelContext {
-  const caps = new CapabilityStore(sql);
+  const auth = new AuthStore(sql as any);
+  auth.init();
+
+  const caps = new CapabilityStore(sql as any);
   caps.init();
 
-  const devices = new DeviceRegistry(sql);
+  const config = new ConfigStore(sql as any);
+  config.init();
+
+  const devices = new DeviceRegistry(sql as any);
   devices.init();
+
+  const procs = new ProcessRegistry(sql as any);
+  procs.init();
 
   return {
     env: env as any,
+    auth,
     caps,
+    config,
     devices,
+    procs,
     connection: mockConnection,
     serverVersion: "0.0.1-test",
   };
-}
-
-async function cleanR2() {
-  const listed = await env.STORAGE.list({ prefix: "/etc/" });
-  for (const obj of listed.objects) {
-    await env.STORAGE.delete(obj.key);
-  }
 }
 
 describe("handleConnect", () => {
@@ -129,7 +255,6 @@ describe("handleConnect", () => {
 
   beforeEach(async () => {
     sql = createMockSql();
-    await cleanR2();
   });
 
   it("rejects unsupported protocol", async () => {
@@ -169,20 +294,14 @@ describe("handleConnect", () => {
   });
 
   it("rejects no-auth after root has a token", async () => {
+    const ctx = makeCtx(sql);
     const token = "my-root-token";
     const hash = await hashToken(token);
-    await ensureBootstrapped(env.STORAGE, undefined);
 
-    // Manually update shadow to set a real hash for root
-    const shadowObj = await env.STORAGE.get("/etc/shadow");
-    const shadowRaw = await shadowObj!.text();
-    const updatedShadow = shadowRaw.replace(/!/, hash);
-    await env.STORAGE.put("/etc/shadow", updatedShadow, {
-      httpMetadata: { contentType: "text/plain" },
-      customMetadata: { owner: "0", gid: "0", mode: "640" },
-    });
+    // Bootstrap then set root's password
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", hash);
 
-    const ctx = makeCtx(sql);
     const result = await handleConnect(
       { protocol: 1, client: { id: "c1", version: "1", platform: "test", role: "user" } },
       ctx,
@@ -192,11 +311,13 @@ describe("handleConnect", () => {
   });
 
   it("authenticates with valid token", async () => {
-    const token = "root-secret";
-    await ensureBootstrapped(env.STORAGE, token);
-
     const ctx = makeCtx(sql);
+    const token = "root-secret";
+    const hash = await hashToken(token);
+
+    await ctx.auth.bootstrap();
     ctx.caps.seed();
+    await ctx.auth.setPassword("root", hash);
 
     const result = await handleConnect(
       {
@@ -216,9 +337,11 @@ describe("handleConnect", () => {
   });
 
   it("rejects wrong token", async () => {
-    await ensureBootstrapped(env.STORAGE, "correct-token");
-
     const ctx = makeCtx(sql);
+    const hash = await hashToken("correct-token");
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", hash);
+
     const result = await handleConnect(
       {
         protocol: 1,
@@ -232,9 +355,11 @@ describe("handleConnect", () => {
   });
 
   it("rejects unknown user", async () => {
-    await ensureBootstrapped(env.STORAGE, "root-token");
-
     const ctx = makeCtx(sql);
+    const hash = await hashToken("root-token");
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", hash);
+
     const result = await handleConnect(
       {
         protocol: 1,
@@ -336,21 +461,12 @@ describe("handleConnect", () => {
   });
 
   it("authenticates with password (PBKDF2)", async () => {
-    // Bootstrap with no token (locked root)
-    await ensureBootstrapped(env.STORAGE);
-
-    // Set a password hash for root manually
-    const pwHash = await hashPassword("hunter2");
-    const shadowObj = await env.STORAGE.get("/etc/shadow");
-    const shadowRaw = await shadowObj!.text();
-    const updatedShadow = shadowRaw.replace(/!/, pwHash);
-    await env.STORAGE.put("/etc/shadow", updatedShadow, {
-      httpMetadata: { contentType: "text/plain" },
-      customMetadata: { owner: "0", gid: "0", mode: "640" },
-    });
-
     const ctx = makeCtx(sql);
+    const pwHash = await hashPassword("hunter2");
+
+    await ctx.auth.bootstrap();
     ctx.caps.seed();
+    await ctx.auth.setPassword("root", pwHash);
 
     const result = await handleConnect(
       {
