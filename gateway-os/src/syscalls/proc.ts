@@ -6,10 +6,13 @@
  * Sub-processes can be spawned for tasks, cron jobs, etc.
  */
 
+import type { ProcessIdentity } from "./system";
+
 export type ProcSpawnArgs = {
   label?: string;
   prompt?: string;
   parentPid?: string;
+  // NOTE: consider allowing explicit identity override (root only or subset of current identity)
 };
 
 export type ProcSpawnResult =
@@ -85,3 +88,12 @@ export type ProcListEntry = {
 export type ProcListResult = {
   processes: ProcListEntry[];
 };
+
+// Kernel-only: sets process identity. Sent by the kernel to Process DOs
+// at spawn time and never routed from user/device connections.
+export type ProcSetIdentityArgs = {
+  pid: string;
+  identity: ProcessIdentity;
+};
+
+export type ProcSetIdentityResult = { ok: true };

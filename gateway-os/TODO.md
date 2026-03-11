@@ -47,7 +47,7 @@ Capabilities are NOT hardcoded — root can modify them. Stored in kernel DO SQL
 - [x] Implement `resolve(gids)` — union of all capabilities across groups
 - [x] Implement `hasCapability(capabilities, syscall)` — matching logic (`*`, `domain.*`, exact)
 - [x] Implement `grant` / `revoke` / `list` with format validation
-- [ ] Wire capabilities into `ConnectResult.identity.capabilities` during `sys.connect`
+- [x] Wire capabilities into `ConnectResult.identity.capabilities` during `sys.connect`
 
 ## R2FS permission model upgrade (uid/gid/mode)
 
@@ -156,7 +156,9 @@ Replaces old `proc.*` for device-level shell execution. Always routable (require
 - [x] `shell.list` — list running shell commands on a device
 - [x] Types in `syscalls/shell.ts`
 - [x] Constants in `syscalls/constants.ts`
-- [x] Dispatch wired (devices-only, no native handler)
+- [x] Dispatch wired (device routing + native `shell.exec` via `just-bash`)
+- [x] Native driver: `R2BashFs` (R2-backed `IFileSystem`), virtual `/proc` + `/dev` mounts
+- [x] Custom bash commands: `whoami`, `id`, `hostname`, `uname`, `chown`, `chmod`, `ps`
 
 ## Syscall domain: `proc.*` (OS process management)
 
@@ -285,15 +287,17 @@ Uses agents SDK `schedule()` / `scheduleEvery()`.
 
 ## Worker entrypoint & routing
 
-- [ ] Update `src/index.ts` fetch handler
-- [ ] Wire `/ws`, `/health`, `/media/*`
+- [x] Update `src/index.ts` fetch handler
+- [x] Wire `/ws`, `/health`, `/media/*`
 - [ ] Port `GatewayEntrypoint` Service Binding RPC for channel inbound
-- [ ] Export Process DO + Kernel DO in `wrangler.jsonc`
+- [x] Export Process DO + Kernel DO in `wrangler.jsonc`
 
 ## CLI updates (Rust)
 
-- [ ] Update frame types: `method` → `call`, add `sig` frame, `session` domain → `proc` domain
-- [ ] Update connect flow: `sys.connect` with new `ConnectResult`
-- [ ] Add auth: password/token in `ConnectArgs.auth`
-- [ ] Device commands use `shell.*` domain instead of `proc.*`
+- [x] Update frame types: `method` → `call`, add `sig` frame, `session` domain → `proc` domain
+- [x] Update connect flow: `sys.connect` with new `ConnectResult`
+- [x] Add auth: password/token in `ConnectArgs.auth`
+- [x] Device commands use `shell.*` domain instead of `proc.*`
+- [x] `gsv shell` interactive REPL (connects as user, sends `shell.exec`)
+- [x] `gsv node` connects as driver with `implements: ["fs.*", "shell.*"]`
 - [ ] Update binary frame format

@@ -23,6 +23,12 @@ import {
   handleFsSearch,
 } from "../drivers/native/fs";
 import { handleShellExec } from "../drivers/native/shell";
+import { handleAiTools, handleAiConfig } from "./ai";
+import {
+  handleProcList,
+  handleProcSpawn,
+  forwardToProcess,
+} from "./proc-handlers";
 
 export type DispatchDeps = {
   routingTable: RoutingTable;
@@ -106,13 +112,29 @@ async function dispatchNative(
       case "shell.list":
         return errFrame(frame.id, 501, `${frame.call} requires a device target`);
 
-      case "proc.spawn":
-      case "proc.kill":
       case "proc.list":
+        data = handleProcList(frame.args, ctx);
+        break;
+      case "proc.spawn":
+        data = await handleProcSpawn(frame.args, ctx);
+        break;
       case "proc.send":
+      case "proc.kill":
       case "proc.history":
       case "proc.reset":
-        return errFrame(frame.id, 501, `${frame.call} not yet implemented`);
+        data = await forwardToProcess(frame, ctx);
+        break;
+      case "proc.setidentity":
+        return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
+
+
+      // --- ai.* ---
+      case "ai.tools":
+        data = await handleAiTools(ctx);
+        break;
+      case "ai.config":
+        data = await handleAiConfig(ctx);
+        break;
 
       // --- sys.* ---
       case "sys.connect":

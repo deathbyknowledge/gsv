@@ -4,7 +4,7 @@ import {
   Agent as Host,
   type WSMessage,
 } from "agents";
-import type { Frame, RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protocol/frames";
 import type { ConnectionIdentity, ProcessIdentity } from "../syscalls/system";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { DeviceRegistry } from "./devices";
@@ -13,6 +13,7 @@ import { ProcessRegistry } from "./processes";
 import { handleConnect } from "./connect";
 import { dispatch, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
+import { sendFrameToProcess } from "../shared/utils";
 
 const SERVER_VERSION = "0.0.1";
 
@@ -26,7 +27,7 @@ export class Kernel extends Host<Env> {
   private readonly devices: DeviceRegistry;
   private readonly routes: RoutingTable;
   private readonly procs: ProcessRegistry;
-  private readonly connections = new Map<string, Connection>();
+  private readonly connections = new Map<string, Connection<ConnectionState>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -110,7 +111,7 @@ export class Kernel extends Host<Env> {
    */
   async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
     if (frame.type === "req") {
-      return this.handleProcessReq(processId, frame as RequestFrame);
+      return this.handleProcessReq(processId, frame);
     }
 
     if (frame.type === "res") {
@@ -122,7 +123,7 @@ export class Kernel extends Host<Env> {
     return null;
   }
 
-  private async handleProcessReq(processId: string, frame: RequestFrame): Promise<Frame | null> {
+  private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
     const identity = this.procs.getIdentity(processId);
     if (!identity) {
       return errFrame(frame.id, 404, "Unknown process");
@@ -256,6 +257,24 @@ export class Kernel extends Host<Env> {
     connection.setState(newState);
     this.connections.set(ctx.connection.id, connection);
 
+    if (outcome.identity.role === "user") {
+      const freshIdentity = outcome.identity.process;
+      const { pid: initPid, created } = this.procs.ensureInit(freshIdentity);
+
+      if (created) {
+        sendFrameToProcess(initPid, {
+          type: "req",
+          id: crypto.randomUUID(),
+          call: "proc.setidentity",
+          args: { pid: initPid, identity: freshIdentity },
+        } as RequestFrame).catch((err: unknown) => {
+          console.error(`[Kernel] Failed to set identity for ${initPid}:`, err);
+        });
+      } else {
+        this.reconcileIdentity(freshIdentity);
+      }
+    }
+
     this.sendOk(connection, frame.id, outcome.result);
   }
 
@@ -297,10 +316,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (origin.type === "process") {
-      const stub = this.env.PROCESS.get(
-        this.env.PROCESS.idFromName(origin.id),
-      );
-      stub.recvFrame(frame).catch((err: unknown) => {
+      sendFrameToProcess(origin.id, frame).catch((err: unknown) => {
         console.error(`[Kernel] Failed to deliver frame to process ${origin.id}:`, err);
       });
     }
@@ -331,6 +347,61 @@ export class Kernel extends Host<Env> {
       }
     }
   }
+
+  /**
+   * Compare freshly-resolved identity from R2 against ProcessRegistry.
+   * If there's drift (groups changed, home changed, etc.), update the
+   * registry and send identity.changed signals to all processes for that uid.
+   */
+  private reconcileIdentity(fresh: ProcessIdentity): void {
+    const existing = this.procs.getIdentity(`init:${fresh.uid}`);
+    if (!existing) return;
+
+    if (
+      existing.gid === fresh.gid &&
+      existing.home === fresh.home &&
+      existing.username === fresh.username &&
+      JSON.stringify(existing.gids) === JSON.stringify(fresh.gids)
+    ) {
+      return;
+    }
+
+    const processes = this.procs.list(fresh.uid);
+    for (const proc of processes) {
+      this.procs.updateIdentity(proc.processId, fresh);
+
+      sendFrameToProcess(proc.processId, {
+        type: "sig",
+        signal: "identity.changed",
+        payload: { identity: fresh },
+      }).catch((err: unknown) => {
+        console.error(`[Kernel] Failed to send identity.changed to ${proc.processId}:`, err);
+      });
+    }
+  }
+
+  /**
+   * Broadcast a signal to all active WebSocket connections belonging to a UID.
+   * Skips service/channel connections — those require explicit ipc.send.
+   */
+  broadcastToUid(uid: number, signal: string, payload?: unknown): void {
+    const frame: SignalFrame = {
+      type: "sig",
+      signal,
+      payload,
+    };
+    const json = JSON.stringify(frame);
+
+    for (const [, conn] of this.connections) {
+      const state = conn.state
+      if (!state) continue;
+      if (state.identity?.role === "service") continue;
+      if (state.identity?.process.uid === uid) {
+        conn.send(json);
+      }
+    }
+  }
+
 
   private sendOk(connection: Connection, id: string, data?: unknown): void {
     connection.send(JSON.stringify({ type: "res", id, ok: true, data }));

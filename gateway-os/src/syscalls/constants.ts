@@ -17,6 +17,7 @@ export const PROC_LIST = "proc.list";
 export const PROC_SEND = "proc.send";
 export const PROC_HISTORY = "proc.history";
 export const PROC_RESET = "proc.reset";
+export const PROC_SETIDENTITY = "proc.setidentity";
 
 // System
 export const SYS_CONNECT = "sys.connect";
@@ -29,6 +30,10 @@ export const SCHED_ADD = "sched.add";
 export const SCHED_UPDATE = "sched.update";
 export const SCHED_REMOVE = "sched.remove";
 export const SCHED_RUN = "sched.run";
+
+// AI (process bootstrap)
+export const AI_TOOLS = "ai.tools";
+export const AI_CONFIG = "ai.config";
 
 // IPC (channels)
 export const IPC_SEND = "ipc.send";

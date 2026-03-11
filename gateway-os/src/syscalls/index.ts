@@ -23,6 +23,8 @@ import type {
   ProcResetResult,
   ProcListArgs,
   ProcListResult,
+  ProcSetIdentityArgs,
+  ProcSetIdentityResult,
 } from "./proc";
 import type { ConnectArgs, ConnectResult } from "./system";
 import type {
@@ -33,6 +35,12 @@ import type {
   CronJob,
   CronJobPatch,
 } from "./scheduler";
+import type {
+  AiToolsArgs,
+  AiToolsResult,
+  AiConfigArgs,
+  AiConfigResult,
+} from "./ai";
 import type { IpcSendArgs, IpcSendResult, ChannelStatus } from "./ipc";
 
 export type ToolDefinition = {
@@ -61,6 +69,7 @@ export type SyscallDomains = {
   "proc.send": { args: ProcSendArgs; result: ProcSendResult };
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
+  "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
@@ -73,6 +82,10 @@ export type SyscallDomains = {
   "sched.update": { args: { id: string; patch: CronJobPatch }; result: { job: CronJob } };
   "sched.remove": { args: { id: string }; result: { removed: boolean } };
   "sched.run": { args: { id?: string; mode?: "due" | "force" }; result: SchedulerRunResult };
+
+  // AI (process bootstrap)
+  "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
+  "ai.config": { args: AiConfigArgs; result: AiConfigResult };
 
   // IPC (channels)
   "ipc.send": { args: IpcSendArgs; result: IpcSendResult };
@@ -88,6 +101,7 @@ export type SyscallDomain =
   | "shell"
   | "proc"
   | "sys"
+  | "ai"
   | "sched"
   | "ipc";
 

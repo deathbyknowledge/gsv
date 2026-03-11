@@ -1,5 +1,8 @@
-import { Connection, getCurrentAgent } from "agents";
+import { Connection, getAgentByName } from "agents";
 import { Kernel } from "../kernel/do";
+import { env } from "cloudflare:workers";
+import { Process } from "../process/do";
+import type { RequestFrame, ResponseFrame, Frame } from "../protocol/frames";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
@@ -13,20 +16,29 @@ export const isConnectionInit = (connection: Connection<ConnState>) => {
   return connection.state.step === "ready";
 };
 
-export function getKernelPtr(skipConnection = false) {
-  const { agent, connection } = getCurrentAgent<Kernel>();
+// don't break the ✨illusion✨
+type ProcessPtr = DurableObjectStub<Process>;
+type KernelPtr = DurableObjectStub<Kernel>;
 
-  if (!agent) {
-    throw new Error(
-      "Kernel not found. Did you use getKernelPtr() outside the DO?",
-    );
-  }
+export async function getKernelPtr(): Promise<KernelPtr> {
+  return await getAgentByName(env.KERNEL, "singleton");
+}
 
-  if (!skipConnection && !connection) {
-    throw new Error(
-      "Connection not found. Did you mean to use getKernelPtr(true)?",
-    );
-  }
+export async function getProcessByPid(pid: string): Promise<ProcessPtr> {
+  return await getAgentByName(env.PROCESS, pid);
+}
 
-  return { kernel: agent, connection };
+export async function sendFrameToKernel(
+  processId: string,
+  frame: Frame,
+): Promise<Frame | null> {
+  const kernel = await getKernelPtr();
+  return kernel.recvFrame(processId, frame);
+}
+export async function sendFrameToProcess(
+  pid: string,
+  frame: Frame,
+): Promise<Frame | null> {
+  const proc = await getProcessByPid(pid);
+  return proc.recvFrame(frame);
 }

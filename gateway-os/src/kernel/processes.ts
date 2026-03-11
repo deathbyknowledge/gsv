@@ -74,14 +74,15 @@ export class ProcessRegistry {
 
   /**
    * Ensure the user's init process exists. Spawns it if missing.
+   * Returns { pid, created } so the caller knows whether to initialize the DO.
    */
-  ensureInit(identity: ProcessIdentity): string {
+  ensureInit(identity: ProcessIdentity): { pid: string; created: boolean } {
     const initId = `init:${identity.uid}`;
     const existing = this.get(initId);
-    if (existing) return initId;
+    if (existing) return { pid: initId, created: false };
 
     this.spawn(initId, identity, { label: `init (${identity.username})` });
-    return initId;
+    return { pid: initId, created: true };
   }
 
   getIdentity(processId: string): ProcessIdentity | null {
@@ -116,6 +117,18 @@ export class ProcessRegistry {
 
     if (rows.length === 0) return null;
     return toRecord(rows[0]);
+  }
+
+  updateIdentity(processId: string, identity: ProcessIdentity): void {
+    this.sql.exec(
+      `UPDATE processes SET uid = ?, gid = ?, gids = ?, username = ?, home = ? WHERE process_id = ?`,
+      identity.uid,
+      identity.gid,
+      JSON.stringify(identity.gids),
+      identity.username,
+      identity.home,
+      processId,
+    );
   }
 
   setState(processId: string, state: ProcessState): boolean {
