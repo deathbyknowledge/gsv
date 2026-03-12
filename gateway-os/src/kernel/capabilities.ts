@@ -15,7 +15,7 @@ const CAPABILITY_PATTERN = /^(\*|[a-z][a-z0-9]*\.\*|[a-z][a-z0-9]*\.[a-z][a-z0-9
 
 const DEFAULT_CAPABILITIES: [number, string[]][] = [
   [0,   ["*"]],                                           // root
-  [100, ["fs.*", "shell.*", "proc.*", "sched.*"]],        // users
+  [100, ["fs.*", "shell.*", "proc.*", "sched.*", "sys.config.get", "sys.config.set"]],  // users
   [101, ["fs.*", "shell.*"]],                             // drivers
   [102, ["ipc.*"]],                                       // services
 ];

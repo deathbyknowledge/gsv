@@ -17,7 +17,8 @@ import type {
   ResponseFrame,
   SignalFrame,
 } from "../protocol/frames";
-import type { SyscallName } from "../syscalls";
+import type { ResultOf,
+SyscallName } from "../syscalls";
 import type { ProcessIdentity } from "../syscalls/system";
 import type {
   ProcSendResult,
@@ -114,7 +115,7 @@ export class Process extends Host<Env> {
    */
   private async handleReq(frame: RequestFrame): Promise<ResponseFrame | null> {
     try {
-      let data: unknown;
+      let data: ResultOf<SyscallName>;
 
       switch (frame.call) {
         case "proc.setidentity": {

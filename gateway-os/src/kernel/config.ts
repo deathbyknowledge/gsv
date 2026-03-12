@@ -120,24 +120,4 @@ export class ConfigStore {
       );
     }
   }
-
-  /**
-   * Seed from a parsed key=value config string (like /etc/gsv/config).
-   * Only inserts keys that don't already exist.
-   */
-  seedFromText(prefix: string, text: string): void {
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eqIdx = trimmed.indexOf("=");
-      if (eqIdx < 1) continue;
-      const key = trimmed.slice(0, eqIdx).trim();
-      const value = trimmed.slice(eqIdx + 1).trim();
-      this.sql.exec(
-        "INSERT OR IGNORE INTO config_kv (key, value) VALUES (?, ?)",
-        `${prefix}/${key}`,
-        value,
-      );
-    }
-  }
 }

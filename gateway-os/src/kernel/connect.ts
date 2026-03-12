@@ -43,6 +43,7 @@ export async function handleConnect(
   const bootstrapped = await auth.bootstrap();
   if (bootstrapped) {
     caps.seed();
+    await ensureRootHome(ctx.env.STORAGE);
   }
 
   // Authentication
@@ -166,6 +167,15 @@ async function resolveIdentity(
   if (!result.ok) return { ok: false, error: result.error };
 
   return { ok: true, identity: result.identity };
+}
+
+async function ensureRootHome(bucket: R2Bucket): Promise<void> {
+  const marker = "root/.dir";
+  const existing = await bucket.head(marker);
+  if (existing) return;
+  await bucket.put(marker, new ArrayBuffer(0), {
+    customMetadata: { uid: "0", gid: "0", mode: "750", dirmarker: "1" },
+  });
 }
 
 function buildSignalList(role: string): string[] {

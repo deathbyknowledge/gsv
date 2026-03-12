@@ -430,8 +430,7 @@ export class GsvFs implements IFileSystem {
     const obj = await this.bucket.get(key);
     if (!obj) throw new Error(`ENOENT: no such file or directory, chown '${path}'`);
 
-    const fileUid = parseInt(obj.customMetadata?.uid ?? "-1", 10);
-    if (this.identity.uid !== 0 && this.identity.uid !== fileUid) {
+    if (this.identity.uid !== 0) {
       throw new Error(`EPERM: operation not permitted, chown '${path}'`);
     }
 

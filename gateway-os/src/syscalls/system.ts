@@ -64,3 +64,27 @@ export type UserPermissions = {
   grants: string[];
   denials: string[];
 };
+
+// -- sys.config.get / sys.config.set -----------------------------------------
+
+export type SysConfigGetArgs = {
+  key?: string;
+};
+
+export type SysConfigEntry = {
+  key: string;
+  value: string;
+};
+
+export type SysConfigGetResult = {
+  entries: SysConfigEntry[];
+};
+
+export type SysConfigSetArgs = {
+  key: string;
+  value: string;
+};
+
+export type SysConfigSetResult = {
+  ok: true;
+};

@@ -29,6 +29,7 @@ import {
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
+import { handleSysConfigGet, handleSysConfigSet } from "./sys-config";
 
 export type DispatchDeps = {
   routingTable: RoutingTable;
@@ -140,8 +141,11 @@ async function dispatchNative(
       case "sys.connect":
         return errFrame(frame.id, 400, "sys.connect handled separately");
       case "sys.config.get":
+        data = handleSysConfigGet(frame.args, ctx);
+        break;
       case "sys.config.set":
-        return errFrame(frame.id, 501, `${frame.call} not yet implemented`);
+        data = handleSysConfigSet(frame.args, ctx);
+        break;
 
       // --- sched.* ---
       case "sched.list":
@@ -160,7 +164,7 @@ async function dispatchNative(
         return errFrame(frameId, 404, `Unknown syscall: ${(frame as { call: string }).call}`);
     }
 
-    return { type: "res", id: frame.id, ok: true, data };
+    return { type: "res", id: frame.id, ok: true, data } as ResponseFrame;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return errFrame(frame.id, 500, message);

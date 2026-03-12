@@ -182,6 +182,8 @@ describe("CapabilityStore", () => {
       "proc.*",
       "sched.*",
       "shell.*",
+      "sys.config.get",
+      "sys.config.set",
     ]);
   });
 

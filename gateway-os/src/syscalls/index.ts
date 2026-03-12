@@ -26,7 +26,14 @@ import type {
   ProcSetIdentityArgs,
   ProcSetIdentityResult,
 } from "./proc";
-import type { ConnectArgs, ConnectResult } from "./system";
+import type {
+  ConnectArgs,
+  ConnectResult,
+  SysConfigGetArgs,
+  SysConfigGetResult,
+  SysConfigSetArgs,
+  SysConfigSetResult,
+} from "./system";
 import type {
   SchedulerListArgs,
   SchedulerListResult,
@@ -73,8 +80,8 @@ export type SyscallDomains = {
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
-  "sys.config.get": { args: { path?: string }; result: unknown };
-  "sys.config.set": { args: { path: string; value: unknown }; result: { ok: true } };
+  "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
+  "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
 
   // Scheduler (cron)
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
