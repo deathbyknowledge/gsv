@@ -29,7 +29,7 @@ No R2 round-trips for auth, no credentials in object storage.
 - [x] GsvFs routes `/etc/passwd`, `/etc/shadow`, `/etc/group` as virtual paths (read/write)
 - [x] `/etc/shadow` read restricted to uid 0, stat shows mode 0640
 - [x] `sys.connect` uses `AuthStore` instead of R2 for auth
-- [ ] Create `/root/` directory marker on first boot
+- [x] Create `/root/` directory marker on first boot
 
 ## Identity links (channel → uid mapping)
 
@@ -209,19 +209,26 @@ Kernel-internal process management. Not routable (no `target`).
 - [x] SQLite: `pending_tool_calls` + `process_meta` tables
 - [x] `registerToolCall` / `resolveToolCall` / `failToolCall` / `getToolResults`
 - [x] `dispatchSyscall` — send req to kernel, handle sync/async receipt
-- [ ] Load shared identity files (SOUL.md) from user's home dir on init
+- [x] Prompt assembly: system prompt (ConfigStore) + `~/CONSTITUTION.md` + `~/context.d/*.md`
 - [ ] Track `lastInboundContext` for response routing
-- [ ] Agent loop: LLM call → tool dispatch → result collection → continue
+- [x] Agent loop: LLM call → tool dispatch → result collection → continue
 - [x] Export + bind in `wrangler.jsonc` / `index.ts`
 
-## Process DO — agent loop (port from Session)
+## Process DO — agent loop
 
-- [ ] Port message history storage from old Session DO (SQLite-backed)
-- [ ] Port agent loop (model call → tool dispatch → model call cycle)
-- [ ] Implement `proc.send` — inject a user message and start the agent loop
-- [ ] Implement `proc.reset` — archive messages, create new session id
-- [ ] Implement `proc.history` — return message history with limit/offset
-- [ ] Wire up LLM token streaming via `sig` frames (chat.chunk, chat.complete)
+- [x] Message history storage (SQLite-backed via `ProcessStore`)
+- [x] Agent loop (`continueAgentLoop`: LLM call → tool dispatch → result collection → continue)
+- [x] `proc.send` — inject user message and start agent loop (or queue if busy)
+- [x] `proc.reset` — archive messages to R2, clear conversation
+- [x] `proc.history` — return message history with limit/offset
+- [x] Message queue: FIFO with tool-result-boundary injection (drain queue before next LLM call)
+- [x] Signal delivery: `chat.text`, `chat.tool_call`, `chat.tool_result`, `chat.complete`
+- [x] Run state: per-run cache of ai.config, ai.tools, assembled prompt
+- [x] `kernelRpc` helper for synchronous kernel calls (ai.config, ai.tools)
+- [x] Reverse tool map: LLM tool name → syscall name
+- [ ] Token-level streaming (`streamSimple` + `chat.chunk` deltas)
+- [ ] Context overflow handling / compaction
+- [ ] Max turns / loop safety limits
 
 ## User onboarding flow
 
@@ -283,7 +290,7 @@ Routes paths internally:
 - [x] Permission enforcement: root reads/writes all `/sys/`, non-root only own `/sys/users/{uid}/`
 - [x] Wire into shell driver (replace `R2BashFs` + `composeMounts` + `InMemoryFs`)
 - [x] Wire into `fs.*` syscall handlers (replace `R2FS`)
-- [ ] `readdir` for virtual directories (`/proc/`, `/sys/`, `/sys/devices/`, etc.)
+- [x] `readdir` for virtual directories (`/proc/`, `/sys/`, `/sys/devices/`, etc.)
 - [ ] Unit tests
 
 ## ConfigStore (`kernel/config.ts`)
@@ -299,12 +306,14 @@ are seed files loaded on first connect (like `sysctl -p` loading `/etc/sysctl.co
 - [x] Explicit `SYSTEM_CONFIG_DEFAULTS` with documented fields (ai, server, shell, process)
 - [x] `USER_OVERRIDABLE_PREFIXES` restricts which config keys users can override
 - [x] Kernel seeds defaults on init (INSERT OR IGNORE — never overwrites)
-- [ ] Reconciliation: on `sys.connect`, read R2 dotfiles and seed into ConfigStore if not populated
-- [ ] `sys.config.get` / `sys.config.set` syscall handlers
+- ~~Reconciliation~~ — removed; `/sys/config/*` + `sys.config.set` are the config interfaces, no need for `/etc/gsv/config` dotfile duplication
+- [x] `sys.config.get` / `sys.config.set` syscall handlers
 
 ## System config (`sys.config.*`)
 
-- [ ] `sys.config.get` / `sys.config.set` handlers — thin wrappers around `ConfigStore` + permission checks
+- [x] `sys.config.get` / `sys.config.set` handlers — thin wrappers around `ConfigStore` + permission checks
+- [x] Key-level permission model: root full access; non-root reads `config/*` + own `users/{uid}/*`; writes only `users/{uid}/{overridable}/*`
+- [x] Users group granted `sys.config.get` + `sys.config.set` capabilities (fine-grained check in handler)
 
 ## File transfer (`fs.transfer`)
 
@@ -338,7 +347,10 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 
 ### Kernel → client (outbound)
 - [ ] `chat.chunk` — LLM token streaming
-- [ ] `chat.complete` — LLM response finished
+- [x] `chat.text` — assistant text at tool-call boundary (pre-dispatch)
+- [x] `chat.tool_call` — tool dispatched
+- [x] `chat.tool_result` — tool completed
+- [x] `chat.complete` — run finished (final text + usage)
 - [ ] `process.exit` — process terminated
 - [ ] `device.status` — device online/offline
 - [ ] `channel.status` — channel connected/disconnected
@@ -347,7 +359,8 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 - [ ] `device.heartbeat` — periodic health check from device
 
 ### Plumbing
-- [ ] `sendSignal(connection, signal, payload)` in kernel
+- [x] `broadcastToUid(uid, signal, payload)` in kernel
+- [x] Process → Kernel signal relay (`recvFrame` handles `sig` frames from processes)
 - [ ] Inbound signal routing in `onMessage`
 - [ ] Wire LLM streaming, process lifecycle events
 

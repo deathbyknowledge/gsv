@@ -44,7 +44,7 @@ export type ProcHistoryArgs = {
 };
 
 export type ProcHistoryMessage = {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "toolResult";
   content: unknown;
   timestamp?: number;
 };

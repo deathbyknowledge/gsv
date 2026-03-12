@@ -130,8 +130,27 @@ export class Kernel extends Host<Env> {
       return null;
     }
 
-    // sig — inbound signals from process (future use)
+    if (frame.type === "sig") {
+      this.handleProcessSignal(processId, frame);
+      return null;
+    }
+
     return null;
+  }
+
+  /**
+   * Relay chat.* signals from a process to the owning user's connections.
+   */
+  private handleProcessSignal(processId: string, frame: SignalFrame): void {
+    if (!frame.signal.startsWith("chat.")) return;
+
+    const identity = this.procs.getIdentity(processId);
+    if (!identity) {
+      console.warn(`[Kernel] Signal from unknown process ${processId}`);
+      return;
+    }
+
+    this.broadcastToUid(identity.uid, frame.signal, frame.payload);
   }
 
   private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {

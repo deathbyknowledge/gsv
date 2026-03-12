@@ -15,11 +15,13 @@ import type {
   Frame,
   RequestFrame,
   ResponseFrame,
+  ResponseOkFrame,
+  ResponseErrFrame,
   SignalFrame,
 } from "../protocol/frames";
-import type { ResultOf,
-SyscallName } from "../syscalls";
+import type { ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { ProcessIdentity } from "../syscalls/system";
+import type { AiConfigResult,AiToolsDevice,AiToolsResult } from "../syscalls/ai";
 import type {
   ProcSendResult,
   ProcHistoryResult,
@@ -27,12 +29,26 @@ import type {
   ProcResetResult,
   ProcKillResult,
 } from "../syscalls/proc";
+import type {
+  AssistantMessage,
+  TextContent,
+  ToolCall,
+  Context,
+  Tool,
+  ThinkingLevel,
+} from "@mariozechner/pi-ai";
+import { completeSimple, getModel } from "@mariozechner/pi-ai";
 import { ProcessStore } from "./store";
+import { buildPrompt } from "./prompt";
 import { sendFrameToKernel } from "../shared/utils";
+import { TOOL_TO_SYSCALL, SYSCALL_TOOL_NAMES } from "../syscalls/constants";
 
 type RunState = {
   runId: string;
   queued: boolean;
+  config?: AiConfigResult;
+  tools?: ToolDefinition[];
+  systemPrompt?: string;
 };
 
 export class Process extends Host<Env> {
@@ -176,15 +192,12 @@ export class Process extends Host<Env> {
   }): Promise<ProcSendResult> {
     const runId = crypto.randomUUID();
 
-    this.store.appendMessage("user", args.message);
-
-    const queued = this.currentRun !== null;
-
-    if (queued) {
-      this.store.setValue("pendingRunId", runId);
+    if (this.currentRun) {
+      this.store.enqueue(runId, args.message);
       return { ok: true, status: "started", runId, queued: true };
     }
 
+    this.store.appendMessage("user", args.message);
     this.currentRun = { runId, queued: false };
     this.scheduleTick(runId);
 
@@ -272,13 +285,12 @@ export class Process extends Host<Env> {
         break;
     }
   }
-
   /**
    * Schedule the next agent loop tick using the DO scheduler.
    * Each tick resets the subrequest counter.
    */
   private scheduleTick(runId: string): void {
-    const next = new Date(Date.now() + 10); // 10ms from now
+    const next = new Date(Date.now() + 10);
     this.schedule(next, "tick", runId);
   }
 
@@ -287,17 +299,266 @@ export class Process extends Host<Env> {
   }
 
   private async continueAgentLoop(runId: string): Promise<void> {
-    // Stub — Phase 4 will port the full LLM call + tool dispatch cycle.
-    console.log(`[Process] Agent loop tick for run ${runId} (stub)`);
-
-    const pendingRunId = this.store.getValue("pendingRunId");
-    if (pendingRunId) {
-      this.store.deleteValue("pendingRunId");
-      this.currentRun = { runId: pendingRunId, queued: false };
-      this.scheduleTick(pendingRunId);
-    } else {
-      this.currentRun = null;
+    const run = this.currentRun;
+    if (!run || run.runId !== runId) {
+      console.warn(`[Process] Stale tick for run ${runId}, ignoring`);
+      return;
     }
+
+    // Step 1: Collect resolved tool results
+    const toolResults = this.store.getResults(runId);
+    const hadPendingToolCalls = toolResults.length > 0;
+
+    if (hadPendingToolCalls) {
+      for (const result of toolResults) {
+        const content =
+          result.status === "error"
+            ? `Error: ${result.error}`
+            : typeof result.result === "string"
+              ? result.result
+              : JSON.stringify(result.result ?? null);
+
+        this.store.appendToolResult(
+          result.id,
+          result.call,
+          content,
+          result.status === "error",
+        );
+
+        await this.sendSignal("chat.tool_result", {
+          name: SYSCALL_TOOL_NAMES[result.call] ?? result.call,
+          callId: result.id,
+          ok: result.status === "completed",
+          error: result.status === "error" ? result.error : undefined,
+          pid: this.pid,
+          runId,
+        });
+      }
+      this.store.clearRun(runId);
+    }
+
+    // Step 2: Inject queued messages at tool-result boundary
+    if (hadPendingToolCalls) {
+      const queued = this.store.drainQueue();
+      for (const qm of queued) {
+        this.store.appendMessage("user", qm.message);
+      }
+      if (queued.length > 0) {
+        console.log(
+          `[Process] Injected ${queued.length} queued message(s) at tool-result boundary`,
+        );
+      }
+    }
+
+    // Step 3: Load config + tools (first tick only, cached on run state)
+    if (!run.config) {
+      run.config = await this.kernelRpc("ai.config");
+
+      const toolsResult = await this.kernelRpc("ai.tools");
+      run.tools = toolsResult.tools;
+
+      this.currentRun = run;
+    }
+
+    // Step 4: Assemble prompt (first tick only)
+    if (!run.systemPrompt) {
+      run.systemPrompt = await buildPrompt(
+        run.config!.systemPrompt,
+        this.identity.home,
+        this.env.STORAGE,
+        run.config!.maxContextBytes,
+      );
+      this.currentRun = run;
+    }
+
+    // Step 5: Build pi-ai Context
+    const piMessages = this.store.toMessages();
+    const tools: Tool[] = (run.tools ?? []).map((t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: t.inputSchema as Tool["parameters"],
+    }));
+
+    const context: Context = {
+      systemPrompt: run.systemPrompt,
+      messages: piMessages,
+      tools: tools.length > 0 ? tools : undefined,
+    };
+
+    // Step 6: Call LLM
+    const model = getModel(
+      run.config!.provider as "anthropic",
+      run.config!.model as "claude-sonnet-4-20250514",
+    );
+
+    if (!model) {
+      const errorMsg = `Model not found: ${run.config!.provider}/${run.config!.model}`;
+      console.error(`[Process] ${errorMsg}`);
+      await this.sendSignal("chat.complete", {
+        text: null,
+        error: errorMsg,
+        pid: this.pid,
+        runId,
+      });
+      this.finishRun();
+      return;
+    }
+
+    const reasoningLevel: ThinkingLevel | undefined =
+      run.config!.reasoning && run.config!.reasoning !== "off"
+        ? (run.config!.reasoning as ThinkingLevel)
+        : undefined;
+
+    let response: AssistantMessage;
+    try {
+      console.log(
+        `[Process] Calling LLM: ${run.config!.provider}/${run.config!.model}${reasoningLevel ? ` (reasoning: ${reasoningLevel})` : ""}`,
+      );
+      response = await completeSimple(model, context, {
+        apiKey: run.config!.apiKey,
+        reasoning: reasoningLevel,
+        maxTokens: run.config!.maxTokens,
+      });
+      console.log(
+        `[Process] LLM response: ${response.content?.length ?? 0} blocks, stop=${response.stopReason}`,
+      );
+    } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      console.error(`[Process] LLM call failed:`, e);
+      await this.sendSignal("chat.complete", {
+        text: null,
+        error: errorMsg,
+        pid: this.pid,
+        runId,
+      });
+      this.finishRun();
+      return;
+    }
+
+    if (!response.content || response.content.length === 0) {
+      const errorMsg = response.errorMessage ?? "LLM returned empty response";
+      console.error(`[Process] ${errorMsg}`);
+      await this.sendSignal("chat.complete", {
+        text: null,
+        error: errorMsg,
+        pid: this.pid,
+        runId,
+      });
+      this.finishRun();
+      return;
+    }
+
+    // Step 7: Process response
+    const textBlocks = response.content.filter(
+      (b): b is TextContent => b.type === "text",
+    );
+    const text = textBlocks.map((b) => b.text).join("");
+    const toolCalls = response.content.filter(
+      (b): b is ToolCall => b.type === "toolCall",
+    );
+
+    if (text.trim()) {
+      await this.sendSignal("chat.text", { text, pid: this.pid, runId });
+    }
+
+    this.store.appendMessage("assistant", text, {
+      toolCalls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : undefined,
+    });
+
+    if (toolCalls.length > 0) {
+      for (const tc of toolCalls) {
+        await this.sendSignal("chat.tool_call", {
+          name: tc.name,
+          args: tc.arguments,
+          callId: tc.id,
+          pid: this.pid,
+          runId,
+        });
+
+        const syscall = TOOL_TO_SYSCALL[tc.name];
+        if (!syscall) {
+          this.store.appendToolResult(
+            tc.id,
+            tc.name,
+            `Error: Unknown tool "${tc.name}"`,
+            true,
+          );
+          await this.sendSignal("chat.tool_result", {
+            name: tc.name,
+            callId: tc.id,
+            ok: false,
+            error: `Unknown tool "${tc.name}"`,
+            pid: this.pid,
+            runId,
+          });
+          continue;
+        }
+
+        await this.dispatchSyscall(
+          runId,
+          tc.id,
+          syscall as SyscallName,
+          tc.arguments,
+        );
+      }
+
+      if (this.store.isRunResolved(runId)) {
+        this.scheduleTick(runId);
+      }
+    } else {
+      await this.sendSignal("chat.complete", {
+        text,
+        pid: this.pid,
+        runId,
+        usage: response.usage,
+      });
+      this.finishRun();
+    }
+  }
+
+  private finishRun(): void {
+    const runId = this.currentRun?.runId;
+    this.currentRun = null;
+    console.log(`[Process] Finished run ${runId}`);
+
+    const next = this.store.dequeue();
+    if (next) {
+      this.store.appendMessage("user", next.message);
+      this.currentRun = { runId: next.runId, queued: false };
+      this.scheduleTick(next.runId);
+    }
+  }
+
+  /**
+   * Synchronous kernel RPC — for syscalls the kernel handles natively
+   * (ai.config, ai.tools, sys.config.get, etc.). Throws on error.
+   */
+  private async kernelRpc<T extends SyscallName>(
+    call: T,
+    args: unknown = {},
+  ): Promise<ResultOf<T>> {
+    const id = crypto.randomUUID();
+    const frame = { type: "req", id, call, args } as RequestFrame;
+    const response = await sendFrameToKernel(this.pid, frame);
+
+    if (!response || response.type !== "res") {
+      throw new Error(`No synchronous response for ${call}`);
+    }
+    if (!response.ok) {
+      throw new Error((response as ResponseErrFrame).error.message);
+    }
+    return response.data as ResultOf<T>;
+  }
+
+  /**
+   * Send a signal frame to the kernel for relay to client connections.
+   */
+  private async sendSignal(signal: string, payload?: unknown): Promise<void> {
+    await sendFrameToKernel(this.pid, {
+      type: "sig",
+      signal,
+      payload,
+    } as SignalFrame);
   }
 
   private async archiveMessages(

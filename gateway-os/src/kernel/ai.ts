@@ -106,5 +106,17 @@ export async function handleAiConfig(
     10,
   );
 
-  return { provider, model, apiKey, reasoning, maxTokens };
+  const systemPrompt =
+    config.get(`users/${uid}/ai/system_prompt`) ??
+    config.get("config/ai/system_prompt") ??
+    "";
+
+  const maxContextBytes = parseInt(
+    config.get(`users/${uid}/ai/max_context_bytes`) ??
+    config.get("config/ai/max_context_bytes") ??
+    "32768",
+    10,
+  );
+
+  return { provider, model, apiKey, reasoning, maxTokens, systemPrompt, maxContextBytes };
 }

@@ -4,10 +4,20 @@
  * Manages:
  *   - messages: the active conversation (agent loop working memory)
  *   - pending_tool_calls: in-flight tool calls awaiting results
- *   - process_meta: key-value metadata (processId, archiveId, etc.)
+ *   - message_queue: FIFO queue for messages arriving during an active run
+ *   - process_kv: key-value metadata (processId, archiveId, etc.)
  */
 
 import type { SyscallName } from "../syscalls";
+import { SYSCALL_TOOL_NAMES } from "../syscalls/constants";
+import type {
+  Message,
+  UserMessage,
+  AssistantMessage,
+  ToolResultMessage,
+  TextContent,
+  ToolCall,
+} from "@mariozechner/pi-ai";
 
 export type ToolCallStatus = "pending" | "completed" | "error";
 
@@ -20,7 +30,7 @@ export type ToolCallRecord = {
   error: string | null;
 };
 
-export type MessageRole = "user" | "assistant" | "system";
+export type MessageRole = "user" | "assistant" | "system" | "toolResult";
 
 export type MessageRecord = {
   id: number;
@@ -29,6 +39,14 @@ export type MessageRecord = {
   toolCalls: string | null;
   toolCallId: string | null;
   createdAt: number;
+};
+
+export type QueuedMessage = {
+  id: number;
+  runId: string;
+  message: string;
+  media: string | null;
+  overrides: string | null;
 };
 
 export class ProcessStore {
@@ -63,6 +81,17 @@ export class ProcessStore {
       CREATE TABLE IF NOT EXISTS process_kv (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      )
+    `);
+
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS message_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        message TEXT NOT NULL,
+        media_json TEXT,
+        overrides_json TEXT,
+        created_at INTEGER NOT NULL
       )
     `);
   }
@@ -238,5 +267,154 @@ export class ProcessStore {
 
   deleteValue(key: string): void {
     this.sql.exec("DELETE FROM process_kv WHERE key = ?", key);
+  }
+
+  // --- Message conversion to pi-ai format ---
+
+  toMessages(opts?: { limit?: number; offset?: number }): Message[] {
+    const records = this.getMessages(opts);
+    const messages: Message[] = [];
+
+    for (const r of records) {
+      switch (r.role) {
+        case "user":
+          messages.push({
+            role: "user",
+            content: r.content,
+            timestamp: r.createdAt,
+          } satisfies UserMessage);
+          break;
+
+        case "assistant": {
+          const content: (TextContent | ToolCall)[] = [];
+          if (r.content) {
+            content.push({ type: "text", text: r.content });
+          }
+          if (r.toolCalls) {
+            const toolCalls = JSON.parse(r.toolCalls) as ToolCall[];
+            content.push(...toolCalls);
+          }
+          messages.push({
+            role: "assistant",
+            content,
+            api: "",
+            provider: "",
+            model: "",
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            stopReason: "stop",
+            timestamp: r.createdAt,
+          } as AssistantMessage);
+          break;
+        }
+
+        case "toolResult": {
+          const meta: { toolName?: string; isError?: boolean } =
+            r.toolCalls ? JSON.parse(r.toolCalls) : {};
+          messages.push({
+            role: "toolResult",
+            toolCallId: r.toolCallId!,
+            toolName: meta.toolName ?? "unknown",
+            content: [{ type: "text", text: r.content }],
+            isError: meta.isError ?? false,
+            timestamp: r.createdAt,
+          } satisfies ToolResultMessage);
+          break;
+        }
+      }
+    }
+
+    return messages;
+  }
+
+  /**
+   * Append a tool result message. Stores the toolName and isError flag
+   * in the tool_calls column as JSON metadata.
+   */
+  appendToolResult(
+    toolCallId: string,
+    syscallName: string,
+    content: string,
+    isError: boolean,
+  ): number {
+    const toolName = SYSCALL_TOOL_NAMES[syscallName] ?? syscallName;
+    return this.appendMessage("toolResult", content, {
+      toolCallId,
+      toolCalls: JSON.stringify({ toolName, isError }),
+    });
+  }
+
+  // --- Message queue ---
+
+  enqueue(
+    runId: string,
+    message: string,
+    media?: string,
+    overrides?: string,
+  ): void {
+    this.sql.exec(
+      `INSERT INTO message_queue (run_id, message, media_json, overrides_json, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      runId,
+      message,
+      media ?? null,
+      overrides ?? null,
+      Date.now(),
+    );
+  }
+
+  dequeue(): QueuedMessage | null {
+    const rows = [
+      ...this.sql.exec<{
+        id: number;
+        run_id: string;
+        message: string;
+        media_json: string | null;
+        overrides_json: string | null;
+      }>(
+        "SELECT id, run_id, message, media_json, overrides_json FROM message_queue ORDER BY id ASC LIMIT 1",
+      ),
+    ];
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    this.sql.exec("DELETE FROM message_queue WHERE id = ?", row.id);
+    return {
+      id: row.id,
+      runId: row.run_id,
+      message: row.message,
+      media: row.media_json,
+      overrides: row.overrides_json,
+    };
+  }
+
+  drainQueue(): QueuedMessage[] {
+    const rows = [
+      ...this.sql.exec<{
+        id: number;
+        run_id: string;
+        message: string;
+        media_json: string | null;
+        overrides_json: string | null;
+      }>(
+        "SELECT id, run_id, message, media_json, overrides_json FROM message_queue ORDER BY id ASC",
+      ),
+    ];
+    if (rows.length === 0) return [];
+    this.sql.exec("DELETE FROM message_queue");
+    return rows.map((row) => ({
+      id: row.id,
+      runId: row.run_id,
+      message: row.message,
+      media: row.media_json,
+      overrides: row.overrides_json,
+    }));
+  }
+
+  queueSize(): number {
+    const rows = [
+      ...this.sql.exec<{ cnt: number }>(
+        "SELECT COUNT(*) as cnt FROM message_queue",
+      ),
+    ];
+    return rows[0]?.cnt ?? 0;
   }
 }

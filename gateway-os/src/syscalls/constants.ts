@@ -48,3 +48,8 @@ export const SYSCALL_TOOL_NAMES: Record<string, string> = {
   [FS_SEARCH]: "Search",
   [SHELL_EXEC]: "Shell",
 };
+
+// LLM tool name -> syscall. Reverse mapping of the above
+export const TOOL_TO_SYSCALL: Record<string, string> = Object.fromEntries(
+  Object.entries(SYSCALL_TOOL_NAMES).map(([syscall, tool]) => [tool, syscall]),
+);

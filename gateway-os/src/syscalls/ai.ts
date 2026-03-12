@@ -32,4 +32,6 @@ export type AiConfigResult = {
   apiKey: string;
   reasoning?: string;
   maxTokens: number;
+  systemPrompt: string;
+  maxContextBytes: number;
 };

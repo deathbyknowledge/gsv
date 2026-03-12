@@ -32,6 +32,11 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/reasoning": "off",
   // Max tokens for LLM responses (model-dependent upper bound).
   "config/ai/max_tokens": "8192",
+  // Default system prompt. Injected as the first layer of the assembled prompt.
+  "config/ai/system_prompt":
+    "You are an AI agent running inside GSV, a distributed operating system. You have access to tools for reading/writing files, executing shell commands, and managing processes. Use them to help the user accomplish their goals.",
+  // Max total bytes for ~/context.d/ files included in the prompt.
+  "config/ai/max_context_bytes": "32768",
 
   // -- Server -----------------------------------------------------------------
   // Human-readable name for this GSV instance.
