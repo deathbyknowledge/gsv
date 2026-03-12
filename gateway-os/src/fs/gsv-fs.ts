@@ -164,6 +164,7 @@ export class GsvFs implements IFileSystem {
   async exists(path: string): Promise<boolean> {
     const p = normalize(path);
 
+    if (p === "/") return true;
     if (this.isVirtualDir(p)) return true;
     if (p === "/etc") return true;
     if (this.isEtcAuth(p)) return true;
@@ -185,6 +186,19 @@ export class GsvFs implements IFileSystem {
 
   async statExtended(path: string): Promise<ExtendedStat> {
     const p = normalize(path);
+
+    if (p === "/") {
+      return {
+        isFile: false,
+        isDirectory: true,
+        isSymbolicLink: false,
+        mode: 0o755,
+        size: 0,
+        mtime: new Date(),
+        uid: 0,
+        gid: 0,
+      };
+    }
 
     if (this.isVirtualDir(p)) {
       return { isFile: false, isDirectory: true, isSymbolicLink: false, mode: 0o755, size: 0, mtime: new Date(), uid: 0, gid: 0 };
@@ -342,8 +356,38 @@ export class GsvFs implements IFileSystem {
       return;
     }
 
+    const dirPrefix = key.endsWith("/") ? key : key + "/";
+    const markerKey = dirPrefix + ".dir";
+    const marker = await this.bucket.head(markerKey);
+    if (marker) {
+      this.assertMode(marker, WRITE_BIT, p);
+
+      const listed = await this.bucket.list({ prefix: dirPrefix, limit: 2 });
+      const hasChildren =
+        listed.delimitedPrefixes.length > 0 ||
+        listed.objects.some((obj) => obj.key !== markerKey);
+
+      if (hasChildren && !options?.recursive) {
+        throw new Error(`ENOTEMPTY: directory not empty, rmdir '${p}'`);
+      }
+
+      if (options?.recursive) {
+        let cursor: string | undefined;
+        do {
+          const page = await this.bucket.list({ prefix: dirPrefix, cursor, limit: 100 });
+          if (page.objects.length > 0) {
+            await this.bucket.delete(page.objects.map((o) => o.key));
+          }
+          cursor = page.truncated ? page.cursor : undefined;
+        } while (cursor);
+      } else {
+        await this.bucket.delete(markerKey);
+      }
+      return;
+    }
+
     if (options?.recursive) {
-      const prefix = key + "/";
+      const prefix = dirPrefix;
       let cursor: string | undefined;
       do {
         const listed = await this.bucket.list({ prefix, cursor, limit: 100 });

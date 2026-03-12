@@ -318,6 +318,36 @@ describe("GsvFs chown", () => {
   });
 });
 
+describe("GsvFs directory removal", () => {
+  const TEST_PREFIX = "test/dirs/";
+
+  beforeEach(async () => {
+    const listed = await env.STORAGE.list({ prefix: TEST_PREFIX });
+    for (const obj of listed.objects) {
+      await env.STORAGE.delete(obj.key);
+    }
+  });
+
+  it("removes an empty directory created via mkdir", async () => {
+    const fs = makeFs(ROOT);
+
+    await fs.mkdir(`/${TEST_PREFIX}alpha`, { recursive: true });
+    await fs.rm(`/${TEST_PREFIX}alpha`);
+
+    const exists = await fs.exists(`/${TEST_PREFIX}alpha`);
+    expect(exists).toBe(false);
+  });
+
+  it("refuses removing non-empty directory without recursive option", async () => {
+    const fs = makeFs(ROOT);
+
+    await fs.mkdir(`/${TEST_PREFIX}beta`, { recursive: true });
+    await fs.writeFile(`/${TEST_PREFIX}beta/file.txt`, "hello");
+
+    await expect(fs.rm(`/${TEST_PREFIX}beta`)).rejects.toThrow("ENOTEMPTY");
+  });
+});
+
 describe("resolveUserPath", () => {
   it("resolves ~ to home", () => {
     expect(resolveUserPath("~", "/home/sam", "/home/sam")).toBe("/home/sam");
@@ -343,6 +373,18 @@ describe("resolveUserPath", () => {
 
   it("respects custom cwd", () => {
     expect(resolveUserPath("src/main.ts", "/home/sam", "/projects/myapp")).toBe("/projects/myapp/src/main.ts");
+  });
+});
+
+describe("GsvFs root path", () => {
+  it("treats / as an existing directory", async () => {
+    const fs = makeFs(ROOT);
+    const exists = await fs.exists("/");
+    const stat = await fs.stat("/");
+
+    expect(exists).toBe(true);
+    expect(stat.isDirectory).toBe(true);
+    expect(stat.mode).toBe(0o755);
   });
 });
 
