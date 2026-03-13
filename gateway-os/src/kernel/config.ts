@@ -38,11 +38,6 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // Max total bytes for ~/context.d/ files included in the prompt.
   "config/ai/max_context_bytes": "32768",
 
-  // -- Authentication ---------------------------------------------------------
-  // Allow driver/service password auth (tokenless) for local dev/setup only.
-  // Production should keep this false and require machine tokens.
-  "config/auth/allow_machine_password": "false",
-
   // -- Server -----------------------------------------------------------------
   // Human-readable name for this GSV instance.
   "config/server/name": "gsv",

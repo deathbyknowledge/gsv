@@ -632,7 +632,7 @@ describe("handleConnect", () => {
     if (!result.ok) expect(result.message).toContain("Token required");
   });
 
-  it("allows driver password auth only when explicitly enabled by config", async () => {
+  it("rejects driver password auth even when machine-password config is present", async () => {
     const ctx = makeCtx(sql);
     const pwHash = await hashPassword("hunter2");
     await ctx.auth.bootstrap();
@@ -650,10 +650,28 @@ describe("handleConnect", () => {
       ctx,
     );
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.identity.role).toBe("driver");
-    }
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain("Token required");
+  });
+
+  it("rejects when both password and token are provided", async () => {
+    const ctx = makeCtx(sql);
+    const rootHash = await hashPassword("root-password");
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", rootHash);
+    const issued = await ctx.auth.issueToken({ uid: 0, kind: "user", label: "cli" });
+
+    const result = await handleConnect(
+      {
+        protocol: 1,
+        client: { id: "c1", version: "1", platform: "test", role: "user" },
+        auth: { username: "root", password: "root-password", token: issued.token },
+      },
+      ctx,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain("either password or token");
   });
 
   it("rejects driver token when bound to a different device", async () => {

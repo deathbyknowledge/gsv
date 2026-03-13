@@ -72,6 +72,15 @@ pub struct GatewayConfig {
 
     /// Non-interactive gateway credential (legacy "token" field)
     pub token: Option<String>,
+
+    /// Cached short-lived user session token for CLI commands
+    pub session_token: Option<String>,
+
+    /// ID of cached user session token (for revoke/audit UX)
+    pub session_token_id: Option<String>,
+
+    /// Expiration timestamp (unix ms) for cached user session token
+    pub session_expires_at: Option<i64>,
 }
 
 impl Default for GatewayConfig {
@@ -80,6 +89,9 @@ impl Default for GatewayConfig {
             url: None,
             username: None,
             token: None,
+            session_token: None,
+            session_token_id: None,
+            session_expires_at: None,
         }
     }
 }
@@ -156,7 +168,7 @@ impl CliConfig {
             return Self::default();
         }
 
-        match std::fs::read_to_string(&path) {
+        let mut cfg = match std::fs::read_to_string(&path) {
             Ok(content) => toml::from_str(&content).unwrap_or_else(|e| {
                 eprintln!("Warning: Failed to parse config: {}", e);
                 Self::default()
@@ -165,7 +177,29 @@ impl CliConfig {
                 eprintln!("Warning: Failed to read config: {}", e);
                 Self::default()
             }
+        };
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(&path) {
+                let mode = meta.permissions().mode();
+                if (mode & 0o077) != 0 {
+                    if cfg.gateway.session_token.is_some() {
+                        eprintln!(
+                            "Warning: ignoring cached gateway session token due to insecure permissions on {} (mode {:o}, expected 600).",
+                            path.display(),
+                            mode & 0o777,
+                        );
+                    }
+                    cfg.gateway.session_token = None;
+                    cfg.gateway.session_token_id = None;
+                    cfg.gateway.session_expires_at = None;
+                }
+            }
         }
+
+        cfg
     }
 
     /// Save config to file
@@ -180,7 +214,28 @@ impl CliConfig {
         }
 
         let content = toml::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
+
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .mode(0o600)
+                .open(&path)?;
+            file.write_all(content.as_bytes())?;
+            file.flush()?;
+            let mut perms = file.metadata()?.permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(&path, perms)?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&path, content)?;
+        }
         Ok(())
     }
 
@@ -195,6 +250,21 @@ impl CliConfig {
     /// Get effective token (config only, no default)
     pub fn gateway_token(&self) -> Option<String> {
         self.gateway.token.clone()
+    }
+
+    /// Get cached user session token if present and not expired.
+    pub fn gateway_session_token(&self) -> Option<String> {
+        let token = self.gateway.session_token.clone()?;
+        if let Some(expires_at) = self.gateway.session_expires_at {
+            if chrono::Utc::now().timestamp_millis() >= expires_at {
+                return None;
+            }
+        }
+        Some(token)
+    }
+
+    pub fn gateway_session_expires_at(&self) -> Option<i64> {
+        self.gateway.session_expires_at
     }
 
     /// Get effective gateway username (config only, no default)
@@ -282,6 +352,11 @@ url = "wss://gateway.stevej.workers.dev/ws"
 
 # Non-interactive gateway credential (legacy "token" field, keep secret!)
 token = "your-token-here"
+
+# Cached short-lived user session token (written by `gsv auth login`)
+# session_token = "gsv_user_..."
+# session_token_id = "uuid"
+# session_expires_at = 1735689600000
 
 [cloudflare]
 # Used by 'gsv deploy' commands

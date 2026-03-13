@@ -361,6 +361,24 @@ enum ConfigAction {
 
 #[derive(Subcommand, Clone)]
 enum AuthAction {
+    /// Log in and cache a short-lived user session token locally
+    Login {
+        /// Gateway username (defaults to local config)
+        #[arg(long)]
+        username: Option<String>,
+
+        /// Gateway password (if omitted, prompts interactively)
+        #[arg(long)]
+        password: Option<String>,
+
+        /// Session lifetime in hours (default: 8)
+        #[arg(long, default_value_t = 8)]
+        ttl_hours: u32,
+    },
+
+    /// Clear cached local user session token
+    Logout,
+
     /// Initialize gateway identity/auth (setup mode only)
     Setup {
         /// First user username
@@ -779,6 +797,13 @@ fn is_setup_required_error(error: &(dyn std::error::Error + 'static)) -> bool {
         .unwrap_or(false)
 }
 
+fn is_auth_failed_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<GatewayRpcError>()
+        .map(|rpc_error| rpc_error.code == 401)
+        .unwrap_or(false)
+}
+
 async fn gateway_is_in_setup_mode(url: &str) -> Result<bool, Box<dyn std::error::Error>> {
     let probe_conn = Connection::connect_without_handshake(url, |_| {}).await?;
     let response = probe_conn
@@ -889,6 +914,148 @@ where
     }
 }
 
+async fn run_with_auto_setup_and_login_retry<F, Fut>(
+    url: &str,
+    cfg: &CliConfig,
+    cli_token: Option<String>,
+    cli_username: Option<String>,
+    cli_password: Option<String>,
+    command_name: &'static str,
+    mut run_with_auth: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnMut(GatewayAuth) -> Fut,
+    Fut: Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+    let has_explicit_token = normalize_auth_field(cli_token.clone()).is_some();
+
+    if gateway_is_in_setup_mode(url).await? {
+        if !can_prompt_interactively() && (cli_username.is_none() || cli_password.is_none()) {
+            return Err(
+                "Gateway is in setup mode. Provide --user and --password to bootstrap automatically in non-interactive mode."
+                    .into(),
+            );
+        }
+
+        println!("Gateway is in setup mode. Starting setup wizard...");
+        run_auth_setup(
+            url,
+            cfg,
+            cli_username.clone(),
+            cli_password.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+    }
+
+    match attempt_user_command_with_login_retry(
+        url,
+        cfg,
+        cli_token.clone(),
+        cli_username.clone(),
+        cli_password.clone(),
+        command_name,
+        has_explicit_token,
+        &mut run_with_auth,
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if !is_setup_required_error(error.as_ref()) {
+                return Err(error);
+            }
+
+            if !can_prompt_interactively() && (cli_username.is_none() || cli_password.is_none()) {
+                return Err(
+                    "Gateway is in setup mode. Provide --user and --password to bootstrap automatically in non-interactive mode."
+                        .into(),
+                );
+            }
+
+            println!("Gateway is in setup mode. Starting setup wizard...");
+            run_auth_setup(
+                url,
+                cfg,
+                cli_username.clone(),
+                cli_password.clone(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await?;
+
+            attempt_user_command_with_login_retry(
+                url,
+                cfg,
+                cli_token,
+                cli_username,
+                cli_password,
+                command_name,
+                has_explicit_token,
+                &mut run_with_auth,
+            )
+            .await
+        }
+    }
+}
+
+async fn attempt_user_command_with_login_retry<F, Fut>(
+    url: &str,
+    cfg: &CliConfig,
+    cli_token: Option<String>,
+    cli_username: Option<String>,
+    cli_password: Option<String>,
+    command_name: &str,
+    has_explicit_token: bool,
+    run_with_auth: &mut F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnMut(GatewayAuth) -> Fut,
+    Fut: Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+    let auth = resolve_interactive_gateway_auth(
+        url,
+        cfg,
+        cli_token.clone(),
+        cli_username.clone(),
+        cli_password.clone(),
+        command_name,
+    )
+    .await?;
+
+    match run_with_auth(auth).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if !is_auth_failed_error(error.as_ref()) || has_explicit_token {
+                return Err(error);
+            }
+
+            clear_cached_user_session_token()?;
+            let refreshed = resolve_interactive_gateway_auth(
+                url,
+                cfg,
+                cli_token,
+                cli_username,
+                cli_password,
+                command_name,
+            )
+            .await?;
+            run_with_auth(refreshed).await
+        }
+    }
+}
+
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -905,67 +1072,70 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let url = cli_url_override
         .clone()
         .unwrap_or_else(|| cfg.gateway_url());
-    let token = cli_token_override.clone().or_else(|| cfg.gateway_token());
-
     match cli.command {
         Commands::Chat { message, pid } => {
-            run_with_auto_setup_retry(
+            run_with_auto_setup_and_login_retry(
                 &url,
                 &cfg,
+                cli_token_override.clone(),
                 cli_user_override.clone(),
                 cli_password_override.clone(),
-                || async {
-                    let auth = resolve_interactive_gateway_auth(
-                        &cfg,
-                        token.clone(),
-                        cli_user_override.clone(),
-                        cli_password_override.clone(),
-                        "chat",
-                    )?;
+                "chat",
+                |auth| async {
                     commands::run_client(&url, auth, message.clone(), pid.clone()).await
                 },
             )
             .await
         }
         Commands::Shell => {
-            run_with_auto_setup_retry(
+            run_with_auto_setup_and_login_retry(
                 &url,
                 &cfg,
+                cli_token_override.clone(),
                 cli_user_override.clone(),
                 cli_password_override.clone(),
-                || async {
-                    let auth = resolve_interactive_gateway_auth(
-                        &cfg,
-                        token.clone(),
-                        cli_user_override.clone(),
-                        cli_password_override.clone(),
-                        "shell",
-                    )?;
-                    run_shell(&url, auth).await
-                },
+                "shell",
+                |auth| async { run_shell(&url, auth).await },
             )
             .await
         }
         Commands::Proc { action } => {
-            run_with_auto_setup_retry(
+            run_with_auto_setup_and_login_retry(
                 &url,
                 &cfg,
+                cli_token_override.clone(),
                 cli_user_override.clone(),
                 cli_password_override.clone(),
-                || async {
-                    let auth = resolve_interactive_gateway_auth(
-                        &cfg,
-                        token.clone(),
-                        cli_user_override.clone(),
-                        cli_password_override.clone(),
-                        "proc",
-                    )?;
-                    commands::run_proc(&url, auth, action.clone()).await
-                },
+                "proc",
+                |auth| async { commands::run_proc(&url, auth, action.clone()).await },
             )
             .await
         }
         Commands::Auth { action } => match action {
+            AuthAction::Login {
+                username,
+                password,
+                ttl_hours,
+            } => {
+                run_with_auto_setup_retry(
+                    &url,
+                    &cfg,
+                    username.clone().or_else(|| cli_user_override.clone()),
+                    password.clone().or_else(|| cli_password_override.clone()),
+                    || async {
+                        run_auth_login(
+                            &url,
+                            &cfg,
+                            username.clone().or_else(|| cli_user_override.clone()),
+                            password.clone().or_else(|| cli_password_override.clone()),
+                            ttl_hours,
+                        )
+                        .await
+                    },
+                )
+                .await
+            }
+            AuthAction::Logout => run_auth_logout(),
             AuthAction::Setup {
                 username,
                 new_password,
@@ -992,22 +1162,15 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await
             }
-            other => {
-                run_with_auto_setup_retry(
+            token_action @ AuthAction::Token { .. } => {
+                run_with_auto_setup_and_login_retry(
                     &url,
                     &cfg,
+                    cli_token_override.clone(),
                     cli_user_override.clone(),
                     cli_password_override.clone(),
-                    || async {
-                        let auth = resolve_interactive_gateway_auth(
-                            &cfg,
-                            token.clone(),
-                            cli_user_override.clone(),
-                            cli_password_override.clone(),
-                            "auth",
-                        )?;
-                        commands::run_auth(&url, auth, other.clone()).await
-                    },
+                    "auth",
+                    |auth| async { commands::run_auth(&url, auth, token_action.clone()).await },
                 )
                 .await
             }
@@ -1080,21 +1243,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else {
-                run_with_auto_setup_retry(
+                run_with_auto_setup_and_login_retry(
                     &url,
                     &cfg,
+                    cli_token_override.clone(),
                     cli_user_override.clone(),
                     cli_password_override.clone(),
-                    || async {
-                        let auth = resolve_interactive_gateway_auth(
-                            &cfg,
-                            token.clone(),
-                            cli_user_override.clone(),
-                            cli_password_override.clone(),
-                            "config",
-                        )?;
-                        commands::run_config(&url, auth, action.clone()).await
-                    },
+                    "config",
+                    |auth| async { commands::run_config(&url, auth, action.clone()).await },
                 )
                 .await
             }
@@ -1360,6 +1516,19 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                         "****".to_string()
                     }
                 }),
+                "gateway.session_token" => cfg.gateway.session_token.map(|s| {
+                    if s.len() > 8 {
+                        format!("{}...{}", &s[..4], &s[s.len() - 4..])
+                    } else {
+                        "****".to_string()
+                    }
+                }),
+                "gateway.session_token_id" => cfg.gateway.session_token_id,
+                "gateway.session_expires_at" => cfg.gateway.session_expires_at.map(format_unix_ms),
+                "gateway.session_expires_at_ms" => cfg
+                    .gateway
+                    .session_expires_at
+                    .map(|value| value.to_string()),
                 "cloudflare.account_id" => cfg.cloudflare.account_id,
                 "cloudflare.api_token" => cfg.cloudflare.api_token.map(|s| {
                     if s.len() > 8 {
@@ -1392,6 +1561,7 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                     eprintln!("Unknown config key: {}", key);
                     eprintln!("\nValid keys:");
                     eprintln!("  gateway.url, gateway.username, gateway.token");
+                    eprintln!("  gateway.session_token, gateway.session_token_id, gateway.session_expires_at");
                     eprintln!("  cloudflare.account_id, cloudflare.api_token");
                     eprintln!("  release.channel");
                     eprintln!("  r2.account_id, r2.access_key_id, r2.bucket");
@@ -1414,6 +1584,15 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                 "gateway.url" => cfg.gateway.url = Some(value.clone()),
                 "gateway.username" => cfg.gateway.username = Some(value.clone()),
                 "gateway.token" => cfg.gateway.token = Some(value.clone()),
+                "gateway.session_token" => cfg.gateway.session_token = Some(value.clone()),
+                "gateway.session_token_id" => cfg.gateway.session_token_id = Some(value.clone()),
+                "gateway.session_expires_at" | "gateway.session_expires_at_ms" => {
+                    let parsed = value
+                        .trim()
+                        .parse::<i64>()
+                        .map_err(|_| "gateway.session_expires_at must be unix ms integer")?;
+                    cfg.gateway.session_expires_at = Some(parsed);
+                }
                 "cloudflare.account_id" => cfg.cloudflare.account_id = Some(value.clone()),
                 "cloudflare.api_token" => cfg.cloudflare.api_token = Some(value.clone()),
                 "release.channel" => {
@@ -1540,23 +1719,131 @@ fn resolve_gateway_username(cfg: &CliConfig, cli_username: Option<String>) -> Op
     normalize_auth_field(cli_username).or_else(|| normalize_auth_field(cfg.gateway_username()))
 }
 
-fn resolve_interactive_gateway_auth(
+const DEFAULT_USER_SESSION_TTL_HOURS: u32 = 8;
+
+#[derive(Debug, Deserialize)]
+struct LoginTokenCreatePayload {
+    token: LoginIssuedTokenPayload,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginIssuedTokenPayload {
+    token_id: String,
+    token: String,
+    expires_at: Option<i64>,
+}
+
+async fn issue_and_store_user_session_token(
+    url: &str,
+    username: String,
+    password: String,
+    ttl_hours: u32,
+) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
+    let auth = GatewayAuth {
+        username: Some(username.clone()),
+        password: Some(password),
+        token: None,
+    };
+    auth.validate()?;
+
+    let client = KernelClient::connect_user(url, auth, |_| {}).await?;
+    let expiry_ms = Utc::now().timestamp_millis() + (i64::from(ttl_hours) * 3_600_000);
+    let payload = client
+        .request_ok(
+            "sys.token.create",
+            Some(json!({
+                "kind": "user",
+                "label": format!("gsv-cli@{}", std::env::consts::OS),
+                "allowedRole": "user",
+                "expiresAt": expiry_ms,
+            })),
+        )
+        .await?;
+
+    let issued = serde_json::from_value::<LoginTokenCreatePayload>(payload)
+        .map_err(|_| "Failed to parse sys.token.create response for login")?
+        .token;
+
+    let mut local_cfg = CliConfig::load();
+    local_cfg.gateway.username = Some(username.clone());
+    local_cfg.gateway.session_token = Some(issued.token.clone());
+    local_cfg.gateway.session_token_id = Some(issued.token_id);
+    local_cfg.gateway.session_expires_at = issued.expires_at;
+    local_cfg.save()?;
+
+    if let Some(expires_at) = issued.expires_at {
+        println!(
+            "Authenticated as {}. Session cached until {}.",
+            username,
+            format_unix_ms(expires_at),
+        );
+    } else {
+        println!("Authenticated as {}. Session cached.", username);
+    }
+
+    Ok(GatewayAuth {
+        username: Some(username),
+        password: None,
+        token: Some(issued.token),
+    })
+}
+
+fn clear_cached_user_session_token() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cfg = CliConfig::load();
+    let changed = cfg.gateway.session_token.is_some()
+        || cfg.gateway.session_token_id.is_some()
+        || cfg.gateway.session_expires_at.is_some();
+
+    cfg.gateway.session_token = None;
+    cfg.gateway.session_token_id = None;
+    cfg.gateway.session_expires_at = None;
+
+    if changed {
+        cfg.save()?;
+    }
+
+    Ok(())
+}
+
+async fn resolve_interactive_gateway_auth(
+    url: &str,
     cfg: &CliConfig,
     token: Option<String>,
     cli_username: Option<String>,
     cli_password: Option<String>,
     command_name: &str,
 ) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
-    let mut username = resolve_gateway_username(cfg, cli_username);
+    let fresh_cfg = CliConfig::load();
+    let mut username = resolve_gateway_username(&fresh_cfg, cli_username.clone())
+        .or_else(|| resolve_gateway_username(cfg, cli_username));
     let mut password = normalize_auth_field(cli_password);
-    let token = if password.is_some() {
-        None
-    } else {
-        normalize_auth_field(token)
-    };
+    let explicit_token = normalize_auth_field(token);
 
-    if username.is_none() && (password.is_some() || token.is_some()) {
+    if username.is_none() && (password.is_some() || explicit_token.is_some()) {
         return Err("Username is required when using password/token authentication".into());
+    }
+
+    if let Some(token) = explicit_token {
+        let auth = GatewayAuth {
+            username,
+            password: None,
+            token: Some(token),
+        };
+        auth.validate()?;
+        return Ok(auth);
+    }
+
+    if password.is_none() {
+        if let Some(cached_token) = fresh_cfg.gateway_session_token() {
+            let auth = GatewayAuth {
+                username,
+                password: None,
+                token: Some(cached_token),
+            };
+            auth.validate()?;
+            return Ok(auth);
+        }
     }
 
     if username.is_none() && can_prompt_interactively() {
@@ -1564,25 +1851,22 @@ fn resolve_interactive_gateway_auth(
         username = prompt_line(&prompt, None)?;
     }
 
-    if username.is_some() && password.is_none() && token.is_none() {
+    if username.is_some() && password.is_none() {
         if can_prompt_interactively() {
             let prompt = format!("Gateway password for `{}`", command_name);
             password = prompt_secret(&prompt)?;
         } else {
             return Err(
-                "Missing gateway credential. Set --token (non-interactive), or run in a TTY to enter a password."
+                "Missing gateway session token. Run `gsv auth login` first or provide --password in non-interactive mode."
                     .into(),
             );
         }
     }
 
-    let auth = GatewayAuth {
-        username,
-        password,
-        token,
-    };
-    auth.validate()?;
-    Ok(auth)
+    let username = username.ok_or("Username required")?;
+    let password = password.ok_or("Password required")?;
+    issue_and_store_user_session_token(url, username, password, DEFAULT_USER_SESSION_TTL_HOURS)
+        .await
 }
 
 fn resolve_node_gateway_auth(
@@ -1591,9 +1875,8 @@ fn resolve_node_gateway_auth(
     cli_username: Option<String>,
 ) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
     let username = resolve_gateway_username(cfg, cli_username);
-    let token = normalize_auth_field(token)
-        .or_else(|| normalize_auth_field(cfg.default_node_token()))
-        .or_else(|| normalize_auth_field(cfg.gateway_token()));
+    let token =
+        normalize_auth_field(token).or_else(|| normalize_auth_field(cfg.default_node_token()));
 
     if token.is_some() && username.is_none() {
         return Err("Username is required when using --token for device auth".into());
@@ -1601,7 +1884,7 @@ fn resolve_node_gateway_auth(
 
     if username.is_some() && token.is_none() {
         return Err(
-            "Missing non-interactive device credential. Set --token, `gsv config --local set node.token ...`, or `gsv config --local set gateway.token ...`."
+            "Missing non-interactive device credential. Set --token or `gsv config --local set node.token ...`."
                 .into(),
         );
     }
@@ -1867,6 +2150,61 @@ async fn run_auth_setup(
         println!("Local config unchanged.");
     } else {
         println!("Saved local config: {}.", saved_fields.join(", "));
+    }
+
+    Ok(())
+}
+
+async fn run_auth_login(
+    url: &str,
+    cfg: &CliConfig,
+    username: Option<String>,
+    password: Option<String>,
+    ttl_hours: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if ttl_hours == 0 {
+        return Err("--ttl-hours must be greater than 0".into());
+    }
+
+    let mut username =
+        normalize_auth_field(username).or_else(|| normalize_auth_field(cfg.gateway_username()));
+    let mut password = normalize_auth_field(password);
+
+    if username.is_none() && can_prompt_interactively() {
+        username = prompt_line("Gateway username", None)?;
+    }
+    if username.is_none() {
+        return Err(
+            "Gateway username required (pass --username or configure gateway.username)".into(),
+        );
+    }
+
+    if password.is_none() && can_prompt_interactively() {
+        password = prompt_secret("Gateway password")?;
+    }
+    let password =
+        password.ok_or("Gateway password required (pass --password or run interactively)")?;
+    let username = username.unwrap_or_default();
+
+    let _ = issue_and_store_user_session_token(url, username, password, ttl_hours).await?;
+    Ok(())
+}
+
+fn run_auth_logout() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cfg = CliConfig::load();
+    let had_session = cfg.gateway.session_token.is_some()
+        || cfg.gateway.session_token_id.is_some()
+        || cfg.gateway.session_expires_at.is_some();
+
+    cfg.gateway.session_token = None;
+    cfg.gateway.session_token_id = None;
+    cfg.gateway.session_expires_at = None;
+
+    if had_session {
+        cfg.save()?;
+        println!("Cleared cached user session token.");
+    } else {
+        println!("No cached user session token.");
     }
 
     Ok(())
