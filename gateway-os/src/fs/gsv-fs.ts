@@ -29,6 +29,7 @@ import type { CapabilityStore } from "../kernel/capabilities";
 import type { ConfigStore } from "../kernel/config";
 import type { DeviceRegistry } from "../kernel/devices";
 import type { ProcessRegistry } from "../kernel/processes";
+import { canReadConfigKey } from "../kernel/config-access";
 
 export type KernelRefs = {
   auth: AuthStore;
@@ -591,6 +592,15 @@ export class GsvFs implements IFileSystem {
     }
   }
 
+  private listReadableConfig(prefix: string): { key: string; value: string }[] {
+    if (!this.kernel) return [];
+
+    const entries = this.kernel.config.list(prefix);
+    if (this.identity.uid === 0) return entries;
+
+    return entries.filter((entry) => canReadConfigKey(this.identity.uid, entry.key));
+  }
+
   private readSys(path: string): string | undefined {
     if (!this.kernel) return undefined;
     const rel = path.slice("/sys/".length);
@@ -598,6 +608,7 @@ export class GsvFs implements IFileSystem {
     // /sys/config/{key} — system-wide config
     if (rel.startsWith("config/")) {
       const configKey = rel;  // "config/ai/provider" etc.
+      if (!canReadConfigKey(this.identity.uid, configKey)) return undefined;
       const value = this.kernel.config.get(configKey);
       if (value !== null) return value + "\n";
       return undefined;
@@ -610,8 +621,7 @@ export class GsvFs implements IFileSystem {
       const uid = parseInt(uidStr, 10);
       if (isNaN(uid)) return undefined;
 
-      // Permission check: own uid or root
-      if (this.identity.uid !== 0 && this.identity.uid !== uid) return undefined;
+      if (!canReadConfigKey(this.identity.uid, userKey)) return undefined;
 
       const value = this.kernel.config.get(userKey);
       if (value !== null) return value + "\n";
@@ -775,6 +785,9 @@ export class GsvFs implements IFileSystem {
 
     // /sys/users/{uid} is a directory
     if (path.startsWith("/sys/users/") && !path.slice("/sys/users/".length).includes("/")) {
+      const uid = parseInt(path.slice("/sys/users/".length), 10);
+      if (isNaN(uid)) return false;
+      if (this.identity.uid !== 0 && this.identity.uid !== uid) return false;
       return true;
     }
 
@@ -782,7 +795,7 @@ export class GsvFs implements IFileSystem {
     if (path.startsWith("/sys/config/")) {
       const rel = path.slice("/sys/config/".length);
       if (rel) {
-        const nested = this.kernel.config.list(`config/${rel}`);
+        const nested = this.listReadableConfig(`config/${rel}`);
         if (nested.length > 0) return true;
       }
     }
@@ -794,8 +807,9 @@ export class GsvFs implements IFileSystem {
       if (parts.length >= 2) {
         const uid = parseInt(parts[0], 10);
         if (!isNaN(uid)) {
+          if (this.identity.uid !== 0 && this.identity.uid !== uid) return false;
           const suffix = parts.slice(1).join("/");
-          const nested = this.kernel.config.list(`users/${uid}/${suffix}`);
+          const nested = this.listReadableConfig(`users/${uid}/${suffix}`);
           if (nested.length > 0) return true;
         }
       }
@@ -825,7 +839,7 @@ export class GsvFs implements IFileSystem {
     }
 
     if (path === "/sys/config") {
-      return uniquePrefixes(this.kernel.config.list("config/"), "config/");
+      return uniquePrefixes(this.listReadableConfig("config/"), "config/");
     }
 
     // /sys/config/{prefix} directory
@@ -833,13 +847,16 @@ export class GsvFs implements IFileSystem {
       const rel = path.slice("/sys/config/".length);
       if (!rel) return undefined;
       const prefix = `config/${rel}`;
-      const entries = this.kernel.config.list(prefix);
+      const entries = this.listReadableConfig(prefix);
       if (entries.length === 0) return undefined;
       return uniquePrefixes(entries, `${prefix}/`);
     }
 
     if (path === "/sys/users") {
-      return uniquePrefixes(this.kernel.config.list("users/"), "users/");
+      if (this.identity.uid === 0) {
+        return uniquePrefixes(this.listReadableConfig("users/"), "users/");
+      }
+      return [String(this.identity.uid)];
     }
 
     // /sys/users/{uid} and /sys/users/{uid}/{prefix} directories
@@ -849,16 +866,17 @@ export class GsvFs implements IFileSystem {
       if (parts.length >= 1) {
         const uid = parseInt(parts[0], 10);
         if (isNaN(uid)) return undefined;
+        if (this.identity.uid !== 0 && this.identity.uid !== uid) return undefined;
 
         if (parts.length === 1) {
-          const entries = this.kernel.config.list(`users/${uid}`);
+          const entries = this.listReadableConfig(`users/${uid}`);
           if (entries.length === 0) return [];
           return uniquePrefixes(entries, `users/${uid}/`);
         }
 
         const suffix = parts.slice(1).join("/");
         const prefix = `users/${uid}/${suffix}`;
-        const entries = this.kernel.config.list(prefix);
+        const entries = this.listReadableConfig(prefix);
         if (entries.length === 0) return undefined;
         return uniquePrefixes(entries, `${prefix}/`);
       }

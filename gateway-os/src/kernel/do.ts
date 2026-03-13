@@ -22,6 +22,7 @@ import { dispatch, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys-setup";
+import { isInternalOnlySyscall } from "./syscall-exposure";
 
 const SERVER_VERSION = "0.0.1";
 
@@ -174,7 +175,10 @@ export class Kernel extends Host<Env> {
       capabilities: this.caps.resolve(identity.gids),
     };
 
-    if (!hasCapability(connIdentity.capabilities, frame.call)) {
+    if (
+      !isInternalOnlySyscall(frame.call) &&
+      !hasCapability(connIdentity.capabilities, frame.call)
+    ) {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
@@ -260,6 +264,11 @@ export class Kernel extends Host<Env> {
         return;
       }
       this.sendError(connection, frame.id, 403, "Must call sys.connect first");
+      return;
+    }
+
+    if (isInternalOnlySyscall(frame.call)) {
+      this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
       return;
     }
 

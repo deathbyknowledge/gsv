@@ -9,7 +9,7 @@
  *   "users/1000/ai/model"    → per-user AI model override
  *
  * Permission model:
- *   Read:  root reads all; non-root reads config/* and own users/{uid}/*
+ *   Read:  root reads all; non-root reads own users/{uid}/* and only non-sensitive config/*
  *   Write: root writes all; non-root writes only users/{uid}/{overridable}/*
  */
 
@@ -22,13 +22,7 @@ import type {
   SysConfigEntry,
 } from "../syscalls/system";
 import { USER_OVERRIDABLE_PREFIXES } from "./config";
-
-function canRead(uid: number, key: string): boolean {
-  if (uid === 0) return true;
-  if (key.startsWith("config/")) return true;
-  if (key.startsWith(`users/${uid}/`)) return true;
-  return false;
-}
+import { canReadConfigKey } from "./config-access";
 
 function canWrite(uid: number, key: string): boolean {
   if (uid === 0) return true;
@@ -46,18 +40,18 @@ export function handleSysConfigGet(
   const key = args.key;
 
   if (key === undefined || key === "") {
-    const all = uid === 0
+    const visible = (uid === 0
       ? config.list("")
       : [
           ...config.list("config/"),
           ...config.list(`users/${uid}/`),
-        ];
-    return { entries: all };
+        ]).filter((entry) => canReadConfigKey(uid, entry.key));
+    return { entries: visible };
   }
 
   const exact = config.get(key);
   if (exact !== null) {
-    if (!canRead(uid, key)) {
+    if (!canReadConfigKey(uid, key)) {
       throw new Error(`Permission denied: cannot read ${key}`);
     }
     return { entries: [{ key, value: exact }] };
@@ -68,7 +62,7 @@ export function handleSysConfigGet(
 
   const entries: SysConfigEntry[] = [];
   for (const entry of listed) {
-    if (canRead(uid, entry.key)) {
+    if (canReadConfigKey(uid, entry.key)) {
       entries.push(entry);
     }
   }
@@ -76,7 +70,7 @@ export function handleSysConfigGet(
   if (entries.length === 0 && !key.includes("/")) {
     const scoped = config.list(key);
     for (const entry of scoped) {
-      if (canRead(uid, entry.key)) {
+      if (canReadConfigKey(uid, entry.key)) {
         entries.push(entry);
       }
     }

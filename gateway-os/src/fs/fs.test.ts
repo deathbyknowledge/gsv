@@ -506,4 +506,29 @@ describe("GsvFs virtual /sys config tree", () => {
     });
     await expect(fs.readdir("/sys/config/missing")).rejects.toThrow("ENOENT");
   });
+
+  it("hides sensitive system config keys for non-root users", async () => {
+    const fs = makeConfigBackedFs(SAM, {
+      "config/ai/provider": "anthropic",
+      "config/ai/model": "claude-sonnet-4-20250514",
+      "config/ai/api_key": "sk-test",
+    });
+
+    const entries = await fs.readdir("/sys/config/ai");
+    expect(entries).toEqual(["model", "provider"]);
+
+    await expect(fs.readFile("/sys/config/ai/api_key")).rejects.toThrow("ENOENT");
+  });
+
+  it("shows only own user namespace under /sys/users for non-root users", async () => {
+    const fs = makeConfigBackedFs(SAM, {
+      "users/1000/ai/model": "gpt-4.1-mini",
+      "users/1001/ai/model": "gpt-4.1",
+    });
+
+    const users = await fs.readdir("/sys/users");
+    expect(users).toEqual(["1000"]);
+
+    await expect(fs.readdir("/sys/users/1001")).rejects.toThrow("ENOENT");
+  });
 });

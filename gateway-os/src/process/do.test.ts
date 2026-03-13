@@ -70,6 +70,29 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
 // ---------------------------------------------------------------------------
 
 describe("Process DO — mechanical", () => {
+  describe("kernel process RPC exposure", () => {
+    it("allows non-root processes to call internal ai.config", async () => {
+      const pid = "mech-kernel-ai-config";
+      const identity: ProcessIdentity = {
+        uid: 1000,
+        gid: 1000,
+        gids: [1000, 100],
+        username: "sam",
+        home: "/home/sam",
+      };
+
+      await registerInKernel(pid, identity);
+      const kernel = await getKernelPtr();
+
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(pid, makeReq("ai.config", {})),
+      );
+
+      expect(response).not.toBeNull();
+      expect((response as ResponseFrame).ok).toBe(true);
+    });
+  });
+
   describe("proc.setidentity", () => {
     it("stores pid and identity", async () => {
       const pid = "mech-setid-1";
