@@ -30,6 +30,11 @@ import {
   forwardToProcess,
 } from "./proc-handlers";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys-config";
+import {
+  handleSysTokenCreate,
+  handleSysTokenList,
+  handleSysTokenRevoke,
+} from "./sys-token";
 
 export type DispatchDeps = {
   routingTable: RoutingTable;
@@ -140,11 +145,22 @@ async function dispatchNative(
       // --- sys.* ---
       case "sys.connect":
         return errFrame(frame.id, 400, "sys.connect handled separately");
+      case "sys.setup":
+        return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);
         break;
       case "sys.config.set":
         data = handleSysConfigSet(frame.args, ctx);
+        break;
+      case "sys.token.create":
+        data = await handleSysTokenCreate(frame.args, ctx);
+        break;
+      case "sys.token.list":
+        data = handleSysTokenList(frame.args, ctx);
+        break;
+      case "sys.token.revoke":
+        data = handleSysTokenRevoke(frame.args, ctx);
         break;
 
       // --- sched.* ---

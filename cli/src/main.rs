@@ -1,19 +1,21 @@
-use clap::{Parser, Subcommand};
+use chrono::{TimeZone, Utc};
+use clap::{Parser, Subcommand, ValueEnum};
 use cliclack::{confirm, input, intro, log, multiselect, note, outro_cancel, password, select};
 use gsv::config::{self, CliConfig};
-use gsv::connection::Connection;
+use gsv::connection::{Connection, GatewayRpcError};
 use gsv::deploy;
 use gsv::kernel_client::{GatewayAuth, KernelClient};
 use gsv::protocol::{
     ErrorShape, Frame, NodeExecEventParams, RequestFrame, ResponseFrame, SignalFrame,
 };
 use gsv::tools::{all_tools_with_workspace, subscribe_exec_events, Tool};
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
 use std::future::Future;
-use std::io::{self, BufRead, IsTerminal};
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -23,15 +25,23 @@ mod commands;
 #[command(
     name = "gsv",
     version = gsv::build_info::BUILD_VERSION,
-    about = "GSV CLI - Client and Node for GSV Gateway"
+    about = "GSV CLI - Chat, Device, and Infrastructure Control Plane"
 )]
 struct Cli {
     /// Gateway URL (overrides config file)
-    #[arg(short, long, env = "GSV_URL")]
+    #[arg(long, env = "GSV_URL")]
     url: Option<String>,
 
+    /// Gateway username (global override for remote commands)
+    #[arg(short = 'u', long, global = true)]
+    user: Option<String>,
+
+    /// Gateway password credential (global override for remote commands)
+    #[arg(short = 'p', long, global = true)]
+    password: Option<String>,
+
     /// Non-interactive credential (legacy token flag; overrides config/env)
-    #[arg(short, long, env = "GSV_TOKEN")]
+    #[arg(short, long, env = "GSV_TOKEN", global = true)]
     token: Option<String>,
 
     #[command(subcommand)]
@@ -40,107 +50,106 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize CLI config file (~/.config/gsv/config.toml)
-    Init {
-        /// Overwrite existing config
-        #[arg(long)]
-        force: bool,
-    },
-
     /// Send a message to the agent (interactive or one-shot)
-    Client {
+    Chat {
         /// Message to send (if omitted, enters interactive mode)
         message: Option<String>,
 
         /// Optional process ID (defaults to your init process)
         #[arg(long)]
         pid: Option<String>,
-
-        /// Username for authentication (omit for setup mode)
-        #[arg(short, long)]
-        user: Option<String>,
-
-        /// Password or token credential
-        #[arg(short, long)]
-        password: Option<String>,
-    },
-
-    /// Run as a tool-providing node
-    Node {
-        /// Run in foreground (default: managed daemon/service mode)
-        #[arg(long)]
-        foreground: bool,
-
-        /// Username for gateway authentication
-        #[arg(short, long)]
-        user: Option<String>,
-
-        /// Node ID (default: hostname) - used as namespace prefix for tools
-        #[arg(long)]
-        id: Option<String>,
-
-        /// Workspace directory for file tools (default: config, else current directory)
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-
-        /// Optional daemon management action (install/start/stop/status/logs)
-        #[command(subcommand)]
-        action: Option<NodeAction>,
     },
 
     /// Interactive shell connected to the gateway OS
-    Shell {
-        /// Username for authentication (omit for setup mode)
-        #[arg(short, long)]
-        user: Option<String>,
+    Shell,
 
-        /// Password credential (or use global --token)
-        #[arg(short, long)]
-        password: Option<String>,
+    /// Process management (`proc.*`)
+    Proc {
+        #[command(subcommand)]
+        action: ProcAction,
     },
 
-    /// Get or set gateway configuration (remote)
-    Config {
-        /// Username for authentication (omit for setup mode)
-        #[arg(short, long)]
-        user: Option<String>,
+    /// Authentication and onboarding
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
 
-        /// Password or token credential
-        #[arg(short, long)]
-        password: Option<String>,
+    /// Run and manage the device daemon
+    Device {
+        #[command(subcommand)]
+        action: DeviceAction,
+    },
+
+    /// Get or set gateway configuration (use --local for CLI config)
+    Config {
+        /// Operate on local CLI config instead of remote kernel config
+        #[arg(long)]
+        local: bool,
 
         #[command(subcommand)]
         action: ConfigAction,
     },
 
-    /// Process management (`proc.*`)
-    Proc {
-        /// Username for authentication (omit for setup mode)
-        #[arg(short, long)]
-        user: Option<String>,
-
-        /// Password or token credential
-        #[arg(short, long)]
-        password: Option<String>,
-
+    /// Cloudflare infrastructure lifecycle
+    Infra {
         #[command(subcommand)]
-        action: ProcAction,
+        action: InfraAction,
     },
 
-    /// Get or set local CLI configuration
-    LocalConfig {
-        #[command(subcommand)]
-        action: LocalConfigAction,
+    /// Show CLI version and build metadata
+    Version,
+}
+
+#[derive(Subcommand)]
+enum DeviceAction {
+    /// Run the device in the foreground
+    Run {
+        /// Device ID (default: hostname)
+        #[arg(long)]
+        id: Option<String>,
+
+        /// Workspace directory for file tools
+        #[arg(long)]
+        workspace: Option<PathBuf>,
     },
 
-    /// Cloudflare deployment commands (up/down/status)
+    /// Install and start device daemon service
+    Install {
+        /// Device ID (saved to local config during install)
+        #[arg(long)]
+        id: Option<String>,
+
+        /// Workspace directory (saved to local config during install)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+
+    /// Start device daemon service
+    Start,
+
+    /// Stop device daemon service
+    Stop,
+
+    /// Show device daemon service status
+    Status,
+
+    /// Show device daemon service logs
+    Logs {
+        /// Number of lines to show
+        #[arg(short, long, default_value = "100")]
+        lines: usize,
+
+        /// Follow logs
+        #[arg(long)]
+        follow: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum InfraAction {
+    /// First-time infrastructure deploy (wizard + optional device bootstrap)
     Deploy {
-        #[command(subcommand)]
-        action: DeployAction,
-    },
-
-    /// First-time setup flow (deploy + node daemon install/start)
-    Setup {
         /// Release tag/channel (e.g., stable, dev, v0.2.0, or latest)
         #[arg(long, default_value = "latest")]
         version: String,
@@ -193,20 +202,20 @@ enum Commands {
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
         discord_bot_token: Option<String>,
 
-        /// Node ID to persist in local config (used by node daemon)
+        /// Device ID to persist in local config (used by device daemon)
         #[arg(long)]
         id: Option<String>,
 
-        /// Node workspace to persist in local config (used by node daemon)
+        /// Device workspace to persist in local config (used by device daemon)
         #[arg(long)]
         workspace: Option<PathBuf>,
 
-        /// Skip node daemon installation/start
+        /// Skip device daemon installation/start
         #[arg(long)]
         skip_node: bool,
     },
 
-    /// Upgrade deployed Cloudflare components (wrapper around `deploy up`)
+    /// Upgrade deployed infrastructure components
     Upgrade {
         /// Release tag/channel (e.g., stable, dev, v0.2.0, or latest)
         #[arg(long, default_value = "latest")]
@@ -261,8 +270,8 @@ enum Commands {
         discord_bot_token: Option<String>,
     },
 
-    /// Uninstall deployment and optionally remove local node daemon
-    Uninstall {
+    /// Destroy deployed infrastructure and optionally keep local device daemon
+    Destroy {
         /// Component to remove (repeat for multiple). Defaults to all when omitted.
         #[arg(short = 'c', long = "component")]
         component: Vec<String>,
@@ -291,59 +300,15 @@ enum Commands {
         #[arg(long, env = "CF_ACCOUNT_ID")]
         account_id: Option<String>,
 
-        /// Keep local node daemon installed
+        /// Keep local device daemon installed
         #[arg(long)]
         keep_node: bool,
     },
-
-    /// Mount R2 bucket to local workspace using rclone
-    Mount {
-        #[command(subcommand)]
-        action: MountAction,
-    },
-
-    /// Show CLI version and build metadata
-    Version,
 }
 
 #[derive(Subcommand)]
-enum MountAction {
-    /// Configure rclone with R2 credentials (reads from config if not provided)
-    Setup {
-        /// Cloudflare Account ID (or set r2.account_id in config)
-        #[arg(long, env = "CF_ACCOUNT_ID", default_value = "")]
-        account_id: String,
-
-        /// R2 Access Key ID (or set r2.access_key_id in config)
-        #[arg(long, env = "R2_ACCESS_KEY_ID", default_value = "")]
-        access_key_id: String,
-
-        /// R2 Secret Access Key (or set r2.secret_access_key in config)
-        #[arg(long, env = "R2_SECRET_ACCESS_KEY", default_value = "")]
-        secret_access_key: String,
-
-        /// R2 bucket name (default: gsv-storage)
-        #[arg(long, default_value = "gsv-storage")]
-        bucket: String,
-    },
-
-    /// Start the mount (requires setup first)
-    Start {
-        /// Run in foreground (default: background)
-        #[arg(long)]
-        foreground: bool,
-    },
-
-    /// Stop the mount
-    Stop,
-
-    /// Show mount status
-    Status,
-}
-
-#[derive(Subcommand)]
-enum NodeAction {
-    /// Install and start node daemon service
+enum DeviceServiceAction {
+    /// Install and start device daemon service
     Install {
         /// Node ID (saved to local config during install)
         #[arg(long)]
@@ -354,19 +319,19 @@ enum NodeAction {
         workspace: Option<PathBuf>,
     },
 
-    /// Uninstall and stop node daemon service
+    /// Uninstall and stop device daemon service
     Uninstall,
 
-    /// Start node daemon service
+    /// Start device daemon service
     Start,
 
-    /// Stop node daemon service
+    /// Stop device daemon service
     Stop,
 
-    /// Show node daemon service status
+    /// Show device daemon service status
     Status,
 
-    /// Show node daemon service logs
+    /// Show device daemon service logs
     Logs {
         /// Number of lines to show
         #[arg(short, long, default_value = "100")]
@@ -378,7 +343,7 @@ enum NodeAction {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum ConfigAction {
     /// Get configuration value
     Get {
@@ -394,7 +359,140 @@ enum ConfigAction {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
+enum AuthAction {
+    /// Initialize gateway identity/auth (setup mode only)
+    Setup {
+        /// First user username
+        #[arg(long)]
+        username: Option<String>,
+
+        /// First user password
+        #[arg(long = "new-password")]
+        new_password: Option<String>,
+
+        /// Optional root password (omit to keep root locked)
+        #[arg(long)]
+        root_password: Option<String>,
+
+        /// Optional AI provider
+        #[arg(long)]
+        ai_provider: Option<String>,
+
+        /// Optional AI model
+        #[arg(long)]
+        ai_model: Option<String>,
+
+        /// Optional AI API key
+        #[arg(long)]
+        ai_api_key: Option<String>,
+
+        /// Optional node id to pre-issue a driver token for
+        #[arg(long)]
+        node_id: Option<String>,
+
+        /// Optional node token label
+        #[arg(long)]
+        node_label: Option<String>,
+
+        /// Optional node token expiry unix ms
+        #[arg(long)]
+        node_expires_at: Option<i64>,
+    },
+
+    /// Manage auth tokens
+    Token {
+        #[command(subcommand)]
+        action: AuthTokenAction,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+enum AuthTokenAction {
+    /// Create a new auth token
+    Create {
+        /// Token kind
+        #[arg(long, value_enum, default_value = "node")]
+        kind: TokenKindArg,
+
+        /// Optional owner uid (root only)
+        #[arg(long)]
+        uid: Option<u32>,
+
+        /// Optional token label
+        #[arg(long)]
+        label: Option<String>,
+
+        /// Optional explicit role binding (defaults from kind)
+        #[arg(long, value_enum)]
+        role: Option<TokenRoleArg>,
+
+        /// Optional device binding (driver/node tokens only)
+        #[arg(long)]
+        device: Option<String>,
+
+        /// Optional expiry timestamp (unix ms)
+        #[arg(long)]
+        expires_at: Option<i64>,
+    },
+
+    /// List auth tokens
+    List {
+        /// Optional uid filter (root only)
+        #[arg(long)]
+        uid: Option<u32>,
+    },
+
+    /// Revoke an auth token
+    Revoke {
+        /// Token ID to revoke
+        token_id: String,
+
+        /// Optional revoke reason
+        #[arg(long)]
+        reason: Option<String>,
+
+        /// Optional uid filter (root only)
+        #[arg(long)]
+        uid: Option<u32>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TokenKindArg {
+    Node,
+    Service,
+    User,
+}
+
+impl TokenKindArg {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::Service => "service",
+            Self::User => "user",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TokenRoleArg {
+    Driver,
+    Service,
+    User,
+}
+
+impl TokenRoleArg {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Driver => "driver",
+            Self::Service => "service",
+            Self::User => "user",
+        }
+    }
+}
+
+#[derive(Subcommand, Clone)]
 enum ProcAction {
     /// List visible processes
     List {
@@ -467,12 +565,12 @@ enum LocalConfigAction {
     Show,
     /// Get a config value
     Get {
-        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "node.workspace")
+        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "node.token", "node.workspace")
         key: String,
     },
     /// Set a config value
     Set {
-        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "node.workspace")
+        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "node.token", "node.workspace")
         key: String,
         /// Value to set
         value: String,
@@ -674,14 +772,133 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .block_on(async_main())
 }
 
+fn is_setup_required_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<GatewayRpcError>()
+        .map(|rpc_error| rpc_error.is_setup_required())
+        .unwrap_or(false)
+}
+
+async fn gateway_is_in_setup_mode(url: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    let probe_conn = Connection::connect_without_handshake(url, |_| {}).await?;
+    let response = probe_conn
+        .request(
+            "sys.connect",
+            Some(json!({
+                "protocol": 1,
+                "client": {
+                    "id": format!("gsv-setup-probe-{}", uuid::Uuid::new_v4()),
+                    "version": gsv::build_info::BUILD_VERSION,
+                    "platform": std::env::consts::OS,
+                    "role": "user",
+                },
+            })),
+        )
+        .await?;
+
+    if response.ok {
+        return Ok(false);
+    }
+
+    let is_setup_mode = response
+        .error
+        .as_ref()
+        .map(|error| {
+            error.code == 425
+                || error
+                    .details
+                    .as_ref()
+                    .and_then(|details| details.get("setupMode"))
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    Ok(is_setup_mode)
+}
+
+async fn run_with_auto_setup_retry<F, Fut>(
+    url: &str,
+    cfg: &CliConfig,
+    setup_username: Option<String>,
+    setup_password: Option<String>,
+    mut attempt: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+    if gateway_is_in_setup_mode(url).await? {
+        if !can_prompt_interactively() && (setup_username.is_none() || setup_password.is_none()) {
+            return Err(
+                "Gateway is in setup mode. Provide --user and --password to bootstrap automatically in non-interactive mode."
+                    .into(),
+            );
+        }
+
+        println!("Gateway is in setup mode. Starting setup wizard...");
+        run_auth_setup(
+            url,
+            cfg,
+            setup_username.clone(),
+            setup_password.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+    }
+
+    match attempt().await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if !is_setup_required_error(error.as_ref()) {
+                return Err(error);
+            }
+
+            if !can_prompt_interactively() && (setup_username.is_none() || setup_password.is_none())
+            {
+                return Err(
+                    "Gateway is in setup mode. Provide --user and --password to bootstrap automatically in non-interactive mode."
+                        .into(),
+                );
+            }
+
+            println!("Gateway is in setup mode. Starting setup wizard...");
+            run_auth_setup(
+                url,
+                cfg,
+                setup_username,
+                setup_password,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await?;
+
+            attempt().await
+        }
+    }
+}
+
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Load config from file
     let cfg = CliConfig::load();
 
-    // Keep explicit CLI overrides so managed node mode can persist them.
+    // Keep explicit CLI overrides so managed device mode can persist them.
     let cli_url_override = cli.url.clone();
+    let cli_user_override = cli.user.clone();
+    let cli_password_override = cli.password.clone();
     let cli_token_override = cli.token.clone();
 
     // Merge CLI args with config (CLI takes precedence)
@@ -691,94 +908,199 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let token = cli_token_override.clone().or_else(|| cfg.gateway_token());
 
     match cli.command {
-        Commands::Init { force } => run_init(force),
-        Commands::Client {
-            message,
-            pid,
-            user,
-            password,
-        } => {
-            let auth = resolve_interactive_gateway_auth(&cfg, token, user, password, "client")?;
-            commands::run_client(&url, auth, message, pid).await
+        Commands::Chat { message, pid } => {
+            run_with_auto_setup_retry(
+                &url,
+                &cfg,
+                cli_user_override.clone(),
+                cli_password_override.clone(),
+                || async {
+                    let auth = resolve_interactive_gateway_auth(
+                        &cfg,
+                        token.clone(),
+                        cli_user_override.clone(),
+                        cli_password_override.clone(),
+                        "chat",
+                    )?;
+                    commands::run_client(&url, auth, message.clone(), pid.clone()).await
+                },
+            )
+            .await
         }
-        Commands::Node {
-            foreground,
-            user,
-            id,
-            workspace,
-            action,
-        } => {
-            if let Some(action) = action {
-                if foreground {
-                    return Err(
-                        "--foreground cannot be combined with node management subcommands".into(),
-                    );
+        Commands::Shell => {
+            run_with_auto_setup_retry(
+                &url,
+                &cfg,
+                cli_user_override.clone(),
+                cli_password_override.clone(),
+                || async {
+                    let auth = resolve_interactive_gateway_auth(
+                        &cfg,
+                        token.clone(),
+                        cli_user_override.clone(),
+                        cli_password_override.clone(),
+                        "shell",
+                    )?;
+                    run_shell(&url, auth).await
+                },
+            )
+            .await
+        }
+        Commands::Proc { action } => {
+            run_with_auto_setup_retry(
+                &url,
+                &cfg,
+                cli_user_override.clone(),
+                cli_password_override.clone(),
+                || async {
+                    let auth = resolve_interactive_gateway_auth(
+                        &cfg,
+                        token.clone(),
+                        cli_user_override.clone(),
+                        cli_password_override.clone(),
+                        "proc",
+                    )?;
+                    commands::run_proc(&url, auth, action.clone()).await
+                },
+            )
+            .await
+        }
+        Commands::Auth { action } => match action {
+            AuthAction::Setup {
+                username,
+                new_password,
+                root_password,
+                ai_provider,
+                ai_model,
+                ai_api_key,
+                node_id,
+                node_label,
+                node_expires_at,
+            } => {
+                run_auth_setup(
+                    &url,
+                    &cfg,
+                    username,
+                    new_password,
+                    root_password,
+                    ai_provider,
+                    ai_model,
+                    ai_api_key,
+                    node_id,
+                    node_label,
+                    node_expires_at,
+                )
+                .await
+            }
+            other => {
+                run_with_auto_setup_retry(
+                    &url,
+                    &cfg,
+                    cli_user_override.clone(),
+                    cli_password_override.clone(),
+                    || async {
+                        let auth = resolve_interactive_gateway_auth(
+                            &cfg,
+                            token.clone(),
+                            cli_user_override.clone(),
+                            cli_password_override.clone(),
+                            "auth",
+                        )?;
+                        commands::run_auth(&url, auth, other.clone()).await
+                    },
+                )
+                .await
+            }
+        },
+        Commands::Device { action } => match action {
+            DeviceAction::Run { id, workspace } => {
+                run_with_auto_setup_retry(
+                    &url,
+                    &cfg,
+                    cli_user_override.clone(),
+                    cli_password_override.clone(),
+                    || async {
+                        let node_id = resolve_node_id(id.clone(), &cfg);
+                        let workspace = resolve_node_workspace(workspace.clone(), &cfg);
+                        let auth = resolve_node_gateway_auth(
+                            &cfg,
+                            cli_token_override.clone(),
+                            cli_user_override.clone(),
+                        )?;
+                        run_node(&url, auth, node_id, workspace).await
+                    },
+                )
+                .await
+            }
+            DeviceAction::Install { id, workspace } => run_node_service(
+                DeviceServiceAction::Install { id, workspace },
+                &cfg,
+                cli_url_override.as_deref(),
+                cli_user_override.as_deref(),
+                cli_token_override.as_deref(),
+            ),
+            DeviceAction::Start => run_node_service(
+                DeviceServiceAction::Start,
+                &cfg,
+                cli_url_override.as_deref(),
+                cli_user_override.as_deref(),
+                cli_token_override.as_deref(),
+            ),
+            DeviceAction::Stop => run_node_service(
+                DeviceServiceAction::Stop,
+                &cfg,
+                cli_url_override.as_deref(),
+                cli_user_override.as_deref(),
+                cli_token_override.as_deref(),
+            ),
+            DeviceAction::Status => run_node_service(
+                DeviceServiceAction::Status,
+                &cfg,
+                cli_url_override.as_deref(),
+                cli_user_override.as_deref(),
+                cli_token_override.as_deref(),
+            ),
+            DeviceAction::Logs { lines, follow } => run_node_service(
+                DeviceServiceAction::Logs { lines, follow },
+                &cfg,
+                cli_url_override.as_deref(),
+                cli_user_override.as_deref(),
+                cli_token_override.as_deref(),
+            ),
+        },
+        Commands::Config { local, action } => {
+            if local {
+                match action {
+                    ConfigAction::Get { key } => {
+                        let key = key.ok_or("`gsv config --local get` requires a key")?;
+                        run_local_config(LocalConfigAction::Get { key })
+                    }
+                    ConfigAction::Set { key, value } => {
+                        run_local_config(LocalConfigAction::Set { key, value })
+                    }
                 }
-                run_node_service(
-                    action,
-                    &cfg,
-                    cli_url_override.as_deref(),
-                    user.as_deref(),
-                    cli_token_override.as_deref(),
-                )
-            } else if foreground {
-                let node_id = resolve_node_id(id, &cfg);
-                let workspace = resolve_node_workspace(workspace, &cfg);
-                let auth = resolve_node_gateway_auth(&cfg, token, user)?;
-                run_node(&url, auth, node_id, workspace).await
             } else {
-                run_node_default_managed(
+                run_with_auto_setup_retry(
+                    &url,
                     &cfg,
-                    id,
-                    workspace,
-                    cli_url_override.as_deref(),
-                    user.as_deref(),
-                    cli_token_override.as_deref(),
+                    cli_user_override.clone(),
+                    cli_password_override.clone(),
+                    || async {
+                        let auth = resolve_interactive_gateway_auth(
+                            &cfg,
+                            token.clone(),
+                            cli_user_override.clone(),
+                            cli_password_override.clone(),
+                            "config",
+                        )?;
+                        commands::run_config(&url, auth, action.clone()).await
+                    },
                 )
+                .await
             }
         }
-        Commands::Shell { user, password } => {
-            let auth = resolve_interactive_gateway_auth(&cfg, token, user, password, "shell")?;
-            run_shell(&url, auth).await
-        }
-        Commands::Config {
-            user,
-            password,
-            action,
-        } => {
-            let auth = resolve_interactive_gateway_auth(&cfg, token, user, password, "config")?;
-            commands::run_config(&url, auth, action).await
-        }
-        Commands::Proc {
-            user,
-            password,
-            action,
-        } => {
-            let auth = resolve_interactive_gateway_auth(&cfg, token, user, password, "proc")?;
-            commands::run_proc(&url, auth, action).await
-        }
-        Commands::LocalConfig { action } => run_local_config(action),
-        Commands::Deploy { action } => run_deploy(action, &cfg).await,
-        Commands::Setup {
-            version,
-            component,
-            all,
-            force_fetch,
-            bundle_dir,
-            no_wizard,
-            api_token,
-            account_id,
-            gateway_auth_token,
-            llm_provider,
-            llm_model,
-            llm_api_key,
-            discord_bot_token,
-            id,
-            workspace,
-            skip_node,
-        } => {
-            run_setup(
-                &cfg,
+        Commands::Infra { action } => match action {
+            InfraAction::Deploy {
                 version,
                 component,
                 all,
@@ -795,26 +1117,29 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 id,
                 workspace,
                 skip_node,
-            )
-            .await
-        }
-        Commands::Upgrade {
-            version,
-            component,
-            all,
-            force_fetch,
-            bundle_dir,
-            wizard,
-            api_token,
-            account_id,
-            gateway_auth_token,
-            llm_provider,
-            llm_model,
-            llm_api_key,
-            discord_bot_token,
-        } => {
-            run_upgrade(
-                &cfg,
+            } => {
+                run_setup(
+                    &cfg,
+                    version,
+                    component,
+                    all,
+                    force_fetch,
+                    bundle_dir,
+                    no_wizard,
+                    api_token,
+                    account_id,
+                    gateway_auth_token,
+                    llm_provider,
+                    llm_model,
+                    llm_api_key,
+                    discord_bot_token,
+                    id,
+                    workspace,
+                    skip_node,
+                )
+                .await
+            }
+            InfraAction::Upgrade {
                 version,
                 component,
                 all,
@@ -828,21 +1153,26 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 llm_model,
                 llm_api_key,
                 discord_bot_token,
-            )
-            .await
-        }
-        Commands::Uninstall {
-            component,
-            all,
-            delete_bucket,
-            purge_bucket,
-            wizard,
-            api_token,
-            account_id,
-            keep_node,
-        } => {
-            run_uninstall(
-                &cfg,
+            } => {
+                run_upgrade(
+                    &cfg,
+                    version,
+                    component,
+                    all,
+                    force_fetch,
+                    bundle_dir,
+                    wizard,
+                    api_token,
+                    account_id,
+                    gateway_auth_token,
+                    llm_provider,
+                    llm_model,
+                    llm_api_key,
+                    discord_bot_token,
+                )
+                .await
+            }
+            InfraAction::Destroy {
                 component,
                 all,
                 delete_bucket,
@@ -851,10 +1181,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 api_token,
                 account_id,
                 keep_node,
-            )
-            .await
-        }
-        Commands::Mount { action } => run_mount(action, &cfg).await,
+            } => {
+                run_uninstall(
+                    &cfg,
+                    component,
+                    all,
+                    delete_bucket,
+                    purge_bucket,
+                    wizard,
+                    api_token,
+                    account_id,
+                    keep_node,
+                )
+                .await
+            }
+        },
         Commands::Version => run_version(),
     }
 }
@@ -877,40 +1218,6 @@ fn run_version() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     println!("build timestamp: {}", gsv::build_info::BUILD_TIMESTAMP);
-    Ok(())
-}
-
-fn run_init(force: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(path) = CliConfig::config_path() else {
-        return Err("Could not determine config directory".into());
-    };
-
-    if path.exists() && !force {
-        println!("Config file already exists at: {}", path.display());
-        println!("\nUse --force to overwrite, or edit directly:");
-        println!("  $EDITOR {}", path.display());
-        return Ok(());
-    }
-
-    // Create parent directory
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    // Write sample config
-    std::fs::write(&path, config::sample_config())?;
-
-    println!("Created config file: {}", path.display());
-    println!("\nEdit it to set your gateway URL and auth fields:");
-    println!("  $EDITOR {}", path.display());
-    println!("\nOr use 'gsv local-config set' to update values:");
-    println!("  gsv local-config set gateway.url wss://gateway.example.com/ws");
-    println!("  gsv local-config set gateway.username root");
-    println!("  gsv local-config set gateway.token your-secret-token");
-    println!("  gsv local-config set release.channel stable");
-    println!("  gsv local-config set node.id my-node");
-    println!("  gsv local-config set node.workspace /path/to/workspace");
-
     Ok(())
 }
 
@@ -1073,6 +1380,13 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                 "r2.bucket" => cfg.r2.bucket,
                 "session.default_key" => cfg.session.default_key,
                 "node.id" => cfg.node.id,
+                "node.token" => cfg.node.token.map(|s| {
+                    if s.len() > 8 {
+                        format!("{}...{}", &s[..4], &s[s.len() - 4..])
+                    } else {
+                        "****".to_string()
+                    }
+                }),
                 "node.workspace" => cfg.node.workspace.map(|path| path.display().to_string()),
                 _ => {
                     eprintln!("Unknown config key: {}", key);
@@ -1082,7 +1396,7 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                     eprintln!("  release.channel");
                     eprintln!("  r2.account_id, r2.access_key_id, r2.bucket");
                     eprintln!("  session.default_key");
-                    eprintln!("  node.id, node.workspace");
+                    eprintln!("  node.id, node.token, node.workspace");
                     return Ok(());
                 }
             };
@@ -1118,6 +1432,7 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                     cfg.session.default_key = Some(config::normalize_session_key(&value))
                 }
                 "node.id" => cfg.node.id = Some(value.clone()),
+                "node.token" => cfg.node.token = Some(value.clone()),
                 "node.workspace" => cfg.node.workspace = Some(PathBuf::from(value.clone())),
                 "channels.whatsapp.url" => cfg.channels.whatsapp.url = Some(value.clone()),
                 "channels.whatsapp.token" => cfg.channels.whatsapp.token = Some(value.clone()),
@@ -1150,7 +1465,7 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                 if path.exists() {
                     println!("(exists)");
                 } else {
-                    println!("(not created yet - run 'gsv init')");
+                    println!("(not created yet - set any local config key to create it)");
                 }
             }
             None => println!("Could not determine config path"),
@@ -1214,6 +1529,13 @@ fn normalize_auth_field(value: Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+fn format_unix_ms(timestamp_ms: i64) -> String {
+    Utc.timestamp_millis_opt(timestamp_ms)
+        .single()
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| timestamp_ms.to_string())
+}
+
 fn resolve_gateway_username(cfg: &CliConfig, cli_username: Option<String>) -> Option<String> {
     normalize_auth_field(cli_username).or_else(|| normalize_auth_field(cfg.gateway_username()))
 }
@@ -1238,19 +1560,13 @@ fn resolve_interactive_gateway_auth(
     }
 
     if username.is_none() && can_prompt_interactively() {
-        let prompt = format!(
-            "Gateway username for `{}` (leave empty to try setup/no-auth mode)",
-            command_name
-        );
+        let prompt = format!("Gateway username for `{}`", command_name);
         username = prompt_line(&prompt, None)?;
     }
 
     if username.is_some() && password.is_none() && token.is_none() {
         if can_prompt_interactively() {
-            let prompt = format!(
-                "Gateway password for `{}` (leave empty to try setup/no-auth mode)",
-                command_name
-            );
+            let prompt = format!("Gateway password for `{}`", command_name);
             password = prompt_secret(&prompt)?;
         } else {
             return Err(
@@ -1275,15 +1591,17 @@ fn resolve_node_gateway_auth(
     cli_username: Option<String>,
 ) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
     let username = resolve_gateway_username(cfg, cli_username);
-    let token = normalize_auth_field(token);
+    let token = normalize_auth_field(token)
+        .or_else(|| normalize_auth_field(cfg.default_node_token()))
+        .or_else(|| normalize_auth_field(cfg.gateway_token()));
 
     if token.is_some() && username.is_none() {
-        return Err("Username is required when using --token for node auth".into());
+        return Err("Username is required when using --token for device auth".into());
     }
 
     if username.is_some() && token.is_none() {
         return Err(
-            "Missing non-interactive node credential. Set --token or local-config gateway.token."
+            "Missing non-interactive device credential. Set --token, `gsv config --local set node.token ...`, or `gsv config --local set gateway.token ...`."
                 .into(),
         );
     }
@@ -1295,6 +1613,288 @@ fn resolve_node_gateway_auth(
     };
     auth.validate()?;
     Ok(auth)
+}
+
+async fn run_auth_setup(
+    url: &str,
+    cfg: &CliConfig,
+    username: Option<String>,
+    password: Option<String>,
+    root_password: Option<String>,
+    ai_provider: Option<String>,
+    ai_model: Option<String>,
+    ai_api_key: Option<String>,
+    node_id: Option<String>,
+    node_label: Option<String>,
+    node_expires_at: Option<i64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut username =
+        normalize_auth_field(username).or_else(|| normalize_auth_field(cfg.gateway_username()));
+    let mut password = normalize_auth_field(password);
+    let mut root_password = normalize_auth_field(root_password);
+    let mut ai_provider = normalize_auth_field(ai_provider).map(|p| p.to_ascii_lowercase());
+    let mut ai_model = normalize_auth_field(ai_model);
+    let mut ai_api_key = ai_api_key.filter(|value| !value.trim().is_empty());
+    let mut node_id = normalize_auth_field(node_id).or_else(|| cfg.node.id.clone());
+    let mut node_label = normalize_auth_field(node_label);
+    let mut node_expires_at = node_expires_at;
+
+    if username.is_none() && can_prompt_interactively() {
+        username = prompt_line("First gateway username", Some("admin"))?;
+    }
+    if password.is_none() && can_prompt_interactively() {
+        password = prompt_secret("First gateway password (min 8 chars)")?;
+    }
+
+    if can_prompt_interactively() {
+        if root_password.is_none() && prompt_yes_no("Set a root password now?", false)? {
+            root_password = prompt_secret("Root password (min 8 chars)")?;
+        }
+        if root_password
+            .as_ref()
+            .map(|value| value.trim().len() < 8)
+            .unwrap_or(false)
+        {
+            return Err("Root password must be at least 8 characters".into());
+        }
+
+        let mut wants_ai = ai_provider.is_some() || ai_model.is_some() || ai_api_key.is_some();
+        if !wants_ai {
+            wants_ai = prompt_yes_no("Configure AI provider/model now?", true)?;
+        }
+        if wants_ai {
+            if ai_provider.is_none() {
+                let provider_choice = select("AI provider")
+                    .item("openrouter".to_string(), "openrouter", "recommended")
+                    .item("anthropic".to_string(), "anthropic", "")
+                    .item("openai".to_string(), "openai", "")
+                    .item("google".to_string(), "google", "")
+                    .item("custom".to_string(), "custom", "")
+                    .interact()?;
+                if provider_choice == "custom" {
+                    ai_provider = prompt_line("Custom AI provider ID", None)?;
+                } else {
+                    ai_provider = Some(provider_choice);
+                }
+                ai_provider = ai_provider.map(|provider| provider.to_ascii_lowercase());
+            }
+
+            if ai_model.is_none() {
+                let default_model = ai_provider
+                    .as_deref()
+                    .and_then(default_llm_model_for_provider);
+                ai_model = prompt_line("AI model", default_model)?;
+            }
+
+            if ai_api_key.is_none() {
+                if let Some(provider) = ai_provider.as_deref() {
+                    if let Some(env_key) = env_api_key_for_provider(provider) {
+                        if prompt_yes_no(
+                            "Use AI API key from environment for selected provider?",
+                            true,
+                        )? {
+                            ai_api_key = Some(env_key);
+                        }
+                    }
+                }
+            }
+
+            if ai_api_key.is_none() {
+                ai_api_key = prompt_secret("AI API key (leave empty to skip for now)")?;
+            }
+        }
+
+        let mut wants_device_token =
+            node_id.is_some() || node_label.is_some() || node_expires_at.is_some();
+        if !wants_device_token {
+            wants_device_token = prompt_yes_no("Issue a device token now?", true)?;
+        }
+        if wants_device_token {
+            if node_id.is_none() {
+                let default_device_id = cfg.node.id.clone().unwrap_or_else(|| {
+                    format!(
+                        "device-{}",
+                        whoami::fallible::hostname().unwrap_or_else(|_| "local".to_string())
+                    )
+                });
+                node_id = prompt_line("Device ID for token binding", Some(&default_device_id))?;
+            }
+
+            if node_label.is_none() {
+                node_label = prompt_line("Device token label (optional)", None)?;
+            }
+
+            if node_expires_at.is_none() {
+                let expiry_days = prompt_line(
+                    "Device token expiry in days (leave empty for no expiry)",
+                    None,
+                )?;
+                if let Some(days_raw) = expiry_days {
+                    let days: i64 = days_raw
+                        .parse()
+                        .map_err(|_| "Expiry days must be a positive integer")?;
+                    if days <= 0 {
+                        return Err("Expiry days must be greater than zero".into());
+                    }
+                    node_expires_at =
+                        Some(Utc::now().timestamp_millis() + (days * 24 * 60 * 60 * 1000));
+                }
+            }
+        }
+    }
+
+    let username =
+        username.ok_or("Missing username. Pass --username or run in interactive mode.")?;
+    let password =
+        password.ok_or("Missing password. Pass --new-password (or run interactively).")?;
+
+    let mut payload = json!({
+        "username": username,
+        "password": password,
+    });
+
+    if let Some(root_password) = root_password {
+        payload["rootPassword"] = json!(root_password);
+    }
+
+    if ai_provider.is_some() || ai_model.is_some() || ai_api_key.is_some() {
+        let mut ai = json!({});
+        if let Some(provider) = ai_provider {
+            ai["provider"] = json!(provider);
+        }
+        if let Some(model) = ai_model {
+            ai["model"] = json!(model);
+        }
+        if let Some(api_key) = ai_api_key {
+            ai["apiKey"] = json!(api_key);
+        }
+        payload["ai"] = ai;
+    }
+
+    if let Some(node_id) = node_id {
+        let mut node = json!({
+            "deviceId": node_id,
+        });
+        if let Some(label) = node_label {
+            node["label"] = json!(label);
+        }
+        if let Some(expires_at) = node_expires_at {
+            node["expiresAt"] = json!(expires_at);
+        }
+        payload["node"] = node;
+    }
+
+    let conn = Connection::connect_without_handshake(url, |_| {}).await?;
+    let response = conn.request("sys.setup", Some(payload)).await?;
+    if !response.ok {
+        if let Some(error) = response.error {
+            return Err(Box::new(GatewayRpcError::new(
+                "sys.setup",
+                error.code,
+                error.message,
+                error.details,
+            )));
+        }
+        return Err("sys.setup failed".into());
+    }
+
+    let data = response.data.unwrap_or_else(|| json!({}));
+    let setup = match serde_json::from_value::<SysSetupPayload>(data.clone()) {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            // Schema drift fallback for debugging and compatibility.
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            return Ok(());
+        }
+    };
+
+    let mut local_cfg = CliConfig::load();
+    let mut saved_fields: Vec<&str> = Vec::new();
+
+    if local_cfg.gateway.username.as_deref() != Some(setup.user.username.as_str()) {
+        local_cfg.gateway.username = Some(setup.user.username.clone());
+        saved_fields.push("gateway.username");
+    }
+
+    if let Some(node_token) = setup.node_token.as_ref() {
+        if local_cfg.node.token.as_deref() != Some(node_token.token.as_str()) {
+            local_cfg.node.token = Some(node_token.token.clone());
+            saved_fields.push("node.token");
+        }
+        if let Some(device_id) = node_token.allowed_device_id.as_deref() {
+            if local_cfg.node.id.as_deref() != Some(device_id) {
+                local_cfg.node.id = Some(device_id.to_string());
+                saved_fields.push("node.id");
+            }
+        }
+    }
+
+    if !saved_fields.is_empty() {
+        local_cfg.save()?;
+    }
+
+    println!("Setup complete.");
+    println!("User: {} (uid {})", setup.user.username, setup.user.uid);
+    println!("Home: {}", setup.user.home);
+    println!(
+        "Root account: {}",
+        if setup.root_locked {
+            "locked"
+        } else {
+            "password set"
+        }
+    );
+
+    if let Some(node_token) = setup.node_token {
+        println!(
+            "Node token issued: {} ({})",
+            node_token.token_id, node_token.token_prefix
+        );
+        println!(
+            "Node binding: {}",
+            node_token.allowed_device_id.as_deref().unwrap_or("<none>")
+        );
+        println!(
+            "Node token expires: {}",
+            node_token
+                .expires_at
+                .map(format_unix_ms)
+                .unwrap_or_else(|| "never".to_string())
+        );
+    }
+
+    if saved_fields.is_empty() {
+        println!("Local config unchanged.");
+    } else {
+        println!("Saved local config: {}.", saved_fields.join(", "));
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SysSetupPayload {
+    user: SysSetupUser,
+    root_locked: bool,
+    node_token: Option<SysSetupNodeToken>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysSetupUser {
+    uid: u32,
+    username: String,
+    home: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SysSetupNodeToken {
+    token_id: String,
+    token: String,
+    token_prefix: String,
+    allowed_device_id: Option<String>,
+    expires_at: Option<i64>,
 }
 
 fn prompt_yes_no(prompt: &str, default_yes: bool) -> Result<bool, Box<dyn std::error::Error>> {
@@ -1374,7 +1974,7 @@ fn resolve_cloudflare_token_for_deploy(
             .ok_or("Cloudflare API token is required for deploy wizard".into());
     }
 
-    Err("Cloudflare API token missing. Set --api-token or `gsv local-config set cloudflare.api_token ...`".into())
+    Err("Cloudflare API token missing. Set --api-token or `gsv config --local set cloudflare.api_token ...`".into())
 }
 
 async fn resolve_cloudflare_account_id_for_deploy(
@@ -1643,13 +2243,13 @@ async fn run_setup(
     .await?;
 
     if skip_node {
-        println!("Skipped node daemon setup (--skip-node).");
+        println!("Skipped device daemon setup (--skip-node).");
         return Ok(());
     }
 
     if !node_service_management_supported() {
         println!(
-            "Node daemon management is unsupported on this OS. Run `gsv node --foreground` to start a node manually."
+            "Device daemon management is unsupported on this OS. Run `gsv device run` to start a device manually."
         );
         return Ok(());
     }
@@ -1740,19 +2340,25 @@ async fn run_uninstall(
     .await?;
 
     if keep_node {
-        println!("Skipped node daemon uninstall (--keep-node).");
+        println!("Skipped device daemon uninstall (--keep-node).");
         return Ok(());
     }
 
     if !node_service_management_supported() {
         println!(
-            "Node daemon management is unsupported on this OS. Local node teardown was skipped."
+            "Device daemon management is unsupported on this OS. Local device teardown was skipped."
         );
         return Ok(());
     }
 
     let refreshed_cfg = CliConfig::load();
-    run_node_service(NodeAction::Uninstall, &refreshed_cfg, None, None, None)
+    run_node_service(
+        DeviceServiceAction::Uninstall,
+        &refreshed_cfg,
+        None,
+        None,
+        None,
+    )
 }
 
 async fn run_deploy(
@@ -1863,7 +2469,7 @@ async fn run_deploy(
                     }
                 } else {
                     println!(
-                        "Tip: persist it with `gsv local-config set cloudflare.account_id {}`",
+                        "Tip: persist it with `gsv config --local set cloudflare.account_id {}`",
                         resolved_account_id
                     );
                 }
@@ -2262,7 +2868,7 @@ async fn run_deploy(
 
             let token = api_token
                 .or_else(|| cfg.cloudflare.api_token.clone())
-                .ok_or("Cloudflare API token missing. Set --api-token or `gsv local-config set cloudflare.api_token ...`")?;
+                .ok_or("Cloudflare API token missing. Set --api-token or `gsv config --local set cloudflare.api_token ...`")?;
             let configured_account_id = account_id
                 .or_else(|| cfg.cloudflare.account_id.clone())
                 .filter(|v| !v.trim().is_empty());
@@ -2331,7 +2937,7 @@ async fn run_deploy(
             } => {
                 let token = api_token
                     .or_else(|| cfg.cloudflare.api_token.clone())
-                    .ok_or("Cloudflare API token missing. Set --api-token or `gsv local-config set cloudflare.api_token ...`")?;
+                    .ok_or("Cloudflare API token missing. Set --api-token or `gsv config --local set cloudflare.api_token ...`")?;
                 let configured_account_id = account_id
                     .or_else(|| cfg.cloudflare.account_id.clone())
                     .filter(|v| !v.trim().is_empty());
@@ -2344,7 +2950,7 @@ async fn run_deploy(
                 } else {
                     println!("Resolved Cloudflare account ID: {}", resolved);
                     println!(
-                        "Tip: persist it with `gsv local-config set cloudflare.account_id {}`",
+                        "Tip: persist it with `gsv config --local set cloudflare.account_id {}`",
                         resolved
                     );
                 }
@@ -2377,39 +2983,7 @@ fn node_logs_file(lines: usize, follow: bool) -> Result<(), Box<dyn std::error::
     run_command_passthrough(&mut cmd, "Failed to read node log file")
 }
 
-const DEFAULT_NODE_LOG_GET_LINES: usize = 100;
-const MAX_NODE_LOG_GET_LINES: usize = 5000;
 const MAX_NODE_EXEC_EVENT_OUTBOX: usize = 2048;
-
-fn resolve_logs_get_line_limit(lines: Option<usize>) -> usize {
-    lines
-        .unwrap_or(DEFAULT_NODE_LOG_GET_LINES)
-        .max(1)
-        .min(MAX_NODE_LOG_GET_LINES)
-}
-
-fn read_recent_node_log_lines(limit: usize) -> Result<(Vec<String>, bool), String> {
-    let path = logger::node_log_path().map_err(|e| format!("Failed to resolve log path: {}", e))?;
-    let file =
-        fs::File::open(&path).map_err(|e| format!("Failed to open '{}': {}", path.display(), e))?;
-    let reader = io::BufReader::new(file);
-
-    let mut total_lines = 0usize;
-    let mut recent = VecDeque::with_capacity(limit.min(1024));
-
-    for line in reader.lines() {
-        let line = line.map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
-        total_lines += 1;
-
-        if recent.len() == limit {
-            recent.pop_front();
-        }
-        recent.push_back(line);
-    }
-
-    let truncated = total_lines > limit;
-    Ok((recent.into_iter().collect(), truncated))
-}
 
 #[cfg(unix)]
 async fn wait_for_shutdown_signal() -> &'static str {
@@ -2548,7 +3122,7 @@ fn node_service_is_installed() -> Result<bool, Box<dyn std::error::Error>> {
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        Err("node daemon management is currently supported on macOS and Linux only".into())
+        Err("device daemon management is currently supported on macOS and Linux only".into())
     }
 }
 
@@ -2565,7 +3139,7 @@ fn restart_node_service() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        Err("node daemon management is currently supported on macOS and Linux only".into())
+        Err("device daemon management is currently supported on macOS and Linux only".into())
     }
 }
 
@@ -2588,7 +3162,7 @@ fn run_node_default_managed(
         if gateway_overrides_changed || node_defaults_changed {
             restart_node_service()?;
         } else {
-            run_node_service(NodeAction::Start, cfg, None, None, None)?;
+            run_node_service(DeviceServiceAction::Start, cfg, None, None, None)?;
         }
         if gateway_overrides_changed {
             println!("Saved gateway connection overrides to local config.");
@@ -2600,7 +3174,7 @@ fn run_node_default_managed(
         );
     } else {
         run_node_service(
-            NodeAction::Install {
+            DeviceServiceAction::Install {
                 id: node_id,
                 workspace,
             },
@@ -2615,14 +3189,14 @@ fn run_node_default_managed(
 }
 
 fn run_node_service(
-    action: NodeAction,
+    action: DeviceServiceAction,
     cfg: &CliConfig,
     gateway_url_override: Option<&str>,
     gateway_username_override: Option<&str>,
     gateway_token_override: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        NodeAction::Install { id, workspace } => {
+        DeviceServiceAction::Install { id, workspace } => {
             let gateway_overrides_changed = persist_gateway_overrides(
                 gateway_url_override,
                 gateway_username_override,
@@ -2643,7 +3217,8 @@ fn run_node_service(
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 return Err(
-                    "node daemon management is currently supported on macOS and Linux only".into(),
+                    "device daemon management is currently supported on macOS and Linux only"
+                        .into(),
                 );
             }
 
@@ -2651,7 +3226,7 @@ fn run_node_service(
                 restart_node_service()?;
             }
 
-            println!("Node daemon installed and started.");
+            println!("Device daemon installed and started.");
             if gateway_overrides_changed {
                 println!("Saved gateway connection overrides to local config.");
             }
@@ -2661,11 +3236,11 @@ fn run_node_service(
                 workspace.display()
             );
             println!("\nCheck status:");
-            println!("  gsv node status");
+            println!("  gsv device status");
             println!("View logs:");
-            println!("  gsv node logs --follow");
+            println!("  gsv device logs --follow");
         }
-        NodeAction::Uninstall => {
+        DeviceServiceAction::Uninstall => {
             #[cfg(target_os = "linux")]
             uninstall_systemd_user_service()?;
 
@@ -2675,13 +3250,14 @@ fn run_node_service(
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 return Err(
-                    "node daemon management is currently supported on macOS and Linux only".into(),
+                    "device daemon management is currently supported on macOS and Linux only"
+                        .into(),
                 );
             }
 
-            println!("Node daemon uninstalled.");
+            println!("Device daemon uninstalled.");
         }
-        NodeAction::Start => {
+        DeviceServiceAction::Start => {
             let gateway_overrides_changed = persist_gateway_overrides(
                 gateway_url_override,
                 gateway_username_override,
@@ -2691,7 +3267,7 @@ fn run_node_service(
             if gateway_overrides_changed {
                 restart_node_service()?;
                 println!("Saved gateway connection overrides to local config.");
-                println!("Node daemon restarted.");
+                println!("Device daemon restarted.");
                 return Ok(());
             }
 
@@ -2704,13 +3280,14 @@ fn run_node_service(
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 return Err(
-                    "node daemon management is currently supported on macOS and Linux only".into(),
+                    "device daemon management is currently supported on macOS and Linux only"
+                        .into(),
                 );
             }
 
-            println!("Node daemon started.");
+            println!("Device daemon started.");
         }
-        NodeAction::Stop => {
+        DeviceServiceAction::Stop => {
             #[cfg(target_os = "linux")]
             systemd_stop_service()?;
 
@@ -2720,13 +3297,14 @@ fn run_node_service(
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 return Err(
-                    "node daemon management is currently supported on macOS and Linux only".into(),
+                    "device daemon management is currently supported on macOS and Linux only"
+                        .into(),
                 );
             }
 
-            println!("Node daemon stopped.");
+            println!("Device daemon stopped.");
         }
-        NodeAction::Status => {
+        DeviceServiceAction::Status => {
             #[cfg(target_os = "linux")]
             systemd_status_service()?;
 
@@ -2736,11 +3314,12 @@ fn run_node_service(
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 return Err(
-                    "node daemon management is currently supported on macOS and Linux only".into(),
+                    "device daemon management is currently supported on macOS and Linux only"
+                        .into(),
                 );
             }
         }
-        NodeAction::Logs { lines, follow } => {
+        DeviceServiceAction::Logs { lines, follow } => {
             node_logs_file(lines, follow)?;
         }
     }
@@ -2843,7 +3422,7 @@ fn install_systemd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::e
     let path_env_line = systemd_path_environment_line(node_service_path().as_deref());
     let exe_path = exe_path.display().to_string().replace('"', "\\\"");
     let unit = format!(
-        "[Unit]\nDescription=GSV Node daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart=\"{}\" node --foreground\n{}Restart=always\nRestartSec=3\nKillSignal=SIGTERM\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=GSV Device daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart=\"{}\" device run\n{}Restart=always\nRestartSec=3\nKillSignal=SIGTERM\n\n[Install]\nWantedBy=default.target\n",
         exe_path,
         path_env_line,
     );
@@ -2883,7 +3462,7 @@ fn install_systemd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::e
                 println!();
                 println!("⚠️  Could not enable linger: {}", e);
                 println!();
-                println!("Without linger, the node daemon will stop when you log out.");
+                println!("Without linger, the device daemon will stop when you log out.");
                 println!("Run this once with sudo:");
                 println!("  sudo loginctl enable-linger {}", whoami::username());
             }
@@ -3099,7 +3678,7 @@ fn launchd_start_service() -> Result<(), Box<dyn std::error::Error>> {
     let plist_path = launchd_plist_path()?;
     if !plist_path.exists() {
         return Err(format!(
-            "Service not installed. Run 'gsv node install' first ({})",
+            "Service not installed. Run 'gsv device install' first ({})",
             plist_path.display()
         )
         .into());
@@ -3617,6 +4196,17 @@ async fn run_node(
                 c.into_connection()
             }
             Ok(Err(e)) => {
+                if let Some(rpc_error) = e.downcast_ref::<GatewayRpcError>() {
+                    if rpc_error.is_setup_required() {
+                        logger.error(
+                            "connect.setup_required",
+                            json!({
+                                "error": rpc_error.to_string(),
+                            }),
+                        );
+                        return Err(e);
+                    }
+                }
                 logger.error(
                     "connect.failed",
                     json!({
@@ -3782,394 +4372,4 @@ async fn run_node(
             }
         }
     }
-}
-
-async fn run_mount(action: MountAction, cfg: &CliConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let config_dir = dirs::config_dir()
-        .ok_or("Could not find config directory")?
-        .join("gsv");
-    let rclone_config = config_dir.join("rclone.conf");
-    let pid_file = config_dir.join("mount.pid");
-
-    match action {
-        MountAction::Setup {
-            account_id,
-            access_key_id,
-            secret_access_key,
-            bucket,
-        } => {
-            // Use CLI args, falling back to config file
-            let account_id = if account_id.is_empty() {
-                cfg.r2
-                    .account_id
-                    .clone()
-                    .ok_or("account_id required (use --account-id or set in config)")?
-            } else {
-                account_id
-            };
-            let access_key_id = if access_key_id.is_empty() {
-                cfg.r2
-                    .access_key_id
-                    .clone()
-                    .ok_or("access_key_id required (use --access-key-id or set in config)")?
-            } else {
-                access_key_id
-            };
-            let secret_access_key = if secret_access_key.is_empty() {
-                cfg.r2.secret_access_key.clone().ok_or(
-                    "secret_access_key required (use --secret-access-key or set in config)",
-                )?
-            } else {
-                secret_access_key
-            };
-            let bucket = if bucket == "gsv-storage" {
-                cfg.r2
-                    .bucket
-                    .clone()
-                    .unwrap_or_else(|| "gsv-storage".to_string())
-            } else {
-                bucket
-            };
-
-            // Check if rclone is installed
-            let rclone_check = std::process::Command::new("rclone")
-                .arg("--version")
-                .output();
-
-            if rclone_check.is_err() {
-                eprintln!("rclone is not installed. Install it first:");
-                eprintln!("  macOS:  brew install rclone");
-                eprintln!("  Linux:  curl https://rclone.org/install.sh | sudo bash");
-                return Err("rclone not found".into());
-            }
-
-            // Create config directory
-            std::fs::create_dir_all(&config_dir)?;
-
-            // Generate rclone config
-            let endpoint = format!("{}.r2.cloudflarestorage.com", account_id);
-            let config_content = format!(
-                r#"[gsv-r2]
-type = s3
-provider = Cloudflare
-access_key_id = {}
-secret_access_key = {}
-endpoint = https://{}
-acl = private
-
-[gsv-bucket]
-type = alias
-remote = gsv-r2:{}
-"#,
-                access_key_id, secret_access_key, endpoint, bucket
-            );
-
-            std::fs::write(&rclone_config, &config_content)?;
-
-            println!("R2 configuration saved to {}", rclone_config.display());
-            println!("\nConfiguration:");
-            println!("  Account ID: {}", account_id);
-            println!("  Bucket: {}", bucket);
-
-            // Create mount point directory (~/.gsv/r2)
-            let bucket_mount = cfg.r2_mount_path();
-
-            if !bucket_mount.exists() {
-                println!("\nCreating mount point {}...", bucket_mount.display());
-                std::fs::create_dir_all(&bucket_mount)?;
-                println!("Created {}", bucket_mount.display());
-            } else {
-                println!("\nMount point {} already exists", bucket_mount.display());
-            }
-
-            let r2_mount = cfg.r2_mount_path();
-            println!("\nMount location:");
-            println!("  R2 bucket will be mounted at: {}", r2_mount.display());
-            println!("  Agent configs at: {}/agents/", r2_mount.display());
-            println!("\nTo start the mount, run:");
-            println!("  gsv mount start");
-        }
-
-        MountAction::Start { foreground } => {
-            if !rclone_config.exists() {
-                eprintln!("rclone not configured. Run 'gsv mount setup' first.");
-                return Err("rclone not configured".into());
-            }
-
-            // Check if already mounted
-            if pid_file.exists() {
-                let pid = std::fs::read_to_string(&pid_file)?;
-                eprintln!("Mount may already be running (PID: {})", pid.trim());
-                eprintln!("Run 'gsv mount stop' first if you want to restart.");
-                return Ok(());
-            }
-
-            // Check for FUSE support (kernel extension mode)
-            #[cfg(target_os = "macos")]
-            {
-                // Check for macFUSE by looking for the filesystem bundle
-                let macfuse_fs = std::path::Path::new("/Library/Filesystems/macfuse.fs");
-
-                if !macfuse_fs.exists() {
-                    eprintln!("Error: macFUSE is required for mounting on macOS.");
-                    eprintln!("");
-                    eprintln!("Install it with:");
-                    eprintln!("  brew install --cask macfuse");
-                    return Err("macFUSE not installed".into());
-                }
-
-                // Check if rclone is from Homebrew (which doesn't support mount)
-                let rclone_path = std::process::Command::new("which")
-                    .arg("rclone")
-                    .output()
-                    .ok()
-                    .and_then(|o| String::from_utf8(o.stdout).ok())
-                    .unwrap_or_default();
-
-                if rclone_path.contains("/homebrew/") {
-                    eprintln!("Error: Homebrew rclone doesn't support FUSE mounting on macOS.");
-                    eprintln!("");
-                    eprintln!("Install rclone from official binaries instead:");
-                    eprintln!("  brew uninstall rclone");
-                    eprintln!(
-                        "  curl -O https://downloads.rclone.org/rclone-current-osx-arm64.zip"
-                    );
-                    eprintln!("  unzip rclone-current-osx-arm64.zip");
-                    eprintln!("  cd rclone-*-osx-arm64");
-                    eprintln!("  sudo cp rclone /usr/local/bin/");
-                    eprintln!("  sudo chmod +x /usr/local/bin/rclone");
-                    return Err("Homebrew rclone doesn't support mount".into());
-                }
-            }
-
-            // Mount to ~/.gsv/r2
-            let bucket_mount = cfg.r2_mount_path();
-
-            #[cfg(target_os = "linux")]
-            {
-                let has_fuse = std::process::Command::new("which")
-                    .arg("fusermount")
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
-                    || std::process::Command::new("which")
-                        .arg("fusermount3")
-                        .output()
-                        .map(|o| o.status.success())
-                        .unwrap_or(false);
-
-                if !has_fuse {
-                    eprintln!("Error: FUSE is required for mounting on Linux.");
-                    eprintln!("");
-                    eprintln!("Install it with:");
-                    eprintln!("  Ubuntu/Debian: sudo apt install fuse3");
-                    eprintln!("  Fedora/RHEL:   sudo dnf install fuse3");
-                    eprintln!("  Arch:          sudo pacman -S fuse3");
-                    return Err("FUSE not installed".into());
-                }
-            }
-
-            // Check mount point exists (created during setup)
-            if !bucket_mount.exists() {
-                eprintln!("Mount point {} does not exist.", bucket_mount.display());
-                eprintln!("Run 'gsv mount setup' first to create it.");
-                return Err("Mount point not found".into());
-            }
-
-            println!("Mounting R2 bucket to {}...", bucket_mount.display());
-
-            let mut cmd = std::process::Command::new("rclone");
-            cmd.arg("mount")
-                .arg("gsv-bucket:/") // Mount full bucket, not just workspace
-                .arg(&bucket_mount)
-                .arg("--config")
-                .arg(&rclone_config)
-                .arg("--vfs-cache-mode")
-                .arg("full")
-                .arg("--vfs-cache-max-age")
-                .arg("1h")
-                .arg("--vfs-read-chunk-size")
-                .arg("0") // Disable chunked reads (R2 returns 403 on ranged requests)
-                .arg("--dir-cache-time")
-                .arg("30s")
-                .arg("--allow-non-empty");
-
-            if foreground {
-                println!("Running in foreground. Press Ctrl+C to stop.");
-                let status = cmd.status()?;
-                if !status.success() {
-                    return Err("rclone mount failed".into());
-                }
-            } else {
-                cmd.arg("--daemon");
-
-                let output = cmd.output()?;
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("rclone mount failed: {}", stderr);
-                    return Err("rclone mount failed".into());
-                }
-
-                // Find the PID (rclone --daemon doesn't return it directly)
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-                let pgrep = std::process::Command::new("pgrep")
-                    .arg("-f")
-                    .arg(format!("rclone mount.*gsv-bucket"))
-                    .output();
-
-                if let Ok(output) = pgrep {
-                    let pid = String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
-                    if !pid.is_empty() {
-                        std::fs::write(&pid_file, &pid)?;
-                        println!("Mount started (PID: {})", pid);
-                    }
-                }
-
-                println!("R2 bucket mounted at: {}", bucket_mount.display());
-                println!("Agent configs: {}/agents/", bucket_mount.display());
-                println!("\nTo initialize a workspace, run:");
-                println!("  gsv workspace init [agent_id]");
-                println!("\nTo stop the mount, run:");
-                println!("  gsv mount stop");
-            }
-        }
-
-        MountAction::Stop => {
-            let bucket_mount = cfg.r2_mount_path();
-
-            if !pid_file.exists() {
-                println!("No mount PID file found. Mount may not be running.");
-
-                // Try to find and kill anyway
-                let _ = std::process::Command::new("pkill")
-                    .arg("-f")
-                    .arg("rclone mount.*gsv-bucket")
-                    .status();
-
-                // Try to unmount
-                #[cfg(target_os = "macos")]
-                {
-                    let _ = std::process::Command::new("umount")
-                        .arg(&bucket_mount)
-                        .status();
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    let _ = std::process::Command::new("fusermount")
-                        .arg("-u")
-                        .arg(&bucket_mount)
-                        .status();
-                }
-
-                return Ok(());
-            }
-
-            let pid = std::fs::read_to_string(&pid_file)?.trim().to_string();
-
-            // Kill the process
-            let status = std::process::Command::new("kill").arg(&pid).status();
-
-            if status.is_ok() {
-                println!("Mount stopped (PID: {})", pid);
-            } else {
-                eprintln!("Failed to stop mount (PID: {})", pid);
-            }
-
-            // Clean up PID file
-            let _ = std::fs::remove_file(&pid_file);
-
-            // Clean up mount point
-            #[cfg(target_os = "macos")]
-            {
-                let _ = std::process::Command::new("umount")
-                    .arg(&bucket_mount)
-                    .status();
-
-                // macFUSE removes the mount point after umount, recreate it
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                if !bucket_mount.exists() {
-                    let _ = std::fs::create_dir_all(&bucket_mount);
-                }
-            }
-            #[cfg(target_os = "linux")]
-            {
-                let _ = std::process::Command::new("fusermount")
-                    .arg("-u")
-                    .arg(&bucket_mount)
-                    .status();
-            }
-        }
-
-        MountAction::Status => {
-            let bucket_mount = cfg.r2_mount_path();
-
-            let mut is_running = false;
-
-            if pid_file.exists() {
-                let pid = std::fs::read_to_string(&pid_file)?.trim().to_string();
-
-                // Check if process is still running
-                let status = std::process::Command::new("ps")
-                    .arg("-p")
-                    .arg(&pid)
-                    .output();
-
-                if let Ok(output) = status {
-                    if output.status.success() {
-                        println!("Mount is running (PID: {})", pid);
-                        is_running = true;
-                    }
-                }
-
-                if !is_running {
-                    // Process not running, clean up stale PID file
-                    let _ = std::fs::remove_file(&pid_file);
-                }
-            }
-
-            if is_running {
-                println!("\nFull bucket:     {}", bucket_mount.display());
-
-                // List top-level directories
-                if let Ok(entries) = std::fs::read_dir(&bucket_mount) {
-                    let dirs: Vec<_> = entries
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                        .map(|e| e.file_name().to_string_lossy().to_string())
-                        .collect();
-                    if !dirs.is_empty() {
-                        println!("                 Contains: {}", dirs.join(", "));
-                    }
-                }
-
-                // List agent directories
-                let agents_path = bucket_mount.join("agents");
-                if agents_path.exists() {
-                    if let Ok(entries) = std::fs::read_dir(&agents_path) {
-                        let agents: Vec<_> = entries
-                            .filter_map(|e| e.ok())
-                            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                            .map(|e| e.file_name().to_string_lossy().to_string())
-                            .collect();
-                        if !agents.is_empty() {
-                            println!("\nAgents found: {}", agents.join(", "));
-                            println!("\nUse 'gsv workspace status <agent>' for workspace details");
-                        }
-                    }
-                }
-            } else {
-                println!("Mount is not running");
-                println!("\nTo start the mount, run:");
-                println!("  gsv mount start");
-            }
-        }
-    }
-
-    Ok(())
 }

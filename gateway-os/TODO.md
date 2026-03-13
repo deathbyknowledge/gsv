@@ -60,7 +60,7 @@ Passwords are for humans (interactive login). Tokens are for non-interactive cli
   - service role: require token
   - user role: password or token
   - enforce role/device binding when configured
-- [ ] `sys.token.create` / `sys.token.list` / `sys.token.revoke` syscalls
+- [x] `sys.token.create` / `sys.token.list` / `sys.token.revoke` syscalls
 - [ ] Audit metadata updates on successful token use (`last_used_at`, client info)
 
 ## Identity links (channel → uid mapping)
@@ -84,7 +84,7 @@ Capabilities are NOT hardcoded — root can modify them. Stored in kernel DO SQL
 - [x] Design the `group_capabilities` table schema
 - [x] Seed default capabilities on first boot:
   - gid 0 (root) → `["*"]`
-  - gid 100 (users) → `["fs.*", "shell.*", "proc.*", "sched.*"]`
+  - gid 100 (users) → `["fs.*", "shell.*", "proc.*", "sched.*", "sys.config.get", "sys.config.set", "sys.token.create", "sys.token.list", "sys.token.revoke"]`
   - gid 101 (drivers) → `["fs.*", "shell.*"]`
   - gid 102 (services) → `["ipc.*"]`
 - [x] Implement `resolve(gids)` — union of all capabilities across groups
@@ -268,11 +268,16 @@ Kernel-internal process management. Not routable (no `target`).
 
 First-boot experience when the system has no users. Setup mode walks through configuration.
 
-- [ ] Detect setup mode: `/etc/passwd` doesn't exist or root shadow is locked
-- [ ] Onboarding steps: timezone → username/password → optional model config
-- [ ] Model config stored in `/sys/users/{uid}/ai/*` (kernel SQLite via `ConfigStore`)
-- [ ] On completion: create user, create home dir, spawn init process, set password
-- [ ] Exit setup mode (root shadow no longer locked)
+- [x] Detect setup mode in kernel auth state (root locked and no non-root users)
+- [x] `sys.setup` one-shot syscall (pre-connect only in setup mode):
+  - create first user + home dir marker
+  - set first-user password
+  - optional root password (or keep root locked)
+  - optional initial AI config (`provider`, `model`, `api_key`)
+  - optional first node token issuance (device-bound)
+- [x] `sys.connect` setup-mode rejection details: `{ setupMode: true, next: "sys.setup" }`
+- [ ] Full interactive onboarding flow: timezone + richer validation + confirmations
+- [ ] On completion: spawn/init first user process immediately
 
 ## Device registry & driver routing
 
@@ -413,11 +418,12 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 - [x] Add auth fields in `ConnectArgs.auth` (`username`, `password`, `token`)
 - [x] Clarify current behavior: kernel auth treats `token` as alternate credential input (`token ?? password`) and validates against `/etc/shadow`
 - [ ] Design first-class token model (issuance, rotation, revoke, scope) separate from password auth
-- [ ] Add dedicated token management syscalls once first-class token model exists
+- [x] Add dedicated token management syscalls once first-class token model exists
 - [x] Device commands use `shell.*` domain instead of `proc.*`
 - [x] `gsv shell` interactive REPL (connects as user, sends `shell.exec`)
 - [x] `gsv node` connects as driver with `implements: ["fs.*", "shell.*"]`
-- [ ] `gsv auth token create|list|revoke` commands
+- [x] `gsv auth setup` command for first-time kernel onboarding (`sys.setup`)
+- [x] `gsv auth token create|list|revoke` commands
 - [ ] `gsv node enroll` flow (password once → issue node token → store locally)
 - [ ] `gsv node` runtime auth policy:
   - prefer token always

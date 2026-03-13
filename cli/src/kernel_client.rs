@@ -1,4 +1,4 @@
-use crate::connection::{ConnectOptions, Connection};
+use crate::connection::{ConnectOptions, Connection, GatewayRpcError};
 use crate::protocol::Frame;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -103,12 +103,20 @@ impl KernelClient {
     ) -> Result<Value, Box<dyn std::error::Error>> {
         let response = self.conn.request(call, args).await?;
         if !response.ok {
-            let message = response
-                .error
-                .as_ref()
-                .map(|error| format!("{} (code {}): {}", call, error.code, error.message))
-                .unwrap_or_else(|| format!("{} failed", call));
-            return Err(message.into());
+            if let Some(error) = response.error {
+                return Err(Box::new(GatewayRpcError::new(
+                    call.to_string(),
+                    error.code,
+                    error.message,
+                    error.details,
+                )));
+            }
+            return Err(Box::new(GatewayRpcError::new(
+                call.to_string(),
+                500,
+                "Unknown RPC failure",
+                None,
+            )));
         }
         Ok(response.data.unwrap_or_else(|| json!({})))
     }

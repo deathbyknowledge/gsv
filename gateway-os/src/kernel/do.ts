@@ -12,10 +12,16 @@ import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
 import { DeviceRegistry } from "./devices";
 import { RoutingTable, type RouteOrigin } from "./routing";
 import { ProcessRegistry } from "./processes";
-import { handleConnect } from "./connect";
+import {
+  ensureKernelBootstrapped,
+  handleConnect,
+  setupRequiredDetails,
+  SETUP_REQUIRED_ERROR_CODE,
+} from "./connect";
 import { dispatch, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
+import { handleSysSetup as handleKernelSetup } from "./sys-setup";
 
 const SERVER_VERSION = "0.0.1";
 
@@ -237,7 +243,22 @@ export class Kernel extends Host<Env> {
       return;
     }
 
+    if (frame.call === "sys.setup") {
+      await this.handleSysSetup(connection, frame as RequestFrame<"sys.setup">);
+      return;
+    }
+
     if (!state || state.step !== "connected" || !state.identity) {
+      if (this.auth.isSetupMode()) {
+        this.sendError(
+          connection,
+          frame.id,
+          SETUP_REQUIRED_ERROR_CODE,
+          "Setup required",
+          setupRequiredDetails(),
+        );
+        return;
+      }
       this.sendError(connection, frame.id, 403, "Must call sys.connect first");
       return;
     }
@@ -267,7 +288,7 @@ export class Kernel extends Host<Env> {
     const outcome = await handleConnect(frame.args, ctx);
 
     if (!outcome.ok) {
-      this.sendError(connection, frame.id, outcome.code, outcome.message);
+      this.sendError(connection, frame.id, outcome.code, outcome.message, outcome.details);
       return;
     }
 
@@ -318,6 +339,33 @@ export class Kernel extends Host<Env> {
     }
 
     this.sendOk(connection, frame.id, outcome.result);
+  }
+
+  private async handleSysSetup(
+    connection: Connection<ConnectionState>,
+    frame: RequestFrame<"sys.setup">,
+  ): Promise<void> {
+    const state = connection.state as ConnectionState | undefined;
+    if (state?.step === "connected") {
+      this.sendError(connection, frame.id, 409, "Already connected");
+      return;
+    }
+
+    const ctx = this.buildContext(connection);
+    await ensureKernelBootstrapped(ctx);
+
+    if (!this.auth.isSetupMode()) {
+      this.sendError(connection, frame.id, 409, "System already initialized");
+      return;
+    }
+
+    try {
+      const data = await handleKernelSetup(frame.args, ctx);
+      this.sendOk(connection, frame.id, data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sendError(connection, frame.id, 400, message);
+    }
   }
 
   private handleRes(_connection: Connection, frame: ResponseFrame): void {
@@ -483,13 +531,18 @@ export class Kernel extends Host<Env> {
     id: string,
     code: number,
     message: string,
+    details?: unknown,
   ): void {
     connection.send(
       JSON.stringify({
         type: "res",
         id,
         ok: false,
-        error: { code, message },
+        error: {
+          code,
+          message,
+          ...(details === undefined ? {} : { details }),
+        },
       }),
     );
   }

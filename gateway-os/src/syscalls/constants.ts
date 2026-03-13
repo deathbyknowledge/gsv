@@ -21,8 +21,12 @@ export const PROC_SETIDENTITY = "proc.setidentity";
 
 // System
 export const SYS_CONNECT = "sys.connect";
+export const SYS_SETUP = "sys.setup";
 export const SYS_CONFIG_GET = "sys.config.get";
 export const SYS_CONFIG_SET = "sys.config.set";
+export const SYS_TOKEN_CREATE = "sys.token.create";
+export const SYS_TOKEN_LIST = "sys.token.list";
+export const SYS_TOKEN_REVOKE = "sys.token.revoke";
 
 // Scheduler (cron)
 export const SCHED_LIST = "sched.list";

@@ -2,10 +2,12 @@ use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use chrono::{TimeZone, Utc};
 use gsv::kernel_client::{GatewayAuth, KernelClient};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{ConfigAction, ProcAction};
+use crate::{AuthAction, AuthTokenAction, ConfigAction, ProcAction};
 
 const CHAT_WAIT_TIMEOUT_SECS: u64 = 120;
 
@@ -104,7 +106,10 @@ fn process_chat_signal(
             awaiting_response.store(false, Ordering::SeqCst);
             emitted_text.store(false, Ordering::SeqCst);
             completed.store(true, Ordering::SeqCst);
-            debug_log(debug_enabled, "chat.complete -> completed=true awaiting=false");
+            debug_log(
+                debug_enabled,
+                "chat.complete -> completed=true awaiting=false",
+            );
         }
         _ => {}
     }
@@ -222,7 +227,7 @@ pub(crate) async fn run_client(
     let pending_signals_for_handler = pending_signals.clone();
     let debug_enabled_for_handler = debug_enabled;
 
-    let client = KernelClient::connect_user(url, auth, move |frame| {
+    let client = match KernelClient::connect_user(url, auth, move |frame| {
         if let gsv::protocol::Frame::Sig(sig) = frame {
             let payload = sig.payload.unwrap_or_else(|| json!({}));
             let incoming_run_id = signal_run_id(&payload).unwrap_or_else(|| "<none>".to_string());
@@ -268,7 +273,10 @@ pub(crate) async fn run_client(
                         });
                         debug_log(
                             debug_enabled_for_handler,
-                            format!("signal queued (expected runId pending) queue_len={}", pending.len()),
+                            format!(
+                                "signal queued (expected runId pending) queue_len={}",
+                                pending.len()
+                            ),
                         );
                     }
                 }
@@ -297,7 +305,11 @@ pub(crate) async fn run_client(
             );
         }
     })
-    .await?;
+    .await
+    {
+        Ok(client) => client,
+        Err(error) => return Err(error),
+    };
 
     if let Some(message) = message {
         begin_wait_for_chat_response(
@@ -443,12 +455,144 @@ pub(crate) async fn run_config(
     match action {
         ConfigAction::Get { key } => {
             let payload = client.sys_config_get(key.as_deref()).await?;
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            match serde_json::from_value::<SysConfigGetPayload>(payload.clone()) {
+                Ok(result) => {
+                    if result.entries.is_empty() {
+                        if key.is_some() {
+                            println!("(not set)");
+                        } else {
+                            println!("(no entries)");
+                        }
+                    } else if let Some(requested_key) = key.as_deref() {
+                        if result.entries.len() == 1 && result.entries[0].key == requested_key {
+                            let entry = &result.entries[0];
+                            println!("{}", display_config_value(&entry.key, &entry.value));
+                        } else {
+                            for entry in result.entries {
+                                println!(
+                                    "{} = {}",
+                                    entry.key,
+                                    display_config_value(&entry.key, &entry.value)
+                                );
+                            }
+                        }
+                    } else {
+                        for entry in result.entries {
+                            println!(
+                                "{} = {}",
+                                entry.key,
+                                display_config_value(&entry.key, &entry.value)
+                            );
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Schema drift fallback for debugging and compatibility.
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                }
+            }
         }
         ConfigAction::Set { key, value } => {
             client.sys_config_set(&key, &value).await?;
-            println!("ok");
+            println!("Set {}.", key);
         }
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn run_auth(
+    url: &str,
+    auth: GatewayAuth,
+    action: AuthAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = KernelClient::connect_user(url, auth, |_| {}).await?;
+
+    match action {
+        AuthAction::Setup { .. } => {
+            return Err("auth setup does not use an authenticated kernel session".into());
+        }
+        AuthAction::Token { action } => match action {
+            AuthTokenAction::Create {
+                kind,
+                uid,
+                label,
+                role,
+                device,
+                expires_at,
+            } => {
+                let mut args = json!({
+                    "kind": kind.as_str(),
+                });
+                if let Some(uid) = uid {
+                    args["uid"] = json!(uid);
+                }
+                if let Some(label) = label {
+                    args["label"] = json!(label);
+                }
+                if let Some(role) = role {
+                    args["allowedRole"] = json!(role.as_str());
+                }
+                if let Some(device) = device {
+                    args["allowedDeviceId"] = json!(device);
+                }
+                if let Some(expires_at) = expires_at {
+                    args["expiresAt"] = json!(expires_at);
+                }
+                let payload = client.request_ok("sys.token.create", Some(args)).await?;
+                match serde_json::from_value::<SysTokenCreatePayload>(payload.clone()) {
+                    Ok(result) => {
+                        print_token_create(&result.token);
+                    }
+                    Err(_) => {
+                        println!("{}", serde_json::to_string_pretty(&payload)?);
+                    }
+                }
+            }
+            AuthTokenAction::List { uid } => {
+                let mut args = json!({});
+                if let Some(uid) = uid {
+                    args["uid"] = json!(uid);
+                }
+                let payload = client.request_ok("sys.token.list", Some(args)).await?;
+                match serde_json::from_value::<SysTokenListPayload>(payload.clone()) {
+                    Ok(result) => {
+                        print_token_list(&result.tokens);
+                    }
+                    Err(_) => {
+                        println!("{}", serde_json::to_string_pretty(&payload)?);
+                    }
+                }
+            }
+            AuthTokenAction::Revoke {
+                token_id,
+                reason,
+                uid,
+            } => {
+                let mut args = json!({
+                    "tokenId": token_id,
+                });
+                if let Some(reason) = reason {
+                    args["reason"] = json!(reason);
+                }
+                if let Some(uid) = uid {
+                    args["uid"] = json!(uid);
+                }
+                let payload = client.request_ok("sys.token.revoke", Some(args)).await?;
+                match serde_json::from_value::<SysTokenRevokePayload>(payload.clone()) {
+                    Ok(result) => {
+                        if result.revoked {
+                            println!("revoked");
+                        } else {
+                            println!("not found");
+                        }
+                    }
+                    Err(_) => {
+                        println!("{}", serde_json::to_string_pretty(&payload)?);
+                    }
+                }
+            }
+        },
     }
 
     Ok(())
@@ -461,13 +605,17 @@ pub(crate) async fn run_proc(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = KernelClient::connect_user(url, auth, |_| {}).await?;
 
-    let payload = match action {
+    match action {
         ProcAction::List { uid } => {
             let mut args = json!({});
             if let Some(uid) = uid {
                 args["uid"] = json!(uid);
             }
-            client.request_ok("proc.list", Some(args)).await?
+            let payload = client.request_ok("proc.list", Some(args)).await?;
+            match serde_json::from_value::<ProcListPayload>(payload.clone()) {
+                Ok(result) => print_proc_list(&result.processes),
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
         }
         ProcAction::Spawn {
             label,
@@ -484,11 +632,31 @@ pub(crate) async fn run_proc(
             if let Some(parent_pid) = parent_pid {
                 args["parentPid"] = json!(parent_pid);
             }
-            client.request_ok("proc.spawn", Some(args)).await?
+            let payload = client.request_ok("proc.spawn", Some(args)).await?;
+            match serde_json::from_value::<ProcSpawnPayload>(payload.clone()) {
+                Ok(result) => {
+                    if !result.ok {
+                        return Err(result
+                            .error
+                            .unwrap_or_else(|| "proc.spawn failed".to_string())
+                            .into());
+                    }
+                    let pid = result.pid.unwrap_or_else(|| "<unknown>".to_string());
+                    if let Some(label) = result.label {
+                        println!("Spawned process {} ({})", pid, label);
+                    } else {
+                        println!("Spawned process {}", pid);
+                    }
+                }
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
         }
         ProcAction::Send { message, pid } => {
             let result = client.proc_send(pid.as_deref(), &message).await?;
-            serde_json::to_value(result)?
+            println!(
+                "Message accepted: run_id={} status={} queued={}",
+                result.run_id, result.status, result.queued
+            );
         }
         ProcAction::History { pid, limit, offset } => {
             let mut args = json!({});
@@ -501,17 +669,68 @@ pub(crate) async fn run_proc(
             if let Some(offset) = offset {
                 args["offset"] = json!(offset);
             }
-            client.request_ok("proc.history", Some(args)).await?
+            let payload = client.request_ok("proc.history", Some(args)).await?;
+            match serde_json::from_value::<ProcHistoryPayload>(payload.clone()) {
+                Ok(result) => {
+                    if !result.ok {
+                        return Err(result
+                            .error
+                            .unwrap_or_else(|| "proc.history failed".to_string())
+                            .into());
+                    }
+                    let pid = result.pid.unwrap_or_else(|| "<unknown>".to_string());
+                    let count = result.message_count.unwrap_or(result.messages.len());
+                    println!("History for {} ({} messages):", pid, count);
+                    for message in result.messages {
+                        let ts = message
+                            .timestamp
+                            .map(format_unix_ms)
+                            .map(|value| format!("[{}] ", value))
+                            .unwrap_or_default();
+                        println!(
+                            "{}{}: {}",
+                            ts,
+                            message.role,
+                            render_message_content(&message.content)
+                        );
+                    }
+                    if result.truncated.unwrap_or(false) {
+                        println!("(truncated)");
+                    }
+                }
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
         }
         ProcAction::Reset { pid } => {
             let mut args = json!({});
             if let Some(pid) = pid {
                 args["pid"] = json!(pid);
             }
-            client.request_ok("proc.reset", Some(args)).await?
+            let payload = client.request_ok("proc.reset", Some(args)).await?;
+            match serde_json::from_value::<ProcResetPayload>(payload.clone()) {
+                Ok(result) => {
+                    if !result.ok {
+                        return Err(result
+                            .error
+                            .unwrap_or_else(|| "proc.reset failed".to_string())
+                            .into());
+                    }
+                    let pid = result.pid.unwrap_or_else(|| "<unknown>".to_string());
+                    let archived_messages = result.archived_messages.unwrap_or(0);
+                    if let Some(path) = result.archived_to {
+                        println!(
+                            "Reset {} (archived {} messages to {})",
+                            pid, archived_messages, path
+                        );
+                    } else {
+                        println!("Reset {} (archived {} messages)", pid, archived_messages);
+                    }
+                }
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
         }
         ProcAction::Kill { pid, no_archive } => {
-            client
+            let payload = client
                 .request_ok(
                     "proc.kill",
                     Some(json!({
@@ -519,10 +738,278 @@ pub(crate) async fn run_proc(
                         "archive": !no_archive,
                     })),
                 )
-                .await?
+                .await?;
+            match serde_json::from_value::<ProcKillPayload>(payload.clone()) {
+                Ok(result) => {
+                    if !result.ok {
+                        return Err(result
+                            .error
+                            .unwrap_or_else(|| "proc.kill failed".to_string())
+                            .into());
+                    }
+                    let pid = result.pid.unwrap_or_else(|| "<unknown>".to_string());
+                    if let Some(path) = result.archived_to {
+                        println!("Killed {} (archived to {})", pid, path);
+                    } else {
+                        println!("Killed {}", pid);
+                    }
+                }
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
         }
-    };
+    }
 
-    println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct SysConfigGetPayload {
+    entries: Vec<SysConfigEntryPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysConfigEntryPayload {
+    key: String,
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysTokenCreatePayload {
+    token: SysTokenIssuedPayload,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SysTokenIssuedPayload {
+    token_id: String,
+    token: String,
+    token_prefix: String,
+    uid: u32,
+    kind: String,
+    label: Option<String>,
+    allowed_role: Option<String>,
+    allowed_device_id: Option<String>,
+    created_at: i64,
+    expires_at: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysTokenListPayload {
+    tokens: Vec<SysTokenRecordPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SysTokenRecordPayload {
+    token_id: String,
+    uid: u32,
+    kind: String,
+    label: Option<String>,
+    token_prefix: String,
+    allowed_role: Option<String>,
+    allowed_device_id: Option<String>,
+    created_at: i64,
+    last_used_at: Option<i64>,
+    expires_at: Option<i64>,
+    revoked_at: Option<i64>,
+    revoked_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysTokenRevokePayload {
+    revoked: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcListPayload {
+    processes: Vec<ProcListEntryPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcListEntryPayload {
+    pid: String,
+    uid: u32,
+    parent_pid: Option<String>,
+    state: String,
+    label: Option<String>,
+    created_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcSpawnPayload {
+    ok: bool,
+    pid: Option<String>,
+    label: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcHistoryPayload {
+    ok: bool,
+    pid: Option<String>,
+    messages: Vec<ProcHistoryMessagePayload>,
+    message_count: Option<usize>,
+    truncated: Option<bool>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcHistoryMessagePayload {
+    role: String,
+    content: Value,
+    timestamp: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcResetPayload {
+    ok: bool,
+    pid: Option<String>,
+    archived_messages: Option<u32>,
+    archived_to: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcKillPayload {
+    ok: bool,
+    pid: Option<String>,
+    archived_to: Option<String>,
+    error: Option<String>,
+}
+
+fn display_config_value(key: &str, value: &str) -> String {
+    if is_sensitive_config_key(key) {
+        mask_secret(value)
+    } else {
+        value.to_string()
+    }
+}
+
+fn is_sensitive_config_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("password")
+        || lower.contains("api_key")
+        || lower.contains("access_key")
+}
+
+fn mask_secret(value: &str) -> String {
+    if value.len() > 8 {
+        format!("{}...{}", &value[..4], &value[value.len() - 4..])
+    } else {
+        "****".to_string()
+    }
+}
+
+fn format_unix_ms(timestamp_ms: i64) -> String {
+    Utc.timestamp_millis_opt(timestamp_ms)
+        .single()
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| timestamp_ms.to_string())
+}
+
+fn print_token_create(token: &SysTokenIssuedPayload) {
+    println!("Token created.");
+    println!("id: {}", token.token_id);
+    println!("prefix: {}", token.token_prefix);
+    println!("uid: {}", token.uid);
+    println!("kind: {}", token.kind);
+    println!(
+        "role: {}",
+        token.allowed_role.as_deref().unwrap_or("<none>")
+    );
+    println!(
+        "device: {}",
+        token.allowed_device_id.as_deref().unwrap_or("<none>")
+    );
+    println!("label: {}", token.label.as_deref().unwrap_or("<none>"));
+    println!("created: {}", format_unix_ms(token.created_at));
+    println!(
+        "expires: {}",
+        token
+            .expires_at
+            .map(format_unix_ms)
+            .unwrap_or_else(|| "never".to_string())
+    );
+    println!("token: {}", token.token);
+    println!("Store this token now; it will not be shown again.");
+}
+
+fn print_token_list(tokens: &[SysTokenRecordPayload]) {
+    if tokens.is_empty() {
+        println!("(no tokens)");
+        return;
+    }
+
+    let now_ms = Utc::now().timestamp_millis();
+    for token in tokens {
+        let status = if token.revoked_at.is_some() {
+            "revoked"
+        } else if token
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= now_ms)
+        {
+            "expired"
+        } else {
+            "active"
+        };
+
+        println!(
+            "{} {} uid={} kind={} role={} device={} status={}",
+            token.token_id,
+            token.token_prefix,
+            token.uid,
+            token.kind,
+            token.allowed_role.as_deref().unwrap_or("-"),
+            token.allowed_device_id.as_deref().unwrap_or("-"),
+            status
+        );
+        println!(
+            "  label={} created={} expires={} last_used={}",
+            token.label.as_deref().unwrap_or("-"),
+            format_unix_ms(token.created_at),
+            token
+                .expires_at
+                .map(format_unix_ms)
+                .unwrap_or_else(|| "never".to_string()),
+            token
+                .last_used_at
+                .map(format_unix_ms)
+                .unwrap_or_else(|| "never".to_string())
+        );
+        if let Some(reason) = token.revoked_reason.as_deref() {
+            println!("  revoked_reason={}", reason);
+        }
+    }
+}
+
+fn print_proc_list(processes: &[ProcListEntryPayload]) {
+    if processes.is_empty() {
+        println!("(no processes)");
+        return;
+    }
+
+    for process in processes {
+        println!(
+            "{} state={} uid={} parent={} label={} created={}",
+            process.pid,
+            process.state,
+            process.uid,
+            process.parent_pid.as_deref().unwrap_or("-"),
+            process.label.as_deref().unwrap_or("-"),
+            format_unix_ms(process.created_at)
+        );
+    }
+}
+
+fn render_message_content(content: &Value) -> String {
+    if let Some(text) = content.as_str() {
+        return text.to_string();
+    }
+    serde_json::to_string(content).unwrap_or_else(|_| "<unrenderable>".to_string())
 }

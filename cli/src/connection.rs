@@ -6,6 +6,8 @@ use crate::protocol::{
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::error::Error as StdError;
+use std::fmt::{self, Display, Formatter};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
@@ -19,6 +21,61 @@ pub type DisconnectFlag = Arc<AtomicBool>;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[derive(Debug, Clone)]
+pub struct GatewayRpcError {
+    pub call: String,
+    pub code: i32,
+    pub message: String,
+    pub details: Option<Value>,
+}
+
+impl GatewayRpcError {
+    pub fn new(
+        call: impl Into<String>,
+        code: i32,
+        message: impl Into<String>,
+        details: Option<Value>,
+    ) -> Self {
+        Self {
+            call: call.into(),
+            code,
+            message: message.into(),
+            details,
+        }
+    }
+
+    pub fn is_setup_required(&self) -> bool {
+        if self.code == 425 {
+            return true;
+        }
+        self.details
+            .as_ref()
+            .and_then(|d| d.get("setupMode"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+}
+
+impl Display for GatewayRpcError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if let Some(details) = &self.details {
+            write!(
+                f,
+                "{} failed (code {}): {} [details: {}]",
+                self.call, self.code, self.message, details
+            )
+        } else {
+            write!(
+                f,
+                "{} failed (code {}): {}",
+                self.call, self.code, self.message
+            )
+        }
+    }
+}
+
+impl StdError for GatewayRpcError {}
 
 async fn fail_all_pending_requests(pending: &PendingRequests, code: i32, message: &str) {
     let mut pending = pending.lock().await;
@@ -67,7 +124,23 @@ impl Connection {
         opts: ConnectOptions,
         on_frame: impl Fn(Frame) + Send + 'static + Sync,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let (ws_stream, _) = connect_async(&opts.url).await?;
+        let mut conn = Self::open_socket(&opts.url, on_frame).await?;
+        conn.handshake(&opts).await?;
+        Ok(conn)
+    }
+
+    pub async fn connect_without_handshake(
+        url: &str,
+        on_frame: impl Fn(Frame) + Send + 'static + Sync,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::open_socket(url, on_frame).await
+    }
+
+    async fn open_socket(
+        url: &str,
+        on_frame: impl Fn(Frame) + Send + 'static + Sync,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let (ws_stream, _) = connect_async(url).await?;
         let (mut write, mut read) = ws_stream.split();
 
         let (tx, mut rx) = mpsc::channel::<Message>(32);
@@ -143,7 +216,7 @@ impl Connection {
             .await;
         });
 
-        let mut conn = Self {
+        let conn = Self {
             tx,
             pending,
             frame_handler,
@@ -151,7 +224,6 @@ impl Connection {
             disconnected,
             connect_result: None,
         };
-        conn.handshake(&opts).await?;
         Ok(conn)
     }
 
@@ -235,11 +307,12 @@ impl Connection {
             .await?;
 
         if !res.ok {
-            return Err(format!(
-                "Handshake failed: {}",
-                res.error.map(|e| e.message).unwrap_or_default()
-            )
-            .into());
+            let rpc_error = if let Some(error) = res.error {
+                GatewayRpcError::new("sys.connect", error.code, error.message, error.details)
+            } else {
+                GatewayRpcError::new("sys.connect", 500, "Unknown handshake failure", None)
+            };
+            return Err(Box::new(rpc_error));
         }
 
         if let Some(ref data) = res.data {

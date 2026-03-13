@@ -6,9 +6,8 @@
  * and returns what the connection is allowed to do.
  *
  * Auth data lives in kernel SQLite (AuthStore), not R2.
- * Setup mode: if root's shadow entry is locked ("!"), any connection
- * is granted root (uid 0) without auth. This persists until root
- * sets a password via sys.passwd.
+ * During setup mode, sys.connect is rejected with structured details
+ * pointing the caller to sys.setup.
  */
 
 import type {
@@ -23,7 +22,21 @@ import type { KernelContext } from "./context";
 
 export type ConnectOutcome =
   | { ok: true; identity: ConnectionIdentity; result: ConnectResult }
-  | { ok: false; code: number; message: string };
+  | { ok: false; code: number; message: string; details?: unknown };
+
+export const SETUP_REQUIRED_ERROR_CODE = 425;
+
+export function setupRequiredDetails(): { setupMode: true; next: "sys.setup" } {
+  return { setupMode: true, next: "sys.setup" };
+}
+
+export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void> {
+  const bootstrapped = await ctx.auth.bootstrap();
+  if (bootstrapped) {
+    ctx.caps.seed();
+    await ensureRootHome(ctx.env.STORAGE);
+  }
+}
 
 export async function handleConnect(
   args: ConnectArgs,
@@ -41,10 +54,15 @@ export async function handleConnect(
   }
 
   // First-boot provisioning (SQLite, no R2)
-  const bootstrapped = await auth.bootstrap();
-  if (bootstrapped) {
-    caps.seed();
-    await ensureRootHome(ctx.env.STORAGE);
+  await ensureKernelBootstrapped(ctx);
+
+  if (auth.isSetupMode()) {
+    return {
+      ok: false,
+      code: SETUP_REQUIRED_ERROR_CODE,
+      message: "Setup required",
+      details: setupRequiredDetails(),
+    };
   }
 
   // Authentication
@@ -150,12 +168,6 @@ async function resolveIdentity(
   const role = args.client.role;
 
   if (!args.auth) {
-    if (auth.isSetupMode()) {
-      return {
-        ok: true,
-        identity: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root" },
-      };
-    }
     return { ok: false, error: "Authentication required" };
   }
 

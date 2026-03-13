@@ -371,19 +371,18 @@ describe("handleConnect", () => {
     if (!result.ok) expect(result.code).toBe(103);
   });
 
-  it("grants root on first boot (setup mode, no auth)", async () => {
+  it("returns setup-required details on first boot", async () => {
     const ctx = makeCtx(sql);
     const result = await handleConnect(
       { protocol: 1, client: { id: "c1", version: "1", platform: "test", role: "user" } },
       ctx,
     );
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.identity.role).toBe("user");
-      expect(result.identity.process.uid).toBe(0);
-      expect(result.identity.process.username).toBe("root");
-      expect(result.identity.capabilities).toContain("*");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe(425);
+      expect(result.message).toContain("Setup required");
+      expect(result.details).toEqual({ setupMode: true, next: "sys.setup" });
     }
   });
 
@@ -404,8 +403,10 @@ describe("handleConnect", () => {
 
   it("authenticates with valid token", async () => {
     const ctx = makeCtx(sql);
+    const rootHash = await hashPassword("root-password");
     await ctx.auth.bootstrap();
     ctx.caps.seed();
+    await ctx.auth.setPassword("root", rootHash);
     const issued = await ctx.auth.issueToken({ uid: 0, kind: "user", label: "cli" });
 
     const result = await handleConnect(
@@ -427,7 +428,9 @@ describe("handleConnect", () => {
 
   it("rejects wrong token", async () => {
     const ctx = makeCtx(sql);
+    const rootHash = await hashPassword("root-password");
     await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", rootHash);
     await ctx.auth.issueToken({ uid: 0, kind: "user", label: "cli" });
 
     const result = await handleConnect(
@@ -444,7 +447,9 @@ describe("handleConnect", () => {
 
   it("rejects unknown user", async () => {
     const ctx = makeCtx(sql);
+    const rootHash = await hashPassword("root-password");
     await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", rootHash);
 
     const result = await handleConnect(
       {
@@ -460,10 +465,15 @@ describe("handleConnect", () => {
 
   it("driver role requires implements list", async () => {
     const ctx = makeCtx(sql);
+    const rootHash = await hashPassword("root-password");
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", rootHash);
+    const issued = await ctx.auth.issueToken({ uid: 0, kind: "node", label: "macbook" });
     const result = await handleConnect(
       {
         protocol: 1,
         client: { id: "macbook", version: "1", platform: "darwin", role: "driver" },
+        auth: { username: "root", token: issued.token },
       },
       ctx,
     );
@@ -513,11 +523,16 @@ describe("handleConnect", () => {
 
   it("driver rejects invalid implements patterns", async () => {
     const ctx = makeCtx(sql);
+    const rootHash = await hashPassword("root-password");
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", rootHash);
+    const issued = await ctx.auth.issueToken({ uid: 0, kind: "node", label: "macbook" });
     const result = await handleConnect(
       {
         protocol: 1,
         client: { id: "macbook", version: "1", platform: "darwin", role: "driver" },
         driver: { implements: ["not valid!"] },
+        auth: { username: "root", token: issued.token },
       },
       ctx,
     );
@@ -527,10 +542,15 @@ describe("handleConnect", () => {
 
   it("service role requires channel", async () => {
     const ctx = makeCtx(sql);
+    const rootHash = await hashPassword("root-password");
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", rootHash);
+    const issued = await ctx.auth.issueToken({ uid: 0, kind: "service", label: "svc" });
     const result = await handleConnect(
       {
         protocol: 1,
         client: { id: "wa-1", version: "1", platform: "worker", role: "service" },
+        auth: { username: "root", token: issued.token },
       },
       ctx,
     );

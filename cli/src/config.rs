@@ -119,6 +119,9 @@ pub struct NodeConfig {
     /// Node ID (namespace prefix for tools)
     pub id: Option<String>,
 
+    /// Node-specific gateway token (driver auth)
+    pub token: Option<String>,
+
     /// Workspace directory for file tools
     pub workspace: Option<PathBuf>,
 }
@@ -229,6 +232,11 @@ impl CliConfig {
         self.node.workspace.clone()
     }
 
+    /// Get default node token (if configured)
+    pub fn default_node_token(&self) -> Option<String> {
+        self.node.token.clone()
+    }
+
     /// Get the GSV home directory (~/.gsv)
     pub fn gsv_home(&self) -> PathBuf {
         dirs::home_dir()
@@ -298,6 +306,7 @@ default_key = "agent:main:cli:dm:main"
 [node]
 # Optional defaults used by 'gsv node'
 # id = "node-macbook"
+# token = "your-node-token"
 # workspace = "/Users/you/projects"
 
 [channels.whatsapp]

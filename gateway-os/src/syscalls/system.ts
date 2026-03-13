@@ -65,6 +65,41 @@ export type UserPermissions = {
   denials: string[];
 };
 
+// -- sys.setup ---------------------------------------------------------------
+
+export type SysSetupArgs = {
+  username: string;
+  password: string;
+  rootPassword?: string;
+  ai?: {
+    provider?: string;
+    model?: string;
+    apiKey?: string;
+  };
+  node?: {
+    deviceId: string;
+    label?: string;
+    expiresAt?: number;
+  };
+};
+
+export type SysSetupResult = {
+  user: ProcessIdentity;
+  rootLocked: boolean;
+  nodeToken?: {
+    tokenId: string;
+    token: string;
+    tokenPrefix: string;
+    uid: number;
+    kind: "node";
+    label: string | null;
+    allowedRole: "driver" | null;
+    allowedDeviceId: string | null;
+    createdAt: number;
+    expiresAt: number | null;
+  };
+};
+
 // -- sys.config.get / sys.config.set -----------------------------------------
 
 export type SysConfigGetArgs = {
@@ -87,4 +122,66 @@ export type SysConfigSetArgs = {
 
 export type SysConfigSetResult = {
   ok: true;
+};
+
+// -- sys.token.create / sys.token.list / sys.token.revoke -------------------
+
+export type SysTokenKind = "node" | "service" | "user";
+export type SysTokenRole = "driver" | "service" | "user";
+
+export type SysTokenCreateArgs = {
+  uid?: number;
+  kind: SysTokenKind;
+  label?: string;
+  allowedRole?: SysTokenRole;
+  allowedDeviceId?: string;
+  expiresAt?: number;
+};
+
+export type SysTokenCreateResult = {
+  token: {
+    tokenId: string;
+    token: string;
+    tokenPrefix: string;
+    uid: number;
+    kind: SysTokenKind;
+    label: string | null;
+    allowedRole: SysTokenRole | null;
+    allowedDeviceId: string | null;
+    createdAt: number;
+    expiresAt: number | null;
+  };
+};
+
+export type SysTokenRecord = {
+  tokenId: string;
+  uid: number;
+  kind: SysTokenKind;
+  label: string | null;
+  tokenPrefix: string;
+  allowedRole: SysTokenRole | null;
+  allowedDeviceId: string | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number | null;
+  revokedAt: number | null;
+  revokedReason: string | null;
+};
+
+export type SysTokenListArgs = {
+  uid?: number;
+};
+
+export type SysTokenListResult = {
+  tokens: SysTokenRecord[];
+};
+
+export type SysTokenRevokeArgs = {
+  tokenId: string;
+  reason?: string;
+  uid?: number;
+};
+
+export type SysTokenRevokeResult = {
+  revoked: boolean;
 };

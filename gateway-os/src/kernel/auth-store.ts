@@ -272,7 +272,11 @@ export class AuthStore {
   isSetupMode(): boolean {
     const root = this.getShadowByUsername("root");
     if (!root) return true;
-    return isLocked(root);
+    if (!isLocked(root)) return false;
+
+    // Setup mode ends once at least one non-root user exists.
+    const passwd = this.getPasswdEntries();
+    return !passwd.some((entry) => entry.uid >= 1000);
   }
 
   // ---------------------------------------------------------------------------

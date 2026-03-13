@@ -184,6 +184,9 @@ describe("CapabilityStore", () => {
       "shell.*",
       "sys.config.get",
       "sys.config.set",
+      "sys.token.create",
+      "sys.token.list",
+      "sys.token.revoke",
     ]);
   });
 

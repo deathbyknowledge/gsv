@@ -29,10 +29,18 @@ import type {
 import type {
   ConnectArgs,
   ConnectResult,
+  SysSetupArgs,
+  SysSetupResult,
   SysConfigGetArgs,
   SysConfigGetResult,
   SysConfigSetArgs,
   SysConfigSetResult,
+  SysTokenCreateArgs,
+  SysTokenCreateResult,
+  SysTokenListArgs,
+  SysTokenListResult,
+  SysTokenRevokeArgs,
+  SysTokenRevokeResult,
 } from "./system";
 import type {
   SchedulerListArgs,
@@ -80,8 +88,12 @@ export type SyscallDomains = {
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
+  "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
+  "sys.token.create": { args: SysTokenCreateArgs; result: SysTokenCreateResult };
+  "sys.token.list": { args: SysTokenListArgs; result: SysTokenListResult };
+  "sys.token.revoke": { args: SysTokenRevokeArgs; result: SysTokenRevokeResult };
 
   // Scheduler (cron)
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
