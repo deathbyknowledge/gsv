@@ -31,6 +31,51 @@ export type AuthResult =
   | { ok: true; identity: AuthIdentity }
   | { ok: false; error: string };
 
+export type AuthTokenKind = "node" | "service" | "user";
+export type AuthTokenRole = "driver" | "service" | "user";
+
+export type AuthTokenIssueInput = {
+  uid: number;
+  kind: AuthTokenKind;
+  label?: string;
+  allowedRole?: AuthTokenRole;
+  allowedDeviceId?: string;
+  expiresAt?: number;
+};
+
+export type IssuedAuthToken = {
+  tokenId: string;
+  token: string;
+  tokenPrefix: string;
+  uid: number;
+  kind: AuthTokenKind;
+  label: string | null;
+  allowedRole: AuthTokenRole | null;
+  allowedDeviceId: string | null;
+  createdAt: number;
+  expiresAt: number | null;
+};
+
+export type AuthTokenRecord = {
+  tokenId: string;
+  uid: number;
+  kind: AuthTokenKind;
+  label: string | null;
+  tokenPrefix: string;
+  allowedRole: AuthTokenRole | null;
+  allowedDeviceId: string | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number | null;
+  revokedAt: number | null;
+  revokedReason: string | null;
+};
+
+type TokenAuthOptions = {
+  role?: AuthTokenRole;
+  deviceId?: string;
+};
+
 export class AuthStore {
   constructor(private readonly sql: SqlStorage) {}
 
@@ -66,6 +111,29 @@ export class AuthStore {
         gid     INTEGER NOT NULL UNIQUE,
         members TEXT NOT NULL DEFAULT ''
       )
+    `);
+
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS auth_tokens (
+        token_id           TEXT PRIMARY KEY,
+        uid                INTEGER NOT NULL,
+        kind               TEXT NOT NULL,
+        label              TEXT,
+        token_hash         TEXT NOT NULL UNIQUE,
+        token_prefix       TEXT NOT NULL,
+        allowed_role       TEXT,
+        allowed_device_id  TEXT,
+        created_at         INTEGER NOT NULL,
+        last_used_at       INTEGER,
+        expires_at         INTEGER,
+        revoked_at         INTEGER,
+        revoked_reason     TEXT
+      )
+    `);
+
+    this.sql.exec(`
+      CREATE INDEX IF NOT EXISTS idx_auth_tokens_uid
+      ON auth_tokens(uid)
     `);
   }
 
@@ -305,6 +373,199 @@ export class AuthStore {
     };
   }
 
+  /**
+   * Verify an opaque machine/user token issued by this kernel.
+   * Optional role/device constraints are enforced against token bindings.
+   */
+  async authenticateToken(
+    username: string,
+    token: string,
+    options: TokenAuthOptions = {},
+  ): Promise<AuthResult> {
+    const user = this.getPasswdByUsername(username);
+    if (!user) return { ok: false, error: "Unknown user" };
+
+    const tokenHash = await hashToken(token);
+    const rows = this.sql.exec<{
+      token_id: string;
+      allowed_role: AuthTokenRole | null;
+      allowed_device_id: string | null;
+      expires_at: number | null;
+      revoked_at: number | null;
+    }>(
+      `SELECT token_id, allowed_role, allowed_device_id, expires_at, revoked_at
+       FROM auth_tokens
+       WHERE uid = ? AND token_hash = ?
+       LIMIT 1`,
+      user.uid,
+      tokenHash,
+    ).toArray();
+
+    if (rows.length === 0) {
+      return { ok: false, error: "Authentication failed" };
+    }
+
+    const tokenRow = rows[0];
+    const now = Date.now();
+    if (tokenRow.revoked_at !== null) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    if (tokenRow.expires_at !== null && tokenRow.expires_at <= now) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    if (options.role && tokenRow.allowed_role && tokenRow.allowed_role !== options.role) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    if (
+      options.deviceId &&
+      tokenRow.allowed_device_id &&
+      tokenRow.allowed_device_id !== options.deviceId
+    ) {
+      return { ok: false, error: "Authentication failed" };
+    }
+
+    this.sql.exec(
+      "UPDATE auth_tokens SET last_used_at = ? WHERE token_id = ?",
+      now,
+      tokenRow.token_id,
+    );
+
+    const gids = this.resolveGids(username, user.gid);
+    return {
+      ok: true,
+      identity: {
+        uid: user.uid,
+        gid: user.gid,
+        gids,
+        username: user.username,
+        home: user.home,
+      },
+    };
+  }
+
+  async issueToken(input: AuthTokenIssueInput): Promise<IssuedAuthToken> {
+    const user = this.getPasswdByUid(input.uid);
+    if (!user) {
+      throw new Error(`Unknown uid: ${input.uid}`);
+    }
+
+    const now = Date.now();
+    const tokenId = crypto.randomUUID();
+    const rawToken = this.generateTokenValue(input.kind);
+    const tokenPrefix = rawToken.slice(0, 16);
+    const tokenHash = await hashToken(rawToken);
+    const allowedRole = input.allowedRole ?? defaultRoleForKind(input.kind);
+
+    this.sql.exec(
+      `INSERT INTO auth_tokens
+        (token_id, uid, kind, label, token_hash, token_prefix, allowed_role, allowed_device_id, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      tokenId,
+      input.uid,
+      input.kind,
+      input.label ?? null,
+      tokenHash,
+      tokenPrefix,
+      allowedRole,
+      input.allowedDeviceId ?? null,
+      now,
+      input.expiresAt ?? null,
+    );
+
+    return {
+      tokenId,
+      token: rawToken,
+      tokenPrefix,
+      uid: input.uid,
+      kind: input.kind,
+      label: input.label ?? null,
+      allowedRole,
+      allowedDeviceId: input.allowedDeviceId ?? null,
+      createdAt: now,
+      expiresAt: input.expiresAt ?? null,
+    };
+  }
+
+  listTokens(uid?: number): AuthTokenRecord[] {
+    if (typeof uid === "number") {
+      return this.sql.exec<{
+        token_id: string;
+        uid: number;
+        kind: AuthTokenKind;
+        label: string | null;
+        token_prefix: string;
+        allowed_role: AuthTokenRole | null;
+        allowed_device_id: string | null;
+        created_at: number;
+        last_used_at: number | null;
+        expires_at: number | null;
+        revoked_at: number | null;
+        revoked_reason: string | null;
+      }>(
+        `SELECT token_id, uid, kind, label, token_prefix, allowed_role, allowed_device_id,
+                created_at, last_used_at, expires_at, revoked_at, revoked_reason
+         FROM auth_tokens
+         WHERE uid = ?
+         ORDER BY created_at DESC`,
+        uid,
+      ).toArray().map(mapTokenRow);
+    }
+
+    return this.sql.exec<{
+      token_id: string;
+      uid: number;
+      kind: AuthTokenKind;
+      label: string | null;
+      token_prefix: string;
+      allowed_role: AuthTokenRole | null;
+      allowed_device_id: string | null;
+      created_at: number;
+      last_used_at: number | null;
+      expires_at: number | null;
+      revoked_at: number | null;
+      revoked_reason: string | null;
+    }>(
+      `SELECT token_id, uid, kind, label, token_prefix, allowed_role, allowed_device_id,
+              created_at, last_used_at, expires_at, revoked_at, revoked_reason
+       FROM auth_tokens
+       ORDER BY created_at DESC`,
+    ).toArray().map(mapTokenRow);
+  }
+
+  revokeToken(tokenId: string, reason?: string, uid?: number): boolean {
+    const rows = typeof uid === "number"
+      ? this.sql.exec<{ token_id: string }>(
+          "SELECT token_id FROM auth_tokens WHERE token_id = ? AND uid = ? LIMIT 1",
+          tokenId,
+          uid,
+        ).toArray()
+      : this.sql.exec<{ token_id: string }>(
+          "SELECT token_id FROM auth_tokens WHERE token_id = ? LIMIT 1",
+          tokenId,
+        ).toArray();
+
+    if (rows.length === 0) return false;
+
+    const now = Date.now();
+    if (typeof uid === "number") {
+      this.sql.exec(
+        "UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE token_id = ? AND uid = ?",
+        now,
+        reason ?? null,
+        tokenId,
+        uid,
+      );
+    } else {
+      this.sql.exec(
+        "UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE token_id = ?",
+        now,
+        reason ?? null,
+        tokenId,
+      );
+    }
+    return true;
+  }
+
   // ---------------------------------------------------------------------------
   // Serialization — produce classic flat-file format for virtual FS reads
   // ---------------------------------------------------------------------------
@@ -356,4 +617,54 @@ export class AuthStore {
     const entry = this.getGroupByGid(gid);
     return entry?.name ?? String(gid);
   }
+
+  private generateTokenValue(kind: AuthTokenKind): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    const base64 = btoa(String.fromCharCode(...bytes))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+    return `gsv_${kind}_${base64}`;
+  }
+}
+
+function defaultRoleForKind(kind: AuthTokenKind): AuthTokenRole {
+  switch (kind) {
+    case "node":
+      return "driver";
+    case "service":
+      return "service";
+    case "user":
+      return "user";
+  }
+}
+
+function mapTokenRow(row: {
+  token_id: string;
+  uid: number;
+  kind: AuthTokenKind;
+  label: string | null;
+  token_prefix: string;
+  allowed_role: AuthTokenRole | null;
+  allowed_device_id: string | null;
+  created_at: number;
+  last_used_at: number | null;
+  expires_at: number | null;
+  revoked_at: number | null;
+  revoked_reason: string | null;
+}): AuthTokenRecord {
+  return {
+    tokenId: row.token_id,
+    uid: row.uid,
+    kind: row.kind,
+    label: row.label,
+    tokenPrefix: row.token_prefix,
+    allowedRole: row.allowed_role,
+    allowedDeviceId: row.allowed_device_id,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    expiresAt: row.expires_at,
+    revokedAt: row.revoked_at,
+    revokedReason: row.revoked_reason,
+  };
 }

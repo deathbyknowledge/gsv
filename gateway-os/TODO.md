@@ -5,6 +5,19 @@ Items are grouped by subsystem and ordered roughly by dependency.
 
 ---
 
+## Next slice (recommended start)
+
+Consolidated plan for identity + auth work:
+
+- [ ] **Phase 0 (start here): machine token primitives**
+  - Add first-class token store in kernel SQLite
+  - Wire token validation into `sys.connect` (driver/service first)
+  - Keep passwords for interactive user auth; gate password-based driver auth behind dev/setup config
+- [ ] **Phase 2A: identity links + `ipc.*` transport plumbing**
+  - Manual link/unlink/list + channel inbound resolution + `ipc.send` / `ipc.status`
+- [ ] **Phase 2B: pairing UX**
+  - Unknown identity challenge/verification flow + queued inbound replay
+
 ## Unix identity model (`/etc/passwd`, `/etc/shadow`, `/etc/group`)
 
 Use classic Linux flat-file formats so LLM agents can read/parse them naturally.
@@ -31,17 +44,38 @@ No R2 round-trips for auth, no credentials in object storage.
 - [x] `sys.connect` uses `AuthStore` instead of R2 for auth
 - [x] Create `/root/` directory marker on first boot
 
+## Credential model (passwords + machine tokens)
+
+Passwords are for humans (interactive login). Tokens are for non-interactive clients
+(nodes, services/channels, CI/automation) and must be revocable/rotatable.
+
+- [x] `auth_tokens` table in kernel SQLite with lifecycle metadata:
+  - `token_id`, `uid`, `kind` (`node` | `service` | `user`), `label`
+  - `token_hash`, `token_prefix`, `created_at`, `last_used_at`
+  - `expires_at`, `revoked_at`, `revoked_reason`
+  - optional binding: `allowed_role`, `allowed_device_id`
+- [x] `AuthStore.issueToken(...)` / `authenticateToken(...)` / `revokeToken(...)` / `listTokens(uid?)`
+- [x] `sys.connect` token auth path:
+  - driver role: require token (except explicit setup/dev override)
+  - service role: require token
+  - user role: password or token
+  - enforce role/device binding when configured
+- [ ] `sys.token.create` / `sys.token.list` / `sys.token.revoke` syscalls
+- [ ] Audit metadata updates on successful token use (`last_used_at`, client info)
+
 ## Identity links (channel → uid mapping)
 
 Map external channel identities to internal UIDs. Stored in kernel SQLite.
 
-- [ ] `identity_links` table: `(channel TEXT, external_id TEXT, uid INTEGER, PRIMARY KEY (channel, external_id))`
-- [ ] `linkIdentity(channel, externalId, uid)` — create mapping
-- [ ] `unlinkIdentity(channel, externalId)` — remove mapping
-- [ ] `resolveUid(channel, externalId)` → `uid | null` — lookup
+- [ ] `identity_links` table:
+  - `(channel TEXT, account_id TEXT, external_id TEXT, uid INTEGER, created_at INTEGER, linked_by_uid INTEGER, metadata TEXT, PRIMARY KEY (channel, account_id, external_id))`
+- [ ] `linkIdentity(channel, accountId, externalId, uid)` — create mapping
+- [ ] `unlinkIdentity(channel, accountId, externalId)` — remove mapping
+- [ ] `resolveUid(channel, accountId, externalId)` → `uid | null` — lookup
 - [ ] `listLinks(uid?)` — list all links, optionally filtered by user
-- [ ] Pairing flow: when channel delivers message from unknown identity, respond with auth challenge
-- [ ] `sys.link` / `sys.unlink` syscalls for managing identity links (uid 0 or self)
+- [ ] `sys.link` / `sys.unlink` / `sys.link.list` syscalls for managing identity links (uid 0 or self)
+- [ ] Pairing flow (Phase 2B): when channel delivers message from unknown identity, respond with auth challenge
+- [ ] Optional `identity_link_challenges` table for challenge code + expiry + attempt tracking
 
 ## Group-based capabilities (kernel SQLite)
 
@@ -253,10 +287,11 @@ Wire channel workers as IPC endpoints. Channels deliver messages to the kernel,
 kernel resolves uid via identity links, routes to user's init process.
 
 - [ ] On service `sys.connect`: register channel in channel registry
+- [ ] Re-enable `GatewayEntrypoint` Service Binding RPC methods (`channelInbound`, `channelStatusChanged`)
 - [ ] `ipc.send` handler: route outbound messages to channel via Service Binding RPC
 - [ ] `ipc.status` handler: query channel status
-- [ ] Channel inbound flow: channel → kernel → `resolveUid(channel, externalId)` → init process
-- [ ] Handle unknown external identity: initiate pairing flow
+- [ ] Channel inbound flow: channel → kernel → `resolveUid(channel, accountId, externalId)` → init process
+- [ ] Handle unknown external identity (Phase 2B): initiate pairing flow
 - [ ] Handle group/multi-user channels: per-sender routing via identity links
 
 ## Scheduler (cron)
@@ -382,4 +417,9 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 - [x] Device commands use `shell.*` domain instead of `proc.*`
 - [x] `gsv shell` interactive REPL (connects as user, sends `shell.exec`)
 - [x] `gsv node` connects as driver with `implements: ["fs.*", "shell.*"]`
+- [ ] `gsv auth token create|list|revoke` commands
+- [ ] `gsv node enroll` flow (password once → issue node token → store locally)
+- [ ] `gsv node` runtime auth policy:
+  - prefer token always
+  - password fallback only in explicit setup/dev mode
 - [ ] Update binary frame format

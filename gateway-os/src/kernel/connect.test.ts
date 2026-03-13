@@ -7,7 +7,7 @@ import { CapabilityStore } from "./capabilities";
 import { ConfigStore } from "./config";
 import { DeviceRegistry } from "./devices";
 import { ProcessRegistry } from "./processes";
-import { hashToken, hashPassword, makeShadowEntry } from "../auth/shadow";
+import { hashPassword } from "../auth/shadow";
 
 type Row = Record<string, unknown>;
 
@@ -88,6 +88,100 @@ function createMockSql() {
       const [deviceId] = bindings as [string];
       const rows = table.filter((r) => r.device_id === deviceId);
       return { toArray: () => rows as T[] };
+    }
+
+    // ConfigStore queries
+    if (q.startsWith("INSERT OR REPLACE INTO config_kv")) {
+      const table = getTable("config_kv");
+      const [key, value] = bindings as [string, string];
+      const idx = table.findIndex((row) => row.key === key);
+      if (idx >= 0) table[idx] = { key, value };
+      else table.push({ key, value });
+      return { toArray: () => [] as T[] };
+    }
+
+    if (q.startsWith("INSERT OR IGNORE INTO config_kv")) {
+      const table = getTable("config_kv");
+      const [key, value] = bindings as [string, string];
+      const exists = table.some((row) => row.key === key);
+      if (!exists) table.push({ key, value });
+      return { toArray: () => [] as T[] };
+    }
+
+    if (q.startsWith("SELECT value FROM config_kv WHERE key = ?")) {
+      const table = getTable("config_kv");
+      const [key] = bindings as [string];
+      const row = table.find((record) => record.key === key);
+      const rows = row ? [{ value: row.value as string }] : [];
+      return { toArray: () => rows as T[] };
+    }
+
+    // AuthStore - auth_tokens
+    if (q.startsWith("INSERT INTO auth_tokens")) {
+      const table = getTable("auth_tokens");
+      const [
+        token_id,
+        uid,
+        kind,
+        label,
+        token_hash,
+        token_prefix,
+        allowed_role,
+        allowed_device_id,
+        created_at,
+        expires_at,
+      ] = bindings as [
+        string,
+        number,
+        string,
+        string | null,
+        string,
+        string,
+        string | null,
+        string | null,
+        number,
+        number | null,
+      ];
+      table.push({
+        token_id,
+        uid,
+        kind,
+        label,
+        token_hash,
+        token_prefix,
+        allowed_role,
+        allowed_device_id,
+        created_at,
+        last_used_at: null,
+        expires_at,
+        revoked_at: null,
+        revoked_reason: null,
+      });
+      return { toArray: () => [] as T[] };
+    }
+
+    if (q.includes("FROM auth_tokens") && q.includes("WHERE uid = ? AND token_hash = ?")) {
+      const table = getTable("auth_tokens");
+      const [uid, tokenHash] = bindings as [number, string];
+      const rows = table
+        .filter((row) => row.uid === uid && row.token_hash === tokenHash)
+        .slice(0, 1)
+        .map((row) => ({
+          token_id: row.token_id as string,
+          allowed_role: (row.allowed_role as string | null) ?? null,
+          allowed_device_id: (row.allowed_device_id as string | null) ?? null,
+          expires_at: (row.expires_at as number | null) ?? null,
+          revoked_at: (row.revoked_at as number | null) ?? null,
+        }));
+      return { toArray: () => rows as T[] };
+    }
+
+    if (q.startsWith("UPDATE auth_tokens SET last_used_at = ? WHERE token_id = ?")) {
+      const table = getTable("auth_tokens");
+      const [lastUsedAt, tokenId] = bindings as [number, string];
+      const row = table.find((record) => record.token_id === tokenId);
+      if (row) row.last_used_at = lastUsedAt;
+      return { toArray: () => [] as T[] };
     }
 
     // AuthStore - passwd
@@ -293,12 +387,10 @@ describe("handleConnect", () => {
     }
   });
 
-  it("rejects no-auth after root has a token", async () => {
+  it("rejects no-auth after setup is completed", async () => {
     const ctx = makeCtx(sql);
-    const token = "my-root-token";
-    const hash = await hashToken(token);
+    const hash = await hashPassword("root-password");
 
-    // Bootstrap then set root's password
     await ctx.auth.bootstrap();
     await ctx.auth.setPassword("root", hash);
 
@@ -312,18 +404,15 @@ describe("handleConnect", () => {
 
   it("authenticates with valid token", async () => {
     const ctx = makeCtx(sql);
-    const token = "root-secret";
-    const hash = await hashToken(token);
-
     await ctx.auth.bootstrap();
     ctx.caps.seed();
-    await ctx.auth.setPassword("root", hash);
+    const issued = await ctx.auth.issueToken({ uid: 0, kind: "user", label: "cli" });
 
     const result = await handleConnect(
       {
         protocol: 1,
         client: { id: "c1", version: "1", platform: "test", role: "user" },
-        auth: { username: "root", token },
+        auth: { username: "root", token: issued.token },
       },
       ctx,
     );
@@ -338,9 +427,8 @@ describe("handleConnect", () => {
 
   it("rejects wrong token", async () => {
     const ctx = makeCtx(sql);
-    const hash = await hashToken("correct-token");
     await ctx.auth.bootstrap();
-    await ctx.auth.setPassword("root", hash);
+    await ctx.auth.issueToken({ uid: 0, kind: "user", label: "cli" });
 
     const result = await handleConnect(
       {
@@ -356,9 +444,7 @@ describe("handleConnect", () => {
 
   it("rejects unknown user", async () => {
     const ctx = makeCtx(sql);
-    const hash = await hashToken("root-token");
     await ctx.auth.bootstrap();
-    await ctx.auth.setPassword("root", hash);
 
     const result = await handleConnect(
       {
@@ -391,11 +477,22 @@ describe("handleConnect", () => {
 
   it("driver role registers device on success", async () => {
     const ctx = makeCtx(sql);
+    const hash = await hashPassword("root-password");
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", hash);
+    const issued = await ctx.auth.issueToken({
+      uid: 0,
+      kind: "node",
+      label: "macbook",
+      allowedDeviceId: "macbook",
+    });
+
     const result = await handleConnect(
       {
         protocol: 1,
         client: { id: "macbook", version: "1", platform: "darwin-arm64", role: "driver" },
         driver: { implements: ["fs.*", "proc.*"] },
+        auth: { username: "root", token: issued.token },
       },
       ctx,
     );
@@ -443,10 +540,21 @@ describe("handleConnect", () => {
 
   it("service role succeeds with channel", async () => {
     const ctx = makeCtx(sql);
+    const hash = await hashPassword("root-password");
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", hash);
+    const issued = await ctx.auth.issueToken({
+      uid: 0,
+      kind: "service",
+      label: "wa-service",
+      allowedRole: "service",
+    });
+
     const result = await handleConnect(
       {
         protocol: 1,
         client: { id: "wa-1", version: "1", platform: "worker", role: "service", channel: "whatsapp" },
+        auth: { username: "root", token: issued.token },
       },
       ctx,
     );
@@ -481,5 +589,77 @@ describe("handleConnect", () => {
     if (result.ok) {
       expect(result.identity.process.uid).toBe(0);
     }
+  });
+
+  it("rejects driver password auth when machine-token enforcement is enabled", async () => {
+    const ctx = makeCtx(sql);
+    const pwHash = await hashPassword("hunter2");
+    await ctx.auth.bootstrap();
+    ctx.caps.seed();
+    await ctx.auth.setPassword("root", pwHash);
+
+    const result = await handleConnect(
+      {
+        protocol: 1,
+        client: { id: "macbook", version: "1", platform: "darwin", role: "driver" },
+        driver: { implements: ["fs.*"] },
+        auth: { username: "root", password: "hunter2" },
+      },
+      ctx,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain("Token required");
+  });
+
+  it("allows driver password auth only when explicitly enabled by config", async () => {
+    const ctx = makeCtx(sql);
+    const pwHash = await hashPassword("hunter2");
+    await ctx.auth.bootstrap();
+    ctx.caps.seed();
+    await ctx.auth.setPassword("root", pwHash);
+    ctx.config.set("config/auth/allow_machine_password", "true");
+
+    const result = await handleConnect(
+      {
+        protocol: 1,
+        client: { id: "macbook", version: "1", platform: "darwin", role: "driver" },
+        driver: { implements: ["fs.*"] },
+        auth: { username: "root", password: "hunter2" },
+      },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.identity.role).toBe("driver");
+    }
+  });
+
+  it("rejects driver token when bound to a different device", async () => {
+    const ctx = makeCtx(sql);
+    const pwHash = await hashPassword("hunter2");
+    await ctx.auth.bootstrap();
+    ctx.caps.seed();
+    await ctx.auth.setPassword("root", pwHash);
+    const issued = await ctx.auth.issueToken({
+      uid: 0,
+      kind: "node",
+      label: "laptop",
+      allowedDeviceId: "laptop",
+    });
+
+    const result = await handleConnect(
+      {
+        protocol: 1,
+        client: { id: "server", version: "1", platform: "linux", role: "driver" },
+        driver: { implements: ["fs.*"] },
+        auth: { username: "root", token: issued.token },
+      },
+      ctx,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe(401);
   });
 });

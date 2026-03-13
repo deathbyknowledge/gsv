@@ -17,6 +17,7 @@ import type {
   ConnectionIdentity,
   ProcessIdentity,
 } from "../syscalls/system";
+import type { AuthTokenRole } from "./auth-store";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 
@@ -145,7 +146,8 @@ async function resolveIdentity(
   args: ConnectArgs,
   ctx: KernelContext,
 ): Promise<IdentityOutcome> {
-  const { auth } = ctx;
+  const { auth, config } = ctx;
+  const role = args.client.role;
 
   if (!args.auth) {
     if (auth.isSetupMode()) {
@@ -158,12 +160,50 @@ async function resolveIdentity(
   }
 
   const { username } = args.auth;
-  const credential = args.auth.token ?? args.auth.password;
-
   if (!username) return { ok: false, error: "Username required" };
-  if (!credential) return { ok: false, error: "Password or token required" };
+  if (!args.auth.token && !args.auth.password) {
+    return { ok: false, error: "Password or token required" };
+  }
 
-  const result = await auth.authenticate(username, credential);
+  if (role === "driver" || role === "service") {
+    const machineRole = role as AuthTokenRole;
+
+    if (args.auth.token) {
+      const result = await auth.authenticateToken(username, args.auth.token, {
+        role: machineRole,
+        deviceId: role === "driver" ? args.client.id : undefined,
+      });
+      if (!result.ok) return { ok: false, error: result.error };
+      return { ok: true, identity: result.identity };
+    }
+
+    const allowMachinePassword =
+      config.get("config/auth/allow_machine_password") === "true";
+    if (!allowMachinePassword) {
+      return { ok: false, error: "Token required for machine connections" };
+    }
+
+    const password = args.auth.password;
+    if (!password) {
+      return { ok: false, error: "Token required for machine connections" };
+    }
+
+    const result = await auth.authenticate(username, password);
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, identity: result.identity };
+  }
+
+  if (args.auth.token) {
+    const result = await auth.authenticateToken(username, args.auth.token, {
+      role: "user",
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, identity: result.identity };
+  }
+
+  const password = args.auth.password;
+  if (!password) return { ok: false, error: "Password or token required" };
+  const result = await auth.authenticate(username, password);
   if (!result.ok) return { ok: false, error: result.error };
 
   return { ok: true, identity: result.identity };
