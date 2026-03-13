@@ -234,6 +234,7 @@ export class Process extends Host<Env> {
   private async handleProcReset(): Promise<ProcResetResult> {
     const pid = this.pid;
     const count = this.store.messageCount();
+    this.resetExecutionState();
 
     if (count > 0) {
       const archiveId = crypto.randomUUID();
@@ -256,18 +257,29 @@ export class Process extends Host<Env> {
     archive?: boolean;
   }): Promise<ProcKillResult> {
     const pid = this.pid;
+    this.resetExecutionState();
+
+    let archivedTo: string | null = null;
 
     if (args.archive !== false) {
       const archiveId = crypto.randomUUID();
-      const archivedTo = await this.archiveMessages(pid, archiveId);
-      return {
-        ok: true,
-        pid,
-        archivedTo: archivedTo ?? undefined,
-      };
+      archivedTo = await this.archiveMessages(pid, archiveId);
     }
 
-    return { ok: true, pid };
+    // A killed process should restart with a clean conversation and no queued work.
+    this.store.clearMessages();
+
+    return {
+      ok: true,
+      pid,
+      archivedTo: archivedTo ?? undefined,
+    };
+  }
+
+  private resetExecutionState(): void {
+    this.currentRun = null;
+    this.store.clearPendingToolCalls();
+    this.store.clearQueue();
   }
 
   private async handleSig(frame: SignalFrame): Promise<void> {

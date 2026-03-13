@@ -289,6 +289,73 @@ describe("Process DO — mechanical", () => {
       expect(data.archivedMessages).toBe(0);
       expect(data.archivedTo).toBeUndefined();
     });
+
+    it("clears active run state and queued messages", async () => {
+      const pid = "mech-reset-runtime";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const runId = "run-reset-runtime";
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.setValue("currentRun", JSON.stringify({ runId, queued: false }));
+        store.register("call-reset-1", runId, "fs.read", { path: "/tmp/test.txt" });
+        store.enqueue(runId, "queued after reset");
+        store.appendMessage("user", "hello before reset");
+      });
+
+      const resetRes = (await stub.recvFrame(
+        makeReq("proc.reset", {}),
+      )) as ResponseOkFrame;
+      expect(resetRes.ok).toBe(true);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        expect(store.getValue("currentRun")).toBeNull();
+        expect(store.queueSize()).toBe(0);
+        expect(store.getResults(runId)).toHaveLength(0);
+      });
+
+      const sendRes = (await stub.recvFrame(
+        makeReq("proc.send", { message: "first after reset" }),
+      )) as ResponseOkFrame;
+      const sendData = sendRes.data as { queued?: boolean };
+      expect(sendData.queued).toBeUndefined();
+    });
+  });
+
+  describe("proc.kill", () => {
+    it("clears conversation and runtime state so next send is not queued", async () => {
+      const pid = "mech-kill-runtime";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const runId = "run-kill-runtime";
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.setValue("currentRun", JSON.stringify({ runId, queued: false }));
+        store.register("call-kill-1", runId, "fs.read", { path: "/tmp/test.txt" });
+        store.enqueue(runId, "queued before kill");
+        store.appendMessage("user", "hello before kill");
+      });
+
+      const killRes = (await stub.recvFrame(
+        makeReq("proc.kill", { archive: false }),
+      )) as ResponseOkFrame;
+      expect(killRes.ok).toBe(true);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        expect(store.getValue("currentRun")).toBeNull();
+        expect(store.queueSize()).toBe(0);
+        expect(store.getResults(runId)).toHaveLength(0);
+        expect(store.messageCount()).toBe(0);
+      });
+
+      const sendRes = (await stub.recvFrame(
+        makeReq("proc.send", { message: "first after kill" }),
+      )) as ResponseOkFrame;
+      const sendData = sendRes.data as { queued?: boolean };
+      expect(sendData.queued).toBeUndefined();
+    });
   });
 
   describe("unknown command", () => {

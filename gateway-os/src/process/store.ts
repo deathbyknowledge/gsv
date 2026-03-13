@@ -168,6 +168,10 @@ export class ProcessStore {
     this.sql.exec("DELETE FROM pending_tool_calls WHERE run_id = ?", runId);
   }
 
+  clearPendingToolCalls(): void {
+    this.sql.exec("DELETE FROM pending_tool_calls");
+  }
+
   appendMessage(
     role: MessageRole,
     content: string,
@@ -407,6 +411,10 @@ export class ProcessStore {
       media: row.media_json,
       overrides: row.overrides_json,
     }));
+  }
+
+  clearQueue(): void {
+    this.sql.exec("DELETE FROM message_queue");
   }
 
   queueSize(): number {
