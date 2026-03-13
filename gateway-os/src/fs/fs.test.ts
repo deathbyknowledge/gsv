@@ -42,6 +42,40 @@ function makeFs(identity: ProcessIdentity): GsvFs {
   return new GsvFs(env.STORAGE, identity);
 }
 
+function makeConfigBackedFs(
+  identity: ProcessIdentity,
+  initialEntries: Record<string, string>,
+): GsvFs {
+  const entries = new Map<string, string>(Object.entries(initialEntries));
+  const config = {
+    get(key: string): string | null {
+      return entries.has(key) ? entries.get(key)! : null;
+    },
+    set(key: string, value: string): void {
+      entries.set(key, value);
+    },
+    list(prefix: string): { key: string; value: string }[] {
+      const normalized = prefix.trim();
+      const keys = [...entries.keys()].sort();
+      if (!normalized) {
+        return keys.map((key) => ({ key, value: entries.get(key)! }));
+      }
+      const withSlash = normalized.endsWith("/") ? normalized : `${normalized}/`;
+      return keys
+        .filter((key) => key.startsWith(withSlash))
+        .map((key) => ({ key, value: entries.get(key)! }));
+    },
+  };
+
+  return new GsvFs(env.STORAGE, identity, {
+    auth: null as never,
+    procs: null as never,
+    devices: null as never,
+    caps: null as never,
+    config: config as never,
+  });
+}
+
 describe("parseMode", () => {
   it("parses 644", () => {
     expect(parseMode("644")).toEqual({ owner: 6, group: 4, other: 4 });
@@ -424,5 +458,52 @@ describe("GsvFs virtual /dev", () => {
     expect(entries).toContain("zero");
     expect(entries).toContain("random");
     expect(entries).toContain("urandom");
+  });
+});
+
+describe("GsvFs virtual /sys config tree", () => {
+  it("lists nested /sys/config directories based on config key prefixes", async () => {
+    const fs = makeConfigBackedFs(ROOT, {
+      "config/ai/provider": "anthropic",
+      "config/ai/model": "claude-sonnet-4-20250514",
+      "config/ai/api_key": "sk-test",
+      "config/server/name": "gsv",
+    });
+
+    const top = await fs.readdir("/sys/config");
+    expect(top).toEqual(["ai", "server"]);
+
+    const ai = await fs.readdir("/sys/config/ai");
+    expect(ai).toEqual(["api_key", "model", "provider"]);
+
+    const stat = await fs.stat("/sys/config/ai");
+    expect(stat.isDirectory).toBe(true);
+
+    const provider = await fs.readFile("/sys/config/ai/provider");
+    expect(provider).toBe("anthropic\n");
+  });
+
+  it("lists nested /sys/users/{uid} directories based on user config key prefixes", async () => {
+    const fs = makeConfigBackedFs(ROOT, {
+      "users/0/ai/provider": "openai",
+      "users/0/ai/model": "gpt-4.1",
+      "users/1000/ai/model": "gpt-4.1-mini",
+    });
+
+    const users = await fs.readdir("/sys/users");
+    expect(users).toEqual(["0", "1000"]);
+
+    const user0 = await fs.readdir("/sys/users/0");
+    expect(user0).toEqual(["ai"]);
+
+    const user0Ai = await fs.readdir("/sys/users/0/ai");
+    expect(user0Ai).toEqual(["model", "provider"]);
+  });
+
+  it("returns ENOENT for unknown config subtree", async () => {
+    const fs = makeConfigBackedFs(ROOT, {
+      "config/ai/provider": "anthropic",
+    });
+    await expect(fs.readdir("/sys/config/missing")).rejects.toThrow("ENOENT");
   });
 });

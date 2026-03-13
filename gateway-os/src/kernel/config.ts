@@ -106,7 +106,14 @@ export class ConfigStore {
    * e.g. list("config/ai") returns all /sys/config/ai/* entries.
    */
   list(prefix: string): { key: string; value: string }[] {
-    const pattern = prefix.endsWith("/") ? prefix : prefix + "/";
+    const normalized = prefix.trim();
+    if (normalized.length === 0) {
+      return this.sql.exec<{ key: string; value: string }>(
+        "SELECT key, value FROM config_kv ORDER BY key",
+      ).toArray();
+    }
+
+    const pattern = normalized.endsWith("/") ? normalized : normalized + "/";
     return this.sql.exec<{ key: string; value: string }>(
       "SELECT key, value FROM config_kv WHERE key LIKE ? ORDER BY key",
       pattern + "%",

@@ -22,6 +22,7 @@ const SERVER_VERSION = "0.0.1";
 type ConnectionState = {
   step: "pending" | "connected";
   identity?: ConnectionIdentity;
+  clientId?: string;
 };
 
 export class Kernel extends Host<Env> {
@@ -54,6 +55,8 @@ export class Kernel extends Host<Env> {
 
     this.procs = new ProcessRegistry(ctx.storage.sql);
     this.procs.init();
+
+    this.rehydrateConnections();
   }
 
   shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
@@ -269,12 +272,16 @@ export class Kernel extends Host<Env> {
     }
 
     const uid = outcome.identity.process.uid;
-    const clientId = frame.args?.client?.id;
+    const role = outcome.identity.role;
+    const clientId = frame.args?.client?.id?.trim();
     if (clientId) {
       for (const [connId, existing] of this.connections) {
         const existingState = existing.state as ConnectionState | undefined;
         if (
-          existingState?.identity?.process.uid === uid &&
+          existingState?.step === "connected" &&
+          existingState.identity?.process.uid === uid &&
+          existingState.identity.role === role &&
+          existingState.clientId === clientId &&
           connId !== ctx.connection.id &&
           existing !== connection
         ) {
@@ -287,6 +294,7 @@ export class Kernel extends Host<Env> {
     const newState: ConnectionState = {
       step: "connected",
       identity: outcome.identity,
+      clientId: clientId || undefined,
     };
     connection.setState(newState);
     this.connections.set(ctx.connection.id, connection);
@@ -431,7 +439,36 @@ export class Kernel extends Host<Env> {
       if (!state) continue;
       if (state.identity?.role === "service") continue;
       if (state.identity?.process.uid === uid) {
-        conn.send(json);
+          conn.send(json);
+      }
+    }
+  }
+
+  /**
+   * Rebuild in-memory connection index after hibernation/wake.
+   * The Agent runtime restores Connection objects and their persisted state,
+   * but our local maps must be reconstructed per constructor invocation.
+   */
+  private rehydrateConnections(): void {
+    const live = this.getConnections<ConnectionState>();
+
+    const onlineDrivers = new Set<string>();
+
+    for (const connection of live) {
+      const state = connection.state;
+      if (!state || state.step !== "connected" || !state.identity) continue;
+
+      this.connections.set(connection.id, connection);
+      if (state.identity.role === "driver") {
+        onlineDrivers.add(state.identity.device);
+        this.devices.setOnline(state.identity.device, true);
+      }
+    }
+
+    // Reconcile persistent device online flags with live rehydrated sockets.
+    for (const device of this.devices.listOnline()) {
+      if (!onlineDrivers.has(device.device_id)) {
+        this.devices.setOnline(device.device_id, false);
       }
     }
   }

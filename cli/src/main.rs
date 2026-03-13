@@ -1,8 +1,9 @@
 use clap::{Parser, Subcommand};
 use cliclack::{confirm, input, intro, log, multiselect, note, outro_cancel, password, select};
 use gsv::config::{self, CliConfig};
-use gsv::connection::{Connection, ConnectOptions};
+use gsv::connection::Connection;
 use gsv::deploy;
+use gsv::kernel_client::{GatewayAuth, KernelClient};
 use gsv::protocol::{
     ErrorShape, Frame, NodeExecEventParams, RequestFrame, ResponseFrame, SignalFrame,
 };
@@ -29,7 +30,7 @@ struct Cli {
     #[arg(short, long, env = "GSV_URL")]
     url: Option<String>,
 
-    /// Auth token (overrides config file, or set GSV_TOKEN env var)
+    /// Non-interactive credential (legacy token flag; overrides config/env)
     #[arg(short, long, env = "GSV_TOKEN")]
     token: Option<String>,
 
@@ -51,9 +52,17 @@ enum Commands {
         /// Message to send (if omitted, enters interactive mode)
         message: Option<String>,
 
-        /// Session key (default from config or "agent:main:cli:dm:main")
+        /// Optional process ID (defaults to your init process)
+        #[arg(long)]
+        pid: Option<String>,
+
+        /// Username for authentication (omit for setup mode)
         #[arg(short, long)]
-        session: Option<String>,
+        user: Option<String>,
+
+        /// Password or token credential
+        #[arg(short, long)]
+        password: Option<String>,
     },
 
     /// Run as a tool-providing node
@@ -61,6 +70,10 @@ enum Commands {
         /// Run in foreground (default: managed daemon/service mode)
         #[arg(long)]
         foreground: bool,
+
+        /// Username for gateway authentication
+        #[arg(short, long)]
+        user: Option<String>,
 
         /// Node ID (default: hostname) - used as namespace prefix for tools
         #[arg(long)]
@@ -81,15 +94,37 @@ enum Commands {
         #[arg(short, long)]
         user: Option<String>,
 
-        /// Password for authentication
+        /// Password credential (or use global --token)
         #[arg(short, long)]
         password: Option<String>,
     },
 
     /// Get or set gateway configuration (remote)
     Config {
+        /// Username for authentication (omit for setup mode)
+        #[arg(short, long)]
+        user: Option<String>,
+
+        /// Password or token credential
+        #[arg(short, long)]
+        password: Option<String>,
+
         #[command(subcommand)]
         action: ConfigAction,
+    },
+
+    /// Process management (`proc.*`)
+    Proc {
+        /// Username for authentication (omit for setup mode)
+        #[arg(short, long)]
+        user: Option<String>,
+
+        /// Password or token credential
+        #[arg(short, long)]
+        password: Option<String>,
+
+        #[command(subcommand)]
+        action: ProcAction,
     },
 
     /// Get or set local CLI configuration
@@ -261,163 +296,14 @@ enum Commands {
         keep_node: bool,
     },
 
-    /// Manage sessions
-    Session {
-        #[command(subcommand)]
-        action: SessionAction,
-    },
-
-    /// Manage tools (list, call)
-    Tools {
-        #[command(subcommand)]
-        action: ToolsAction,
-    },
-
-    /// Inspect and refresh skill runtime eligibility
-    Skills {
-        #[command(subcommand)]
-        action: SkillsAction,
-    },
-
     /// Mount R2 bucket to local workspace using rclone
     Mount {
         #[command(subcommand)]
         action: MountAction,
     },
 
-    /// Manage heartbeat (proactive check-ins)
-    Heartbeat {
-        #[command(subcommand)]
-        action: HeartbeatAction,
-    },
-
-    /// Manage pairing requests (approve/reject new senders)
-    Pair {
-        #[command(subcommand)]
-        action: PairAction,
-    },
-
-    /// Manage channel accounts (WhatsApp, Discord, etc.)
-    Channel {
-        #[command(subcommand)]
-        action: ChannelAction,
-    },
-
     /// Show CLI version and build metadata
     Version,
-}
-
-#[derive(Subcommand)]
-enum HeartbeatAction {
-    /// Show heartbeat status for all agents
-    Status,
-
-    /// Start the heartbeat scheduler
-    Start,
-
-    /// Manually trigger a heartbeat
-    Trigger {
-        /// Agent ID (default: main)
-        #[arg(default_value = "main")]
-        agent_id: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum PairAction {
-    /// List pending pairing requests
-    List,
-
-    /// Approve a pairing request
-    Approve {
-        /// Channel name (e.g., "whatsapp")
-        channel: String,
-
-        /// Sender ID (e.g., "+1234567890")
-        sender_id: String,
-    },
-
-    /// Reject a pairing request
-    Reject {
-        /// Channel name (e.g., "whatsapp")
-        channel: String,
-
-        /// Sender ID (e.g., "+1234567890")
-        sender_id: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum ChannelAction {
-    /// WhatsApp channel management
-    Whatsapp {
-        #[command(subcommand)]
-        action: WhatsAppAction,
-    },
-
-    /// Discord channel management
-    Discord {
-        #[command(subcommand)]
-        action: DiscordAction,
-    },
-
-    /// List all channel accounts
-    List,
-}
-
-#[derive(Subcommand)]
-enum WhatsAppAction {
-    /// Login to WhatsApp (displays QR code in terminal)
-    Login {
-        /// Account ID (arbitrary name for this WhatsApp account)
-        #[arg(default_value = "default")]
-        account_id: String,
-    },
-
-    /// Check WhatsApp account status
-    Status {
-        /// Account ID
-        #[arg(default_value = "default")]
-        account_id: String,
-    },
-
-    /// Logout from WhatsApp (clears credentials)
-    Logout {
-        /// Account ID
-        #[arg(default_value = "default")]
-        account_id: String,
-    },
-
-    /// Stop WhatsApp connection
-    Stop {
-        /// Account ID
-        #[arg(default_value = "default")]
-        account_id: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum DiscordAction {
-    /// Start Discord bot connection
-    Start {
-        /// Account ID (arbitrary name for this Discord bot)
-        #[arg(default_value = "default")]
-        account_id: String,
-    },
-
-    /// Check Discord bot status
-    Status {
-        /// Account ID
-        #[arg(default_value = "default")]
-        account_id: String,
-    },
-
-    /// Stop Discord bot connection
-    Stop {
-        /// Account ID
-        #[arg(default_value = "default")]
-        account_id: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -493,51 +379,85 @@ enum NodeAction {
 }
 
 #[derive(Subcommand)]
-enum ToolsAction {
-    /// List available tools from connected nodes
-    List,
-
-    /// Call a tool directly
-    Call {
-        /// Tool name (e.g., "macbook:Bash")
-        tool: String,
-
-        /// Arguments as JSON object (e.g., '{"command": "ls -la"}')
-        #[arg(default_value = "{}")]
-        args: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum SkillsAction {
-    /// Show skill eligibility status for an agent
-    Status {
-        /// Agent ID (default: main)
-        #[arg(default_value = "main")]
-        agent_id: String,
-    },
-
-    /// Refresh and show skill eligibility status
-    Update {
-        /// Agent ID (default: main)
-        #[arg(default_value = "main")]
-        agent_id: String,
-    },
-}
-
-#[derive(Subcommand)]
 enum ConfigAction {
     /// Get configuration value
     Get {
-        /// Config path (e.g., "apiKeys.anthropic", "model.provider")
-        path: Option<String>,
+        /// Config key (or omit to list all visible keys)
+        key: Option<String>,
     },
     /// Set configuration value
     Set {
-        /// Config path (e.g., "apiKeys.anthropic", "model.provider")
-        path: String,
+        /// Config key
+        key: String,
         /// Value to set
         value: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProcAction {
+    /// List visible processes
+    List {
+        /// Optional uid filter (root only)
+        #[arg(long)]
+        uid: Option<u32>,
+    },
+
+    /// Spawn a child process
+    Spawn {
+        /// Optional process label
+        #[arg(long)]
+        label: Option<String>,
+
+        /// Optional initial prompt/message for the spawned process
+        #[arg(long)]
+        prompt: Option<String>,
+
+        /// Optional parent process ID (defaults to your init process)
+        #[arg(long = "parent")]
+        parent_pid: Option<String>,
+    },
+
+    /// Send a message to a process
+    Send {
+        /// Message to deliver
+        message: String,
+
+        /// Optional process ID (defaults to your init process)
+        #[arg(long)]
+        pid: Option<String>,
+    },
+
+    /// Read process message history
+    History {
+        /// Optional process ID (defaults to your init process)
+        #[arg(long)]
+        pid: Option<String>,
+
+        /// Maximum number of messages
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Offset into message history
+        #[arg(long)]
+        offset: Option<u32>,
+    },
+
+    /// Reset process conversation history
+    Reset {
+        /// Optional process ID (defaults to your init process)
+        #[arg(long)]
+        pid: Option<String>,
+    },
+
+    /// Kill a process
+    Kill {
+        /// Process ID
+        pid: String,
+
+        /// Skip archival before kill
+        #[arg(long)]
+        no_archive: bool,
     },
 }
 
@@ -547,12 +467,12 @@ enum LocalConfigAction {
     Show,
     /// Get a config value
     Get {
-        /// Config key (e.g., "gateway.url", "gateway.token", "release.channel", "node.workspace")
+        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "node.workspace")
         key: String,
     },
     /// Set a config value
     Set {
-        /// Config key (e.g., "gateway.url", "gateway.token", "release.channel", "node.workspace")
+        /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "node.workspace")
         key: String,
         /// Value to set
         value: String,
@@ -737,67 +657,6 @@ enum DeployAccountAction {
     },
 }
 
-#[derive(Subcommand)]
-enum SessionAction {
-    /// List all known sessions
-    List {
-        /// Maximum number of sessions to show
-        #[arg(short, long, default_value = "50")]
-        limit: i64,
-    },
-    /// Reset a session (clear message history, archive to R2)
-    Reset {
-        /// Session key (default: "agent:main:cli:dm:main")
-        #[arg(default_value = "agent:main:cli:dm:main")]
-        session_key: String,
-    },
-    /// Get session info
-    Get {
-        /// Session key (default: "agent:main:cli:dm:main")
-        #[arg(default_value = "agent:main:cli:dm:main")]
-        session_key: String,
-    },
-    /// Get session stats (token usage)
-    Stats {
-        /// Session key (default: "agent:main:cli:dm:main")
-        #[arg(default_value = "agent:main:cli:dm:main")]
-        session_key: String,
-    },
-    /// Update session settings
-    Set {
-        /// Session key
-        session_key: String,
-        /// Path to set (e.g., "model.provider", "thinkingLevel", "resetPolicy.mode")
-        path: String,
-        /// Value to set
-        value: String,
-    },
-    /// Compact session (trim to last N messages)
-    Compact {
-        /// Session key (default: "agent:main:cli:dm:main")
-        #[arg(default_value = "agent:main:cli:dm:main")]
-        session_key: String,
-        /// Number of messages to keep (default: 20)
-        #[arg(short, long, default_value = "20")]
-        keep: i64,
-    },
-    /// Show session history (previous session IDs)
-    History {
-        /// Session key (default: "agent:main:cli:dm:main")
-        #[arg(default_value = "agent:main:cli:dm:main")]
-        session_key: String,
-    },
-    /// Preview session messages
-    Preview {
-        /// Session key (default: "agent:main:cli:dm:main")
-        #[arg(default_value = "agent:main:cli:dm:main")]
-        session_key: String,
-        /// Number of messages to show (default: all)
-        #[arg(short, long)]
-        limit: Option<i64>,
-    },
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Install rustls crypto provider BEFORE tokio runtime starts
     // (required for rustls 0.23+ - must happen before any TLS operations)
@@ -833,13 +692,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Init { force } => run_init(force),
-        Commands::Client { message, session } => {
-            let session = session.unwrap_or_else(|| cfg.default_session());
-            let session = config::normalize_session_key(&session);
-            commands::run_client(&url, token, message, &session).await
+        Commands::Client {
+            message,
+            pid,
+            user,
+            password,
+        } => {
+            let auth = resolve_interactive_gateway_auth(&cfg, token, user, password, "client")?;
+            commands::run_client(&url, auth, message, pid).await
         }
         Commands::Node {
             foreground,
+            user,
             id,
             workspace,
             action,
@@ -854,26 +718,45 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     action,
                     &cfg,
                     cli_url_override.as_deref(),
+                    user.as_deref(),
                     cli_token_override.as_deref(),
                 )
             } else if foreground {
                 let node_id = resolve_node_id(id, &cfg);
                 let workspace = resolve_node_workspace(workspace, &cfg);
-                run_node(&url, token, node_id, workspace).await
+                let auth = resolve_node_gateway_auth(&cfg, token, user)?;
+                run_node(&url, auth, node_id, workspace).await
             } else {
                 run_node_default_managed(
                     &cfg,
                     id,
                     workspace,
                     cli_url_override.as_deref(),
+                    user.as_deref(),
                     cli_token_override.as_deref(),
                 )
             }
         }
         Commands::Shell { user, password } => {
-            run_shell(&url, user, password).await
+            let auth = resolve_interactive_gateway_auth(&cfg, token, user, password, "shell")?;
+            run_shell(&url, auth).await
         }
-        Commands::Config { action } => commands::run_config(&url, token, action).await,
+        Commands::Config {
+            user,
+            password,
+            action,
+        } => {
+            let auth = resolve_interactive_gateway_auth(&cfg, token, user, password, "config")?;
+            commands::run_config(&url, auth, action).await
+        }
+        Commands::Proc {
+            user,
+            password,
+            action,
+        } => {
+            let auth = resolve_interactive_gateway_auth(&cfg, token, user, password, "proc")?;
+            commands::run_proc(&url, auth, action).await
+        }
         Commands::LocalConfig { action } => run_local_config(action),
         Commands::Deploy { action } => run_deploy(action, &cfg).await,
         Commands::Setup {
@@ -971,13 +854,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await
         }
-        Commands::Session { action } => commands::run_session(&url, token, action).await,
-        Commands::Tools { action } => commands::run_tools(&url, token, action).await,
-        Commands::Skills { action } => commands::run_skills(&url, token, action).await,
         Commands::Mount { action } => run_mount(action, &cfg).await,
-        Commands::Heartbeat { action } => commands::run_heartbeat(&url, token, action).await,
-        Commands::Pair { action } => commands::run_pair(&url, token, action).await,
-        Commands::Channel { action } => commands::run_channel(action, &url, token, &cfg).await,
         Commands::Version => run_version(),
     }
 }
@@ -1024,10 +901,11 @@ fn run_init(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(&path, config::sample_config())?;
 
     println!("Created config file: {}", path.display());
-    println!("\nEdit it to set your gateway URL and token:");
+    println!("\nEdit it to set your gateway URL and auth fields:");
     println!("  $EDITOR {}", path.display());
     println!("\nOr use 'gsv local-config set' to update values:");
     println!("  gsv local-config set gateway.url wss://gateway.example.com/ws");
+    println!("  gsv local-config set gateway.username root");
     println!("  gsv local-config set gateway.token your-secret-token");
     println!("  gsv local-config set release.channel stable");
     println!("  gsv local-config set node.id my-node");
@@ -1166,6 +1044,7 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
             let cfg = CliConfig::load();
             let value = match key.as_str() {
                 "gateway.url" => cfg.gateway.url.map(|s| s.to_string()),
+                "gateway.username" => cfg.gateway.username.map(|s| s.to_string()),
                 "gateway.token" => cfg.gateway.token.map(|s| {
                     // Mask token for security
                     if s.len() > 8 {
@@ -1198,7 +1077,7 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                 _ => {
                     eprintln!("Unknown config key: {}", key);
                     eprintln!("\nValid keys:");
-                    eprintln!("  gateway.url, gateway.token");
+                    eprintln!("  gateway.url, gateway.username, gateway.token");
                     eprintln!("  cloudflare.account_id, cloudflare.api_token");
                     eprintln!("  release.channel");
                     eprintln!("  r2.account_id, r2.access_key_id, r2.bucket");
@@ -1219,6 +1098,7 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
 
             match key.as_str() {
                 "gateway.url" => cfg.gateway.url = Some(value.clone()),
+                "gateway.username" => cfg.gateway.username = Some(value.clone()),
                 "gateway.token" => cfg.gateway.token = Some(value.clone()),
                 "cloudflare.account_id" => cfg.cloudflare.account_id = Some(value.clone()),
                 "cloudflare.api_token" => cfg.cloudflare.api_token = Some(value.clone()),
@@ -1326,6 +1206,95 @@ fn generate_gateway_auth_token() -> String {
 
 fn can_prompt_interactively() -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+fn normalize_auth_field(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn resolve_gateway_username(cfg: &CliConfig, cli_username: Option<String>) -> Option<String> {
+    normalize_auth_field(cli_username).or_else(|| normalize_auth_field(cfg.gateway_username()))
+}
+
+fn resolve_interactive_gateway_auth(
+    cfg: &CliConfig,
+    token: Option<String>,
+    cli_username: Option<String>,
+    cli_password: Option<String>,
+    command_name: &str,
+) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
+    let mut username = resolve_gateway_username(cfg, cli_username);
+    let mut password = normalize_auth_field(cli_password);
+    let token = if password.is_some() {
+        None
+    } else {
+        normalize_auth_field(token)
+    };
+
+    if username.is_none() && (password.is_some() || token.is_some()) {
+        return Err("Username is required when using password/token authentication".into());
+    }
+
+    if username.is_none() && can_prompt_interactively() {
+        let prompt = format!(
+            "Gateway username for `{}` (leave empty to try setup/no-auth mode)",
+            command_name
+        );
+        username = prompt_line(&prompt, None)?;
+    }
+
+    if username.is_some() && password.is_none() && token.is_none() {
+        if can_prompt_interactively() {
+            let prompt = format!(
+                "Gateway password for `{}` (leave empty to try setup/no-auth mode)",
+                command_name
+            );
+            password = prompt_secret(&prompt)?;
+        } else {
+            return Err(
+                "Missing gateway credential. Set --token (non-interactive), or run in a TTY to enter a password."
+                    .into(),
+            );
+        }
+    }
+
+    let auth = GatewayAuth {
+        username,
+        password,
+        token,
+    };
+    auth.validate()?;
+    Ok(auth)
+}
+
+fn resolve_node_gateway_auth(
+    cfg: &CliConfig,
+    token: Option<String>,
+    cli_username: Option<String>,
+) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
+    let username = resolve_gateway_username(cfg, cli_username);
+    let token = normalize_auth_field(token);
+
+    if token.is_some() && username.is_none() {
+        return Err("Username is required when using --token for node auth".into());
+    }
+
+    if username.is_some() && token.is_none() {
+        return Err(
+            "Missing non-interactive node credential. Set --token or local-config gateway.token."
+                .into(),
+        );
+    }
+
+    let auth = GatewayAuth {
+        username,
+        password: None,
+        token,
+    };
+    auth.validate()?;
+    Ok(auth)
 }
 
 fn prompt_yes_no(prompt: &str, default_yes: bool) -> Result<bool, Box<dyn std::error::Error>> {
@@ -1686,7 +1655,7 @@ async fn run_setup(
     }
 
     let refreshed_cfg = CliConfig::load();
-    run_node_default_managed(&refreshed_cfg, node_id, node_workspace, None, None)
+    run_node_default_managed(&refreshed_cfg, node_id, node_workspace, None, None, None)
 }
 
 async fn run_upgrade(
@@ -1783,7 +1752,7 @@ async fn run_uninstall(
     }
 
     let refreshed_cfg = CliConfig::load();
-    run_node_service(NodeAction::Uninstall, &refreshed_cfg, None, None)
+    run_node_service(NodeAction::Uninstall, &refreshed_cfg, None, None, None)
 }
 
 async fn run_deploy(
@@ -2509,9 +2478,13 @@ fn persist_node_defaults(
 
 fn persist_gateway_overrides(
     gateway_url_override: Option<&str>,
+    gateway_username_override: Option<&str>,
     gateway_token_override: Option<&str>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    if gateway_url_override.is_none() && gateway_token_override.is_none() {
+    if gateway_url_override.is_none()
+        && gateway_username_override.is_none()
+        && gateway_token_override.is_none()
+    {
         return Ok(false);
     }
 
@@ -2521,6 +2494,13 @@ fn persist_gateway_overrides(
     if let Some(url) = gateway_url_override {
         if local_cfg.gateway.url.as_deref() != Some(url) {
             local_cfg.gateway.url = Some(url.to_string());
+            changed = true;
+        }
+    }
+
+    if let Some(username) = gateway_username_override {
+        if local_cfg.gateway.username.as_deref() != Some(username) {
+            local_cfg.gateway.username = Some(username.to_string());
             changed = true;
         }
     }
@@ -2594,17 +2574,21 @@ fn run_node_default_managed(
     node_id: Option<String>,
     workspace: Option<PathBuf>,
     gateway_url_override: Option<&str>,
+    gateway_username_override: Option<&str>,
     gateway_token_override: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if node_service_is_installed()? {
-        let gateway_overrides_changed =
-            persist_gateway_overrides(gateway_url_override, gateway_token_override)?;
+        let gateway_overrides_changed = persist_gateway_overrides(
+            gateway_url_override,
+            gateway_username_override,
+            gateway_token_override,
+        )?;
         let (node_id, workspace, node_defaults_changed) =
             persist_node_defaults(cfg, node_id, workspace)?;
         if gateway_overrides_changed || node_defaults_changed {
             restart_node_service()?;
         } else {
-            run_node_service(NodeAction::Start, cfg, None, None)?;
+            run_node_service(NodeAction::Start, cfg, None, None, None)?;
         }
         if gateway_overrides_changed {
             println!("Saved gateway connection overrides to local config.");
@@ -2622,6 +2606,7 @@ fn run_node_default_managed(
             },
             cfg,
             gateway_url_override,
+            gateway_username_override,
             gateway_token_override,
         )?;
     }
@@ -2633,12 +2618,16 @@ fn run_node_service(
     action: NodeAction,
     cfg: &CliConfig,
     gateway_url_override: Option<&str>,
+    gateway_username_override: Option<&str>,
     gateway_token_override: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         NodeAction::Install { id, workspace } => {
-            let gateway_overrides_changed =
-                persist_gateway_overrides(gateway_url_override, gateway_token_override)?;
+            let gateway_overrides_changed = persist_gateway_overrides(
+                gateway_url_override,
+                gateway_username_override,
+                gateway_token_override,
+            )?;
             let (node_id, workspace, node_defaults_changed) =
                 persist_node_defaults(cfg, id, workspace)?;
 
@@ -2693,8 +2682,11 @@ fn run_node_service(
             println!("Node daemon uninstalled.");
         }
         NodeAction::Start => {
-            let gateway_overrides_changed =
-                persist_gateway_overrides(gateway_url_override, gateway_token_override)?;
+            let gateway_overrides_changed = persist_gateway_overrides(
+                gateway_url_override,
+                gateway_username_override,
+                gateway_token_override,
+            )?;
 
             if gateway_overrides_changed {
                 restart_node_service()?;
@@ -3478,29 +3470,16 @@ async fn execute_tool_by_name(
     Err(format!("tool not found: {}", name))
 }
 
-async fn run_shell(
-    url: &str,
-    user: Option<String>,
-    password: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let opts = ConnectOptions {
-        url: url.to_string(),
-        role: "user".to_string(),
-        client_id: None,
-        implements: None,
-        auth_username: user.clone(),
-        auth_password: password,
-        auth_token: None,
-    };
-
-    let conn = Connection::connect(opts, |frame| {
+async fn run_shell(url: &str, auth: GatewayAuth) -> Result<(), Box<dyn std::error::Error>> {
+    let username = auth.username.clone();
+    let client = KernelClient::connect_user(url, auth, |frame| {
         if let Frame::Sig(sig) = frame {
             eprintln!("[signal] {}: {:?}", sig.signal, sig.payload);
         }
     })
     .await?;
 
-    let username = user.unwrap_or_else(|| "root".to_string());
+    let username = username.unwrap_or_else(|| "setup".to_string());
     println!("Connected to GSV OS as {}", username);
     println!("Type commands to execute, or :quit to exit");
     println!();
@@ -3527,7 +3506,8 @@ async fn run_shell(
             break;
         }
 
-        let res = conn
+        let res = client
+            .connection()
             .request("shell.exec", Some(json!({ "command": trimmed })))
             .await?;
 
@@ -3560,7 +3540,7 @@ async fn run_shell(
 
 async fn run_node(
     url: &str,
-    token: Option<String>,
+    auth: GatewayAuth,
     node_id: String,
     workspace: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -3622,16 +3602,11 @@ async fn run_node(
 
         let conn = match tokio::time::timeout(
             CONNECT_TIMEOUT,
-            Connection::connect(
-                ConnectOptions {
-                    url: url.to_string(),
-                    role: "driver".to_string(),
-                    client_id: Some(node_id.clone()),
-                    implements: Some(vec!["fs.*".to_string(), "shell.*".to_string()]),
-                    auth_username: None,
-                    auth_password: None,
-                    auth_token: token.clone(),
-                },
+            KernelClient::connect_driver(
+                url,
+                node_id.clone(),
+                vec!["fs.*".to_string(), "shell.*".to_string()],
+                auth.clone(),
                 |_frame| {},
             ),
         )
@@ -3639,7 +3614,7 @@ async fn run_node(
         {
             Ok(Ok(c)) => {
                 retry_delay = INITIAL_RETRY_DELAY;
-                c
+                c.into_connection()
             }
             Ok(Err(e)) => {
                 logger.error(
@@ -3750,7 +3725,13 @@ async fn run_node(
                     if tokio::time::Instant::now() >= next_keepalive_at {
                         let keepalive = tokio::time::timeout(
                             keepalive_timeout,
-                            conn.request("tools.list", None),
+                            conn.request(
+                                "fs.read",
+                                Some(json!({
+                                    "path": "/etc/passwd",
+                                    "limit": 1,
+                                })),
+                            ),
                         )
                         .await;
 

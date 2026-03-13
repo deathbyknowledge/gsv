@@ -71,6 +71,7 @@ impl Connection {
         let (mut write, mut read) = ws_stream.split();
 
         let (tx, mut rx) = mpsc::channel::<Message>(32);
+        let tx_for_read = tx.clone();
         let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
         let frame_handler: FrameHandler = Arc::new(RwLock::new(Some(Box::new(on_frame))));
         let binary_handler: BinaryHandler = Arc::new(RwLock::new(None));
@@ -126,6 +127,10 @@ impl Connection {
                             h(data);
                         }
                     }
+                    Message::Ping(payload) => {
+                        let _ = tx_for_read.send(Message::Pong(payload)).await;
+                    }
+                    Message::Pong(_) => {}
                     _ => {}
                 }
             }
@@ -175,10 +180,7 @@ impl Connection {
         self.disconnected.load(Ordering::SeqCst)
     }
 
-    async fn handshake(
-        &mut self,
-        opts: &ConnectOptions,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handshake(&mut self, opts: &ConnectOptions) -> Result<(), Box<dyn std::error::Error>> {
         let id = opts.client_id.clone().unwrap_or_else(|| {
             if opts.role == "driver" {
                 let hostname = hostname::get()
@@ -202,9 +204,10 @@ impl Connection {
 
         let driver = if opts.role == "driver" {
             Some(DriverInfo {
-                implements: opts.implements.clone().unwrap_or_else(|| {
-                    vec!["fs.*".to_string(), "shell.*".to_string()]
-                }),
+                implements: opts
+                    .implements
+                    .clone()
+                    .unwrap_or_else(|| vec!["fs.*".to_string(), "shell.*".to_string()]),
             })
         } else {
             None

@@ -67,7 +67,10 @@ pub struct GatewayConfig {
     /// WebSocket URL for the gateway
     pub url: Option<String>,
 
-    /// Auth token
+    /// Username for gateway authentication
+    pub username: Option<String>,
+
+    /// Non-interactive gateway credential (legacy "token" field)
     pub token: Option<String>,
 }
 
@@ -75,6 +78,7 @@ impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
             url: None,
+            username: None,
             token: None,
         }
     }
@@ -190,6 +194,11 @@ impl CliConfig {
         self.gateway.token.clone()
     }
 
+    /// Get effective gateway username (config only, no default)
+    pub fn gateway_username(&self) -> Option<String> {
+        self.gateway.username.clone()
+    }
+
     /// Get normalized release channel from config (`stable` or `dev`)
     pub fn release_channel(&self) -> Option<String> {
         self.release
@@ -260,7 +269,10 @@ pub fn sample_config() -> &'static str {
 # WebSocket URL for the gateway (required for remote)
 url = "wss://gateway.stevej.workers.dev/ws"
 
-# Auth token (keep secret!)
+# Gateway username
+# username = "root"
+
+# Non-interactive gateway credential (legacy "token" field, keep secret!)
 token = "your-token-here"
 
 [cloudflare]

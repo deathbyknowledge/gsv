@@ -190,12 +190,12 @@ Kernel-internal process management. Not routable (no `target`).
 - [x] `proc.reset` — archive + clear conversation, process stays alive
 - [x] Types in `syscalls/proc.ts`
 - [x] Constants in `syscalls/constants.ts`
-- [ ] Implement `proc.spawn` handler in dispatcher
-- [ ] Implement `proc.kill` handler in dispatcher
-- [ ] Implement `proc.list` handler in dispatcher
-- [ ] Implement `proc.send` handler — deliver message to process, trigger agent loop
-- [ ] Implement `proc.history` handler — read from process DO
-- [ ] Implement `proc.reset` handler — archive + clear process conversation
+- [x] Implement `proc.spawn` handler in dispatcher
+- [x] Implement `proc.kill` handler in dispatcher
+- [x] Implement `proc.list` handler in dispatcher
+- [x] Implement `proc.send` handler — deliver message to process, trigger agent loop
+- [x] Implement `proc.history` handler — read from process DO
+- [x] Implement `proc.reset` handler — archive + clear process conversation
 
 ## Native FS driver (`drivers/native/fs.ts`)
 
@@ -375,7 +375,10 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 
 - [x] Update frame types: `method` → `call`, add `sig` frame, `session` domain → `proc` domain
 - [x] Update connect flow: `sys.connect` with new `ConnectResult`
-- [x] Add auth: password/token in `ConnectArgs.auth`
+- [x] Add auth fields in `ConnectArgs.auth` (`username`, `password`, `token`)
+- [x] Clarify current behavior: kernel auth treats `token` as alternate credential input (`token ?? password`) and validates against `/etc/shadow`
+- [ ] Design first-class token model (issuance, rotation, revoke, scope) separate from password auth
+- [ ] Add dedicated token management syscalls once first-class token model exists
 - [x] Device commands use `shell.*` domain instead of `proc.*`
 - [x] `gsv shell` interactive REPL (connects as user, sends `shell.exec`)
 - [x] `gsv node` connects as driver with `implements: ["fs.*", "shell.*"]`

@@ -2,657 +2,432 @@ use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use gsv::config;
-use gsv::connection::Connection;
-use gsv::gateway_client::GatewayClient;
-use gsv::protocol::Frame;
-use serde_json::json;
+use gsv::kernel_client::{GatewayAuth, KernelClient};
+use serde_json::{json, Value};
 
-use crate::{
-    ChannelAction, ConfigAction, DiscordAction, HeartbeatAction, PairAction, SessionAction,
-    SkillsAction, ToolsAction, WhatsAppAction,
-};
+use crate::{ConfigAction, ProcAction};
 
-enum ChatSendResult {
-    NoWait,
-    Wait,
+const CHAT_WAIT_TIMEOUT_SECS: u64 = 120;
+
+#[derive(Clone, Debug)]
+struct PendingChatSignal {
+    signal: String,
+    payload: Value,
 }
 
-fn chat_event_matches_request(
-    payload: &serde_json::Value,
-    requested_session_key: &str,
-    expected_run_id: Option<&str>,
-) -> bool {
-    if let Some(run_id) = expected_run_id {
-        return payload
-            .get("runId")
-            .and_then(|r| r.as_str())
-            .map(|event_run_id| event_run_id == run_id)
-            .unwrap_or(false);
+fn client_debug_enabled() -> bool {
+    std::env::var("GSV_CLIENT_DEBUG")
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            !normalized.is_empty() && normalized != "0" && normalized != "false"
+        })
+        .unwrap_or(false)
+}
+
+fn debug_log(enabled: bool, message: impl AsRef<str>) {
+    if enabled {
+        eprintln!("[gsv-client-debug] {}", message.as_ref());
     }
-
-    payload
-        .get("sessionKey")
-        .and_then(|s| s.as_str())
-        .map(|event_session| event_session == requested_session_key)
-        .unwrap_or(true)
 }
 
-async fn wait_for_chat_response(response_received: &AtomicBool) {
-    // Wait up to 120 seconds for LLM + tool execution.
-    let timeout = tokio::time::Duration::from_secs(120);
+fn signal_run_id(payload: &Value) -> Option<String> {
+    payload
+        .get("runId")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+}
+
+fn process_chat_signal(
+    debug_enabled: bool,
+    signal: &str,
+    payload: &Value,
+    expected_run_id: &Arc<Mutex<Option<String>>>,
+    awaiting_response: &AtomicBool,
+    emitted_text: &AtomicBool,
+    completed: &AtomicBool,
+) {
+    let run_id = signal_run_id(payload).unwrap_or_else(|| "<none>".to_string());
+    debug_log(
+        debug_enabled,
+        format!("process signal={} runId={}", signal, run_id),
+    );
+
+    match signal {
+        "chat.text" => {
+            if let Some(text) = payload.get("text").and_then(|value| value.as_str()) {
+                print!("{}", text);
+                let _ = io::stdout().flush();
+                emitted_text.store(true, Ordering::SeqCst);
+            }
+        }
+        "chat.tool_call" => {
+            if let Some(name) = payload.get("name").and_then(|value| value.as_str()) {
+                println!("\n[tool] {}", name);
+            }
+        }
+        "chat.tool_result" => {
+            let tool_name = payload
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            let ok = payload
+                .get("ok")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if ok {
+                println!("[tool result] {}: ok", tool_name);
+            } else {
+                let error = payload
+                    .get("error")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown error");
+                eprintln!("[tool result] {}: {}", tool_name, error);
+            }
+        }
+        "chat.complete" => {
+            if let Some(error) = payload.get("error").and_then(|value| value.as_str()) {
+                eprintln!("\nError: {}", error);
+            } else if !emitted_text.load(Ordering::SeqCst) {
+                if let Some(text) = payload.get("text").and_then(|value| value.as_str()) {
+                    if !text.is_empty() {
+                        println!("\nAssistant: {}", text);
+                    }
+                }
+            } else {
+                println!();
+            }
+
+            if let Ok(mut run_id) = expected_run_id.lock() {
+                *run_id = None;
+            }
+            awaiting_response.store(false, Ordering::SeqCst);
+            emitted_text.store(false, Ordering::SeqCst);
+            completed.store(true, Ordering::SeqCst);
+            debug_log(debug_enabled, "chat.complete -> completed=true awaiting=false");
+        }
+        _ => {}
+    }
+}
+
+fn drain_pending_chat_signals(
+    debug_enabled: bool,
+    expected_run_id_value: &str,
+    pending_signals: &Arc<Mutex<Vec<PendingChatSignal>>>,
+    expected_run_id: &Arc<Mutex<Option<String>>>,
+    awaiting_response: &AtomicBool,
+    emitted_text: &AtomicBool,
+    completed: &AtomicBool,
+) -> (usize, usize) {
+    let queued = match pending_signals.lock() {
+        Ok(mut pending) => std::mem::take(&mut *pending),
+        Err(_) => return (0, 0),
+    };
+
+    let total = queued.len();
+    let mut processed = 0usize;
+
+    for queued_signal in queued {
+        let run_id = signal_run_id(&queued_signal.payload);
+        if run_id.as_deref() != Some(expected_run_id_value) {
+            continue;
+        }
+        processed += 1;
+        process_chat_signal(
+            debug_enabled,
+            &queued_signal.signal,
+            &queued_signal.payload,
+            expected_run_id,
+            awaiting_response,
+            emitted_text,
+            completed,
+        );
+        if !awaiting_response.load(Ordering::SeqCst) {
+            break;
+        }
+    }
+    debug_log(
+        debug_enabled,
+        format!(
+            "drain pending runId={} total={} processed={}",
+            expected_run_id_value, total, processed
+        ),
+    );
+    (total, processed)
+}
+
+fn begin_wait_for_chat_response(
+    completed: &AtomicBool,
+    emitted_text: &AtomicBool,
+    awaiting_response: &AtomicBool,
+    expected_run_id: &Arc<Mutex<Option<String>>>,
+    pending_signals: &Arc<Mutex<Vec<PendingChatSignal>>>,
+) {
+    completed.store(false, Ordering::SeqCst);
+    emitted_text.store(false, Ordering::SeqCst);
+    awaiting_response.store(true, Ordering::SeqCst);
+    if let Ok(mut expected) = expected_run_id.lock() {
+        *expected = None;
+    }
+    if let Ok(mut pending) = pending_signals.lock() {
+        pending.clear();
+    }
+}
+
+async fn wait_for_chat_complete(
+    completed: &AtomicBool,
+    debug_enabled: bool,
+    is_disconnected: impl Fn() -> bool,
+) {
+    let timeout = tokio::time::Duration::from_secs(CHAT_WAIT_TIMEOUT_SECS);
     let start = tokio::time::Instant::now();
 
-    while !response_received.load(Ordering::SeqCst) {
+    while !completed.load(Ordering::SeqCst) {
+        if is_disconnected() {
+            eprintln!("Connection lost while waiting for chat response");
+            debug_log(debug_enabled, "wait aborted: connection disconnected");
+            break;
+        }
         if start.elapsed() > timeout {
-            eprintln!("Timeout waiting for response");
+            eprintln!(
+                "Timeout waiting for chat completion after {} seconds",
+                CHAT_WAIT_TIMEOUT_SECS
+            );
             break;
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }
 
-fn truncate_for_display(text: &str, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
-        return text.to_string();
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-
-    format!("{}...", &text[..end])
-}
-
 pub(crate) async fn run_client(
     url: &str,
-    token: Option<String>,
+    auth: GatewayAuth,
     message: Option<String>,
-    session_key: &str,
+    pid: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let debug_enabled = client_debug_enabled();
+
     println!("Connecting to {}...", url);
+    debug_log(debug_enabled, format!("connecting url={}", url));
 
-    // Flag to track when we've received a final/error response
-    let response_received = Arc::new(AtomicBool::new(false));
-    let response_received_clone = response_received.clone();
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_for_handler = completed.clone();
     let expected_run_id = Arc::new(Mutex::new(None::<String>));
-    let expected_run_id_clone = expected_run_id.clone();
-    let session_key_owned = session_key.to_string();
+    let expected_run_id_for_handler = expected_run_id.clone();
+    let emitted_text = Arc::new(AtomicBool::new(false));
+    let emitted_text_for_handler = emitted_text.clone();
+    let awaiting_response = Arc::new(AtomicBool::new(false));
+    let awaiting_response_for_handler = awaiting_response.clone();
+    let pending_signals = Arc::new(Mutex::new(Vec::<PendingChatSignal>::new()));
+    let pending_signals_for_handler = pending_signals.clone();
+    let debug_enabled_for_handler = debug_enabled;
 
-    let conn = Connection::connect(
-        gsv::connection::ConnectOptions {
-            url: url.to_string(),
-            role: "user".to_string(),
-            client_id: None,
-            implements: None,
-            auth_username: None,
-            auth_password: None,
-            auth_token: token.map(|t| t.to_string()),
-        },
-        move |frame| {
-            if let Frame::Sig(sig) = frame {
-                if sig.signal == "chat" {
-                    if let Some(payload) = sig.payload {
-                        let expected_run_id = expected_run_id_clone
-                            .lock()
-                            .ok()
-                            .and_then(|run_id| run_id.clone());
-
-                        // Prefer runId filtering when available (authoritative for this request).
-                        // Fall back to sessionKey filtering for older payloads.
-                        if !chat_event_matches_request(
-                            &payload,
-                            &session_key_owned,
-                            expected_run_id.as_deref(),
-                        ) {
-                            return;
-                        }
-
-                        if let Some(state) = payload.get("state").and_then(|s| s.as_str()) {
-                            match state {
-                                "delta" | "partial" => {
-                                    if let Some(text) = payload.get("text").and_then(|t| t.as_str())
-                                    {
-                                        print!("{}", text);
-                                        let _ = io::stdout().flush();
-                                    }
-                                }
-                                "final" => {
-                                    if let Some(msg) = payload.get("message") {
-                                        if let Some(content) = msg.get("content") {
-                                            println!("\nAssistant: {}", format_content(content));
-                                        }
-                                    }
-                                    if let Ok(mut run_id) = expected_run_id_clone.lock() {
-                                        *run_id = None;
-                                    }
-                                    response_received_clone.store(true, Ordering::SeqCst);
-                                }
-                                "error" => {
-                                    if let Some(err) = payload.get("error").and_then(|e| e.as_str())
-                                    {
-                                        eprintln!("\nError: {}", err);
-                                    }
-                                    if let Ok(mut run_id) = expected_run_id_clone.lock() {
-                                        *run_id = None;
-                                    }
-                                    response_received_clone.store(true, Ordering::SeqCst);
-                                }
-                                "paused" => {
-                                    if let Some(msg) = payload.get("message") {
-                                        if let Some(content) = msg.get("content") {
-                                            println!("\nAssistant: {}", format_content(content));
-                                        }
-                                    } else {
-                                        println!(
-                                            "\nAssistant: Run is paused waiting for tool approval. Reply yes/no."
-                                        );
-                                    }
-                                    response_received_clone.store(true, Ordering::SeqCst);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
+    let client = KernelClient::connect_user(url, auth, move |frame| {
+        if let gsv::protocol::Frame::Sig(sig) = frame {
+            let payload = sig.payload.unwrap_or_else(|| json!({}));
+            let incoming_run_id = signal_run_id(&payload).unwrap_or_else(|| "<none>".to_string());
+            debug_log(
+                debug_enabled_for_handler,
+                format!("signal recv raw={} runId={}", sig.signal, incoming_run_id),
+            );
+            if !sig.signal.starts_with("chat.") {
+                debug_log(debug_enabled_for_handler, "signal ignored (non-chat)");
+                return;
             }
-        },
-    )
-    .await?;
-    let gateway = GatewayClient::new(conn);
+            let expected = expected_run_id_for_handler
+                .lock()
+                .ok()
+                .and_then(|run_id| run_id.clone());
+            debug_log(
+                debug_enabled_for_handler,
+                format!(
+                    "signal recv={} runId={} expected={:?} awaiting={}",
+                    sig.signal,
+                    incoming_run_id,
+                    expected,
+                    awaiting_response_for_handler.load(Ordering::SeqCst)
+                ),
+            );
 
-    if let Some(msg) = message {
-        // One-shot mode: send message and wait for response
-        response_received.store(false, Ordering::SeqCst);
-        if let Ok(mut run_id) = expected_run_id.lock() {
-            *run_id = None;
-        }
-
-        let run_id = uuid::Uuid::new_v4().to_string();
-        if let Ok(mut expected) = expected_run_id.lock() {
-            *expected = Some(run_id.clone());
-        }
-
-        match send_chat(&gateway, session_key, &msg, &run_id).await? {
-            ChatSendResult::NoWait => {
-                if let Ok(mut expected) = expected_run_id.lock() {
-                    *expected = None;
-                }
-            }
-            ChatSendResult::Wait => {
-                wait_for_chat_response(response_received.as_ref()).await;
-            }
-        }
-    } else {
-        // Interactive mode
-        println!("Connected! Type your message and press Enter. Type 'quit' to exit.\n");
-
-        let stdin = io::stdin();
-        print!("> ");
-        let _ = io::stdout().flush();
-
-        for line in stdin.lock().lines() {
-            let line = line?;
-            let line = line.trim();
-
-            if line == "quit" || line == "exit" {
-                break;
-            }
-
-            if line.is_empty() {
-                print!("> ");
-                let _ = io::stdout().flush();
-                continue;
-            }
-
-            // Reset response flag
-            response_received.store(false, Ordering::SeqCst);
-            if let Ok(mut run_id) = expected_run_id.lock() {
-                *run_id = None;
-            }
-
-            let run_id = uuid::Uuid::new_v4().to_string();
-            if let Ok(mut expected) = expected_run_id.lock() {
-                *expected = Some(run_id.clone());
-            }
-
-            match send_chat(&gateway, session_key, line, &run_id).await? {
-                ChatSendResult::NoWait => {
-                    if let Ok(mut expected) = expected_run_id.lock() {
-                        *expected = None;
-                    }
-                }
-                ChatSendResult::Wait => {
-                    wait_for_chat_response(response_received.as_ref()).await;
-                }
-            }
-
-            print!("\n> ");
-            let _ = io::stdout().flush();
-        }
-    }
-
-    Ok(())
-}
-
-pub(crate) async fn run_heartbeat(
-    url: &str,
-    token: Option<String>,
-    action: HeartbeatAction,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = GatewayClient::connect(url, token).await?;
-
-    match action {
-        HeartbeatAction::Status => {
-            let payload = client.heartbeat_status().await?;
-
-            if let Some(agents) = payload.get("agents").and_then(|a| a.as_object()) {
-                if agents.is_empty() {
-                    println!("No heartbeat state (scheduler not started)");
-                    println!("\nTo start the heartbeat scheduler, run:");
-                    println!("  gsv heartbeat start");
-                } else {
-                    println!("Heartbeat status:");
-                    for (agent_id, state) in agents {
-                        println!("\n  Agent: {}", agent_id);
-
-                        if let Some(next) = state.get("nextHeartbeatAt").and_then(|n| n.as_i64()) {
-                            let dt = chrono::DateTime::from_timestamp_millis(next);
-                            if let Some(dt) = dt {
-                                println!("    Next: {}", dt.format("%Y-%m-%d %H:%M:%S"));
-                            }
-                        }
-
-                        if let Some(last) = state.get("lastHeartbeatAt").and_then(|n| n.as_i64()) {
-                            let dt = chrono::DateTime::from_timestamp_millis(last);
-                            if let Some(dt) = dt {
-                                println!("    Last: {}", dt.format("%Y-%m-%d %H:%M:%S"));
-                            }
-                        }
-
-                        if let Some(last_active) = state.get("lastActive") {
-                            if let Some(channel) =
-                                last_active.get("channel").and_then(|c| c.as_str())
-                            {
-                                let peer_name = last_active
-                                    .get("peer")
-                                    .and_then(|p| p.get("name"))
-                                    .and_then(|n| n.as_str())
-                                    .unwrap_or("unknown");
-                                let peer_id = last_active
-                                    .get("peer")
-                                    .and_then(|p| p.get("id"))
-                                    .and_then(|i| i.as_str())
-                                    .unwrap_or("unknown");
-
-                                println!(
-                                    "    Delivery: {} -> {} ({})",
-                                    channel, peer_name, peer_id
-                                );
-
-                                if let Some(ts) =
-                                    last_active.get("timestamp").and_then(|t| t.as_i64())
-                                {
-                                    let dt = chrono::DateTime::from_timestamp_millis(ts);
-                                    if let Some(dt) = dt {
-                                        println!(
-                                            "    Last msg: {}",
-                                            dt.format("%Y-%m-%d %H:%M:%S")
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        HeartbeatAction::Start => {
-            let payload = client.heartbeat_start().await?;
-
-            if let Some(msg) = payload.get("message").and_then(|m| m.as_str()) {
-                println!("{}", msg);
-            }
-
-            if let Some(agents) = payload.get("agents").and_then(|a| a.as_object()) {
-                for (agent_id, state) in agents {
-                    if let Some(next) = state.get("nextHeartbeatAt").and_then(|n| n.as_i64()) {
-                        let dt = chrono::DateTime::from_timestamp_millis(next);
-                        if let Some(dt) = dt {
-                            println!("  {}: next at {}", agent_id, dt.format("%H:%M:%S"));
-                        }
-                    }
-                }
-            }
-        }
-
-        HeartbeatAction::Trigger { agent_id } => {
-            let payload = client.heartbeat_trigger(agent_id).await?;
-
-            if let Some(msg) = payload.get("message").and_then(|m| m.as_str()) {
-                println!("{}", msg);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub(crate) async fn run_pair(
-    url: &str,
-    token: Option<String>,
-    action: PairAction,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = GatewayClient::connect(url, token).await?;
-
-    match action {
-        PairAction::List => {
-            let payload = client.pair_list().await?;
-
-            if let Some(pairs) = payload.get("pairs").and_then(|p| p.as_object()) {
-                if pairs.is_empty() {
-                    println!("No pending pairing requests");
-                } else {
-                    println!("Pending pairing requests ({}):\n", pairs.len());
-                    for (key, pair) in pairs {
-                        let sender_id = pair
-                            .get("senderId")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("unknown");
-                        let sender_name = pair
-                            .get("senderName")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("unknown");
-                        let channel = pair
-                            .get("channel")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("unknown");
-                        let first_msg = pair
-                            .get("firstMessage")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("");
-
-                        if let Some(requested_at) = pair.get("requestedAt").and_then(|t| t.as_i64())
-                        {
-                            let dt = chrono::DateTime::from_timestamp_millis(requested_at);
-                            if let Some(dt) = dt {
-                                println!("  {} ({}) via {}", sender_name, sender_id, channel);
-                                println!("    Requested: {}", dt.format("%Y-%m-%d %H:%M:%S"));
-                                if !first_msg.is_empty() {
-                                    println!("    Message: \"{}\"", first_msg);
-                                }
-                                println!();
-                            }
-                        } else {
-                            println!("  {}: {} ({})", key, sender_name, sender_id);
-                        }
-                    }
-                    println!("To approve: gsv pair approve <channel> <sender_id>");
-                    println!("To reject:  gsv pair reject <channel> <sender_id>");
-                }
-            } else {
-                eprintln!("No pairing data returned");
-            }
-        }
-
-        PairAction::Approve { channel, sender_id } => {
-            let requested_sender_id = sender_id.clone();
-            let payload = client.pair_approve(channel, sender_id).await?;
-
-            let approved_id = payload
-                .get("senderId")
-                .and_then(|s| s.as_str())
-                .unwrap_or(requested_sender_id.as_str());
-            let sender_name = payload.get("senderName").and_then(|s| s.as_str());
-
-            if let Some(name) = sender_name {
-                println!(
-                    "Approved {} ({}) - they can now message the bot",
-                    name, approved_id
+            if !awaiting_response_for_handler.load(Ordering::SeqCst) {
+                debug_log(
+                    debug_enabled_for_handler,
+                    "signal ignored (awaiting_response=false)",
                 );
-            } else {
-                println!("Approved {} - they can now message the bot", approved_id);
+                return;
             }
-        }
 
-        PairAction::Reject { channel, sender_id } => {
-            client.pair_reject(channel, sender_id).await?;
-            println!("Rejected request removed");
-        }
-    }
+            let signal_run_id = signal_run_id(&payload);
 
-    Ok(())
-}
-
-pub(crate) async fn run_channel(
-    action: ChannelAction,
-    url: &str,
-    token: Option<String>,
-    _cfg: &gsv::config::CliConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    match action {
-        ChannelAction::Whatsapp { action } => run_whatsapp_via_gateway(url, token, action).await,
-        ChannelAction::Discord { action } => run_discord_via_gateway(url, token, action).await,
-        ChannelAction::List => run_channels_list(url, token).await,
-    }
-}
-
-pub(crate) async fn run_channels_list(
-    url: &str,
-    token: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = GatewayClient::connect(url, token).await?;
-
-    let payload = client.channels_list().await?;
-
-    if let Some(channels) = payload.get("channels").and_then(|c| c.as_array()) {
-        if channels.is_empty() {
-            println!("No channel accounts connected");
-        } else {
-            println!("Connected channel accounts ({}):\n", channels.len());
-            for ch in channels {
-                let channel = ch.get("channel").and_then(|c| c.as_str()).unwrap_or("?");
-                let account_id = ch.get("accountId").and_then(|a| a.as_str()).unwrap_or("?");
-                let connected_at = ch.get("connectedAt").and_then(|t| t.as_i64());
-                let last_msg = ch.get("lastMessageAt").and_then(|t| t.as_i64());
-
-                print!("  {}:{}", channel, account_id);
-
-                if let Some(ts) = connected_at {
-                    if let Some(dt) = chrono::DateTime::from_timestamp_millis(ts) {
-                        print!(" (connected {})", dt.format("%Y-%m-%d %H:%M"));
+            let Some(expected) = expected else {
+                if signal_run_id.is_some() {
+                    if let Ok(mut pending) = pending_signals_for_handler.lock() {
+                        pending.push(PendingChatSignal {
+                            signal: sig.signal.clone(),
+                            payload,
+                        });
+                        debug_log(
+                            debug_enabled_for_handler,
+                            format!("signal queued (expected runId pending) queue_len={}", pending.len()),
+                        );
                     }
                 }
-                if let Some(ts) = last_msg {
-                    if let Some(dt) = chrono::DateTime::from_timestamp_millis(ts) {
-                        print!(", last msg {}", dt.format("%H:%M:%S"));
-                    }
-                }
-                println!();
+                return;
+            };
+
+            if signal_run_id.as_deref() != Some(expected.as_str()) {
+                debug_log(
+                    debug_enabled_for_handler,
+                    format!(
+                        "signal ignored (runId mismatch): signal={:?} expected={}",
+                        signal_run_id, expected
+                    ),
+                );
+                return;
             }
+
+            process_chat_signal(
+                debug_enabled_for_handler,
+                &sig.signal,
+                &payload,
+                &expected_run_id_for_handler,
+                awaiting_response_for_handler.as_ref(),
+                emitted_text_for_handler.as_ref(),
+                completed_for_handler.as_ref(),
+            );
         }
-    }
+    })
+    .await?;
 
-    Ok(())
-}
+    if let Some(message) = message {
+        begin_wait_for_chat_response(
+            completed.as_ref(),
+            emitted_text.as_ref(),
+            awaiting_response.as_ref(),
+            &expected_run_id,
+            &pending_signals,
+        );
+        debug_log(
+            debug_enabled,
+            format!(
+                "proc.send start pid={} chars={}",
+                pid.as_deref().unwrap_or("<init>"),
+                message.chars().count()
+            ),
+        );
 
-pub(crate) async fn run_whatsapp_via_gateway(
-    url: &str,
-    token: Option<String>,
-    action: WhatsAppAction,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = GatewayClient::connect(url, token).await?;
-
-    match action {
-        WhatsAppAction::Login { account_id } => {
-            println!("Logging in to WhatsApp account: {}", account_id);
-
-            let payload = client
-                .channel_login("whatsapp".to_string(), account_id)
-                .await?;
-
-            if let Some(qr_data_url) = payload.get("qrDataUrl").and_then(|q| q.as_str()) {
-                // qrDataUrl is a data URL, extract the QR data
-                println!("\nScan this QR code with WhatsApp:\n");
-
-                // The qrDataUrl from WhatsApp channel is actually the raw QR string
-                // Try to render it
-                render_qr_terminal(qr_data_url)?;
-                println!("\nQR code expires in ~20 seconds. Re-run command if needed.");
-            } else if let Some(msg) = payload.get("message").and_then(|m| m.as_str()) {
-                println!("{}", msg);
-            } else if let Some(msg) = payload.get("status").and_then(|m| m.as_str()) {
-                println!("{}", msg);
-            }
-        }
-
-        WhatsAppAction::Status { account_id } => {
-            let payload = client
-                .channel_status("whatsapp".to_string(), account_id)
-                .await?;
-
-            if let Some(accounts) = payload.get("accounts").and_then(|a| a.as_array()) {
-                if accounts.is_empty() {
-                    println!("No WhatsApp accounts found");
-                } else {
-                    for acc in accounts {
-                        let acc_id = acc.get("accountId").and_then(|a| a.as_str()).unwrap_or("?");
-                        let connected = acc
-                            .get("connected")
-                            .and_then(|c| c.as_bool())
-                            .unwrap_or(false);
-                        let authenticated = acc
-                            .get("authenticated")
-                            .and_then(|a| a.as_bool())
-                            .unwrap_or(false);
-
-                        println!("WhatsApp account: {}", acc_id);
-                        println!("  Connected: {}", connected);
-                        println!("  Authenticated: {}", authenticated);
-
-                        if let Some(error) = acc.get("error").and_then(|e| e.as_str()) {
-                            println!("  Error: {}", error);
-                        }
-
-                        if let Some(extra) = acc.get("extra") {
-                            if let Some(jid) = extra.get("selfJid").and_then(|e| e.as_str()) {
-                                println!("  JID: {}", jid);
-                            }
-                            if let Some(e164) = extra.get("selfE164").and_then(|e| e.as_str()) {
-                                println!("  Phone: {}", e164);
-                            }
-                        }
-
-                        if let Some(last) = acc.get("lastActivity").and_then(|t| t.as_i64()) {
-                            if let Some(dt) = chrono::DateTime::from_timestamp_millis(last) {
-                                println!("  Last activity: {}", dt.format("%Y-%m-%d %H:%M:%S"));
-                            }
-                        }
-                    }
-                }
-            }
+        let result = client.proc_send(pid.as_deref(), &message).await?;
+        debug_log(
+            debug_enabled,
+            format!(
+                "proc.send response runId={} queued={}",
+                result.run_id, result.queued
+            ),
+        );
+        if result.queued {
+            println!("[queued] process is busy; your message was queued");
         }
 
-        WhatsAppAction::Logout { account_id } => {
-            println!("Logging out WhatsApp account: {}", account_id);
-            client
-                .channel_logout("whatsapp".to_string(), account_id)
-                .await?;
-            println!("Logged out successfully. Credentials cleared.");
+        if let Ok(mut expected) = expected_run_id.lock() {
+            *expected = Some(result.run_id);
         }
-
-        WhatsAppAction::Stop { account_id } => {
-            println!("Stopping WhatsApp account: {}", account_id);
-            client
-                .channel_stop("whatsapp".to_string(), account_id)
-                .await?;
-            println!("Stopped.");
-        }
-    }
-
-    Ok(())
-}
-
-pub(crate) async fn run_discord_via_gateway(
-    url: &str,
-    token: Option<String>,
-    action: DiscordAction,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = GatewayClient::connect(url, token).await?;
-
-    match action {
-        DiscordAction::Start { account_id } => {
-            println!("Starting Discord bot account: {}", account_id);
-
-            client
-                .channel_start("discord".to_string(), account_id)
-                .await?;
-            println!("Discord bot started successfully.");
-            println!(
-                "\nThe bot will connect using the DISCORD_BOT_TOKEN configured on the channel worker."
+        if let Some(expected_run_id_value) = expected_run_id
+            .lock()
+            .ok()
+            .and_then(|run_id| run_id.clone())
+        {
+            drain_pending_chat_signals(
+                debug_enabled,
+                &expected_run_id_value,
+                &pending_signals,
+                &expected_run_id,
+                awaiting_response.as_ref(),
+                emitted_text.as_ref(),
+                completed.as_ref(),
             );
         }
 
-        DiscordAction::Status { account_id } => {
-            let payload = client
-                .channel_status("discord".to_string(), account_id)
-                .await?;
+        wait_for_chat_complete(completed.as_ref(), debug_enabled, || {
+            client.connection().is_disconnected()
+        })
+        .await;
+        return Ok(());
+    }
 
-            if let Some(accounts) = payload.get("accounts").and_then(|a| a.as_array()) {
-                if accounts.is_empty() {
-                    println!("No Discord accounts found");
-                } else {
-                    for acc in accounts {
-                        let acc_id = acc.get("accountId").and_then(|a| a.as_str()).unwrap_or("?");
-                        let connected = acc
-                            .get("connected")
-                            .and_then(|c| c.as_bool())
-                            .unwrap_or(false);
-                        let authenticated = acc
-                            .get("authenticated")
-                            .and_then(|a| a.as_bool())
-                            .unwrap_or(false);
+    println!("Connected! Type your message and press Enter. Type 'quit' to exit.\n");
 
-                        println!("Discord account: {}", acc_id);
-                        println!("  Connected: {}", connected);
-                        println!("  Authenticated: {}", authenticated);
+    let stdin = io::stdin();
+    print!("> ");
+    let _ = io::stdout().flush();
 
-                        if let Some(error) = acc.get("error").and_then(|e| e.as_str()) {
-                            println!("  Error: {}", error);
-                        }
+    for line in stdin.lock().lines() {
+        let line = line?;
+        let line = line.trim();
 
-                        if let Some(extra) = acc.get("extra") {
-                            if let Some(bot_user) = extra.get("botUser") {
-                                if let Some(username) =
-                                    bot_user.get("username").and_then(|u| u.as_str())
-                                {
-                                    println!("  Bot username: {}", username);
-                                }
-                                if let Some(id) = bot_user.get("id").and_then(|i| i.as_str()) {
-                                    println!("  Bot ID: {}", id);
-                                }
-                            }
-                        }
-
-                        if let Some(last) = acc.get("lastActivity").and_then(|t| t.as_i64()) {
-                            if let Some(dt) = chrono::DateTime::from_timestamp_millis(last) {
-                                println!("  Last activity: {}", dt.format("%Y-%m-%d %H:%M:%S"));
-                            }
-                        }
-                    }
-                }
-            }
+        if line == "quit" || line == "exit" {
+            break;
         }
 
-        DiscordAction::Stop { account_id } => {
-            println!("Stopping Discord bot account: {}", account_id);
-            client
-                .channel_stop("discord".to_string(), account_id)
-                .await?;
-            println!("Stopped.");
+        if line.is_empty() {
+            print!("> ");
+            let _ = io::stdout().flush();
+            continue;
         }
+
+        begin_wait_for_chat_response(
+            completed.as_ref(),
+            emitted_text.as_ref(),
+            awaiting_response.as_ref(),
+            &expected_run_id,
+            &pending_signals,
+        );
+        debug_log(
+            debug_enabled,
+            format!(
+                "proc.send start pid={} chars={}",
+                pid.as_deref().unwrap_or("<init>"),
+                line.chars().count()
+            ),
+        );
+
+        let result = client.proc_send(pid.as_deref(), line).await?;
+        debug_log(
+            debug_enabled,
+            format!(
+                "proc.send response runId={} queued={}",
+                result.run_id, result.queued
+            ),
+        );
+        if result.queued {
+            println!("[queued] process is busy; your message was queued");
+        }
+
+        if let Ok(mut expected) = expected_run_id.lock() {
+            *expected = Some(result.run_id);
+        }
+        if let Some(expected_run_id_value) = expected_run_id
+            .lock()
+            .ok()
+            .and_then(|run_id| run_id.clone())
+        {
+            drain_pending_chat_signals(
+                debug_enabled,
+                &expected_run_id_value,
+                &pending_signals,
+                &expected_run_id,
+                awaiting_response.as_ref(),
+                emitted_text.as_ref(),
+                completed.as_ref(),
+            );
+        }
+
+        wait_for_chat_complete(completed.as_ref(), debug_enabled, || {
+            client.connection().is_disconnected()
+        })
+        .await;
+
+        print!("\n> ");
+        let _ = io::stdout().flush();
     }
 
     Ok(())
@@ -660,708 +435,94 @@ pub(crate) async fn run_discord_via_gateway(
 
 pub(crate) async fn run_config(
     url: &str,
-    token: Option<String>,
+    auth: GatewayAuth,
     action: ConfigAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = GatewayClient::connect(url, token).await?;
+    let client = KernelClient::connect_user(url, auth, |_| {}).await?;
 
     match action {
-        ConfigAction::Get { path } => {
-            let payload = client.config_get(path).await?;
+        ConfigAction::Get { key } => {
+            let payload = client.sys_config_get(key.as_deref()).await?;
             println!("{}", serde_json::to_string_pretty(&payload)?);
         }
-        ConfigAction::Set { path, value } => {
-            // Try to parse value as JSON, fall back to string
-            let parsed_value: serde_json::Value = serde_json::from_str(&value)
-                .unwrap_or_else(|_| serde_json::Value::String(value.clone()));
-            client.config_set(path.clone(), parsed_value).await?;
-            println!("Set {} successfully", path);
+        ConfigAction::Set { key, value } => {
+            client.sys_config_set(&key, &value).await?;
+            println!("ok");
         }
     }
 
     Ok(())
 }
 
-pub(crate) async fn run_tools(
+pub(crate) async fn run_proc(
     url: &str,
-    token: Option<String>,
-    action: ToolsAction,
+    auth: GatewayAuth,
+    action: ProcAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = GatewayClient::connect(url, token).await?;
+    let client = KernelClient::connect_user(url, auth, |_| {}).await?;
 
-    match action {
-        ToolsAction::List => {
-            let payload = client.tools_list().await?;
-            if let Some(tools) = payload.get("tools").and_then(|t| t.as_array()) {
-                if tools.is_empty() {
-                    println!("No tools available (is a node connected?)");
-                } else {
-                    println!("Available tools ({}):", tools.len());
-                    for tool in tools {
-                        let name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-                        let desc = tool
-                            .get("description")
-                            .and_then(|d| d.as_str())
-                            .unwrap_or("");
-                        println!("  {} - {}", name, desc);
-                    }
-                }
-            } else {
-                println!("No tools available (is a node connected?)");
-            }
-        }
-
-        ToolsAction::Call { tool, args } => {
-            // Parse args as JSON
-            let args: serde_json::Value = serde_json::from_str(&args).map_err(|e| {
-                format!(
-                    "Invalid JSON args: {}. Expected format: '{{\"key\": \"value\"}}'",
-                    e
-                )
-            })?;
-
-            println!("Calling tool: {}", tool);
-            println!("Args: {}", serde_json::to_string_pretty(&args)?);
-            println!();
-
-            let payload = client.tool_invoke(tool.clone(), args).await?;
-            if let Some(result) = payload.get("result") {
-                println!("Result:");
-                // Try to print as pretty JSON, fall back to raw
-                if let Some(s) = result.as_str() {
-                    println!("{}", s);
-                } else {
-                    println!("{}", serde_json::to_string_pretty(result)?);
-                }
-            } else {
-                println!("Result: {}", serde_json::to_string_pretty(&payload)?);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub(crate) async fn run_skills(
-    url: &str,
-    token: Option<String>,
-    action: SkillsAction,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = GatewayClient::connect(url, token).await?;
     let payload = match action {
-        SkillsAction::Status { agent_id } => client.skills_status(agent_id).await?,
-        SkillsAction::Update { agent_id } => client.skills_update(agent_id).await?,
-    };
-    let agent_id = payload
-        .get("agentId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("main");
-    println!("Agent: {}", agent_id);
-
-    if let Some(nodes) = payload.get("nodes").and_then(|v| v.as_array()) {
-        println!("\nNodes:");
-        if nodes.is_empty() {
-            println!("  (none connected)");
-        } else {
-            for node in nodes {
-                let node_id = node.get("nodeId").and_then(|v| v.as_str()).unwrap_or("?");
-                let online = node
-                    .get("online")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let capabilities = node
-                    .get("hostCapabilities")
-                    .and_then(|v| v.as_array())
-                    .map(|entries| {
-                        entries
-                            .iter()
-                            .filter_map(|entry| entry.as_str())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                println!(
-                    "  - {} ({}) capabilities={}",
-                    node_id,
-                    if online { "online" } else { "offline" },
-                    if capabilities.is_empty() {
-                        "none".to_string()
-                    } else {
-                        capabilities.join(", ")
-                    }
-                );
+        ProcAction::List { uid } => {
+            let mut args = json!({});
+            if let Some(uid) = uid {
+                args["uid"] = json!(uid);
             }
+            client.request_ok("proc.list", Some(args)).await?
         }
-    }
-
-    if let Some(skills) = payload.get("skills").and_then(|v| v.as_array()) {
-        println!("\nSkills:");
-        if skills.is_empty() {
-            println!("  (none)");
-        } else {
-            for skill in skills {
-                let name = skill.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                let eligible = skill
-                    .get("eligible")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let reasons = skill
-                    .get("reasons")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|entry| entry.as_str())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-
-                if eligible {
-                    println!("  - {}: eligible", name);
-                } else if reasons.is_empty() {
-                    println!("  - {}: ineligible", name);
-                } else {
-                    println!("  - {}: ineligible ({})", name, reasons.join("; "));
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub(crate) async fn run_session(
-    url: &str,
-    token: Option<String>,
-    action: SessionAction,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = GatewayClient::connect(url, token).await?;
-
-    match action {
-        SessionAction::List { limit } => {
-            let payload = client.sessions_list(limit).await?;
-            let sessions = payload.get("sessions").and_then(|s| s.as_array());
-            let count = payload.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
-            if let Some(sessions) = sessions {
-                if sessions.is_empty() {
-                    println!("No sessions found");
-                } else {
-                    println!("Sessions ({}):", count);
-                    for session in sessions {
-                        let key = session
-                            .get("sessionKey")
-                            .and_then(|k| k.as_str())
-                            .unwrap_or("?");
-                        let label = session.get("label").and_then(|l| l.as_str());
-                        let last_active = session.get("lastActiveAt").and_then(|t| t.as_i64());
-
-                        let last_active_str = last_active
-                            .and_then(|ts| chrono::DateTime::from_timestamp_millis(ts))
-                            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-                            .unwrap_or_else(|| "?".to_string());
-
-                        if let Some(label) = label {
-                            println!("  {} ({}) - last active: {}", key, label, last_active_str);
-                        } else {
-                            println!("  {} - last active: {}", key, last_active_str);
-                        }
-                    }
-                }
-            }
-        }
-
-        SessionAction::Reset { session_key } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_reset(session_key.clone()).await?;
-            let old_id = payload
-                .get("oldSessionId")
-                .and_then(|s| s.as_str())
-                .unwrap_or("?");
-            let new_id = payload
-                .get("newSessionId")
-                .and_then(|s| s.as_str())
-                .unwrap_or("?");
-            let archived = payload
-                .get("archivedMessages")
-                .and_then(|c| c.as_i64())
-                .unwrap_or(0);
-            let empty_obj = json!({});
-            let tokens = payload.get("tokensCleared").unwrap_or(&empty_obj);
-            let total_tokens = tokens.get("total").and_then(|t| t.as_i64()).unwrap_or(0);
-
-            println!("Reset session '{}'", session_key);
-            println!("  Old session ID: {}", &old_id[..8.min(old_id.len())]);
-            println!("  New session ID: {}", &new_id[..8.min(new_id.len())]);
-            println!("  Archived {} messages ({} tokens)", archived, total_tokens);
-            if let Some(path) = payload.get("archivedTo").and_then(|p| p.as_str()) {
-                println!("  Archived to: {}", path);
-            }
-        }
-
-        SessionAction::Get { session_key } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_get(session_key.clone()).await?;
-            println!("Session: {}", session_key);
-            println!(
-                "  Session ID: {}",
-                payload
-                    .get("sessionId")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("?")
-            );
-            println!(
-                "  Messages: {}",
-                payload
-                    .get("messageCount")
-                    .and_then(|c| c.as_i64())
-                    .unwrap_or(0)
-            );
-
-            if let Some(tokens) = payload.get("tokens") {
-                let input = tokens.get("input").and_then(|t| t.as_i64()).unwrap_or(0);
-                let output = tokens.get("output").and_then(|t| t.as_i64()).unwrap_or(0);
-                let total = tokens.get("total").and_then(|t| t.as_i64()).unwrap_or(0);
-                println!("  Tokens: {} in / {} out ({} total)", input, output, total);
-            }
-
-            if let Some(settings) = payload.get("settings") {
-                if !settings.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-                    println!("  Settings: {}", serde_json::to_string(settings)?);
-                }
-            }
-
-            if let Some(policy) = payload.get("resetPolicy") {
-                let mode = policy
-                    .get("mode")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("manual");
-                print!("  Reset policy: {}", mode);
-                if mode == "daily" {
-                    if let Some(hour) = policy.get("atHour").and_then(|h| h.as_i64()) {
-                        print!(" (at {}:00)", hour);
-                    }
-                } else if mode == "idle" {
-                    if let Some(mins) = policy.get("idleMinutes").and_then(|m| m.as_i64()) {
-                        print!(" (after {} min)", mins);
-                    }
-                }
-                println!();
-            }
-
-            if let Some(label) = payload.get("label").and_then(|l| l.as_str()) {
-                println!("  Label: {}", label);
-            }
-
-            let prev_ids = payload.get("previousSessionIds").and_then(|p| p.as_array());
-            if let Some(ids) = prev_ids {
-                if !ids.is_empty() {
-                    println!("  Previous sessions: {}", ids.len());
-                }
-            }
-
-            if let Some(created) = payload.get("createdAt").and_then(|c| c.as_i64()) {
-                let dt = chrono::DateTime::from_timestamp_millis(created);
-                if let Some(dt) = dt {
-                    println!("  Created: {}", dt.format("%Y-%m-%d %H:%M:%S"));
-                }
-            }
-        }
-        SessionAction::Stats { session_key } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_stats(session_key.clone()).await?;
-            println!("Session stats: {}", session_key);
-            println!(
-                "  Messages: {}",
-                payload
-                    .get("messageCount")
-                    .and_then(|c| c.as_i64())
-                    .unwrap_or(0)
-            );
-
-            if let Some(tokens) = payload.get("tokens") {
-                let input = tokens.get("input").and_then(|t| t.as_i64()).unwrap_or(0);
-                let output = tokens.get("output").and_then(|t| t.as_i64()).unwrap_or(0);
-                let total = tokens.get("total").and_then(|t| t.as_i64()).unwrap_or(0);
-                println!("  Input tokens: {}", input);
-                println!("  Output tokens: {}", output);
-                println!("  Total tokens: {}", total);
-            }
-
-            if let Some(uptime) = payload.get("uptime").and_then(|u| u.as_i64()) {
-                let hours = uptime / 3600000;
-                let minutes = (uptime % 3600000) / 60000;
-                println!("  Uptime: {}h {}m", hours, minutes);
-            }
-        }
-
-        SessionAction::Set {
-            session_key,
-            path,
-            value,
+        ProcAction::Spawn {
+            label,
+            prompt,
+            parent_pid,
         } => {
-            let session_key = config::normalize_session_key(&session_key);
-            // Build the patch params based on the path
-            let parsed_value: serde_json::Value = serde_json::from_str(&value)
-                .unwrap_or_else(|_| serde_json::Value::String(value.clone()));
-
-            let params = match path.as_str() {
-                "label" => json!({
-                    "sessionKey": session_key,
-                    "label": parsed_value
-                }),
-                p if p.starts_with("settings.")
-                    || p.starts_with("model.")
-                    || p == "thinkingLevel"
-                    || p == "systemPrompt"
-                    || p == "maxTokens" =>
-                {
-                    // Handle settings paths
-                    let settings_path = if p.starts_with("settings.") {
-                        &p[9..] // Remove "settings." prefix
-                    } else {
-                        p
-                    };
-
-                    // Build nested settings object
-                    let mut settings = json!({});
-                    let parts: Vec<&str> = settings_path.split('.').collect();
-                    if parts.len() == 1 {
-                        settings[parts[0]] = parsed_value;
-                    } else if parts.len() == 2 {
-                        settings[parts[0]] = json!({ parts[1]: parsed_value });
-                    }
-
-                    json!({
-                        "sessionKey": session_key,
-                        "settings": settings
-                    })
-                }
-                p if p.starts_with("resetPolicy.") || p == "resetPolicy" => {
-                    let policy_path = if p.starts_with("resetPolicy.") {
-                        &p[12..] // Remove "resetPolicy." prefix
-                    } else {
-                        "mode"
-                    };
-
-                    let mut policy = json!({});
-                    policy[policy_path] = parsed_value;
-
-                    json!({
-                        "sessionKey": session_key,
-                        "resetPolicy": policy
-                    })
-                }
-                _ => {
-                    eprintln!("Unknown setting path: {}", path);
-                    eprintln!("Valid paths: label, model.provider, model.id, thinkingLevel, systemPrompt, maxTokens, resetPolicy.mode, resetPolicy.atHour, resetPolicy.idleMinutes");
-                    return Ok(());
-                }
-            };
-
-            client.session_patch(params).await?;
-            println!("Updated {} = {} for session '{}'", path, value, session_key);
-        }
-
-        SessionAction::Compact { session_key, keep } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_compact(session_key.clone(), keep).await?;
-            let trimmed = payload
-                .get("trimmedMessages")
-                .and_then(|c| c.as_i64())
-                .unwrap_or(0);
-            let kept = payload
-                .get("keptMessages")
-                .and_then(|c| c.as_i64())
-                .unwrap_or(0);
-
-            if trimmed > 0 {
-                println!("Compacted session '{}'", session_key);
-                println!("  Trimmed {} messages, kept {}", trimmed, kept);
-                if let Some(path) = payload.get("archivedTo").and_then(|p| p.as_str()) {
-                    println!("  Archived to: {}", path);
-                }
-            } else {
-                println!(
-                    "Session '{}' has {} messages (no compaction needed)",
-                    session_key, kept
-                );
+            let mut args = json!({});
+            if let Some(label) = label {
+                args["label"] = json!(label);
             }
-        }
-
-        SessionAction::History { session_key } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_history(session_key.clone()).await?;
-            let current = payload
-                .get("currentSessionId")
-                .and_then(|s| s.as_str())
-                .unwrap_or("?");
-            let previous = payload.get("previousSessionIds").and_then(|p| p.as_array());
-
-            println!("Session history: {}", session_key);
-            println!("  Current session: {}", &current[..8.min(current.len())]);
-
-            if let Some(ids) = previous {
-                if ids.is_empty() {
-                    println!("  No previous sessions");
-                } else {
-                    println!("  Previous sessions ({}):", ids.len());
-                    for id in ids.iter().rev().take(10) {
-                        if let Some(s) = id.as_str() {
-                            println!("    - {}", &s[..8.min(s.len())]);
-                        }
-                    }
-                    if ids.len() > 10 {
-                        println!("    ... and {} more", ids.len() - 10);
-                    }
-                }
+            if let Some(prompt) = prompt {
+                args["prompt"] = json!(prompt);
             }
-        }
-
-        SessionAction::Preview { session_key, limit } => {
-            let session_key = config::normalize_session_key(&session_key);
-            let payload = client.session_preview(session_key.clone(), limit).await?;
-            let msg_count = payload
-                .get("messageCount")
-                .and_then(|c| c.as_i64())
-                .unwrap_or(0);
-            let messages = payload.get("messages").and_then(|m| m.as_array());
-
-            println!("Session: {} ({} messages total)\n", session_key, msg_count);
-
-            if let Some(msgs) = messages {
-                for msg in msgs {
-                    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
-
-                    match role {
-                        "user" => {
-                            let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                            println!("USER: {}\n", content);
-                        }
-                        "assistant" => {
-                            print!("ASSISTANT: ");
-                            if let Some(content) = msg.get("content") {
-                                if let Some(text) = content.as_str() {
-                                    println!("{}\n", text);
-                                } else if let Some(blocks) = content.as_array() {
-                                    for block in blocks {
-                                        if let Some(block_type) =
-                                            block.get("type").and_then(|t| t.as_str())
-                                        {
-                                            match block_type {
-                                                "text" => {
-                                                    if let Some(text) =
-                                                        block.get("text").and_then(|t| t.as_str())
-                                                    {
-                                                        print!("{}", text);
-                                                    }
-                                                }
-                                                "toolCall" => {
-                                                    let name = block
-                                                        .get("name")
-                                                        .and_then(|n| n.as_str())
-                                                        .unwrap_or("?");
-                                                    println!("\n[Tool call: {}]", name);
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                    }
-                                    println!("\n");
-                                }
-                            }
-                        }
-                        "toolResult" => {
-                            let tool_name =
-                                msg.get("toolName").and_then(|n| n.as_str()).unwrap_or("?");
-                            let is_error = msg
-                                .get("isError")
-                                .and_then(|e| e.as_bool())
-                                .unwrap_or(false);
-                            let prefix = if is_error { "ERROR" } else { "RESULT" };
-
-                            print!("TOOL {} ({}): ", prefix, tool_name);
-                            if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
-                                for block in content {
-                                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                                        // Truncate long results
-                                        if text.len() > 200 {
-                                            println!("{}", truncate_for_display(text, 200));
-                                        } else {
-                                            println!("{}", text);
-                                        }
-                                    }
-                                }
-                            }
-                            println!();
-                        }
-                        _ => {
-                            println!("{}: {:?}\n", role.to_uppercase(), msg);
-                        }
-                    }
-                }
+            if let Some(parent_pid) = parent_pid {
+                args["parentPid"] = json!(parent_pid);
             }
+            client.request_ok("proc.spawn", Some(args)).await?
         }
-    }
+        ProcAction::Send { message, pid } => {
+            let result = client.proc_send(pid.as_deref(), &message).await?;
+            serde_json::to_value(result)?
+        }
+        ProcAction::History { pid, limit, offset } => {
+            let mut args = json!({});
+            if let Some(pid) = pid {
+                args["pid"] = json!(pid);
+            }
+            if let Some(limit) = limit {
+                args["limit"] = json!(limit);
+            }
+            if let Some(offset) = offset {
+                args["offset"] = json!(offset);
+            }
+            client.request_ok("proc.history", Some(args)).await?
+        }
+        ProcAction::Reset { pid } => {
+            let mut args = json!({});
+            if let Some(pid) = pid {
+                args["pid"] = json!(pid);
+            }
+            client.request_ok("proc.reset", Some(args)).await?
+        }
+        ProcAction::Kill { pid, no_archive } => {
+            client
+                .request_ok(
+                    "proc.kill",
+                    Some(json!({
+                        "pid": pid,
+                        "archive": !no_archive,
+                    })),
+                )
+                .await?
+        }
+    };
 
+    println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
-}
-
-async fn send_chat(
-    client: &GatewayClient,
-    session_key: &str,
-    message: &str,
-    run_id: &str,
-) -> Result<ChatSendResult, Box<dyn std::error::Error>> {
-    let payload = client
-        .chat_send(
-            session_key.to_string(),
-            message.to_string(),
-            run_id.to_string(),
-        )
-        .await?;
-
-    if let Some(status) = payload.get("status").and_then(|s| s.as_str()) {
-        match status {
-            "command" => {
-                if let Some(response) = payload.get("response").and_then(|r| r.as_str()) {
-                    println!("{}", response);
-                }
-                if let Some(error) = payload.get("error").and_then(|e| e.as_str()) {
-                    eprintln!("Error: {}", error);
-                }
-                return Ok(ChatSendResult::NoWait);
-            }
-            "directive-only" => {
-                if let Some(response) = payload.get("response").and_then(|r| r.as_str()) {
-                    println!("{}", response);
-                }
-                return Ok(ChatSendResult::NoWait);
-            }
-            "paused" => {
-                if let Some(response) = payload.get("response").and_then(|r| r.as_str()) {
-                    println!("{}", response);
-                } else {
-                    println!("Run is paused waiting for tool approval. Reply yes/no.");
-                }
-                return Ok(ChatSendResult::NoWait);
-            }
-            _ => {}
-        }
-    }
-
-    Ok(ChatSendResult::Wait)
-}
-
-fn format_content(content: &serde_json::Value) -> String {
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(arr) = content.as_array() {
-        let mut result = String::new();
-        for block in arr {
-            if let Some(block_type) = block.get("type").and_then(|t| t.as_str()) {
-                match block_type {
-                    "text" => {
-                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                            result.push_str(text);
-                        }
-                    }
-                    "toolCall" => {
-                        if let Some(name) = block.get("name").and_then(|n| n.as_str()) {
-                            result.push_str(&format!("[Tool: {}]", name));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        return result;
-    }
-
-    content.to_string()
-}
-
-fn render_qr_terminal(data: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use qrcode::render::unicode;
-    use qrcode::QrCode;
-
-    let code = QrCode::new(data.as_bytes())?;
-    let image = code
-        .render::<unicode::Dense1x2>()
-        .dark_color(unicode::Dense1x2::Light)
-        .light_color(unicode::Dense1x2::Dark)
-        .build();
-
-    println!("{}", image);
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{chat_event_matches_request, truncate_for_display};
-    use serde_json::json;
-
-    #[test]
-    fn chat_event_matches_by_run_id_when_present() {
-        let payload = json!({
-            "runId": "run-123",
-            "sessionKey": "agent:main:main",
-        });
-        assert!(chat_event_matches_request(
-            &payload,
-            "agent:main:cli:dm:main",
-            Some("run-123"),
-        ));
-    }
-
-    #[test]
-    fn chat_event_rejects_non_matching_run_id() {
-        let payload = json!({
-            "runId": "run-456",
-            "sessionKey": "agent:main:main",
-        });
-        assert!(!chat_event_matches_request(
-            &payload,
-            "agent:main:cli:dm:main",
-            Some("run-123"),
-        ));
-    }
-
-    #[test]
-    fn chat_event_falls_back_to_session_key_without_run_id() {
-        let payload = json!({
-            "sessionKey": "agent:main:cli:dm:main",
-        });
-        assert!(chat_event_matches_request(
-            &payload,
-            "agent:main:cli:dm:main",
-            None,
-        ));
-    }
-
-    #[test]
-    fn chat_event_rejects_other_session_without_run_id() {
-        let payload = json!({
-            "sessionKey": "agent:main:main",
-        });
-        assert!(!chat_event_matches_request(
-            &payload,
-            "agent:main:cli:dm:main",
-            None,
-        ));
-    }
-
-    #[test]
-    fn truncate_for_display_keeps_short_text_unchanged() {
-        let text = "hello";
-        assert_eq!(truncate_for_display(text, 200), "hello");
-    }
-
-    #[test]
-    fn truncate_for_display_respects_utf8_boundaries() {
-        let text = "a".repeat(199) + "─tail";
-        let truncated = truncate_for_display(&text, 200);
-
-        assert!(truncated.ends_with("..."));
-        assert_eq!(truncated, format!("{}...", "a".repeat(199)));
-    }
 }

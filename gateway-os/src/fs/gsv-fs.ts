@@ -778,6 +778,29 @@ export class GsvFs implements IFileSystem {
       return true;
     }
 
+    // /sys/config/{...} is a directory if there are nested config keys.
+    if (path.startsWith("/sys/config/")) {
+      const rel = path.slice("/sys/config/".length);
+      if (rel) {
+        const nested = this.kernel.config.list(`config/${rel}`);
+        if (nested.length > 0) return true;
+      }
+    }
+
+    // /sys/users/{uid}/{...} is a directory if there are nested user config keys.
+    if (path.startsWith("/sys/users/")) {
+      const rel = path.slice("/sys/users/".length);
+      const parts = rel.split("/").filter(Boolean);
+      if (parts.length >= 2) {
+        const uid = parseInt(parts[0], 10);
+        if (!isNaN(uid)) {
+          const suffix = parts.slice(1).join("/");
+          const nested = this.kernel.config.list(`users/${uid}/${suffix}`);
+          if (nested.length > 0) return true;
+        }
+      }
+    }
+
     return false;
   }
 
@@ -805,8 +828,40 @@ export class GsvFs implements IFileSystem {
       return uniquePrefixes(this.kernel.config.list("config/"), "config/");
     }
 
+    // /sys/config/{prefix} directory
+    if (path.startsWith("/sys/config/")) {
+      const rel = path.slice("/sys/config/".length);
+      if (!rel) return undefined;
+      const prefix = `config/${rel}`;
+      const entries = this.kernel.config.list(prefix);
+      if (entries.length === 0) return undefined;
+      return uniquePrefixes(entries, `${prefix}/`);
+    }
+
     if (path === "/sys/users") {
       return uniquePrefixes(this.kernel.config.list("users/"), "users/");
+    }
+
+    // /sys/users/{uid} and /sys/users/{uid}/{prefix} directories
+    if (path.startsWith("/sys/users/")) {
+      const rel = path.slice("/sys/users/".length);
+      const parts = rel.split("/").filter(Boolean);
+      if (parts.length >= 1) {
+        const uid = parseInt(parts[0], 10);
+        if (isNaN(uid)) return undefined;
+
+        if (parts.length === 1) {
+          const entries = this.kernel.config.list(`users/${uid}`);
+          if (entries.length === 0) return [];
+          return uniquePrefixes(entries, `users/${uid}/`);
+        }
+
+        const suffix = parts.slice(1).join("/");
+        const prefix = `users/${uid}/${suffix}`;
+        const entries = this.kernel.config.list(prefix);
+        if (entries.length === 0) return undefined;
+        return uniquePrefixes(entries, `${prefix}/`);
+      }
     }
 
     if (path === "/sys/devices") {

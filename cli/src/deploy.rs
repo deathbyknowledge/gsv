@@ -2874,15 +2874,19 @@ async fn connect_gateway_with_retry(
 
 async fn gateway_config_set(
     conn: &Connection,
-    path: &str,
+    key: &str,
     value: Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let response = conn
         .request(
-            "config.set",
+            "sys.config.set",
             Some(json!({
-                "path": path,
-                "value": value
+                "key": key,
+                "value": if let Some(text) = value.as_str() {
+                    text.to_string()
+                } else {
+                    value.to_string()
+                }
             })),
         )
         .await?;
@@ -2893,8 +2897,8 @@ async fn gateway_config_set(
         let message = response
             .error
             .map(|err| err.message)
-            .unwrap_or_else(|| "Unknown config.set failure".to_string());
-        Err(format!("config.set {} failed: {}", path, message).into())
+            .unwrap_or_else(|| "Unknown sys.config.set failure".to_string());
+        Err(format!("sys.config.set {} failed: {}", key, message).into())
     }
 }
 
