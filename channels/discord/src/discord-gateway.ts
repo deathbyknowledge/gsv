@@ -10,7 +10,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type {
   ChannelAccountStatus,
-  ChannelInboundMessage,
   ChannelMedia,
 } from "./types";
 
@@ -45,17 +44,62 @@ const MAX_INLINE_MEDIA_BYTES = 25 * 1024 * 1024; // 25MB
 const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000; // 4KB (avoids argument-list stack overflows)
 
 type GatewayChannelBinding = Fetcher & {
-  channelInbound: (
-    channelId: string,
-    accountId: string,
-    message: ChannelInboundMessage,
-  ) => Promise<{ ok: boolean; sessionKey?: string; status?: string; error?: string }>;
-  channelStatusChanged: (
-    channelId: string,
-    accountId: string,
-    status: ChannelAccountStatus,
-  ) => Promise<void>;
+  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
 };
+
+type AdapterInboundMessage = {
+  messageId: string;
+  surface: {
+    kind: "dm" | "group" | "channel" | "thread";
+    id: string;
+    name?: string;
+    handle?: string;
+    threadId?: string;
+  };
+  actor?: {
+    id: string;
+    name?: string;
+    handle?: string;
+  };
+  text: string;
+  media?: ChannelMedia[];
+  replyToId?: string;
+  replyToText?: string;
+  timestamp?: number;
+  wasMentioned?: boolean;
+};
+
+type AdapterInboundResult = {
+  ok: boolean;
+  challenge?: {
+    code: string;
+    prompt: string;
+    expiresAt: number;
+  };
+  droppedReason?: string;
+  error?: string;
+};
+
+type GatewayRequestFrame = {
+  type: "req";
+  id: string;
+  call: string;
+  args: unknown;
+};
+
+type GatewayResponseFrame = {
+  type: "res";
+  id: string;
+  ok: boolean;
+  data?: unknown;
+  error?: {
+    code?: number;
+    message: string;
+    details?: unknown;
+  };
+};
+
+type GatewayFrame = GatewayRequestFrame | GatewayResponseFrame;
 
 type DiscordAttachment = {
   id: string;
@@ -368,17 +412,18 @@ export class DiscordGateway extends DurableObject<Env> {
       : [];
     const botUser = await this.ctx.storage.get<{ id: string }>("botUser");
     const wasMentioned = mentions?.some(m => m.id === botUser?.id) ?? false;
+    const actorId = author ? `discord:user:${author.id}` : undefined;
 
     // Build inbound message
-    const message: ChannelInboundMessage = {
+    const message: AdapterInboundMessage = {
       messageId,
-      peer: {
+      surface: {
         kind: guildId ? "group" : "dm",
         id: channelId,
         name: undefined, // Could fetch channel name
       },
-      sender: author ? {
-        id: author.id,
+      actor: author ? {
+        id: actorId!,
         name: author.username,
         handle: author.discriminator ? `${author.username}#${author.discriminator}` : author.username,
       } : undefined,
@@ -394,16 +439,22 @@ export class DiscordGateway extends DurableObject<Env> {
 
     // Forward to GSV Gateway via Service Binding RPC.
     try {
-      const result = await this.env.GATEWAY.channelInbound(
-        "discord",
-        this.getAccountId(),
-        message,
+      const result = await this.callGateway<AdapterInboundResult>(
+        "adapter.inbound",
+        {
+          adapter: "discord",
+          accountId: this.getAccountId(),
+          message,
+        },
       );
       if (!result.ok) {
         console.error(
           `[DiscordGateway] Inbound rejected by gateway: ${result.error ?? "unknown error"}`,
         );
         return;
+      }
+      if (result.challenge?.prompt) {
+        await this.sendChannelText(channelId, result.challenge.prompt, messageReference?.message_id);
       }
       console.log(
         `[DiscordGateway] Delivered message ${messageId} from ${author?.username}`,
@@ -416,9 +467,56 @@ export class DiscordGateway extends DurableObject<Env> {
   private async notifyGatewayStatus(status: ChannelAccountStatus): Promise<void> {
     const accountId = this.getAccountId();
     try {
-      await this.env.GATEWAY.channelStatusChanged("discord", accountId, status);
+      await this.callGateway("adapter.state.update", {
+        adapter: "discord",
+        accountId,
+        status,
+      });
     } catch (e) {
       console.error("[DiscordGateway] Failed to deliver status via RPC:", e);
+    }
+  }
+
+  private async callGateway<T = unknown>(call: string, args: unknown): Promise<T> {
+    const frame: GatewayRequestFrame = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call,
+      args,
+    };
+
+    const response = await this.env.GATEWAY.serviceFrame(frame);
+    if (!response || response.type !== "res") {
+      throw new Error("No response from gateway serviceFrame");
+    }
+    if (!response.ok) {
+      throw new Error(response.error?.message || `Gateway error on ${call}`);
+    }
+
+    return (response.data ?? {}) as T;
+  }
+
+  private async sendChannelText(channelId: string, text: string, replyToId?: string): Promise<void> {
+    if (!this.state.botToken) return;
+    const body: Record<string, unknown> = { content: text };
+    if (replyToId) {
+      body.message_reference = { message_id: replyToId };
+    }
+
+    try {
+      const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bot ${this.state.botToken}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        console.warn(`[DiscordGateway] Failed to send challenge prompt: ${response.status}`);
+      }
+    } catch (e) {
+      console.warn("[DiscordGateway] Error sending challenge prompt:", e);
     }
   }
 

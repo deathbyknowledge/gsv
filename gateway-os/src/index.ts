@@ -1,10 +1,9 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { isWebSocketRequest } from "./shared//utils";
 import type {
-  ChannelInboundMessage,
-  ChannelAccountStatus,
-  GatewayChannelInterface,
-} from "./channel-interface";
+  GatewayAdapterInterface,
+} from "./adapter-interface";
+import type { Frame } from "./protocol/frames";
 import { getAgentByName } from "agents";
 
 export { Kernel } from "./kernel/do";
@@ -64,67 +63,21 @@ export default {
 /**
  * Gateway Entrypoint for Service Binding RPC
  *
- * Channel workers call these methods via Service Bindings.
- * This provides a secure, type-safe interface for channels to deliver
+ * Adapter workers call these methods via Service Bindings.
+ * This provides a secure, type-safe interface for adapters to deliver
  * inbound messages to the Gateway.
  */
-// export class GatewayEntrypoint
-//   extends WorkerEntrypoint<Env>
-//   implements GatewayChannelInterface
-// {
-//   /**
-//    * Receive an inbound message from a channel.
-//    * Routes to the appropriate session based on peer info.
-//    */
-//   async channelInbound(
-//     channelId: string,
-//     accountId: string,
-//     message: ChannelInboundMessage,
-//   ): Promise<{ ok: boolean; sessionKey?: string; error?: string }> {
-//     try {
-//       const kernel = await getAgentByName(this.env.KERNEL, "singleton");
-
-//       // Convert to the format Gateway expects
-//       const result = await kernel.handleChannelInboundRpc({
-//         channel: channelId,
-//         accountId,
-//         peer: message.peer,
-//         sender: message.sender,
-//         message: {
-//           id: message.messageId,
-//           text: message.text,
-//           timestamp: message.timestamp,
-//           replyToId: message.replyToId,
-//           replyToText: message.replyToText,
-//           media: message.media,
-//         },
-//         wasMentioned: message.wasMentioned,
-//       });
-
-//       return result;
-//     } catch (e) {
-//       console.error(`[GatewayEntrypoint] channelInbound failed:`, e);
-//       return {
-//         ok: false,
-//         error: e instanceof Error ? e.message : String(e),
-//       };
-//     }
-//   }
-
-//   /**
-//    * Notify Gateway that a channel's status changed.
-//    * Used for monitoring and health checks.
-//    */
-//   async channelStatusChanged(
-//     channelId: string,
-//     accountId: string,
-//     status: ChannelAccountStatus,
-//   ): Promise<void> {
-//     try {
-//       const kernel = await getAgentByName(this.env.KERNEL, "singleton");
-//       await kernel.handleChannelStatusChanged(channelId, accountId, status);
-//     } catch (e) {
-//       console.error(`[GatewayEntrypoint] channelStatusChanged failed:`, e);
-//     }
-//   }
-// }
+export class GatewayEntrypoint
+  extends WorkerEntrypoint<Env>
+  implements GatewayAdapterInterface
+{
+  async serviceFrame(frame: Frame): Promise<Frame | null> {
+    try {
+      const kernel = await getAgentByName(this.env.KERNEL, "singleton");
+      return await kernel.serviceFrame(frame);
+    } catch (e) {
+      console.error("[GatewayEntrypoint] serviceFrame failed:", e);
+      return null;
+    }
+  }
+}

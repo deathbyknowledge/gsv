@@ -518,6 +518,30 @@ pub(crate) async fn run_auth(
         AuthAction::Setup { .. } => {
             return Err("auth setup does not use an authenticated kernel session".into());
         }
+        AuthAction::Link { code } => {
+            let payload = client
+                .request_ok("sys.link.consume", Some(json!({ "code": code })))
+                .await?;
+            match serde_json::from_value::<SysLinkConsumePayload>(payload.clone()) {
+                Ok(result) => {
+                    if result.linked {
+                        if let Some(link) = result.link {
+                            println!(
+                                "Linked {}:{}:{} -> uid {}",
+                                link.adapter, link.account_id, link.actor_id, link.uid
+                            );
+                        } else {
+                            println!("linked");
+                        }
+                    } else {
+                        println!("not linked");
+                    }
+                }
+                Err(_) => {
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                }
+            }
+        }
         AuthAction::Token { action } => match action {
             AuthTokenAction::Create {
                 kind,
@@ -824,6 +848,21 @@ struct SysTokenRecordPayload {
 #[derive(Debug, Deserialize)]
 struct SysTokenRevokePayload {
     revoked: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysLinkConsumePayload {
+    linked: bool,
+    link: Option<SysLinkPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SysLinkPayload {
+    adapter: String,
+    account_id: String,
+    actor_id: String,
+    uid: u32,
 }
 
 #[derive(Debug, Deserialize)]

@@ -27,6 +27,7 @@ export const SYS_CONFIG_SET = "sys.config.set";
 export const SYS_TOKEN_CREATE = "sys.token.create";
 export const SYS_TOKEN_LIST = "sys.token.list";
 export const SYS_TOKEN_REVOKE = "sys.token.revoke";
+export const SYS_LINK_CONSUME = "sys.link.consume";
 
 // Scheduler (cron)
 export const SCHED_LIST = "sched.list";
@@ -39,9 +40,11 @@ export const SCHED_RUN = "sched.run";
 export const AI_TOOLS = "ai.tools";
 export const AI_CONFIG = "ai.config";
 
-// IPC (channels)
-export const IPC_SEND = "ipc.send";
-export const IPC_STATUS = "ipc.status";
+// Adapter transport (external connectors)
+export const ADAPTER_INBOUND = "adapter.inbound";
+export const ADAPTER_STATE_UPDATE = "adapter.state.update";
+export const ADAPTER_SEND = "adapter.send";
+export const ADAPTER_STATUS = "adapter.status";
 
 // syscall → LLM tool name map (only for syscalls exposed as tools)
 export const SYSCALL_TOOL_NAMES: Record<string, string> = {

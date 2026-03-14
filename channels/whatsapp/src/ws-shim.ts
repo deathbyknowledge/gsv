@@ -43,8 +43,9 @@ export class WebSocket extends EventEmitter {
       // But let's try anyway - the server might not strictly require it
       this.ws = new globalThis.WebSocket(urlString);
       
-      // Ensure binary messages are delivered as ArrayBuffer, not Blob
-      this.ws.binaryType = "arraybuffer";
+      // Ensure binary messages are delivered as ArrayBuffer, not Blob.
+      // The worker WebSocket type in our TS libs omits binaryType.
+      (this.ws as globalThis.WebSocket & { binaryType?: string }).binaryType = "arraybuffer";
       
       this.ws.addEventListener("open", () => {
         console.log(`[ws-shim] Connection opened`);

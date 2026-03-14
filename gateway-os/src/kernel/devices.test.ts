@@ -288,7 +288,7 @@ describe("DeviceRegistry", () => {
     expect(registry.canHandle("macbook", "fs.write")).toBe(true);
     expect(registry.canHandle("macbook", "proc.exec")).toBe(true);
     expect(registry.canHandle("macbook", "proc.list")).toBe(false);
-    expect(registry.canHandle("macbook", "ipc.send")).toBe(false);
+    expect(registry.canHandle("macbook", "adapter.send")).toBe(false);
   });
 
   it("findDevice finds accessible device that implements syscall", () => {
@@ -303,7 +303,7 @@ describe("DeviceRegistry", () => {
 
   it("findDevice returns null when no device matches", () => {
     registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
-    expect(registry.findDevice("ipc.send", 1000, [1000])).toBeNull();
+    expect(registry.findDevice("adapter.send", 1000, [1000])).toBeNull();
   });
 
   it("grantAccess and revokeAccess work", () => {

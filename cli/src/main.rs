@@ -379,6 +379,12 @@ enum AuthAction {
     /// Clear cached local user session token
     Logout,
 
+    /// Link an adapter account to the authenticated user via one-time code
+    Link {
+        /// One-time link code (e.g., ABCD-1234)
+        code: String,
+    },
+
     /// Initialize gateway identity/auth (setup mode only)
     Setup {
         /// First user username
@@ -1159,6 +1165,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     node_id,
                     node_label,
                     node_expires_at,
+                )
+                .await
+            }
+            link_action @ AuthAction::Link { .. } => {
+                run_with_auto_setup_and_login_retry(
+                    &url,
+                    &cfg,
+                    cli_token_override.clone(),
+                    cli_user_override.clone(),
+                    cli_password_override.clone(),
+                    "auth",
+                    |auth| async { commands::run_auth(&url, auth, link_action.clone()).await },
                 )
                 .await
             }

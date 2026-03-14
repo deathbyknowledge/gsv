@@ -12,6 +12,8 @@ import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";
 import type { DeviceRegistry } from "./devices";
 import type { ProcessRegistry } from "./processes";
+import type { AdapterStore } from "./adapter-store";
+import type { RunRouteStore } from "./run-routes";
 
 export type KernelContext = {
   env: Env;
@@ -20,6 +22,8 @@ export type KernelContext = {
   config: ConfigStore;
   devices: DeviceRegistry;
   procs: ProcessRegistry;
+  adapters: AdapterStore;
+  runRoutes: RunRouteStore;
   connection: Connection;
   identity?: ConnectionIdentity;
   serverVersion: string;

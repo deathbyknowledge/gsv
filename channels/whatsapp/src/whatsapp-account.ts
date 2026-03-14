@@ -27,28 +27,72 @@ import {
 import { useDOAuthState, clearAuthState, hasAuthState } from "./auth-store";
 import type {
   WhatsAppAccountState,
-  PeerInfo,
   MediaAttachment,
 } from "./types";
 import type {
-  ChannelInboundMessage,
   ChannelOutboundMessage,
   ChannelPeer,
   ChannelAccountStatus,
+  ChannelMedia,
 } from "./channel-types";
 
 type GatewayChannelBinding = Fetcher & {
-  channelInbound: (
-    channelId: string,
-    accountId: string,
-    message: ChannelInboundMessage,
-  ) => Promise<{ ok: boolean; sessionKey?: string; status?: string; error?: string }>;
-  channelStatusChanged: (
-    channelId: string,
-    accountId: string,
-    status: ChannelAccountStatus,
-  ) => Promise<void>;
+  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
 };
+
+type AdapterInboundMessage = {
+  messageId: string;
+  surface: {
+    kind: "dm" | "group" | "channel" | "thread";
+    id: string;
+    name?: string;
+    handle?: string;
+    threadId?: string;
+  };
+  actor?: {
+    id: string;
+    name?: string;
+    handle?: string;
+  };
+  text: string;
+  media?: ChannelMedia[];
+  replyToId?: string;
+  replyToText?: string;
+  timestamp?: number;
+  wasMentioned?: boolean;
+};
+
+type AdapterInboundResult = {
+  ok: boolean;
+  challenge?: {
+    code: string;
+    prompt: string;
+    expiresAt: number;
+  };
+  droppedReason?: string;
+  error?: string;
+};
+
+type GatewayRequestFrame = {
+  type: "req";
+  id: string;
+  call: string;
+  args: unknown;
+};
+
+type GatewayResponseFrame = {
+  type: "res";
+  id: string;
+  ok: boolean;
+  data?: unknown;
+  error?: {
+    code?: number;
+    message: string;
+    details?: unknown;
+  };
+};
+
+type GatewayFrame = GatewayRequestFrame | GatewayResponseFrame;
 
 interface Env {
   // Direct service binding to Gateway entrypoint.
@@ -85,6 +129,23 @@ function uint8ArrayToBase64(data: Uint8Array): string {
     chunks.push(String.fromCharCode(...chunk));
   }
   return btoa(chunks.join(""));
+}
+
+function canonicalizeWhatsAppActorId(jid: string | null | undefined, senderPn?: string): string | null {
+  const senderPnMatch = typeof senderPn === "string" ? senderPn.match(/^(\\d+)@/) : null;
+  if (senderPnMatch) {
+    return `wa:+${senderPnMatch[1]}`;
+  }
+
+  const normalized = (jid ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+
+  const digitsMatch = normalized.match(/^(\\d+)@/);
+  if (digitsMatch) {
+    return `wa:+${digitsMatch[1]}`;
+  }
+
+  return `wa:jid:${normalized}`;
 }
 
 export class WhatsAppAccount extends DurableObject<Env> {
@@ -439,22 +500,16 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
       const remoteJid = msg.key.remoteJid!;
       const isGroup = remoteJid.endsWith("@g.us");
-      const isLid = remoteJid.endsWith("@lid");
-      
-      let senderId: string | undefined;
-      if (isLid && msg.key.senderPn) {
-        const senderPn = msg.key.senderPn as string;
-        const match = senderPn.match(/^(\d+)@/);
-        if (match) {
-          senderId = `+${match[1]}`;
-        }
-      }
-      
-      const peer: PeerInfo = {
-        kind: isGroup ? "group" : "dm",
-        id: remoteJid,
-        name: msg.pushName ?? undefined,
-      };
+      const actorId = isGroup
+        ? canonicalizeWhatsAppActorId(
+            msg.key.participant,
+            typeof msg.key.senderPn === "string" ? msg.key.senderPn : undefined,
+          )
+        : canonicalizeWhatsAppActorId(
+            remoteJid,
+            typeof msg.key.senderPn === "string" ? msg.key.senderPn : undefined,
+          );
+      if (!actorId) continue;
 
       // Download media if present
       const media: MediaAttachment[] = [];
@@ -470,20 +525,18 @@ export class WhatsAppAccount extends DurableObject<Env> {
       }
 
       // Build inbound message for Gateway
-      const inbound: ChannelInboundMessage = {
+      const inbound: AdapterInboundMessage = {
         messageId: msg.key.id!,
-        peer: {
-          kind: peer.kind,
-          id: peer.id,
-          name: peer.name,
+        surface: {
+          kind: isGroup ? "group" : "dm",
+          id: remoteJid,
+          name: msg.pushName ?? undefined,
         },
-        sender: isGroup ? {
-          id: msg.key.participant!,
+        actor: {
+          id: actorId,
           name: msg.pushName ?? undefined,
-        } : (senderId ? {
-          id: senderId,
-          name: msg.pushName ?? undefined,
-        } : undefined),
+          handle: actorId,
+        },
         text: text || (media.length > 0 ? "[Media]" : hasMedia ? "[Media unavailable]" : ""),
         media: media.length > 0 ? media : undefined,
         replyToId: msg.message?.extendedTextMessage?.contextInfo?.stanzaId ?? undefined,
@@ -491,16 +544,26 @@ export class WhatsAppAccount extends DurableObject<Env> {
       };
 
       try {
-        const result = await this.env.GATEWAY.channelInbound(
-          "whatsapp",
-          this.state.accountId,
-          inbound,
+        const result = await this.callGateway<AdapterInboundResult>(
+          "adapter.inbound",
+          {
+            adapter: "whatsapp",
+            accountId: this.state.accountId,
+            message: inbound,
+          },
         );
         if (!result.ok) {
           console.error(
             `[WA:${this.state.accountId}] Gateway RPC inbound rejected: ${result.error || "unknown error"}`,
           );
           continue;
+        }
+        if (result.challenge?.prompt && !isGroup && this.sock) {
+          try {
+            await this.sock.sendMessage(remoteJid, { text: result.challenge.prompt });
+          } catch (err) {
+            console.error(`[WA:${this.state.accountId}] Failed to send challenge prompt:`, err);
+          }
         }
         this.state.lastMessageAt = Date.now();
       } catch (e) {
@@ -628,15 +691,37 @@ export class WhatsAppAccount extends DurableObject<Env> {
         extra: { selfJid: this.state.selfJid, selfE164: this.state.selfE164 },
       };
 
-      await this.env.GATEWAY.channelStatusChanged(
-        "whatsapp",
-        this.state.accountId,
-        status,
+      await this.callGateway(
+        "adapter.state.update",
+        {
+          adapter: "whatsapp",
+          accountId: this.state.accountId,
+          status,
+        },
       );
     } catch (e) {
       // Status updates are best-effort.
       console.error(`[WA:${this.state.accountId}] Gateway RPC status failed:`, e);
     }
+  }
+
+  private async callGateway<T = unknown>(call: string, args: unknown): Promise<T> {
+    const frame: GatewayRequestFrame = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call,
+      args,
+    };
+
+    const response = await this.env.GATEWAY.serviceFrame(frame);
+    if (!response || response.type !== "res") {
+      throw new Error("No response from gateway serviceFrame");
+    }
+    if (!response.ok) {
+      throw new Error(response.error?.message || `Gateway error on ${call}`);
+    }
+
+    return (response.data ?? {}) as T;
   }
 
   private waitForQrOrConnection(timeoutMs: number): Promise<{ connected?: boolean; qr?: string }> {

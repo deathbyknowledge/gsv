@@ -5,13 +5,22 @@ import {
   type WSMessage,
 } from "agents";
 import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protocol/frames";
-import type { ConnectionIdentity, ProcessIdentity } from "../syscalls/system";
+import type {
+  ConnectionIdentity,
+  ProcessIdentity,
+  SysSetupResult,
+} from "../syscalls/system";
+import type {
+  AdapterOutboundMessage,
+} from "../adapter-interface";
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
 import { DeviceRegistry } from "./devices";
 import { RoutingTable, type RouteOrigin } from "./routing";
 import { ProcessRegistry } from "./processes";
+import { AdapterStore } from "./adapter-store";
+import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -23,6 +32,7 @@ import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys-setup";
 import { isInternalOnlySyscall } from "./syscall-exposure";
+import { resolveAdapterServiceForKernel } from "./adapter-handlers";
 
 const SERVER_VERSION = "0.0.1";
 
@@ -32,6 +42,13 @@ type ConnectionState = {
   clientId?: string;
 };
 
+type ProcSendData = {
+  ok?: boolean;
+  status?: string;
+  runId?: string;
+  queued?: boolean;
+};
+
 export class Kernel extends Host<Env> {
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
@@ -39,6 +56,8 @@ export class Kernel extends Host<Env> {
   private readonly devices: DeviceRegistry;
   private readonly routes: RoutingTable;
   private readonly procs: ProcessRegistry;
+  private readonly adapters: AdapterStore;
+  private readonly runRoutes: RunRouteStore;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -62,6 +81,12 @@ export class Kernel extends Host<Env> {
 
     this.procs = new ProcessRegistry(ctx.storage.sql);
     this.procs.init();
+
+    this.adapters = new AdapterStore(ctx.storage.sql);
+    this.adapters.init();
+
+    this.runRoutes = new RunRouteStore(ctx.storage.sql);
+    this.runRoutes.init();
 
     this.rehydrateConnections();
   }
@@ -89,6 +114,7 @@ export class Kernel extends Host<Env> {
     }
 
     this.failRoutesForConnection(connection.id);
+    this.runRoutes.clearForConnection(connection.id);
   }
 
   async onMessage(connection: Connection<ConnectionState>, message: WSMessage): Promise<void> {
@@ -141,7 +167,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (frame.type === "sig") {
-      this.handleProcessSignal(processId, frame);
+      await this.handleProcessSignal(processId, frame);
       return null;
     }
 
@@ -149,9 +175,21 @@ export class Kernel extends Host<Env> {
   }
 
   /**
-   * Relay chat.* signals from a process to the owning user's connections.
+   * Service-binding RPC entrypoint.
+   * Accepts the same frame format as WS connections/process RPC.
    */
-  private handleProcessSignal(processId: string, frame: SignalFrame): void {
+  async serviceFrame(frame: Frame): Promise<Frame | null> {
+    if (frame.type !== "req") {
+      return null;
+    }
+
+    return this.handleServiceReq(frame);
+  }
+
+  /**
+   * Relay process signals using deterministic run route lookups.
+   */
+  private async handleProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
     if (!frame.signal.startsWith("chat.")) return;
 
     const identity = this.procs.getIdentity(processId);
@@ -160,7 +198,99 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    this.broadcastToUid(identity.uid, frame.signal, frame.payload);
+    const runId = this.extractRunId(frame.payload);
+    if (!runId) {
+      this.broadcastToUid(identity.uid, frame.signal, frame.payload);
+      return;
+    }
+
+    const route = this.runRoutes.get(runId);
+    if (!route) {
+      this.broadcastToUid(identity.uid, frame.signal, frame.payload);
+      return;
+    }
+
+    if (route.uid !== identity.uid) {
+      this.runRoutes.delete(runId);
+      return;
+    }
+
+    if (route.kind === "connection") {
+      this.deliverSignalToConnection(route, frame, identity.uid);
+      if (frame.signal === "chat.complete") {
+        this.runRoutes.delete(runId);
+      }
+      return;
+    }
+
+    await this.deliverSignalToAdapter(route, frame);
+    if (frame.signal === "chat.complete") {
+      this.runRoutes.delete(runId);
+    }
+  }
+
+  private deliverSignalToConnection(
+    route: Extract<RunRoute, { kind: "connection" }>,
+    frame: SignalFrame,
+    uid: number,
+  ): void {
+    const conn = this.connections.get(route.connectionId);
+    if (!conn) {
+      this.broadcastToUid(uid, frame.signal, frame.payload);
+      return;
+    }
+
+    conn.send(JSON.stringify(frame));
+  }
+
+  private async deliverSignalToAdapter(route: AdapterRunRoute, frame: SignalFrame): Promise<void> {
+    if (frame.signal !== "chat.complete") {
+      return;
+    }
+
+    const payload =
+      frame.payload && typeof frame.payload === "object"
+        ? (frame.payload as Record<string, unknown>)
+        : {};
+
+    const text =
+      typeof payload.error === "string" && payload.error.trim().length > 0
+        ? `Error: ${payload.error}`
+        : typeof payload.text === "string"
+          ? payload.text
+          : "";
+
+    if (!text.trim()) return;
+
+    await this.sendAdapterMessage(route.adapter, route.accountId, {
+      surface: {
+        kind: route.surfaceKind,
+        id: route.surfaceId,
+        threadId: route.threadId,
+      },
+      text,
+    });
+  }
+
+  private async sendAdapterMessage(
+    adapter: string,
+    accountId: string,
+    message: AdapterOutboundMessage,
+  ): Promise<void> {
+    const service = resolveAdapterServiceForKernel(this.env, adapter);
+    if (!service || typeof service.send !== "function") {
+      console.warn(`[Kernel] Adapter service unavailable for ${adapter}`);
+      return;
+    }
+
+    try {
+      const result = await service.send(accountId, message);
+      if (!result.ok) {
+        console.warn(`[Kernel] Adapter send failed (${adapter}/${accountId}): ${result.error}`);
+      }
+    } catch (err) {
+      console.warn(`[Kernel] Adapter send threw (${adapter}/${accountId}):`, err);
+    }
   }
 
   private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
@@ -189,6 +319,8 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      adapters: this.adapters,
+      runRoutes: this.runRoutes,
       connection: null as unknown as Connection,
       identity: connIdentity,
       serverVersion: SERVER_VERSION,
@@ -198,10 +330,37 @@ export class Kernel extends Host<Env> {
     const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
 
     if (result.handled) {
+      this.applyPostDispatchEffects(frame, result.response);
       return result.response;
     }
 
     return null;
+  }
+
+  private async handleServiceReq(frame: RequestFrame): Promise<ResponseFrame> {
+    if (frame.call === "sys.connect" || frame.call === "sys.setup") {
+      return errFrame(frame.id, 400, `${frame.call} is not supported via serviceFrame`);
+    }
+
+    if (isInternalOnlySyscall(frame.call)) {
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+
+    const identity = this.buildServiceBindingIdentity(frame);
+    if (!hasCapability(identity.capabilities, frame.call)) {
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+
+    const ctx = this.buildServiceContext(identity);
+    const origin: RouteOrigin = { type: "process", id: "__service_binding__" };
+    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+
+    if (!result.handled) {
+      return errFrame(frame.id, 501, `${frame.call} requires unsupported async routing`);
+    }
+
+    this.applyPostDispatchEffects(frame, result.response);
+    return result.response;
   }
 
   private buildContext(connection: Connection<ConnectionState>): KernelContext {
@@ -214,8 +373,26 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      adapters: this.adapters,
+      runRoutes: this.runRoutes,
       connection,
       identity: state.identity as ConnectionIdentity,
+      serverVersion: SERVER_VERSION,
+    };
+  }
+
+  private buildServiceContext(identity: ConnectionIdentity): KernelContext {
+    return {
+      env: this.env,
+      auth: this.auth,
+      caps: this.caps,
+      config: this.config,
+      devices: this.devices,
+      procs: this.procs,
+      adapters: this.adapters,
+      runRoutes: this.runRoutes,
+      connection: null as unknown as Connection,
+      identity,
       serverVersion: SERVER_VERSION,
     };
   }
@@ -282,10 +459,86 @@ export class Kernel extends Host<Env> {
     const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
 
     if (result.handled) {
+      this.captureConnectionRunRoute(connection.id, state.identity, frame, result.response);
+      this.applyPostDispatchEffects(frame, result.response);
       connection.send(JSON.stringify(result.response));
     }
     // If not handled, request was forwarded to a device.
     // Response will come back via handleRes when the device responds.
+  }
+
+  private captureConnectionRunRoute(
+    connectionId: string,
+    identity: ConnectionIdentity,
+    frame: RequestFrame,
+    response: ResponseFrame,
+  ): void {
+    if (identity.role !== "user") return;
+    if (frame.call !== "proc.send") return;
+    if (!response.ok) return;
+
+    const data = (response as { data?: ProcSendData }).data;
+    const runId = typeof data?.runId === "string" ? data.runId : null;
+    if (!runId) return;
+
+    this.runRoutes.setConnectionRoute(runId, identity.process.uid, connectionId);
+  }
+
+  private buildServiceBindingIdentity(frame: RequestFrame): ConnectionIdentity {
+    const args = frame.args as Record<string, unknown>;
+    const adapterHint =
+      typeof args.adapter === "string" && args.adapter.trim().length > 0
+        ? args.adapter.trim().toLowerCase()
+        : "service-binding";
+
+    const root = this.auth.getPasswdByUid(0);
+    const process: ProcessIdentity = root
+      ? {
+          uid: root.uid,
+          gid: root.gid,
+          gids: this.auth.resolveGids(root.username, root.gid),
+          username: root.username,
+          home: root.home,
+        }
+      : {
+          uid: 0,
+          gid: 0,
+          gids: [0],
+          username: "root",
+          home: "/root",
+        };
+
+    return {
+      role: "service",
+      process,
+      capabilities: this.caps.resolve([102]),
+      channel: adapterHint,
+    };
+  }
+
+  private applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
+    if (!response.ok) return;
+
+    if (frame.call === "adapter.state.update") {
+      const args = frame.args as {
+        adapter?: unknown;
+        accountId?: unknown;
+        status?: unknown;
+      };
+
+      if (
+        typeof args.adapter === "string" &&
+        typeof args.accountId === "string" &&
+        args.status &&
+        typeof args.status === "object"
+      ) {
+        this.broadcastToRole("service", "adapter.status", {
+          adapter: args.adapter,
+          accountId: args.accountId,
+          status: args.status,
+        });
+      }
+    }
   }
 
   private async handleSysConnect(
@@ -331,20 +584,8 @@ export class Kernel extends Host<Env> {
 
     if (outcome.identity.role === "user") {
       const freshIdentity = outcome.identity.process;
-      const { pid: initPid, created } = this.procs.ensureInit(freshIdentity);
-
-      if (created) {
-        sendFrameToProcess(initPid, {
-          type: "req",
-          id: crypto.randomUUID(),
-          call: "proc.setidentity",
-          args: { pid: initPid, identity: freshIdentity },
-        } as RequestFrame).catch((err: unknown) => {
-          console.error(`[Kernel] Failed to set identity for ${initPid}:`, err);
-        });
-      } else {
-        this.reconcileIdentity(freshIdentity);
-      }
+      await this.ensureUserInitProcess(freshIdentity);
+      this.reconcileIdentity(freshIdentity);
     }
 
     this.sendOk(connection, frame.id, outcome.result);
@@ -370,6 +611,8 @@ export class Kernel extends Host<Env> {
 
     try {
       const data = await handleKernelSetup(frame.args, ctx);
+      const setup = data as SysSetupResult;
+      await this.ensureUserInitProcess(setup.user);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -448,7 +691,7 @@ export class Kernel extends Host<Env> {
   }
 
   /**
-   * Compare freshly-resolved identity from R2 against ProcessRegistry.
+   * Compare freshly-resolved identity from auth store against ProcessRegistry.
    * If there's drift (groups changed, home changed, etc.), update the
    * registry and send identity.changed signals to all processes for that uid.
    */
@@ -481,7 +724,7 @@ export class Kernel extends Host<Env> {
 
   /**
    * Broadcast a signal to all active WebSocket connections belonging to a UID.
-   * Skips service/channel connections — those require explicit ipc.send.
+   * Skips service connections — adapter traffic is explicit via adapter.send.
    */
   broadcastToUid(uid: number, signal: string, payload?: unknown): void {
     const frame: SignalFrame = {
@@ -492,12 +735,28 @@ export class Kernel extends Host<Env> {
     const json = JSON.stringify(frame);
 
     for (const [, conn] of this.connections) {
-      const state = conn.state
+      const state = conn.state;
       if (!state) continue;
       if (state.identity?.role === "service") continue;
       if (state.identity?.process.uid === uid) {
-          conn.send(json);
+        conn.send(json);
       }
+    }
+  }
+
+  private broadcastToRole(role: ConnectionIdentity["role"], signal: string, payload?: unknown): void {
+    const frame: SignalFrame = {
+      type: "sig",
+      signal,
+      payload,
+    };
+    const json = JSON.stringify(frame);
+
+    for (const [, conn] of this.connections) {
+      const state = conn.state;
+      if (!state?.identity) continue;
+      if (state.identity.role !== role) continue;
+      conn.send(json);
     }
   }
 
@@ -530,6 +789,26 @@ export class Kernel extends Host<Env> {
     }
   }
 
+  private async ensureUserInitProcess(identity: ProcessIdentity): Promise<string> {
+    const { pid, created } = this.procs.ensureInit(identity);
+
+    if (created) {
+      await sendFrameToProcess(pid, {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.setidentity",
+        args: { pid, identity },
+      } as RequestFrame);
+    }
+
+    return pid;
+  }
+
+  private extractRunId(payload: unknown): string | null {
+    if (!payload || typeof payload !== "object") return null;
+    const maybe = (payload as Record<string, unknown>).runId;
+    return typeof maybe === "string" && maybe.trim().length > 0 ? maybe : null;
+  }
 
   private sendOk(connection: Connection, id: string, data?: unknown): void {
     connection.send(JSON.stringify({ type: "res", id, ok: true, data }));

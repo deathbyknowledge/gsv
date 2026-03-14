@@ -122,7 +122,7 @@ describe("hasCapability", () => {
     expect(hasCapability(caps, "proc.exec")).toBe(true);
     expect(hasCapability(caps, "session.send")).toBe(true);
     expect(hasCapability(caps, "proc.list")).toBe(false);
-    expect(hasCapability(caps, "ipc.send")).toBe(false);
+    expect(hasCapability(caps, "adapter.send")).toBe(false);
   });
 
   it("empty capabilities denies everything", () => {
@@ -144,7 +144,7 @@ describe("isValidCapability", () => {
   it("accepts exact syscall names", () => {
     expect(isValidCapability("fs.read")).toBe(true);
     expect(isValidCapability("proc.exec")).toBe(true);
-    expect(isValidCapability("ipc.send")).toBe(true);
+    expect(isValidCapability("adapter.send")).toBe(true);
   });
 
   it("rejects malformed strings", () => {
@@ -184,6 +184,7 @@ describe("CapabilityStore", () => {
       "shell.*",
       "sys.config.get",
       "sys.config.set",
+      "sys.link.consume",
       "sys.token.create",
       "sys.token.list",
       "sys.token.revoke",
@@ -219,21 +220,21 @@ describe("CapabilityStore", () => {
 
   it("grant adds a new capability", () => {
     store.seed();
-    const result = store.grant(100, "ipc.send");
+    const result = store.grant(100, "adapter.send");
     expect(result.ok).toBe(true);
 
     const caps = store.list(100);
-    expect(caps.map((r) => r.capability)).toContain("ipc.send");
+    expect(caps.map((r) => r.capability)).toContain("adapter.send");
   });
 
   it("grant is idempotent", () => {
     store.seed();
-    store.grant(100, "ipc.send");
-    store.grant(100, "ipc.send");
+    store.grant(100, "adapter.send");
+    store.grant(100, "adapter.send");
 
     const caps = store.list(100);
-    const ipcCount = caps.filter((r) => r.capability === "ipc.send").length;
-    expect(ipcCount).toBe(1);
+    const adapterCount = caps.filter((r) => r.capability === "adapter.send").length;
+    expect(adapterCount).toBe(1);
   });
 
   it("grant rejects invalid format", () => {
@@ -269,15 +270,15 @@ describe("CapabilityStore", () => {
   it("list with gid returns only that group", () => {
     store.seed();
     const serviceCaps = store.list(102);
-    expect(serviceCaps).toEqual([{ gid: 102, capability: "ipc.*" }]);
+    expect(serviceCaps).toEqual([{ gid: 102, capability: "adapter.*" }]);
   });
 
   it("end-to-end: grant + check capability", () => {
     store.seed();
 
-    store.grant(100, "ipc.send");
+    store.grant(100, "adapter.send");
     const caps = store.resolve([100]);
-    expect(hasCapability(caps, "ipc.send")).toBe(true);
-    expect(hasCapability(caps, "ipc.status")).toBe(false);
+    expect(hasCapability(caps, "adapter.send")).toBe(true);
+    expect(hasCapability(caps, "adapter.status")).toBe(false);
   });
 });

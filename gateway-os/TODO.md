@@ -9,14 +9,17 @@ Items are grouped by subsystem and ordered roughly by dependency.
 
 Consolidated plan for identity + auth work:
 
-- [ ] **Phase 0 (start here): machine token primitives**
-  - Add first-class token store in kernel SQLite
-  - Wire token validation into `sys.connect` (driver/service first)
-  - Keep passwords for interactive user auth; gate password-based driver auth behind dev/setup config
-- [ ] **Phase 2A: identity links + `ipc.*` transport plumbing**
-  - Manual link/unlink/list + channel inbound resolution + `ipc.send` / `ipc.status`
+- [x] **Phase 0: machine token primitives**
+  - token store in kernel SQLite
+  - token validation wired into `sys.connect` (driver/service/user)
+  - password auth retained for interactive user login
+  - remaining: audit metadata updates (`last_used_at` + client info)
+- [ ] **Phase 2A: identity links + `adapter.*` transport plumbing**
+  - done: inbound adapter resolution + `adapter.send` / `adapter.status`
+  - remaining: manual link/unlink/list syscalls
 - [ ] **Phase 2B: pairing UX**
-  - Unknown identity challenge/verification flow + queued inbound replay
+  - done: unknown DM identity challenge + `sys.link.consume`
+  - remaining: queued inbound replay + richer UX
 
 ## Unix identity model (`/etc/passwd`, `/etc/shadow`, `/etc/group`)
 
@@ -67,15 +70,14 @@ Passwords are for humans (interactive login). Tokens are for non-interactive cli
 
 Map external channel identities to internal UIDs. Stored in kernel SQLite.
 
-- [ ] `identity_links` table:
-  - `(channel TEXT, account_id TEXT, external_id TEXT, uid INTEGER, created_at INTEGER, linked_by_uid INTEGER, metadata TEXT, PRIMARY KEY (channel, account_id, external_id))`
-- [ ] `linkIdentity(channel, accountId, externalId, uid)` — create mapping
-- [ ] `unlinkIdentity(channel, accountId, externalId)` — remove mapping
-- [ ] `resolveUid(channel, accountId, externalId)` → `uid | null` — lookup
-- [ ] `listLinks(uid?)` — list all links, optionally filtered by user
-- [ ] `sys.link` / `sys.unlink` / `sys.link.list` syscalls for managing identity links (uid 0 or self)
-- [ ] Pairing flow (Phase 2B): when channel delivers message from unknown identity, respond with auth challenge
-- [ ] Optional `identity_link_challenges` table for challenge code + expiry + attempt tracking
+- [x] `identity_links` table:
+  - `(adapter TEXT, account_id TEXT, actor_id TEXT, uid INTEGER, created_at INTEGER, linked_by_uid INTEGER, metadata_json TEXT, PRIMARY KEY (adapter, account_id, actor_id))`
+- [x] `link(adapter, accountId, actorId, uid)` / `unlink(...)` / `resolveUid(...)` / `list(uid?)` in `IdentityLinkStore`
+- [x] Pairing flow (Phase 2B base): unknown DM identity returns challenge prompt
+- [x] `link_challenges` table/store for one-time code + expiry + use tracking
+- [x] `sys.link.consume` syscall — redeem code and create link for current user
+- [ ] `sys.link` / `sys.unlink` / `sys.link.list` management syscalls (uid 0 or self)
+- [ ] Queue/replay first inbound message after link completion
 
 ## Group-based capabilities (kernel SQLite)
 
@@ -84,9 +86,9 @@ Capabilities are NOT hardcoded — root can modify them. Stored in kernel DO SQL
 - [x] Design the `group_capabilities` table schema
 - [x] Seed default capabilities on first boot:
   - gid 0 (root) → `["*"]`
-  - gid 100 (users) → `["fs.*", "shell.*", "proc.*", "sched.*", "sys.config.get", "sys.config.set", "sys.token.create", "sys.token.list", "sys.token.revoke"]`
+  - gid 100 (users) → `["fs.*", "shell.*", "proc.*", "sched.*", "sys.config.get", "sys.config.set", "sys.token.create", "sys.token.list", "sys.token.revoke", "sys.link.consume"]`
   - gid 101 (drivers) → `["fs.*", "shell.*"]`
-  - gid 102 (services) → `["ipc.*"]`
+  - gid 102 (services) → `["adapter.*"]`
 - [x] Implement `resolve(gids)` — union of all capabilities across groups
 - [x] Implement `hasCapability(capabilities, syscall)` — matching logic (`*`, `domain.*`, exact)
 - [x] Implement `grant` / `revoke` / `list` with format validation
@@ -112,7 +114,7 @@ Merged into unified `GsvFs`. The R2 permission logic now lives in `GsvFs` alongs
 - [x] Handle first-boot, setup mode, reconnect
 - [x] Handle driver + service connections
 - [x] Return `ConnectResult`, reject pre-connect syscalls, capability check per req
-- [ ] On successful user connect: ensure user's init process exists (`ProcessRegistry.ensureInit`)
+- [x] On successful user connect: ensure user's init process exists (`ProcessRegistry.ensureInit`)
 - [ ] Read user's `shell` field from `/etc/passwd` — if `/bin/init`, spawn/connect to init process
 
 ## Routing table (`kernel/routing.ts`)
@@ -127,7 +129,7 @@ expiry via agents SDK `schedule()`.
 ## Kernel syscall dispatcher (`kernel/dispatch.ts`)
 
 Switch-based. `target` extracted and stripped at dispatch boundary.
-Routable domains: `fs`, `shell`. Kernel-internal: `proc`, `sys`, `sched`, `ipc`.
+Routable domains: `fs`, `shell`. Kernel-internal: `proc`, `sys`, `sched`, `adapter`.
 
 - [x] `dispatch(frame, origin, ctx, deps)` → `DispatchResult`
 - [x] Target extraction → device routing → routing table registration
@@ -170,15 +172,12 @@ the equivalent of a login shell in Linux.
 
 Processes produce output; the kernel routes it to the right place based on context.
 
-- [ ] Track `lastInboundContext` per user in kernel (stored per init process):
-  - `{ type: "channel", channel, accountId, peer }` — last message was from a channel
-  - `{ type: "connection", uid }` — last message was from a WS connection
-- [ ] Channel inbound → update `lastInboundContext`, deliver to init process
-- [ ] WS connection inbound → update `lastInboundContext`, deliver to init process
-- [ ] Process output routing:
-  - If `lastInboundContext.type === "channel"` → route only to that specific channel/peer
-  - If `lastInboundContext.type === "connection"` → broadcast to all WS connections for that uid
-- [ ] Child process output routes back to parent (init), which decides delivery
+- [x] `run_routes` table keyed by `runId` with route kind (`connection` | `adapter`) + TTL
+- [x] Capture route on `proc.send` from WS connections
+- [x] Capture route on adapter inbound -> `proc.send`
+- [x] Route process `chat.*` signals by `runId` (not `lastInboundContext`)
+- [x] Cleanup route on `chat.complete` and on connection close
+- [ ] Add tests for run-route behavior (connection fallback, adapter delivery, TTL expiry)
 
 ## Conversation archival
 
@@ -244,7 +243,7 @@ Kernel-internal process management. Not routable (no `target`).
 - [x] `registerToolCall` / `resolveToolCall` / `failToolCall` / `getToolResults`
 - [x] `dispatchSyscall` — send req to kernel, handle sync/async receipt
 - [x] Prompt assembly: system prompt (ConfigStore) + `~/CONSTITUTION.md` + `~/context.d/*.md`
-- [ ] Track `lastInboundContext` for response routing
+- [x] Response routing delegated to kernel `run_routes` (no process-local `lastInboundContext`)
 - [x] Agent loop: LLM call → tool dispatch → result collection → continue
 - [x] Export + bind in `wrangler.jsonc` / `index.ts`
 
@@ -277,7 +276,7 @@ First-boot experience when the system has no users. Setup mode walks through con
   - optional first node token issuance (device-bound)
 - [x] `sys.connect` setup-mode rejection details: `{ setupMode: true, next: "sys.setup" }`
 - [ ] Full interactive onboarding flow: timezone + richer validation + confirmations
-- [ ] On completion: spawn/init first user process immediately
+- [x] On completion: spawn/init first user process immediately
 
 ## Device registry & driver routing
 
@@ -286,18 +285,19 @@ First-boot experience when the system has no users. Setup mode walks through con
 - [x] Device routing via dispatcher + routing table
 - [x] Fail routing entries on disconnect
 
-## IPC (channel integration)
+## Adapter integration
 
-Wire channel workers as IPC endpoints. Channels deliver messages to the kernel,
-kernel resolves uid via identity links, routes to user's init process.
+Wire adapter workers as kernel endpoints. Adapters deliver inbound activity to the kernel,
+kernel resolves uid via identity links, routes to user processes, and sends outbound replies via adapter bindings.
 
-- [ ] On service `sys.connect`: register channel in channel registry
-- [ ] Re-enable `GatewayEntrypoint` Service Binding RPC methods (`channelInbound`, `channelStatusChanged`)
-- [ ] `ipc.send` handler: route outbound messages to channel via Service Binding RPC
-- [ ] `ipc.status` handler: query channel status
-- [ ] Channel inbound flow: channel → kernel → `resolveUid(channel, accountId, externalId)` → init process
-- [ ] Handle unknown external identity (Phase 2B): initiate pairing flow
-- [ ] Handle group/multi-user channels: per-sender routing via identity links
+- [x] Re-enable `GatewayEntrypoint` Service Binding RPC bridge (`serviceFrame`) for adapter service calls
+- [x] `adapter.send` handler: route outbound messages to adapter via Service Binding RPC
+- [x] `adapter.status` handler: return last-known status with optional live refresh
+- [x] Adapter inbound flow: adapter → kernel → `resolveUid(adapter, accountId, actorId)` → process routing
+- [x] Handle unknown DM identity (Phase 2B base): issue pairing challenge code
+- [x] Track adapter account status updates in kernel store and emit `adapter.status` signal
+- [ ] Explicit adapter/account registration lifecycle for service sessions (if needed)
+- [ ] Group/multi-user policy refinements (membership/authz semantics per adapter surface)
 
 ## Scheduler (cron)
 

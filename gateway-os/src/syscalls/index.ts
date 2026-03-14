@@ -41,6 +41,8 @@ import type {
   SysTokenListResult,
   SysTokenRevokeArgs,
   SysTokenRevokeResult,
+  SysLinkConsumeArgs,
+  SysLinkConsumeResult,
 } from "./system";
 import type {
   SchedulerListArgs,
@@ -56,7 +58,16 @@ import type {
   AiConfigArgs,
   AiConfigResult,
 } from "./ai";
-import type { IpcSendArgs, IpcSendResult, ChannelStatus } from "./ipc";
+import type {
+  AdapterInboundArgs,
+  AdapterInboundSyscallResult,
+  AdapterStateUpdateArgs,
+  AdapterStateUpdateResult,
+  AdapterSendArgs,
+  AdapterSendResult,
+  AdapterStatusArgs,
+  AdapterStatusResult,
+} from "./adapter";
 
 export type ToolDefinition = {
   name: string;
@@ -94,6 +105,7 @@ export type SyscallDomains = {
   "sys.token.create": { args: SysTokenCreateArgs; result: SysTokenCreateResult };
   "sys.token.list": { args: SysTokenListArgs; result: SysTokenListResult };
   "sys.token.revoke": { args: SysTokenRevokeArgs; result: SysTokenRevokeResult };
+  "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
 
   // Scheduler (cron)
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
@@ -106,9 +118,11 @@ export type SyscallDomains = {
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
 
-  // IPC (channels)
-  "ipc.send": { args: IpcSendArgs; result: IpcSendResult };
-  "ipc.status": { args: { channel: string }; result: ChannelStatus };
+  // Adapter transport (external connectors)
+  "adapter.inbound": { args: AdapterInboundArgs; result: AdapterInboundSyscallResult };
+  "adapter.state.update": { args: AdapterStateUpdateArgs; result: AdapterStateUpdateResult };
+  "adapter.send": { args: AdapterSendArgs; result: AdapterSendResult };
+  "adapter.status": { args: AdapterStatusArgs; result: AdapterStatusResult };
 };
 
 export type SyscallName = keyof SyscallDomains;
@@ -122,7 +136,7 @@ export type SyscallDomain =
   | "sys"
   | "ai"
   | "sched"
-  | "ipc";
+  | "adapter";
 
 export function domainOf(syscall: SyscallName): SyscallDomain {
   return syscall.split(".")[0] as SyscallDomain;

@@ -35,6 +35,13 @@ import {
   handleSysTokenList,
   handleSysTokenRevoke,
 } from "./sys-token";
+import { handleSysLinkConsume } from "./sys-link";
+import {
+  handleAdapterInbound,
+  handleAdapterSend,
+  handleAdapterStateUpdate,
+  handleAdapterStatus,
+} from "./adapter-handlers";
 
 export type DispatchDeps = {
   routingTable: RoutingTable;
@@ -51,7 +58,7 @@ const DEFAULT_DEVICE_TTL_MS = 60_000;
 /**
  * Domains that support device routing via the `target` field.
  * `shell` always requires a device. `fs` can be native (R2) or device.
- * Other domains (sys, proc, sched, ipc) are always kernel-internal.
+ * Other domains (sys, proc, sched, adapter) are always kernel-internal.
  */
 const ROUTABLE_DOMAINS = new Set(["fs", "shell"]);
 
@@ -162,6 +169,9 @@ async function dispatchNative(
       case "sys.token.revoke":
         data = handleSysTokenRevoke(frame.args, ctx);
         break;
+      case "sys.link.consume":
+        data = handleSysLinkConsume(frame.args, ctx);
+        break;
 
       // --- sched.* ---
       case "sched.list":
@@ -171,10 +181,19 @@ async function dispatchNative(
       case "sched.run":
         return errFrame(frame.id, 501, `${frame.call} not yet implemented`);
 
-      // --- ipc.* ---
-      case "ipc.send":
-      case "ipc.status":
-        return errFrame(frame.id, 501, `${frame.call} not yet implemented`);
+      // --- adapter.* ---
+      case "adapter.inbound":
+        data = await handleAdapterInbound(frame.args, ctx);
+        break;
+      case "adapter.state.update":
+        data = handleAdapterStateUpdate(frame.args, ctx);
+        break;
+      case "adapter.send":
+        data = await handleAdapterSend(frame.args, ctx);
+        break;
+      case "adapter.status":
+        data = await handleAdapterStatus(frame.args, ctx);
+        break;
 
       default:
         return errFrame(frameId, 404, `Unknown syscall: ${(frame as { call: string }).call}`);

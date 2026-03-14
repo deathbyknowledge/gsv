@@ -185,3 +185,20 @@ export type SysTokenRevokeArgs = {
 export type SysTokenRevokeResult = {
   revoked: boolean;
 };
+
+// -- sys.link.consume ---------------------------------------------------------
+
+export type SysLinkConsumeArgs = {
+  code: string;
+};
+
+export type SysLinkConsumeResult = {
+  linked: boolean;
+  link?: {
+    adapter: string;
+    accountId: string;
+    actorId: string;
+    uid: number;
+    createdAt: number;
+  };
+};

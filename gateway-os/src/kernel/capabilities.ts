@@ -25,9 +25,10 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.token.create",
     "sys.token.list",
     "sys.token.revoke",
+    "sys.link.consume",
   ]],  // users
   [101, ["fs.*", "shell.*"]],                             // drivers
-  [102, ["ipc.*"]],                                       // services
+  [102, ["adapter.*"]],                                   // services
 ];
 
 export class CapabilityStore {
