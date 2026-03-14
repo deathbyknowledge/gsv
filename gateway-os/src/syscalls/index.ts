@@ -41,6 +41,12 @@ import type {
   SysTokenListResult,
   SysTokenRevokeArgs,
   SysTokenRevokeResult,
+  SysLinkArgs,
+  SysLinkResult,
+  SysUnlinkArgs,
+  SysUnlinkResult,
+  SysLinkListArgs,
+  SysLinkListResult,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
 } from "./system";
@@ -105,6 +111,9 @@ export type SyscallDomains = {
   "sys.token.create": { args: SysTokenCreateArgs; result: SysTokenCreateResult };
   "sys.token.list": { args: SysTokenListArgs; result: SysTokenListResult };
   "sys.token.revoke": { args: SysTokenRevokeArgs; result: SysTokenRevokeResult };
+  "sys.link": { args: SysLinkArgs; result: SysLinkResult };
+  "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
+  "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
   "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
 
   // Scheduler (cron)

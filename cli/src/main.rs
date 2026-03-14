@@ -379,10 +379,49 @@ enum AuthAction {
     /// Clear cached local user session token
     Logout,
 
-    /// Link an adapter account to the authenticated user via one-time code
+    /// Link an adapter identity to a local user.
+    /// Use either a one-time code positional argument or explicit adapter/account/actor flags.
     Link {
         /// One-time link code (e.g., ABCD-1234)
-        code: String,
+        code: Option<String>,
+
+        /// Adapter id (manual link mode)
+        #[arg(long)]
+        adapter: Option<String>,
+
+        /// Adapter account id (manual link mode)
+        #[arg(long = "account-id")]
+        account_id: Option<String>,
+
+        /// Adapter actor id (manual link mode)
+        #[arg(long = "actor-id")]
+        actor_id: Option<String>,
+
+        /// Optional target uid (root only for other users)
+        #[arg(long)]
+        uid: Option<u32>,
+    },
+
+    /// List linked adapter identities
+    LinkList {
+        /// Optional uid filter (root only for other users)
+        #[arg(long)]
+        uid: Option<u32>,
+    },
+
+    /// Remove an existing adapter identity link
+    Unlink {
+        /// Adapter id
+        #[arg(long)]
+        adapter: String,
+
+        /// Adapter account id
+        #[arg(long = "account-id")]
+        account_id: String,
+
+        /// Adapter actor id
+        #[arg(long = "actor-id")]
+        actor_id: String,
     },
 
     /// Initialize gateway identity/auth (setup mode only)
@@ -1168,7 +1207,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await
             }
-            link_action @ AuthAction::Link { .. } => {
+            link_action @ AuthAction::Link { .. }
+            | link_action @ AuthAction::LinkList { .. }
+            | link_action @ AuthAction::Unlink { .. } => {
                 run_with_auto_setup_and_login_retry(
                     &url,
                     &cfg,

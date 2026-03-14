@@ -28,6 +28,9 @@ export const SYS_TOKEN_CREATE = "sys.token.create";
 export const SYS_TOKEN_LIST = "sys.token.list";
 export const SYS_TOKEN_REVOKE = "sys.token.revoke";
 export const SYS_LINK_CONSUME = "sys.link.consume";
+export const SYS_LINK = "sys.link";
+export const SYS_UNLINK = "sys.unlink";
+export const SYS_LINK_LIST = "sys.link.list";
 
 // Scheduler (cron)
 export const SCHED_LIST = "sched.list";

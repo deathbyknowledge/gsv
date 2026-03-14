@@ -184,10 +184,13 @@ describe("CapabilityStore", () => {
       "shell.*",
       "sys.config.get",
       "sys.config.set",
+      "sys.link",
       "sys.link.consume",
+      "sys.link.list",
       "sys.token.create",
       "sys.token.list",
       "sys.token.revoke",
+      "sys.unlink",
     ]);
   });
 

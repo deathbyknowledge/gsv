@@ -16,7 +16,8 @@ Consolidated plan for identity + auth work:
   - remaining: audit metadata updates (`last_used_at` + client info)
 - [ ] **Phase 2A: identity links + `adapter.*` transport plumbing**
   - done: inbound adapter resolution + `adapter.send` / `adapter.status`
-  - remaining: manual link/unlink/list syscalls
+  - done: manual `sys.link` / `sys.unlink` / `sys.link.list` syscalls
+  - remaining: management UX polish + tests
 - [ ] **Phase 2B: pairing UX**
   - done: unknown DM identity challenge + `sys.link.consume`
   - remaining: queued inbound replay + richer UX
@@ -76,7 +77,7 @@ Map external channel identities to internal UIDs. Stored in kernel SQLite.
 - [x] Pairing flow (Phase 2B base): unknown DM identity returns challenge prompt
 - [x] `link_challenges` table/store for one-time code + expiry + use tracking
 - [x] `sys.link.consume` syscall — redeem code and create link for current user
-- [ ] `sys.link` / `sys.unlink` / `sys.link.list` management syscalls (uid 0 or self)
+- [x] `sys.link` / `sys.unlink` / `sys.link.list` management syscalls (uid 0 or self)
 - [ ] Queue/replay first inbound message after link completion
 
 ## Group-based capabilities (kernel SQLite)
@@ -86,7 +87,7 @@ Capabilities are NOT hardcoded — root can modify them. Stored in kernel DO SQL
 - [x] Design the `group_capabilities` table schema
 - [x] Seed default capabilities on first boot:
   - gid 0 (root) → `["*"]`
-  - gid 100 (users) → `["fs.*", "shell.*", "proc.*", "sched.*", "sys.config.get", "sys.config.set", "sys.token.create", "sys.token.list", "sys.token.revoke", "sys.link.consume"]`
+  - gid 100 (users) → `["fs.*", "shell.*", "proc.*", "sched.*", "sys.config.get", "sys.config.set", "sys.token.create", "sys.token.list", "sys.token.revoke", "sys.link", "sys.unlink", "sys.link.list", "sys.link.consume"]`
   - gid 101 (drivers) → `["fs.*", "shell.*"]`
   - gid 102 (services) → `["adapter.*"]`
 - [x] Implement `resolve(gids)` — union of all capabilities across groups
@@ -373,7 +374,7 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 - [ ] `sys.passwd` — change password (own password or any as uid 0)
 - [ ] `sys.groupadd` / `sys.groupdel` — manage groups (uid 0 only)
 - [ ] `sys.cap.list` / `sys.cap.grant` / `sys.cap.revoke` — manage group capabilities (uid 0 only)
-- [ ] `sys.link` / `sys.unlink` — manage identity links (uid 0 or self)
+- [x] `sys.link` / `sys.unlink` / `sys.link.list` — manage identity links (uid 0 or self)
 
 ## Binary stream frames
 

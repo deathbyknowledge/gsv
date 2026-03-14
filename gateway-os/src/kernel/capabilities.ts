@@ -22,9 +22,12 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sched.*",
     "sys.config.get",
     "sys.config.set",
+    "sys.link",
+    "sys.link.list",
     "sys.token.create",
     "sys.token.list",
     "sys.token.revoke",
+    "sys.unlink",
     "sys.link.consume",
   ]],  // users
   [101, ["fs.*", "shell.*"]],                             // drivers

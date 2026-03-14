@@ -518,10 +518,62 @@ pub(crate) async fn run_auth(
         AuthAction::Setup { .. } => {
             return Err("auth setup does not use an authenticated kernel session".into());
         }
-        AuthAction::Link { code } => {
-            let payload = client
-                .request_ok("sys.link.consume", Some(json!({ "code": code })))
-                .await?;
+        AuthAction::Link {
+            code,
+            adapter,
+            account_id,
+            actor_id,
+            uid,
+        } => {
+            let has_manual =
+                adapter.is_some() || account_id.is_some() || actor_id.is_some() || uid.is_some();
+            if code.is_some() && has_manual {
+                return Err(
+                    "auth link: either provide one-time code OR --adapter/--account-id/--actor-id"
+                        .into(),
+                );
+            }
+
+            if let Some(code) = code {
+                let payload = client
+                    .request_ok("sys.link.consume", Some(json!({ "code": code })))
+                    .await?;
+                match serde_json::from_value::<SysLinkConsumePayload>(payload.clone()) {
+                    Ok(result) => {
+                        if result.linked {
+                            if let Some(link) = result.link {
+                                println!(
+                                    "Linked {}:{}:{} -> uid {}",
+                                    link.adapter, link.account_id, link.actor_id, link.uid
+                                );
+                            } else {
+                                println!("linked");
+                            }
+                        } else {
+                            println!("not linked");
+                        }
+                    }
+                    Err(_) => {
+                        println!("{}", serde_json::to_string_pretty(&payload)?);
+                    }
+                }
+                return Ok(());
+            }
+
+            let adapter = adapter.ok_or("auth link requires --adapter")?;
+            let account_id = account_id.ok_or("auth link requires --account-id")?;
+            let actor_id = actor_id.ok_or("auth link requires --actor-id")?;
+
+            let mut args = json!({
+                "adapter": adapter,
+                "accountId": account_id,
+                "actorId": actor_id,
+            });
+            if let Some(uid) = uid {
+                args["uid"] = json!(uid);
+            }
+
+            let payload = client.request_ok("sys.link", Some(args)).await?;
             match serde_json::from_value::<SysLinkConsumePayload>(payload.clone()) {
                 Ok(result) => {
                     if result.linked {
@@ -537,9 +589,50 @@ pub(crate) async fn run_auth(
                         println!("not linked");
                     }
                 }
-                Err(_) => {
-                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
+        }
+        AuthAction::LinkList { uid } => {
+            let mut args = json!({});
+            if let Some(uid) = uid {
+                args["uid"] = json!(uid);
+            }
+            let payload = client.request_ok("sys.link.list", Some(args)).await?;
+            match serde_json::from_value::<SysLinkListPayload>(payload.clone()) {
+                Ok(result) => {
+                    if result.links.is_empty() {
+                        println!("(no links)");
+                    } else {
+                        print_link_list(&result.links);
+                    }
                 }
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
+        }
+        AuthAction::Unlink {
+            adapter,
+            account_id,
+            actor_id,
+        } => {
+            let payload = client
+                .request_ok(
+                    "sys.unlink",
+                    Some(json!({
+                        "adapter": adapter,
+                        "accountId": account_id,
+                        "actorId": actor_id,
+                    })),
+                )
+                .await?;
+            match serde_json::from_value::<SysUnlinkPayload>(payload.clone()) {
+                Ok(result) => {
+                    if result.removed {
+                        println!("unlinked");
+                    } else {
+                        println!("not found");
+                    }
+                }
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
             }
         }
         AuthAction::Token { action } => match action {
@@ -857,12 +950,24 @@ struct SysLinkConsumePayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct SysLinkListPayload {
+    links: Vec<SysLinkPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysUnlinkPayload {
+    removed: bool,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SysLinkPayload {
     adapter: String,
     account_id: String,
     actor_id: String,
     uid: u32,
+    created_at: Option<i64>,
+    linked_by_uid: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1030,6 +1135,24 @@ fn print_token_list(tokens: &[SysTokenRecordPayload]) {
         if let Some(reason) = token.revoked_reason.as_deref() {
             println!("  revoked_reason={}", reason);
         }
+    }
+}
+
+fn print_link_list(links: &[SysLinkPayload]) {
+    for link in links {
+        println!(
+            "{}:{}:{} -> uid={} created={} linked_by={}",
+            link.adapter,
+            link.account_id,
+            link.actor_id,
+            link.uid,
+            link.created_at
+                .map(format_unix_ms)
+                .unwrap_or_else(|| "-".to_string()),
+            link.linked_by_uid
+                .map(|uid| uid.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+        );
     }
 }
 

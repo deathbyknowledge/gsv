@@ -35,7 +35,12 @@ import {
   handleSysTokenList,
   handleSysTokenRevoke,
 } from "./sys-token";
-import { handleSysLinkConsume } from "./sys-link";
+import {
+  handleSysLink,
+  handleSysLinkConsume,
+  handleSysLinkList,
+  handleSysUnlink,
+} from "./sys-link";
 import {
   handleAdapterInbound,
   handleAdapterSend,
@@ -168,6 +173,15 @@ async function dispatchNative(
         break;
       case "sys.token.revoke":
         data = handleSysTokenRevoke(frame.args, ctx);
+        break;
+      case "sys.link":
+        data = handleSysLink(frame.args, ctx);
+        break;
+      case "sys.unlink":
+        data = handleSysUnlink(frame.args, ctx);
+        break;
+      case "sys.link.list":
+        data = handleSysLinkList(frame.args, ctx);
         break;
       case "sys.link.consume":
         data = handleSysLinkConsume(frame.args, ctx);

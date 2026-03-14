@@ -202,3 +202,48 @@ export type SysLinkConsumeResult = {
     createdAt: number;
   };
 };
+
+// -- sys.link / sys.unlink / sys.link.list ----------------------------------
+
+export type SysLinkArgs = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  uid?: number;
+};
+
+export type SysLinkResult = {
+  linked: boolean;
+  link?: {
+    adapter: string;
+    accountId: string;
+    actorId: string;
+    uid: number;
+    createdAt: number;
+  };
+};
+
+export type SysUnlinkArgs = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+};
+
+export type SysUnlinkResult = {
+  removed: boolean;
+};
+
+export type SysLinkListArgs = {
+  uid?: number;
+};
+
+export type SysLinkListResult = {
+  links: Array<{
+    adapter: string;
+    accountId: string;
+    actorId: string;
+    uid: number;
+    createdAt: number;
+    linkedByUid: number;
+  }>;
+};
