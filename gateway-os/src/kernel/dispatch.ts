@@ -42,6 +42,8 @@ import {
   handleSysUnlink,
 } from "./sys-link";
 import {
+  handleAdapterConnect,
+  handleAdapterDisconnect,
   handleAdapterInbound,
   handleAdapterSend,
   handleAdapterStateUpdate,
@@ -196,6 +198,12 @@ async function dispatchNative(
         return errFrame(frame.id, 501, `${frame.call} not yet implemented`);
 
       // --- adapter.* ---
+      case "adapter.connect":
+        data = await handleAdapterConnect(frame.args, ctx);
+        break;
+      case "adapter.disconnect":
+        data = await handleAdapterDisconnect(frame.args, ctx);
+        break;
       case "adapter.inbound":
         data = await handleAdapterInbound(frame.args, ctx);
         break;

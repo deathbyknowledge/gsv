@@ -178,6 +178,9 @@ describe("CapabilityStore", () => {
 
     const userCaps = store.list(100);
     expect(userCaps.map((r) => r.capability)).toEqual([
+      "adapter.connect",
+      "adapter.disconnect",
+      "adapter.status",
       "fs.*",
       "proc.*",
       "sched.*",
@@ -282,6 +285,6 @@ describe("CapabilityStore", () => {
     store.grant(100, "adapter.send");
     const caps = store.resolve([100]);
     expect(hasCapability(caps, "adapter.send")).toBe(true);
-    expect(hasCapability(caps, "adapter.status")).toBe(false);
+    expect(hasCapability(caps, "adapter.inbound")).toBe(false);
   });
 });

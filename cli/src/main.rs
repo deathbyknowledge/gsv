@@ -69,6 +69,12 @@ enum Commands {
         action: ProcAction,
     },
 
+    /// Adapter account lifecycle (`adapter.*`)
+    Adapter {
+        #[command(subcommand)]
+        action: AdapterAction,
+    },
+
     /// Authentication and onboarding
     Auth {
         #[command(subcommand)]
@@ -622,6 +628,46 @@ enum ProcAction {
     },
 }
 
+#[derive(Subcommand, Clone)]
+enum AdapterAction {
+    /// Connect/start an adapter account
+    Connect {
+        /// Adapter id (e.g., whatsapp, discord)
+        #[arg(long)]
+        adapter: String,
+
+        /// Adapter account id
+        #[arg(long = "account-id", default_value = "default")]
+        account_id: String,
+
+        /// Adapter-specific config JSON object
+        #[arg(long = "config-json")]
+        config_json: Option<String>,
+    },
+
+    /// Disconnect/stop an adapter account
+    Disconnect {
+        /// Adapter id (e.g., whatsapp, discord)
+        #[arg(long)]
+        adapter: String,
+
+        /// Adapter account id
+        #[arg(long = "account-id", default_value = "default")]
+        account_id: String,
+    },
+
+    /// Show adapter account status
+    Status {
+        /// Adapter id (e.g., whatsapp, discord)
+        #[arg(long)]
+        adapter: String,
+
+        /// Optional adapter account id
+        #[arg(long = "account-id")]
+        account_id: Option<String>,
+    },
+}
+
 #[derive(Subcommand)]
 enum LocalConfigAction {
     /// Show current local config
@@ -1153,6 +1199,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 cli_password_override.clone(),
                 "proc",
                 |auth| async { commands::run_proc(&url, auth, action.clone()).await },
+            )
+            .await
+        }
+        Commands::Adapter { action } => {
+            run_with_auto_setup_and_login_retry(
+                &url,
+                &cfg,
+                cli_token_override.clone(),
+                cli_user_override.clone(),
+                cli_password_override.clone(),
+                "adapter",
+                |auth| async { commands::run_adapter(&url, auth, action.clone()).await },
             )
             .await
         }

@@ -65,6 +65,10 @@ import type {
   AiConfigResult,
 } from "./ai";
 import type {
+  AdapterConnectArgs,
+  AdapterConnectResult,
+  AdapterDisconnectArgs,
+  AdapterDisconnectResult,
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
   AdapterStateUpdateArgs,
@@ -128,6 +132,8 @@ export type SyscallDomains = {
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
 
   // Adapter transport (external connectors)
+  "adapter.connect": { args: AdapterConnectArgs; result: AdapterConnectResult };
+  "adapter.disconnect": { args: AdapterDisconnectArgs; result: AdapterDisconnectResult };
   "adapter.inbound": { args: AdapterInboundArgs; result: AdapterInboundSyscallResult };
   "adapter.state.update": { args: AdapterStateUpdateArgs; result: AdapterStateUpdateResult };
   "adapter.send": { args: AdapterSendArgs; result: AdapterSendResult };

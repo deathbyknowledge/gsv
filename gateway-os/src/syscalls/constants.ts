@@ -46,6 +46,8 @@ export const AI_CONFIG = "ai.config";
 // Adapter transport (external connectors)
 export const ADAPTER_INBOUND = "adapter.inbound";
 export const ADAPTER_STATE_UPDATE = "adapter.state.update";
+export const ADAPTER_CONNECT = "adapter.connect";
+export const ADAPTER_DISCONNECT = "adapter.disconnect";
 export const ADAPTER_SEND = "adapter.send";
 export const ADAPTER_STATUS = "adapter.status";
 

@@ -2,9 +2,49 @@ import type {
   AdapterInboundMessage,
   AdapterInboundResult,
   AdapterAccountStatus,
+  AdapterConnectChallenge,
   AdapterMedia,
   AdapterSurface,
 } from "../adapter-interface";
+
+export type AdapterConnectArgs = {
+  adapter: string;
+  accountId: string;
+  config?: Record<string, unknown>;
+};
+
+export type AdapterConnectResult =
+  | {
+      ok: true;
+      adapter: string;
+      accountId: string;
+      connected: boolean;
+      authenticated: boolean;
+      message?: string;
+      challenge?: AdapterConnectChallenge;
+    }
+  | {
+      ok: false;
+      error: string;
+      challenge?: AdapterConnectChallenge;
+    };
+
+export type AdapterDisconnectArgs = {
+  adapter: string;
+  accountId: string;
+};
+
+export type AdapterDisconnectResult =
+  | {
+      ok: true;
+      adapter: string;
+      accountId: string;
+      message?: string;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
 
 export type AdapterSendArgs = {
   adapter: string;
