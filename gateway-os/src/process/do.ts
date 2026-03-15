@@ -216,11 +216,53 @@ export class Process extends Host<Env> {
       offset: args.offset,
     });
 
-    const messages: ProcHistoryMessage[] = records.map((r) => ({
-      role: r.role,
-      content: r.toolCalls ? JSON.parse(r.toolCalls) : r.content,
-      timestamp: r.createdAt,
-    }));
+    const messages: ProcHistoryMessage[] = records.map((r) => {
+      if (r.role === "toolResult") {
+        let meta: { toolName?: string; isError?: boolean } = {};
+        if (r.toolCalls) {
+          try {
+            meta = JSON.parse(r.toolCalls) as { toolName?: string; isError?: boolean };
+          } catch {
+            meta = {};
+          }
+        }
+
+        return {
+          role: r.role,
+          content: {
+            toolName: meta.toolName ?? "unknown",
+            isError: meta.isError ?? false,
+            toolCallId: r.toolCallId ?? null,
+            output: r.content,
+          },
+          timestamp: r.createdAt,
+        };
+      }
+
+      if (r.role === "assistant" && r.toolCalls) {
+        let toolCalls: unknown = [];
+        try {
+          toolCalls = JSON.parse(r.toolCalls);
+        } catch {
+          toolCalls = [];
+        }
+
+        return {
+          role: r.role,
+          content: {
+            text: r.content,
+            toolCalls,
+          },
+          timestamp: r.createdAt,
+        };
+      }
+
+      return {
+        role: r.role,
+        content: r.content,
+        timestamp: r.createdAt,
+      };
+    });
 
     return {
       ok: true,
@@ -339,8 +381,10 @@ export class Process extends Host<Env> {
 
         await this.sendSignal("chat.tool_result", {
           name: SYSCALL_TOOL_NAMES[result.call] ?? result.call,
+          syscall: result.call,
           callId: result.id,
           ok: result.status === "completed",
+          output: result.status === "completed" ? result.result : undefined,
           error: result.status === "error" ? result.error : undefined,
           pid: this.pid,
           runId,
@@ -479,15 +523,17 @@ export class Process extends Host<Env> {
 
     if (toolCalls.length > 0) {
       for (const tc of toolCalls) {
+        const syscall = TOOL_TO_SYSCALL[tc.name];
+
         await this.sendSignal("chat.tool_call", {
           name: tc.name,
+          syscall,
           args: tc.arguments,
           callId: tc.id,
           pid: this.pid,
           runId,
         });
 
-        const syscall = TOOL_TO_SYSCALL[tc.name];
         if (!syscall) {
           this.store.appendToolResult(
             tc.id,
@@ -497,6 +543,7 @@ export class Process extends Host<Env> {
           );
           await this.sendSignal("chat.tool_result", {
             name: tc.name,
+            syscall: tc.name,
             callId: tc.id,
             ok: false,
             error: `Unknown tool "${tc.name}"`,

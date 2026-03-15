@@ -22,40 +22,6 @@ export default {
       return kernel.fetch(request);
     }
 
-    // Serve media files from R2
-    // /media/{uuid}.{ext}
-    // TODO: either remove or auth this
-    const mediaMatch = url.pathname.match(
-      /^\/media\/([a-f0-9-]+\.[a-z0-9]+)$/i,
-    );
-    if (mediaMatch && request.method === "GET") {
-      const key = `media/${mediaMatch[1]}`;
-      const object = await env.STORAGE.get(key);
-
-      if (!object) {
-        return new Response("Not Found", { status: 404 });
-      }
-
-      // Check if expired
-      const expiresAt = object.customMetadata?.expiresAt;
-      if (expiresAt && parseInt(expiresAt, 10) < Date.now()) {
-        // Clean up expired file
-        await env.STORAGE.delete(key);
-        return new Response("Expired", { status: 410 });
-      }
-
-      const headers = new Headers();
-      headers.set(
-        "Content-Type",
-        object.httpMetadata?.contentType || "application/octet-stream",
-      );
-      headers.set("Cache-Control", "private, max-age=3600");
-      // Allow cross-origin for LLM APIs
-      headers.set("Access-Control-Allow-Origin", "*");
-
-      return new Response(object.body, { headers });
-    }
-
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;

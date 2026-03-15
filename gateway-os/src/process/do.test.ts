@@ -244,6 +244,32 @@ describe("Process DO — mechanical", () => {
       expect(data.messageCount).toBe(10);
       expect(data.truncated).toBe(true);
     });
+
+    it("includes full toolResult payload (metadata + output)", async () => {
+      const pid = "mech-history-toolresult";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendToolResult("call-1", "fs.read", "file contents here", false);
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      const data = res.data as any;
+      expect(data.ok).toBe(true);
+      expect(data.messages).toHaveLength(1);
+      expect(data.messages[0].role).toBe("toolResult");
+      expect(data.messages[0].content).toEqual({
+        toolName: "Read",
+        isError: false,
+        toolCallId: "call-1",
+        output: "file contents here",
+      });
+    });
   });
 
   describe("proc.reset", () => {
