@@ -112,17 +112,8 @@ export interface GatewayAdapterInterface {
 export interface AdapterWorkerInterface {
   readonly adapterId: string;
 
-  connect?(accountId: string, config?: Record<string, unknown>): Promise<AdapterConnectResult>;
-  disconnect?(accountId: string): Promise<AdapterDisconnectResult>;
-  // TODO(gateway-os): Remove login/logout/start/stop compatibility methods
-  // after all adapters implement connect/disconnect directly.
-  login?(accountId: string, options?: Record<string, unknown>): Promise<
-    | { ok: true; qrDataUrl?: string; message: string }
-    | { ok: false; error: string }
-  >;
-  logout?(accountId: string): Promise<{ ok: true } | { ok: false; error: string }>;
-  start?(accountId: string, config: Record<string, unknown>): Promise<{ ok: true } | { ok: false; error: string }>;
-  stop?(accountId: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  connect(accountId: string, config?: Record<string, unknown>): Promise<AdapterConnectResult>;
+  disconnect(accountId: string): Promise<AdapterDisconnectResult>;
   send(accountId: string, message: AdapterOutboundMessage): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }>;
   status(accountId?: string): Promise<AdapterAccountStatus[]>;
 }

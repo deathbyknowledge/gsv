@@ -85,6 +85,61 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     qrLogin: true,
   };
 
+  /**
+   * Canonical adapter lifecycle entrypoint used by gateway-os.
+   */
+  async connect(accountId: string, config: Record<string, unknown> = {}): Promise<
+    | {
+        ok: true;
+        connected: boolean;
+        authenticated: boolean;
+        message?: string;
+        challenge?: { type: string; message?: string; data?: string };
+      }
+    | { ok: false; error: string }
+  > {
+    const force = config.force === true || config.force === "true";
+    const login = await this.login(accountId, { force });
+    if (!login.ok) {
+      return { ok: false, error: login.error };
+    }
+
+    if (login.qrDataUrl) {
+      return {
+        ok: true,
+        connected: true,
+        authenticated: false,
+        message: login.message,
+        challenge: {
+          type: "qr",
+          message: login.message,
+          data: login.qrDataUrl,
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      connected: true,
+      authenticated: true,
+      message: login.message,
+    };
+  }
+
+  /**
+   * Canonical adapter lifecycle entrypoint used by gateway-os.
+   */
+  async disconnect(accountId: string): Promise<
+    | { ok: true; message?: string }
+    | { ok: false; error: string }
+  > {
+    const logout = await this.logout(accountId);
+    if (!logout.ok) {
+      return { ok: false, error: logout.error };
+    }
+    return { ok: true, message: "Disconnected" };
+  }
+
   async start(accountId: string, _config: Record<string, unknown>): Promise<StartResult> {
     try {
       const res = await this.doFetch(accountId, "/wake", { method: "POST" });

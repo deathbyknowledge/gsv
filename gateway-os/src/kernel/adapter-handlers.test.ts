@@ -22,12 +22,18 @@ function makeContext(
 }
 
 describe("adapter lifecycle handlers", () => {
-  it("adapter.connect falls back to login and returns QR challenge", async () => {
+  it("adapter.connect returns connect challenge payload and refreshes status", async () => {
     const service = {
-      login: vi.fn(async () => ({
+      connect: vi.fn(async () => ({
         ok: true as const,
-        qrDataUrl: "data:image/png;base64,abc123",
         message: "Scan QR code",
+        connected: true,
+        authenticated: false,
+        challenge: {
+          type: "qr",
+          data: "qr-payload",
+          message: "Scan QR code",
+        },
       })),
       status: vi.fn(async () => [
         {
@@ -52,7 +58,7 @@ describe("adapter lifecycle handlers", () => {
       ctx,
     );
 
-    expect(service.login).toHaveBeenCalledWith("default", undefined);
+    expect(service.connect).toHaveBeenCalledWith("default", undefined);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.challenge?.type).toBe("qr");
@@ -62,16 +68,9 @@ describe("adapter lifecycle handlers", () => {
     expect(status.upsert).toHaveBeenCalled();
   });
 
-  it("adapter.connect falls back to start when connect/login are unavailable", async () => {
+  it("adapter.connect returns error when binding does not implement connect", async () => {
     const service = {
       start: vi.fn(async () => ({ ok: true as const })),
-      status: vi.fn(async () => [
-        {
-          accountId: "default",
-          connected: true,
-          authenticated: true,
-        },
-      ]),
     };
 
     const status = { upsert: vi.fn() };
@@ -87,19 +86,16 @@ describe("adapter lifecycle handlers", () => {
       ctx,
     );
 
-    expect(service.start).toHaveBeenCalledWith("default", { botToken: "x" });
-    expect(result).toMatchObject({
-      ok: true,
-      adapter: "discord",
-      accountId: "default",
-      connected: true,
-      authenticated: true,
-    });
+    expect(service.start).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("does not implement connect");
+    }
   });
 
-  it("adapter.disconnect falls back to logout", async () => {
+  it("adapter.disconnect calls disconnect and refreshes status", async () => {
     const service = {
-      logout: vi.fn(async () => ({ ok: true as const })),
+      disconnect: vi.fn(async () => ({ ok: true as const })),
       status: vi.fn(async () => [
         {
           accountId: "default",
@@ -123,7 +119,7 @@ describe("adapter lifecycle handlers", () => {
       ctx,
     );
 
-    expect(service.logout).toHaveBeenCalledWith("default");
+    expect(service.disconnect).toHaveBeenCalledWith("default");
     expect(result).toMatchObject({
       ok: true,
       adapter: "whatsapp",

@@ -1,9 +1,6 @@
 import type {
   AdapterInboundMessage,
   AdapterAccountStatus,
-  AdapterConnectChallenge,
-  AdapterConnectResult,
-  AdapterDisconnectResult,
   AdapterOutboundMessage,
   AdapterSurface,
   AdapterWorkerInterface,
@@ -34,12 +31,6 @@ type ProcSendData = {
   runId?: string;
   queued?: boolean;
 };
-type AdapterLoginResult =
-  | { ok: true; qrDataUrl?: string; message: string }
-  | { ok: false; error: string };
-type AdapterStartResult = { ok: true } | { ok: false; error: string };
-type AdapterLogoutResult = { ok: true } | { ok: false; error: string };
-type AdapterStopResult = { ok: true } | { ok: false; error: string };
 
 function resolveAdapterService(env: Env, adapter: string): AdapterServiceBinding | null {
   const key = `CHANNEL_${adapter.trim().toUpperCase()}`;
@@ -62,8 +53,11 @@ export async function handleAdapterConnect(
   if (!service) {
     return { ok: false, error: `Adapter service unavailable: ${adapter}` };
   }
+  if (typeof service.connect !== "function") {
+    return { ok: false, error: `Adapter service does not implement connect: ${adapter}` };
+  }
 
-  const connectResult = await callAdapterConnect(service, accountId, args.config);
+  const connectResult = await service.connect(accountId, args.config);
   if (!connectResult.ok) {
     return {
       ok: false,
@@ -102,8 +96,11 @@ export async function handleAdapterDisconnect(
   if (!service) {
     return { ok: false, error: `Adapter service unavailable: ${adapter}` };
   }
+  if (typeof service.disconnect !== "function") {
+    return { ok: false, error: `Adapter service does not implement disconnect: ${adapter}` };
+  }
 
-  const result = await callAdapterDisconnect(service, accountId);
+  const result = await service.disconnect(accountId);
   if (!result.ok) {
     return { ok: false, error: result.error };
   }
@@ -335,90 +332,6 @@ export function handleAdapterStateUpdate(
 
 export function resolveAdapterServiceForKernel(env: Env, adapter: string): AdapterServiceBinding | null {
   return resolveAdapterService(env, adapter);
-}
-
-async function callAdapterConnect(
-  service: AdapterServiceBinding,
-  accountId: string,
-  config?: Record<string, unknown>,
-): Promise<AdapterConnectResult> {
-  // TODO(gateway-os): Remove legacy fallback chain once adapters expose
-  // connect/disconnect universally.
-  if (typeof service.connect === "function") {
-    return service.connect(accountId, config);
-  }
-
-  if (typeof service.login === "function") {
-    const login = (await service.login(accountId, config)) as AdapterLoginResult;
-    if (!login.ok) {
-      return { ok: false, error: login.error };
-    }
-
-    const challenge = login.qrDataUrl
-      ? toQrChallenge(login.qrDataUrl, login.message)
-      : undefined;
-
-    return {
-      ok: true,
-      message: login.message,
-      connected: true,
-      authenticated: !challenge,
-      challenge,
-    };
-  }
-
-  if (typeof service.start === "function") {
-    const start = (await service.start(accountId, config ?? {})) as AdapterStartResult;
-    if (!start.ok) {
-      return { ok: false, error: start.error };
-    }
-    return { ok: true, connected: true, authenticated: true };
-  }
-
-  return {
-    ok: false,
-    error: "Adapter does not implement connect/login/start",
-  };
-}
-
-async function callAdapterDisconnect(
-  service: AdapterServiceBinding,
-  accountId: string,
-): Promise<AdapterDisconnectResult> {
-  // TODO(gateway-os): Remove legacy fallback chain once adapters expose
-  // connect/disconnect universally.
-  if (typeof service.disconnect === "function") {
-    return service.disconnect(accountId);
-  }
-
-  if (typeof service.logout === "function") {
-    const logout = (await service.logout(accountId)) as AdapterLogoutResult;
-    if (!logout.ok) {
-      return { ok: false, error: logout.error };
-    }
-    return { ok: true };
-  }
-
-  if (typeof service.stop === "function") {
-    const stop = (await service.stop(accountId)) as AdapterStopResult;
-    if (!stop.ok) {
-      return { ok: false, error: stop.error };
-    }
-    return { ok: true };
-  }
-
-  return {
-    ok: false,
-    error: "Adapter does not implement disconnect/logout/stop",
-  };
-}
-
-function toQrChallenge(qrDataUrl: string, message?: string): AdapterConnectChallenge {
-  return {
-    type: "qr",
-    data: qrDataUrl,
-    message: message || "Scan QR code to finish adapter login",
-  };
 }
 
 async function refreshAdapterStatus(

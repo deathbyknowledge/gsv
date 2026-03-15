@@ -53,6 +53,39 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
   };
 
   /**
+   * Canonical adapter lifecycle entrypoint used by gateway-os.
+   */
+  async connect(accountId: string, config: Record<string, unknown> = {}): Promise<
+    | { ok: true; connected: boolean; authenticated: boolean; message?: string }
+    | { ok: false; error: string }
+  > {
+    const started = await this.start(accountId, config);
+    if (!started.ok) {
+      return { ok: false, error: started.error };
+    }
+    return {
+      ok: true,
+      connected: true,
+      authenticated: true,
+      message: "Connected",
+    };
+  }
+
+  /**
+   * Canonical adapter lifecycle entrypoint used by gateway-os.
+   */
+  async disconnect(accountId: string): Promise<
+    | { ok: true; message?: string }
+    | { ok: false; error: string }
+  > {
+    const stopped = await this.stop(accountId);
+    if (!stopped.ok) {
+      return { ok: false, error: stopped.error };
+    }
+    return { ok: true, message: "Disconnected" };
+  }
+
+  /**
    * Start Discord Gateway connection for an account.
    */
   async start(accountId: string, config: Record<string, unknown>): Promise<StartResult> {
