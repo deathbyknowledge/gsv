@@ -26,6 +26,8 @@
 - [x] Build launcher that opens windows from manifest, not hardcoded mock content.
 - [x] Add app lifecycle hooks (`mount`, `suspend`, `resume`, `terminate`).
 - [x] Add app crash boundary and restart UX.
+- [x] Introduce UI App SDK contract (`src/app-sdk`) with manifest validator, scoped kernel client, and theme client.
+- [x] Add component-app runtime adapter (`entrypoint.kind = component`) for Web Component apps.
 
 ## Auth + Session UX
 - [x] Build desktop-style login screen (username/password) that exchanges for short-lived session token.
@@ -57,6 +59,8 @@
 - [x] Wire Chat app to live gateway flows (history load, send path, streaming responses).
 - [x] Render assistant messages as sanitized Markdown.
 - [x] Add structured tool call/result cards with tool-specific output views.
+- [x] Migrate Chat to SDK component runtime (`gsv-chat-app`) while preserving behavior.
+- [x] Build real Control app config panel (`sys.config.get`/`sys.config.set`) with filter + edit workflow.
 - [x] Hook UI to real gateway-os websocket client.
 - [ ] Replace mock kernel status with live connection/session/process indicators.
 - [ ] Add first real apps: Chat, Shell, Process Monitor, Files.

@@ -42,6 +42,7 @@ function applyThemeTokens(shellNode: HTMLElement, themeId: ThemeId): void {
   const tokens = THEME_TOKENS[themeId];
   for (const tokenName of THEME_TOKEN_KEYS) {
     shellNode.style.setProperty(`--${tokenName}`, tokens[tokenName]);
+    shellNode.style.setProperty(`--gsv-${tokenName}`, tokens[tokenName]);
   }
 }
 
@@ -56,6 +57,7 @@ export function createThemeService(): ThemeService {
         applyThemeTokens(shellNode, themeId);
         themeSelectNode.value = themeId;
         persistThemePreference(themeId);
+        window.dispatchEvent(new CustomEvent("gsv:theme-change", { detail: { themeId } }));
       };
 
       const onThemeChange = (): void => {

@@ -66,6 +66,15 @@ body.is-dragging-window {
   --icon-bg-hover: rgba(150, 196, 226, 0.16);
   --icon-shadow: none;
 
+  --control-bg: color-mix(in srgb, var(--surface-0) 72%, transparent);
+  --control-border: var(--line-soft);
+  --control-border-focus: color-mix(in srgb, var(--accent) 62%, var(--line-strong));
+  --control-focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+  --control-text: var(--text-main);
+  --control-placeholder: color-mix(in srgb, var(--text-muted) 92%, transparent);
+  --control-disabled-bg: color-mix(in srgb, var(--surface-0) 52%, transparent);
+  --control-disabled-text: color-mix(in srgb, var(--text-muted) 88%, transparent);
+
   position: relative;
   width: 100%;
   height: 100%;
@@ -247,46 +256,67 @@ body.is-dragging-window {
 
 .session-lock-btn {
   height: 28px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--surface-2) 86%, transparent);
-  color: var(--text-main);
+  background: var(--control-bg);
+  color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.74rem;
   font-weight: 600;
   padding: 0 10px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
 .session-lock-btn:disabled {
-  opacity: 0.55;
+  background: var(--control-disabled-bg);
+  color: var(--control-disabled-text);
+  border-color: color-mix(in srgb, var(--control-border) 80%, transparent);
+  opacity: 0.7;
 }
 
 .theme-picker {
   height: 28px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--surface-2) 86%, transparent);
-  color: var(--text-main);
+  background: var(--control-bg);
+  color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.76rem;
   font-weight: 600;
-  padding: 0 8px;
+  padding: 0 30px 0 8px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--control-text) 50%), linear-gradient(135deg, var(--control-text) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
 }
 
 .windows-toggle {
   height: 28px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--surface-2) 86%, transparent);
-  color: var(--text-main);
+  background: var(--control-bg);
+  color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.74rem;
   font-weight: 600;
   padding: 0 10px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
+.session-lock-btn:hover,
+.theme-picker:hover,
 .windows-toggle:hover {
-  border-color: var(--line-strong);
+  border-color: var(--control-border-focus);
+}
+
+.session-lock-btn:focus-visible,
+.theme-picker:focus-visible,
+.windows-toggle:focus-visible {
+  outline: none;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
 }
 
 .windows-panel {
@@ -318,18 +348,25 @@ body.is-dragging-window {
 
 .windows-list button {
   width: 100%;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--surface-0) 72%, transparent);
-  color: var(--text-main);
+  background: var(--control-bg);
+  color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.76rem;
   text-align: left;
   padding: 7px 9px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
 .windows-list button:hover {
-  border-color: var(--line-strong);
+  border-color: var(--control-border-focus);
+}
+
+.windows-list button:focus-visible {
+  outline: none;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
 }
 
 .workspace {
@@ -381,13 +418,29 @@ body.is-dragging-window {
 
 .session-form input {
   width: 100%;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-0) 70%, transparent);
-  color: var(--text-main);
+  background: var(--control-bg);
+  color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.82rem;
   padding: 8px 10px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.session-form input::placeholder {
+  color: var(--control-placeholder);
+}
+
+.session-form input:focus-visible {
+  outline: none;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
+}
+
+.session-form input:disabled {
+  background: var(--control-disabled-bg);
+  color: var(--control-disabled-text);
 }
 
 .session-error {
@@ -711,6 +764,293 @@ body.is-dragging-window {
   padding: 3px 8px;
 }
 
+.config-app {
+  display: grid;
+  gap: 14px;
+}
+
+.config-top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.config-card,
+.config-advanced {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-0) 64%, transparent);
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.config-card header h2,
+.config-advanced header h2 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.config-card header p,
+.config-advanced header p {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+}
+
+.config-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.config-field {
+  border: 1px solid color-mix(in srgb, var(--line-soft) 64%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-1) 44%, transparent);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.config-field h3 {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.config-field p {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.config-checkbox {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem !important;
+  color: var(--text-main) !important;
+}
+
+.config-checkbox input {
+  appearance: none;
+  width: 16px !important;
+  height: 16px;
+  margin: 0;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  background: var(--control-bg);
+  position: relative;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.config-checkbox input:checked {
+  border-color: var(--control-border-focus);
+  background: color-mix(in srgb, var(--accent) 66%, var(--surface-0));
+}
+
+.config-checkbox input:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid color-mix(in srgb, var(--text-main) 94%, white);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.config-checkbox input:focus-visible {
+  outline: none;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
+}
+
+.config-checkbox input:disabled {
+  background: var(--control-disabled-bg);
+  border-color: color-mix(in srgb, var(--control-border) 80%, transparent);
+  opacity: 0.75;
+}
+
+.config-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.config-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.config-toolbar label,
+.config-set-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.config-toolbar input,
+.config-set-form input,
+.config-set-form textarea,
+.config-field input,
+.config-field textarea,
+.config-field select {
+  width: 100%;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  background: var(--control-bg);
+  color: var(--control-text);
+  font-family: var(--font-ui);
+  font-size: 0.84rem;
+  padding: 8px 10px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.config-toolbar input::placeholder,
+.config-set-form input::placeholder,
+.config-set-form textarea::placeholder,
+.config-field input::placeholder,
+.config-field textarea::placeholder {
+  color: var(--control-placeholder);
+}
+
+.config-toolbar input:focus-visible,
+.config-set-form input:focus-visible,
+.config-set-form textarea:focus-visible,
+.config-field input:focus-visible,
+.config-field textarea:focus-visible,
+.config-field select:focus-visible {
+  outline: none;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
+}
+
+.config-toolbar input:disabled,
+.config-set-form input:disabled,
+.config-set-form textarea:disabled,
+.config-field input:disabled,
+.config-field textarea:disabled,
+.config-field select:disabled {
+  background: var(--control-disabled-bg);
+  color: var(--control-disabled-text);
+  border-color: color-mix(in srgb, var(--control-border) 80%, transparent);
+}
+
+.config-field select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--control-text) 50%), linear-gradient(135deg, var(--control-text) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.config-set-form textarea {
+  resize: vertical;
+  min-height: 90px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.config-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-toggle input {
+  width: auto;
+  margin: 0;
+}
+
+.config-status {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-soft);
+  font-size: 0.78rem;
+}
+
+.config-status.is-ok {
+  color: color-mix(in srgb, var(--ok) 78%, var(--text-main));
+  border-color: color-mix(in srgb, var(--ok) 36%, var(--line-soft));
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.config-status.is-error {
+  color: color-mix(in srgb, var(--danger) 84%, var(--text-main));
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--line-soft));
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.config-list {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-0) 56%, transparent);
+  min-height: 160px;
+  max-height: 300px;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+}
+
+.config-empty {
+  margin: 12px;
+}
+
+.config-row {
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line-soft) 68%, transparent);
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.config-row:last-child {
+  border-bottom: 0;
+}
+
+.config-row:hover {
+  background: color-mix(in srgb, var(--surface-1) 44%, transparent);
+}
+
+.config-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-1));
+}
+
+.config-row-key {
+  font-family: var(--font-mono);
+  font-size: 0.73rem;
+  color: var(--text-main);
+}
+
+.config-row-value {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.config-set-form {
+  display: grid;
+  gap: 10px;
+}
+
+.config-set-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .runtime-crash {
   max-width: 72ch;
 }
@@ -740,24 +1080,47 @@ body.is-dragging-window {
 }
 
 .runtime-btn {
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-0) 75%, transparent);
-  color: var(--text-main);
+  background: var(--control-bg);
+  color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.74rem;
   font-weight: 600;
   line-height: 1;
   padding: 8px 12px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
 .runtime-btn:hover {
-  border-color: var(--line-strong);
+  border-color: var(--control-border-focus);
 }
 
-.window-content.chat-app-host {
+.runtime-btn:focus-visible {
+  outline: none;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
+}
+
+.runtime-btn:disabled {
+  background: var(--control-disabled-bg);
+  color: var(--control-disabled-text);
+  border-color: color-mix(in srgb, var(--control-border) 80%, transparent);
+  opacity: 0.78;
+}
+
+.window-content.window-content-full-bleed {
   padding: 0;
   overflow: hidden;
+}
+
+.gsv-app-element {
+  display: block;
+  height: 100%;
+}
+
+.gsv-app-element > .app-grid {
+  min-height: 100%;
 }
 
 .chat-app {
@@ -1011,18 +1374,32 @@ body.is-dragging-window {
   min-height: 74px;
   max-height: 180px;
   resize: vertical;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-border);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--surface-0) 70%, transparent);
-  color: var(--text-main);
+  background: var(--control-bg);
+  color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.88rem;
   line-height: 1.45;
   padding: 10px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.chat-composer textarea::placeholder {
+  color: var(--control-placeholder);
+}
+
+.chat-composer textarea:focus-visible {
+  outline: none;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
 }
 
 .chat-composer textarea:disabled {
-  opacity: 0.7;
+  background: var(--control-disabled-bg);
+  color: var(--control-disabled-text);
+  border-color: color-mix(in srgb, var(--control-border) 80%, transparent);
+  opacity: 0.75;
 }
 
 .mock-grid h2 {
@@ -1151,6 +1528,25 @@ body.is-dragging-window {
 
   .chat-composer {
     grid-template-columns: 1fr;
+  }
+
+  .config-toolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .config-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .config-card-actions,
+  .config-top-actions,
+  .config-set-actions {
+    flex-wrap: wrap;
+  }
+
+  .config-toggle {
+    justify-content: flex-start;
   }
 
   .tool-meta-row {

@@ -59,6 +59,14 @@ export const THEME_TOKEN_KEYS = [
   "icon-bg",
   "icon-bg-hover",
   "icon-shadow",
+  "control-bg",
+  "control-border",
+  "control-border-focus",
+  "control-focus-ring",
+  "control-text",
+  "control-placeholder",
+  "control-disabled-bg",
+  "control-disabled-text",
 ] as const;
 
 export type ThemeTokenKey = (typeof THEME_TOKEN_KEYS)[number];
@@ -76,6 +84,14 @@ const SHARED_TOKENS = {
   "icon-glyph-size": "22px",
   "icon-label-size": "0.74rem",
   "icon-shadow": "none",
+  "control-bg": "color-mix(in srgb, var(--surface-0) 72%, transparent)",
+  "control-border": "var(--line-soft)",
+  "control-border-focus": "color-mix(in srgb, var(--accent) 62%, var(--line-strong))",
+  "control-focus-ring": "0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent)",
+  "control-text": "var(--text-main)",
+  "control-placeholder": "color-mix(in srgb, var(--text-muted) 92%, transparent)",
+  "control-disabled-bg": "color-mix(in srgb, var(--surface-0) 52%, transparent)",
+  "control-disabled-text": "color-mix(in srgb, var(--text-muted) 88%, transparent)",
 } as const;
 
 function defineThemeTokens(tokens: ThemeTokens): ThemeTokens {

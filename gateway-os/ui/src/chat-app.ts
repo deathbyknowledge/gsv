@@ -2,7 +2,8 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import type { AppInstance, AppRuntimeContext } from "./app-runtime";
-import type { GatewayClient, ProcHistoryResult } from "./gateway-client";
+import type { ProcHistoryResult } from "./gateway-client";
+import type { AppElementContext, AppKernelClient, GsvAppElement } from "./app-sdk";
 
 type ChatRole = "user" | "assistant" | "system";
 
@@ -760,7 +761,7 @@ function mapHistoryRole(role: string): ChatRole {
   return "system";
 }
 
-export function createChatAppInstance(client: GatewayClient): AppInstance {
+function createChatAppController(client: AppKernelClient): AppInstance {
   let composerInput: HTMLTextAreaElement | null = null;
   let composerButton: HTMLButtonElement | null = null;
   let logNode: HTMLElement | null = null;
@@ -1024,7 +1025,6 @@ export function createChatAppInstance(client: GatewayClient): AppInstance {
 
   return {
     mount: (container, _context: AppRuntimeContext) => {
-      container.classList.add("chat-app-host");
       container.innerHTML = `
         <section class="chat-app">
           <section class="chat-log" data-chat-log>
@@ -1150,4 +1150,41 @@ export function createChatAppInstance(client: GatewayClient): AppInstance {
       composeNode = null;
     },
   };
+}
+
+class GsvChatAppElement extends HTMLElement implements GsvAppElement {
+  private controller: AppInstance | null = null;
+  readonly gsvFullBleed = true;
+
+  async gsvMount(context: AppElementContext): Promise<void> {
+    await this.gsvUnmount();
+
+    const controller = createChatAppController(context.kernel);
+    this.controller = controller;
+    await controller.mount(this, context);
+  }
+
+  async gsvSuspend(): Promise<void> {
+    await this.controller?.suspend?.();
+  }
+
+  async gsvResume(): Promise<void> {
+    await this.controller?.resume?.();
+  }
+
+  async gsvUnmount(): Promise<void> {
+    if (!this.controller) {
+      return;
+    }
+
+    const controller = this.controller;
+    this.controller = null;
+    await controller.terminate?.();
+  }
+}
+
+export function ensureChatAppRegistered(): void {
+  if (!customElements.get("gsv-chat-app")) {
+    customElements.define("gsv-chat-app", GsvChatAppElement);
+  }
 }

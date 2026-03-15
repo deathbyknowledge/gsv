@@ -227,7 +227,7 @@ export class GatewayClient {
   }
 
   async sendMessage(message: string, pid?: string): Promise<ProcSendResult> {
-    const result = (await this.request("proc.send", {
+    const result = (await this.call("proc.send", {
       message,
       ...(pid ? { pid } : {}),
     })) as ProcSendResult;
@@ -235,7 +235,7 @@ export class GatewayClient {
   }
 
   async getHistory(limit = 50, pid?: string): Promise<ProcHistoryResult> {
-    const result = (await this.request("proc.history", {
+    const result = (await this.call("proc.history", {
       limit,
       ...(pid ? { pid } : {}),
     })) as ProcHistoryResult;
@@ -243,7 +243,7 @@ export class GatewayClient {
   }
 
   async createUserSessionToken(expiresAt: number): Promise<UserSessionToken> {
-    const raw = (await this.request("sys.token.create", {
+    const raw = (await this.call("sys.token.create", {
       kind: "user",
       label: "gsv-ui-session",
       allowedRole: "user",
@@ -272,12 +272,16 @@ export class GatewayClient {
   }
 
   async revokeToken(tokenId: string, reason = "ui session lock"): Promise<boolean> {
-    const raw = (await this.request("sys.token.revoke", {
+    const raw = (await this.call("sys.token.revoke", {
       tokenId,
       reason,
     })) as { revoked?: unknown };
 
     return raw.revoked === true;
+  }
+
+  async call<T = unknown>(call: string, args: unknown = {}): Promise<T> {
+    return (await this.request(call, args)) as T;
   }
 
   private setStatus(next: GatewayClientStatus): void {
