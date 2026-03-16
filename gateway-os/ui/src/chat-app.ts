@@ -28,12 +28,17 @@ type ToolResultSummary = {
   syscall?: string | null;
 };
 
+type AssistantRunState = "streaming" | "complete" | "error";
+
 type AssistantRunView = {
   runId: string | null;
   rowNode: HTMLElement;
+  statusNode: HTMLElement;
   markdownNode: HTMLElement;
   toolListNode: HTMLElement;
   markdownSource: string;
+  state: AssistantRunState;
+  timestampMs: number;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -76,6 +81,31 @@ function prettyJson(value: unknown): string {
   }
 }
 
+function formatMessageContent(value: unknown): string {
+  return typeof value === "string" ? value : prettyJson(value);
+}
+
+function normalizeTimestampMs(value: unknown): number | null {
+  const numeric = asNumber(value);
+  if (numeric === null) {
+    return null;
+  }
+
+  // Accept seconds values and normalize to milliseconds.
+  if (numeric > 0 && numeric < 1_000_000_000_000) {
+    return Math.floor(numeric * 1_000);
+  }
+
+  return Math.floor(numeric);
+}
+
+function formatTimestamp(ms: number): string {
+  const date = new Date(ms);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
 function maybeParseJsonString(value: string): unknown {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -109,32 +139,55 @@ function toMarkdownHtml(markdown: string): string {
   return DOMPurify.sanitize(html);
 }
 
-function createTextRow(role: ChatRole, text: string): HTMLElement {
+function createTextRow(
+  role: ChatRole,
+  text: string,
+  options?: {
+    timestampMs?: number;
+  },
+): HTMLElement {
   const row = document.createElement("article");
   row.className = `chat-row chat-row-${role}`;
+
+  const footNode = document.createElement("div");
+  footNode.className = "chat-row-foot";
 
   const roleNode = document.createElement("div");
   roleNode.className = "chat-row-role";
   roleNode.textContent = role;
 
+  const timestampMs = options?.timestampMs ?? Date.now();
+  const metaNode = document.createElement("div");
+  metaNode.className = "chat-row-meta";
+  metaNode.textContent = formatTimestamp(timestampMs);
+
   const textNode = document.createElement("pre");
   textNode.className = "chat-row-text";
   textNode.textContent = text;
 
-  row.append(roleNode, textNode);
+  if (role === "system") {
+    footNode.append(roleNode, metaNode);
+  } else {
+    footNode.append(metaNode);
+  }
+
+  row.append(textNode, footNode);
   return row;
 }
 
-function createAssistantRunRow(runId: string | null): AssistantRunView {
+function createAssistantRunRow(runId: string | null, timestampMs = Date.now()): AssistantRunView {
   const rowNode = document.createElement("article");
-  rowNode.className = "chat-row chat-row-assistant";
+  rowNode.className = "chat-row chat-row-assistant is-streaming";
   if (runId) {
     rowNode.dataset.runId = runId;
   }
 
-  const roleNode = document.createElement("div");
-  roleNode.className = "chat-row-role";
-  roleNode.textContent = "assistant";
+  const footNode = document.createElement("div");
+  footNode.className = "chat-row-foot";
+
+  const statusNode = document.createElement("div");
+  statusNode.className = "chat-run-status";
+  statusNode.textContent = `${formatTimestamp(timestampMs)} · running`;
 
   const bodyNode = document.createElement("div");
   bodyNode.className = "chat-row-body";
@@ -145,25 +198,55 @@ function createAssistantRunRow(runId: string | null): AssistantRunView {
   const toolListNode = document.createElement("div");
   toolListNode.className = "tool-list";
 
+  footNode.append(statusNode);
   bodyNode.append(markdownNode, toolListNode);
-  rowNode.append(roleNode, bodyNode);
+  rowNode.append(bodyNode, footNode);
 
   return {
     runId,
     rowNode,
+    statusNode,
     markdownNode,
     toolListNode,
     markdownSource: "",
+    state: "streaming",
+    timestampMs,
   };
 }
 
 function setRunMarkdown(run: AssistantRunView, markdown: string): void {
   run.markdownSource = markdown;
   run.markdownNode.innerHTML = toMarkdownHtml(run.markdownSource);
+  run.rowNode.classList.toggle("has-markdown", run.markdownSource.trim().length > 0);
 }
 
 function appendRunMarkdown(run: AssistantRunView, chunk: string): void {
   setRunMarkdown(run, `${run.markdownSource}${chunk}`);
+}
+
+function setRunState(run: AssistantRunView, state: AssistantRunState, detail?: string): void {
+  run.state = state;
+  run.rowNode.classList.toggle("is-streaming", state === "streaming");
+  run.rowNode.classList.toggle("is-complete", state === "complete");
+  run.rowNode.classList.toggle("is-error", state === "error");
+
+  const prefix = formatTimestamp(run.timestampMs);
+  if (detail) {
+    run.statusNode.textContent = `${prefix} · ${detail}`;
+    return;
+  }
+
+  if (state === "streaming") {
+    run.statusNode.textContent = `${prefix} · running`;
+    return;
+  }
+
+  if (state === "error") {
+    run.statusNode.textContent = `${prefix} · error`;
+    return;
+  }
+
+  run.statusNode.textContent = run.toolListNode.childElementCount > 0 ? `${prefix} · done + tools` : `${prefix} · done`;
 }
 
 function addMetaRow(parent: HTMLElement, label: string, value: unknown): void {
@@ -545,6 +628,298 @@ function isToolKind(
   return toolName === expectedName || syscall === expectedSyscall;
 }
 
+function inferToolSyscall(toolName: string, syscall: string | null | undefined): string | null {
+  if (syscall && syscall.length > 0) {
+    return syscall;
+  }
+
+  switch (toolName) {
+    case "Read":
+      return "fs.read";
+    case "Search":
+      return "fs.search";
+    case "Shell":
+      return "shell.exec";
+    case "Write":
+      return "fs.write";
+    case "Edit":
+      return "fs.edit";
+    case "Delete":
+      return "fs.delete";
+    default:
+      return null;
+  }
+}
+
+type ToolCardPresentation = {
+  iconKind: "shell" | "read" | "search" | "write" | "edit" | "delete" | "generic";
+  title: string;
+  context?: string;
+  targetKind: "gsv" | "device";
+  targetLabel: string;
+};
+
+function truncateInline(value: string, maxLength = 80): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, maxLength)}...`;
+}
+
+function truncateBlock(value: string, maxLength = 1_800): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}\n...[truncated]`;
+}
+
+function basenamePath(path: string): string {
+  const normalized = path.replace(/\/+$/g, "");
+  if (!normalized) {
+    return path;
+  }
+  const segments = normalized.split("/");
+  return segments[segments.length - 1] || normalized;
+}
+
+function toDomId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
+function resolveToolTarget(args: unknown): { kind: "gsv" | "device"; label: string } {
+  const record = asRecord(args);
+  const raw = asString(record?.target)?.trim() ?? "";
+
+  if (!raw || raw === "gsv" || raw === "gateway" || raw === "<init>" || raw === "init" || raw === "local") {
+    return { kind: "gsv", label: "gsv" };
+  }
+
+  if (raw.startsWith("device:")) {
+    return { kind: "device", label: raw.slice("device:".length) || raw };
+  }
+
+  if (raw.startsWith("driver:")) {
+    return { kind: "device", label: raw.slice("driver:".length) || raw };
+  }
+
+  return { kind: "device", label: raw };
+}
+
+function describeToolCard(toolName: string, args: unknown, syscall?: string | null): ToolCardPresentation {
+  const record = asRecord(args);
+  const path = asString(record?.path);
+  const target = resolveToolTarget(args);
+
+  if (isToolKind(toolName, syscall, "Shell", "shell.exec")) {
+    const command = asString(record?.command);
+    const workdir = asString(record?.workdir);
+
+    const contextParts: string[] = [];
+    if (workdir) contextParts.push(`workdir ${truncateInline(workdir, 36)}`);
+
+    return {
+      iconKind: "shell",
+      title: command ? `Run ${truncateInline(command)}` : "Run command",
+      context: contextParts.join(" · ") || undefined,
+      targetKind: target.kind,
+      targetLabel: target.label,
+    };
+  }
+
+  if (isToolKind(toolName, syscall, "Read", "fs.read")) {
+    return {
+      iconKind: "read",
+      title: path ? `Read ${basenamePath(path)}` : "Read file",
+      targetKind: target.kind,
+      targetLabel: target.label,
+    };
+  }
+
+  if (isToolKind(toolName, syscall, "Search", "fs.search")) {
+    const pattern = asString(record?.pattern);
+    return {
+      iconKind: "search",
+      title: pattern ? `Search ${truncateInline(pattern, 42)}` : "Search workspace",
+      context: path ? truncateInline(path, 48) : undefined,
+      targetKind: target.kind,
+      targetLabel: target.label,
+    };
+  }
+
+  if (isToolKind(toolName, syscall, "Write", "fs.write")) {
+    return {
+      iconKind: "write",
+      title: path ? `Write ${basenamePath(path)}` : "Write file",
+      targetKind: target.kind,
+      targetLabel: target.label,
+    };
+  }
+
+  if (isToolKind(toolName, syscall, "Edit", "fs.edit")) {
+    return {
+      iconKind: "edit",
+      title: path ? `Edit ${basenamePath(path)}` : "Edit file",
+      targetKind: target.kind,
+      targetLabel: target.label,
+    };
+  }
+
+  if (isToolKind(toolName, syscall, "Delete", "fs.delete")) {
+    return {
+      iconKind: "delete",
+      title: path ? `Delete ${basenamePath(path)}` : "Delete file",
+      targetKind: target.kind,
+      targetLabel: target.label,
+    };
+  }
+
+  return {
+    iconKind: "generic",
+    title: toolName,
+    targetKind: target.kind,
+    targetLabel: target.label,
+  };
+}
+
+function createToolPreviewLine(text: string, className = "tool-preview-line"): HTMLElement {
+  const line = document.createElement("p");
+  line.className = className;
+  line.textContent = text;
+  return line;
+}
+
+function createToolPreviewPre(text: string, className = "tool-preview-pre"): HTMLElement {
+  const pre = document.createElement("pre");
+  pre.className = className;
+  pre.textContent = truncateBlock(text);
+  return pre;
+}
+
+function renderToolResultPreview(
+  toolName: string,
+  syscall: string | null | undefined,
+  output: unknown,
+  ok: boolean,
+  error?: string,
+): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "tool-preview-content";
+
+  const normalized = normalizeToolOutput(output);
+  const record = asRecord(normalized);
+  const recordError = asString(record?.error);
+
+  if (!ok || record?.ok === false) {
+    const message = error ?? recordError ?? "Tool call failed.";
+    wrapper.appendChild(createToolPreviewLine(message, "tool-preview-line tool-preview-line-error"));
+    return wrapper;
+  }
+
+  if (isToolKind(toolName, syscall, "Shell", "shell.exec")) {
+    const stdout = asString(record?.stdout);
+    const stderr = asString(record?.stderr);
+    if (stdout && stdout.trim().length > 0) {
+      wrapper.appendChild(createToolPreviewPre(stdout));
+    }
+    if (stderr && stderr.trim().length > 0) {
+      wrapper.appendChild(createToolPreviewPre(stderr, "tool-preview-pre tool-preview-pre-error"));
+    }
+    if ((!stdout || stdout.trim().length === 0) && (!stderr || stderr.trim().length === 0)) {
+      wrapper.appendChild(createToolPreviewLine("Command completed."));
+    }
+    return wrapper;
+  }
+
+  if (isToolKind(toolName, syscall, "Read", "fs.read")) {
+    const directories = Array.isArray(record?.directories) ? record.directories : [];
+    const files = Array.isArray(record?.files) ? record.files : [];
+    if (directories.length > 0 || files.length > 0) {
+      wrapper.appendChild(createToolPreviewLine(`Listed ${directories.length} dirs and ${files.length} files.`));
+      const names = [
+        ...directories.slice(0, 8).map((value) => `dir: ${safeText(value)}`),
+        ...files.slice(0, 8).map((value) => `file: ${safeText(value)}`),
+      ];
+      if (names.length > 0) {
+        wrapper.appendChild(createToolPreviewPre(names.join("\n")));
+      }
+      return wrapper;
+    }
+
+    if (typeof record?.content === "string") {
+      wrapper.appendChild(createToolPreviewPre(record.content));
+      return wrapper;
+    }
+
+    if (Array.isArray(record?.content)) {
+      const textParts = record.content
+        .map((item) => {
+          const block = asRecord(item);
+          if (!block) return "";
+          if (block.type === "text" && typeof block.text === "string") {
+            return block.text;
+          }
+          return "";
+        })
+        .filter((entry) => entry.length > 0);
+      if (textParts.length > 0) {
+        wrapper.appendChild(createToolPreviewPre(textParts.join("\n")));
+        return wrapper;
+      }
+    }
+
+    wrapper.appendChild(createToolPreviewLine("Read completed."));
+    return wrapper;
+  }
+
+  if (isToolKind(toolName, syscall, "Search", "fs.search")) {
+    const matches = Array.isArray(record?.matches) ? record.matches : [];
+    const count = asNumber(record?.count) ?? matches.length;
+    wrapper.appendChild(createToolPreviewLine(`${count} matches.`));
+    if (matches.length > 0) {
+      const lines = matches
+        .slice(0, 10)
+        .map((item) => {
+          const match = asRecord(item);
+          if (!match) return safeText(item);
+          const matchPath = safeText(match.path);
+          const line = safeText(match.line);
+          const content = safeText(match.content);
+          return `${basenamePath(matchPath)}:${line}: ${content}`;
+        });
+      wrapper.appendChild(createToolPreviewPre(lines.join("\n")));
+    }
+    return wrapper;
+  }
+
+  if (isToolKind(toolName, syscall, "Write", "fs.write")) {
+    const bytes = asNumber(record?.size);
+    wrapper.appendChild(createToolPreviewLine(bytes === null ? "Write completed." : `Wrote ${bytes} bytes.`));
+    return wrapper;
+  }
+
+  if (isToolKind(toolName, syscall, "Edit", "fs.edit")) {
+    const replacements = asNumber(record?.replacements);
+    wrapper.appendChild(
+      createToolPreviewLine(replacements === null ? "Edit completed." : `${replacements} replacement${replacements === 1 ? "" : "s"}.`),
+    );
+    return wrapper;
+  }
+
+  if (isToolKind(toolName, syscall, "Delete", "fs.delete")) {
+    wrapper.appendChild(createToolPreviewLine("Delete completed."));
+    return wrapper;
+  }
+
+  if (typeof normalized === "string") {
+    wrapper.appendChild(createToolPreviewPre(normalized));
+    return wrapper;
+  }
+
+  wrapper.appendChild(createToolPreviewPre(prettyJson(normalized)));
+  return wrapper;
+}
+
 function renderToolResultOutput(
   toolName: string,
   syscall: string | null | undefined,
@@ -576,6 +951,10 @@ function renderToolResultOutput(
 }
 
 function createToolCard(toolName: string, callId: string, args: unknown, syscall?: string | null): HTMLElement {
+  const presentation = describeToolCard(toolName, args, syscall);
+  const detailsId = `tool-details-${toDomId(callId)}`;
+  const resolvedSyscall = inferToolSyscall(toolName, syscall);
+
   const card = document.createElement("article");
   card.className = "tool-card is-pending";
   card.dataset.callId = callId;
@@ -583,19 +962,65 @@ function createToolCard(toolName: string, callId: string, args: unknown, syscall
   const header = document.createElement("header");
   header.className = "tool-card-head";
 
+  const lead = document.createElement("div");
+  lead.className = "tool-card-lead";
+
+  const icon = document.createElement("span");
+  icon.className = `tool-kind-icon tool-kind-${presentation.iconKind}`;
+  icon.setAttribute("aria-hidden", "true");
+
   const title = document.createElement("h4");
   title.className = "tool-card-title";
-  title.textContent = toolName;
+  title.textContent = presentation.title;
+
+  const meta = document.createElement("div");
+  meta.className = "tool-card-meta";
+
+  const target = document.createElement("span");
+  target.className = `tool-target-badge ${presentation.targetKind === "gsv" ? "is-gsv" : "is-device"}`;
+  target.setAttribute(
+    "title",
+    presentation.targetKind === "gsv"
+      ? "Runs on GSV host"
+      : `Runs on device "${presentation.targetLabel}"`,
+  );
+  target.setAttribute("aria-label", target.getAttribute("title") ?? "Tool target");
 
   const status = document.createElement("span");
-  status.className = "tool-card-status";
-  status.textContent = "running";
+  status.className = "tool-status-badge is-running";
+  status.setAttribute("title", "Running");
+  status.setAttribute("aria-label", "Running");
 
-  header.append(title, status);
+  const detailsToggle = document.createElement("button");
+  detailsToggle.type = "button";
+  detailsToggle.className = "tool-meta-icon-btn tool-details-toggle";
+  detailsToggle.setAttribute("title", "Show details");
+  detailsToggle.setAttribute("aria-label", "Show details");
+  detailsToggle.setAttribute("aria-expanded", "false");
+  detailsToggle.setAttribute("aria-controls", detailsId);
+
+  lead.append(icon, title);
+  meta.append(target, status, detailsToggle);
+  header.append(lead, meta);
+
+  const contextNode = document.createElement("p");
+  contextNode.className = "tool-card-context";
+  contextNode.textContent = presentation.context ?? "";
+  contextNode.hidden = !presentation.context;
+
+  const previewNode = document.createElement("div");
+  previewNode.className = "tool-preview";
+  previewNode.appendChild(createToolPreviewLine("Running..."));
+
+  const detailsBody = document.createElement("div");
+  detailsBody.className = "tool-details-body";
+  detailsBody.id = detailsId;
+  detailsBody.hidden = true;
 
   const syscallNode = document.createElement("p");
   syscallNode.className = "tool-card-subtle";
-  syscallNode.textContent = syscall ? `syscall: ${syscall}` : "";
+  syscallNode.dataset.syscallInfo = "true";
+  syscallNode.textContent = resolvedSyscall ? `syscall: ${resolvedSyscall}` : "syscall: unknown";
 
   const inputNode = renderToolCallInput(toolName, args);
   inputNode.classList.add("tool-input");
@@ -604,7 +1029,22 @@ function createToolCard(toolName: string, callId: string, args: unknown, syscall
   resultNode.className = "tool-result";
   resultNode.hidden = true;
 
-  card.append(header, syscallNode, inputNode, resultNode);
+  const setDetailsOpen = (open: boolean): void => {
+    detailsBody.hidden = !open;
+    detailsToggle.classList.toggle("is-open", open);
+    detailsToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    detailsToggle.setAttribute("title", open ? "Hide details" : "Show details");
+    detailsToggle.setAttribute("aria-label", open ? "Hide details" : "Show details");
+  };
+
+  detailsToggle.addEventListener("click", () => {
+    setDetailsOpen(detailsBody.hidden);
+  });
+
+  detailsBody.append(syscallNode, inputNode, resultNode);
+  setDetailsOpen(false);
+
+  card.append(header, contextNode, previewNode, detailsBody);
   return card;
 }
 
@@ -619,20 +1059,49 @@ function applyToolResult(card: HTMLElement, result: ToolResultSummary): void {
   card.classList.remove("is-pending", "is-ok", "is-error");
   card.classList.add(effectiveOk ? "is-ok" : "is-error");
 
-  const statusNode = card.querySelector<HTMLElement>(".tool-card-status");
+  const statusNode = card.querySelector<HTMLElement>(".tool-status-badge");
   if (statusNode) {
-    if (result.toolName === "Shell" && outputRecord?.backgrounded === true) {
-      statusNode.textContent = "backgrounded";
-    } else if (result.toolName === "Shell" && exitCode !== null) {
-      statusNode.textContent = `exit ${exitCode}`;
-    } else {
-      statusNode.textContent = effectiveOk ? "done" : "error";
-    }
+    const statusTooltip =
+      result.toolName === "Shell" && outputRecord?.backgrounded === true
+        ? "Backgrounded"
+        : result.toolName === "Shell" && exitCode !== null
+          ? `Exit ${exitCode}`
+          : effectiveOk
+            ? "Done"
+            : "Error";
+    statusNode.classList.remove("is-running", "is-done", "is-error");
+    statusNode.classList.add(effectiveOk ? "is-done" : "is-error");
+    statusNode.setAttribute("title", statusTooltip);
+    statusNode.setAttribute("aria-label", statusTooltip);
   }
 
   const resultNode = card.querySelector<HTMLElement>(".tool-result");
+  const previewNode = card.querySelector<HTMLElement>(".tool-preview");
+  const detailsBody = card.querySelector<HTMLElement>(".tool-details-body");
+  const detailsToggle = card.querySelector<HTMLButtonElement>(".tool-details-toggle");
+  const syscallInfoNode = card.querySelector<HTMLElement>(".tool-card-subtle[data-syscall-info='true']");
   if (!resultNode) {
     return;
+  }
+
+  if (syscallInfoNode) {
+    const resolvedSyscall = inferToolSyscall(result.toolName, result.syscall);
+    if (resolvedSyscall) {
+      syscallInfoNode.textContent = `syscall: ${resolvedSyscall}`;
+    }
+  }
+
+  if (previewNode) {
+    previewNode.innerHTML = "";
+    previewNode.appendChild(
+      renderToolResultPreview(
+        result.toolName,
+        result.syscall,
+        normalizedOutput,
+        effectiveOk,
+        result.error,
+      ),
+    );
   }
 
   resultNode.innerHTML = "";
@@ -650,6 +1119,13 @@ function applyToolResult(card: HTMLElement, result: ToolResultSummary): void {
   }
 
   resultNode.appendChild(renderToolResultOutput(result.toolName, result.syscall, normalizedOutput));
+  if (detailsBody && detailsToggle && !effectiveOk) {
+    detailsBody.hidden = false;
+    detailsToggle.classList.add("is-open");
+    detailsToggle.setAttribute("aria-expanded", "true");
+    detailsToggle.setAttribute("title", "Hide details");
+    detailsToggle.setAttribute("aria-label", "Hide details");
+  }
 }
 
 function parseToolCallSignal(payload: unknown): ToolCallSummary | null {
@@ -668,7 +1144,7 @@ function parseToolCallSignal(payload: unknown): ToolCallSummary | null {
     toolName,
     callId,
     args: record.args,
-    syscall: asString(record.syscall),
+    syscall: inferToolSyscall(toolName, asString(record.syscall)),
   };
 }
 
@@ -689,7 +1165,7 @@ function parseToolResultSignal(payload: unknown): ToolResultSummary | null {
     ok: record.ok === true,
     output: normalizeToolOutput(record.output),
     error: asString(record.error) ?? undefined,
-    syscall: asString(record.syscall),
+    syscall: inferToolSyscall(toolName, asString(record.syscall)),
   };
 }
 
@@ -718,14 +1194,14 @@ function extractAssistantHistory(content: unknown): {
       continue;
     }
 
-    const callId = asString(item.id) ?? asString(item.callId) ?? `hist-call-${Date.now()}-${index}`;
-    const args: unknown = item.arguments ?? item.args ?? {};
-    toolCalls.push({
-      toolName,
-      callId,
-      args,
-      syscall: asString(item.syscall),
-    });
+      const callId = asString(item.id) ?? asString(item.callId) ?? `hist-call-${Date.now()}-${index}`;
+      const args: unknown = item.arguments ?? item.args ?? {};
+      toolCalls.push({
+        toolName,
+        callId,
+        args,
+        syscall: inferToolSyscall(toolName, asString(item.syscall)),
+      });
   }
 
   return { text, toolCalls };
@@ -751,7 +1227,7 @@ function extractToolResultHistory(content: unknown): ToolResultSummary | null {
     ok,
     output: normalizeToolOutput(record.output),
     error: asString(record.error) ?? undefined,
-    syscall: asString(record.syscall),
+    syscall: inferToolSyscall(toolName, asString(record.syscall)),
   };
 }
 
@@ -774,13 +1250,42 @@ function createChatAppController(client: AppKernelClient): AppInstance {
 
   const runViewsByRunId = new Map<string, AssistantRunView>();
   const toolCardsByCallId = new Map<string, HTMLElement>();
+  const pendingRunIds = new Set<string>();
   let lastAssistantRun: AssistantRunView | null = null;
 
   const cleanup = new Set<() => void>();
-
   const scrollLogToBottom = (): void => {
     if (!logNode) return;
     logNode.scrollTop = logNode.scrollHeight;
+  };
+
+  const isNearBottom = (thresholdPx = 96): boolean => {
+    if (!logNode) {
+      return true;
+    }
+    const distance = logNode.scrollHeight - (logNode.scrollTop + logNode.clientHeight);
+    return distance <= thresholdPx;
+  };
+
+  const maybeScrollToBottom = (shouldStick: boolean): void => {
+    if (!shouldStick) {
+      return;
+    }
+    scrollLogToBottom();
+  };
+
+  const updateComposerState = (status: ChatStatus): void => {
+    const connected = status.state === "connected";
+    if (composeNode) {
+      composeNode.hidden = !connected;
+    }
+    if (composerInput) {
+      composerInput.disabled = !connected || suspended;
+    }
+    if (composerButton) {
+      composerButton.disabled = !connected || suspended;
+      composerButton.textContent = pendingRunIds.size > 0 ? "Running..." : "Send";
+    }
   };
 
   const appendRowNode = (node: HTMLElement): void => {
@@ -788,27 +1293,29 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       return;
     }
 
+    const shouldStick = isNearBottom();
     logNode.appendChild(node);
-    scrollLogToBottom();
+    maybeScrollToBottom(shouldStick);
   };
 
-  const appendTextRow = (role: ChatRole, text: string): void => {
-    appendRowNode(createTextRow(role, text));
+  const appendTextRow = (role: ChatRole, text: string, timestampMs?: number): void => {
+    appendRowNode(createTextRow(role, text, { timestampMs }));
   };
 
-  const createRun = (runId: string | null): AssistantRunView => {
-    const run = createAssistantRunRow(runId);
+  const createRun = (runId: string | null, timestampMs?: number): AssistantRunView => {
+    const run = createAssistantRunRow(runId, timestampMs);
     appendRowNode(run.rowNode);
 
     if (runId) {
       runViewsByRunId.set(runId, run);
     }
 
+    setRunState(run, "streaming");
     lastAssistantRun = run;
     return run;
   };
 
-  const ensureRun = (runId: string | null): AssistantRunView => {
+  const ensureRun = (runId: string | null, timestampMs?: number): AssistantRunView => {
     if (runId) {
       const existing = runViewsByRunId.get(runId);
       if (existing) {
@@ -816,7 +1323,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       }
     }
 
-    return createRun(runId);
+    return createRun(runId, timestampMs);
   };
 
   const ensureToolCard = (
@@ -833,6 +1340,9 @@ function createChatAppController(client: AppKernelClient): AppInstance {
 
     const card = createToolCard(toolName, callId, args, syscall);
     run.toolListNode.appendChild(card);
+    if (run.state !== "error") {
+      setRunState(run, "streaming", "running tools");
+    }
     toolCardsByCallId.set(callId, card);
     return card;
   };
@@ -845,6 +1355,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     logNode.innerHTML = "";
     runViewsByRunId.clear();
     toolCardsByCallId.clear();
+    pendingRunIds.clear();
     lastAssistantRun = null;
   };
 
@@ -869,10 +1380,12 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     resetTimeline();
 
     for (const entry of history.messages) {
+      const entryTimestampMs = normalizeTimestampMs(entry.timestamp) ?? undefined;
+
       if (entry.role === "assistant") {
         const parsed = extractAssistantHistory(entry.content);
         const syntheticRunId = `hist-run-${historySyntheticRunCounter++}`;
-        const run = createRun(syntheticRunId);
+        const run = createRun(syntheticRunId, entryTimestampMs);
 
         if (parsed.text.trim()) {
           setRunMarkdown(run, parsed.text);
@@ -882,29 +1395,33 @@ function createChatAppController(client: AppKernelClient): AppInstance {
           ensureToolCard(run, toolCall.callId, toolCall.toolName, toolCall.args, toolCall.syscall);
         }
 
+        setRunState(run, "complete");
         continue;
       }
 
       if (entry.role === "toolResult") {
         const parsedResult = extractToolResultHistory(entry.content);
         if (!parsedResult) {
-          appendTextRow("system", prettyJson(entry.content));
+          appendTextRow("system", formatMessageContent(entry.content), entryTimestampMs);
           continue;
         }
 
         let run = lastAssistantRun;
         if (!run) {
-          run = createRun(`hist-run-${historySyntheticRunCounter++}`);
+          run = createRun(`hist-run-${historySyntheticRunCounter++}`, entryTimestampMs);
         }
 
         const callId = parsedResult.callId ?? `hist-result-${historySyntheticRunCounter++}`;
         const card = ensureToolCard(run, callId, parsedResult.toolName, {}, parsedResult.syscall);
         applyToolResult(card, parsedResult);
+        if (run.state !== "error") {
+          setRunState(run, "complete");
+        }
         continue;
       }
 
       const role = mapHistoryRole(entry.role);
-      appendTextRow(role, prettyJson(entry.content));
+      appendTextRow(role, formatMessageContent(entry.content), entryTimestampMs);
     }
 
     if (history.messages.length === 0) {
@@ -912,21 +1429,17 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     }
 
     loadedConnectionId = connectionId;
+    scrollLogToBottom();
+    updateComposerState(client.getStatus());
   };
 
   const applyConnectionStatus = (status: ChatStatus): void => {
     const connected = status.state === "connected";
-    if (composeNode) {
-      composeNode.hidden = !connected;
-    }
-    if (composerInput) {
-      composerInput.disabled = !connected || suspended;
-    }
-    if (composerButton) {
-      composerButton.disabled = !connected || suspended;
-    }
+    updateComposerState(status);
 
     if (!connected && wasConnected) {
+      pendingRunIds.clear();
+      updateComposerState(status);
       appendTextRow("system", "session disconnected");
     }
 
@@ -935,6 +1448,15 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     }
 
     wasConnected = connected;
+  };
+
+  const clearPendingRun = (runId: string | null): void => {
+    if (!runId) {
+      return;
+    }
+    if (pendingRunIds.delete(runId)) {
+      updateComposerState(client.getStatus());
+    }
   };
 
   const onSignal = (signal: string, payload: unknown): void => {
@@ -951,6 +1473,8 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     }
 
     const runId = asString(record.runId);
+    const signalTimestampMs = normalizeTimestampMs(record.timestamp) ?? Date.now();
+    const shouldStick = isNearBottom();
 
     if (signal === "chat.text") {
       const text = asString(record.text) ?? "";
@@ -958,8 +1482,12 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         return;
       }
 
-      const run = ensureRun(runId);
+      const run = ensureRun(runId, signalTimestampMs);
       appendRunMarkdown(run, text);
+      if (run.state !== "error") {
+        setRunState(run, "streaming", "streaming");
+      }
+      maybeScrollToBottom(shouldStick);
       return;
     }
 
@@ -969,8 +1497,12 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         return;
       }
 
-      const run = ensureRun(runId);
+      const run = ensureRun(runId, signalTimestampMs);
       ensureToolCard(run, parsedCall.callId, parsedCall.toolName, parsedCall.args, parsedCall.syscall);
+      if (run.state !== "error") {
+        setRunState(run, "streaming", "running tools");
+      }
+      maybeScrollToBottom(shouldStick);
       return;
     }
 
@@ -984,42 +1516,73 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       let card = toolCardsByCallId.get(targetCallId) ?? null;
 
       if (!card) {
-        const run = ensureRun(runId);
+        const run = ensureRun(runId, signalTimestampMs);
         card = ensureToolCard(run, targetCallId, parsedResult.toolName, {}, parsedResult.syscall);
       }
 
       applyToolResult(card, parsedResult);
+      const run = runId ? runViewsByRunId.get(runId) ?? lastAssistantRun : lastAssistantRun;
+      if (run) {
+        setRunState(run, card.classList.contains("is-error") ? "error" : "streaming", card.classList.contains("is-error") ? "tool error" : "running tools");
+      }
+      maybeScrollToBottom(shouldStick);
       return;
     }
 
     if (signal === "chat.complete") {
-      if (runId) {
-        runViewsByRunId.delete(runId);
-      }
-
       const error = asString(record.error);
       if (error) {
+        const run = runId ? runViewsByRunId.get(runId) ?? null : null;
+        if (run) {
+          setRunState(run, "error");
+        }
+        clearPendingRun(runId);
+        if (runId) {
+          runViewsByRunId.delete(runId);
+        }
         appendTextRow("system", `error: ${error}`);
+        maybeScrollToBottom(shouldStick);
         return;
       }
 
       const finalText = asString(record.text) ?? "";
-      if (!finalText.trim()) {
-        return;
-      }
-
       const run = runId ? runViewsByRunId.get(runId) ?? null : null;
-      if (run && run.markdownSource.trim().length === 0) {
-        setRunMarkdown(run, finalText);
+      if (run) {
+        if (finalText.trim() && run.markdownSource.trim().length === 0) {
+          setRunMarkdown(run, finalText);
+        }
+        if (run.state !== "error") {
+          setRunState(run, "complete");
+        }
+        clearPendingRun(runId);
+        if (runId) {
+          runViewsByRunId.delete(runId);
+        }
+        maybeScrollToBottom(shouldStick);
         return;
       }
 
-      if (!run) {
-        const fallbackRun = ensureRun(runId);
-        if (fallbackRun.markdownSource.trim().length === 0) {
-          setRunMarkdown(fallbackRun, finalText);
+      if (!finalText.trim()) {
+        clearPendingRun(runId);
+        if (runId) {
+          runViewsByRunId.delete(runId);
         }
+        maybeScrollToBottom(shouldStick);
+        return;
       }
+
+      const fallbackRun = ensureRun(runId, signalTimestampMs);
+      if (fallbackRun.markdownSource.trim().length === 0) {
+        setRunMarkdown(fallbackRun, finalText);
+      }
+      if (fallbackRun.state !== "error") {
+        setRunState(fallbackRun, "complete");
+      }
+      clearPendingRun(runId);
+      if (runId) {
+        runViewsByRunId.delete(runId);
+      }
+      maybeScrollToBottom(shouldStick);
     }
   };
 
@@ -1027,12 +1590,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     mount: (container, _context: AppRuntimeContext) => {
       container.innerHTML = `
         <section class="chat-app">
-          <section class="chat-log" data-chat-log>
-            <article class="chat-row chat-row-system">
-              <div class="chat-row-role">system</div>
-              <pre class="chat-row-text">Unlock desktop session to use chat.</pre>
-            </article>
-          </section>
+          <section class="chat-log" data-chat-log></section>
 
           <form class="chat-composer" data-chat-compose hidden>
             <textarea
@@ -1064,6 +1622,8 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       logNode = chatLog;
       composeNode = chatCompose;
 
+      appendTextRow("system", "Unlock desktop session to use chat.");
+
       const onComposeSubmit = async (event: SubmitEvent): Promise<void> => {
         event.preventDefault();
 
@@ -1087,6 +1647,9 @@ function createChatAppController(client: AppKernelClient): AppInstance {
             appendTextRow("system", `send failed: ${result.error}`);
             return;
           }
+
+          pendingRunIds.add(result.runId);
+          updateComposerState(client.getStatus());
 
           if (result.queued) {
             appendTextRow("system", "message queued while process is busy");
@@ -1123,8 +1686,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
 
     suspend: () => {
       suspended = true;
-      if (composerInput) composerInput.disabled = true;
-      if (composerButton) composerButton.disabled = true;
+      updateComposerState(client.getStatus());
     },
 
     resume: () => {
@@ -1137,6 +1699,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       mounted = false;
       runViewsByRunId.clear();
       toolCardsByCallId.clear();
+      pendingRunIds.clear();
       lastAssistantRun = null;
 
       for (const fn of cleanup) {
