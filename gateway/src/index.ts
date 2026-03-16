@@ -97,9 +97,84 @@ export default {
       return stub.fetch(request);
     }
 
-    // Serve media files from R2
-    // /media/{uuid}.{ext}
-    // TODO: either remove or auth this
+    // ── Authenticated R2 access: /fs/{r2-key} ──
+    // Clients obtain a short-lived token via the `fs.authorize` WS RPC,
+    // then use it as a Bearer header here for direct R2 read/write.
+    const fsMatch = url.pathname.match(/^\/fs\/(.+)$/);
+    if (fsMatch && (request.method === "GET" || request.method === "PUT")) {
+      const r2Key = decodeURIComponent(fsMatch[1]);
+
+      // Extract Bearer token
+      const authHeader = request.headers.get("Authorization");
+      const token = authHeader?.startsWith("Bearer ")
+        ? authHeader.slice(7)
+        : null;
+      if (!token) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      // Path traversal guard
+      if (r2Key.includes("..")) {
+        return new Response("Bad Request", { status: 400 });
+      }
+
+      // Verify token against the Gateway DO
+      const stub = env.GATEWAY.get(env.GATEWAY.idFromName("singleton"));
+      const mode = request.method === "GET" ? "read" : "write";
+      const valid = await stub.verifyFsToken(token, r2Key, mode as "read" | "write");
+      if (!valid) {
+        return new Response("Forbidden", { status: 403 });
+      }
+
+      if (request.method === "GET") {
+        const object = await env.STORAGE.get(r2Key);
+        if (!object) {
+          return new Response("Not Found", { status: 404 });
+        }
+        const headers = new Headers();
+        headers.set(
+          "Content-Type",
+          object.httpMetadata?.contentType || "application/octet-stream",
+        );
+        headers.set("Cache-Control", "private, no-cache");
+        return new Response(object.body, { headers });
+      }
+
+      // PUT — write to R2
+      if (!request.body) {
+        return new Response("Body required", { status: 400 });
+      }
+
+      // Enforce 50 MB limit
+      const contentLength = request.headers.get("Content-Length");
+      if (contentLength && parseInt(contentLength, 10) > 50 * 1024 * 1024) {
+        return new Response("Payload Too Large", { status: 413 });
+      }
+
+      // Extract custom metadata from headers (optional)
+      const customMetadata: Record<string, string> = {};
+      const metaHeader = request.headers.get("X-R2-Meta");
+      if (metaHeader) {
+        try {
+          const parsed = JSON.parse(metaHeader);
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "string") customMetadata[k] = v;
+          }
+        } catch { /* ignore malformed metadata */ }
+      }
+
+      await env.STORAGE.put(r2Key, request.body, {
+        httpMetadata: {
+          contentType:
+            request.headers.get("Content-Type") || "application/octet-stream",
+        },
+        customMetadata,
+      });
+
+      return new Response("OK", { status: 200 });
+    }
+
+    // Legacy media endpoint (unauthenticated, to be migrated to /fs/)
     const mediaMatch = url.pathname.match(
       /^\/media\/([a-f0-9-]+\.[a-z0-9]+)$/i,
     );
@@ -114,7 +189,6 @@ export default {
       // Check if expired
       const expiresAt = object.customMetadata?.expiresAt;
       if (expiresAt && parseInt(expiresAt, 10) < Date.now()) {
-        // Clean up expired file
         await env.STORAGE.delete(key);
         return new Response("Expired", { status: 410 });
       }
@@ -125,7 +199,6 @@ export default {
         object.httpMetadata?.contentType || "application/octet-stream",
       );
       headers.set("Cache-Control", "private, max-age=3600");
-      // Allow cross-origin for LLM APIs
       headers.set("Access-Control-Allow-Origin", "*");
 
       return new Response(object.body, { headers });

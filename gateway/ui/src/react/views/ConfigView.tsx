@@ -44,6 +44,15 @@ const MODEL_OPTIONS = [
   { provider: "google", id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
 ];
 
+// Stable fallback so the Zustand selector never creates a new object reference
+// when config is null.  (s.config || {}) would return a fresh {} on every store
+// update, causing ConfigView to re-render on every unrelated event.
+const EMPTY_CONFIG: GsvConfig = {};
+
+type ConfigViewProps = {
+  embedded?: boolean;
+};
+
 function parseAllowFrom(text: string): string[] {
   return text
     .split("\n")
@@ -51,8 +60,8 @@ function parseAllowFrom(text: string): string[] {
     .filter(Boolean);
 }
 
-export function ConfigView() {
-  const config = useReactUiStore((s) => (s.config || {}) as GsvConfig);
+export function ConfigView({ embedded = false }: ConfigViewProps = {}) {
+  const config = useReactUiStore((s) => (s.config as GsvConfig) ?? EMPTY_CONFIG);
   const configLoading = useReactUiStore((s) => s.configLoading);
   const connectionState = useReactUiStore((s) => s.connectionState);
   const settings = useReactUiStore((s) => s.settings);
@@ -60,56 +69,68 @@ export function ConfigView() {
   const saveConfig = useReactUiStore((s) => s.saveConfig);
   const updateSettings = useReactUiStore((s) => s.updateSettings);
 
-  const model = config.model || {
-    provider: "anthropic",
-    id: "claude-sonnet-4-20250514",
-  };
-  const apiKeys = config.apiKeys || {};
-  const auth = config.auth || {};
-  const transcriptionProvider = config.transcription?.provider || "workers-ai";
-  const whatsapp = config.channels?.whatsapp || { dmPolicy: "pairing", allowFrom: [] };
-  const identityLinks = config.session?.identityLinks || {};
-  const heartbeat = config.agents?.defaultHeartbeat || {};
+  // ── Derive config fields with runtime guards ──
+  const rawModel = config.model;
+  const configModel = useMemo(() => ({
+    provider: String(
+      (rawModel && typeof rawModel === "object" && "provider" in rawModel ? rawModel.provider : null) || "anthropic",
+    ),
+    id: String(
+      (rawModel && typeof rawModel === "object" && "id" in rawModel ? rawModel.id : null) || "claude-sonnet-4-20250514",
+    ),
+  }), [rawModel]);
 
+  const apiKeys = (config.apiKeys && typeof config.apiKeys === "object" ? config.apiKeys : {}) as Record<string, string | undefined>;
+  const auth = (config.auth && typeof config.auth === "object" ? config.auth : {}) as Record<string, string | undefined>;
+  const transcriptionProvider = String(config.transcription && typeof config.transcription === "object" && "provider" in config.transcription ? config.transcription.provider : "") || "workers-ai";
+  const rawWhatsapp = config.channels && typeof config.channels === "object" && "whatsapp" in config.channels ? config.channels.whatsapp : null;
+  const whatsapp = (rawWhatsapp && typeof rawWhatsapp === "object" ? rawWhatsapp : { dmPolicy: "pairing", allowFrom: [] }) as { dmPolicy?: string; allowFrom?: string[] };
+  const rawIdentityLinks = config.session && typeof config.session === "object" && "identityLinks" in config.session ? config.session.identityLinks : null;
+  const identityLinks = (rawIdentityLinks && typeof rawIdentityLinks === "object" ? rawIdentityLinks : {}) as Record<string, string[]>;
+  const rawHeartbeat = config.agents && typeof config.agents === "object" && "defaultHeartbeat" in config.agents ? config.agents.defaultHeartbeat : null;
+  const heartbeat = (rawHeartbeat && typeof rawHeartbeat === "object" ? rawHeartbeat : {}) as { every?: string; target?: string };
+
+  // ── Local form state ──
   const [gatewayUrl, setGatewayUrl] = useState(settings.gatewayUrl);
   const [sessionKey, setSessionKey] = useState(settings.sessionKey);
-  const [modelProvider, setModelProvider] = useState(model.provider);
-  const [modelId, setModelId] = useState(model.id);
-  const [anthropicKey, setAnthropicKey] = useState(apiKeys.anthropic || "");
-  const [openAiKey, setOpenAiKey] = useState(apiKeys.openai || "");
-  const [googleKey, setGoogleKey] = useState(apiKeys.google || "");
-  const [openRouterKey, setOpenRouterKey] = useState(apiKeys.openrouter || "");
-  const [authToken, setAuthToken] = useState(auth.token || "");
+  const [modelProvider, setModelProvider] = useState(configModel.provider);
+  const [modelId, setModelId] = useState(configModel.id);
+  const [anthropicKey, setAnthropicKey] = useState(String(apiKeys.anthropic || ""));
+  const [openAiKey, setOpenAiKey] = useState(String(apiKeys.openai || ""));
+  const [googleKey, setGoogleKey] = useState(String(apiKeys.google || ""));
+  const [openRouterKey, setOpenRouterKey] = useState(String(apiKeys.openrouter || ""));
+  const [authToken, setAuthToken] = useState(String(auth.token || ""));
   const [allowFromText, setAllowFromText] = useState(
-    (whatsapp.allowFrom || []).join("\n"),
+    (Array.isArray(whatsapp.allowFrom) ? whatsapp.allowFrom : []).map(String).join("\n"),
   );
-  const [heartbeatEvery, setHeartbeatEvery] = useState(heartbeat.every || "");
+  const [heartbeatEvery, setHeartbeatEvery] = useState(String(heartbeat.every || ""));
   const [newIdentityName, setNewIdentityName] = useState("");
   const [newIdentityValues, setNewIdentityValues] = useState("");
 
+  // ── Sync local state from config/settings changes ──
   useEffect(() => {
     setGatewayUrl(settings.gatewayUrl);
     setSessionKey(settings.sessionKey);
   }, [settings.gatewayUrl, settings.sessionKey]);
 
   useEffect(() => {
-    setModelProvider(model.provider);
-    setModelId(model.id);
-  }, [model.provider, model.id]);
+    setModelProvider(configModel.provider);
+    setModelId(configModel.id);
+  }, [configModel.provider, configModel.id]);
 
   useEffect(() => {
-    setAnthropicKey(apiKeys.anthropic || "");
-    setOpenAiKey(apiKeys.openai || "");
-    setGoogleKey(apiKeys.google || "");
-    setOpenRouterKey(apiKeys.openrouter || "");
+    setAnthropicKey(String(apiKeys.anthropic || ""));
+    setOpenAiKey(String(apiKeys.openai || ""));
+    setGoogleKey(String(apiKeys.google || ""));
+    setOpenRouterKey(String(apiKeys.openrouter || ""));
   }, [apiKeys.anthropic, apiKeys.google, apiKeys.openai, apiKeys.openrouter]);
 
   useEffect(() => {
-    setAuthToken(auth.token || "");
+    setAuthToken(String(auth.token || ""));
   }, [auth.token]);
 
   const allowFromValue = useMemo(
-    () => (whatsapp.allowFrom || []).join("\n"),
+    () => (Array.isArray(whatsapp.allowFrom) ? whatsapp.allowFrom : []).map(String).join("\n"),
     [whatsapp.allowFrom],
   );
   useEffect(() => {
@@ -117,12 +138,13 @@ export function ConfigView() {
   }, [allowFromValue]);
 
   useEffect(() => {
-    setHeartbeatEvery(heartbeat.every || "");
+    setHeartbeatEvery(String(heartbeat.every || ""));
   }, [heartbeat.every]);
 
-  const modelValue = `${model.provider}/${model.id}`;
-  const modelHasQuickSelect = MODEL_OPTIONS.some(
-    (option) => `${option.provider}/${option.id}` === modelValue,
+  // ── Model Select: derive from local state to avoid re-render loops ──
+  const localModelValue = `${modelProvider}/${modelId}`;
+  const localModelHasQuickSelect = MODEL_OPTIONS.some(
+    (option) => `${option.provider}/${option.id}` === localModelValue,
   );
 
   const commitModel = () => {
@@ -140,22 +162,54 @@ export function ConfigView() {
   const monoSensitiveInputClassName = "mono ui-sensitive-fix";
 
   return (
-    <div className="view-container">
-      <div className="section-header">
-        <h2 className="section-title">Configuration</h2>
-        <Button
-          size="sm"
-          variant="secondary"
-          loading={configLoading}
-          onClick={() => {
-            void loadConfig();
-          }}
-        >
-          Refresh
-        </Button>
-      </div>
+    <div className={embedded ? undefined : "view-container"}>
+      <div className={embedded ? "app-list" : "app-shell"} data-app={embedded ? undefined : "settings"}>
+        {!embedded ? (
+          <section className="app-hero">
+            <div className="app-hero-content">
+              <div>
+                <h2 className="app-hero-title">Gateway Configuration</h2>
+                <p className="app-hero-subtitle">
+                  Edit runtime model, provider keys, channel policies, identity links,
+                  and heartbeat defaults.
+                </p>
+                <div className="app-hero-meta">
+                  <span className="app-badge-dot" />
+                  <span>{connectionState}</span>
+                  <span className="app-mono-pill mono">{getGatewayUrl(settings)}</span>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={configLoading}
+                onClick={() => {
+                  void loadConfig();
+                }}
+              >
+                Refresh
+              </Button>
+            </div>
+          </section>
+        ) : null}
 
-      <Surface className="card" style={{ marginBottom: "var(--space-4)" }}>
+        {embedded ? (
+          <div className="app-actions" style={{ justifyContent: "space-between" }}>
+            <span className="app-mono-pill mono">{getGatewayUrl(settings)}</span>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={configLoading}
+              onClick={() => {
+                void loadConfig();
+              }}
+            >
+              Refresh
+            </Button>
+          </div>
+        ) : null}
+
+        <Surface className="card" style={{ marginBottom: "var(--space-4)" }}>
         <div className="card-header">
           <h3 className="card-title">Gateway Connection</h3>
           <Badge variant={connectionBadgeVariant}>{connectionState}</Badge>
@@ -221,7 +275,7 @@ export function ConfigView() {
             <Select<string>
               label="Quick Select"
               hideLabel={false}
-              value={modelHasQuickSelect ? modelValue : ""}
+              value={localModelHasQuickSelect ? localModelValue : ""}
               onValueChange={(value) => {
                 const selected = String(value || "").trim();
                 if (!selected.includes("/")) {
@@ -232,7 +286,6 @@ export function ConfigView() {
                 setModelId(id);
                 void saveConfig("model", { provider, id });
               }}
-              placeholder="Select a common model"
             >
               <Select.Option value="">Custom model</Select.Option>
               {MODEL_OPTIONS.map((option) => (
@@ -254,7 +307,7 @@ export function ConfigView() {
               value={modelProvider}
               onChange={(event) => setModelProvider(event.target.value)}
               onBlur={commitModel}
-              description={`Current: ${model.provider}`}
+              description={`Current: ${configModel.provider}`}
             />
           </div>
 
@@ -266,7 +319,7 @@ export function ConfigView() {
               value={modelId}
               onChange={(event) => setModelId(event.target.value)}
               onBlur={commitModel}
-              description={`Current: ${model.id}`}
+              description={`Current: ${configModel.id}`}
             />
           </div>
         </div>
@@ -418,7 +471,7 @@ export function ConfigView() {
             <Select<string>
               label="DM Access Policy"
               hideLabel={false}
-              value={whatsapp.dmPolicy || "pairing"}
+              value={String(whatsapp.dmPolicy || "pairing")}
               onValueChange={(value) =>
                 void saveConfig("channels.whatsapp.dmPolicy", String(value))
               }
@@ -498,7 +551,7 @@ export function ConfigView() {
                     </Button>
                   </div>
                   <code className="mono" style={{ fontSize: "var(--font-size-xs)" }}>
-                    {(ids || []).join(", ")}
+                    {(Array.isArray(ids) ? ids : []).map(String).join(", ")}
                   </code>
                 </div>
               </Surface>
@@ -578,7 +631,7 @@ export function ConfigView() {
           <Select<string>
             label="Delivery Target"
             hideLabel={false}
-            value={heartbeat.target || "last"}
+            value={String(heartbeat.target || "last")}
             onValueChange={(value) =>
               void saveConfig("agents.defaultHeartbeat.target", String(value))
             }
@@ -597,11 +650,12 @@ export function ConfigView() {
           <details>
             <summary style={{ cursor: "pointer" }}>View raw JSON</summary>
             <pre style={{ marginTop: "var(--space-3)", maxHeight: 420, overflow: "auto" }}>
-              <code>{JSON.stringify(config || {}, null, 2)}</code>
+              <code>{JSON.stringify(config, null, 2)}</code>
             </pre>
           </details>
         </div>
       </Surface>
+      </div>
     </div>
   );
 }

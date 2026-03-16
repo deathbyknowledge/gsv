@@ -207,10 +207,11 @@ function renderImageBlock(block: ImageBlock) {
 }
 
 function renderThinkingBlock(block: ThinkingBlock) {
+  const text = block.text || (block as ThinkingBlock & { thinking?: string }).thinking || "";
   return html`
     <details class="thinking-block">
       <summary>Thinking</summary>
-      <pre>${block.text}</pre>
+      <pre>${text}</pre>
     </details>
   `;
 }

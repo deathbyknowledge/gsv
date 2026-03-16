@@ -64,6 +64,7 @@ import {
   parseToolApprovalDecision,
   type ToolApprovalEvaluation,
 } from "./tool-approval";
+import { Agent, Connection, ConnectionContext } from "agents";
 
 type PendingToolCall = {
   id: string;
@@ -294,6 +295,7 @@ export class Session extends DurableObject<Env> {
   private static generateSessionId(): string {
     return crypto.randomUUID();
   }
+
 
   /**
    * Extract agentId from session key.
@@ -1243,10 +1245,12 @@ export class Session extends DurableObject<Env> {
 
     // If this turn resumed from tool calls, inject queued user messages now so they
     // are included before the next LLM continuation, without waiting for run end.
-    let continuationOverrides: {
-      thinkLevel?: string;
-      model?: { provider: string; id: string };
-    } | undefined;
+    let continuationOverrides:
+      | {
+          thinkLevel?: string;
+          model?: { provider: string; id: string };
+        }
+      | undefined;
     if (hadPendingToolCalls && this.messageQueue.length > 0) {
       const queuedMessages = [...this.messageQueue];
       this.messageQueue = [];
@@ -2101,10 +2105,19 @@ export class Session extends DurableObject<Env> {
           bucket: this.env.STORAGE,
           agentId,
           gateway,
+          callId: toolCall.id,
+          sessionKey: this.meta.sessionKey,
         },
         toolCall.name,
         toolCall.args,
       );
+
+      // Deferred tools (e.g. eval) will have their result routed back
+      // asynchronously via toolResult(). Don't set result/error here.
+      if (result.deferred) {
+        console.log(`[Session] Native tool ${toolCall.name} deferred (callId=${toolCall.id})`);
+        return;
+      }
 
       if (result.ok) {
         toolCall.result = result.result;

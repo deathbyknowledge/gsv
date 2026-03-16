@@ -11,6 +11,7 @@ export const CAPABILITY_IDS = [
   "filesystem.edit",
   "text.search",
   "shell.exec",
+  "display.surface",
 ] as const;
 export type CapabilityId = (typeof CAPABILITY_IDS)[number];
 

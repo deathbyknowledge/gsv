@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { ChannelWorkerInterface } from "../channel-interface";
-import { PersistedObject, snapshot } from "../shared/persisted-object";
+import { PersistedObject, snapshot, type Proxied } from "../shared/persisted-object";
 import type {
   Frame,
   EventFrame,
@@ -61,6 +61,7 @@ import {
   type CronRunResult,
 } from "../cron";
 import type { ChatEventPayload } from "../protocol/chat";
+import type { Surface } from "../protocol/surface";
 import type {
   ChannelRegistryEntry,
   ChannelId,
@@ -148,6 +149,28 @@ export class Gateway extends DurableObject<Env> {
       prefix: "pendingPairs:",
     },
   );
+
+  // Surface registry — renderable views across all clients
+  readonly surfaces = PersistedObject<Record<string, Surface>>(
+    this.ctx.storage.kv,
+    { prefix: "surfaces:" },
+  );
+
+  // ── Filesystem token store (in-memory, ephemeral) ──
+  // Short-lived tokens for authenticated R2 access via /fs/ endpoint.
+  private fsTokens = new Map<string, import("../protocol/fs").FsToken>();
+
+  // ── Browser profile locks (in-memory) ──
+  // Tracks which node currently holds a profile open. Key = profileId.
+  private profileLocks = new Map<string, { nodeId: string; surfaceId: string }>();
+
+  // ── Pending surface eval calls ──
+  // Key: evalId, Value: { ws, frameId } for deferred RPC response (WS callers).
+  readonly pendingEvals = new Map<string, { ws: WebSocket; frameId: string }>();
+  // Key: evalId, Value: routing info for agent tool calls (fire-and-forget, routed back via Session DO).
+  readonly pendingEvalRoutes = PersistedObject<
+    Record<string, { sessionKey: string; callId: string; createdAt: number }>
+  >(this.ctx.storage.kv, { prefix: "pendingEvalRoutes:" });
 
   // Heartbeat scheduler state (persisted to survive DO eviction)
   readonly heartbeatScheduler: { initialized: boolean } = PersistedObject<{
@@ -345,6 +368,8 @@ export class Gateway extends DurableObject<Env> {
       }
       this.clients.delete(clientId);
       this.nodeService.cleanupClientPendingOperations(clientId);
+      // Cleanup surfaces targeting this disconnected client.
+      this.cleanupSurfacesForClient(clientId);
     } else if (mode === "node" && nodeId) {
       // Ignore close events from stale sockets that were replaced by reconnect.
       if (this.nodes.get(nodeId) !== ws) {
@@ -360,6 +385,7 @@ export class Gateway extends DurableObject<Env> {
         `Node disconnected during log request: ${nodeId}`,
       );
       failTransfersForNode(this, nodeId);
+      this.cleanupSurfacesForClient(nodeId);
       console.log(`[Gateway] Node ${nodeId} marked offline`);
     } else if (mode === "channel" && channelKey) {
       // Ignore close events from stale sockets that were replaced by reconnect.
@@ -828,6 +854,76 @@ export class Gateway extends DurableObject<Env> {
     return this.getFullConfig();
   }
 
+  /** Broadcast an event frame to all connected clients. */
+  broadcastToClients<T>(event: string, payload: T): void {
+    const evt: EventFrame<T> = { type: "evt", event, payload };
+    const message = JSON.stringify(evt);
+    for (const ws of this.clients.values()) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
+    }
+  }
+
+  /**
+   * Broadcast a surface event to all web clients AND the targeted node
+   * (if the surface targets a display-capable node).
+   *
+   * @param excludeWs - Skip this WebSocket (the requesting client already
+   *   gets the data from the RPC response, so echoing the event back causes
+   *   duplicate windows in the OS shell).
+   */
+  broadcastSurfaceEvent<T>(event: string, payload: T, targetClientId?: string, excludeWs?: WebSocket): void {
+    const evt: EventFrame<T> = { type: "evt", event, payload };
+    const message = JSON.stringify(evt);
+
+    // Broadcast to all web clients except the sender
+    for (const ws of this.clients.values()) {
+      if (ws === excludeWs) continue;
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
+    }
+
+    // Also send to the targeted node if it's a node (not a web client)
+    if (targetClientId && this.nodes.has(targetClientId)) {
+      const nodeWs = this.nodes.get(targetClientId);
+      if (nodeWs && nodeWs !== excludeWs && nodeWs.readyState === WebSocket.OPEN) {
+        nodeWs.send(message);
+      }
+    }
+  }
+
+  /** Check if a node has the display.surface capability. */
+  nodeHasDisplayCapability(nodeId: string): boolean {
+    const runtime = this.nodeService.getNodeRuntime(nodeId);
+    return runtime?.hostCapabilities?.includes("display.surface") ?? false;
+  }
+
+  /** Find the first display-capable node. */
+  findDisplayNode(): string | null {
+    for (const nodeId of this.nodes.keys()) {
+      if (this.nodeHasDisplayCapability(nodeId)) {
+        return nodeId;
+      }
+    }
+    return null;
+  }
+
+  /** Clean up surfaces targeting a disconnected client or node. */
+  cleanupSurfacesForClient(clientId: string): void {
+    for (const [surfaceId, surface] of Object.entries(this.surfaces)) {
+      if (surface.targetClientId === clientId) {
+        if (surface.profileId) {
+          this.releaseProfileLock(surface.profileId, surfaceId);
+        }
+        delete this.surfaces[surfaceId];
+      }
+    }
+    // Also release any remaining profile locks for this node
+    this.releaseProfileLocksForNode(clientId);
+  }
+
   broadcastToSession(sessionKey: string, payload: ChatEventPayload): void {
     const evt: EventFrame<ChatEventPayload> = {
       type: "evt",
@@ -892,6 +988,314 @@ export class Gateway extends DurableObject<Env> {
         routePayloadToChannel(this, sessionKey, channelContext, payload);
       }
     }
+  }
+
+  // ---- Surface System (agent tool entry points) ----
+
+  /**
+   * Open a surface on a specific client or the first available client.
+   * Called by Session DO via gateway stub (for agent tools like gsv__OpenView).
+   */
+  async openSurface(params: {
+    kind: string;
+    contentRef: string;
+    label?: string;
+    contentData?: unknown;
+    targetClientId?: string;
+    sourceSessionKey?: string;
+  }): Promise<{ ok: boolean; surface?: Surface; error?: string }> {
+    let targetClientId = params.targetClientId;
+
+    // Auto-target resolution:
+    //   1. For webview/media surfaces, prefer display-capable nodes (native windows,
+    //      no X-Frame-Options issues, autoplay works). Fall back to web clients.
+    //   2. For app surfaces, prefer web clients (built-in tab views).
+    //   3. If nothing is connected, error out.
+    if (!targetClientId) {
+      const isNativeKind = params.kind === "webview" || params.kind === "media";
+      const displayNode = this.findDisplayNode();
+      const firstClient = this.clients.keys().next();
+
+      if (isNativeKind && displayNode) {
+        targetClientId = displayNode;
+      } else if (!firstClient.done) {
+        targetClientId = firstClient.value;
+      } else if (displayNode) {
+        targetClientId = displayNode;
+      } else {
+        return { ok: false, error: "No clients or display-capable nodes connected" };
+      }
+    }
+
+    // Verify target is connected
+    if (!this.clients.has(targetClientId) && !this.nodes.has(targetClientId)) {
+      return { ok: false, error: `Target not connected: ${targetClientId}` };
+    }
+
+    const now = Date.now();
+    const surfaceId = crypto.randomUUID();
+
+    // Browser profile handling for webview surfaces
+    let profileId: string | undefined;
+    let profileVersion: number | undefined;
+    let profileLock: Surface["profileLock"] | undefined;
+    if (params.kind === "webview" && params.contentRef) {
+      profileId = Gateway.deriveProfileId(params.contentRef) ?? undefined;
+      if (profileId) {
+        // Check if target is a node (profile persistence only works on nodes)
+        const isNode = this.nodes.has(targetClientId);
+        if (isNode) {
+          if (!this.acquireProfileLock(profileId, targetClientId, surfaceId)) {
+            const holder = this.profileLocks.get(profileId);
+            return {
+              ok: false,
+              error: `Profile "${profileId}" is locked by node "${holder?.nodeId}"`,
+            };
+          }
+          profileLock = { nodeId: targetClientId, surfaceId };
+        }
+        // Check if a snapshot exists in R2
+        const snapshotKey = await this.getProfileSnapshotKey(profileId);
+        if (snapshotKey) {
+          // profileVersion is stored in surface metadata; for now read from R2 custom metadata
+          const head = await this.env.STORAGE.head(snapshotKey);
+          profileVersion = head?.customMetadata?.version
+            ? parseInt(head.customMetadata.version, 10)
+            : 1;
+        }
+      }
+    }
+
+    const surface: Surface = {
+      surfaceId,
+      kind: params.kind as Surface["kind"],
+      label: params.label ?? params.contentRef,
+      contentRef: params.contentRef,
+      contentData: params.contentData,
+      targetClientId,
+      sourceSessionKey: params.sourceSessionKey,
+      state: "open",
+      createdAt: now,
+      updatedAt: now,
+      profileId,
+      profileVersion,
+      profileLock,
+    };
+
+    this.surfaces[surfaceId] = surface;
+
+    // Broadcast to all clients + targeted node
+    this.broadcastSurfaceEvent("surface.opened", { surface }, targetClientId);
+
+    console.log(
+      `[Gateway] Surface opened via tool: ${surfaceId} kind=${surface.kind} ref=${surface.contentRef} target=${targetClientId}` +
+        (profileId ? ` profile=${profileId}` : ""),
+    );
+
+    return { ok: true, surface };
+  }
+
+  /**
+   * List all surfaces, optionally filtered by target client.
+   * Called by Session DO via gateway stub (for agent tools like gsv__ListViews).
+   */
+  async listSurfaces(targetClientId?: string): Promise<{
+    surfaces: Surface[];
+    count: number;
+  }> {
+    const all = Object.values(this.surfaces);
+    const filtered = targetClientId
+      ? all.filter((s) => s.targetClientId === targetClientId)
+      : all;
+    // Snapshot proxied values so they serialize correctly across the RPC boundary.
+    const snapped = filtered.map((s) =>
+      snapshot(s as unknown as Proxied<Surface>),
+    );
+    return { surfaces: snapped, count: snapped.length };
+  }
+
+  /**
+   * Close a surface by ID.
+   * Called by Session DO via gateway stub (for agent tools like gsv__CloseView).
+   */
+  async closeSurface(surfaceId: string): Promise<{ ok: boolean; error?: string }> {
+    const surface = this.surfaces[surfaceId];
+    if (!surface) {
+      return { ok: false, error: `Surface not found: ${surfaceId}` };
+    }
+
+    // Release browser profile lock if held
+    if (surface.profileId) {
+      this.releaseProfileLock(surface.profileId, surfaceId);
+    }
+
+    const targetClientId = surface.targetClientId;
+    const profileId = surface.profileId;
+    delete this.surfaces[surfaceId];
+
+    this.broadcastSurfaceEvent(
+      "surface.closed",
+      { surfaceId, targetClientId, profileId },
+      targetClientId,
+    );
+
+    console.log(`[Gateway] Surface closed via tool: ${surfaceId}`);
+    return { ok: true };
+  }
+
+  /**
+   * Execute JavaScript in a webview surface (fire-and-forget).
+   * Called by Session DO via gateway stub (for agent tools like gsv__View eval).
+   * Sends the script to the target node and returns immediately.
+   * The result is routed back asynchronously via handleSurfaceEvalResult → Session DO toolResult().
+   */
+  async evalSurface(
+    surfaceId: string,
+    script: string,
+    callId?: string,
+    sessionKey?: string,
+  ): Promise<{ ok: boolean; error?: string; evalId?: string }> {
+    const surface = this.surfaces[surfaceId];
+    if (!surface) {
+      return { ok: false, error: `Surface not found: ${surfaceId}` };
+    }
+    if (surface.kind !== "webview") {
+      return { ok: false, error: `Surface kind "${surface.kind}" does not support eval` };
+    }
+
+    const targetClientId = surface.targetClientId;
+    if (!this.nodes.has(targetClientId)) {
+      return { ok: false, error: "Target is not a display node" };
+    }
+    const targetWs = this.nodes.get(targetClientId);
+    if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
+      return { ok: false, error: `Target node "${targetClientId}" not connected` };
+    }
+
+    const evalId = crypto.randomUUID();
+
+    // Store routing info so the result handler can route back to Session DO
+    if (callId && sessionKey) {
+      this.pendingEvalRoutes[evalId] = {
+        sessionKey,
+        callId,
+        createdAt: Date.now(),
+      };
+    }
+
+    // Send the eval request to the target node
+    const payload: import("../protocol/surface").SurfaceEvalRequestPayload = {
+      evalId,
+      surfaceId,
+      script,
+    };
+    targetWs.send(JSON.stringify({ type: "evt", event: "surface.eval", payload }));
+
+    console.log(`[Gateway] Surface eval dispatched via tool: ${evalId} -> surface ${surfaceId}`);
+
+    return { ok: true, evalId };
+  }
+
+  // ---- Filesystem Token System ----
+
+  /**
+   * Issue a short-lived token for R2 access via the /fs/ endpoint.
+   * Called by the fs.authorize RPC handler.
+   */
+  authorizeFs(pathPrefix: string, mode: import("../protocol/fs").FsMode): import("../protocol/fs").FsAuthorizeResult {
+    // Lazy GC: prune expired tokens
+    const now = Date.now();
+    for (const [tok, entry] of this.fsTokens) {
+      if (entry.expiresAt <= now) this.fsTokens.delete(tok);
+    }
+
+    const token = crypto.randomUUID();
+    const expiresAt = now + 60_000; // 60 seconds
+    this.fsTokens.set(token, { pathPrefix, mode, expiresAt });
+
+    return { token, expiresAt, pathPrefix };
+  }
+
+  /**
+   * Verify a token for a given path and mode.
+   * Called by the worker fetch handler before proxying R2 operations.
+   * Returns true if the token is valid and grants access to the requested path.
+   */
+  verifyFsToken(token: string, path: string, mode: import("../protocol/fs").FsMode): boolean {
+    const entry = this.fsTokens.get(token);
+    if (!entry) return false;
+
+    // Check expiry
+    if (entry.expiresAt <= Date.now()) {
+      this.fsTokens.delete(token);
+      return false;
+    }
+
+    // Check mode
+    if (entry.mode !== mode) return false;
+
+    // Check path prefix
+    if (!path.startsWith(entry.pathPrefix)) return false;
+
+    return true;
+  }
+
+  // ---- Browser Profile Locks ----
+
+  /**
+   * Derive a profileId from a URL origin.
+   * e.g. "https://github.com/settings" → "github.com"
+   */
+  static deriveProfileId(urlStr: string): string | null {
+    try {
+      const u = new URL(urlStr);
+      return u.hostname;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Acquire a profile lock for a node. Returns false if already locked by another node.
+   */
+  acquireProfileLock(profileId: string, nodeId: string, surfaceId: string): boolean {
+    const existing = this.profileLocks.get(profileId);
+    if (existing && existing.nodeId !== nodeId) {
+      return false; // locked by another node
+    }
+    this.profileLocks.set(profileId, { nodeId, surfaceId });
+    return true;
+  }
+
+  /**
+   * Release a profile lock. Only releases if the lock is held by the specified surface.
+   */
+  releaseProfileLock(profileId: string, surfaceId?: string): void {
+    const existing = this.profileLocks.get(profileId);
+    if (!existing) return;
+    if (surfaceId && existing.surfaceId !== surfaceId) return;
+    this.profileLocks.delete(profileId);
+  }
+
+  /**
+   * Release all profile locks held by a given node (on disconnect).
+   */
+  releaseProfileLocksForNode(nodeId: string): void {
+    for (const [profileId, lock] of this.profileLocks) {
+      if (lock.nodeId === nodeId) {
+        this.profileLocks.delete(profileId);
+      }
+    }
+  }
+
+  /**
+   * Get the current R2 snapshot path for a profile, if one has been uploaded.
+   * Returns the R2 key or null.
+   */
+  async getProfileSnapshotKey(profileId: string): Promise<string | null> {
+    const key = `browser-profiles/${profileId}/snapshot.tar.gz`;
+    const head = await this.env.STORAGE.head(key);
+    return head ? key : null;
   }
 
   // ---- Heartbeat System ----

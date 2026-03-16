@@ -9,7 +9,7 @@ function getUniqueNodes(tools: { name: string }[]): string[] {
       nodes.add(parts[0]);
     }
   }
-  return Array.from(nodes);
+  return Array.from(nodes).sort();
 }
 
 export function OverviewView() {
@@ -20,104 +20,118 @@ export function OverviewView() {
   const channels = useReactUiStore((s) => s.channels);
   const chatMessages = useReactUiStore((s) => s.chatMessages);
 
-  const nodeCount = getUniqueNodes(tools).length;
-  const toolCount = tools.length;
   const gatewayUrl = getGatewayUrl(settings);
+  const nodes = getUniqueNodes(tools);
+  const kpis = [
+    { label: "Nodes", value: nodes.length },
+    { label: "Tools", value: tools.length },
+    { label: "Sessions", value: sessions.length },
+    { label: "Channels", value: channels.length },
+    { label: "Messages", value: chatMessages.length },
+  ];
 
   return (
     <div className="view-container">
-      <div className="cards-grid">
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Connection</h3>
-          </div>
-          <div className="card-body">
-            <div className="kv-list">
-              <div className="kv-row">
-                <span className="kv-key">Status</span>
-                <span
-                  className={`pill ${
-                    connectionState === "connected" ? "pill-success" : "pill-warning"
-                  }`}
-                >
-                  {connectionState}
-                </span>
-              </div>
-              <div className="kv-row">
-                <span className="kv-key">Gateway URL</span>
-                <span className="kv-value mono">{gatewayUrl}</span>
+      <div className="app-shell" data-app="overview">
+        <section className="app-hero">
+          <div className="app-hero-content">
+            <div>
+              <h2 className="app-hero-title">System Overview</h2>
+              <p className="app-hero-subtitle">
+                Real-time control snapshot for your gateway, connected nodes, channels,
+                and the currently selected session.
+              </p>
+              <div className="app-hero-meta">
+                <span className="app-badge-dot" />
+                <span>{connectionState}</span>
+                <span className="app-mono-pill mono">{gatewayUrl}</span>
               </div>
             </div>
+            <div className="app-mono-pill mono">{settings.sessionKey}</div>
           </div>
-        </div>
+        </section>
 
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Nodes</h3>
-          </div>
-          <div className="card-body">
-            <div className="stat">
-              <div className="stat-value">{nodeCount}</div>
-              <div className="stat-label">Connected Nodes</div>
+        <section className="app-kpis">
+          {kpis.map((kpi) => (
+            <article className="app-kpi" key={kpi.label}>
+              <span className="app-kpi-label">{kpi.label}</span>
+              <span className="app-kpi-value">{kpi.value}</span>
+            </article>
+          ))}
+        </section>
+
+        <section className="app-grid">
+          <article className="app-panel app-col-7">
+            <header className="app-panel-head">
+              <h3 className="app-panel-title">Connected Execution Nodes</h3>
+              <span className="app-panel-meta">{nodes.length} active</span>
+            </header>
+            <div className="app-panel-body">
+              {nodes.length ? (
+                <div className="app-list">
+                  {nodes.map((nodeId) => {
+                    const nodeToolCount = tools.filter((tool) =>
+                      tool.name.startsWith(`${nodeId}__`),
+                    ).length;
+                    return (
+                      <div className="app-list-item" key={nodeId}>
+                        <div className="app-list-head">
+                          <div>
+                            <div className="app-list-title mono">{nodeId}</div>
+                            <div className="app-list-subtitle">
+                              Execution host currently serving tool requests.
+                            </div>
+                          </div>
+                          <span className="pill pill-success">{nodeToolCount} tools</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="app-empty">
+                  <div>
+                    <div className="app-empty-icon">🖥️</div>
+                    <div>No nodes connected yet.</div>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        </div>
+          </article>
 
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Tools</h3>
-          </div>
-          <div className="card-body">
-            <div className="stat">
-              <div className="stat-value">{toolCount}</div>
-              <div className="stat-label">Available Tools</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Sessions</h3>
-          </div>
-          <div className="card-body">
-            <div className="stat">
-              <div className="stat-value">{sessions.length}</div>
-              <div className="stat-label">Active Sessions</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Channels</h3>
-          </div>
-          <div className="card-body">
-            <div className="stat">
-              <div className="stat-value">{channels.length}</div>
-              <div className="stat-label">Connected Channels</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Current Session</h3>
-          </div>
-          <div className="card-body">
-            <div className="kv-list">
-              <div className="kv-row">
-                <span className="kv-key">Session Key</span>
-                <span className="kv-value mono truncate" style={{ maxWidth: 200 }}>
-                  {settings.sessionKey}
-                </span>
+          <article className="app-panel app-col-5">
+            <header className="app-panel-head">
+              <h3 className="app-panel-title">Current Session</h3>
+              <span className="app-panel-meta">live context</span>
+            </header>
+            <div className="app-panel-body">
+              <div className="app-list">
+                <div className="app-list-item">
+                  <div className="app-meta-row">
+                    <div className="app-meta-label">Session Key</div>
+                    <div className="app-meta-value mono">{settings.sessionKey}</div>
+                  </div>
+                </div>
+                <div className="app-list-item">
+                  <div className="app-list-meta">
+                    <div className="app-meta-row">
+                      <div className="app-meta-label">Message Count</div>
+                      <div className="app-meta-value">{chatMessages.length}</div>
+                    </div>
+                    <div className="app-meta-row">
+                      <div className="app-meta-label">Connection</div>
+                      <div className="app-meta-value">{connectionState}</div>
+                    </div>
+                    <div className="app-meta-row">
+                      <div className="app-meta-label">Channel Accounts</div>
+                      <div className="app-meta-value">{channels.length}</div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="kv-row">
-                <span className="kv-key">Messages</span>
-                <span className="kv-value">{chatMessages.length}</span>
-              </div>
             </div>
-          </div>
-        </div>
+          </article>
+        </section>
       </div>
     </div>
   );

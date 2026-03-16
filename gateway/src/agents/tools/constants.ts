@@ -11,4 +11,5 @@ export const NATIVE_TOOLS = {
   MESSAGE: `${NATIVE_TOOL_PREFIX}Message`,
   SESSIONS_LIST: `${NATIVE_TOOL_PREFIX}SessionsList`,
   SESSION_SEND: `${NATIVE_TOOL_PREFIX}SessionSend`,
+  VIEW: `${NATIVE_TOOL_PREFIX}View`,
 } as const;

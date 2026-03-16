@@ -2,6 +2,8 @@ pub mod build_info;
 pub mod config;
 pub mod connection;
 pub mod deploy;
+#[cfg(feature = "display")]
+pub mod display;
 pub mod gateway_client;
 pub mod logger;
 pub mod protocol;

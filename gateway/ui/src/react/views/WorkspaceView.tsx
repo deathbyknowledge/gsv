@@ -56,163 +56,152 @@ export function WorkspaceView() {
 
   return (
     <div className="view-container">
-      <div className="section-header">
-        <h2 className="section-title">Agent Workspace</h2>
-        <Button
-          size="sm"
-          variant="secondary"
-          loading={workspaceLoading}
-          onClick={() => {
-            void loadWorkspace(workspaceCurrentPath);
-          }}
-        >
-          Refresh
-        </Button>
-      </div>
-
-      <div className="workspace-layout">
-        <div className="card workspace-panel">
-          <div className="card-header">
-            <h3 className="card-title">Files</h3>
-          </div>
-          <div className="card-body workspace-panel-body">
-            {workspaceLoading && !workspaceFiles ? (
-              <div className="thinking-indicator">
-                <span className="spinner"></span>
-                <span>Loading...</span>
+      <div className="app-shell" data-app="workspace">
+        <section className="app-hero">
+          <div className="app-hero-content">
+            <div>
+              <h2 className="app-hero-title">Workspace Editor</h2>
+              <p className="app-hero-subtitle">
+                Browse and edit files in the active agent workspace directly from the
+                OS shell. Changes write back through gateway RPC.
+              </p>
+              <div className="app-hero-meta">
+                <span className="app-badge-dot" />
+                <span className="app-mono-pill mono">{normalizedPath}</span>
               </div>
-            ) : !workspaceFiles ? (
-              <p className="muted">Failed to load workspace</p>
-            ) : (
-              <>
-                <div
-                  style={{
-                    marginBottom: "var(--space-3)",
-                    paddingBottom: "var(--space-2)",
-                    borderBottom: "1px solid var(--border-muted)",
-                  }}
-                >
-                  <code
-                    className="mono"
-                    style={{
-                      fontSize: "var(--font-size-xs)",
-                      color: "var(--text-muted)",
-                    }}
-                  >
-                    {normalizedPath}
-                  </code>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={workspaceLoading}
+              onClick={() => {
+                void loadWorkspace(workspaceCurrentPath);
+              }}
+            >
+              Refresh
+            </Button>
+          </div>
+        </section>
+
+        <section className="app-split">
+          <article className="app-panel">
+            <header className="app-panel-head">
+              <h3 className="app-panel-title">Explorer</h3>
+              <span className="app-panel-meta mono">{normalizedPath}</span>
+            </header>
+            <div className="app-panel-body app-scroll">
+              {workspaceLoading && !workspaceFiles ? (
+                <div className="app-empty" style={{ minHeight: 140 }}>
+                  <div>
+                    <span className="spinner" />
+                    <div style={{ marginTop: "var(--space-2)" }}>Loading workspace...</div>
+                  </div>
                 </div>
-
-                {normalizedPath !== "/" ? (
-                  <Button
-                    variant="ghost"
-                    className="nav-item"
-                    onClick={() => {
-                      void loadWorkspace(getParentPath(normalizedPath));
-                    }}
-                    style={{
-                      padding: "var(--space-2)",
-                      margin: "0 calc(var(--space-4) * -1)",
-                      justifyContent: "flex-start",
-                      width: "calc(100% + var(--space-8))",
-                    }}
-                  >
-                    <span>📁</span>
-                    <span>..</span>
-                  </Button>
-                ) : null}
-
-                {workspaceFiles.directories.map((dir) => (
-                  <Button
-                    variant="ghost"
-                    key={`dir:${dir}`}
-                    className="nav-item"
-                    onClick={() => {
-                      void loadWorkspace(normalizeWorkspacePath(dir));
-                    }}
-                    style={{
-                      padding: "var(--space-2)",
-                      margin: "0 calc(var(--space-4) * -1)",
-                      justifyContent: "flex-start",
-                      width: "calc(100% + var(--space-8))",
-                    }}
-                  >
-                    <span>📁</span>
-                    <span>{getEntryLabel(dir)}</span>
-                  </Button>
-                ))}
-
-                {workspaceFiles.files.map((file) => {
-                  const isSelected = workspaceFileContent?.path === file;
-                  const icon = file.endsWith(".md") ? "📝" : "📄";
-                  return (
-                    <Button
-                      variant="ghost"
-                      key={`file:${file}`}
-                      className={`nav-item ${isSelected ? "active" : ""}`}
+              ) : !workspaceFiles ? (
+                <div className="app-empty" style={{ minHeight: 140 }}>
+                  <div>
+                    <div className="app-empty-icon">📂</div>
+                    <div>Workspace unavailable</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="app-compact-list">
+                  {normalizedPath !== "/" ? (
+                    <button
+                      type="button"
+                      className="app-compact-item"
                       onClick={() => {
-                        void readWorkspaceFile(file);
-                      }}
-                      style={{
-                        padding: "var(--space-2)",
-                        margin: "0 calc(var(--space-4) * -1)",
-                        justifyContent: "flex-start",
-                        width: "calc(100% + var(--space-8))",
+                        void loadWorkspace(getParentPath(normalizedPath));
                       }}
                     >
-                      <span>{icon}</span>
-                      <span>{getEntryLabel(file)}</span>
-                    </Button>
-                  );
-                })}
+                      <span>↩</span>
+                      <span>..</span>
+                    </button>
+                  ) : null}
 
-                {workspaceFiles.files.length === 0 &&
-                workspaceFiles.directories.length === 0 ? (
-                  <p className="muted" style={{ fontSize: "var(--font-size-sm)" }}>
-                    Empty directory
-                  </p>
-                ) : null}
-              </>
-            )}
-          </div>
-        </div>
+                  {workspaceFiles.directories.map((dir) => (
+                    <button
+                      type="button"
+                      className="app-compact-item"
+                      key={`dir:${dir}`}
+                      onClick={() => {
+                        void loadWorkspace(normalizeWorkspacePath(dir));
+                      }}
+                    >
+                      <span>📁</span>
+                      <span>{getEntryLabel(dir)}</span>
+                    </button>
+                  ))}
 
-        <div className="card workspace-panel">
-          <div className="card-header">
-            <h3 className="card-title">
-              {workspaceFileContent ? workspaceFileContent.path : "No file selected"}
-            </h3>
-            {workspaceFileContent ? (
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => {
-                  void writeWorkspaceFile(workspaceFileContent.path, editorContent);
-                }}
-              >
-                Save
-              </Button>
-            ) : null}
-          </div>
-          <div className="card-body workspace-panel-body" style={{ padding: 0 }}>
-            {workspaceFileContent ? (
-              <textarea
-                id="workspace-editor"
-                className="workspace-editor"
-                value={editorContent}
-                onChange={(event) => setEditorContent(event.target.value)}
-              />
-            ) : (
-              <div className="empty-state">
-                <div className="empty-state-icon">📝</div>
-                <h3 className="empty-state-title">Select a file</h3>
-                <p className="empty-state-description">
-                  Choose a file from the browser to view and edit.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+                  {workspaceFiles.files.map((file) => {
+                    const isSelected = workspaceFileContent?.path === file;
+                    return (
+                      <button
+                        type="button"
+                        className={`app-compact-item ${isSelected ? "active" : ""}`}
+                        key={`file:${file}`}
+                        onClick={() => {
+                          void readWorkspaceFile(file);
+                        }}
+                      >
+                        <span>{file.endsWith(".md") ? "📝" : "📄"}</span>
+                        <span>{getEntryLabel(file)}</span>
+                      </button>
+                    );
+                  })}
+
+                  {workspaceFiles.files.length === 0 && workspaceFiles.directories.length === 0 ? (
+                    <div className="app-empty" style={{ minHeight: 140 }}>
+                      <div>
+                        <div className="app-empty-icon">🫥</div>
+                        <div>Empty directory</div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </article>
+
+          <article className="app-panel">
+            <header className="app-panel-head">
+              <h3 className="app-panel-title">
+                {workspaceFileContent ? getEntryLabel(workspaceFileContent.path) : "Editor"}
+              </h3>
+              {workspaceFileContent ? (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => {
+                    void writeWorkspaceFile(workspaceFileContent.path, editorContent);
+                  }}
+                >
+                  Save
+                </Button>
+              ) : null}
+            </header>
+            <div className="app-panel-body" style={{ padding: 0 }}>
+              {workspaceFileContent ? (
+                <textarea
+                  id="workspace-editor"
+                  className="app-editor"
+                  value={editorContent}
+                  onChange={(event) => setEditorContent(event.target.value)}
+                />
+              ) : (
+                <div className="app-empty" style={{ minHeight: 320 }}>
+                  <div>
+                    <div className="app-empty-icon">📝</div>
+                    <div>Select a file to begin editing</div>
+                    <div className="text-secondary" style={{ marginTop: "var(--space-1)" }}>
+                      Changes are written through the workspace RPC interface.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </article>
+        </section>
       </div>
     </div>
   );

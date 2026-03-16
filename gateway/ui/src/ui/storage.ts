@@ -2,11 +2,36 @@
  * Local Storage for UI Settings
  */
 
+export type Wallpaper = "mesh" | "aurora" | "dark-grain" | "grid";
+export type ShellStyle = "brutalist" | "futurist";
+
+export const WALLPAPER_OPTIONS: { id: Wallpaper; label: string; description: string }[] = [
+  { id: "mesh", label: "Mesh Gradient", description: "Smooth shifting color gradient" },
+  { id: "aurora", label: "Aurora", description: "Flowing bands of polar light" },
+  { id: "dark-grain", label: "Dark Grain", description: "Near-black with subtle noise" },
+  { id: "grid", label: "Grid", description: "Faint geometric dot matrix" },
+];
+
+export const SHELL_STYLE_OPTIONS: { id: ShellStyle; label: string; description: string }[] = [
+  {
+    id: "brutalist",
+    label: "Hard Brutalist",
+    description: "Near-zero radius, hard edges, monochrome chrome",
+  },
+  {
+    id: "futurist",
+    label: "Neo Futurist",
+    description: "Sharper geometry with restrained glow and depth",
+  },
+];
+
 export type UiSettings = {
   gatewayUrl: string;
   token: string;
   sessionKey: string;
   theme: "dark" | "light" | "system";
+  wallpaper: Wallpaper;
+  shellStyle: ShellStyle;
 };
 
 const STORAGE_KEY = "gsv-ui-settings";
@@ -27,6 +52,8 @@ const DEFAULT_SETTINGS: UiSettings = {
   token: "",
   sessionKey: "agent:main:web:dm:local",
   theme: "dark",
+  wallpaper: "mesh",
+  shellStyle: "brutalist",
 };
 
 /**
@@ -40,7 +67,15 @@ export function loadSettings(): UiSettings {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+      const parsed = JSON.parse(stored) as Partial<UiSettings>;
+      const merged = { ...DEFAULT_SETTINGS, ...parsed };
+      if (!WALLPAPER_OPTIONS.some((option) => option.id === merged.wallpaper)) {
+        merged.wallpaper = DEFAULT_SETTINGS.wallpaper;
+      }
+      if (!SHELL_STYLE_OPTIONS.some((option) => option.id === merged.shellStyle)) {
+        merged.shellStyle = DEFAULT_SETTINGS.shellStyle;
+      }
+      return merged;
     }
   } catch {
     // Ignore
@@ -63,4 +98,8 @@ export function applyTheme(theme: UiSettings["theme"]): void {
   const effectiveTheme = theme === "system" ? (prefersDark ? "dark" : "light") : theme;
   document.documentElement.setAttribute("data-theme", effectiveTheme);
   document.documentElement.setAttribute("data-mode", effectiveTheme);
+}
+
+export function applyShellStyle(shellStyle: ShellStyle): void {
+  document.documentElement.setAttribute("data-shell-style", shellStyle);
 }
