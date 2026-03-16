@@ -1255,10 +1255,13 @@ function createChatAppController(client: AppKernelClient): AppInstance {
   let loadedConnectionId: string | null = null;
   let historySyntheticRunCounter = 0;
 
-  const runViewsByRunId = new Map<string, AssistantRunView>();
+  const textRunViewsByRunId = new Map<string, AssistantRunView>();
+  const toolRunViewsByRunId = new Map<string, AssistantRunView>();
   const toolCardsByCallId = new Map<string, HTMLElement>();
+  const toolCardOwnersByCallId = new Map<string, AssistantRunView>();
   const pendingRunIds = new Set<string>();
-  let lastAssistantRun: AssistantRunView | null = null;
+  let lastAssistantTextRun: AssistantRunView | null = null;
+  let lastAssistantToolRun: AssistantRunView | null = null;
 
   const cleanup = new Set<() => void>();
   const scrollLogToBottom = (): void => {
@@ -1379,13 +1382,27 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     }
   };
 
-  const appendRowNode = (node: HTMLElement): void => {
+  const appendRowNode = (
+    node: HTMLElement,
+    options?: {
+      before?: HTMLElement | null;
+      after?: HTMLElement | null;
+    },
+  ): void => {
     if (!logNode) {
       return;
     }
 
     const shouldStick = isNearBottom();
-    logNode.appendChild(node);
+    const beforeNode = options?.before;
+    const afterNode = options?.after;
+    if (beforeNode && beforeNode.parentNode === logNode) {
+      logNode.insertBefore(node, beforeNode);
+    } else if (afterNode && afterNode.parentNode === logNode) {
+      logNode.insertBefore(node, afterNode.nextSibling);
+    } else {
+      logNode.appendChild(node);
+    }
     maybeScrollToBottom(shouldStick);
   };
 
@@ -1393,28 +1410,62 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     appendRowNode(createTextRow(role, text, { timestampMs }));
   };
 
-  const createRun = (runId: string | null, timestampMs?: number): AssistantRunView => {
+  const createRun = (
+    kind: "text" | "tools",
+    runId: string | null,
+    timestampMs?: number,
+    options?: {
+      before?: HTMLElement | null;
+      after?: HTMLElement | null;
+    },
+  ): AssistantRunView => {
     const run = createAssistantRunRow(runId, timestampMs);
-    appendRowNode(run.rowNode);
+    run.rowNode.dataset.channel = kind;
+    appendRowNode(run.rowNode, options);
 
     if (runId) {
-      runViewsByRunId.set(runId, run);
+      if (kind === "text") {
+        textRunViewsByRunId.set(runId, run);
+      } else {
+        toolRunViewsByRunId.set(runId, run);
+      }
     }
 
     setRunState(run, "streaming");
-    lastAssistantRun = run;
+    if (kind === "text") {
+      lastAssistantTextRun = run;
+    } else {
+      lastAssistantToolRun = run;
+    }
     return run;
   };
 
-  const ensureRun = (runId: string | null, timestampMs?: number): AssistantRunView => {
+  const ensureTextRun = (runId: string | null, timestampMs?: number): AssistantRunView => {
     if (runId) {
-      const existing = runViewsByRunId.get(runId);
+      const existing = textRunViewsByRunId.get(runId);
       if (existing) {
         return existing;
       }
     }
 
-    return createRun(runId, timestampMs);
+    const toolRun = runId ? toolRunViewsByRunId.get(runId) ?? null : null;
+    return createRun("text", runId, timestampMs, {
+      before: toolRun?.rowNode ?? null,
+    });
+  };
+
+  const ensureToolRun = (runId: string | null, timestampMs?: number): AssistantRunView => {
+    if (runId) {
+      const existing = toolRunViewsByRunId.get(runId);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    const textRun = runId ? textRunViewsByRunId.get(runId) ?? null : null;
+    return createRun("tools", runId, timestampMs, {
+      after: textRun?.rowNode ?? null,
+    });
   };
 
   const ensureToolCard = (
@@ -1435,6 +1486,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       setRunState(run, "streaming", "running tools");
     }
     toolCardsByCallId.set(callId, card);
+    toolCardOwnersByCallId.set(callId, run);
     return card;
   };
 
@@ -1444,10 +1496,13 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     }
 
     logNode.innerHTML = "";
-    runViewsByRunId.clear();
+    textRunViewsByRunId.clear();
+    toolRunViewsByRunId.clear();
     toolCardsByCallId.clear();
+    toolCardOwnersByCallId.clear();
     pendingRunIds.clear();
-    lastAssistantRun = null;
+    lastAssistantTextRun = null;
+    lastAssistantToolRun = null;
   };
 
   const loadHistory = async (connectionId: string | null): Promise<void> => {
@@ -1455,38 +1510,61 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       return;
     }
 
-    let history: ProcHistoryResult;
-    try {
-      history = await client.getHistory(80);
-    } catch (error) {
-      appendTextRow("system", `failed to load history: ${error instanceof Error ? error.message : String(error)}`);
-      return;
-    }
+    const mergedMessages: Array<{
+      role: "user" | "assistant" | "system" | "toolResult";
+      content: unknown;
+      timestamp?: number;
+    }> = [];
+    let historyTotal = 0;
+    let historyTruncated = false;
+    let offset = 0;
+    const limit = 200;
+    const maxPages = 100;
 
-    if (!history.ok) {
-      appendTextRow("system", `history error: ${history.error}`);
-      return;
+    for (let page = 0; page < maxPages; page += 1) {
+      let historyPage: ProcHistoryResult;
+      try {
+        historyPage = await client.getHistory(limit, undefined, offset);
+      } catch (error) {
+        appendTextRow("system", `failed to load history: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+
+      if (!historyPage.ok) {
+        appendTextRow("system", `history error: ${historyPage.error}`);
+        return;
+      }
+
+      mergedMessages.push(...historyPage.messages);
+      historyTotal = historyPage.messageCount;
+      offset += historyPage.messages.length;
+      historyTruncated = historyPage.truncated === true;
+
+      if (!historyTruncated || historyPage.messages.length === 0 || offset >= historyTotal) {
+        break;
+      }
     }
 
     resetTimeline();
 
-    for (const entry of history.messages) {
+    for (const entry of mergedMessages) {
       const entryTimestampMs = normalizeTimestampMs(entry.timestamp) ?? undefined;
 
       if (entry.role === "assistant") {
         const parsed = extractAssistantHistory(entry.content);
-        const syntheticRunId = `hist-run-${historySyntheticRunCounter++}`;
-        const run = createRun(syntheticRunId, entryTimestampMs);
-
         if (parsed.text.trim()) {
-          setRunMarkdown(run, parsed.text);
+          const textRun = createRun("text", `hist-text-${historySyntheticRunCounter++}`, entryTimestampMs);
+          setRunMarkdown(textRun, parsed.text);
+          setRunState(textRun, "complete");
         }
 
-        for (const toolCall of parsed.toolCalls) {
-          ensureToolCard(run, toolCall.callId, toolCall.toolName, toolCall.args, toolCall.syscall);
+        if (parsed.toolCalls.length > 0) {
+          const toolRun = createRun("tools", `hist-tools-${historySyntheticRunCounter++}`, entryTimestampMs);
+          for (const toolCall of parsed.toolCalls) {
+            ensureToolCard(toolRun, toolCall.callId, toolCall.toolName, toolCall.args, toolCall.syscall);
+          }
+          setRunState(toolRun, "complete");
         }
-
-        setRunState(run, "complete");
         continue;
       }
 
@@ -1497,9 +1575,9 @@ function createChatAppController(client: AppKernelClient): AppInstance {
           continue;
         }
 
-        let run = lastAssistantRun;
+        let run = lastAssistantToolRun;
         if (!run) {
-          run = createRun(`hist-run-${historySyntheticRunCounter++}`, entryTimestampMs);
+          run = createRun("tools", `hist-tools-${historySyntheticRunCounter++}`, entryTimestampMs);
         }
 
         const callId = parsedResult.callId ?? `hist-result-${historySyntheticRunCounter++}`;
@@ -1515,8 +1593,10 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       appendTextRow(role, formatMessageContent(entry.content), entryTimestampMs);
     }
 
-    if (history.messages.length === 0) {
+    if (mergedMessages.length === 0) {
       appendTextRow("system", "No messages yet. Send your first prompt.");
+    } else if (historyTruncated && offset < historyTotal) {
+      appendTextRow("system", `history truncated at ${offset}/${historyTotal} messages`);
     }
 
     loadedConnectionId = connectionId;
@@ -1573,7 +1653,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         return;
       }
 
-      const run = ensureRun(runId, signalTimestampMs);
+      const run = ensureTextRun(runId, signalTimestampMs);
       appendRunMarkdown(run, text);
       if (run.state !== "error") {
         setRunState(run, "streaming", "streaming");
@@ -1588,7 +1668,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         return;
       }
 
-      const run = ensureRun(runId, signalTimestampMs);
+      const run = ensureToolRun(runId, signalTimestampMs);
       ensureToolCard(run, parsedCall.callId, parsedCall.toolName, parsedCall.args, parsedCall.syscall);
       if (run.state !== "error") {
         setRunState(run, "streaming", "running tools");
@@ -1607,12 +1687,15 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       let card = toolCardsByCallId.get(targetCallId) ?? null;
 
       if (!card) {
-        const run = ensureRun(runId, signalTimestampMs);
+        const run = ensureToolRun(runId, signalTimestampMs);
         card = ensureToolCard(run, targetCallId, parsedResult.toolName, {}, parsedResult.syscall);
       }
 
       applyToolResult(card, parsedResult);
-      const run = runId ? runViewsByRunId.get(runId) ?? lastAssistantRun : lastAssistantRun;
+      const run =
+        toolCardOwnersByCallId.get(targetCallId) ??
+        (runId ? toolRunViewsByRunId.get(runId) ?? null : null) ??
+        lastAssistantToolRun;
       if (run) {
         setRunState(run, card.classList.contains("is-error") ? "error" : "streaming", card.classList.contains("is-error") ? "tool error" : "running tools");
       }
@@ -1623,13 +1706,18 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     if (signal === "chat.complete") {
       const error = asString(record.error);
       if (error) {
-        const run = runId ? runViewsByRunId.get(runId) ?? null : null;
-        if (run) {
-          setRunState(run, "error");
+        const textRun = runId ? textRunViewsByRunId.get(runId) ?? null : null;
+        const toolRun = runId ? toolRunViewsByRunId.get(runId) ?? null : null;
+        if (textRun) {
+          setRunState(textRun, "error");
+        }
+        if (toolRun) {
+          setRunState(toolRun, "error");
         }
         clearPendingRun(runId);
         if (runId) {
-          runViewsByRunId.delete(runId);
+          textRunViewsByRunId.delete(runId);
+          toolRunViewsByRunId.delete(runId);
         }
         appendTextRow("system", `error: ${error}`);
         maybeScrollToBottom(shouldStick);
@@ -1637,17 +1725,24 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       }
 
       const finalText = asString(record.text) ?? "";
-      const run = runId ? runViewsByRunId.get(runId) ?? null : null;
-      if (run) {
-        if (finalText.trim() && run.markdownSource.trim().length === 0) {
-          setRunMarkdown(run, finalText);
+      const textRun = runId ? textRunViewsByRunId.get(runId) ?? null : null;
+      const toolRun = runId ? toolRunViewsByRunId.get(runId) ?? null : null;
+
+      if (toolRun && toolRun.state !== "error") {
+        setRunState(toolRun, "complete");
+      }
+
+      if (textRun) {
+        if (finalText.trim() && textRun.markdownSource.trim().length === 0) {
+          setRunMarkdown(textRun, finalText);
         }
-        if (run.state !== "error") {
-          setRunState(run, "complete");
+        if (textRun.state !== "error") {
+          setRunState(textRun, "complete");
         }
         clearPendingRun(runId);
         if (runId) {
-          runViewsByRunId.delete(runId);
+          textRunViewsByRunId.delete(runId);
+          toolRunViewsByRunId.delete(runId);
         }
         maybeScrollToBottom(shouldStick);
         return;
@@ -1656,13 +1751,14 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       if (!finalText.trim()) {
         clearPendingRun(runId);
         if (runId) {
-          runViewsByRunId.delete(runId);
+          textRunViewsByRunId.delete(runId);
+          toolRunViewsByRunId.delete(runId);
         }
         maybeScrollToBottom(shouldStick);
         return;
       }
 
-      const fallbackRun = ensureRun(runId, signalTimestampMs);
+      const fallbackRun = ensureTextRun(runId, signalTimestampMs);
       if (fallbackRun.markdownSource.trim().length === 0) {
         setRunMarkdown(fallbackRun, finalText);
       }
@@ -1671,7 +1767,8 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       }
       clearPendingRun(runId);
       if (runId) {
-        runViewsByRunId.delete(runId);
+        textRunViewsByRunId.delete(runId);
+        toolRunViewsByRunId.delete(runId);
       }
       maybeScrollToBottom(shouldStick);
     }
@@ -1916,10 +2013,13 @@ function createChatAppController(client: AppKernelClient): AppInstance {
 
     terminate: () => {
       mounted = false;
-      runViewsByRunId.clear();
+      textRunViewsByRunId.clear();
+      toolRunViewsByRunId.clear();
       toolCardsByCallId.clear();
+      toolCardOwnersByCallId.clear();
       pendingRunIds.clear();
-      lastAssistantRun = null;
+      lastAssistantTextRun = null;
+      lastAssistantToolRun = null;
 
       for (const fn of cleanup) {
         fn();

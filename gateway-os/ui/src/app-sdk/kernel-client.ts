@@ -8,7 +8,7 @@ export type AppKernelClient = {
   onSignal: (listener: (signal: string, payload: unknown) => void) => () => void;
   request: <T = unknown>(syscall: string, args?: unknown) => Promise<T>;
   sendMessage: (message: string, pid?: string) => Promise<ProcSendResult>;
-  getHistory: (limit?: number, pid?: string) => Promise<ProcHistoryResult>;
+  getHistory: (limit?: number, pid?: string, offset?: number) => Promise<ProcHistoryResult>;
   allowedSyscalls: readonly string[];
 };
 
@@ -53,11 +53,10 @@ export function createScopedKernelClient(
       assertAllowed(manifest, "proc.send");
       return gatewayClient.sendMessage(message, pid);
     },
-    getHistory: async (limit = 50, pid?: string): Promise<ProcHistoryResult> => {
+    getHistory: async (limit = 50, pid?: string, offset?: number): Promise<ProcHistoryResult> => {
       assertAllowed(manifest, "proc.history");
-      return gatewayClient.getHistory(limit, pid);
+      return gatewayClient.getHistory(limit, pid, offset);
     },
     allowedSyscalls: manifest.syscalls,
   };
 }
-

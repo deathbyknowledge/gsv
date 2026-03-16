@@ -234,9 +234,10 @@ export class GatewayClient {
     return result;
   }
 
-  async getHistory(limit = 50, pid?: string): Promise<ProcHistoryResult> {
+  async getHistory(limit = 50, pid?: string, offset?: number): Promise<ProcHistoryResult> {
     const result = (await this.call("proc.history", {
       limit,
+      ...(typeof offset === "number" ? { offset } : {}),
       ...(pid ? { pid } : {}),
     })) as ProcHistoryResult;
     return result;

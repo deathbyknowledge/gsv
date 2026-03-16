@@ -2447,9 +2447,9 @@ button:disabled {
   --font-ui: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
   --font-mono: "IBM Plex Mono", "SF Mono", "Menlo", monospace;
   background:
-    radial-gradient(circle at 14% 6%, rgba(240, 245, 251, 0.66) 0%, rgba(240, 245, 251, 0) 32%),
-    radial-gradient(circle at 88% 12%, rgba(225, 234, 243, 0.4) 0%, rgba(225, 234, 243, 0) 42%),
-    linear-gradient(145deg, #bec9d6 0%, #aeb9c8 44%, #a1adbc 100%);
+    radial-gradient(circle at 14% 6%, rgba(255, 255, 255, 0.8) 0%, rgba(255, 255, 255, 0) 34%),
+    radial-gradient(circle at 88% 12%, rgba(244, 248, 253, 0.62) 0%, rgba(244, 248, 253, 0) 44%),
+    linear-gradient(145deg, var(--bg-light) 0%, var(--bg-mid) 44%, var(--bg-deep) 100%);
 }
 
 .desktop-shell[data-theme="neumorphism"] .atmosphere {
@@ -2479,7 +2479,7 @@ button:disabled {
 }
 
 .desktop-shell[data-theme="neumorphism"] .session-overlay {
-  background: color-mix(in srgb, var(--bg-mid) 78%, #95a2b1);
+  background: color-mix(in srgb, var(--bg-mid) 82%, #cdd6e1);
   backdrop-filter: blur(2px);
 }
 
@@ -2668,7 +2668,16 @@ button:disabled {
   border: 0;
 }
 
-.desktop-shell[data-theme="neumorphism"] .chat-composer textarea,
+.desktop-shell[data-theme="neumorphism"] .chat-composer textarea {
+  border: 0;
+  background: var(--chat-input-bg);
+  box-shadow: var(--chat-input-shadow);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-composer textarea:focus-visible {
+  background: var(--chat-input-focus-bg);
+}
+
 .desktop-shell[data-theme="neumorphism"] .session-form input,
 .desktop-shell[data-theme="neumorphism"] .config-toolbar input,
 .desktop-shell[data-theme="neumorphism"] .config-set-form input,
