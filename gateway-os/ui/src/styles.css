@@ -82,6 +82,49 @@ button:disabled {
   --control-placeholder: color-mix(in srgb, var(--text-muted) 92%, transparent);
   --control-disabled-bg: color-mix(in srgb, var(--surface-0) 52%, transparent);
   --control-disabled-text: color-mix(in srgb, var(--text-muted) 88%, transparent);
+  --control-border-width: 1px;
+  --surface-border-width: 1px;
+
+  --surface-raised: color-mix(in srgb, var(--surface-0) 72%, transparent);
+  --surface-pressed: color-mix(in srgb, var(--surface-2) 84%, transparent);
+  --surface-overlay: color-mix(in srgb, var(--surface-1) 92%, transparent);
+
+  --elevation-soft:
+    0 1px 0 color-mix(in srgb, white 24%, transparent) inset,
+    0 6px 14px color-mix(in srgb, var(--bg-deep) 26%, transparent);
+  --elevation-raised:
+    0 1px 0 color-mix(in srgb, white 30%, transparent) inset,
+    0 10px 24px color-mix(in srgb, var(--bg-deep) 36%, transparent);
+  --elevation-pressed:
+    inset 2px 2px 5px color-mix(in srgb, var(--bg-deep) 38%, transparent),
+    inset -2px -2px 4px color-mix(in srgb, white 16%, transparent);
+  --elevation-focus: var(--control-focus-ring);
+
+  --scrollbar-track: color-mix(in srgb, var(--surface-0) 62%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--accent) 40%, var(--line-soft));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+
+  --chat-compose-surface-border: var(--control-border);
+  --chat-compose-surface-bg: color-mix(in srgb, var(--surface-0) 62%, transparent);
+  --chat-compose-surface-focus-border: var(--control-border-focus);
+  --chat-compose-surface-focus-ring: var(--control-focus-ring);
+  --chat-compose-action-bg: color-mix(in srgb, var(--surface-0) 58%, transparent);
+  --chat-compose-action-bg-hover: color-mix(in srgb, var(--accent) 18%, var(--surface-0));
+  --chat-compose-action-border: color-mix(in srgb, var(--line-soft) 88%, transparent);
+  --chat-compose-action-color: color-mix(in srgb, var(--text-main) 76%, var(--text-muted));
+  --chat-compose-action-size: 34px;
+  --chat-compose-action-icon-size: 17px;
+  --chat-upload-tray-bg: color-mix(in srgb, var(--surface-1) 90%, transparent);
+  --chat-upload-tray-shadow: 0 10px 24px rgba(3, 10, 24, 0.34);
+  --chat-voice-panel-bg: color-mix(in srgb, var(--surface-0) 82%, transparent);
+  --chat-voice-panel-border: color-mix(in srgb, var(--line-soft) 84%, transparent);
+  --chat-voice-panel-shadow: 0 12px 24px rgba(2, 8, 20, 0.3);
+  --chat-voice-orb-core: color-mix(in srgb, var(--accent) 52%, white);
+  --chat-voice-orb-glow: color-mix(in srgb, var(--accent) 48%, transparent);
+  --chat-voice-orb-ring: color-mix(in srgb, var(--accent) 42%, transparent);
+  --chat-input-bg: var(--surface-pressed);
+  --chat-input-focus-bg: color-mix(in srgb, var(--surface-0) 45%, transparent);
+  --chat-input-shadow: var(--elevation-pressed);
 
   position: relative;
   width: 100%;
@@ -100,7 +143,7 @@ button:disabled {
 .chat-log,
 .chat-composer textarea {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent) 38%, var(--line-soft)) color-mix(in srgb, var(--surface-0) 65%, transparent);
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 .desktop-shell *::-webkit-scrollbar {
@@ -109,17 +152,17 @@ button:disabled {
 }
 
 .desktop-shell *::-webkit-scrollbar-track {
-  background: color-mix(in srgb, var(--surface-0) 62%, transparent);
+  background: var(--scrollbar-track);
 }
 
 .desktop-shell *::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  border: 2px solid color-mix(in srgb, var(--surface-0) 62%, transparent);
-  background: color-mix(in srgb, var(--accent) 40%, var(--line-soft));
+  border: 2px solid var(--scrollbar-track);
+  background: var(--scrollbar-thumb);
 }
 
 .desktop-shell *::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  background: var(--scrollbar-thumb-hover);
 }
 
 .atmosphere {
@@ -223,8 +266,9 @@ button:disabled {
   height: 24px;
   padding: 0 10px;
   border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: var(--surface-border-width) solid var(--line-strong);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-overlay));
+  box-shadow: var(--elevation-soft);
   font-size: 0.74rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -264,9 +308,10 @@ button:disabled {
 
 .session-lock-btn {
   height: 28px;
-  border: 1px solid var(--control-border);
+  border: var(--control-border-width) solid var(--control-border);
   border-radius: 6px;
-  background: var(--control-bg);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-soft);
   color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.74rem;
@@ -284,9 +329,10 @@ button:disabled {
 
 .theme-picker {
   height: 28px;
-  border: 1px solid var(--control-border);
+  border: var(--control-border-width) solid var(--control-border);
   border-radius: 6px;
-  background: var(--control-bg);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-soft);
   color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.76rem;
@@ -302,9 +348,10 @@ button:disabled {
 
 .windows-toggle {
   height: 28px;
-  border: 1px solid var(--control-border);
+  border: var(--control-border-width) solid var(--control-border);
   border-radius: 6px;
-  background: var(--control-bg);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-soft);
   color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.74rem;
@@ -335,10 +382,10 @@ button:disabled {
   max-width: 290px;
   padding: 10px;
   border-radius: 8px;
-  border: 1px solid var(--line-soft);
-  background: color-mix(in srgb, var(--surface-1) 92%, transparent);
+  border: var(--surface-border-width) solid var(--line-soft);
+  background: var(--surface-overlay);
   backdrop-filter: var(--panel-backdrop);
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--bg-deep) 72%, black);
+  box-shadow: var(--elevation-raised);
   z-index: 40;
 }
 
@@ -356,9 +403,10 @@ button:disabled {
 
 .windows-list button {
   width: 100%;
-  border: 1px solid var(--control-border);
+  border: var(--control-border-width) solid var(--control-border);
   border-radius: 6px;
-  background: var(--control-bg);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-soft);
   color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.76rem;
@@ -399,10 +447,10 @@ button:disabled {
 
 .session-card {
   width: min(480px, calc(100% - 32px));
-  border: 1px solid var(--line-soft);
+  border: var(--surface-border-width) solid var(--line-soft);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-1) 95%, transparent);
-  box-shadow: 0 20px 50px color-mix(in srgb, var(--bg-deep) 82%, black);
+  background: var(--surface-overlay);
+  box-shadow: var(--elevation-raised);
   padding: 20px 20px 18px;
 }
 
@@ -426,7 +474,7 @@ button:disabled {
 
 .session-form input {
   width: 100%;
-  border: 1px solid var(--control-border);
+  border: var(--control-border-width) solid var(--control-border);
   border-radius: 8px;
   background: var(--control-bg);
   color: var(--control-text);
@@ -749,8 +797,9 @@ button:disabled {
 .mock-grid article {
   padding: 12px;
   border-radius: 10px;
-  border: 1px solid var(--line-soft);
-  background: color-mix(in srgb, var(--surface-0) 46%, transparent);
+  border: var(--surface-border-width) solid var(--line-soft);
+  background: var(--surface-overlay);
+  box-shadow: var(--elevation-soft);
 }
 
 .app-grid article:last-child p {
@@ -767,7 +816,7 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  border: 1px solid var(--line-soft);
+  border: var(--surface-border-width) solid var(--line-soft);
   background: color-mix(in srgb, var(--surface-0) 68%, transparent);
   color: var(--text-main);
   font-family: var(--font-mono);
@@ -788,9 +837,10 @@ button:disabled {
 
 .config-card,
 .config-advanced {
-  border: 1px solid var(--line-soft);
+  border: var(--surface-border-width) solid var(--line-soft);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-0) 64%, transparent);
+  background: var(--surface-overlay);
+  box-shadow: var(--elevation-soft);
   padding: 12px;
   display: grid;
   gap: 12px;
@@ -815,9 +865,10 @@ button:disabled {
 }
 
 .config-field {
-  border: 1px solid color-mix(in srgb, var(--line-soft) 64%, transparent);
+  border: var(--surface-border-width) solid color-mix(in srgb, var(--line-soft) 64%, transparent);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--surface-1) 44%, transparent);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-soft);
   padding: 10px;
   display: grid;
   gap: 6px;
@@ -847,7 +898,7 @@ button:disabled {
   width: 16px !important;
   height: 16px;
   margin: 0;
-  border: 1px solid var(--control-border);
+  border: var(--control-border-width) solid var(--control-border);
   border-radius: 4px;
   background: var(--control-bg);
   position: relative;
@@ -910,9 +961,10 @@ button:disabled {
 .config-field textarea,
 .config-field select {
   width: 100%;
-  border: 1px solid var(--control-border);
+  border: var(--control-border-width) solid var(--control-border);
   border-radius: 8px;
-  background: var(--control-bg);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-soft);
   color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.84rem;
@@ -1091,9 +1143,10 @@ button:disabled {
 }
 
 .runtime-btn {
-  border: 1px solid var(--control-border);
+  border: var(--control-border-width) solid var(--control-border);
   border-radius: 999px;
-  background: var(--control-bg);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-soft);
   color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.74rem;
@@ -1101,6 +1154,10 @@ button:disabled {
   line-height: 1;
   padding: 8px 12px;
   transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.runtime-btn:active:not(:disabled) {
+  box-shadow: var(--elevation-pressed);
 }
 
 .runtime-btn:hover {
@@ -1152,13 +1209,13 @@ button:disabled {
 
 .chat-row {
   max-width: min(860px, 100%);
-  border: 1px solid var(--line-soft);
+  border: var(--surface-border-width) solid var(--line-soft);
   border-radius: 12px;
   padding: 10px 12px;
-  background: color-mix(in srgb, var(--surface-0) 64%, transparent);
+  background: var(--surface-overlay);
   display: grid;
   gap: 8px;
-  box-shadow: 0 1px 0 color-mix(in srgb, white 36%, transparent) inset;
+  box-shadow: var(--elevation-soft);
 }
 
 .chat-row-foot {
@@ -1178,7 +1235,7 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   width: fit-content;
-  border: 1px solid color-mix(in srgb, var(--line-soft) 74%, transparent);
+  border: var(--surface-border-width) solid color-mix(in srgb, var(--line-soft) 74%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-1) 76%, transparent);
   padding: 2px 8px;
@@ -1215,7 +1272,7 @@ button:disabled {
   margin-left: auto;
   max-width: min(760px, 92%);
   border-color: color-mix(in srgb, var(--accent) 42%, var(--line-soft));
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface-0));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-raised));
 }
 
 .chat-row-user .chat-row-role {
@@ -1226,7 +1283,7 @@ button:disabled {
 .chat-row-system {
   border-style: dashed;
   max-width: min(760px, 96%);
-  background: color-mix(in srgb, var(--surface-0) 54%, transparent);
+  background: color-mix(in srgb, var(--surface-pressed) 72%, transparent);
 }
 
 .chat-row-system .chat-row-role {
@@ -1298,6 +1355,11 @@ button:disabled {
   margin: 0;
 }
 
+.chat-markdown p {
+  max-width: none;
+  color: var(--text-main);
+}
+
 .chat-markdown ul,
 .chat-markdown ol {
   padding-left: 18px;
@@ -1332,7 +1394,7 @@ button:disabled {
 .chat-markdown pre {
   border: 1px solid var(--line-soft);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
+  background: var(--surface-pressed);
   padding: 10px 11px;
   overflow-x: auto;
 }
@@ -1343,13 +1405,13 @@ button:disabled {
 }
 
 .tool-card {
-  border: 1px solid var(--line-soft);
+  border: var(--surface-border-width) solid var(--line-soft);
   border-radius: 11px;
-  background: color-mix(in srgb, var(--surface-1) 75%, transparent);
+  background: var(--surface-overlay);
   padding: 10px;
   display: grid;
   gap: 8px;
-  box-shadow: 0 1px 0 color-mix(in srgb, white 28%, transparent) inset;
+  box-shadow: var(--elevation-soft);
 }
 
 .tool-card-head {
@@ -1369,7 +1431,7 @@ button:disabled {
 .tool-kind-icon {
   width: 20px;
   height: 20px;
-  border: 1px solid color-mix(in srgb, var(--line-soft) 74%, transparent);
+  border: var(--surface-border-width) solid color-mix(in srgb, var(--line-soft) 74%, transparent);
   border-radius: 6px;
   background: color-mix(in srgb, var(--surface-0) 74%, transparent);
   display: inline-grid;
@@ -1432,7 +1494,7 @@ button:disabled {
   width: 18px;
   height: 18px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--line-soft) 74%, transparent);
+  border: var(--surface-border-width) solid color-mix(in srgb, var(--line-soft) 74%, transparent);
   background: color-mix(in srgb, var(--surface-0) 66%, transparent);
   color: var(--text-muted);
   display: inline-grid;
@@ -1566,7 +1628,7 @@ button:disabled {
   margin: 0;
   border: 0;
   border-radius: 7px;
-  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  background: var(--surface-pressed);
   padding: 8px 9px;
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -1682,33 +1744,198 @@ button:disabled {
 }
 
 .chat-composer {
-  border-top: 1px solid var(--line-soft);
+  border-top: var(--surface-border-width) solid var(--line-soft);
   padding: 12px 14px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 10px;
-  background: color-mix(in srgb, var(--surface-1) 38%, transparent);
+  gap: 8px;
+  background: var(--surface-overlay);
 }
 
-.chat-composer > .runtime-btn {
-  min-width: 112px;
-  align-self: end;
+.chat-compose-surface {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 8px;
+  border: var(--control-border-width) solid var(--chat-compose-surface-border);
+  border-radius: 14px;
+  background: var(--chat-compose-surface-bg);
+  padding: 6px;
+  position: relative;
+  box-shadow: var(--elevation-soft);
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.chat-composer:focus-within .chat-compose-surface {
+  border-color: var(--chat-compose-surface-focus-border);
+  box-shadow: var(--chat-compose-surface-focus-ring);
+}
+
+.chat-composer[data-has-text="true"] .chat-compose-surface {
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--chat-compose-surface-border));
+  background: color-mix(in srgb, var(--chat-compose-surface-bg) 82%, var(--accent));
+}
+
+.chat-compose-action-cluster {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.chat-action-btn {
+  width: var(--chat-compose-action-size);
+  height: var(--chat-compose-action-size);
+  border-radius: 10px;
+  border: var(--control-border-width) solid var(--chat-compose-action-border);
+  background: var(--chat-compose-action-bg);
+  color: var(--chat-compose-action-color);
+  box-shadow: var(--elevation-soft);
+  display: inline-grid;
+  place-items: center;
+  position: relative;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.chat-action-btn svg {
+  width: var(--chat-compose-action-icon-size);
+  height: var(--chat-compose-action-icon-size);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chat-action-btn:hover:not(:disabled),
+.chat-action-btn:focus-visible {
+  border-color: var(--chat-compose-surface-focus-border);
+  background: var(--chat-compose-action-bg-hover);
+  color: var(--text-main);
+}
+
+.chat-action-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--chat-compose-surface-focus-ring);
+}
+
+.chat-action-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: var(--elevation-pressed);
+}
+
+.chat-action-btn:disabled {
+  opacity: 0.5;
+}
+
+.chat-action-attach[data-state="open"] {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--chat-compose-action-border));
+  background: color-mix(in srgb, var(--accent) 22%, var(--chat-compose-action-bg));
+}
+
+.chat-action-attach[data-state="open"] svg {
+  transform: rotate(45deg);
+}
+
+.chat-upload-tray {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: var(--control-border-width) solid var(--chat-compose-action-border);
+  border-radius: 999px;
+  background: var(--chat-upload-tray-bg);
+  padding: 6px;
+  box-shadow: var(--chat-upload-tray-shadow);
+  opacity: 0;
+  transform: translateY(8px) scale(0.92);
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+  z-index: 8;
+}
+
+.chat-composer[data-upload-open="true"] .chat-upload-tray {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.chat-upload-btn {
+  width: calc(var(--chat-compose-action-size) - 2px);
+  height: calc(var(--chat-compose-action-size) - 2px);
+  border-radius: 999px;
+  border: var(--control-border-width) solid color-mix(in srgb, var(--chat-compose-action-border) 84%, transparent);
+  background: color-mix(in srgb, var(--chat-compose-action-bg) 86%, transparent);
+  color: var(--chat-compose-action-color);
+  box-shadow: var(--elevation-soft);
+  display: inline-grid;
+  place-items: center;
+  transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.chat-upload-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chat-upload-btn:hover:not(:disabled) {
+  border-color: var(--chat-compose-surface-focus-border);
+  background: var(--chat-compose-action-bg-hover);
+  color: var(--text-main);
+  transform: translateY(-1px);
+}
+
+.chat-upload-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: var(--elevation-pressed);
+}
+
+.chat-action-voice[data-state="active"] {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--chat-compose-action-border));
+  background: color-mix(in srgb, var(--accent) 22%, var(--chat-compose-action-bg));
+  color: color-mix(in srgb, var(--text-main) 88%, white);
+}
+
+.chat-action-voice[data-state="active"]::before,
+.chat-action-voice[data-state="active"]::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 14px;
+  border: 1px solid var(--chat-voice-orb-ring);
+  opacity: 0;
+  pointer-events: none;
+  animation: chat-voice-ring 1.8s ease-out infinite;
+}
+
+.chat-action-voice[data-state="active"]::after {
+  animation-delay: 0.55s;
 }
 
 .chat-composer textarea {
-  min-height: 74px;
-  max-height: 180px;
+  min-height: 56px;
+  max-height: 170px;
   resize: vertical;
-  border: 1px solid var(--control-border);
+  border: none;
   border-radius: 10px;
-  background: var(--control-bg);
+  background: var(--chat-input-bg);
+  box-shadow: var(--chat-input-shadow);
   color: var(--control-text);
   font-family: var(--font-ui);
   font-size: 0.88rem;
   line-height: 1.45;
-  padding: 10px;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  padding: 9px 10px;
+  transition: background-color 120ms ease;
 }
 
 .chat-composer textarea::placeholder {
@@ -1717,15 +1944,156 @@ button:disabled {
 
 .chat-composer textarea:focus-visible {
   outline: none;
-  border-color: var(--control-border-focus);
-  box-shadow: var(--control-focus-ring);
+  background: var(--chat-input-focus-bg);
 }
 
 .chat-composer textarea:disabled {
   background: var(--control-disabled-bg);
   color: var(--control-disabled-text);
+  opacity: 0.7;
+}
+
+.chat-send-btn {
+  min-width: 84px;
+  height: 38px;
+  align-self: end;
+  border: var(--control-border-width) solid var(--control-border);
+  border-radius: 11px;
+  background: var(--surface-raised);
+  color: var(--control-text);
+  box-shadow: var(--elevation-soft);
+  font-family: var(--font-ui);
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.chat-send-btn[data-state="idle"] {
+  opacity: 0.7;
+}
+
+.chat-send-btn[data-state="ready"] {
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface-0));
+}
+
+.chat-send-btn[data-state="queue"] {
+  border-color: color-mix(in srgb, var(--warn) 62%, var(--line-strong));
+  background: color-mix(in srgb, var(--warn) 18%, var(--surface-0));
+}
+
+.chat-send-btn[data-state="busy"] {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-0));
+}
+
+.chat-send-btn[data-state="voice"] {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-0));
+}
+
+.chat-composer[data-busy="true"] .chat-send-btn[data-state="busy"] {
+  animation: chat-run-pulse 1.2s ease-in-out infinite;
+}
+
+.chat-send-btn:hover {
+  border-color: var(--control-border-focus);
+}
+
+.chat-send-btn:active {
+  transform: translateY(1px);
+  box-shadow: var(--elevation-pressed);
+}
+
+.chat-send-btn:focus-visible {
+  outline: none;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
+}
+
+.chat-send-btn:disabled {
+  background: color-mix(in srgb, var(--surface-0) 54%, transparent);
+  color: var(--control-disabled-text);
   border-color: color-mix(in srgb, var(--control-border) 80%, transparent);
-  opacity: 0.75;
+  opacity: 0.66;
+}
+
+.chat-voice-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: var(--control-border-width) solid var(--chat-voice-panel-border);
+  border-radius: 12px;
+  background: var(--chat-voice-panel-bg);
+  box-shadow: var(--chat-voice-panel-shadow);
+  padding: 8px 10px;
+  animation: chat-voice-panel-in 220ms ease;
+}
+
+.chat-voice-panel[hidden] {
+  display: none !important;
+}
+
+.chat-voice-orb {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 36% 32%, color-mix(in srgb, white 72%, var(--chat-voice-orb-core)) 0%, var(--chat-voice-orb-core) 54%, color-mix(in srgb, var(--chat-voice-orb-core) 72%, transparent) 100%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--chat-voice-orb-core) 56%, transparent),
+    0 0 20px var(--chat-voice-orb-glow);
+  animation: chat-voice-orb-pulse 1.8s ease-in-out infinite;
+}
+
+.chat-voice-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.chat-voice-title {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 650;
+  color: color-mix(in srgb, var(--text-main) 92%, white);
+}
+
+.chat-voice-hint {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  color: color-mix(in srgb, var(--text-muted) 92%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-compose-surface,
+  .chat-composer textarea,
+  .chat-action-btn,
+  .chat-upload-tray,
+  .chat-upload-btn,
+  .chat-send-btn {
+    transition: none;
+  }
+
+  .chat-voice-panel {
+    animation: none;
+  }
+
+  .chat-composer[data-busy="true"] .chat-send-btn[data-state="busy"] {
+    animation: none;
+  }
+
+  .chat-action-voice[data-state="active"]::before,
+  .chat-action-voice[data-state="active"]::after,
+  .chat-voice-orb {
+    animation: none;
+  }
 }
 
 @keyframes chat-run-pulse {
@@ -1736,6 +2104,41 @@ button:disabled {
 
   50% {
     opacity: 1;
+  }
+}
+
+@keyframes chat-voice-ring {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.9);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.38);
+  }
+}
+
+@keyframes chat-voice-orb-pulse {
+  0%,
+  100% {
+    transform: scale(0.95);
+  }
+
+  50% {
+    transform: scale(1);
+  }
+}
+
+@keyframes chat-voice-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -1889,7 +2292,7 @@ button:disabled {
 .desktop-shell[data-theme="frutiger-aero"] .dot {
   width: 12px;
   height: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
+  border: 0;
   box-shadow:
     0 1px 1px rgba(255, 255, 255, 0.55) inset,
     0 1px 2px rgba(57, 97, 126, 0.25);
@@ -1929,6 +2332,353 @@ button:disabled {
 
 .desktop-shell[data-theme="frutiger-aero"] .runtime-btn:active {
   transform: translateY(1px);
+}
+
+.desktop-shell[data-theme="frutiger-aero"],
+.desktop-shell[data-theme="frutiger-aero"] .window-content,
+.desktop-shell[data-theme="frutiger-aero"] .chat-log,
+.desktop-shell[data-theme="frutiger-aero"] .chat-composer textarea {
+  scrollbar-color: rgba(83, 177, 219, 0.7) rgba(225, 244, 253, 0.64);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] *::-webkit-scrollbar-track {
+  background: rgba(223, 242, 252, 0.72);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] *::-webkit-scrollbar-thumb {
+  border-color: rgba(221, 241, 251, 0.85);
+  background: linear-gradient(180deg, rgba(126, 208, 241, 0.88) 0%, rgba(97, 183, 219, 0.86) 100%);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] *::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(111, 208, 245, 0.96) 0%, rgba(76, 176, 216, 0.94) 100%);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-log {
+  background:
+    radial-gradient(circle at 88% 0%, rgba(182, 240, 255, 0.35) 0%, rgba(182, 240, 255, 0) 44%),
+    radial-gradient(circle at 12% 100%, rgba(189, 244, 211, 0.28) 0%, rgba(189, 244, 211, 0) 42%),
+    linear-gradient(180deg, rgba(235, 249, 255, 0.98) 0%, rgba(219, 239, 249, 0.96) 100%);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-row {
+  border-color: rgba(109, 172, 202, 0.46);
+  border-radius: 13px;
+  background: linear-gradient(180deg, rgba(248, 255, 255, 0.94) 0%, rgba(226, 244, 252, 0.9) 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.82) inset,
+    0 10px 18px rgba(83, 147, 184, 0.12);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-row-user {
+  border-color: rgba(82, 195, 228, 0.52);
+  background: linear-gradient(180deg, rgba(224, 250, 255, 0.96) 0%, rgba(202, 241, 250, 0.94) 100%);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-row-system {
+  border-color: rgba(97, 166, 193, 0.5);
+  background: linear-gradient(180deg, rgba(241, 251, 255, 0.92) 0%, rgba(227, 243, 251, 0.9) 100%);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-row-meta,
+.desktop-shell[data-theme="frutiger-aero"] .chat-run-status {
+  color: rgba(43, 104, 133, 0.74);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-markdown {
+  font-size: 0.92rem;
+  line-height: 1.57;
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-markdown p {
+  color: #1d4b63;
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-markdown code {
+  border-color: rgba(115, 178, 206, 0.48);
+  background: linear-gradient(180deg, rgba(248, 255, 255, 0.94) 0%, rgba(230, 248, 255, 0.9) 100%);
+  color: #285870;
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-markdown pre {
+  border-color: rgba(101, 170, 201, 0.5);
+  background: linear-gradient(180deg, rgba(245, 253, 255, 0.96) 0%, rgba(223, 243, 251, 0.94) 100%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-markdown blockquote {
+  border-left-color: rgba(86, 194, 232, 0.62);
+  background: color-mix(in srgb, rgba(194, 242, 255, 0.54) 64%, transparent);
+  border-radius: 0 8px 8px 0;
+  padding: 6px 10px;
+  color: rgba(35, 90, 115, 0.84);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .tool-card {
+  border-color: rgba(103, 170, 198, 0.44);
+  background: linear-gradient(180deg, rgba(245, 254, 255, 0.96) 0%, rgba(224, 244, 252, 0.93) 100%);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .tool-kind-icon {
+  border-color: rgba(92, 163, 194, 0.52);
+  background: linear-gradient(180deg, rgba(249, 255, 255, 0.96) 0%, rgba(223, 246, 255, 0.9) 100%);
+  color: rgba(34, 93, 119, 0.74);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-composer {
+  background: linear-gradient(180deg, rgba(236, 250, 255, 0.95) 0%, rgba(219, 242, 251, 0.93) 100%);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-compose-surface {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.78) inset,
+    0 9px 18px rgba(84, 146, 181, 0.14);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-send-btn,
+.desktop-shell[data-theme="frutiger-aero"] .chat-action-btn,
+.desktop-shell[data-theme="frutiger-aero"] .chat-upload-btn {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.88) inset,
+    0 4px 10px rgba(72, 138, 173, 0.16);
+}
+
+.desktop-shell[data-theme="neumorphism"] {
+  --font-ui: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", "Menlo", monospace;
+  background:
+    radial-gradient(circle at 14% 6%, rgba(240, 245, 251, 0.66) 0%, rgba(240, 245, 251, 0) 32%),
+    radial-gradient(circle at 88% 12%, rgba(225, 234, 243, 0.4) 0%, rgba(225, 234, 243, 0) 42%),
+    linear-gradient(145deg, #bec9d6 0%, #aeb9c8 44%, #a1adbc 100%);
+}
+
+.desktop-shell[data-theme="neumorphism"] .atmosphere {
+  opacity: 0.2;
+}
+
+.desktop-shell[data-theme="neumorphism"] .cloud,
+.desktop-shell[data-theme="neumorphism"] .starship-glow,
+.desktop-shell[data-theme="neumorphism"] .starship-hull {
+  display: none;
+}
+
+.desktop-shell[data-theme="neumorphism"] .topbar {
+  background: var(--surface-raised);
+  border-bottom: 0;
+  box-shadow: var(--elevation-soft);
+}
+
+.desktop-shell[data-theme="neumorphism"] .pill,
+.desktop-shell[data-theme="neumorphism"] .session-lock-btn,
+.desktop-shell[data-theme="neumorphism"] .theme-picker,
+.desktop-shell[data-theme="neumorphism"] .windows-toggle {
+  border: 0;
+  background: var(--surface-raised);
+  color: var(--control-text);
+  box-shadow: var(--elevation-soft);
+}
+
+.desktop-shell[data-theme="neumorphism"] .session-overlay {
+  background: color-mix(in srgb, var(--bg-mid) 78%, #95a2b1);
+  backdrop-filter: blur(2px);
+}
+
+.desktop-shell[data-theme="neumorphism"] .session-card {
+  border: 0;
+  background: var(--surface-overlay);
+  box-shadow: var(--elevation-raised);
+}
+
+.desktop-shell[data-theme="neumorphism"] .desktop-icon {
+  border: 0;
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-soft);
+}
+
+.desktop-shell[data-theme="neumorphism"] .desktop-icon:hover {
+  border: 0;
+  background: var(--surface-overlay);
+  box-shadow: var(--elevation-raised);
+}
+
+.desktop-shell[data-theme="neumorphism"] .desktop-icon.is-selected,
+.desktop-shell[data-theme="neumorphism"] .desktop-icon.is-active {
+  border: 0;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-raised));
+  box-shadow: var(--elevation-pressed);
+}
+
+.desktop-shell[data-theme="neumorphism"] .desktop-glyph {
+  border: 0;
+  background: var(--surface-pressed);
+  box-shadow: var(--elevation-pressed);
+}
+
+.desktop-shell[data-theme="neumorphism"] .windows-panel {
+  border: 0;
+  background: var(--surface-overlay);
+  box-shadow: var(--elevation-raised);
+}
+
+.desktop-shell[data-theme="neumorphism"] .window-snap-overlay {
+  border-color: rgba(91, 126, 160, 0.48);
+  background: color-mix(in srgb, rgba(95, 129, 162, 0.18) 84%, transparent);
+  box-shadow: none;
+}
+
+.desktop-shell[data-theme="neumorphism"] .mock-window {
+  border: 0;
+  background: var(--surface-overlay);
+  box-shadow: var(--window-shadow);
+}
+
+.desktop-shell[data-theme="neumorphism"] .mock-window.managed-window.is-active {
+  box-shadow:
+    var(--window-shadow),
+    0 0 0 2px rgba(101, 134, 163, 0.18);
+}
+
+.desktop-shell[data-theme="neumorphism"] .window-titlebar {
+  border-bottom: 0;
+  box-shadow: var(--elevation-soft);
+}
+
+.desktop-shell[data-theme="neumorphism"] .window-meta {
+  color: rgba(61, 74, 93, 0.7);
+}
+
+.desktop-shell[data-theme="neumorphism"] .dot {
+  border: 0;
+  box-shadow: var(--elevation-pressed);
+}
+
+.desktop-shell[data-theme="neumorphism"] .dot.red {
+  background: #d0717f;
+}
+
+.desktop-shell[data-theme="neumorphism"] .dot.amber {
+  background: #c59b5f;
+}
+
+.desktop-shell[data-theme="neumorphism"] .dot.green {
+  background: #6caa7d;
+}
+
+.desktop-shell[data-theme="neumorphism"] .window-content,
+.desktop-shell[data-theme="neumorphism"] .chat-log {
+  background: var(--surface-overlay);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-row,
+.desktop-shell[data-theme="neumorphism"] .tool-card,
+.desktop-shell[data-theme="neumorphism"] .config-card,
+.desktop-shell[data-theme="neumorphism"] .config-advanced,
+.desktop-shell[data-theme="neumorphism"] .mock-grid article {
+  border: 0;
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-soft);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-row-user {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-raised));
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-row-system {
+  border-style: solid;
+  background: var(--surface-pressed);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-row-role {
+  border: 0;
+  background: var(--surface-pressed);
+  box-shadow: var(--elevation-pressed);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-row-meta,
+.desktop-shell[data-theme="neumorphism"] .chat-run-status {
+  color: rgba(57, 71, 90, 0.68);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-markdown p {
+  color: #2a394b;
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-markdown code,
+.desktop-shell[data-theme="neumorphism"] .chat-markdown pre {
+  border: 0;
+  background: var(--surface-pressed);
+  box-shadow: var(--elevation-pressed);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-markdown blockquote {
+  border-left-color: rgba(82, 118, 152, 0.5);
+  background: color-mix(in srgb, var(--surface-raised) 92%, rgba(103, 133, 163, 0.12));
+}
+
+.desktop-shell[data-theme="neumorphism"] .tool-kind-icon,
+.desktop-shell[data-theme="neumorphism"] .tool-target-badge,
+.desktop-shell[data-theme="neumorphism"] .tool-status-badge,
+.desktop-shell[data-theme="neumorphism"] .tool-meta-icon-btn {
+  border: 0;
+  background: var(--surface-pressed);
+  box-shadow: var(--elevation-pressed);
+}
+
+.desktop-shell[data-theme="neumorphism"] .tool-details-body,
+.desktop-shell[data-theme="neumorphism"] .tool-result {
+  border-top-style: solid;
+  border-top-color: rgba(146, 160, 176, 0.5);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-composer {
+  border-top: 0;
+  background: var(--surface-overlay);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-compose-surface {
+  border: 0;
+  box-shadow: var(--elevation-pressed);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-action-btn,
+.desktop-shell[data-theme="neumorphism"] .chat-upload-btn,
+.desktop-shell[data-theme="neumorphism"] .chat-send-btn,
+.desktop-shell[data-theme="neumorphism"] .runtime-btn {
+  border: 0;
+  box-shadow: var(--elevation-soft);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-send-btn[data-state="ready"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-send-btn[data-state="queue"] {
+  background: color-mix(in srgb, var(--warn) 18%, var(--surface-raised));
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-send-btn:active,
+.desktop-shell[data-theme="neumorphism"] .chat-action-btn:active:not(:disabled),
+.desktop-shell[data-theme="neumorphism"] .chat-upload-btn:active:not(:disabled),
+.desktop-shell[data-theme="neumorphism"] .runtime-btn:active:not(:disabled) {
+  box-shadow: var(--elevation-pressed);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-upload-tray,
+.desktop-shell[data-theme="neumorphism"] .chat-voice-panel {
+  border: 0;
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-composer textarea,
+.desktop-shell[data-theme="neumorphism"] .session-form input,
+.desktop-shell[data-theme="neumorphism"] .config-toolbar input,
+.desktop-shell[data-theme="neumorphism"] .config-set-form input,
+.desktop-shell[data-theme="neumorphism"] .config-set-form textarea,
+.desktop-shell[data-theme="neumorphism"] .config-field input,
+.desktop-shell[data-theme="neumorphism"] .config-field textarea,
+.desktop-shell[data-theme="neumorphism"] .config-field select {
+  border: 0;
+  background: var(--surface-pressed);
+  box-shadow: var(--elevation-pressed);
 }
 
 .desktop-shell[data-theme="glassmorphism"] {
@@ -2208,8 +2958,7 @@ button:disabled {
   }
 
   .chat-composer {
-    grid-template-columns: 1fr;
-    align-items: stretch;
+    padding: 10px;
   }
 
   .chat-row,
@@ -2222,8 +2971,8 @@ button:disabled {
     margin-left: 0;
   }
 
-  .chat-composer > .runtime-btn {
-    width: 100%;
+  .chat-send-btn {
+    min-width: 74px;
   }
 
   .config-toolbar {

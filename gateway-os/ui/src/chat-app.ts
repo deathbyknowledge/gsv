@@ -1240,10 +1240,17 @@ function mapHistoryRole(role: string): ChatRole {
 function createChatAppController(client: AppKernelClient): AppInstance {
   let composerInput: HTMLTextAreaElement | null = null;
   let composerButton: HTMLButtonElement | null = null;
+  let composerAttachButton: HTMLButtonElement | null = null;
+  let composerVoiceButton: HTMLButtonElement | null = null;
+  let composerUploadTray: HTMLElement | null = null;
+  let composerUploadButtons: HTMLButtonElement[] = [];
+  let composerVoicePanel: HTMLElement | null = null;
   let logNode: HTMLElement | null = null;
   let composeNode: HTMLFormElement | null = null;
   let mounted = false;
   let suspended = false;
+  let voiceMode = false;
+  let uploadExpanded = false;
   let wasConnected = false;
   let loadedConnectionId: string | null = null;
   let historySyntheticRunCounter = 0;
@@ -1274,17 +1281,101 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     scrollLogToBottom();
   };
 
+  const setUploadExpanded = (open: boolean): void => {
+    uploadExpanded = open;
+    if (composeNode) {
+      composeNode.dataset.uploadOpen = open ? "true" : "false";
+    }
+    if (composerUploadTray) {
+      composerUploadTray.hidden = !open;
+    }
+    if (composerAttachButton) {
+      composerAttachButton.dataset.state = open ? "open" : "closed";
+      composerAttachButton.setAttribute("aria-expanded", open ? "true" : "false");
+      composerAttachButton.title = open ? "Close media options" : "Add media";
+    }
+  };
+
+  const setVoiceMode = (active: boolean): void => {
+    voiceMode = active;
+    if (composeNode) {
+      composeNode.dataset.voice = active ? "true" : "false";
+    }
+    if (composerVoicePanel) {
+      composerVoicePanel.hidden = !active;
+    }
+    if (composerVoiceButton) {
+      composerVoiceButton.dataset.state = active ? "active" : "idle";
+      composerVoiceButton.setAttribute("aria-pressed", active ? "true" : "false");
+      composerVoiceButton.title = active ? "Stop voice mode" : "Start voice mode";
+    }
+  };
+
   const updateComposerState = (status: ChatStatus): void => {
     const connected = status.state === "connected";
+    const hasDraft = composerInput ? composerInput.value.trim().length > 0 : false;
+    const hasPendingRun = pendingRunIds.size > 0;
+    const interactive = connected && !suspended;
+
     if (composeNode) {
       composeNode.hidden = !connected;
+      composeNode.dataset.connected = connected ? "true" : "false";
+      composeNode.dataset.hasText = hasDraft ? "true" : "false";
+      composeNode.dataset.busy = hasPendingRun ? "true" : "false";
     }
+
+    if (!interactive) {
+      setUploadExpanded(false);
+      setVoiceMode(false);
+    }
+
+    if (hasDraft && uploadExpanded) {
+      setUploadExpanded(false);
+    }
+
+    if (hasDraft && voiceMode) {
+      setVoiceMode(false);
+    }
+
     if (composerInput) {
-      composerInput.disabled = !connected || suspended;
+      composerInput.disabled = !interactive || voiceMode;
+    }
+    if (composerAttachButton) {
+      composerAttachButton.disabled = !interactive || voiceMode;
+    }
+    if (composerVoiceButton) {
+      composerVoiceButton.disabled = !interactive;
+    }
+    if (composerUploadButtons.length > 0) {
+      for (const button of composerUploadButtons) {
+        button.disabled = !interactive;
+      }
     }
     if (composerButton) {
-      composerButton.disabled = !connected || suspended;
-      composerButton.textContent = pendingRunIds.size > 0 ? "Running..." : "Send";
+      composerButton.disabled = !interactive || voiceMode || !hasDraft;
+      if (voiceMode) {
+        composerButton.dataset.state = "voice";
+        composerButton.textContent = "Voice";
+        composerButton.title = "Voice mode active";
+        return;
+      }
+      if (hasPendingRun && hasDraft) {
+        composerButton.dataset.state = "queue";
+        composerButton.textContent = "Queue";
+        composerButton.title = "Queue message while a run is in progress";
+      } else if (hasPendingRun) {
+        composerButton.dataset.state = "busy";
+        composerButton.textContent = "Running";
+        composerButton.title = "Run in progress";
+      } else if (hasDraft) {
+        composerButton.dataset.state = "ready";
+        composerButton.textContent = "Send";
+        composerButton.title = "Send message";
+      } else {
+        composerButton.dataset.state = "idle";
+        composerButton.textContent = "Send";
+        composerButton.title = "Write a message to send";
+      }
     }
   };
 
@@ -1593,12 +1684,71 @@ function createChatAppController(client: AppKernelClient): AppInstance {
           <section class="chat-log" data-chat-log></section>
 
           <form class="chat-composer" data-chat-compose hidden>
-            <textarea
-              data-chat-input
-              rows="3"
-              placeholder="Type a message. Enter to send, Shift+Enter for newline."
-            ></textarea>
-            <button type="submit" class="runtime-btn" data-chat-send>Send</button>
+            <div class="chat-compose-surface">
+              <div class="chat-compose-action-cluster">
+                <button
+                  type="button"
+                  class="chat-action-btn chat-action-attach"
+                  data-chat-attach-toggle
+                  data-state="closed"
+                  aria-label="Add media"
+                  aria-expanded="false"
+                  title="Add media"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </button>
+                <div class="chat-upload-tray" data-chat-upload-tray hidden>
+                  <button type="button" class="chat-upload-btn" data-chat-upload-action="camera" title="Camera">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M5 8h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" />
+                      <path d="M9 8l1.4-2h3.2L15 8" />
+                      <circle cx="12" cy="13" r="3" />
+                    </svg>
+                  </button>
+                  <button type="button" class="chat-upload-btn" data-chat-upload-action="image" title="Image">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="4" y="4" width="16" height="16" rx="2" />
+                      <circle cx="9" cy="9" r="1.6" />
+                      <path d="m20 15-4.2-4.2a1.8 1.8 0 0 0-2.6 0L6 18" />
+                    </svg>
+                  </button>
+                  <button type="button" class="chat-upload-btn" data-chat-upload-action="file" title="File">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+                      <path d="M14 3v5h5" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <textarea
+                data-chat-input
+                rows="3"
+                placeholder="Ask anything... Enter to send, Shift+Enter for newline."
+              ></textarea>
+              <button
+                type="button"
+                class="chat-action-btn chat-action-voice"
+                data-chat-voice-toggle
+                data-state="idle"
+                aria-label="Start voice mode"
+                aria-pressed="false"
+                title="Start voice mode"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 12h2m3-4v8m5-10v12m5-8v8m3-4v4" />
+                </svg>
+              </button>
+              <button type="submit" class="chat-send-btn" data-chat-send title="Send message">Send</button>
+            </div>
+            <div class="chat-voice-panel" data-chat-voice-panel hidden>
+              <div class="chat-voice-orb" aria-hidden="true"></div>
+              <div class="chat-voice-copy">
+                <p class="chat-voice-title">Voice mode preview</p>
+                <p class="chat-voice-hint">Voice capture is not wired yet. Press the voice button again to close.</p>
+              </div>
+            </div>
           </form>
         </section>
       `;
@@ -1612,15 +1762,27 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       const chatCompose = container.querySelector<HTMLFormElement>("[data-chat-compose]");
       const chatInput = container.querySelector<HTMLTextAreaElement>("[data-chat-input]");
       const sendButton = container.querySelector<HTMLButtonElement>("[data-chat-send]");
+      const attachButton = container.querySelector<HTMLButtonElement>("[data-chat-attach-toggle]");
+      const voiceButton = container.querySelector<HTMLButtonElement>("[data-chat-voice-toggle]");
+      const uploadTray = container.querySelector<HTMLElement>("[data-chat-upload-tray]");
+      const uploadButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-chat-upload-action]"));
+      const voicePanel = container.querySelector<HTMLElement>("[data-chat-voice-panel]");
 
-      if (!chatLog || !chatCompose || !chatInput || !sendButton) {
+      if (!chatLog || !chatCompose || !chatInput || !sendButton || !attachButton || !voiceButton || !uploadTray || !voicePanel) {
         throw new Error("Chat app markup is incomplete");
       }
 
       composerInput = chatInput;
       composerButton = sendButton;
+      composerAttachButton = attachButton;
+      composerVoiceButton = voiceButton;
+      composerUploadTray = uploadTray;
+      composerUploadButtons = uploadButtons;
+      composerVoicePanel = voicePanel;
       logNode = chatLog;
       composeNode = chatCompose;
+      setUploadExpanded(false);
+      setVoiceMode(false);
 
       appendTextRow("system", "Unlock desktop session to use chat.");
 
@@ -1640,6 +1802,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         appendTextRow("user", message);
         chatInput.value = "";
         chatInput.focus();
+        updateComposerState(client.getStatus());
 
         try {
           const result = await client.sendMessage(message);
@@ -1668,11 +1831,67 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         chatCompose.requestSubmit();
       };
 
+      const onComposerInput = (): void => {
+        if (chatInput.value.trim().length > 0) {
+          setUploadExpanded(false);
+        }
+        updateComposerState(client.getStatus());
+      };
+
+      const onAttachToggle = (): void => {
+        if (chatInput.value.trim().length > 0 || voiceMode) {
+          return;
+        }
+        setUploadExpanded(!uploadExpanded);
+        updateComposerState(client.getStatus());
+      };
+
+      const onVoiceToggle = (): void => {
+        if (chatInput.value.trim().length > 0) {
+          return;
+        }
+        const next = !voiceMode;
+        setVoiceMode(next);
+        if (next) {
+          setUploadExpanded(false);
+          chatInput.blur();
+          updateComposerState(client.getStatus());
+          return;
+        }
+        chatInput.focus();
+        updateComposerState(client.getStatus());
+      };
+
+      const onUploadActionClick = (event: MouseEvent): void => {
+        const button = event.currentTarget as HTMLButtonElement | null;
+        if (!button) {
+          return;
+        }
+        setUploadExpanded(false);
+        const kind = button.dataset.chatUploadAction ?? "attachment";
+        button.title = `${kind} support coming soon`;
+        chatInput.focus();
+      };
+
       chatCompose.addEventListener("submit", onComposeSubmit);
       chatInput.addEventListener("keydown", onComposerKeyDown);
+      chatInput.addEventListener("input", onComposerInput);
+      attachButton.addEventListener("click", onAttachToggle);
+      voiceButton.addEventListener("click", onVoiceToggle);
+      for (const uploadButton of uploadButtons) {
+        uploadButton.addEventListener("click", onUploadActionClick);
+      }
 
       cleanup.add(() => chatCompose.removeEventListener("submit", onComposeSubmit));
       cleanup.add(() => chatInput.removeEventListener("keydown", onComposerKeyDown));
+      cleanup.add(() => chatInput.removeEventListener("input", onComposerInput));
+      cleanup.add(() => attachButton.removeEventListener("click", onAttachToggle));
+      cleanup.add(() => voiceButton.removeEventListener("click", onVoiceToggle));
+      cleanup.add(() => {
+        for (const uploadButton of uploadButtons) {
+          uploadButton.removeEventListener("click", onUploadActionClick);
+        }
+      });
 
       const offSignal = client.onSignal(onSignal);
       const offStatus = client.onStatus((status) => {
@@ -1709,8 +1928,15 @@ function createChatAppController(client: AppKernelClient): AppInstance {
 
       composerInput = null;
       composerButton = null;
+      composerAttachButton = null;
+      composerVoiceButton = null;
+      composerUploadTray = null;
+      composerUploadButtons = [];
+      composerVoicePanel = null;
       logNode = null;
       composeNode = null;
+      voiceMode = false;
+      uploadExpanded = false;
     },
   };
 }
