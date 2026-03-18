@@ -1,10 +1,11 @@
 import { DEFAULT_THEME_ID, isThemeId, THEME_TOKEN_KEYS, THEME_TOKENS, type ThemeId } from "./themes";
 
 const THEME_STORAGE_KEY = "gsv.desktop.theme";
+const THEME_CHANGE_EVENT = "gsv:theme-change";
+const THEME_SET_EVENT = "gsv:theme-set";
 
 type ThemeBindingOptions = {
   shellNode: HTMLElement;
-  themeSelectNode: HTMLSelectElement;
 };
 
 type ThemeBinding = {
@@ -51,31 +52,34 @@ export function createThemeService(): ThemeService {
 
   return {
     initialTheme,
-    bind: ({ shellNode, themeSelectNode }: ThemeBindingOptions): ThemeBinding => {
+    bind: ({ shellNode }: ThemeBindingOptions): ThemeBinding => {
       const applyTheme = (themeId: ThemeId): void => {
         shellNode.dataset.theme = themeId;
         applyThemeTokens(shellNode, themeId);
-        themeSelectNode.value = themeId;
         persistThemePreference(themeId);
-        window.dispatchEvent(new CustomEvent("gsv:theme-change", { detail: { themeId } }));
+        window.dispatchEvent(new CustomEvent(THEME_CHANGE_EVENT, { detail: { themeId } }));
       };
 
-      const onThemeChange = (): void => {
-        const nextTheme = themeSelectNode.value;
-        if (!isThemeId(nextTheme)) {
+      const onThemeSet = (event: Event): void => {
+        if (!(event instanceof CustomEvent)) {
           return;
         }
 
-        applyTheme(nextTheme);
+        const requestedTheme = event.detail?.themeId;
+        if (typeof requestedTheme !== "string" || !isThemeId(requestedTheme)) {
+          return;
+        }
+
+        applyTheme(requestedTheme);
       };
 
-      themeSelectNode.addEventListener("change", onThemeChange);
+      window.addEventListener(THEME_SET_EVENT, onThemeSet);
       applyTheme(initialTheme);
 
       return {
         applyTheme,
         destroy: () => {
-          themeSelectNode.removeEventListener("change", onThemeChange);
+          window.removeEventListener(THEME_SET_EVENT, onThemeSet);
         },
       };
     },

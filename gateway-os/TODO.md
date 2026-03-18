@@ -14,13 +14,13 @@ Consolidated plan for identity + auth work:
   - token validation wired into `sys.connect` (driver/service/user)
   - password auth retained for interactive user login
   - remaining: audit metadata updates (`last_used_at` + client info)
-- [ ] **Phase 2A: identity links + `adapter.*` transport plumbing**
+- [x] **Phase 2A: identity links + `adapter.*` transport plumbing**
   - done: inbound adapter resolution + `adapter.send` / `adapter.status`
   - done: manual `sys.link` / `sys.unlink` / `sys.link.list` syscalls
-  - remaining: management UX polish + tests
-- [ ] **Phase 2B: pairing UX**
+  - done: CLI commands + kernel unit tests for link management
+- [x] **Phase 2B: pairing UX**
   - done: unknown DM identity challenge + `sys.link.consume`
-  - remaining: queued inbound replay + richer UX
+  - done by design: no inbound replay after linking (first message is intentionally dropped)
 
 ## Unix identity model (`/etc/passwd`, `/etc/shadow`, `/etc/group`)
 
@@ -78,7 +78,7 @@ Map external channel identities to internal UIDs. Stored in kernel SQLite.
 - [x] `link_challenges` table/store for one-time code + expiry + use tracking
 - [x] `sys.link.consume` syscall — redeem code and create link for current user
 - [x] `sys.link` / `sys.unlink` / `sys.link.list` management syscalls (uid 0 or self)
-- [ ] Queue/replay first inbound message after link completion
+- [x] Decision: do not queue/replay first inbound message after link completion
 
 ## Group-based capabilities (kernel SQLite)
 
@@ -178,7 +178,7 @@ Processes produce output; the kernel routes it to the right place based on conte
 - [x] Capture route on adapter inbound -> `proc.send`
 - [x] Route process `chat.*` signals by `runId` (not `lastInboundContext`)
 - [x] Cleanup route on `chat.complete` and on connection close
-- [ ] Add tests for run-route behavior (connection fallback, adapter delivery, TTL expiry)
+- [ ] Add integration tests for run-route delivery/fallback behavior (TTL/store tests done)
 
 ## Conversation archival
 
@@ -297,7 +297,7 @@ kernel resolves uid via identity links, routes to user processes, and sends outb
 - [x] Adapter inbound flow: adapter → kernel → `resolveUid(adapter, accountId, actorId)` → process routing
 - [x] Handle unknown DM identity (Phase 2B base): issue pairing challenge code
 - [x] Track adapter account status updates in kernel store and emit `adapter.status` signal
-- [ ] Explicit adapter/account registration lifecycle for service sessions (if needed)
+- [x] Explicit adapter/account lifecycle: native `adapter.connect` / `adapter.disconnect` across adapters
 - [ ] Group/multi-user policy refinements (membership/authz semantics per adapter surface)
 
 ## Scheduler (cron)

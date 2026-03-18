@@ -187,6 +187,8 @@ describe("CapabilityStore", () => {
       "shell.*",
       "sys.config.get",
       "sys.config.set",
+      "sys.device.get",
+      "sys.device.list",
       "sys.link",
       "sys.link.consume",
       "sys.link.list",

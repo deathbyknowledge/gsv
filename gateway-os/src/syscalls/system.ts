@@ -124,6 +124,40 @@ export type SysConfigSetResult = {
   ok: true;
 };
 
+// -- sys.device.list / sys.device.get ----------------------------------------
+
+export type SysDeviceListArgs = {
+  includeOffline?: boolean;
+};
+
+export type SysDeviceSummary = {
+  deviceId: string;
+  ownerUid: number;
+  platform: string;
+  version: string;
+  online: boolean;
+  lastSeenAt: number;
+};
+
+export type SysDeviceListResult = {
+  devices: SysDeviceSummary[];
+};
+
+export type SysDeviceGetArgs = {
+  deviceId: string;
+};
+
+export type SysDeviceDetail = SysDeviceSummary & {
+  implements: string[];
+  firstSeenAt: number;
+  connectedAt: number | null;
+  disconnectedAt: number | null;
+};
+
+export type SysDeviceGetResult = {
+  device: SysDeviceDetail | null;
+};
+
 // -- sys.token.create / sys.token.list / sys.token.revoke -------------------
 
 export type SysTokenKind = "node" | "service" | "user";

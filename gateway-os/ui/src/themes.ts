@@ -83,6 +83,8 @@ export const THEME_TOKEN_KEYS = [
   "chat-compose-surface-bg",
   "chat-compose-surface-focus-border",
   "chat-compose-surface-focus-ring",
+  "chat-compose-surface-active-border",
+  "chat-compose-surface-active-bg",
   "chat-compose-action-bg",
   "chat-compose-action-bg-hover",
   "chat-compose-action-border",
@@ -144,6 +146,10 @@ const SHARED_TOKENS = {
   "chat-compose-surface-bg": "color-mix(in srgb, var(--surface-0) 62%, transparent)",
   "chat-compose-surface-focus-border": "var(--control-border-focus)",
   "chat-compose-surface-focus-ring": "var(--control-focus-ring)",
+  "chat-compose-surface-active-border":
+    "color-mix(in srgb, var(--accent) 56%, var(--chat-compose-surface-border))",
+  "chat-compose-surface-active-bg":
+    "color-mix(in srgb, var(--chat-compose-surface-bg) 82%, var(--accent))",
   "chat-compose-action-bg": "color-mix(in srgb, var(--surface-0) 58%, transparent)",
   "chat-compose-action-bg-hover": "color-mix(in srgb, var(--accent) 18%, var(--surface-0))",
   "chat-compose-action-border": "color-mix(in srgb, var(--line-soft) 88%, transparent)",
@@ -229,6 +235,9 @@ export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
     "chat-compose-surface-bg": "linear-gradient(180deg, rgba(246, 254, 255, 0.92) 0%, rgba(223, 245, 252, 0.84) 100%)",
     "chat-compose-surface-focus-border": "transparent",
     "chat-compose-surface-focus-ring": "0 0 0 3px rgba(89, 205, 255, 0.34)",
+    "chat-compose-surface-active-border": "transparent",
+    "chat-compose-surface-active-bg":
+      "linear-gradient(180deg, rgba(246, 254, 255, 0.92) 0%, rgba(223, 245, 252, 0.84) 100%)",
     "chat-compose-action-bg": "linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(212, 242, 252, 0.86) 100%)",
     "chat-compose-action-bg-hover":
       "linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(194, 243, 255, 0.94) 100%)",
@@ -337,6 +346,8 @@ export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
     "chat-compose-surface-bg": "linear-gradient(145deg, #e0e8f1, #c8d3df)",
     "chat-compose-surface-focus-border": "rgba(98, 131, 163, 0.5)",
     "chat-compose-surface-focus-ring": "0 0 0 2px rgba(100, 134, 165, 0.2)",
+    "chat-compose-surface-active-border": "rgba(98, 131, 163, 0.5)",
+    "chat-compose-surface-active-bg": "linear-gradient(145deg, #e0e8f1, #c8d3df)",
     "chat-compose-action-bg": "linear-gradient(145deg, #e3ebf4, #ccd6e2)",
     "chat-compose-action-bg-hover": "linear-gradient(145deg, #e9eff6, #d3dce8)",
     "chat-compose-action-border": "rgba(255, 255, 255, 0.5)",
@@ -412,6 +423,9 @@ export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
     "chat-compose-surface-bg": "linear-gradient(180deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.22) 100%)",
     "chat-compose-surface-border": "rgba(255, 255, 255, 0.56)",
     "chat-compose-surface-focus-border": "rgba(255, 255, 255, 0.82)",
+    "chat-compose-surface-active-border": "rgba(255, 255, 255, 0.82)",
+    "chat-compose-surface-active-bg":
+      "linear-gradient(180deg, rgba(255, 255, 255, 0.52) 0%, rgba(255, 255, 255, 0.34) 100%)",
     "chat-compose-action-bg": "linear-gradient(180deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.28) 100%)",
     "chat-compose-action-bg-hover": "linear-gradient(180deg, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 0.38) 100%)",
     "chat-compose-action-border": "rgba(255, 255, 255, 0.65)",
@@ -471,6 +485,8 @@ export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
     "chat-compose-surface-bg": "#fffcee",
     "chat-compose-surface-focus-border": "#ff3ebf",
     "chat-compose-surface-focus-ring": "0 0 0 3px rgba(255, 62, 191, 0.35)",
+    "chat-compose-surface-active-border": "#000000",
+    "chat-compose-surface-active-bg": "#fffcee",
     "chat-compose-action-bg": "#f7e95a",
     "chat-compose-action-bg-hover": "#ff93eb",
     "chat-compose-action-border": "#000000",
@@ -484,7 +500,7 @@ export const THEME_TOKENS: Record<ThemeId, ThemeTokens> = {
     "chat-voice-orb-glow": "rgba(255, 62, 191, 0.45)",
     "chat-voice-orb-ring": "#000000",
     "chat-input-bg": "#fffcee",
-    "chat-input-focus-bg": "#ffffff",
+    "chat-input-focus-bg": "#fffcee",
     "chat-input-shadow": "inset 3px 3px 0 #000000",
   }),
 };

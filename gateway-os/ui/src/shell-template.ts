@@ -1,12 +1,5 @@
 import { APP_REGISTRY } from "./apps";
-import { DESKTOP_THEMES, type ThemeId } from "./themes";
-
-function renderThemeOptions(initialTheme: ThemeId): string {
-  return DESKTOP_THEMES.map((theme) => {
-    const selected = theme.id === initialTheme ? " selected" : "";
-    return `<option value="${theme.id}"${selected}>${theme.label}</option>`;
-  }).join("");
-}
+import type { ThemeId } from "./themes";
 
 function renderDesktopIcons(): string {
   return APP_REGISTRY.map((appItem) => {
@@ -24,7 +17,6 @@ export function renderDesktopShell(initialTheme: ThemeId): string {
     throw new Error("App registry is empty");
   }
 
-  const themeOptionsMarkup = renderThemeOptions(initialTheme);
   const desktopIconsMarkup = renderDesktopIcons();
 
   return `
@@ -41,12 +33,6 @@ export function renderDesktopShell(initialTheme: ThemeId): string {
         <div class="topbar-section">
           <span class="pill">GSV</span>
           <span class="muted">workspace: bridge</span>
-        </div>
-        <div class="topbar-section topbar-theme">
-          <label for="theme-picker" class="muted">theme</label>
-          <select id="theme-picker" class="theme-picker" aria-label="Desktop theme">
-            ${themeOptionsMarkup}
-          </select>
         </div>
         <div class="topbar-section topbar-windows">
           <button

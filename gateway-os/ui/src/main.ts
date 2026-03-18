@@ -23,16 +23,14 @@ const appRuntime = createAppRuntime(gatewayClient);
 app.innerHTML = renderDesktopShell(themeService.initialTheme);
 
 const shellEl = app.querySelector<HTMLElement>(".desktop-shell");
-const themeSelectEl = app.querySelector<HTMLSelectElement>("#theme-picker");
 const windowsLayerEl = app.querySelector<HTMLElement>("[data-windows-layer]");
 
-if (!shellEl || !themeSelectEl || !windowsLayerEl) {
+if (!shellEl || !windowsLayerEl) {
   throw new Error("Shell markup is incomplete");
 }
 
 themeService.bind({
   shellNode: shellEl,
-  themeSelectNode: themeSelectEl,
 });
 
 const windowManager = createWindowManager({

@@ -30,6 +30,7 @@ import {
   forwardToProcess,
 } from "./proc-handlers";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys-config";
+import { handleSysDeviceGet, handleSysDeviceList } from "./sys-device";
 import {
   handleSysTokenCreate,
   handleSysTokenList,
@@ -166,6 +167,12 @@ async function dispatchNative(
         break;
       case "sys.config.set":
         data = handleSysConfigSet(frame.args, ctx);
+        break;
+      case "sys.device.list":
+        data = handleSysDeviceList(frame.args, ctx);
+        break;
+      case "sys.device.get":
+        data = handleSysDeviceGet(frame.args, ctx);
         break;
       case "sys.token.create":
         data = await handleSysTokenCreate(frame.args, ctx);

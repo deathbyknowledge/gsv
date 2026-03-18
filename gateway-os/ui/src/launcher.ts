@@ -1,4 +1,11 @@
 import { APP_REGISTRY, type AppManifest } from "./apps";
+import {
+  OPEN_CHAT_PROCESS_EVENT,
+  TARGET_CHAT_PROCESS_EVENT,
+  normalizeProcessId,
+  queuePendingChatProcess,
+  type TargetChatProcessEventDetail,
+} from "./chat-process-link";
 import type { WindowManager, WindowSummary } from "./window-manager";
 
 type LauncherOptions = {
@@ -42,14 +49,18 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     syncIconState();
   };
 
-  const openApp = (appId: string): void => {
+  const openWindowForApp = (appId: string): string | null => {
     const app = byId(appId);
     if (!app) {
-      return;
+      return null;
     }
 
     selectedAppId = app.id;
-    windowManager.openApp(app);
+    return windowManager.openApp(app);
+  };
+
+  const openApp = (appId: string): void => {
+    void openWindowForApp(appId);
   };
 
   const onIconClick = (event: MouseEvent): void => {
@@ -111,12 +122,35 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     setSelectedIcon(appId);
   };
 
+  const onOpenChatProcess = (event: Event): void => {
+    if (!(event instanceof CustomEvent)) {
+      return;
+    }
+
+    const detail = event.detail as { pid?: unknown } | null;
+    const pid = normalizeProcessId(detail?.pid);
+    if (!pid) {
+      return;
+    }
+
+    const chatWindowId = openWindowForApp("chat");
+    if (!chatWindowId) {
+      return;
+    }
+
+    queuePendingChatProcess(chatWindowId, pid);
+    const targetDetail: TargetChatProcessEventDetail = { pid, windowId: chatWindowId };
+    window.dispatchEvent(new CustomEvent<TargetChatProcessEventDetail>(TARGET_CHAT_PROCESS_EVENT, { detail: targetDetail }));
+  };
+
   for (const iconNode of iconNodes) {
     iconNode.addEventListener("click", onIconClick);
     iconNode.addEventListener("dblclick", onIconDoubleClick);
     iconNode.addEventListener("keydown", onIconKeyDown);
     iconNode.addEventListener("focus", onIconFocus);
   }
+
+  window.addEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
 
   const unsubscribe = windowManager.subscribe((summaries) => {
     latestSummaries = summaries;
@@ -137,6 +171,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
         iconNode.removeEventListener("keydown", onIconKeyDown);
         iconNode.removeEventListener("focus", onIconFocus);
       }
+      window.removeEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
     },
   };
 }

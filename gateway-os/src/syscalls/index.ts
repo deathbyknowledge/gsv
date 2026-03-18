@@ -35,6 +35,10 @@ import type {
   SysConfigGetResult,
   SysConfigSetArgs,
   SysConfigSetResult,
+  SysDeviceListArgs,
+  SysDeviceListResult,
+  SysDeviceGetArgs,
+  SysDeviceGetResult,
   SysTokenCreateArgs,
   SysTokenCreateResult,
   SysTokenListArgs,
@@ -112,6 +116,8 @@ export type SyscallDomains = {
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
+  "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
+  "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
   "sys.token.create": { args: SysTokenCreateArgs; result: SysTokenCreateResult };
   "sys.token.list": { args: SysTokenListArgs; result: SysTokenListResult };
   "sys.token.revoke": { args: SysTokenRevokeArgs; result: SysTokenRevokeResult };

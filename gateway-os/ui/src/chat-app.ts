@@ -2,6 +2,12 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import type { AppInstance, AppRuntimeContext } from "./app-runtime";
+import {
+  TARGET_CHAT_PROCESS_EVENT,
+  consumePendingChatProcess,
+  normalizeProcessId,
+  type TargetChatProcessEventDetail,
+} from "./chat-process-link";
 import type { ProcHistoryResult } from "./gateway-client";
 import type { AppElementContext, AppKernelClient, GsvAppElement } from "./app-sdk";
 
@@ -1253,6 +1259,9 @@ function createChatAppController(client: AppKernelClient): AppInstance {
   let uploadExpanded = false;
   let wasConnected = false;
   let loadedConnectionId: string | null = null;
+  let loadedPid: string | null = null;
+  let activePid: string | null = null;
+  let appWindowId: string | null = null;
   let historySyntheticRunCounter = 0;
 
   const textRunViewsByRunId = new Map<string, AssistantRunView>();
@@ -1524,7 +1533,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     for (let page = 0; page < maxPages; page += 1) {
       let historyPage: ProcHistoryResult;
       try {
-        historyPage = await client.getHistory(limit, undefined, offset);
+        historyPage = await client.getHistory(limit, activePid ?? undefined, offset);
       } catch (error) {
         appendTextRow("system", `failed to load history: ${error instanceof Error ? error.message : String(error)}`);
         return;
@@ -1600,8 +1609,29 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     }
 
     loadedConnectionId = connectionId;
+    loadedPid = activePid;
     scrollLogToBottom();
     updateComposerState(client.getStatus());
+  };
+
+  const switchProcessContext = (pid: string): void => {
+    const normalizedPid = normalizeProcessId(pid);
+    if (!normalizedPid || normalizedPid === activePid) {
+      return;
+    }
+
+    activePid = normalizedPid;
+    loadedConnectionId = null;
+    loadedPid = null;
+
+    if (!mounted) {
+      return;
+    }
+
+    const status = client.getStatus();
+    if (status.state === "connected") {
+      void loadHistory(status.connectionId);
+    }
   };
 
   const applyConnectionStatus = (status: ChatStatus): void => {
@@ -1614,7 +1644,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       appendTextRow("system", "session disconnected");
     }
 
-    if (connected && status.connectionId !== loadedConnectionId) {
+    if (connected && (status.connectionId !== loadedConnectionId || activePid !== loadedPid)) {
       void loadHistory(status.connectionId);
     }
 
@@ -1775,7 +1805,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
   };
 
   return {
-    mount: (container, _context: AppRuntimeContext) => {
+    mount: (container, context: AppRuntimeContext) => {
       container.innerHTML = `
         <section class="chat-app">
           <section class="chat-log" data-chat-log></section>
@@ -1854,6 +1884,9 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       suspended = false;
       wasConnected = false;
       loadedConnectionId = null;
+      loadedPid = null;
+      activePid = null;
+      appWindowId = context.windowId;
 
       const chatLog = container.querySelector<HTMLElement>("[data-chat-log]");
       const chatCompose = container.querySelector<HTMLFormElement>("[data-chat-compose]");
@@ -1881,6 +1914,14 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       setUploadExpanded(false);
       setVoiceMode(false);
 
+      if (appWindowId) {
+        const queuedPid = consumePendingChatProcess(appWindowId);
+        const normalizedPid = normalizeProcessId(queuedPid);
+        if (normalizedPid) {
+          activePid = normalizedPid;
+        }
+      }
+
       appendTextRow("system", "Unlock desktop session to use chat.");
 
       const onComposeSubmit = async (event: SubmitEvent): Promise<void> => {
@@ -1902,7 +1943,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         updateComposerState(client.getStatus());
 
         try {
-          const result = await client.sendMessage(message);
+          const result = await client.sendMessage(message, activePid ?? undefined);
           if (!result.ok) {
             appendTextRow("system", `send failed: ${result.error}`);
             return;
@@ -1997,6 +2038,25 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       cleanup.add(offSignal);
       cleanup.add(offStatus);
 
+      const onTargetProcess = (event: Event): void => {
+        if (!(event instanceof CustomEvent)) {
+          return;
+        }
+        const detail = event.detail as Partial<TargetChatProcessEventDetail> | null;
+        if (detail?.windowId && appWindowId && detail.windowId !== appWindowId) {
+          return;
+        }
+        if (!detail?.pid) {
+          return;
+        }
+        if (detail.windowId) {
+          consumePendingChatProcess(detail.windowId);
+        }
+        switchProcessContext(detail.pid);
+      };
+      window.addEventListener(TARGET_CHAT_PROCESS_EVENT, onTargetProcess as EventListener);
+      cleanup.add(() => window.removeEventListener(TARGET_CHAT_PROCESS_EVENT, onTargetProcess as EventListener));
+
       applyConnectionStatus(client.getStatus());
     },
 
@@ -2037,6 +2097,9 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       composeNode = null;
       voiceMode = false;
       uploadExpanded = false;
+      loadedPid = null;
+      activePid = null;
+      appWindowId = null;
     },
   };
 }

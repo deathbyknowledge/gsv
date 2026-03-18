@@ -1,6 +1,18 @@
-export type DesktopGlyphClass = "glyph-chat" | "glyph-shell" | "glyph-files" | "glyph-system";
+export type DesktopGlyphClass =
+  | "glyph-chat"
+  | "glyph-shell"
+  | "glyph-device"
+  | "glyph-files"
+  | "glyph-system"
+  | "glyph-process";
 
-export type AppCapability = "chat.use" | "shell.exec" | "fs.read" | "proc.inspect" | "system.manage";
+export type AppCapability =
+  | "chat.use"
+  | "shell.exec"
+  | "fs.read"
+  | "proc.inspect"
+  | "device.inspect"
+  | "system.manage";
 
 export type AppWindowDefaults = {
   width: number;
@@ -58,4 +70,3 @@ export function defineAppManifest(manifest: AppManifest): AppManifest {
   assertManifest(manifest);
   return manifest;
 }
-

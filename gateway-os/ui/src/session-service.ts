@@ -7,8 +7,10 @@ import type {
 
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
 const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
+const STORAGE_PENDING_REVOKES = "gsv.ui.session.pending-revokes.v1";
 const SESSION_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 const SESSION_TOKEN_REFRESH_LEEWAY_MS = 10 * 60 * 1000;
+const LOCK_REVOKE_WAIT_MS = 1_500;
 
 type PersistedSessionToken = {
   username: string;
@@ -93,6 +95,23 @@ function readPersistedToken(): PersistedSessionToken | null {
   }
 }
 
+function readPersistedRevokes(): string[] {
+  const raw = readStored(STORAGE_PENDING_REVOKES);
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((item): item is string => typeof item === "string" && item.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 function storePersistedToken(token: PersistedSessionToken): void {
   try {
     window.localStorage.setItem(STORAGE_SESSION_TOKEN, JSON.stringify(token));
@@ -126,6 +145,12 @@ function toPersistedToken(username: string, token: UserSessionToken): PersistedS
   };
 }
 
+function waitFor(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 export function createSessionService(client: GatewayClient): SessionService {
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
@@ -138,6 +163,7 @@ export function createSessionService(client: GatewayClient): SessionService {
   };
 
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
+  let pendingRevokes = Array.from(new Set(readPersistedRevokes()));
   let refreshTimerId: number | null = null;
 
   const emit = (): void => {
@@ -162,6 +188,49 @@ export function createSessionService(client: GatewayClient): SessionService {
     currentSessionToken = null;
     removeValue(STORAGE_SESSION_TOKEN);
     clearRefreshTimer();
+  };
+
+  const persistPendingRevokes = (): void => {
+    if (pendingRevokes.length === 0) {
+      removeValue(STORAGE_PENDING_REVOKES);
+      return;
+    }
+
+    storeValue(STORAGE_PENDING_REVOKES, JSON.stringify(pendingRevokes));
+  };
+
+  const queueRevoke = (tokenId: string): void => {
+    if (!tokenId) {
+      return;
+    }
+    if (!pendingRevokes.includes(tokenId)) {
+      pendingRevokes.push(tokenId);
+      persistPendingRevokes();
+    }
+  };
+
+  const drainPendingRevokes = async (reason: string): Promise<void> => {
+    if (!client.isConnected() || pendingRevokes.length === 0) {
+      return;
+    }
+
+    const remaining: string[] = [];
+    for (const tokenId of pendingRevokes) {
+      try {
+        const revoked = await client.revokeToken(tokenId, reason);
+        if (!revoked) {
+          remaining.push(tokenId);
+        }
+      } catch {
+        remaining.push(tokenId);
+        if (!client.isConnected()) {
+          break;
+        }
+      }
+    }
+
+    pendingRevokes = Array.from(new Set(remaining));
+    persistPendingRevokes();
   };
 
   const scheduleRefresh = (token: PersistedSessionToken): void => {
@@ -206,15 +275,11 @@ export function createSessionService(client: GatewayClient): SessionService {
     storePersistedToken(persisted);
     scheduleRefresh(persisted);
 
-    if (
-      previousToken &&
-      previousToken.tokenId !== nextToken.tokenId &&
-      client.isConnected()
-    ) {
-      void client.revokeToken(previousToken.tokenId, "ui session rotated").catch(() => {
-        // Best effort.
-      });
+    if (previousToken && previousToken.tokenId !== nextToken.tokenId) {
+      queueRevoke(previousToken.tokenId);
     }
+
+    await drainPendingRevokes("ui session rotated");
   };
 
   client.onStatus((status) => {
@@ -279,6 +344,7 @@ export function createSessionService(client: GatewayClient): SessionService {
         message: null,
       });
 
+      await drainPendingRevokes("ui session cleanup");
       await refreshSessionToken("post-login");
 
       return result;
@@ -298,20 +364,25 @@ export function createSessionService(client: GatewayClient): SessionService {
     const previousTokenId = currentSessionToken?.tokenId ?? null;
     clearStoredSessionToken();
 
-    if (previousTokenId && client.isConnected()) {
-      void client.revokeToken(previousTokenId, "ui session lock").catch(() => {
-        // Best effort.
-      });
+    if (previousTokenId) {
+      queueRevoke(previousTokenId);
     }
 
-    client.disconnect();
-    setSnapshot({
-      phase: "locked",
-      url: deriveGatewayUrlFromOrigin(),
-      username: snapshot.username,
-      connectionId: null,
-      message: reason,
-    });
+    void (async () => {
+      await Promise.race([
+        drainPendingRevokes("ui session lock"),
+        waitFor(LOCK_REVOKE_WAIT_MS),
+      ]);
+
+      client.disconnect();
+      setSnapshot({
+        phase: "locked",
+        url: deriveGatewayUrlFromOrigin(),
+        username: snapshot.username,
+        connectionId: null,
+        message: reason,
+      });
+    })();
   };
 
   const start = async (): Promise<void> => {
@@ -349,8 +420,8 @@ export function createSessionService(client: GatewayClient): SessionService {
         message: null,
       });
 
+      await drainPendingRevokes("ui session cleanup");
       scheduleRefresh(persisted);
-      await refreshSessionToken("post-login");
     } catch {
       clearStoredSessionToken();
       setSnapshot({
