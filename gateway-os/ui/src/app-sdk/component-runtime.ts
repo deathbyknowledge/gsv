@@ -12,6 +12,7 @@ export type AppElementContext = AppRuntimeContext & {
 export type GsvAppElement = HTMLElement & {
   gsvFullBleed?: boolean;
   gsvMount?: (context: AppElementContext) => void | Promise<void>;
+  gsvOnSignal?: (signal: string, payload: unknown) => void | Promise<void>;
   gsvSuspend?: () => void | Promise<void>;
   gsvResume?: () => void | Promise<void>;
   gsvUnmount?: () => void | Promise<void>;
@@ -43,9 +44,12 @@ export function createComponentAppInstance(
 
   let element: GsvAppElement | null = null;
   let context: AppElementContext | null = null;
+  let unsubscribeSignals: (() => void) | null = null;
 
   return {
     mount: async (container, runtimeContext) => {
+      unsubscribeSignals?.();
+      unsubscribeSignals = null;
       container.classList.remove("window-content-full-bleed");
 
       const node = document.createElement(manifest.entrypoint.tagName) as GsvAppElement;
@@ -62,6 +66,17 @@ export function createComponentAppInstance(
         theme: createThemeClient(),
       };
 
+      unsubscribeSignals = context.kernel.onSignal((signal, payload) => {
+        const target = element;
+        if (!target?.gsvOnSignal) {
+          return;
+        }
+
+        void maybeAwait(target.gsvOnSignal(signal, payload)).catch((error) => {
+          console.error(`App "${manifest.id}" gsvOnSignal failed`, error);
+        });
+      });
+
       await maybeAwait(node.gsvMount?.(context));
     },
     suspend: async () => {
@@ -71,6 +86,8 @@ export function createComponentAppInstance(
       await maybeAwait(element?.gsvResume?.());
     },
     terminate: async () => {
+      unsubscribeSignals?.();
+      unsubscribeSignals = null;
       const target = element;
       element = null;
       context = null;

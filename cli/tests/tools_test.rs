@@ -193,6 +193,31 @@ async fn test_read_tool() {
 }
 
 #[tokio::test]
+async fn test_read_tool_directory() {
+    use gsv::tools::{ReadTool, Tool};
+    use serde_json::json;
+
+    let workspace = std::env::temp_dir().join("gsv_test_read_dir");
+    std::fs::create_dir_all(workspace.join("nested")).unwrap();
+    std::fs::write(workspace.join("file.txt"), "hello").unwrap();
+
+    let tool = ReadTool::new(std::env::temp_dir());
+
+    let result = tool
+        .execute(json!({
+            "path": workspace.to_str().unwrap()
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["directories"][0], "nested");
+    assert_eq!(result["files"][0], "file.txt");
+
+    std::fs::remove_dir_all(&workspace).ok();
+}
+
+#[tokio::test]
 async fn test_read_tool_with_offset_limit() {
     use gsv::tools::{ReadTool, Tool};
     use serde_json::json;
@@ -242,7 +267,7 @@ async fn test_write_tool() {
 
     let test_file = workspace.join("gsv_test_write.txt");
 
-    // Test writing - returns "bytes" not "success"
+    // Test writing - returns native fs.write shape
     let result = tool
         .execute(json!({
             "path": test_file.to_str().unwrap(),
@@ -251,7 +276,8 @@ async fn test_write_tool() {
         .await
         .unwrap();
 
-    assert_eq!(result["bytes"], 19); // "test content\nline 2" = 19 bytes
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["size"], 19); // "test content\nline 2" = 19 bytes
 
     // Verify content
     let content = std::fs::read_to_string(&test_file).unwrap();
@@ -376,14 +402,15 @@ fn test_all_tools_with_workspace() {
     let workspace = std::env::temp_dir();
     let tools = all_tools_with_workspace(workspace);
 
-    // Should have 7 tools: Bash, Process, Read, Write, Edit, Glob, Grep
-    assert_eq!(tools.len(), 7);
+    // Should have 8 tools: Bash, Process, Read, Write, Delete, Edit, Glob, Grep
+    assert_eq!(tools.len(), 8);
 
     let names: Vec<_> = tools.iter().map(|t| t.definition().name).collect();
     assert!(names.contains(&"Bash".to_string()));
     assert!(names.contains(&"Process".to_string()));
     assert!(names.contains(&"Read".to_string()));
     assert!(names.contains(&"Write".to_string()));
+    assert!(names.contains(&"Delete".to_string()));
     assert!(names.contains(&"Edit".to_string()));
     assert!(names.contains(&"Glob".to_string()));
     assert!(names.contains(&"Grep".to_string()));

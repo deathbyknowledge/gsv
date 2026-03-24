@@ -1,11 +1,12 @@
 import { APP_REGISTRY } from "./apps";
+import { renderDesktopIcon } from "./icons";
 import type { ThemeId } from "./themes";
 
 function renderDesktopIcons(): string {
   return APP_REGISTRY.map((appItem) => {
     return `
       <button type="button" class="desktop-icon" data-app-id="${appItem.id}">
-        <span class="desktop-glyph ${appItem.iconGlyphClass}" aria-hidden="true"></span>
+        ${renderDesktopIcon(appItem.iconId)}
         <span>${appItem.name}</span>
       </button>
     `;

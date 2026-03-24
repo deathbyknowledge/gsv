@@ -6,11 +6,11 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
-pub struct WriteTool {
+pub struct DeleteTool {
     workspace: PathBuf,
 }
 
-impl WriteTool {
+impl DeleteTool {
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
     }
@@ -26,53 +26,50 @@ impl WriteTool {
 }
 
 #[derive(Deserialize)]
-struct WriteArgs {
+struct DeleteArgs {
     path: String,
-    content: String,
 }
 
 #[async_trait]
-impl Tool for WriteTool {
+impl Tool for DeleteTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "Write".to_string(),
-            description: "Write content to a file. Creates parent directories if needed. Paths are relative to the workspace unless absolute.".to_string(),
+            name: "Delete".to_string(),
+            description:
+                "Delete a file or directory. Paths are relative to the workspace unless absolute."
+                    .to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the file to write"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
+                        "description": "Path to the file or directory to delete"
                     }
                 },
-                "required": ["path", "content"]
+                "required": ["path"]
             }),
         }
     }
 
     async fn execute(&self, args: Value) -> Result<Value, String> {
-        let args: WriteArgs =
+        let args: DeleteArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
         let resolved = self.resolve_path(&args.path);
+        let metadata = fs::metadata(&resolved)
+            .map_err(|e| format!("Failed to delete '{}': {}", resolved.display(), e))?;
 
-        // Create parent directories if needed
-        if let Some(parent) = resolved.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directories: {}", e))?;
+        if metadata.is_dir() {
+            fs::remove_dir_all(&resolved)
+                .map_err(|e| format!("Failed to delete '{}': {}", resolved.display(), e))?;
+        } else {
+            fs::remove_file(&resolved)
+                .map_err(|e| format!("Failed to delete '{}': {}", resolved.display(), e))?;
         }
-
-        fs::write(&resolved, &args.content)
-            .map_err(|e| format!("Failed to write '{}': {}", resolved.display(), e))?;
 
         Ok(json!({
             "ok": true,
-            "path": resolved.display().to_string(),
-            "size": args.content.len()
+            "path": resolved.display().to_string()
         }))
     }
 }

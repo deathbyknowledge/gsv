@@ -4400,7 +4400,7 @@ fn syscall_to_tool_name(call: &str) -> Option<&'static str> {
         "fs.write" => Some("Write"),
         "fs.edit" => Some("Edit"),
         "fs.search" => Some("Grep"),
-        "fs.delete" => None,
+        "fs.delete" => Some("Delete"),
         "shell.exec" => Some("Bash"),
         "shell.signal" => None,
         "shell.list" => None,
@@ -4417,13 +4417,6 @@ async fn handle_driver_request(
     let args = req.args.clone().unwrap_or(serde_json::Value::Null);
 
     let result: Result<serde_json::Value, String> = match req.call.as_str() {
-        "fs.delete" => {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            match std::fs::remove_file(path) {
-                Ok(_) => Ok(json!({ "ok": true })),
-                Err(e) => Err(e.to_string()),
-            }
-        }
         "shell.signal" => {
             let tool_args = json!({
                 "action": "kill",
@@ -4452,17 +4445,31 @@ async fn handle_driver_request(
             data: Some(data),
             error: None,
         }),
-        Err(message) => Frame::Res(ResponseFrame {
-            id: req.id.clone(),
-            ok: false,
-            data: None,
-            error: Some(ErrorShape {
-                code: -1,
-                message: message.clone(),
-                details: None,
-                retryable: None,
-            }),
-        }),
+        Err(message) => {
+            if req.call.starts_with("fs.") {
+                Frame::Res(ResponseFrame {
+                    id: req.id.clone(),
+                    ok: true,
+                    data: Some(json!({
+                        "ok": false,
+                        "error": message,
+                    })),
+                    error: None,
+                })
+            } else {
+                Frame::Res(ResponseFrame {
+                    id: req.id.clone(),
+                    ok: false,
+                    data: None,
+                    error: Some(ErrorShape {
+                        code: -1,
+                        message: message.clone(),
+                        details: None,
+                        retryable: None,
+                    }),
+                })
+            }
+        }
     };
 
     match serde_json::to_string(&response) {

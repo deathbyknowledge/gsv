@@ -1,14 +1,14 @@
 import { defineAppManifest } from "./app-sdk";
-import type { AppCapability, AppManifest, AppWindowDefaults, DesktopGlyphClass } from "./app-sdk";
+import type { AppCapability, AppManifest, AppWindowDefaults, DesktopIconId } from "./app-sdk";
 
-export type { AppCapability, AppManifest, AppWindowDefaults, DesktopGlyphClass };
+export type { AppCapability, AppManifest, AppWindowDefaults, DesktopIconId };
 
 export const APP_REGISTRY: readonly AppManifest[] = [
   defineAppManifest({
     id: "chat",
     name: "Chat",
     description: "Conversational workspace with agents.",
-    iconGlyphClass: "glyph-chat",
+    iconId: "chat",
     entrypoint: { kind: "component", route: "/apps/chat", tagName: "gsv-chat-app" },
     permissions: ["chat.use"],
     syscalls: ["proc.send", "proc.history"],
@@ -23,10 +23,10 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     id: "shell",
     name: "Shell",
     description: "Interactive command shell for nodes.",
-    iconGlyphClass: "glyph-shell",
+    iconId: "shell",
     entrypoint: { kind: "component", route: "/apps/shell", tagName: "gsv-shell-app" },
-    permissions: ["shell.exec", "proc.inspect", "device.inspect"],
-    syscalls: ["shell.exec", "shell.signal", "shell.list", "proc.list", "sys.device.list"],
+    permissions: ["shell.exec", "device.inspect"],
+    syscalls: ["shell.exec", "sys.device.list"],
     windowDefaults: {
       width: 980,
       height: 640,
@@ -38,7 +38,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     id: "devices",
     name: "Devices",
     description: "Connected machine inventory and runtime device status.",
-    iconGlyphClass: "glyph-device",
+    iconId: "devices",
     entrypoint: { kind: "component", route: "/apps/devices", tagName: "gsv-devices-app" },
     permissions: ["device.inspect"],
     syscalls: ["sys.device.list", "sys.device.get"],
@@ -53,7 +53,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     id: "processes",
     name: "Processes",
     description: "Inspect and manage running agent processes.",
-    iconGlyphClass: "glyph-process",
+    iconId: "processes",
     entrypoint: { kind: "component", route: "/apps/processes", tagName: "gsv-processes-app" },
     permissions: ["proc.inspect"],
     syscalls: ["proc.list", "proc.kill"],
@@ -68,10 +68,10 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     id: "files",
     name: "Files",
     description: "File browser and workspace management.",
-    iconGlyphClass: "glyph-files",
+    iconId: "files",
     entrypoint: { kind: "component", route: "/apps/files", tagName: "gsv-files-app" },
-    permissions: ["fs.read"],
-    syscalls: ["fs.read", "fs.search", "fs.write", "fs.edit", "fs.delete"],
+    permissions: ["fs.*", "device.inspect"],
+    syscalls: ["fs.read", "fs.search", "fs.write", "fs.edit", "fs.delete", "sys.device.list"],
     windowDefaults: {
       width: 980,
       height: 650,
@@ -83,7 +83,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     id: "control",
     name: "Control",
     description: "System status, permissions, and settings.",
-    iconGlyphClass: "glyph-system",
+    iconId: "control",
     entrypoint: { kind: "component", route: "/apps/control", tagName: "gsv-control-app" },
     permissions: ["system.manage", "proc.inspect"],
     syscalls: [

@@ -120,9 +120,9 @@ impl Tool for GrepTool {
                         // Limit total matches
                         if matches.len() >= 100 {
                             return Ok(json!({
-                                "pattern": args.pattern,
-                                "basePath": base_path.display().to_string(),
+                                "ok": true,
                                 "matches": matches,
+                                "count": matches.len(),
                                 "truncated": true
                             }));
                         }
@@ -132,8 +132,7 @@ impl Tool for GrepTool {
         }
 
         Ok(json!({
-            "pattern": args.pattern,
-            "basePath": base_path.display().to_string(),
+            "ok": true,
             "matches": matches,
             "count": matches.len()
         }))

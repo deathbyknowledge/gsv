@@ -48,7 +48,6 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
   private suspended = false;
   private statusKind: "idle" | "error" = "idle";
   private statusText = "";
-  private refreshTimer: number | null = null;
   private unsubscribeStatus: (() => void) | null = null;
 
   private readonly onClick = (event: MouseEvent): void => {
@@ -111,11 +110,10 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
 
     this.unsubscribeStatus?.();
     this.unsubscribeStatus = context.kernel.onStatus((status) => {
+      const prev = this.kernelState;
       this.kernelState = status.state;
-      if (status.state === "connected" && !this.suspended) {
-        this.startAutoRefresh();
-      } else {
-        this.stopAutoRefresh();
+      if (prev !== "connected" && status.state === "connected" && !this.suspended) {
+        void this.loadProcesses();
       }
       this.render();
     });
@@ -126,27 +124,33 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
     this.render();
     if (this.kernelState === "connected") {
       await this.loadProcesses();
-      this.startAutoRefresh();
     }
   }
 
   async gsvSuspend(): Promise<void> {
     this.suspended = true;
-    this.stopAutoRefresh();
     this.render();
   }
 
   async gsvResume(): Promise<void> {
     this.suspended = false;
     if (this.kernelState === "connected") {
-      this.startAutoRefresh();
       await this.loadProcesses();
     }
     this.render();
   }
 
+  async gsvOnSignal(signal: string): Promise<void> {
+    if (signal !== "process.exit") {
+      return;
+    }
+    if (this.suspended || this.kernelState !== "connected" || this.isMutating || this.isLoading) {
+      return;
+    }
+    await this.loadProcesses();
+  }
+
   async gsvUnmount(): Promise<void> {
-    this.stopAutoRefresh();
     this.removeEventListener("click", this.onClick);
     this.removeEventListener("input", this.onInput);
     this.unsubscribeStatus?.();
@@ -159,27 +163,6 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
     this.isLoading = false;
     this.isMutating = false;
     this.mutatingPid = null;
-  }
-
-  private startAutoRefresh(): void {
-    if (this.refreshTimer !== null) {
-      return;
-    }
-
-    this.refreshTimer = window.setInterval(() => {
-      if (this.isLoading || this.isMutating || this.suspended || this.kernelState !== "connected") {
-        return;
-      }
-      void this.loadProcesses();
-    }, 10_000);
-  }
-
-  private stopAutoRefresh(): void {
-    if (this.refreshTimer === null) {
-      return;
-    }
-    window.clearInterval(this.refreshTimer);
-    this.refreshTimer = null;
   }
 
   private setStatus(kind: "idle" | "error", text: string): void {

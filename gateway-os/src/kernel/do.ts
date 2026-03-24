@@ -110,6 +110,7 @@ export class Kernel extends Host<Env> {
 
     if (identity?.role === "driver") {
       this.devices.setOnline(identity.device, false);
+      this.broadcastDeviceStatus(identity.device, "disconnected");
       this.failRoutesForDevice(identity.device);
     }
 
@@ -582,6 +583,10 @@ export class Kernel extends Host<Env> {
     connection.setState(newState);
     this.connections.set(ctx.connection.id, connection);
 
+    if (outcome.identity.role === "driver") {
+      this.broadcastDeviceStatus(outcome.identity.device, "connected");
+    }
+
     if (outcome.identity.role === "user") {
       const freshIdentity = outcome.identity.process;
       await this.ensureUserInitProcess(freshIdentity);
@@ -760,6 +765,55 @@ export class Kernel extends Host<Env> {
     }
   }
 
+  private broadcastDeviceStatus(
+    deviceId: string,
+    event: "connected" | "disconnected",
+  ): void {
+    const device = this.devices.get(deviceId);
+    if (!device) {
+      return;
+    }
+
+    const frame: SignalFrame = {
+      type: "sig",
+      signal: "device.status",
+      payload: {
+        event,
+        device: {
+          deviceId: device.device_id,
+          ownerUid: device.owner_uid,
+          platform: device.platform,
+          version: device.version,
+          online: device.online,
+          firstSeenAt: device.first_seen_at,
+          lastSeenAt: device.last_seen_at,
+          connectedAt: device.connected_at,
+          disconnectedAt: device.disconnected_at,
+        },
+      },
+    };
+    const json = JSON.stringify(frame);
+
+    for (const [, conn] of this.connections) {
+      const state = conn.state;
+      if (!state?.identity) continue;
+      if (state.identity.role === "service") continue;
+
+      if (state.identity.role === "user") {
+        const proc = state.identity.process;
+        if (!this.devices.canAccess(deviceId, proc.uid, [...proc.gids])) {
+          continue;
+        }
+      } else if (state.identity.role === "driver") {
+        if (state.identity.device !== deviceId) {
+          continue;
+        }
+      }
+
+      conn.send(json);
+    }
+  }
+
   /**
    * Rebuild in-memory connection index after hibernation/wake.
    * The Agent runtime restores Connection objects and their persisted state,
@@ -785,6 +839,7 @@ export class Kernel extends Host<Env> {
     for (const device of this.devices.listOnline()) {
       if (!onlineDrivers.has(device.device_id)) {
         this.devices.setOnline(device.device_id, false);
+        this.broadcastDeviceStatus(device.device_id, "disconnected");
       }
     }
   }

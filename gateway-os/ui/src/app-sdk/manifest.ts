@@ -1,14 +1,9 @@
-export type DesktopGlyphClass =
-  | "glyph-chat"
-  | "glyph-shell"
-  | "glyph-device"
-  | "glyph-files"
-  | "glyph-system"
-  | "glyph-process";
+export type DesktopIconId = "chat" | "shell" | "devices" | "files" | "control" | "processes";
 
 export type AppCapability =
   | "chat.use"
   | "shell.exec"
+  | "fs.*"
   | "fs.read"
   | "proc.inspect"
   | "device.inspect"
@@ -38,7 +33,7 @@ export type AppManifest = {
   id: string;
   name: string;
   description: string;
-  iconGlyphClass: DesktopGlyphClass;
+  iconId: DesktopIconId;
   entrypoint: AppEntrypoint;
   permissions: readonly AppCapability[];
   syscalls: readonly string[];

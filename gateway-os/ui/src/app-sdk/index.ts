@@ -3,7 +3,7 @@ export type {
   AppEntrypoint,
   AppManifest,
   AppWindowDefaults,
-  DesktopGlyphClass,
+  DesktopIconId,
 } from "./manifest";
 export { defineAppManifest } from "./manifest";
 
@@ -15,4 +15,3 @@ export { createThemeClient } from "./theme";
 
 export type { AppElementContext, GsvAppElement } from "./component-runtime";
 export { createComponentAppInstance } from "./component-runtime";
-

@@ -13,36 +13,17 @@ type DeviceListResult = {
 
 type ShellViewState = "ready" | "working" | "error" | "offline";
 type ShellStatusKind = "idle" | "error";
-type TranscriptStatus = "ok" | "error" | "backgrounded";
 
 type ShellTranscriptEntry = {
   id: string;
-  startedAt: number;
-  completedAt: number;
   target: string;
   command: string;
-  status: TranscriptStatus;
-  exitCode: number | null;
   stdout: string;
   stderr: string;
-  note: string | null;
-  raw: unknown;
-};
-
-type ShellSessionEntry = {
-  id: string;
-  status: string;
-  running: boolean;
-  command: string;
-  pid: number | null;
-  startedAt: number | null;
-  runtimeMs: number | null;
-  tail: string;
 };
 
 type LooseRecord = Record<string, unknown>;
 
-const SESSION_REFRESH_MS = 8_000;
 const TRANSCRIPT_LIMIT = 120;
 
 function defineElement(tagName: string, constructor: CustomElementConstructor): void {
@@ -92,135 +73,20 @@ function prettyJson(value: unknown): string {
   }
 }
 
-function formatTimestampMs(value: number): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-  return date.toLocaleString();
-}
-
-function formatRuntimeMs(value: number | null): string {
-  if (value === null || !Number.isFinite(value) || value < 0) {
-    return "—";
-  }
-  if (value < 1_000) {
-    return `${Math.floor(value)}ms`;
-  }
-
-  const seconds = value / 1_000;
-  if (seconds < 60) {
-    return `${seconds.toFixed(1)}s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.floor(seconds % 60);
-  return `${minutes}m ${remainder}s`;
-}
-
-function normalizeSessions(payload: unknown): ShellSessionEntry[] {
-  const record = asRecord(payload);
-  if (!record) {
-    return [];
-  }
-
-  const fromProcesses = Array.isArray(record.processes) ? record.processes : [];
-  if (fromProcesses.length > 0) {
-    const parsed: ShellSessionEntry[] = [];
-    for (let index = 0; index < fromProcesses.length; index += 1) {
-      const row = asRecord(fromProcesses[index]);
-      if (!row) {
-        continue;
-      }
-      const pid = asNumber(row.pid);
-      const command = asString(row.command) ?? "";
-      const running = asBoolean(row.running) ?? false;
-      const startedAt = asNumber(row.startedAt);
-      const exitCode = asNumber(row.exitCode);
-
-      parsed.push({
-        id: `pid:${pid ?? index}`,
-        status: running ? "running" : (exitCode === null ? "stopped" : `exit ${exitCode}`),
-        running,
-        command,
-        pid,
-        startedAt,
-        runtimeMs: null,
-        tail: "",
-      });
-    }
-
-    parsed.sort((left, right) => {
-      if (left.running !== right.running) {
-        return left.running ? -1 : 1;
-      }
-      return (right.startedAt ?? 0) - (left.startedAt ?? 0);
-    });
-    return parsed;
-  }
-
-  const fromSessions = Array.isArray(record.sessions) ? record.sessions : [];
-  if (fromSessions.length === 0) {
-    return [];
-  }
-
-  const parsed: ShellSessionEntry[] = [];
-  for (let index = 0; index < fromSessions.length; index += 1) {
-    const row = asRecord(fromSessions[index]);
-    if (!row) {
-      continue;
-    }
-
-    const sessionId = asString(row.sessionId) ?? `session-${index}`;
-    const status = asString(row.status) ?? "unknown";
-    const running = status.toLowerCase() === "running";
-    const pid = asNumber(row.pid);
-    const startedAt = asNumber(row.startedAt);
-    const runtimeMs = asNumber(row.runtimeMs);
-    const command = asString(row.command) ?? "";
-    const tail = asString(row.tail) ?? "";
-
-    parsed.push({
-      id: sessionId,
-      status,
-      running,
-      command,
-      pid,
-      startedAt,
-      runtimeMs,
-      tail,
-    });
-  }
-
-  parsed.sort((left, right) => {
-    if (left.running !== right.running) {
-      return left.running ? -1 : 1;
-    }
-    return (right.startedAt ?? 0) - (left.startedAt ?? 0);
-  });
-  return parsed;
-}
-
 function normalizeTranscriptEntry(
   payload: unknown,
-  startedAt: number,
+  requestStartedAt: number,
   target: string,
   command: string,
 ): ShellTranscriptEntry {
   const completedAt = Date.now();
   const record = asRecord(payload);
   const defaultEntry: ShellTranscriptEntry = {
-    id: `${startedAt}-${Math.random().toString(36).slice(2, 8)}`,
-    startedAt,
-    completedAt,
+    id: `${requestStartedAt}-${completedAt}`,
     target,
     command,
-    status: "ok",
-    exitCode: null,
     stdout: "",
     stderr: "",
-    note: null,
-    raw: payload,
   };
 
   if (!record) {
@@ -238,7 +104,6 @@ function normalizeTranscriptEntry(
   const stderr = asString(record.stderr) ?? "";
   const errorText = asString(record.error);
 
-  defaultEntry.exitCode = exitCode;
   defaultEntry.stdout = stdout;
   defaultEntry.stderr = stderr;
 
@@ -247,27 +112,21 @@ function normalizeTranscriptEntry(
     (statusText === "running" && asString(record.sessionId) !== null);
 
   if (backgrounded) {
-    defaultEntry.status = "backgrounded";
-    const sessionId = asString(record.sessionId);
-    defaultEntry.note = sessionId ? `Background session ${sessionId}` : "Command backgrounded";
+    defaultEntry.stdout = "";
+    defaultEntry.stderr = "";
     return defaultEntry;
   }
 
   if (explicitOk === false || statusText === "failed" || errorText) {
-    defaultEntry.status = "error";
     defaultEntry.stderr = errorText ?? defaultEntry.stderr;
     return defaultEntry;
   }
 
   if (exitCode !== null && exitCode !== 0) {
-    defaultEntry.status = "error";
-    defaultEntry.note = `Exit ${exitCode}`;
+    if (defaultEntry.stderr.trim().length === 0) {
+      defaultEntry.stderr = `exit ${exitCode}`;
+    }
     return defaultEntry;
-  }
-
-  defaultEntry.status = "ok";
-  if (exitCode !== null) {
-    defaultEntry.note = `Exit ${exitCode}`;
   }
   return defaultEntry;
 }
@@ -277,7 +136,7 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
   private kernelState: "disconnected" | "connecting" | "connected" = "disconnected";
   private suspended = false;
   private isExecuting = false;
-  private isRefreshingSessions = false;
+  private isRefreshingDevices = false;
   private statusKind: ShellStatusKind = "idle";
   private statusText = "";
 
@@ -289,13 +148,11 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
   private background = false;
 
   private devices: DeviceSummary[] = [];
-  private sessions: ShellSessionEntry[] = [];
   private transcript: ShellTranscriptEntry[] = [];
   private commandHistory: string[] = [];
   private historyCursor: number | null = null;
   private historyDraft = "";
 
-  private sessionRefreshTimer: number | null = null;
   private unsubscribeStatus: (() => void) | null = null;
 
   private readonly onClick = (event: MouseEvent): void => {
@@ -314,10 +171,6 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
       return;
     }
 
-    if (action === "run") {
-      void this.runCommand();
-      return;
-    }
     if (action === "clear-transcript") {
       this.transcript = [];
       this.render();
@@ -325,7 +178,6 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     }
     if (action === "refresh-sessions") {
       void this.loadDeviceSuggestions();
-      void this.loadSessions(true);
     }
   };
 
@@ -350,11 +202,6 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
           return;
         }
         this.target = target.value;
-        if (normalizeTarget(this.target) === "gsv") {
-          this.sessions = [];
-        } else {
-          void this.loadSessions(false);
-        }
         this.render();
         break;
       case "command":
@@ -383,12 +230,15 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     const target = event.target;
-    if (!(target instanceof HTMLTextAreaElement)) {
+    if (!(target instanceof HTMLTextAreaElement) && !(target instanceof HTMLInputElement)) {
       return;
     }
     if (target.dataset.field !== "command") {
       return;
     }
+
+    const selectionStart = target.selectionStart ?? target.value.length;
+    const selectionEnd = target.selectionEnd ?? target.value.length;
 
     if (
       !event.shiftKey &&
@@ -396,8 +246,8 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
       !event.metaKey &&
       !event.altKey &&
       event.key === "ArrowUp" &&
-      target.selectionStart === 0 &&
-      target.selectionEnd === 0
+      selectionStart === 0 &&
+      selectionEnd === 0
     ) {
       event.preventDefault();
       this.navigateHistory(-1, target);
@@ -410,15 +260,18 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
       !event.metaKey &&
       !event.altKey &&
       event.key === "ArrowDown" &&
-      target.selectionStart === target.value.length &&
-      target.selectionEnd === target.value.length
+      selectionStart === target.value.length &&
+      selectionEnd === target.value.length
     ) {
       event.preventDefault();
       this.navigateHistory(1, target);
       return;
     }
 
-    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+    if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    if (target instanceof HTMLTextAreaElement && event.shiftKey) {
       return;
     }
 
@@ -433,13 +286,10 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
 
     this.unsubscribeStatus?.();
     this.unsubscribeStatus = context.kernel.onStatus((status) => {
+      const prev = this.kernelState;
       this.kernelState = status.state;
-      if (status.state === "connected" && !this.suspended) {
+      if (prev !== "connected" && status.state === "connected" && !this.suspended) {
         void this.loadDeviceSuggestions();
-        void this.loadSessions(false);
-        this.startSessionRefresh();
-      } else {
-        this.stopSessionRefresh();
       }
       this.render();
     });
@@ -449,16 +299,19 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.addEventListener("keydown", this.onKeyDown);
 
     this.render();
+    window.requestAnimationFrame(() => {
+      this.focusCommandInput();
+    });
     if (this.kernelState === "connected") {
       await this.loadDeviceSuggestions();
-      await this.loadSessions(false);
-      this.startSessionRefresh();
+      window.requestAnimationFrame(() => {
+        this.focusCommandInput();
+      });
     }
   }
 
   async gsvSuspend(): Promise<void> {
     this.suspended = true;
-    this.stopSessionRefresh();
     this.render();
   }
 
@@ -466,14 +319,24 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.suspended = false;
     if (this.kernelState === "connected") {
       await this.loadDeviceSuggestions();
-      await this.loadSessions(false);
-      this.startSessionRefresh();
+      window.requestAnimationFrame(() => {
+        this.focusCommandInput();
+      });
     }
     this.render();
   }
 
+  async gsvOnSignal(signal: string): Promise<void> {
+    if (signal !== "device.status") {
+      return;
+    }
+    if (this.suspended || this.kernelState !== "connected") {
+      return;
+    }
+    await this.loadDeviceSuggestions();
+  }
+
   async gsvUnmount(): Promise<void> {
-    this.stopSessionRefresh();
     this.removeEventListener("click", this.onClick);
     this.removeEventListener("input", this.onInput);
     this.removeEventListener("keydown", this.onKeyDown);
@@ -481,13 +344,12 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.unsubscribeStatus = null;
 
     this.context = null;
-    this.sessions = [];
     this.devices = [];
     this.transcript = [];
     this.kernelState = "disconnected";
     this.suspended = false;
     this.isExecuting = false;
-    this.isRefreshingSessions = false;
+    this.isRefreshingDevices = false;
     this.statusKind = "idle";
     this.statusText = "";
     this.command = "";
@@ -522,11 +384,11 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
       };
     }
 
-    if (this.isExecuting || this.isRefreshingSessions) {
+    if (this.isExecuting || this.isRefreshingDevices) {
       return {
         kind: "working",
         label: this.isExecuting ? "running" : "refreshing",
-        detail: this.isExecuting ? "Executing command." : "Refreshing remote sessions.",
+        detail: this.isExecuting ? "Executing command." : "Refreshing target list.",
       };
     }
 
@@ -538,7 +400,7 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
   }
 
   private isNearBottom(): boolean {
-    const node = this.querySelector<HTMLElement>("[data-shell-log]");
+    const node = this.querySelector<HTMLElement>("[data-shell-stream]");
     if (!node) {
       return true;
     }
@@ -547,7 +409,7 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
   }
 
   private scrollToBottom(): void {
-    const node = this.querySelector<HTMLElement>("[data-shell-log]");
+    const node = this.querySelector<HTMLElement>("[data-shell-stream]");
     if (!node) {
       return;
     }
@@ -566,27 +428,10 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     }
   }
 
-  private startSessionRefresh(): void {
-    if (this.sessionRefreshTimer !== null) {
-      return;
-    }
-    this.sessionRefreshTimer = window.setInterval(() => {
-      if (
-        this.suspended ||
-        this.kernelState !== "connected" ||
-        this.isExecuting ||
-        this.isRefreshingSessions
-      ) {
-        return;
-      }
-      void this.loadDeviceSuggestions();
-      if (normalizeTarget(this.target) !== "gsv") {
-        void this.loadSessions(false);
-      }
-    }, SESSION_REFRESH_MS);
-  }
-
-  private navigateHistory(direction: -1 | 1, textarea: HTMLTextAreaElement): void {
+  private navigateHistory(
+    direction: -1 | 1,
+    inputNode: HTMLTextAreaElement | HTMLInputElement,
+  ): void {
     if (this.commandHistory.length === 0) {
       return;
     }
@@ -611,9 +456,9 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
       this.command = this.commandHistory[this.historyCursor] ?? "";
     }
 
-    textarea.value = this.command;
+    inputNode.value = this.command;
     const cursor = this.command.length;
-    textarea.setSelectionRange(cursor, cursor);
+    inputNode.setSelectionRange(cursor, cursor);
   }
 
   private rememberCommand(command: string): void {
@@ -633,12 +478,14 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.historyDraft = "";
   }
 
-  private stopSessionRefresh(): void {
-    if (this.sessionRefreshTimer === null) {
+  private focusCommandInput(): void {
+    const input = this.querySelector<HTMLInputElement>("[data-field='command']");
+    if (!input || input.disabled) {
       return;
     }
-    window.clearInterval(this.sessionRefreshTimer);
-    this.sessionRefreshTimer = null;
+    input.focus();
+    const cursor = input.value.length;
+    input.setSelectionRange(cursor, cursor);
   }
 
   private async loadDeviceSuggestions(): Promise<void> {
@@ -647,6 +494,8 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
       return;
     }
 
+    this.isRefreshingDevices = true;
+    this.render();
     try {
       const payload = await context.kernel.request<DeviceListResult>("sys.device.list", {});
       const next = Array.isArray(payload.devices) ? payload.devices : [];
@@ -658,48 +507,16 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
         !next.some((device) => device.deviceId === normalizedTarget)
       ) {
         this.target = "gsv";
-        this.sessions = [];
       }
       this.render();
     } catch {
       // Device suggestions are optional for shell usage.
       this.devices = [];
-      this.render();
-    }
-  }
-
-  private async loadSessions(surfaceErrors: boolean): Promise<void> {
-    const context = this.context;
-    if (!context || this.kernelState !== "connected" || this.suspended) {
-      return;
-    }
-
-    const target = normalizeTarget(this.target);
-    if (target === "gsv") {
-      this.sessions = [];
-      this.isRefreshingSessions = false;
-      this.render();
-      return;
-    }
-
-    this.isRefreshingSessions = true;
-    this.render();
-    try {
-      const payload = await context.kernel.request("shell.list", { target });
-      this.sessions = normalizeSessions(payload);
-      if (surfaceErrors) {
-        this.setStatus("idle", "");
-      }
-    } catch (error) {
-      this.sessions = [];
-      if (surfaceErrors) {
-        this.setStatus("error", error instanceof Error ? error.message : String(error));
-      }
     } finally {
       if (!this.context) {
         return;
       }
-      this.isRefreshingSessions = false;
+      this.isRefreshingDevices = false;
       this.render();
     }
   }
@@ -769,24 +586,15 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
       const entry = normalizeTranscriptEntry(payload, startedAt, normalizedTarget, command);
       this.command = "";
       this.pushTranscript(entry);
-      if (entry.status === "backgrounded") {
-        await this.loadSessions(false);
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.setStatus("error", message);
       this.pushTranscript({
         id: `${startedAt}-${Math.random().toString(36).slice(2, 8)}`,
-        startedAt,
-        completedAt: Date.now(),
         target: normalizedTarget,
         command,
-        status: "error",
-        exitCode: null,
         stdout: "",
         stderr: message,
-        note: "Request failed",
-        raw: { error: message },
       });
     } finally {
       if (!this.context) {
@@ -794,90 +602,38 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
       }
       this.isExecuting = false;
       this.render();
+      window.requestAnimationFrame(() => {
+        this.focusCommandInput();
+      });
     }
   }
 
   private renderTranscript(): string {
     if (this.transcript.length === 0) {
-      return `<p class="config-empty muted">No commands yet. Run one to populate this terminal log.</p>`;
+      return `<p class="shell-empty muted">No commands yet. Type one below and press Enter.</p>`;
     }
 
     return this.transcript
       .map((entry) => {
-        const statusClass =
-          entry.status === "error" ? "is-error" : entry.status === "backgrounded" ? "is-backgrounded" : "is-ok";
-
         const streamNodes: string[] = [];
         if (entry.stdout.trim().length > 0) {
           streamNodes.push(`
-            <pre class="shell-entry-stream is-stdout">${escapeHtml(entry.stdout)}</pre>
+            <pre class="shell-log-stream is-stdout">${escapeHtml(entry.stdout)}</pre>
           `);
         }
         if (entry.stderr.trim().length > 0) {
           streamNodes.push(`
-            <pre class="shell-entry-stream is-stderr">${escapeHtml(entry.stderr)}</pre>
+            <pre class="shell-log-stream is-stderr">${escapeHtml(entry.stderr)}</pre>
           `);
         }
 
-        if (streamNodes.length === 0) {
-          streamNodes.push(`<p class="muted">No output.</p>`);
-        }
-
-        const details = prettyJson(entry.raw);
-
         return `
-          <article class="shell-entry shell-entry-cli">
-            <div class="shell-cli-command-row">
-              <span class="shell-cli-prompt">${escapeHtml(entry.target)}$</span>
-              <code class="shell-cli-command">${escapeHtml(entry.command)}</code>
+          <article class="shell-log-entry">
+            <div class="shell-log-command-row">
+              <span class="shell-log-prompt">${escapeHtml(entry.target)}$</span>
+              <code class="shell-log-command">${escapeHtml(entry.command)}</code>
             </div>
-            <p class="shell-cli-meta ${statusClass}">
-              ${escapeHtml(entry.status === "backgrounded" ? "backgrounded" : entry.status)}
-              · ${escapeHtml(formatTimestampMs(entry.startedAt))}
-              · ${escapeHtml(formatRuntimeMs(entry.completedAt - entry.startedAt))}
-              ${entry.exitCode === null ? "" : ` · exit ${entry.exitCode}`}
-              ${entry.note ? ` · ${escapeHtml(entry.note)}` : ""}
-            </p>
-            <div class="shell-entry-body">
-              ${streamNodes.join("")}
-              <details class="shell-entry-raw">
-                <summary>Raw result</summary>
-                <pre>${escapeHtml(details)}</pre>
-              </details>
-            </div>
-          </article>
-        `;
-      })
-      .join("");
-  }
-
-  private renderSessions(): string {
-    if (normalizeTarget(this.target) === "gsv") {
-      return `<p class="config-empty muted">Remote sessions appear when target is set to a connected device.</p>`;
-    }
-
-    if (this.sessions.length === 0) {
-      return `<p class="config-empty muted">No active or recent remote shell sessions.</p>`;
-    }
-
-    return this.sessions
-      .map((entry) => {
-        const statusClass = entry.running ? "is-running" : "is-stopped";
-        return `
-          <article class="shell-session-row">
-            <div class="shell-session-head">
-              <strong>${escapeHtml(entry.id)}</strong>
-              <span class="shell-session-status ${statusClass}">${escapeHtml(entry.status)}</span>
-            </div>
-            <p class="muted">${entry.command ? `<code>${escapeHtml(entry.command)}</code>` : "No command metadata."}</p>
-            <p class="muted">
-              pid ${entry.pid === null ? "—" : entry.pid}
-              · started ${escapeHtml(entry.startedAt === null ? "—" : formatTimestampMs(entry.startedAt))}
-              · runtime ${escapeHtml(formatRuntimeMs(entry.runtimeMs))}
-            </p>
-            ${entry.tail.trim()
-              ? `<pre class="shell-session-tail">${escapeHtml(entry.tail)}</pre>`
-              : ""}
+            ${streamNodes.join("")}
           </article>
         `;
       })
@@ -897,12 +653,10 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
       target === "gsv" || this.devices.some((device) => device.deviceId === target)
         ? target
         : "gsv";
-    const canRun = this.kernelState === "connected" && !this.suspended && !this.isExecuting;
+    const canCompose = this.kernelState === "connected" && !this.suspended && !this.isExecuting;
     const canRefreshSessions =
-      this.kernelState === "connected" &&
-      !this.suspended &&
-      !this.isRefreshingSessions &&
-      target !== "gsv";
+      this.kernelState === "connected" && !this.suspended && !this.isRefreshingDevices;
+    const canClearLog = this.transcript.length > 0 && !this.suspended;
 
     const targetOptions = [
       `<option value="gsv"${targetSelectValue === "gsv" ? " selected" : ""}>Kernel (gsv)</option>`,
@@ -914,122 +668,112 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     ].join("");
 
     this.innerHTML = `
-      <section class="app-grid shell-app">
-        <header class="shell-page-header">
-          <div class="shell-page-copy">
-            <p class="eyebrow">Command Surface</p>
-            <h1>Shell</h1>
-            <p>Execute commands on the kernel or connected device targets from a single workspace.</p>
-          </div>
-          <div class="shell-toolbar-row">
+      <section class="app-grid shell-app shell-terminal-app">
+        <header class="shell-terminal-header">
+          <div class="shell-terminal-header-main">
             <span class="config-state-icon is-${escapeHtml(state.kind)}" title="${escapeHtml(state.detail)}" aria-label="${escapeHtml(state.label)}">
               <span class="config-state-dot" aria-hidden="true"></span>
             </span>
+            <label class="shell-target-inline">
+              <span>Target</span>
+              <select
+                class="shell-target-select"
+                data-field="target-select"
+                ${this.suspended ? "disabled" : ""}
+              >
+                ${targetOptions}
+              </select>
+            </label>
+            <span class="shell-state-text muted">${escapeHtml(state.label)}</span>
+          </div>
+          <div class="shell-terminal-header-actions">
             <button
               type="button"
-              class="runtime-btn config-icon-btn${this.isRefreshingSessions ? " is-busy" : ""}"
+              class="runtime-btn config-icon-btn${this.isRefreshingDevices ? " is-busy" : ""}"
               data-action="refresh-sessions"
-              title="Refresh remote sessions"
-              aria-label="Refresh remote sessions"
+              title="Refresh targets and sessions"
+              aria-label="Refresh targets and sessions"
               ${canRefreshSessions ? "" : "disabled"}
             >
               <span aria-hidden="true">↻</span>
             </button>
+            <button
+              type="button"
+              class="runtime-btn config-icon-btn"
+              data-action="clear-transcript"
+              title="Clear terminal log"
+              aria-label="Clear terminal log"
+              ${canClearLog ? "" : "disabled"}
+            >
+              <span aria-hidden="true">⌫</span>
+            </button>
           </div>
         </header>
 
-        <section class="shell-controls control-form-grid">
-          <label>
-            Target
-            <select
-              data-field="target-select"
-              ${this.suspended ? "disabled" : ""}
-            >
-              ${targetOptions}
-            </select>
-          </label>
-          <label>
-            Working Directory
-            <input
-              data-field="workdir"
-              type="text"
-              value="${escapeHtml(this.workdir)}"
-              placeholder="/root"
-              ${this.suspended ? "disabled" : ""}
-            />
-          </label>
-          <label>
-            Timeout (ms)
-            <input
-              data-field="timeout"
-              type="text"
-              inputmode="numeric"
-              value="${escapeHtml(this.timeout)}"
-              placeholder="30000"
-              ${this.suspended ? "disabled" : ""}
-            />
-          </label>
-          <label>
-            Yield (ms)
-            <input
-              data-field="yieldMs"
-              type="text"
-              inputmode="numeric"
-              value="${escapeHtml(this.yieldMs)}"
-              placeholder="2000"
-              ${this.suspended ? "disabled" : ""}
-            />
-          </label>
-          <label class="config-checkbox shell-checkbox">
-            <input
-              data-field="background"
-              type="checkbox"
-              ${this.background ? "checked" : ""}
-              ${this.suspended ? "disabled" : ""}
-            />
-            Run in background
-          </label>
-        </section>
-
-        <section class="shell-compose control-form-grid single">
-          <label>
-            Command
-            <div class="shell-compose-editor">
-              <span class="shell-compose-prompt">${escapeHtml(target)}$</span>
-              <textarea
-                data-field="command"
-                placeholder="Enter command (Shift+Enter for newline)"
-                ${this.suspended ? "disabled" : ""}
-              >${escapeHtml(this.command)}</textarea>
-            </div>
-          </label>
-          <div class="shell-compose-actions">
-            <button type="button" class="runtime-btn" data-action="run" ${canRun ? "" : "disabled"}>
-              ${this.isExecuting ? "Running..." : "Run"}
-            </button>
-            <button
-              type="button"
-              class="runtime-btn"
-              data-action="clear-transcript"
-              ${this.transcript.length > 0 && !this.suspended ? "" : "disabled"}
-            >
-              Clear Log
-            </button>
-          </div>
-        </section>
-
-        <section class="shell-layout">
-          <div class="shell-output" data-shell-log>
+        <section class="shell-terminal-output" data-shell-log>
+          <div class="shell-terminal-stream" data-shell-stream>
             ${this.renderTranscript()}
           </div>
-          <aside class="shell-sessions">
-            <h2>Remote Sessions</h2>
-            <p class="muted">Target <code>${escapeHtml(target)}</code></p>
-            <div class="shell-session-list">
-              ${this.renderSessions()}
-            </div>
-          </aside>
+          <div class="shell-terminal-compose-row">
+            <span class="shell-terminal-compose-prompt">${escapeHtml(target)}$</span>
+            <input
+              data-field="command"
+              type="text"
+              value="${escapeHtml(this.command)}"
+              placeholder="Type command and press Enter"
+              autocomplete="off"
+              spellcheck="false"
+              ${canCompose ? "" : "disabled"}
+            />
+          </div>
         </section>
+
+        <details class="shell-drawer shell-options-drawer">
+          <summary>Options</summary>
+          <div class="shell-drawer-body control-form-grid">
+            <label>
+              Working Directory
+              <input
+                data-field="workdir"
+                type="text"
+                value="${escapeHtml(this.workdir)}"
+                placeholder="/root"
+                ${this.suspended ? "disabled" : ""}
+              />
+            </label>
+            <label>
+              Timeout (ms)
+              <input
+                data-field="timeout"
+                type="text"
+                inputmode="numeric"
+                value="${escapeHtml(this.timeout)}"
+                placeholder="30000"
+                ${this.suspended ? "disabled" : ""}
+              />
+            </label>
+            <label>
+              Yield (ms)
+              <input
+                data-field="yieldMs"
+                type="text"
+                inputmode="numeric"
+                value="${escapeHtml(this.yieldMs)}"
+                placeholder="2000"
+                ${this.suspended ? "disabled" : ""}
+              />
+            </label>
+            <label class="config-checkbox shell-checkbox">
+              <input
+                data-field="background"
+                type="checkbox"
+                ${this.background ? "checked" : ""}
+                ${this.suspended ? "disabled" : ""}
+              />
+              Run in background
+            </label>
+          </div>
+        </details>
 
         ${this.statusKind === "error" && this.statusText
           ? `<p class="control-error-text">${escapeHtml(this.statusText)}</p>`

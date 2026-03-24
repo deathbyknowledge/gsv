@@ -4,6 +4,7 @@ import { createComponentAppInstance } from "./app-sdk";
 import { ensureBuiltinComponentAppsRegistered } from "./builtin-component-apps";
 import { ensureChatAppRegistered } from "./chat-app";
 import { ensureDevicesAppRegistered } from "./devices-app";
+import { ensureFilesAppRegistered } from "./files-app";
 import { ensureProcessManagerAppRegistered } from "./process-manager-app";
 import { ensureShellAppRegistered } from "./shell-app";
 import type { GatewayClient } from "./gateway-client";
@@ -50,6 +51,7 @@ function createLegacyPlaceholder(manifest: AppManifest): AppInstance {
 export function createAppRuntime(gatewayClient: GatewayClient): AppRuntimeRegistry {
   ensureBuiltinComponentAppsRegistered();
   ensureChatAppRegistered();
+  ensureFilesAppRegistered();
   ensureShellAppRegistered();
   ensureDevicesAppRegistered();
   ensureProcessManagerAppRegistered();

@@ -2247,7 +2247,6 @@ class GsvSdkExampleAppElement extends GsvSurfaceElement {
 }
 
 export function ensureBuiltinComponentAppsRegistered(): void {
-  defineElement("gsv-files-app", GsvFilesAppElement);
   defineElement("gsv-control-app", GsvControlAppElement);
   defineElement("gsv-sdk-example-app", GsvSdkExampleAppElement);
 }

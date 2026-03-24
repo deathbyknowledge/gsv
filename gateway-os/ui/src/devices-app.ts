@@ -59,7 +59,6 @@ class GsvDevicesAppElement extends HTMLElement implements GsvAppElement {
   private suspended = false;
   private statusKind: "idle" | "error" = "idle";
   private statusText = "";
-  private refreshTimer: number | null = null;
   private unsubscribeStatus: (() => void) | null = null;
 
   private readonly onClick = (event: MouseEvent): void => {
@@ -126,11 +125,10 @@ class GsvDevicesAppElement extends HTMLElement implements GsvAppElement {
 
     this.unsubscribeStatus?.();
     this.unsubscribeStatus = context.kernel.onStatus((status) => {
+      const prev = this.kernelState;
       this.kernelState = status.state;
-      if (status.state === "connected" && !this.suspended) {
-        this.startAutoRefresh();
-      } else {
-        this.stopAutoRefresh();
+      if (prev !== "connected" && status.state === "connected" && !this.suspended) {
+        void this.loadDevices();
       }
       this.render();
     });
@@ -141,27 +139,33 @@ class GsvDevicesAppElement extends HTMLElement implements GsvAppElement {
     this.render();
     if (this.kernelState === "connected") {
       await this.loadDevices();
-      this.startAutoRefresh();
     }
   }
 
   async gsvSuspend(): Promise<void> {
     this.suspended = true;
-    this.stopAutoRefresh();
     this.render();
   }
 
   async gsvResume(): Promise<void> {
     this.suspended = false;
     if (this.kernelState === "connected") {
-      this.startAutoRefresh();
       await this.loadDevices();
     }
     this.render();
   }
 
+  async gsvOnSignal(signal: string): Promise<void> {
+    if (signal !== "device.status") {
+      return;
+    }
+    if (this.suspended || this.kernelState !== "connected") {
+      return;
+    }
+    await this.loadDevices();
+  }
+
   async gsvUnmount(): Promise<void> {
-    this.stopAutoRefresh();
     this.removeEventListener("click", this.onClick);
     this.removeEventListener("input", this.onInput);
     this.unsubscribeStatus?.();
@@ -177,26 +181,6 @@ class GsvDevicesAppElement extends HTMLElement implements GsvAppElement {
     this.isDetailLoading = false;
     this.statusKind = "idle";
     this.statusText = "";
-  }
-
-  private startAutoRefresh(): void {
-    if (this.refreshTimer !== null) {
-      return;
-    }
-    this.refreshTimer = window.setInterval(() => {
-      if (this.suspended || this.kernelState !== "connected" || this.isLoading || this.isDetailLoading) {
-        return;
-      }
-      void this.loadDevices();
-    }, 12_000);
-  }
-
-  private stopAutoRefresh(): void {
-    if (this.refreshTimer === null) {
-      return;
-    }
-    window.clearInterval(this.refreshTimer);
-    this.refreshTimer = null;
   }
 
   private setStatus(kind: "idle" | "error", text: string): void {
