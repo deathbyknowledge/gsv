@@ -69,6 +69,12 @@ enum Commands {
         action: ProcAction,
     },
 
+    /// Shareable intelligence commands (`sys.command.*`)
+    Command {
+        #[command(subcommand)]
+        action: CommandAction,
+    },
+
     /// Adapter account lifecycle (`adapter.*`)
     Adapter {
         #[command(subcommand)]
@@ -626,6 +632,140 @@ enum ProcAction {
         #[arg(long)]
         no_archive: bool,
     },
+}
+
+#[derive(Subcommand, Clone)]
+enum CommandAction {
+    /// Issue a new command from a manifest file or inline flags
+    Issue {
+        /// JSON manifest file to issue
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+
+        /// Optional human-readable title
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Optional description
+        #[arg(long)]
+        description: Option<String>,
+
+        /// Command subject kind for inline manifests
+        #[arg(long, value_enum, default_value = "claim")]
+        subject: CommandSubjectArg,
+
+        /// Target uid when --subject uid is used
+        #[arg(long)]
+        uid: Option<u32>,
+
+        /// Max claims when --subject claim is used
+        #[arg(long)]
+        max_claims: Option<u32>,
+
+        /// Restrict to a single successful execution
+        #[arg(long)]
+        single_use: bool,
+
+        /// Optional activation timestamp (unix ms)
+        #[arg(long)]
+        not_before_at: Option<i64>,
+
+        /// Optional expiry timestamp (unix ms)
+        #[arg(long)]
+        expires_at: Option<i64>,
+
+        /// Require each listed capability
+        #[arg(long = "require-capability")]
+        required_capability: Vec<String>,
+
+        /// Narrow execution to each listed capability
+        #[arg(long = "request-capability")]
+        requested_capability: Vec<String>,
+
+        /// Require each listed device to be online and accessible
+        #[arg(long = "require-device")]
+        required_device: Vec<String>,
+
+        /// Prefer each listed device
+        #[arg(long = "prefer-device")]
+        preferred_device: Vec<String>,
+
+        /// Process target for inline manifests
+        #[arg(long, value_enum, default_value = "spawn")]
+        process: CommandProcessArg,
+
+        /// Existing process ID when --process pid is used
+        #[arg(long)]
+        pid: Option<String>,
+
+        /// Label for spawned process
+        #[arg(long)]
+        label: Option<String>,
+
+        /// Optional parent process ID for spawned process
+        #[arg(long = "parent")]
+        parent_pid: Option<String>,
+
+        /// Message payload for inline manifests
+        message: Option<String>,
+    },
+
+    /// Get one command by ID
+    Get {
+        /// Command ID
+        command_id: String,
+    },
+
+    /// List visible commands
+    List {
+        /// Optional issuer uid filter (root only for other users)
+        #[arg(long)]
+        issuer_uid: Option<u32>,
+
+        /// Include revoked commands
+        #[arg(long)]
+        include_revoked: bool,
+    },
+
+    /// Revoke a command
+    Revoke {
+        /// Command ID
+        command_id: String,
+
+        /// Optional revoke reason
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
+    /// Execute a command and wait for completion
+    Run {
+        /// Command ID
+        command_id: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CommandSubjectArg {
+    Issuer,
+    Uid,
+    Claim,
+}
+
+impl CommandSubjectArg {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Issuer => "issuer",
+            Self::Uid => "uid",
+            Self::Claim => "claim",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CommandProcessArg {
+    Init,
+    Pid,
+    Spawn,
 }
 
 #[derive(Subcommand, Clone)]
@@ -1199,6 +1339,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 cli_password_override.clone(),
                 "proc",
                 |auth| async { commands::run_proc(&url, auth, action.clone()).await },
+            )
+            .await
+        }
+        Commands::Command { action } => {
+            run_with_auto_setup_and_login_retry(
+                &url,
+                &cfg,
+                cli_token_override.clone(),
+                cli_user_override.clone(),
+                cli_password_override.clone(),
+                "command",
+                |auth| async { commands::run_command(&url, auth, action.clone()).await },
             )
             .await
         }

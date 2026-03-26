@@ -43,6 +43,13 @@ import {
   handleSysUnlink,
 } from "./sys-link";
 import {
+  handleSysCommandIssue,
+  handleSysCommandGet,
+  handleSysCommandList,
+  handleSysCommandRevoke,
+  handleSysCommandExecute,
+} from "./sys-command";
+import {
   handleAdapterConnect,
   handleAdapterDisconnect,
   handleAdapterInbound,
@@ -194,6 +201,21 @@ async function dispatchNative(
         break;
       case "sys.link.consume":
         data = handleSysLinkConsume(frame.args, ctx);
+        break;
+      case "sys.command.issue":
+        data = await handleSysCommandIssue(frame.args, ctx);
+        break;
+      case "sys.command.get":
+        data = handleSysCommandGet(frame.args, ctx);
+        break;
+      case "sys.command.list":
+        data = handleSysCommandList(frame.args, ctx);
+        break;
+      case "sys.command.revoke":
+        data = handleSysCommandRevoke(frame.args, ctx);
+        break;
+      case "sys.command.execute":
+        data = await handleSysCommandExecute(frame.args, ctx);
         break;
 
       // --- sched.* ---

@@ -281,3 +281,162 @@ export type SysLinkListResult = {
     linkedByUid: number;
   }>;
 };
+
+// -- sys.command.* -----------------------------------------------------------
+
+export type CommandSubject =
+  | { kind: "issuer" }
+  | { kind: "uid"; uid: number }
+  | { kind: "claim"; maxClaims?: number };
+
+export type CommandValidity = {
+  notBeforeAt?: number;
+  expiresAt?: number;
+  singleUse?: boolean;
+};
+
+export type CommandPolicy = {
+  requiredCapabilities?: string[];
+  requestedCapabilities?: string[];
+  requiredDevices?: string[];
+  preferredDevices?: string[];
+};
+
+export type CommandExecutionSpec = {
+  process:
+    | { kind: "init" }
+    | { kind: "pid"; pid: string }
+    | { kind: "spawn"; label?: string; parentPid?: string };
+  input:
+    | { kind: "message"; message: string };
+};
+
+export type CommandContext = {
+  profile?: {
+    id: string;
+    version?: string;
+    digest?: string;
+  };
+  ai?: {
+    provider?: string;
+    model?: string;
+    reasoning?: "off" | "low" | "medium" | "high";
+  };
+  defaults?: {
+    shellTarget?: string;
+    fsTarget?: string;
+  };
+  workspace?: {
+    repo?: {
+      uri: string;
+      ref?: string;
+      mountPath?: string;
+    };
+    files?: Array<{
+      path: string;
+      content: string;
+      encoding?: "utf8" | "base64";
+    }>;
+  };
+  secretRefs?: string[];
+};
+
+export type CommandManifest = {
+  version: 1;
+  kind: "gsv.command";
+  title?: string;
+  description?: string;
+  subject: CommandSubject;
+  validity?: CommandValidity;
+  policy?: CommandPolicy;
+  execution: CommandExecutionSpec;
+  context?: CommandContext;
+  metadata?: Record<string, string>;
+};
+
+export type IssuedCommandRecord = {
+  commandId: string;
+  issuerUid: number;
+  createdAt: number;
+  manifest: CommandManifest;
+  digest: {
+    alg: "sha256";
+    value: string;
+  };
+  signature?: {
+    alg: "ed25519";
+    keyId: string;
+    value: string;
+  };
+  revokedAt: number | null;
+  revokedReason: string | null;
+  claimedByUid: number | null;
+  claimCount: number;
+  lastExecutedAt: number | null;
+};
+
+export type CommandExecutionRecord = {
+  executionId: string;
+  commandId: string;
+  executorUid: number;
+  invokedAt: number;
+  pid: string;
+  runId: string | null;
+  routeKind: "connection" | "adapter" | "none";
+  routeRef?: Record<string, string>;
+  status: "started" | "completed" | "failed";
+  error?: string;
+};
+
+export type SysCommandIssueArgs = {
+  manifest: CommandManifest;
+};
+
+export type SysCommandIssueResult = {
+  command: IssuedCommandRecord;
+  url: string;
+  cli: string;
+};
+
+export type SysCommandGetArgs = {
+  commandId: string;
+};
+
+export type SysCommandGetResult = {
+  command: IssuedCommandRecord | null;
+};
+
+export type SysCommandListArgs = {
+  issuerUid?: number;
+  includeRevoked?: boolean;
+};
+
+export type SysCommandListResult = {
+  commands: IssuedCommandRecord[];
+};
+
+export type SysCommandRevokeArgs = {
+  commandId: string;
+  reason?: string;
+};
+
+export type SysCommandRevokeResult = {
+  revoked: boolean;
+};
+
+export type SysCommandExecuteArgs = {
+  commandId: string;
+};
+
+export type SysCommandExecuteResult =
+  | {
+      ok: true;
+      commandId: string;
+      pid: string;
+      runId: string | null;
+      claimedByUid?: number;
+    }
+  | {
+      ok: false;
+      error: string;
+    };

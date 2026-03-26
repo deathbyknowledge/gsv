@@ -50,6 +50,7 @@ export default defineConfig({
             { text: "CLI Commands", link: "/reference/cli-commands" },
             { text: "WebSocket Protocol", link: "/reference/websocket-protocol" },
             { text: "Configuration", link: "/reference/configuration" },
+            { text: "Command Manifest", link: "/reference/command-manifest" },
             { text: "Workspace Files", link: "/reference/workspace-files" },
             { text: "Native Tools (gsv__)", link: "/reference/native-tools" },
             { text: "Node Tools", link: "/reference/node-tools" },

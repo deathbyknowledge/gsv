@@ -34,6 +34,11 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.token.revoke",
     "sys.unlink",
     "sys.link.consume",
+    "sys.command.issue",
+    "sys.command.get",
+    "sys.command.list",
+    "sys.command.revoke",
+    "sys.command.execute",
   ]],  // users
   [101, ["fs.*", "shell.*"]],                             // drivers
   [102, ["adapter.*"]],                                   // services

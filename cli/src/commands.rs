@@ -1,4 +1,5 @@
 use std::io::{self, BufRead, Write};
+use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -8,7 +9,10 @@ use qrcode::{render::unicode, QrCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{AdapterAction, AuthAction, AuthTokenAction, ConfigAction, ProcAction};
+use crate::{
+    AdapterAction, AuthAction, AuthTokenAction, CommandAction, CommandProcessArg,
+    CommandSubjectArg, ConfigAction, ProcAction,
+};
 
 const CHAT_WAIT_TIMEOUT_SECS: u64 = 120;
 
@@ -983,6 +987,289 @@ pub(crate) async fn run_proc(
     Ok(())
 }
 
+pub(crate) async fn run_command(
+    url: &str,
+    auth: GatewayAuth,
+    action: CommandAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        CommandAction::Issue {
+            manifest,
+            title,
+            description,
+            subject,
+            uid,
+            max_claims,
+            single_use,
+            not_before_at,
+            expires_at,
+            required_capability,
+            requested_capability,
+            required_device,
+            preferred_device,
+            process,
+            pid,
+            label,
+            parent_pid,
+            message,
+        } => {
+            let client = KernelClient::connect_user(url, auth, |_| {}).await?;
+            let manifest_value = if let Some(path) = manifest {
+                ensure_no_inline_command_builder_fields(
+                    title.as_ref(),
+                    description.as_ref(),
+                    uid,
+                    max_claims,
+                    single_use,
+                    not_before_at,
+                    expires_at,
+                    &required_capability,
+                    &requested_capability,
+                    &required_device,
+                    &preferred_device,
+                    pid.as_ref(),
+                    label.as_ref(),
+                    parent_pid.as_ref(),
+                    message.as_ref(),
+                )?;
+                let raw = fs::read_to_string(&path)
+                    .map_err(|error| format!("Failed to read manifest {}: {}", path.display(), error))?;
+                serde_json::from_str::<Value>(&raw)
+                    .map_err(|error| format!("Manifest must be valid JSON: {}", error))?
+            } else {
+                build_inline_command_manifest(
+                    title.as_deref(),
+                    description.as_deref(),
+                    subject,
+                    uid,
+                    max_claims,
+                    single_use,
+                    not_before_at,
+                    expires_at,
+                    &required_capability,
+                    &requested_capability,
+                    &required_device,
+                    &preferred_device,
+                    process,
+                    pid.as_deref(),
+                    label.as_deref(),
+                    parent_pid.as_deref(),
+                    message.as_deref(),
+                )?
+            };
+
+            let payload = client
+                .request_ok(
+                    "sys.command.issue",
+                    Some(json!({ "manifest": manifest_value })),
+                )
+                .await?;
+            match serde_json::from_value::<SysCommandIssuePayload>(payload.clone()) {
+                Ok(result) => print_command_issue(&result),
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
+        }
+        CommandAction::Get { command_id } => {
+            let client = KernelClient::connect_user(url, auth, |_| {}).await?;
+            let payload = client
+                .request_ok(
+                    "sys.command.get",
+                    Some(json!({ "commandId": command_id })),
+                )
+                .await?;
+            match serde_json::from_value::<SysCommandGetPayload>(payload.clone()) {
+                Ok(result) => {
+                    if let Some(command) = result.command.as_ref() {
+                        print_command_detail(command)?;
+                    } else {
+                        println!("(not found)");
+                    }
+                }
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
+        }
+        CommandAction::List {
+            issuer_uid,
+            include_revoked,
+        } => {
+            let client = KernelClient::connect_user(url, auth, |_| {}).await?;
+            let mut args = json!({});
+            if let Some(issuer_uid) = issuer_uid {
+                args["issuerUid"] = json!(issuer_uid);
+            }
+            if include_revoked {
+                args["includeRevoked"] = json!(true);
+            }
+            let payload = client.request_ok("sys.command.list", Some(args)).await?;
+            match serde_json::from_value::<SysCommandListPayload>(payload.clone()) {
+                Ok(result) => print_command_list(&result.commands),
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
+        }
+        CommandAction::Revoke { command_id, reason } => {
+            let client = KernelClient::connect_user(url, auth, |_| {}).await?;
+            let mut args = json!({ "commandId": command_id });
+            if let Some(reason) = reason {
+                args["reason"] = json!(reason);
+            }
+            let payload = client.request_ok("sys.command.revoke", Some(args)).await?;
+            match serde_json::from_value::<SysCommandRevokePayload>(payload.clone()) {
+                Ok(result) => {
+                    if result.revoked {
+                        println!("revoked");
+                    } else {
+                        println!("not found");
+                    }
+                }
+                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            }
+        }
+        CommandAction::Run { command_id } => {
+            let debug_enabled = client_debug_enabled();
+            let completed = Arc::new(AtomicBool::new(false));
+            let completed_for_handler = completed.clone();
+            let expected_run_id = Arc::new(Mutex::new(None::<String>));
+            let expected_run_id_for_handler = expected_run_id.clone();
+            let emitted_text = Arc::new(AtomicBool::new(false));
+            let emitted_text_for_handler = emitted_text.clone();
+            let awaiting_response = Arc::new(AtomicBool::new(false));
+            let awaiting_response_for_handler = awaiting_response.clone();
+            let pending_signals = Arc::new(Mutex::new(Vec::<PendingChatSignal>::new()));
+            let pending_signals_for_handler = pending_signals.clone();
+            let debug_enabled_for_handler = debug_enabled;
+
+            let client = KernelClient::connect_user(url, auth, move |frame| {
+                if let gsv::protocol::Frame::Sig(sig) = frame {
+                    let signal_name = sig.signal.clone();
+                    let payload = sig.payload.unwrap_or_else(|| json!({}));
+                    let incoming_run_id = signal_run_id(&payload).unwrap_or_else(|| "<none>".to_string());
+                    debug_log(
+                        debug_enabled_for_handler,
+                        format!("signal recv raw={} runId={}", signal_name, incoming_run_id),
+                    );
+                    if !signal_name.starts_with("chat.") {
+                        return;
+                    }
+
+                    let expected = expected_run_id_for_handler
+                        .lock()
+                        .ok()
+                        .and_then(|run_id| run_id.clone());
+                    if !awaiting_response_for_handler.load(Ordering::SeqCst) {
+                        if let Ok(mut pending) = pending_signals_for_handler.lock() {
+                            pending.push(PendingChatSignal {
+                                signal: signal_name.clone(),
+                                payload,
+                            });
+                        }
+                        debug_log(debug_enabled_for_handler, "signal queued (not awaiting)");
+                        return;
+                    }
+
+                    if expected.as_deref() != Some(incoming_run_id.as_str()) {
+                        if let Ok(mut pending) = pending_signals_for_handler.lock() {
+                            pending.push(PendingChatSignal {
+                                signal: signal_name.clone(),
+                                payload,
+                            });
+                        }
+                        debug_log(
+                            debug_enabled_for_handler,
+                            format!(
+                                "signal queued (run mismatch) signal={} incoming={} expected={:?}",
+                                signal_name, incoming_run_id, expected
+                            ),
+                        );
+                        return;
+                    }
+
+                    process_chat_signal(
+                        debug_enabled_for_handler,
+                        &signal_name,
+                        &payload,
+                        &expected_run_id_for_handler,
+                        awaiting_response_for_handler.as_ref(),
+                        emitted_text_for_handler.as_ref(),
+                        completed_for_handler.as_ref(),
+                    );
+                }
+            })
+            .await?;
+
+            begin_wait_for_chat_response(
+                completed.as_ref(),
+                emitted_text.as_ref(),
+                awaiting_response.as_ref(),
+                &expected_run_id,
+                &pending_signals,
+            );
+
+            let payload = client
+                .request_ok(
+                    "sys.command.execute",
+                    Some(json!({ "commandId": command_id })),
+                )
+                .await?;
+            let result: SysCommandExecutePayload = serde_json::from_value(payload.clone())
+                .or_else(|_| {
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                    Err(serde_json::Error::io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "sys.command.execute schema mismatch",
+                    )))
+                })?;
+
+            if !result.ok {
+                return Err(result
+                    .error
+                    .unwrap_or_else(|| "sys.command.execute failed".to_string())
+                    .into());
+            }
+
+            let run_id = result
+                .run_id
+                .clone()
+                .ok_or("sys.command.execute did not return runId")?;
+
+            if let Some(command_id) = result.command_id.as_deref() {
+                debug_log(
+                    debug_enabled,
+                    format!("command.execute commandId={}", command_id),
+                );
+            }
+            if let Some(pid) = result.pid.as_deref() {
+                debug_log(
+                    debug_enabled,
+                    format!("command.execute pid={} runId={}", pid, run_id),
+                );
+            }
+            if let Some(claimed_by_uid) = result.claimed_by_uid {
+                println!("claimed_by_uid={}", claimed_by_uid);
+            }
+
+            if let Ok(mut expected) = expected_run_id.lock() {
+                *expected = Some(run_id.clone());
+            }
+            drain_pending_chat_signals(
+                debug_enabled,
+                &run_id,
+                &pending_signals,
+                &expected_run_id,
+                awaiting_response.as_ref(),
+                emitted_text.as_ref(),
+                completed.as_ref(),
+            );
+
+            wait_for_chat_complete(completed.as_ref(), debug_enabled, || {
+                client.connection().is_disconnected()
+            })
+            .await;
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 struct SysConfigGetPayload {
     entries: Vec<SysConfigEntryPayload>,
@@ -1178,6 +1465,53 @@ struct ProcKillPayload {
     pid: Option<String>,
     archived_to: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysCommandIssuePayload {
+    command: IssuedCommandPayload,
+    url: String,
+    cli: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysCommandGetPayload {
+    command: Option<IssuedCommandPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysCommandListPayload {
+    commands: Vec<IssuedCommandPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SysCommandRevokePayload {
+    revoked: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SysCommandExecutePayload {
+    ok: bool,
+    command_id: Option<String>,
+    pid: Option<String>,
+    run_id: Option<String>,
+    claimed_by_uid: Option<u32>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IssuedCommandPayload {
+    command_id: String,
+    issuer_uid: u32,
+    created_at: i64,
+    manifest: Value,
+    revoked_at: Option<i64>,
+    revoked_reason: Option<String>,
+    claimed_by_uid: Option<u32>,
+    claim_count: u32,
+    last_executed_at: Option<i64>,
 }
 
 fn display_config_value(key: &str, value: &str) -> String {
@@ -1423,4 +1757,306 @@ fn render_message_content(content: &Value) -> String {
         return text.to_string();
     }
     serde_json::to_string(content).unwrap_or_else(|_| "<unrenderable>".to_string())
+}
+
+fn ensure_no_inline_command_builder_fields(
+    title: Option<&String>,
+    description: Option<&String>,
+    uid: Option<u32>,
+    max_claims: Option<u32>,
+    single_use: bool,
+    not_before_at: Option<i64>,
+    expires_at: Option<i64>,
+    required_capability: &[String],
+    requested_capability: &[String],
+    required_device: &[String],
+    preferred_device: &[String],
+    pid: Option<&String>,
+    label: Option<&String>,
+    parent_pid: Option<&String>,
+    message: Option<&String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let has_inline_fields = title.is_some()
+        || description.is_some()
+        || uid.is_some()
+        || max_claims.is_some()
+        || single_use
+        || not_before_at.is_some()
+        || expires_at.is_some()
+        || !required_capability.is_empty()
+        || !requested_capability.is_empty()
+        || !required_device.is_empty()
+        || !preferred_device.is_empty()
+        || pid.is_some()
+        || label.is_some()
+        || parent_pid.is_some()
+        || message.is_some();
+
+    if has_inline_fields {
+        return Err(
+            "When --manifest is used, omit inline builder fields like message/title/policy/process flags"
+                .into(),
+        );
+    }
+
+    Ok(())
+}
+
+fn build_inline_command_manifest(
+    title: Option<&str>,
+    description: Option<&str>,
+    subject: CommandSubjectArg,
+    uid: Option<u32>,
+    max_claims: Option<u32>,
+    single_use: bool,
+    not_before_at: Option<i64>,
+    expires_at: Option<i64>,
+    required_capability: &[String],
+    requested_capability: &[String],
+    required_device: &[String],
+    preferred_device: &[String],
+    process: CommandProcessArg,
+    pid: Option<&str>,
+    label: Option<&str>,
+    parent_pid: Option<&str>,
+    message: Option<&str>,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let message = message
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("Inline command issue requires a message")?;
+
+    if subject.as_str() != "uid" && uid.is_some() {
+        return Err("--uid may only be used with --subject uid".into());
+    }
+    if subject.as_str() != "claim" && max_claims.is_some() {
+        return Err("--max-claims may only be used with --subject claim".into());
+    }
+
+    let subject_value = match subject {
+        CommandSubjectArg::Issuer => json!({ "kind": "issuer" }),
+        CommandSubjectArg::Uid => json!({
+            "kind": "uid",
+            "uid": uid.ok_or("--uid is required when --subject uid is used")?,
+        }),
+        CommandSubjectArg::Claim => {
+            let mut value = json!({ "kind": "claim" });
+            if let Some(max_claims) = max_claims {
+                value["maxClaims"] = json!(max_claims);
+            }
+            value
+        }
+    };
+
+    let process_value = match process {
+        CommandProcessArg::Init => {
+            if pid.is_some() {
+                return Err("--pid may only be used with --process pid".into());
+            }
+            if label.is_some() || parent_pid.is_some() {
+                return Err("--label/--parent may only be used with --process spawn".into());
+            }
+            json!({ "kind": "init" })
+        }
+        CommandProcessArg::Pid => {
+            if label.is_some() || parent_pid.is_some() {
+                return Err("--label/--parent may only be used with --process spawn".into());
+            }
+            json!({
+                "kind": "pid",
+                "pid": pid
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or("--pid is required when --process pid is used")?,
+            })
+        }
+        CommandProcessArg::Spawn => {
+            if pid.is_some() {
+                return Err("--pid may only be used with --process pid".into());
+            }
+            let mut value = json!({ "kind": "spawn" });
+            if let Some(label) = label.map(str::trim).filter(|value| !value.is_empty()) {
+                value["label"] = json!(label);
+            }
+            if let Some(parent_pid) = parent_pid.map(str::trim).filter(|value| !value.is_empty()) {
+                value["parentPid"] = json!(parent_pid);
+            }
+            value
+        }
+    };
+
+    let mut manifest = serde_json::Map::new();
+    manifest.insert("version".to_string(), json!(1));
+    manifest.insert("kind".to_string(), json!("gsv.command"));
+    manifest.insert("subject".to_string(), subject_value);
+    manifest.insert(
+        "execution".to_string(),
+        json!({
+            "process": process_value,
+            "input": {
+                "kind": "message",
+                "message": message,
+            }
+        }),
+    );
+
+    if let Some(title) = title.map(str::trim).filter(|value| !value.is_empty()) {
+        manifest.insert("title".to_string(), json!(title));
+    }
+    if let Some(description) = description.map(str::trim).filter(|value| !value.is_empty()) {
+        manifest.insert("description".to_string(), json!(description));
+    }
+
+    let mut validity = serde_json::Map::new();
+    if let Some(not_before_at) = not_before_at {
+        validity.insert("notBeforeAt".to_string(), json!(not_before_at));
+    }
+    if let Some(expires_at) = expires_at {
+        validity.insert("expiresAt".to_string(), json!(expires_at));
+    }
+    if single_use {
+        validity.insert("singleUse".to_string(), json!(true));
+    }
+    if !validity.is_empty() {
+        manifest.insert("validity".to_string(), Value::Object(validity));
+    }
+
+    let mut policy = serde_json::Map::new();
+    if !required_capability.is_empty() {
+        policy.insert(
+            "requiredCapabilities".to_string(),
+            json!(required_capability),
+        );
+    }
+    if !requested_capability.is_empty() {
+        policy.insert(
+            "requestedCapabilities".to_string(),
+            json!(requested_capability),
+        );
+    }
+    if !required_device.is_empty() {
+        policy.insert("requiredDevices".to_string(), json!(required_device));
+    }
+    if !preferred_device.is_empty() {
+        policy.insert("preferredDevices".to_string(), json!(preferred_device));
+    }
+    if !policy.is_empty() {
+        manifest.insert("policy".to_string(), Value::Object(policy));
+    }
+
+    Ok(Value::Object(manifest))
+}
+
+fn print_command_issue(result: &SysCommandIssuePayload) {
+    println!("Command issued.");
+    print_command_summary(&result.command);
+    println!("url: {}", result.url);
+    println!("cli: {}", result.cli);
+}
+
+fn print_command_detail(command: &IssuedCommandPayload) -> Result<(), Box<dyn std::error::Error>> {
+    print_command_summary(command);
+    println!(
+        "manifest:\n{}",
+        serde_json::to_string_pretty(&command.manifest)?
+    );
+    Ok(())
+}
+
+fn print_command_list(commands: &[IssuedCommandPayload]) {
+    if commands.is_empty() {
+        println!("(no commands)");
+        return;
+    }
+
+    for command in commands {
+        print_command_summary(command);
+    }
+}
+
+fn print_command_summary(command: &IssuedCommandPayload) {
+    println!(
+        "{} title={} subject={} status={} issuer={} claims={} created={}",
+        command.command_id,
+        command_title(&command.manifest),
+        command_subject_summary(&command.manifest),
+        command_status_summary(command),
+        command.issuer_uid,
+        command.claim_count,
+        format_unix_ms(command.created_at),
+    );
+
+    if let Some(claimed_by_uid) = command.claimed_by_uid {
+        println!("  claimed_by={}", claimed_by_uid);
+    }
+    if let Some(last_executed_at) = command.last_executed_at {
+        println!("  last_executed={}", format_unix_ms(last_executed_at));
+    }
+    if let Some(revoked_reason) = command.revoked_reason.as_deref() {
+        println!("  revoked_reason={}", revoked_reason);
+    }
+}
+
+fn command_title(manifest: &Value) -> String {
+    manifest
+        .get("title")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn command_subject_summary(manifest: &Value) -> String {
+    let subject = match manifest.get("subject") {
+        Some(subject) => subject,
+        None => return "-".to_string(),
+    };
+    let kind = subject
+        .get("kind")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+
+    match kind {
+        "uid" => format!(
+            "uid:{}",
+            subject
+                .get("uid")
+                .and_then(|value| value.as_u64())
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "?".to_string())
+        ),
+        "claim" => {
+            if let Some(max_claims) = subject.get("maxClaims").and_then(|value| value.as_u64()) {
+                format!("claim:{}", max_claims)
+            } else {
+                "claim".to_string()
+            }
+        }
+        "issuer" => "issuer".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn command_status_summary(command: &IssuedCommandPayload) -> String {
+    let now_ms = Utc::now().timestamp_millis();
+    if command.revoked_at.is_some() {
+        return "revoked".to_string();
+    }
+
+    if let Some(expires_at) = command
+        .manifest
+        .get("validity")
+        .and_then(|value| value.get("expiresAt"))
+        .and_then(|value| value.as_i64())
+    {
+        if expires_at <= now_ms {
+            return "expired".to_string();
+        }
+    }
+
+    if command.claimed_by_uid.is_some() {
+        return "claimed".to_string();
+    }
+
+    "active".to_string()
 }

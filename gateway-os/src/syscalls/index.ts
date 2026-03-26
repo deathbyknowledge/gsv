@@ -53,6 +53,16 @@ import type {
   SysLinkListResult,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
+  SysCommandIssueArgs,
+  SysCommandIssueResult,
+  SysCommandGetArgs,
+  SysCommandGetResult,
+  SysCommandListArgs,
+  SysCommandListResult,
+  SysCommandRevokeArgs,
+  SysCommandRevokeResult,
+  SysCommandExecuteArgs,
+  SysCommandExecuteResult,
 } from "./system";
 import type {
   SchedulerListArgs,
@@ -125,6 +135,11 @@ export type SyscallDomains = {
   "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
   "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
+  "sys.command.issue": { args: SysCommandIssueArgs; result: SysCommandIssueResult };
+  "sys.command.get": { args: SysCommandGetArgs; result: SysCommandGetResult };
+  "sys.command.list": { args: SysCommandListArgs; result: SysCommandListResult };
+  "sys.command.revoke": { args: SysCommandRevokeArgs; result: SysCommandRevokeResult };
+  "sys.command.execute": { args: SysCommandExecuteArgs; result: SysCommandExecuteResult };
 
   // Scheduler (cron)
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };

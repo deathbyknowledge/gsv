@@ -21,6 +21,7 @@ import { RoutingTable, type RouteOrigin } from "./routing";
 import { ProcessRegistry } from "./processes";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
+import { CommandStore } from "./commands";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -58,6 +59,7 @@ export class Kernel extends Host<Env> {
   private readonly procs: ProcessRegistry;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
+  private readonly commands: CommandStore;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -87,6 +89,9 @@ export class Kernel extends Host<Env> {
 
     this.runRoutes = new RunRouteStore(ctx.storage.sql);
     this.runRoutes.init();
+
+    this.commands = new CommandStore(ctx.storage.sql);
+    this.commands.init();
 
     this.rehydrateConnections();
   }
@@ -203,6 +208,18 @@ export class Kernel extends Host<Env> {
     if (!runId) {
       this.broadcastToUid(identity.uid, frame.signal, frame.payload);
       return;
+    }
+
+    if (frame.signal === "chat.complete") {
+      const payload =
+        frame.payload && typeof frame.payload === "object"
+          ? (frame.payload as Record<string, unknown>)
+          : {};
+      const error =
+        typeof payload.error === "string" && payload.error.trim().length > 0
+          ? payload.error
+          : undefined;
+      this.commands.completeExecutionByRunId(runId, error);
     }
 
     const route = this.runRoutes.get(runId);
@@ -322,6 +339,7 @@ export class Kernel extends Host<Env> {
       procs: this.procs,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      commands: this.commands,
       connection: null as unknown as Connection,
       identity: connIdentity,
       serverVersion: SERVER_VERSION,
@@ -376,6 +394,7 @@ export class Kernel extends Host<Env> {
       procs: this.procs,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      commands: this.commands,
       connection,
       identity: state.identity as ConnectionIdentity,
       serverVersion: SERVER_VERSION,
@@ -392,6 +411,7 @@ export class Kernel extends Host<Env> {
       procs: this.procs,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      commands: this.commands,
       connection: null as unknown as Connection,
       identity,
       serverVersion: SERVER_VERSION,
@@ -475,7 +495,7 @@ export class Kernel extends Host<Env> {
     response: ResponseFrame,
   ): void {
     if (identity.role !== "user") return;
-    if (frame.call !== "proc.send") return;
+    if (frame.call !== "proc.send" && frame.call !== "sys.command.execute") return;
     if (!response.ok) return;
 
     const data = (response as { data?: ProcSendData }).data;

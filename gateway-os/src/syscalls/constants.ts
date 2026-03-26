@@ -33,6 +33,11 @@ export const SYS_LINK_CONSUME = "sys.link.consume";
 export const SYS_LINK = "sys.link";
 export const SYS_UNLINK = "sys.unlink";
 export const SYS_LINK_LIST = "sys.link.list";
+export const SYS_COMMAND_ISSUE = "sys.command.issue";
+export const SYS_COMMAND_GET = "sys.command.get";
+export const SYS_COMMAND_LIST = "sys.command.list";
+export const SYS_COMMAND_REVOKE = "sys.command.revoke";
+export const SYS_COMMAND_EXECUTE = "sys.command.execute";
 
 // Scheduler (cron)
 export const SCHED_LIST = "sched.list";
