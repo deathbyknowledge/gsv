@@ -20,10 +20,9 @@ import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
 import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";
 import type { FsDeleteArgs, FsDeleteResult } from "../../syscalls/delete";
-import type { FsSearchArgs, FsSearchResult, FsSearchMatch } from "../../syscalls/search";
+import type { FsSearchArgs, FsSearchResult } from "../../syscalls/search";
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
-const MAX_SEARCH_MATCHES = 500;
 
 function makeFs(ctx: KernelContext): GsvFs {
   const identity = ctx.identity!.process;
@@ -230,74 +229,17 @@ export async function handleFsSearch(args: FsSearchArgs, ctx: KernelContext): Pr
   const prefix = args.path
     ? resolveUserPath(args.path, identity.home, identity.cwd)
     : identity.cwd;
+  const fs = makeFs(ctx);
 
-  const workspaceBackend = createWorkspaceBackend(ctx.env, identity, ctx.workspaces);
-  if (prefix.startsWith("/workspaces/") && !workspaceBackend) {
-    return { ok: false, error: `Workspace backend is unavailable for ${prefix}` };
+  try {
+    const result = await fs.search(prefix, regex, args.include);
+    return {
+      ok: true,
+      matches: result.matches,
+      count: result.matches.length,
+      truncated: result.truncated,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-  if (workspaceBackend?.handles(prefix)) {
-    try {
-      const result = await workspaceBackend.search(prefix, regex, args.include);
-      return {
-        ok: true,
-        matches: result.matches,
-        count: result.matches.length,
-        truncated: result.truncated,
-      };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  }
-
-  const bucket = ctx.env.STORAGE;
-  const searchPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
-
-  const matches: FsSearchMatch[] = [];
-  let truncated = false;
-  let cursor: string | undefined;
-
-  outer:
-  do {
-    const listed = await bucket.list({
-      prefix: searchPrefix === "/" ? undefined : searchPrefix.slice(1),
-      cursor,
-      limit: 100,
-    });
-
-    for (const obj of listed.objects) {
-      if (args.include && !matchGlob(args.include, obj.key)) continue;
-
-      const contentType = obj.httpMetadata?.contentType || "text/plain";
-      if (!isTextContentType(contentType)) continue;
-
-      const full = await bucket.get(obj.key);
-      if (!full) continue;
-
-      const text = await full.text();
-      const lines = text.split("\n");
-
-      for (let i = 0; i < lines.length; i++) {
-        regex.lastIndex = 0;
-        if (regex.test(lines[i])) {
-          matches.push({ path: "/" + obj.key, line: i + 1, content: lines[i] });
-          if (matches.length >= MAX_SEARCH_MATCHES) {
-            truncated = true;
-            break outer;
-          }
-        }
-      }
-    }
-
-    cursor = listed.truncated ? listed.cursor : undefined;
-  } while (cursor);
-
-  return { ok: true, matches, count: matches.length, truncated };
-}
-
-function matchGlob(pattern: string, path: string): boolean {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*")
-    .replace(/\?/g, ".");
-  return new RegExp(`(^|/)${escaped}$`).test(path);
 }

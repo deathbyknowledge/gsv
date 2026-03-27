@@ -1,76 +1,26 @@
 import type {
-  BufferEncoding,
   FileContent,
-  FsStat,
   MkdirOptions,
   RmOptions,
 } from "just-bash";
 import type { WorkspaceStore } from "../kernel/workspaces";
 import type { ProcessIdentity } from "../syscalls/system";
-import type { FsSearchMatch } from "../syscalls/search";
-
-export type ExtendedWorkspaceStat = FsStat & { uid: number; gid: number };
-
-export interface WorkspaceBackend {
-  handles(path: string): boolean;
-  readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string>;
-  readFileBuffer(path: string): Promise<Uint8Array>;
-  writeFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void>;
-  appendFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void>;
-  exists(path: string): Promise<boolean>;
-  stat(path: string): Promise<ExtendedWorkspaceStat>;
-  mkdir(path: string, options?: MkdirOptions): Promise<void>;
-  readdir(path: string): Promise<string[]>;
-  rm(path: string, options?: RmOptions): Promise<void>;
-  search(path: string, pattern: RegExp, include?: string): Promise<{ matches: FsSearchMatch[]; truncated?: boolean }>;
-}
-
-type RipgitBinding = {
-  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-};
-
-type WorkspaceTreeEntry = {
-  name: string;
-  mode: string;
-  hash: string;
-  type: "tree" | "blob" | "symlink";
-};
-
-type WorkspaceApplyOp =
-  | {
-      type: "put";
-      path: string;
-      contentBytes: number[];
-      message?: string;
-    }
-  | {
-      type: "delete";
-      path: string;
-      recursive?: boolean;
-    }
-  | {
-      type: "move";
-      from: string;
-      to: string;
-    };
-
-type WorkspaceApplyResponse = {
-  ok: boolean;
-  head?: string | null;
-  conflict?: boolean;
-  error?: string;
-};
+import type { ExtendedMountStat, MountBackend, FsSearchBackendResult } from "./mount-backend";
+import {
+  RipgitClient,
+  type RipgitApplyOp,
+  type RipgitRepoRef,
+} from "./ripgit-client";
+import { normalizePath } from "./utils";
 
 type WorkspaceRepoRef = {
   workspaceId: string;
   ownerUid: number;
-  ownerName: string;
-  repoName: string;
+  repo: RipgitRepoRef;
   relativePath: string;
   absolutePath: string;
 };
 
-const DEFAULT_BRANCH = "main";
 const DIRECTORY_MARKER = ".dir";
 const MAX_SEARCH_MATCHES = 500;
 const TEXT_DECODER = new TextDecoder();
@@ -80,19 +30,18 @@ export function createWorkspaceBackend(
   env: Env,
   identity: ProcessIdentity,
   workspaces: WorkspaceStore | undefined,
-): WorkspaceBackend | null {
+): MountBackend | null {
   if (!workspaces) {
     return null;
   }
 
-  const binding = getRipgitBinding(env);
+  const binding = env.RIPGIT;
   if (!binding) {
     return null;
   }
 
-  return new RipgitWorkspaceBackend(
-    binding,
-    getRipgitInternalKey(env),
+  return new WorkspaceMountBackend(
+    new RipgitClient(binding, env.RIPGIT_INTERNAL_KEY ?? null),
     identity,
     workspaces,
   );
@@ -106,16 +55,15 @@ export function isWorkspaceMountPath(path: string): boolean {
   return path === "/workspaces" || path.startsWith("/workspaces/");
 }
 
-class RipgitWorkspaceBackend implements WorkspaceBackend {
+class WorkspaceMountBackend implements MountBackend {
   constructor(
-    private readonly binding: RipgitBinding,
-    private readonly internalKey: string | null,
+    private readonly client: RipgitClient,
     private readonly identity: ProcessIdentity,
     private readonly workspaces: WorkspaceStore,
   ) {}
 
   handles(path: string): boolean {
-    return path.startsWith("/workspaces/") && path !== "/workspaces";
+    return path === "/workspaces" || path.startsWith("/workspaces/");
   }
 
   async readFile(path: string): Promise<string> {
@@ -124,24 +72,23 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
+    if (normalizePath(path) === "/workspaces") {
+      throw new Error("EISDIR: illegal operation on a directory, read '/workspaces'");
+    }
     const repo = this.resolveRepo(path);
     if (repo.relativePath === "") {
       throw new Error(`EISDIR: illegal operation on a directory, read '${repo.absolutePath}'`);
     }
 
-    const response = await this.fetchFile(repo);
-    if (response.status === 404) {
+    const result = await this.client.readPath(repo.repo, repo.relativePath);
+    if (result.kind === "missing") {
       throw new Error(`ENOENT: no such file or directory, open '${repo.absolutePath}'`);
     }
-    if (!response.ok) {
-      throw new Error(await this.readError(response, `open '${repo.absolutePath}'`));
-    }
-
-    if (this.isTreeResponse(response)) {
+    if (result.kind === "tree") {
       throw new Error(`EISDIR: illegal operation on a directory, read '${repo.absolutePath}'`);
     }
 
-    return new Uint8Array(await response.arrayBuffer());
+    return result.bytes;
   }
 
   async writeFile(path: string, content: FileContent): Promise<void> {
@@ -182,6 +129,9 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
   }
 
   async exists(path: string): Promise<boolean> {
+    if (normalizePath(path) === "/workspaces") {
+      return true;
+    }
     try {
       await this.stat(path);
       return true;
@@ -190,33 +140,40 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
     }
   }
 
-  async stat(path: string): Promise<ExtendedWorkspaceStat> {
+  async stat(path: string): Promise<ExtendedMountStat> {
+    if (normalizePath(path) === "/workspaces") {
+      return {
+        isFile: false,
+        isDirectory: true,
+        isSymbolicLink: false,
+        mode: 0o755,
+        size: 0,
+        mtime: new Date(),
+        uid: 0,
+        gid: 0,
+      };
+    }
     const repo = this.resolveRepo(path);
 
     if (repo.relativePath === "") {
       return this.makeDirStat(repo);
     }
 
-    const response = await this.fetchFile(repo);
-    if (response.status === 404) {
+    const result = await this.client.readPath(repo.repo, repo.relativePath);
+    if (result.kind === "missing") {
       throw new Error(`ENOENT: no such file or directory, stat '${repo.absolutePath}'`);
     }
-    if (!response.ok) {
-      throw new Error(await this.readError(response, `stat '${repo.absolutePath}'`));
-    }
-
-    if (this.isTreeResponse(response)) {
+    if (result.kind === "tree") {
       return this.makeDirStat(repo);
     }
 
-    const size = parseInt(response.headers.get("X-Blob-Size") ?? "0", 10);
     const workspace = this.requireWorkspace(repo.workspaceId);
     return {
       isFile: true,
       isDirectory: false,
       isSymbolicLink: false,
       mode: 0o644,
-      size: Number.isFinite(size) ? size : 0,
+      size: result.size,
       mtime: new Date(workspace.updatedAt),
       uid: workspace.ownerUid,
       gid: workspace.ownerUid,
@@ -224,6 +181,9 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
   }
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
+    if (normalizePath(path) === "/workspaces") {
+      return;
+    }
     const repo = this.resolveRepo(path);
     if (repo.relativePath === "") {
       return;
@@ -256,20 +216,22 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
   }
 
   async readdir(path: string): Promise<string[]> {
+    if (normalizePath(path) === "/workspaces") {
+      const workspaces = this.identity.uid === 0
+        ? this.workspaces.list()
+        : this.workspaces.list(this.identity.uid);
+      return workspaces.map((workspace) => workspace.workspaceId).sort();
+    }
     const repo = this.resolveRepo(path);
-    const response = await this.fetchFile(repo);
-
-    if (response.status === 404) {
+    const result = await this.client.readPath(repo.repo, repo.relativePath);
+    if (result.kind === "missing") {
       throw new Error(`ENOENT: no such file or directory, scandir '${repo.absolutePath}'`);
     }
-    if (!response.ok) {
-      throw new Error(await this.readError(response, `scandir '${repo.absolutePath}'`));
-    }
-    if (!this.isTreeResponse(response)) {
+    if (result.kind !== "tree") {
       throw new Error(`ENOTDIR: not a directory, scandir '${repo.absolutePath}'`);
     }
 
-    const entries = (await response.json<WorkspaceTreeEntry[]>())
+    const entries = result.entries
       .map((entry) => entry.name)
       .filter((name) => name !== DIRECTORY_MARKER);
 
@@ -277,6 +239,9 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
   }
 
   async rm(path: string, options?: RmOptions): Promise<void> {
+    if (normalizePath(path) === "/workspaces") {
+      throw new Error("EPERM: cannot remove workspace mount '/workspaces'");
+    }
     const repo = this.resolveRepo(path);
     if (repo.relativePath === "") {
       throw new Error(`EPERM: cannot remove workspace root '${repo.absolutePath}'`);
@@ -296,7 +261,7 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
         throw new Error(`ENOTEMPTY: directory not empty, rmdir '${repo.absolutePath}'`);
       }
 
-      const ops: WorkspaceApplyOp[] = [
+      const ops: RipgitApplyOp[] = [
         { type: "delete", path: joinRelative(repo.relativePath, DIRECTORY_MARKER) },
       ];
       if (options?.recursive) {
@@ -312,9 +277,12 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
     ], `gsv: rm ${repo.relativePath}`);
   }
 
-  async search(path: string, pattern: RegExp, include?: string): Promise<{ matches: FsSearchMatch[]; truncated?: boolean }> {
+  async search(path: string, pattern: RegExp, include?: string): Promise<FsSearchBackendResult> {
+    if (normalizePath(path) === "/workspaces") {
+      return { matches: [] };
+    }
     const root = this.resolveRepo(path);
-    const matches: FsSearchMatch[] = [];
+    const matches: FsSearchBackendResult["matches"] = [];
     const glob = include ? compileGlob(include) : null;
 
     for await (const file of this.walkFiles(root.absolutePath)) {
@@ -364,57 +332,19 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
 
   private async apply(
     repo: WorkspaceRepoRef,
-    ops: WorkspaceApplyOp[],
+    ops: RipgitApplyOp[],
     message: string,
   ): Promise<void> {
-    if (!this.internalKey) {
-      throw new Error("RIPGIT_INTERNAL_KEY is not configured");
-    }
-
-    const response = await this.binding.fetch(this.makeUrl(repo.ownerName, repo.repoName, "/_gsv/apply"), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Ripgit-Internal-Key": this.internalKey,
-      },
-      body: JSON.stringify({
-        defaultBranch: DEFAULT_BRANCH,
-        author: this.identity.username,
-        email: `${this.identity.username}@gsv.internal`,
-        message,
-        ops,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(await this.readError(response, `apply '${repo.absolutePath}'`));
-    }
-
-    const payload = await response.json<WorkspaceApplyResponse>();
-    if (!payload.ok) {
-      throw new Error(payload.error ?? `Failed to apply workspace changes for ${repo.absolutePath}`);
-    }
-  }
-
-  private async fetchFile(repo: WorkspaceRepoRef): Promise<Response> {
-    const url = this.makeUrl(
-      repo.ownerName,
-      repo.repoName,
-      `/file?ref=${encodeURIComponent(DEFAULT_BRANCH)}&path=${encodeURIComponent(repo.relativePath)}`,
+    await this.client.apply(
+      repo.repo,
+      this.identity.username,
+      `${this.identity.username}@gsv.internal`,
+      message,
+      ops,
     );
-    return this.binding.fetch(url);
   }
 
-  private isTreeResponse(response: Response): boolean {
-    const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
-    return contentType.startsWith("application/json");
-  }
-
-  private makeUrl(owner: string, repo: string, suffix: string): URL {
-    return new URL(`https://ripgit/${owner}/${repo}${suffix}`);
-  }
-
-  private makeDirStat(repo: WorkspaceRepoRef): ExtendedWorkspaceStat {
+  private makeDirStat(repo: WorkspaceRepoRef): ExtendedMountStat {
     const workspace = this.requireWorkspace(repo.workspaceId);
     return {
       isFile: false,
@@ -459,31 +389,14 @@ class RipgitWorkspaceBackend implements WorkspaceBackend {
     return {
       workspaceId,
       ownerUid: workspace.ownerUid,
-      ownerName: ripgitWorkspaceOwner(workspace.ownerUid),
-      repoName: workspaceId,
+      repo: {
+        owner: ripgitWorkspaceOwner(workspace.ownerUid),
+        repo: workspaceId,
+      },
       relativePath,
       absolutePath: normalized,
     };
   }
-
-  private async readError(response: Response, context: string): Promise<string> {
-    const text = await response.text().catch(() => "");
-    if (text) {
-      return text;
-    }
-    return `ripgit ${context} failed with ${response.status}`;
-  }
-}
-
-function getRipgitBinding(env: Env): RipgitBinding | null {
-  const maybeEnv = env as Env & { RIPGIT?: RipgitBinding };
-  return maybeEnv.RIPGIT ?? null;
-}
-
-function getRipgitInternalKey(env: Env): string | null {
-  const maybeEnv = env as Env & { RIPGIT_INTERNAL_KEY?: string };
-  const value = maybeEnv.RIPGIT_INTERNAL_KEY;
-  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function asBytes(content: FileContent): Uint8Array {
@@ -491,21 +404,6 @@ function asBytes(content: FileContent): Uint8Array {
     return TEXT_ENCODER.encode(content);
   }
   return content;
-}
-
-function normalizePath(path: string): string {
-  const segments: string[] = [];
-  for (const segment of path.split("/")) {
-    if (!segment || segment === ".") {
-      continue;
-    }
-    if (segment === "..") {
-      segments.pop();
-      continue;
-    }
-    segments.push(segment);
-  }
-  return "/" + segments.join("/");
 }
 
 function dirname(path: string): string {
