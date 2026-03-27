@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { KernelContext } from "./context";
+import type { KernelContext } from "../context";
 import {
   handleSysTokenCreate,
   handleSysTokenList,
   handleSysTokenRevoke,
-} from "./sys-token";
+} from "./token";
 
 type FakeAuth = {
   issueToken: ReturnType<typeof vi.fn>;

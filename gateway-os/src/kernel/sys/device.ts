@@ -1,4 +1,4 @@
-import type { KernelContext } from "./context";
+import type { KernelContext } from "../context";
 import type {
   SysDeviceListArgs,
   SysDeviceListResult,
@@ -6,8 +6,8 @@ import type {
   SysDeviceGetResult,
   SysDeviceDetail,
   SysDeviceSummary,
-} from "../syscalls/system";
-import type { DeviceRecord } from "./devices";
+} from "../../syscalls/system";
+import type { DeviceRecord } from "../devices";
 
 function toSummary(record: DeviceRecord): SysDeviceSummary {
   return {

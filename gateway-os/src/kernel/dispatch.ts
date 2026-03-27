@@ -29,20 +29,20 @@ import {
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
-import { handleSysConfigGet, handleSysConfigSet } from "./sys-config";
-import { handleSysDeviceGet, handleSysDeviceList } from "./sys-device";
-import { handleSysWorkspaceList } from "./sys-workspaces";
+import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
+import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
+import { handleSysWorkspaceList } from "./sys/workspaces";
 import {
   handleSysTokenCreate,
   handleSysTokenList,
   handleSysTokenRevoke,
-} from "./sys-token";
+} from "./sys/token";
 import {
   handleSysLink,
   handleSysLinkConsume,
   handleSysLinkList,
   handleSysUnlink,
-} from "./sys-link";
+} from "./sys/link";
 import {
   handleAdapterConnect,
   handleAdapterDisconnect,
@@ -155,7 +155,7 @@ async function dispatchNative(
         data = await handleAiTools(ctx);
         break;
       case "ai.config":
-        data = await handleAiConfig(ctx);
+        data = await handleAiConfig(frame.args, ctx);
         break;
 
       // --- sys.* ---

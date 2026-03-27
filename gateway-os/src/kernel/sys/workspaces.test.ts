@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { KernelContext } from "./context";
-import { handleSysWorkspaceList } from "./sys-workspaces";
+import type { KernelContext } from "../context";
+import { handleSysWorkspaceList } from "./workspaces";
 
 type WorkspaceRow = {
   workspaceId: string;

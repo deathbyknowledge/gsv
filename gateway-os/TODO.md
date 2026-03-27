@@ -35,11 +35,50 @@ Threads spawn processes. Processes attach to workspaces. Workspaces outlive proc
 - [x] Mount canonical workspace path `/workspaces/{workspaceId}` through `GsvFs`
 - [x] Update native `fs.*` handlers to delegate search by backend (workspace backend vs R2 backend)
 - [ ] Move prompt/path loading off direct raw storage assumptions where workspace-backed paths are involved
+- [x] Realize `.gsv/` as a checkpoint surface, not just scaffolding
+  - [x] flush transcript checkpoints at safe boundaries into `.gsv/processes/{pid}/chat.jsonl`
+  - [x] maintain `.gsv/summary.md`
+  - [x] generate AI-authored checkpoint commit messages for workspace history / semantic metasearch
+  - [x] hide `.gsv/` from normal Files/search unless explicitly requested
 - [x] Chat UI: `New Thread` spawns child process + workspace instead of talking directly to init
 - [x] Files UI: open the current thread's workspace directly
 - [x] Shell UI: open in the current thread's workspace (`cwd = /workspaces/{workspaceId}`)
 - [x] Add a minimal `.gsv/` workspace layout: `workspace.json`, `summary.md`, per-process `chat.jsonl`
 - [x] Add a basic "Recent Threads" / workspace list in the UI
+- [ ] Surface workspace history/search later
+  - add `/hyperspace/.../history`
+  - add diff/recent-changes UX in Files or Chat
+
+## MCP operator / deployment awareness
+
+`mcp` should be a trusted operator process, not just a task process with a
+different prompt.
+
+- [ ] Add root-only operator SQL surface
+  - `sql.query`
+  - `sql.exec`
+  - targetable at `kernel`, `process:{pid}`, later `ripgit:{owner}/{repo}`
+  - audit/log the target + statement metadata
+- [ ] Add structured operator inspection surfaces
+  - runtime snapshot / kernel snapshot
+  - routing table inspection
+  - adapter/device/deployment status inspection
+- [ ] Add source mirror for the deployed GSV codebase
+  - mirror the GSV repo into ripgit on first deploy
+  - update the mirror on subsequent deploys
+  - mount it read-only at `/src/gsv`
+  - keep mutable repair work in `/workspaces/{id}`
+- [ ] Add deployment pointer metadata in kernel
+  - current source repo
+  - deployed commit/ref
+  - deploy time / actor / component versions
+- [ ] Add `mcp`-specific context providers
+  - architecture index provider
+  - runtime snapshot provider
+  - deployment pointer provider
+- [ ] Add an explicit `mcp` spawn surface in UI/CLI
+  - open a trusted operator process directly
+  - attach it to a debugging workspace when needed
 
 ## Unix identity model (`/etc/passwd`, `/etc/shadow`, `/etc/group`)
 
@@ -174,6 +213,10 @@ Kernel tracks all alive processes. Process kind is derived from the processId co
 - [x] `getIdentity(processId)` — look up ProcessIdentity
 - [x] `kill(processId)` / `setState(processId, state)` / `list(uid?)` / `children(parentPid)`
 - [x] `getInit(uid)` / `ensureInit(identity)` — init process helpers
+- [ ] Promote process type/profile to first-class fields instead of inferring everything from the processId string
+  - explicit `process_type` (`init` | `task` | `cron` | `mcp` | `app`)
+  - optional profile/system-prompt selection
+  - spawn semantics for `mcp` / operator-style processes
 - [ ] Unit tests
 
 ## Init process lifecycle
@@ -212,6 +255,37 @@ raw R2 blob archive is an interim implementation, not the target architecture.
 - [ ] Init process periodically compacts: summarize old messages, flush full transcript to KnowledgeStore
 - [ ] Any process can load archived conversations through KnowledgeStore-backed retrieval
 - [ ] Create `/var/sessions/` directory structure on first boot / user creation
+
+## Context assembly / process profiles
+
+Prompt assembly should stop being one flat storage read path. Different process
+types need different awareness, tools, and retrieval behavior.
+
+- [x] Introduce the first provider-based prompt assembly pipeline
+  - base system prompt provider
+  - profile instructions provider
+  - home knowledge provider (`CONSTITUTION`, `context.d`)
+  - workspace summary provider
+- [ ] Add retrieval/live-state providers to the pipeline
+  - live process history provider
+  - workspace retrieval provider
+  - archived/session retrieval provider later
+  - home memory retrieval provider
+- [ ] Add hierarchical AI generation config resolution
+  - global defaults under `/sys/config/ai/default/*`
+  - purpose overrides under `/sys/config/ai/purpose/<purpose>/*`
+  - profile overrides under `/sys/config/ai/profile/<profile>/*`
+  - resolution order: explicit process override -> purpose -> profile -> default
+- [x] Promote prompt profile selection from inferred process-id prefix to explicit process metadata
+  - `proc.spawn` now takes explicit `profile`
+  - process registry stores profile alongside cwd/workspace metadata
+  - Process DO receives/stores profile via `proc.setidentity`
+- [ ] Support per-process profile selection at spawn time
+  - `task`: normal thread work
+  - `mcp`: deployment/kernel/debug/operator awareness
+  - future app/runtime profiles as needed
+- [ ] Design CLI spawn surface for explicit process/profile creation
+  - e.g. `spawn mcp "<msg>" --context cwd --systemprompt ...`
 
 ## KnowledgeStore (versioned + searchable knowledge backend)
 

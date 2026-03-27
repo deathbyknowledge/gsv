@@ -31,7 +31,7 @@ import {
 import { dispatch, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
-import { handleSysSetup as handleKernelSetup } from "./sys-setup";
+import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import { resolveAdapterServiceForKernel } from "./adapter-handlers";
 
@@ -864,7 +864,7 @@ export class Kernel extends Host<Env> {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.setidentity",
-        args: { pid, identity },
+        args: { pid, identity, profile: "init" },
       } as RequestFrame);
     }
 

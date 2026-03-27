@@ -30,11 +30,57 @@ function createMockSql() {
       return rows([] as T[]);
     }
 
+    if (q.startsWith("UPDATE processes SET profile = '")) {
+      const match = q.match(/SET profile = '([^']+)'/);
+      const profile = match?.[1];
+      if (!profile) {
+        return rows([] as T[]);
+      }
+
+      if (q.includes("process_id LIKE 'init:%'")) {
+        for (const row of table.values()) {
+          if (!row.profile && typeof row.process_id === "string" && row.process_id.startsWith("init:")) {
+            row.profile = profile;
+          }
+        }
+      } else if (q.includes("process_id LIKE 'task:%'")) {
+        for (const row of table.values()) {
+          if (!row.profile && typeof row.process_id === "string" && row.process_id.startsWith("task:")) {
+            row.profile = profile;
+          }
+        }
+      } else if (q.includes("process_id LIKE 'cron:%'")) {
+        for (const row of table.values()) {
+          if (!row.profile && typeof row.process_id === "string" && row.process_id.startsWith("cron:")) {
+            row.profile = profile;
+          }
+        }
+      } else if (q.includes("process_id LIKE 'mcp:%'")) {
+        for (const row of table.values()) {
+          if (!row.profile && typeof row.process_id === "string" && row.process_id.startsWith("mcp:")) {
+            row.profile = profile;
+          }
+        }
+      } else if (q.includes("process_id LIKE 'app:%'")) {
+        for (const row of table.values()) {
+          if (!row.profile && typeof row.process_id === "string" && row.process_id.startsWith("app:")) {
+            row.profile = profile;
+          }
+        }
+      } else {
+        for (const row of table.values()) {
+          if (!row.profile) row.profile = profile;
+        }
+      }
+      return rows([] as T[]);
+    }
+
     if (q.startsWith("INSERT OR REPLACE INTO processes")) {
       const [
         process_id,
         parent_pid,
         uid,
+        profile,
         gid,
         gids,
         username,
@@ -47,6 +93,7 @@ function createMockSql() {
         string,
         string | null,
         number,
+        string,
         number,
         string,
         string,
@@ -61,6 +108,7 @@ function createMockSql() {
         process_id,
         parent_pid,
         uid,
+        profile,
         gid,
         gids,
         username,
@@ -152,6 +200,7 @@ describe("ProcessRegistry", () => {
     registry.init();
 
     registry.spawn("task:1", makeIdentity("/home/sam"), {
+      profile: "task",
       cwd: "/workspaces/ws_demo",
       workspaceId: "ws_demo",
       label: "demo",
@@ -174,6 +223,7 @@ describe("ProcessRegistry", () => {
     registry.init();
 
     registry.spawn("task:2", makeIdentity("/home/sam"), {
+      profile: "task",
       cwd: "/home/sam/projects/demo",
     });
 
@@ -196,6 +246,7 @@ describe("ProcessRegistry", () => {
     registry.init();
 
     registry.spawn("task:3", makeIdentity("/home/sam"), {
+      profile: "task",
       cwd: "/workspaces/ws_shared",
       workspaceId: "ws_shared",
     });
@@ -211,6 +262,7 @@ describe("ProcessRegistry", () => {
     });
 
     const record = registry.get("task:3");
+    expect(record?.profile).toBe("task");
     expect(record?.workspaceId).toBe("ws_shared");
     expect(record?.cwd).toBe("/workspaces/ws_shared");
   });

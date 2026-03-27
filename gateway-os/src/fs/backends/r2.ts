@@ -3,9 +3,9 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "../syscalls/system";
-import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "./mount-backend";
-import { inferContentType, isTextContentType, normalizePath } from "./utils";
+import type { ProcessIdentity } from "../../syscalls/system";
+import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "../mount";
+import { inferContentType, isTextContentType, normalizePath } from "../utils";
 
 const READ_BIT = 4;
 const WRITE_BIT = 2;
@@ -242,9 +242,10 @@ export class R2MountBackend implements MountBackend {
     if (!options?.force) throw new Error(`ENOENT: no such file or directory, unlink '${p}'`);
   }
 
-  async search(path: string, pattern: RegExp, include?: string): Promise<FsSearchBackendResult> {
+  async search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
     const prefix = normalizePath(path);
     const searchPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
+    const needle = query;
 
     const matches: FsSearchBackendResult["matches"] = [];
     let truncated = false;
@@ -271,8 +272,7 @@ export class R2MountBackend implements MountBackend {
         const lines = text.split("\n");
 
         for (let i = 0; i < lines.length; i++) {
-          pattern.lastIndex = 0;
-          if (pattern.test(lines[i])) {
+          if (lines[i].includes(needle)) {
             matches.push({ path: "/" + obj.key, line: i + 1, content: lines[i] });
             if (matches.length >= MAX_SEARCH_MATCHES) {
               truncated = true;

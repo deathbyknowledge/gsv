@@ -2,11 +2,11 @@ import type { AppManifest } from "./apps";
 import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "./app-runtime";
 import { createComponentAppInstance } from "./app-sdk";
 import { ensureBuiltinComponentAppsRegistered } from "./builtin-component-apps";
-import { ensureChatAppRegistered } from "./chat-app";
-import { ensureDevicesAppRegistered } from "./devices-app";
-import { ensureFilesAppRegistered } from "./files-app";
-import { ensureProcessManagerAppRegistered } from "./process-manager-app";
-import { ensureShellAppRegistered } from "./shell-app";
+import { ensureChatAppRegistered } from "./apps/chat";
+import { ensureDevicesAppRegistered } from "./apps/devices";
+import { ensureFilesAppRegistered } from "./apps/files";
+import { ensureProcessManagerAppRegistered } from "./apps/process-manager";
+import { ensureShellAppRegistered } from "./apps/shell";
 import type { GatewayClient } from "./gateway-client";
 
 function escapeHtml(value: string): string {

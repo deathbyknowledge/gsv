@@ -34,10 +34,23 @@ export type RipgitPathResult =
   | { kind: "file"; bytes: Uint8Array; size: number }
   | { kind: "tree"; entries: RipgitTreeEntry[] };
 
+export type RipgitSearchMatch = {
+  path: string;
+  line: number;
+  content: string;
+};
+
 type RipgitApplyResponse = {
   ok: boolean;
   head?: string | null;
   conflict?: boolean;
+  error?: string;
+};
+
+type RipgitSearchResponse = {
+  ok: boolean;
+  matches?: RipgitSearchMatch[];
+  truncated?: boolean;
   error?: string;
 };
 
@@ -50,7 +63,9 @@ export class RipgitClient {
   ) {}
 
   async readPath(repo: RipgitRepoRef, path: string): Promise<RipgitPathResult> {
-    const response = await this.binding.fetch(this.makeFileUrl(repo, path));
+    const response = await this.binding.fetch(this.makeReadUrl(repo, path), {
+      headers: this.makeInternalHeaders(),
+    });
     if (response.status === 404) {
       return { kind: "missing" };
     }
@@ -80,15 +95,11 @@ export class RipgitClient {
     message: string,
     ops: RipgitApplyOp[],
   ): Promise<void> {
-    if (!this.internalKey) {
-      throw new Error("RIPGIT_INTERNAL_KEY is not configured");
-    }
-
     const response = await this.binding.fetch(this.makeApplyUrl(repo), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Ripgit-Internal-Key": this.internalKey,
+        ...this.makeInternalHeaders(),
       },
       body: JSON.stringify({
         defaultBranch: repo.branch ?? DEFAULT_BRANCH,
@@ -109,20 +120,63 @@ export class RipgitClient {
     }
   }
 
-  private makeFileUrl(repo: RipgitRepoRef, path: string): URL {
+  async search(
+    repo: RipgitRepoRef,
+    query: string,
+    prefix?: string,
+  ): Promise<{ matches: RipgitSearchMatch[]; truncated?: boolean }> {
+    const response = await this.binding.fetch(this.makeSearchUrl(repo, query, prefix), {
+      headers: this.makeInternalHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `search '${repo.owner}/${repo.repo}'`));
+    }
+
+    const payload = await response.json<RipgitSearchResponse>();
+    if (!payload.ok) {
+      throw new Error(payload.error ?? `Failed to search ${repo.owner}/${repo.repo}`);
+    }
+
+    return {
+      matches: Array.isArray(payload.matches) ? payload.matches : [],
+      truncated: payload.truncated,
+    };
+  }
+
+  private makeReadUrl(repo: RipgitRepoRef, path: string): URL {
     return this.makeUrl(
-      repo.owner,
-      repo.repo,
-      `/file?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&path=${encodeURIComponent(path)}`,
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/read?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&path=${encodeURIComponent(path)}`,
     );
   }
 
   private makeApplyUrl(repo: RipgitRepoRef): URL {
-    return this.makeUrl(repo.owner, repo.repo, "/_gsv/apply");
+    return this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/apply`,
+    );
   }
 
-  private makeUrl(owner: string, repo: string, suffix: string): URL {
-    return new URL(`https://ripgit/${owner}/${repo}${suffix}`);
+  private makeSearchUrl(repo: RipgitRepoRef, query: string, prefix?: string): URL {
+    const url = this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/search?query=${encodeURIComponent(query)}`,
+    );
+    if (prefix && prefix.length > 0) {
+      url.searchParams.set("prefix", prefix);
+    }
+    url.searchParams.set("limit", "500");
+    return url;
+  }
+
+  private makeUrl(suffix: string): URL {
+    return new URL(`https://ripgit${suffix}`);
+  }
+
+  private makeInternalHeaders(): Record<string, string> {
+    if (!this.internalKey) {
+      throw new Error("RIPGIT_INTERNAL_KEY is not configured");
+    }
+    return {
+      "X-Ripgit-Internal-Key": this.internalKey,
+    };
   }
 
   private isTreeResponse(response: Response): boolean {

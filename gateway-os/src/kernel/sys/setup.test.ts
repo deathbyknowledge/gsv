@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { KernelContext } from "./context";
-import { handleSysSetup } from "./sys-setup";
+import type { KernelContext } from "../context";
+import { handleSysSetup } from "./setup";
 
 function createCtx(overrides?: { setupMode?: boolean }) {
   const usersGroup = { name: "users", gid: 100, members: [] as string[] };

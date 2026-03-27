@@ -3,26 +3,25 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { WorkspaceStore } from "../kernel/workspaces";
-import type { ProcessIdentity } from "../syscalls/system";
-import type { ExtendedMountStat, MountBackend, FsSearchBackendResult } from "./mount-backend";
+import type { WorkspaceStore } from "../../kernel/workspaces";
+import type { ProcessIdentity } from "../../syscalls/system";
+import type { ExtendedMountStat, MountBackend, FsSearchBackendResult } from "../mount";
 import {
   RipgitClient,
   type RipgitApplyOp,
-  type RipgitRepoRef,
-} from "./ripgit-client";
-import { normalizePath } from "./utils";
+} from "../ripgit/client";
+import { workspaceRepoRef } from "../ripgit/repos";
+import { normalizePath } from "../utils";
 
 type WorkspaceRepoRef = {
   workspaceId: string;
   ownerUid: number;
-  repo: RipgitRepoRef;
+  repo: ReturnType<typeof workspaceRepoRef>;
   relativePath: string;
   absolutePath: string;
 };
 
 const DIRECTORY_MARKER = ".dir";
-const MAX_SEARCH_MATCHES = 500;
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
 
@@ -277,57 +276,40 @@ class WorkspaceMountBackend implements MountBackend {
     ], `gsv: rm ${repo.relativePath}`);
   }
 
-  async search(path: string, pattern: RegExp, include?: string): Promise<FsSearchBackendResult> {
+  async search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
     if (normalizePath(path) === "/workspaces") {
       return { matches: [] };
     }
     const root = this.resolveRepo(path);
-    const matches: FsSearchBackendResult["matches"] = [];
     const glob = include ? compileGlob(include) : null;
+    const targetStat = await this.stat(path).catch(() => null);
+    const exactPath = targetStat?.isFile ? root.relativePath : null;
+    const result = await this.client.search(
+      root.repo,
+      query,
+      root.relativePath.length > 0 ? root.relativePath : undefined,
+    );
 
-    for await (const file of this.walkFiles(root.absolutePath)) {
-      if (glob && !glob.test(file.split("/").pop() ?? file)) {
-        continue;
-      }
-      if (!isTextPath(file)) {
-        continue;
-      }
-
-      const text = await this.readFile(file).catch(() => null);
-      if (text === null) {
-        continue;
-      }
-
-      const lines = text.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        pattern.lastIndex = 0;
-        if (pattern.test(lines[i])) {
-          matches.push({ path: file, line: i + 1, content: lines[i] });
-          if (matches.length >= MAX_SEARCH_MATCHES) {
-            return { matches, truncated: true };
-          }
+    const matches = result.matches
+      .filter((match) => {
+        if (exactPath && match.path !== exactPath) {
+          return false;
         }
-      }
-    }
+        if (!isTextPath(match.path)) {
+          return false;
+        }
+        if (!glob) {
+          return true;
+        }
+        return glob.test(match.path.split("/").pop() ?? match.path);
+      })
+      .map((match) => ({
+        path: `${workspaceRootPath(root.workspaceId)}/${match.path}`.replace(/\/+/g, "/"),
+        line: match.line,
+        content: match.content,
+      }));
 
-    return { matches };
-  }
-
-  private async *walkFiles(path: string): AsyncGenerator<string> {
-    const stat = await this.stat(path).catch(() => null);
-    if (!stat) {
-      return;
-    }
-
-    if (stat.isFile) {
-      yield path;
-      return;
-    }
-
-    for (const entry of await this.readdir(path)) {
-      const child = path === "/" ? `/${entry}` : `${path.replace(/\/+$/, "")}/${entry}`;
-      yield* this.walkFiles(child);
-    }
+    return { matches, truncated: result.truncated };
   }
 
   private async apply(
@@ -389,10 +371,7 @@ class WorkspaceMountBackend implements MountBackend {
     return {
       workspaceId,
       ownerUid: workspace.ownerUid,
-      repo: {
-        owner: ripgitWorkspaceOwner(workspace.ownerUid),
-        repo: workspaceId,
-      },
+      repo: workspaceRepoRef(workspaceId, workspace.ownerUid),
       relativePath,
       absolutePath: normalized,
     };
@@ -439,8 +418,4 @@ function isTextPath(path: string): boolean {
     "wasm", "so", "dll", "exe", "bin", "pdf",
     "mp3", "wav", "ogg", "mp4", "mov", "avi",
   ].includes(ext);
-}
-
-function ripgitWorkspaceOwner(uid: number): string {
-  return `uid-${uid}`;
 }

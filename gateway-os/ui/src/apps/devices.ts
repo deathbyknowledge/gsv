@@ -1,4 +1,4 @@
-import type { AppElementContext, GsvAppElement } from "./app-sdk";
+import type { AppElementContext, GsvAppElement } from "../app-sdk";
 
 type DeviceSummary = {
   deviceId: string;

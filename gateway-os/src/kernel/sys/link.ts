@@ -1,4 +1,4 @@
-import type { KernelContext } from "./context";
+import type { KernelContext } from "../context";
 import type {
   UserIdentity,
   SysLinkArgs,
@@ -9,7 +9,7 @@ import type {
   SysLinkResult,
   SysUnlinkArgs,
   SysUnlinkResult,
-} from "../syscalls/system";
+} from "../../syscalls/system";
 
 export function handleSysLinkConsume(
   args: SysLinkConsumeArgs,

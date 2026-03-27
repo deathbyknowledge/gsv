@@ -80,8 +80,101 @@ Add:
 
 - `workspace_id TEXT NULL`
 - `cwd TEXT NOT NULL`
+- `process_type TEXT NOT NULL`
+- `profile TEXT NULL`
 
 `init:{uid}` may have no active workspace. Child processes usually do.
+
+### Process types
+
+Process IDs already follow the `<type>:<id>` convention. That should become a
+real kernel concept, not just a naming habit.
+
+Initial process types:
+
+- `init:{uid}`: user's persistent root/orchestrator agent
+- `task:{id}`: normal user-facing thread worker
+- `cron:{jobId}`: scheduled/background process
+- `mcp:{id}`: master-control / live-debug / deployment-aware operator process
+- `app:{id}`: app/runtime-owned process when we need one
+
+These should not all share the same prompt profile or system awareness.
+
+Examples:
+
+- `task`:
+  - user-facing thread work
+  - normal coding/file/shell tools
+  - workspace-oriented
+- `mcp`:
+  - kernel/deployment/source aware
+  - full SQLite / internal inspection tooling as needed
+  - debugging/devops/operator intent, not general chat intent
+
+`proc.spawn` now takes explicit process profile metadata, not only workspace
+attachment metadata.
+
+## MCP operator model
+
+`mcp` is not just a stronger chat prompt. It is a trusted operator process with
+three distinct forms of awareness:
+
+1. mutable operator instructions
+   - profile prompt text lives under `/sys/config/ai/profile/mcp/system_prompt`
+   - user overrides can live under `/sys/users/{uid}/ai/profile/mcp/system_prompt`
+2. live runtime observability
+   - structured syscalls and virtual fs for normal inspection
+   - full SQL access for real-time diagnosis and repair when higher-level
+     surfaces are insufficient
+3. live source + deployment awareness
+   - the deployed GSV source is mirrored into ripgit and mounted read-only
+   - kernel stores a deployment pointer to the currently deployed commit/ref
+
+In a trusted environment, `mcp` should be able to read and write the real
+kernel/process SQLite state. That is the break-glass operator surface, not an
+accidental implementation detail.
+
+Suggested operator SQL surface:
+
+- `sql.query`
+- `sql.exec`
+
+Suggested targets:
+
+- `kernel`
+- `process:{pid}`
+- `ripgit:{owner}/{repo}`
+
+Higher-level read surfaces are still valuable for normal debugging, but they do
+not replace full SQL access for operator workflows.
+
+## Source mirror
+
+The deployed GSV source should be mirrored into ripgit and mounted inside the
+system. This gives `mcp` live access to the code that is actually running.
+
+Recommended mount:
+
+```text
+/src/gsv
+```
+
+Why `/src/gsv` and not `/lib/gsv`:
+
+- `/src` matches “inspectable source tree”
+- `/lib` implies runtime libraries, not the deployed codebase
+
+Policy:
+
+- first deploy seeds the ripgit-backed source repo
+- subsequent deploys update the repo
+- `/src/gsv` is mounted read-only at the deployed commit/ref
+- mutable debugging/repair work still happens in a workspace
+
+This keeps inspection and mutation separate:
+
+- `/src/gsv` = pinned live source mirror
+- `/workspaces/{id}` = mutable repair/debug workspace
 
 ## Spawn semantics
 
@@ -109,7 +202,7 @@ Current concrete direction:
 
 - separate `ripgit` Worker/repo
 - `gateway-os` binds to it through the `RIPGIT` Service Binding
-- writes go through a narrow internal `/_gsv/apply` route guarded by `RIPGIT_INTERNAL_KEY`
+- reads and writes go through a narrow internal `/hyperspace/repos/:owner/:repo/*` route guarded by `RIPGIT_INTERNAL_KEY`
 - reads still use repo/file-style fetches; the kernel hides those details behind the workspace backend
 
 The canonical mount is:
@@ -141,6 +234,27 @@ Minimal v1 layout:
 
 Default search/list views should hide `.gsv/` unless explicitly requested.
 
+`.gsv/` is a reserved machine-owned checkpoint area. It should not be treated as
+the hot source of truth for active state.
+
+Policy:
+
+- live process state stays in the Process DO
+- `.gsv/` stores durable checkpoints and summaries
+- writes to `.gsv/` should happen at safe boundaries, not every streamed event
+
+Good checkpoint boundaries:
+
+- completed turn
+- explicit checkpoint
+- `proc.kill`
+- `proc.reset`
+- periodic idle checkpoint
+
+Checkpoint commits should use AI-generated commit messages. That gives us a
+second searchable semantic layer over the workspace history and makes later
+history/reopen UX much stronger.
+
 ## User home vs workspace
 
 Keep the distinction sharp.
@@ -156,6 +270,69 @@ Workspace:
 - `/workspaces/{workspaceId}/...`
 
 Home is durable personal knowledge. Workspace is durable task/app work.
+
+## Context assembly
+
+Prompt assembly should be a provider pipeline, not one flat storage read path.
+
+The current shape is:
+
+1. base system prompt
+2. profile instructions
+   - resolved from `/sys/config/ai/profile/{profile}/system_prompt`
+   - user overrides can live under `/sys/users/{uid}/ai/profile/{profile}/system_prompt`
+3. home knowledge
+   - `~/CONSTITUTION.md`
+   - `~/context.d/*.md`
+4. workspace summary
+   - `/workspaces/{id}/.gsv/summary.md`
+
+This keeps the current system simple while moving the boundary to the right
+place: providers own where context comes from, and the Process DO only asks for
+an assembled prompt.
+
+Provider selection is profile-aware. The kernel stores profile as explicit
+process metadata, and the runtime resolves an ordered provider plan for the
+prompt purpose from that stored profile.
+
+Near-term provider set:
+
+- `base.system_prompt`
+- `profile.instructions`
+- `home.knowledge`
+- `workspace.summary`
+
+Why `profile.instructions` matters:
+
+- `mcp` should not be hardcoded into developer-only prompt text.
+- If the user asks their `mcp` to change how it behaves, it should be able to
+  do so by updating supported config state, not by patching the runtime.
+- That means provider mechanics stay in code, but profile instructions live in
+  mutable system config.
+
+Next providers:
+
+- live process history provider
+- workspace retrieval provider
+- archived/session retrieval provider
+- home memory retrieval provider
+- architecture index provider
+- runtime snapshot provider
+- deployment pointer provider
+
+The important rule is that active state still lives in the Process DO. Providers
+do not replace live state; they enrich the prompt with durable or retrieved
+context.
+
+The `mcp` profile should eventually use a different provider plan than normal
+thread work. At minimum it should include:
+
+- `base.system_prompt`
+- `profile.instructions:mcp`
+- `system.architecture.index`
+- `system.runtime.snapshot`
+- `system.deployment.pointer`
+- optional `workspace.summary` when attached to a debugging workspace
 
 ## First end-to-end flow
 

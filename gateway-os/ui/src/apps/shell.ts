@@ -1,9 +1,9 @@
-import type { AppElementContext, GsvAppElement } from "./app-sdk";
+import type { AppElementContext, GsvAppElement } from "../app-sdk";
 import {
   getActiveThreadContext,
   subscribeActiveThreadContext,
   type ThreadContext,
-} from "./thread-context";
+} from "../thread-context";
 
 type DeviceSummary = {
   deviceId: string;

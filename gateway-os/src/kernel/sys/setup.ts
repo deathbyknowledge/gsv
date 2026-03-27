@@ -1,7 +1,7 @@
-import { hashPassword, isLocked, makeShadowEntry } from "../auth/shadow";
-import type { KernelContext } from "./context";
-import type { PasswdEntry } from "../auth/passwd";
-import type { ProcessIdentity, SysSetupArgs, SysSetupResult } from "../syscalls/system";
+import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
+import type { KernelContext } from "../context";
+import type { PasswdEntry } from "../../auth/passwd";
+import type { ProcessIdentity, SysSetupArgs, SysSetupResult } from "../../syscalls/system";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 

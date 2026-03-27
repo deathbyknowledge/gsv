@@ -8,6 +8,8 @@
 
 import type { ToolDefinition } from "./index";
 
+export type AiContextProfile = "init" | "task" | "cron" | "mcp" | "app";
+
 // --- ai.tools ---
 
 export type AiToolsArgs = Record<string, never>;
@@ -24,14 +26,18 @@ export type AiToolsResult = {
 };
 
 
-export type AiConfigArgs = Record<string, never>;
+export type AiConfigArgs = {
+  profile?: AiContextProfile;
+};
 
 export type AiConfigResult = {
+  profile?: AiContextProfile;
   provider: string;
   model: string;
   apiKey: string;
   reasoning?: string;
   maxTokens: number;
   systemPrompt: string;
+  profileSystemPrompt?: string;
   maxContextBytes: number;
 };

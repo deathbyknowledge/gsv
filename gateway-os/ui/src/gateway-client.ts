@@ -71,6 +71,7 @@ export type ProcSendResult =
   | { ok: false; error: string };
 
 export type ProcSpawnArgs = {
+  profile: "init" | "task" | "cron" | "mcp" | "app";
   label?: string;
   prompt?: string;
   parentPid?: string;
@@ -87,6 +88,7 @@ export type ProcSpawnResult =
       ok: true;
       pid: string;
       label?: string;
+      profile: "init" | "task" | "cron" | "mcp" | "app";
       workspaceId: string | null;
       cwd: string;
     }

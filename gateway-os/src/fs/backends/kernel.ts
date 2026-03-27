@@ -3,11 +3,11 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "../syscalls/system";
-import { canReadConfigKey } from "../kernel/config-access";
-import type { KernelRefs } from "./kernel-refs";
-import type { MountBackend, ExtendedMountStat } from "./mount-backend";
-import { normalizePath } from "./utils";
+import type { ProcessIdentity } from "../../syscalls/system";
+import { canReadConfigKey } from "../../kernel/config-access";
+import type { KernelRefs } from "../refs";
+import type { MountBackend, ExtendedMountStat } from "../mount";
+import { normalizePath } from "../utils";
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -193,6 +193,7 @@ export class KernelMountBackend implements MountBackend {
           `Name:\t${proc.label ?? proc.processId}`,
           `Pid:\t${proc.processId}`,
           `PPid:\t${proc.parentPid ?? "0"}`,
+          `Profile:\t${proc.profile}`,
           `State:\t${proc.state}`,
           `Uid:\t${proc.uid}`,
           `Gid:\t${proc.gid}`,
@@ -204,6 +205,7 @@ export class KernelMountBackend implements MountBackend {
           gid: proc.gid,
           gids: proc.gids,
           username: proc.username,
+          profile: proc.profile,
           home: proc.home,
           cwd: proc.cwd,
           workspaceId: proc.workspaceId,

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { KernelContext } from "./context";
+import type { KernelContext } from "../context";
 import {
   handleSysDeviceList,
   handleSysDeviceGet,
-} from "./sys-device";
+} from "./device";
 
 type FakeDeviceRecord = {
   device_id: string;

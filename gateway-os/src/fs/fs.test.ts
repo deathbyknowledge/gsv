@@ -540,3 +540,31 @@ describe("GsvFs virtual /sys config tree", () => {
     await expect(fs.readdir("/sys/users/1001")).rejects.toThrow("ENOENT");
   });
 });
+
+describe("GsvFs search", () => {
+  const TEST_PREFIX = "test/search/";
+
+  beforeEach(async () => {
+    const listed = await env.STORAGE.list({ prefix: TEST_PREFIX });
+    for (const obj of listed.objects) {
+      await env.STORAGE.delete(obj.key);
+    }
+  });
+
+  it("treats metacharacters as literal plain text", async () => {
+    await putFile(`${TEST_PREFIX}notes.txt`, "a.c\nabc\n", {
+      uid: "1000", gid: "1000", mode: "644",
+    });
+
+    const fs = makeFs(SAM);
+    const result = await fs.search(`/${TEST_PREFIX}`, "a.c");
+
+    expect(result.matches).toEqual([
+      {
+        path: `/${TEST_PREFIX}notes.txt`,
+        line: 1,
+        content: "a.c",
+      },
+    ]);
+  });
+});

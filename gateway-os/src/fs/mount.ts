@@ -25,7 +25,7 @@ export interface MountBackend {
   mkdir(path: string, options?: MkdirOptions): Promise<void>;
   readdir(path: string): Promise<string[]>;
   rm(path: string, options?: RmOptions): Promise<void>;
-  search?(path: string, pattern: RegExp, include?: string): Promise<FsSearchBackendResult>;
+  search?(path: string, query: string, include?: string): Promise<FsSearchBackendResult>;
   chmod?(path: string, mode: number): Promise<void>;
   chown?(path: string, uid?: number, gid?: number): Promise<void>;
   utimes?(path: string, atime: Date, mtime: Date): Promise<void>;

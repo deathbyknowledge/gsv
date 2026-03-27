@@ -218,11 +218,9 @@ export async function handleFsDelete(args: FsDeleteArgs, ctx: KernelContext): Pr
 }
 
 export async function handleFsSearch(args: FsSearchArgs, ctx: KernelContext): Promise<FsSearchResult> {
-  let regex: RegExp;
-  try {
-    regex = new RegExp(args.pattern, "g");
-  } catch {
-    return { ok: false, error: `Invalid regex: ${args.pattern}` };
+  const query = typeof args.query === "string" ? args.query.trim() : "";
+  if (!query) {
+    return { ok: false, error: "Search query is required." };
   }
 
   const identity = ctx.identity!.process;
@@ -232,7 +230,7 @@ export async function handleFsSearch(args: FsSearchArgs, ctx: KernelContext): Pr
   const fs = makeFs(ctx);
 
   try {
-    const result = await fs.search(prefix, regex, args.include);
+    const result = await fs.search(prefix, query, args.include);
     return {
       ok: true,
       matches: result.matches,

@@ -5,13 +5,12 @@
  * build KernelContext for process-originated syscalls, and for listing
  * processes per user.
  *
- * Process kind is derived from the processId convention:
- *   "init:{uid}" — the user's persistent root agent process
- *   "task:{uuid}" — an ephemeral task spawned by the user or their init
- *   "cron:{jobId}" — an ephemeral process spawned by a cron trigger
+ * Process ids still follow the `<type>:<id>` convention, but prompt/runtime
+ * profile is now explicit metadata stored alongside the process record.
  */
 
 import type { ProcessIdentity } from "../syscalls/system";
+import type { AiContextProfile } from "../syscalls/ai";
 
 export type ProcessState = "running" | "paused" | "killed";
 
@@ -19,6 +18,7 @@ export type ProcessRecord = {
   processId: string;
   parentPid: string | null;
   uid: number;
+  profile: AiContextProfile;
   gid: number;
   gids: number[];
   username: string;
@@ -39,6 +39,7 @@ export class ProcessRegistry {
         process_id TEXT PRIMARY KEY,
         parent_pid TEXT,
         uid INTEGER NOT NULL,
+        profile TEXT NOT NULL,
         gid INTEGER NOT NULL,
         gids TEXT NOT NULL,
         username TEXT NOT NULL,
@@ -59,14 +60,25 @@ export class ProcessRegistry {
       this.sql.exec("ALTER TABLE processes ADD COLUMN workspace_id TEXT");
     } catch {}
 
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN profile TEXT");
+    } catch {}
+
     this.sql.exec("UPDATE processes SET cwd = home WHERE cwd IS NULL OR cwd = ''");
+    this.sql.exec("UPDATE processes SET profile = 'init' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'init:%'");
+    this.sql.exec("UPDATE processes SET profile = 'task' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'task:%'");
+    this.sql.exec("UPDATE processes SET profile = 'cron' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'cron:%'");
+    this.sql.exec("UPDATE processes SET profile = 'mcp' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'mcp:%'");
+    this.sql.exec("UPDATE processes SET profile = 'app' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'app:%'");
+    this.sql.exec("UPDATE processes SET profile = 'task' WHERE profile IS NULL OR profile = ''");
   }
 
   spawn(
     processId: string,
     identity: ProcessIdentity,
-    opts?: {
+    opts: {
       parentPid?: string;
+      profile: AiContextProfile;
       label?: string;
       cwd?: string;
       workspaceId?: string | null;
@@ -74,18 +86,19 @@ export class ProcessRegistry {
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, gid, gids, username, home, cwd, workspace_id, state, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
+        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, workspace_id, state, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
       processId,
-      opts?.parentPid ?? null,
+      opts.parentPid ?? null,
       identity.uid,
+      opts.profile,
       identity.gid,
       JSON.stringify(identity.gids),
       identity.username,
       identity.home,
-      opts?.cwd ?? identity.cwd,
-      opts?.workspaceId ?? identity.workspaceId,
-      opts?.label ?? null,
+      opts.cwd ?? identity.cwd,
+      opts.workspaceId ?? identity.workspaceId,
+      opts.label ?? null,
       Date.now(),
     );
   }
@@ -107,7 +120,7 @@ export class ProcessRegistry {
     const existing = this.get(initId);
     if (existing) return { pid: initId, created: false };
 
-    this.spawn(initId, identity, { label: `init (${identity.username})` });
+    this.spawn(initId, identity, { label: `init (${identity.username})`, profile: "init" });
     return { pid: initId, created: true };
   }
 
@@ -223,6 +236,7 @@ type RowShape = {
   process_id: string;
   parent_pid: string | null;
   uid: number;
+  profile: AiContextProfile;
   gid: number;
   gids: string;
   username: string;
@@ -239,6 +253,7 @@ function toRecord(row: RowShape): ProcessRecord {
     processId: row.process_id,
     parentPid: row.parent_pid,
     uid: row.uid,
+    profile: row.profile,
     gid: row.gid,
     gids: JSON.parse(row.gids),
     username: row.username,

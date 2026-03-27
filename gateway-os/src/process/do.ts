@@ -21,7 +21,12 @@ import type {
 } from "../protocol/frames";
 import type { ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { ProcessIdentity } from "../syscalls/system";
-import type { AiConfigResult,AiToolsDevice,AiToolsResult } from "../syscalls/ai";
+import type {
+  AiConfigResult,
+  AiContextProfile,
+  AiToolsDevice,
+  AiToolsResult,
+} from "../syscalls/ai";
 import type {
   ProcSendResult,
   ProcHistoryResult,
@@ -35,13 +40,21 @@ import type {
   ToolCall,
   Context,
   Tool,
-  ThinkingLevel,
 } from "@mariozechner/pi-ai";
-import { completeSimple, getModel } from "@mariozechner/pi-ai";
-import { ProcessStore } from "./store";
-import { buildPrompt } from "./prompt";
+import { createGenerationService } from "../inference/service";
+import {
+  buildCheckpointCommitMessageContext,
+  buildCheckpointSummaryContext,
+  buildCheckpointTranscript,
+  normalizeCheckpointCommitMessage,
+  normalizeCheckpointSummary,
+} from "./checkpoint";
+import { ProcessStore, type MessageRecord } from "./store";
+import { assembleSystemPrompt } from "./context";
 import { sendFrameToKernel } from "../shared/utils";
 import { TOOL_TO_SYSCALL, SYSCALL_TOOL_NAMES } from "../syscalls/constants";
+import { RipgitClient } from "../fs/ripgit/client";
+import { workspaceRepoRef } from "../fs/ripgit/repos";
 
 type RunState = {
   runId: string;
@@ -51,13 +64,21 @@ type RunState = {
   systemPrompt?: string;
 };
 
+const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
+const TEXT_ENCODER = new TextEncoder();
+
 export class Process extends Host<Env> {
   private readonly store: ProcessStore;
+  private readonly generation = createGenerationService();
+  private readonly ripgit: RipgitClient | null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.store = new ProcessStore(ctx.storage.sql);
     this.store.init();
+    this.ripgit = env.RIPGIT
+      ? new RipgitClient(env.RIPGIT, env.RIPGIT_INTERNAL_KEY ?? null)
+      : null;
   }
 
   private get currentRun(): RunState | null {
@@ -81,6 +102,14 @@ export class Process extends Host<Env> {
     const raw = this.store.getValue("identity");
     if (!raw) throw new Error("Process not initialized — identity missing");
     return JSON.parse(raw);
+  }
+
+  get profile(): AiContextProfile {
+    const raw = this.store.getValue("profile");
+    if (raw === "init" || raw === "task" || raw === "cron" || raw === "mcp" || raw === "app") {
+      return raw;
+    }
+    return "task";
   }
 
   get initialized(): boolean {
@@ -138,9 +167,11 @@ export class Process extends Host<Env> {
           const idArgs = frame.args as unknown as {
             pid: string;
             identity: ProcessIdentity;
+            profile: AiContextProfile;
           };
           this.store.setValue("pid", idArgs.pid);
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
+          this.store.setValue("profile", idArgs.profile);
           data = { ok: true };
           break;
         }
@@ -276,7 +307,9 @@ export class Process extends Host<Env> {
   private async handleProcReset(): Promise<ProcResetResult> {
     const pid = this.pid;
     const count = this.store.messageCount();
+    await this.checkpointWorkspace("proc.reset");
     this.resetExecutionState();
+    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
 
     if (count > 0) {
       const archiveId = crypto.randomUUID();
@@ -299,7 +332,9 @@ export class Process extends Host<Env> {
     archive?: boolean;
   }): Promise<ProcKillResult> {
     const pid = this.pid;
+    await this.checkpointWorkspace("proc.kill");
     this.resetExecutionState();
+    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
 
     let archivedTo: string | null = null;
 
@@ -408,7 +443,9 @@ export class Process extends Host<Env> {
 
     // Step 3: Load config + tools (first tick only, cached on run state)
     if (!run.config) {
-      run.config = await this.kernelRpc("ai.config");
+      run.config = await this.kernelRpc("ai.config", {
+        profile: this.profile,
+      });
 
       const toolsResult = await this.kernelRpc("ai.tools");
       run.tools = toolsResult.tools;
@@ -418,12 +455,14 @@ export class Process extends Host<Env> {
 
     // Step 4: Assemble prompt (first tick only)
     if (!run.systemPrompt) {
-      run.systemPrompt = await buildPrompt(
-        run.config!.systemPrompt,
-        this.identity.home,
-        this.env.STORAGE,
-        run.config!.maxContextBytes,
-      );
+      run.systemPrompt = await assembleSystemPrompt({
+        config: run.config!,
+        profile: this.profile,
+        purpose: "chat.reply",
+        identity: this.identity,
+        storage: this.env.STORAGE,
+        ripgit: this.ripgit,
+      });
       this.currentRun = run;
     }
 
@@ -442,38 +481,15 @@ export class Process extends Host<Env> {
     };
 
     // Step 6: Call LLM
-    const model = getModel(
-      run.config!.provider as "anthropic",
-      run.config!.model as "claude-sonnet-4-20250514",
-    );
-
-    if (!model) {
-      const errorMsg = `Model not found: ${run.config!.provider}/${run.config!.model}`;
-      console.error(`[Process] ${errorMsg}`);
-      await this.sendSignal("chat.complete", {
-        text: null,
-        error: errorMsg,
-        pid: this.pid,
-        runId,
-      });
-      this.finishRun();
-      return;
-    }
-
-    const reasoningLevel: ThinkingLevel | undefined =
-      run.config!.reasoning && run.config!.reasoning !== "off"
-        ? (run.config!.reasoning as ThinkingLevel)
-        : undefined;
-
     let response: AssistantMessage;
     try {
       console.log(
-        `[Process] Calling LLM: ${run.config!.provider}/${run.config!.model}${reasoningLevel ? ` (reasoning: ${reasoningLevel})` : ""}`,
+        `[Process] Calling generation service for chat.reply: ${run.config!.provider}/${run.config!.model}`,
       );
-      response = await completeSimple(model, context, {
-        apiKey: run.config!.apiKey,
-        reasoning: reasoningLevel,
-        maxTokens: run.config!.maxTokens,
+      response = await this.generation.generate({
+        purpose: "chat.reply",
+        config: run.config!,
+        context,
       });
       console.log(
         `[Process] LLM response: ${response.content?.length ?? 0} blocks, stop=${response.stopReason}`,
@@ -487,7 +503,7 @@ export class Process extends Host<Env> {
         pid: this.pid,
         runId,
       });
-      this.finishRun();
+      await this.finishRun("chat.error");
       return;
     }
 
@@ -500,7 +516,7 @@ export class Process extends Host<Env> {
         pid: this.pid,
         runId,
       });
-      this.finishRun();
+      await this.finishRun("chat.empty");
       return;
     }
 
@@ -571,11 +587,17 @@ export class Process extends Host<Env> {
         runId,
         usage: response.usage,
       });
-      this.finishRun();
+      await this.finishRun("turn.complete");
     }
   }
 
-  private finishRun(): void {
+  private async finishRun(reason: string): Promise<void> {
+    try {
+      await this.checkpointWorkspace(reason);
+    } catch (error) {
+      console.error(`[Process] Workspace checkpoint failed (${reason}):`, error);
+    }
+
     const runId = this.currentRun?.runId;
     this.currentRun = null;
     console.log(`[Process] Finished run ${runId}`);
@@ -618,6 +640,139 @@ export class Process extends Host<Env> {
       signal,
       payload,
     } as SignalFrame);
+  }
+
+  private async checkpointWorkspace(reason: string): Promise<void> {
+    const workspaceId = this.identity.workspaceId;
+    if (!workspaceId || !this.ripgit) {
+      return;
+    }
+
+    const messages = this.store.allMessagesForArchive();
+    if (messages.length === 0) {
+      return;
+    }
+
+    const checkpointedCount = Number.parseInt(
+      this.store.getValue(CHECKPOINTED_MESSAGE_COUNT_KEY) ?? "0",
+      10,
+    );
+    if (checkpointedCount === messages.length) {
+      return;
+    }
+
+    const repo = workspaceRepoRef(workspaceId, this.identity.uid);
+    const existingSummary = await this.readWorkspaceSummary(repo);
+    const config = await this.resolveCheckpointConfig();
+    const transcript = buildCheckpointTranscript(messages);
+
+    const summary = await this.generateCheckpointSummary(
+      config,
+      existingSummary,
+      messages,
+    );
+    const commitMessage = await this.generateCheckpointCommitMessage(
+      config,
+      summary,
+      messages,
+      reason,
+    );
+
+    await this.ripgit.apply(
+      repo,
+      this.identity.username,
+      `${this.identity.username}@gsv.internal`,
+      commitMessage,
+      [
+        {
+          type: "put",
+          path: ".gsv/summary.md",
+          contentBytes: Array.from(TEXT_ENCODER.encode(summary)),
+        },
+        {
+          type: "put",
+          path: `.gsv/processes/${this.pid}/chat.jsonl`,
+          contentBytes: Array.from(TEXT_ENCODER.encode(transcript)),
+        },
+      ],
+    );
+
+    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, String(messages.length));
+  }
+
+  private async readWorkspaceSummary(
+    repo: ReturnType<typeof workspaceRepoRef>,
+  ): Promise<string> {
+    if (!this.ripgit) {
+      return "";
+    }
+    const result = await this.ripgit.readPath(repo, ".gsv/summary.md");
+    if (result.kind !== "file") {
+      return "";
+    }
+    return new TextDecoder().decode(result.bytes);
+  }
+
+  private async resolveCheckpointConfig(): Promise<AiConfigResult | null> {
+    if (this.currentRun?.config) {
+      return this.currentRun.config;
+    }
+    try {
+      return await this.kernelRpc("ai.config", {
+        profile: this.profile,
+      });
+    } catch (error) {
+      console.warn("[Process] Failed to resolve AI config for checkpointing:", error);
+      return null;
+    }
+  }
+
+  private async generateCheckpointSummary(
+    config: AiConfigResult | null,
+    existingSummary: string,
+    messages: MessageRecord[],
+  ): Promise<string> {
+    if (!config) {
+      return normalizeCheckpointSummary(existingSummary);
+    }
+    try {
+      const generated = await this.generation.generateText({
+        purpose: "checkpoint.summary",
+        config,
+        context: buildCheckpointSummaryContext(existingSummary, messages),
+      });
+      return normalizeCheckpointSummary(generated);
+    } catch (error) {
+      console.warn("[Process] Failed to generate checkpoint summary:", error);
+      return normalizeCheckpointSummary(existingSummary);
+    }
+  }
+
+  private async generateCheckpointCommitMessage(
+    config: AiConfigResult | null,
+    summary: string,
+    messages: MessageRecord[],
+    reason: string,
+  ): Promise<string> {
+    if (!config) {
+      return this.defaultCheckpointCommitMessage(reason);
+    }
+    try {
+      const generated = await this.generation.generateText({
+        purpose: "checkpoint.commit_message",
+        config,
+        context: buildCheckpointCommitMessageContext(summary, messages, reason),
+      });
+      return normalizeCheckpointCommitMessage(generated);
+    } catch (error) {
+      console.warn("[Process] Failed to generate checkpoint commit message:", error);
+      return this.defaultCheckpointCommitMessage(reason);
+    }
+  }
+
+  private defaultCheckpointCommitMessage(reason: string): string {
+    const normalizedReason = reason.replace(/[^a-z0-9]+/gi, " ").trim().toLowerCase();
+    return normalizedReason ? `checkpoint ${normalizedReason}` : "checkpoint thread state";
   }
 
   private async archiveMessages(

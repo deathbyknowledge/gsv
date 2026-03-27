@@ -379,7 +379,7 @@ async function ensureUserInitProcess(identity: ProcessIdentity, ctx: KernelConte
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.setidentity",
-      args: { pid, identity },
+      args: { pid, identity, profile: "init" },
     } as RequestFrame);
   }
 

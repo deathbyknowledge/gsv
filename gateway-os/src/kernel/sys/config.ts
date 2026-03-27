@@ -13,16 +13,16 @@
  *   Write: root writes all; non-root writes only users/{uid}/{overridable}/*
  */
 
-import type { KernelContext } from "./context";
+import type { KernelContext } from "../context";
 import type {
   SysConfigGetArgs,
   SysConfigGetResult,
   SysConfigSetArgs,
   SysConfigSetResult,
   SysConfigEntry,
-} from "../syscalls/system";
-import { USER_OVERRIDABLE_PREFIXES } from "./config";
-import { canReadConfigKey } from "./config-access";
+} from "../../syscalls/system";
+import { USER_OVERRIDABLE_PREFIXES } from "../config";
+import { canReadConfigKey } from "../config-access";
 
 function canWrite(uid: number, key: string): boolean {
   if (uid === 0) return true;

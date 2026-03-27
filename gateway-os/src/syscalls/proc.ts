@@ -7,6 +7,7 @@
  */
 
 import type { ProcessIdentity } from "./system";
+import type { AiContextProfile } from "./ai";
 
 export type ProcWorkspaceKind = "thread" | "app" | "shared";
 
@@ -17,6 +18,7 @@ export type ProcWorkspaceSpec =
   | { mode: "attach"; workspaceId: string };
 
 export type ProcSpawnArgs = {
+  profile: AiContextProfile;
   label?: string;
   prompt?: string;
   parentPid?: string;
@@ -25,7 +27,7 @@ export type ProcSpawnArgs = {
 };
 
 export type ProcSpawnResult =
-  | { ok: true; pid: string; label?: string; workspaceId: string | null; cwd: string }
+  | { ok: true; pid: string; label?: string; profile: AiContextProfile; workspaceId: string | null; cwd: string }
   | { ok: false; error: string };
 
 export type ProcKillArgs = {
@@ -88,6 +90,7 @@ export type ProcListArgs = {
 export type ProcListEntry = {
   pid: string;
   uid: number;
+  profile: AiContextProfile;
   parentPid: string | null;
   state: string;
   label: string | null;
@@ -105,6 +108,7 @@ export type ProcListResult = {
 export type ProcSetIdentityArgs = {
   pid: string;
   identity: ProcessIdentity;
+  profile: AiContextProfile;
 };
 
 export type ProcSetIdentityResult = { ok: true };

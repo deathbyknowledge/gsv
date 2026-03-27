@@ -21,11 +21,11 @@ import type {
   BufferEncoding,
 } from "just-bash";
 import type { ProcessIdentity } from "../syscalls/system";
-import type { KernelRefs } from "./kernel-refs";
-import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "./mount-backend";
-import { R2MountBackend } from "./r2-backend";
-import { KernelMountBackend } from "./kernel-mount-backend";
-import { isWorkspaceMountPath } from "./workspace-backend";
+import type { KernelRefs } from "./refs";
+import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "./mount";
+import { R2MountBackend } from "./backends/r2";
+import { KernelMountBackend } from "./backends/kernel";
+import { isWorkspaceMountPath } from "./backends/workspace";
 import { normalizePath } from "./utils";
 
 export type ExtendedStat = ExtendedMountStat;
@@ -236,13 +236,13 @@ export class GsvFs implements IFileSystem {
     return [];
   }
 
-  async search(path: string, pattern: RegExp, include?: string): Promise<FsSearchBackendResult> {
+  async search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
     const p = normalizePath(path);
     const backend = this.backendForPath(p);
     if (!backend.search) {
       throw new Error(`ENOSYS: search is not supported for '${p}'`);
     }
-    return backend.search(p, pattern, include);
+    return backend.search(p, query, include);
   }
 
   private backendForPath(path: string): MountBackend {

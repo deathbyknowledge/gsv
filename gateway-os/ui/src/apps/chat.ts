@@ -1,21 +1,21 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
-import type { AppInstance, AppRuntimeContext } from "./app-runtime";
-import { OPEN_APP_EVENT, type OpenAppEventDetail } from "./app-link";
+import type { AppInstance, AppRuntimeContext } from "../app-runtime";
+import { OPEN_APP_EVENT, type OpenAppEventDetail } from "../app-link";
 import {
   TARGET_CHAT_PROCESS_EVENT,
   consumePendingChatProcess,
   type TargetChatProcessEventDetail,
-} from "./chat-process-link";
-import type { ProcHistoryResult } from "./gateway-client";
-import type { AppElementContext, AppKernelClient, GsvAppElement } from "./app-sdk";
+} from "../chat-process-link";
+import type { ProcHistoryResult } from "../gateway-client";
+import type { AppElementContext, AppKernelClient, GsvAppElement } from "../app-sdk";
 import {
   getActiveThreadContext,
   normalizeThreadContext,
   setActiveThreadContext,
   type ThreadContext,
-} from "./thread-context";
+} from "../thread-context";
 
 type ChatRole = "user" | "assistant" | "system";
 
@@ -807,10 +807,10 @@ function describeToolCard(toolName: string, args: unknown, syscall?: string | nu
   }
 
   if (isToolKind(toolName, syscall, "Search", "fs.search")) {
-    const pattern = asString(record?.pattern);
+    const query = asString(record?.query);
     return {
       iconKind: "search",
-      title: pattern ? `Search ${truncateInline(pattern, 42)}` : "Search workspace",
+      title: query ? `Search ${truncateInline(query, 42)}` : "Search workspace",
       context: path ? truncateInline(path, 48) : undefined,
       targetKind: target.kind,
       targetLabel: target.label,
@@ -1771,6 +1771,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
 
     try {
       const spawnResult = await client.spawnProcess({
+        profile: "task",
         label: entry.label ?? undefined,
         workspace: {
           mode: "attach",
@@ -2299,6 +2300,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         try {
           if (!activePid) {
             const spawnResult = await client.spawnProcess({
+              profile: "task",
               label: deriveThreadLabel(message),
               workspace: {
                 mode: "new",

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { KernelContext } from "./context";
+import type { KernelContext } from "../context";
 import {
   handleSysLink,
   handleSysLinkConsume,
   handleSysLinkList,
   handleSysUnlink,
-} from "./sys-link";
+} from "./link";
 
 type FakeAdapters = {
   identityLinks: {

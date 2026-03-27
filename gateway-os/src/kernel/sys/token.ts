@@ -1,5 +1,5 @@
-import type { KernelContext } from "./context";
-import type { AuthTokenKind, AuthTokenRole } from "./auth-store";
+import type { KernelContext } from "../context";
+import type { AuthTokenKind, AuthTokenRole } from "../auth-store";
 import type {
   SysTokenCreateArgs,
   SysTokenCreateResult,
@@ -7,7 +7,7 @@ import type {
   SysTokenListResult,
   SysTokenRevokeArgs,
   SysTokenRevokeResult,
-} from "../syscalls/system";
+} from "../../syscalls/system";
 
 const TOKEN_KINDS = new Set<AuthTokenKind>(["node", "service", "user"]);
 const TOKEN_ROLES = new Set<AuthTokenRole>(["driver", "service", "user"]);

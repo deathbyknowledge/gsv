@@ -12,7 +12,12 @@
  */
 
 import type { KernelContext } from "./context";
-import type { AiToolsResult, AiToolsDevice, AiConfigResult } from "../syscalls/ai";
+import type {
+  AiToolsResult,
+  AiToolsDevice,
+  AiConfigArgs,
+  AiConfigResult,
+} from "../syscalls/ai";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
 
@@ -74,10 +79,12 @@ export async function handleAiTools(
 }
 
 export async function handleAiConfig(
+  args: AiConfigArgs,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
+  const profile = args.profile ?? "task";
 
   const provider =
     config.get(`users/${uid}/ai/provider`) ??
@@ -111,6 +118,11 @@ export async function handleAiConfig(
     config.get("config/ai/system_prompt") ??
     "";
 
+  const profileSystemPrompt =
+    config.get(`users/${uid}/ai/profile/${profile}/system_prompt`) ??
+    config.get(`config/ai/profile/${profile}/system_prompt`) ??
+    "";
+
   const maxContextBytes = parseInt(
     config.get(`users/${uid}/ai/max_context_bytes`) ??
     config.get("config/ai/max_context_bytes") ??
@@ -118,5 +130,15 @@ export async function handleAiConfig(
     10,
   );
 
-  return { provider, model, apiKey, reasoning, maxTokens, systemPrompt, maxContextBytes };
+  return {
+    profile,
+    provider,
+    model,
+    apiKey,
+    reasoning,
+    maxTokens,
+    systemPrompt,
+    profileSystemPrompt,
+    maxContextBytes,
+  };
 }

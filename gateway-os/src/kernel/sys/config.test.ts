@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { KernelContext } from "./context";
-import { handleSysConfigGet } from "./sys-config";
+import type { KernelContext } from "../context";
+import { handleSysConfigGet } from "./config";
 
 type EntryMap = Record<string, string>;
 

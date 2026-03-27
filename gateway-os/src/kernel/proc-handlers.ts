@@ -17,6 +17,7 @@ import type {
   ProcWorkspaceKind,
   ProcWorkspaceSpec,
 } from "../syscalls/proc";
+import type { AiContextProfile } from "../syscalls/ai";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ProcessIdentity } from "../syscalls/system";
 import {
@@ -37,6 +38,7 @@ export function handleProcList(
   const processes: ProcListEntry[] = records.map((r) => ({
     pid: r.processId,
     uid: r.uid,
+    profile: r.profile,
     parentPid: r.parentPid,
     state: r.state,
     label: r.label,
@@ -54,6 +56,11 @@ export async function handleProcSpawn(
 ): Promise<ProcSpawnResult> {
   const identity = ctx.identity!;
   const pid = crypto.randomUUID();
+  const profile = args.profile;
+
+  if (!isProcessProfile(profile)) {
+    return { ok: false, error: `Invalid process profile: ${String(profile)}` };
+  }
 
   const parentPid = args.parentPid ?? `init:${identity.process.uid}`;
   const parent = ctx.procs.get(parentPid);
@@ -85,6 +92,7 @@ export async function handleProcSpawn(
 
   ctx.procs.spawn(pid, materialized.identity, {
     parentPid,
+    profile,
     label: args.label,
     cwd: materialized.identity.cwd,
     workspaceId: materialized.identity.workspaceId,
@@ -98,7 +106,7 @@ export async function handleProcSpawn(
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.setidentity",
-    args: { pid, identity: materialized.identity },
+    args: { pid, identity: materialized.identity, profile },
   });
 
   if (args.prompt) {
@@ -114,6 +122,7 @@ export async function handleProcSpawn(
     ok: true,
     pid,
     label: args.label,
+    profile,
     workspaceId: materialized.identity.workspaceId,
     cwd: materialized.identity.cwd,
   };
@@ -294,4 +303,8 @@ function requireWorkspaceBackend(ctx: KernelContext, identity: ProcessIdentity) 
     throw new Error("Workspace backend is not configured");
   }
   return backend;
+}
+
+function isProcessProfile(value: unknown): value is AiContextProfile {
+  return value === "init" || value === "task" || value === "cron" || value === "mcp" || value === "app";
 }

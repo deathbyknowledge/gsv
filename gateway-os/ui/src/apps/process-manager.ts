@@ -1,13 +1,14 @@
-import type { AppElementContext, GsvAppElement } from "./app-sdk";
+import type { AppElementContext, GsvAppElement } from "../app-sdk";
 import {
   OPEN_CHAT_PROCESS_EVENT,
   normalizeProcessId,
   type OpenChatProcessEventDetail,
-} from "./chat-process-link";
+} from "../chat-process-link";
 
 type ProcListEntry = {
   pid: string;
   uid: number;
+  profile: "init" | "task" | "cron" | "mcp" | "app";
   parentPid: string | null;
   state: string;
   label: string | null;
@@ -217,6 +218,7 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
     return this.processes.filter((entry) => {
       return (
         entry.pid.toLowerCase().includes(query) ||
+        entry.profile.toLowerCase().includes(query) ||
         (entry.label ?? "").toLowerCase().includes(query) ||
         (entry.parentPid ?? "").toLowerCase().includes(query)
       );
@@ -307,7 +309,7 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
                 <h3>${escapeHtml(title)}</h3>
                 <span class="process-state-pill ${stateClass}">${escapeHtml(state || "unknown")}</span>
               </div>
-              <p class="muted process-row-meta"><code>${escapeHtml(entry.pid)}</code> · uid ${entry.uid}</p>
+              <p class="muted process-row-meta"><code>${escapeHtml(entry.pid)}</code> · uid ${entry.uid} · profile ${escapeHtml(entry.profile)}</p>
               <p class="muted process-row-meta">parent ${escapeHtml(entry.parentPid ?? "—")} · created ${escapeHtml(formatTimestampMs(entry.createdAt))}</p>
             </div>
             <div class="process-row-actions">

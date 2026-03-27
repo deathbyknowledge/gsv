@@ -4,26 +4,26 @@
 
 export { GsvFs } from "./gsv-fs";
 export type { ExtendedStat } from "./gsv-fs";
-export type { KernelRefs } from "./kernel-refs";
+export type { KernelRefs } from "./refs";
 export type {
   MountBackend,
   ExtendedMountStat,
   FsSearchBackendResult,
-} from "./mount-backend";
-export { KernelMountBackend } from "./kernel-mount-backend";
-export { R2MountBackend } from "./r2-backend";
-export { RipgitClient } from "./ripgit-client";
+} from "./mount";
+export { KernelMountBackend } from "./backends/kernel";
+export { R2MountBackend } from "./backends/r2";
+export { RipgitClient } from "./ripgit/client";
 export type {
   RipgitApplyOp,
   RipgitPathResult,
   RipgitRepoRef,
   RipgitTreeEntry,
-} from "./ripgit-client";
+} from "./ripgit/client";
 export {
   createWorkspaceBackend,
   isWorkspaceMountPath,
   workspaceRootPath,
-} from "./workspace-backend";
+} from "./backends/workspace";
 export {
   resolveUserPath,
   normalizePath,

@@ -15,6 +15,7 @@ const ROOT_IDENTITY: ProcessIdentity = {
   cwd: "/root",
   workspaceId: null,
 };
+const DEFAULT_PROFILE = "task" as const;
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
@@ -29,7 +30,7 @@ async function registerInKernel(pid: string, identity: ProcessIdentity) {
   await runInDurableObject(kernel, (instance: Kernel) => {
     const k = instance as any;
     k.caps.seed();
-    k.procs.spawn(pid, identity);
+    k.procs.spawn(pid, identity, { profile: DEFAULT_PROFILE });
   });
 }
 
@@ -62,7 +63,7 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
     await registerInKernel(pid, identity);
   }
   const stub = await getProcessByPid(pid);
-  const res = await stub.recvFrame(makeReq("proc.setidentity", { pid, identity }));
+  const res = await stub.recvFrame(makeReq("proc.setidentity", { pid, identity, profile: DEFAULT_PROFILE }));
   expect((res as ResponseFrame).ok).toBe(true);
   return stub;
 }
@@ -124,11 +125,12 @@ describe("Process DO — mechanical", () => {
         cwd: "/home/alice",
         workspaceId: null,
       };
-      await stub.recvFrame(makeReq("proc.setidentity", { pid, identity: newIdentity }));
+      await stub.recvFrame(makeReq("proc.setidentity", { pid, identity: newIdentity, profile: "mcp" }));
 
       await runInDurableObject(stub, (instance: Process) => {
         expect(instance.identity.uid).toBe(1000);
         expect(instance.identity.username).toBe("alice");
+        expect((instance as any).profile).toBe("mcp");
       });
     });
   });
@@ -592,7 +594,7 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     const kernel = await getKernelPtr();
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as any;
-      k.procs.spawn(pid, ROOT_IDENTITY);
+      k.procs.spawn(pid, ROOT_IDENTITY, { profile: DEFAULT_PROFILE });
       k.config.set("users/0/ai/api_key", "sk-invalid-key-for-testing");
     });
 

@@ -1,11 +1,11 @@
-import type { AppElementContext, GsvAppElement } from "./app-sdk";
-import { renderActionIcon, renderFileIcon } from "./icons";
-import type { FileIconKind } from "./icons";
+import type { AppElementContext, GsvAppElement } from "../app-sdk";
+import { renderActionIcon, renderFileIcon } from "../icons";
+import type { FileIconKind } from "../icons";
 import {
   getActiveThreadContext,
   subscribeActiveThreadContext,
   type ThreadContext,
-} from "./thread-context";
+} from "../thread-context";
 
 type DeviceSummary = {
   deviceId: string;
@@ -164,6 +164,52 @@ function baseName(path: string): string {
   }
   const segments = normalized.split("/").filter(Boolean);
   return segments[segments.length - 1] ?? normalized;
+}
+
+function isWorkspacePath(path: string): boolean {
+  const normalized = normalizePath(path, "absolute");
+  return normalized === "/workspaces" || normalized.startsWith("/workspaces/");
+}
+
+function isWorkspaceHiddenPath(path: string): boolean {
+  const normalized = normalizePath(path, "absolute");
+  if (!isWorkspacePath(normalized)) {
+    return false;
+  }
+  return normalized.split("/").filter(Boolean).includes(".gsv");
+}
+
+function shouldHideWorkspaceEntry(
+  target: string,
+  currentPath: string,
+  entryName: string,
+): boolean {
+  if (normalizeTarget(target) !== "gsv") {
+    return false;
+  }
+  if (entryName !== ".gsv") {
+    return false;
+  }
+  const normalizedCurrent = normalizePath(currentPath, "absolute");
+  if (!isWorkspacePath(normalizedCurrent)) {
+    return false;
+  }
+  return !isWorkspaceHiddenPath(normalizedCurrent);
+}
+
+function shouldHideWorkspaceSearchMatch(
+  target: string,
+  currentPath: string,
+  matchPath: string,
+): boolean {
+  if (normalizeTarget(target) !== "gsv") {
+    return false;
+  }
+  const normalizedCurrent = normalizePath(currentPath, "absolute");
+  if (!isWorkspacePath(normalizedCurrent) || isWorkspaceHiddenPath(normalizedCurrent)) {
+    return false;
+  }
+  return isWorkspaceHiddenPath(matchPath);
 }
 
 function isDirectoryReadResult(value: FsReadResult): value is FsReadDirectoryResult {
@@ -721,7 +767,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
           path: resolvePath(name, result.path, style),
           isDirectory: false,
         })),
-      ];
+      ].filter((entry) => !shouldHideWorkspaceEntry(this.target, result.path, entry.name));
 
       this.entries = nextEntries;
       this.pathStyle = style;
@@ -982,9 +1028,9 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
       return;
     }
 
-    const pattern = this.searchPattern.trim();
-    if (!pattern) {
-      this.setStatus("error", "Search pattern is required.");
+    const query = this.searchPattern.trim();
+    if (!query) {
+      this.setStatus("error", "Search query is required.");
       this.render();
       return;
     }
@@ -997,7 +1043,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
       const result = await context.kernel.request<FsSearchResult>(
         "fs.search",
         this.withTarget({
-          pattern,
+          query,
           path: this.currentPath,
         }),
       );
@@ -1006,7 +1052,14 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
         return;
       }
       this.explorerPane = "search";
-      this.searchMatches = result.matches;
+      this.searchMatches = result.matches.filter(
+        (match) =>
+          !shouldHideWorkspaceSearchMatch(
+            this.target,
+            this.currentPath,
+            match.path,
+          ),
+      );
       this.searchTruncated = result.truncated === true;
     } catch (error) {
       this.setStatus("error", error instanceof Error ? error.message : String(error));
@@ -1324,7 +1377,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
             data-field="search-pattern"
             type="text"
             value="${escapeHtml(this.searchPattern)}"
-            placeholder="Search current folder (regex)"
+            placeholder="Search current folder"
             ${this.suspended ? "disabled" : ""}
           />
           <button

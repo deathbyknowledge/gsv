@@ -4,13 +4,13 @@ import { FS_SEARCH, SYSCALL_TOOL_NAMES } from "./constants";
 export const FS_SEARCH_DEFINITION: ToolDefinition = {
   name: SYSCALL_TOOL_NAMES[FS_SEARCH],
   description:
-    "Search file contents using regex patterns. Returns matching lines with file paths and line numbers.",
+    "Search file contents using plain text. Returns matching lines with file paths and line numbers.",
   inputSchema: {
     type: "object",
     properties: {
-      pattern: {
+      query: {
         type: "string",
-        description: "Regex pattern to search for",
+        description: "Plain text to search for",
       },
       path: {
         type: "string",
@@ -21,12 +21,12 @@ export const FS_SEARCH_DEFINITION: ToolDefinition = {
         description: "Glob pattern to filter files (e.g. \"*.ts\", \"*.json\")",
       },
     },
-    required: ["pattern"],
+    required: ["query"],
   },
 };
 
 export type FsSearchArgs = {
-  pattern: string;
+  query: string;
   path?: string;
   include?: string;
 };

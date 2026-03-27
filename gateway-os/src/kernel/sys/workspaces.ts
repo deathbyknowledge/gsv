@@ -1,9 +1,9 @@
-import type { KernelContext } from "./context";
+import type { KernelContext } from "../context";
 import type {
   SysWorkspaceListArgs,
   SysWorkspaceListResult,
   SysWorkspaceSummary,
-} from "../syscalls/system";
+} from "../../syscalls/system";
 
 export function handleSysWorkspaceList(
   args: SysWorkspaceListArgs | undefined,
