@@ -12,6 +12,8 @@ type ProcListEntry = {
   state: string;
   label: string | null;
   createdAt: number;
+  workspaceId: string | null;
+  cwd: string;
 };
 
 type ProcListResult = {
@@ -76,7 +78,11 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
       if (!pid) {
         return;
       }
-      this.openChatForProcess(pid);
+      const entry = this.processes.find((processEntry) => processEntry.pid === pid);
+      if (!entry) {
+        return;
+      }
+      this.openChatForProcess(entry);
       return;
     }
 
@@ -271,8 +277,12 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
     }
   }
 
-  private openChatForProcess(pid: string): void {
-    const detail: OpenChatProcessEventDetail = { pid };
+  private openChatForProcess(entry: ProcListEntry): void {
+    const detail: OpenChatProcessEventDetail = {
+      pid: entry.pid,
+      workspaceId: entry.workspaceId ?? null,
+      cwd: entry.cwd,
+    };
     window.dispatchEvent(new CustomEvent<OpenChatProcessEventDetail>(OPEN_CHAT_PROCESS_EVENT, { detail }));
   }
 

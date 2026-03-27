@@ -160,6 +160,20 @@ type IdentityOutcome =
   | { ok: true; identity: ProcessIdentity }
   | { ok: false; error: string };
 
+function withDefaultProcessContext(identity: {
+  uid: number;
+  gid: number;
+  gids: number[];
+  username: string;
+  home: string;
+}): ProcessIdentity {
+  return {
+    ...identity,
+    cwd: identity.home,
+    workspaceId: null,
+  };
+}
+
 async function resolveIdentity(
   args: ConnectArgs,
   ctx: KernelContext,
@@ -188,7 +202,7 @@ async function resolveIdentity(
       deviceId: role === "driver" ? args.client.id : undefined,
     });
     if (!result.ok) return { ok: false, error: result.error };
-    return { ok: true, identity: result.identity };
+    return { ok: true, identity: withDefaultProcessContext(result.identity) };
   }
 
   if (hasToken) {
@@ -196,14 +210,14 @@ async function resolveIdentity(
       role: "user",
     });
     if (!result.ok) return { ok: false, error: result.error };
-    return { ok: true, identity: result.identity };
+    return { ok: true, identity: withDefaultProcessContext(result.identity) };
   }
 
   if (!hasPassword) return { ok: false, error: "Password or token required" };
   const result = await auth.authenticate(username, args.auth.password!);
   if (!result.ok) return { ok: false, error: result.error };
 
-  return { ok: true, identity: result.identity };
+  return { ok: true, identity: withDefaultProcessContext(result.identity) };
 }
 
 async function ensureRootHome(bucket: R2Bucket): Promise<void> {

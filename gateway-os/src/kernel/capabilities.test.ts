@@ -196,6 +196,7 @@ describe("CapabilityStore", () => {
       "sys.token.list",
       "sys.token.revoke",
       "sys.unlink",
+      "sys.workspace.list",
     ]);
   });
 

@@ -2,14 +2,20 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import type { AppInstance, AppRuntimeContext } from "./app-runtime";
+import { OPEN_APP_EVENT, type OpenAppEventDetail } from "./app-link";
 import {
   TARGET_CHAT_PROCESS_EVENT,
   consumePendingChatProcess,
-  normalizeProcessId,
   type TargetChatProcessEventDetail,
 } from "./chat-process-link";
 import type { ProcHistoryResult } from "./gateway-client";
 import type { AppElementContext, AppKernelClient, GsvAppElement } from "./app-sdk";
+import {
+  getActiveThreadContext,
+  normalizeThreadContext,
+  setActiveThreadContext,
+  type ThreadContext,
+} from "./thread-context";
 
 type ChatRole = "user" | "assistant" | "system";
 
@@ -32,6 +38,31 @@ type ToolResultSummary = {
   output?: unknown;
   error?: string;
   syscall?: string | null;
+};
+
+type RecentThreadProcess = {
+  pid: string;
+  label: string | null;
+  cwd: string;
+  createdAt: number;
+};
+
+type RecentThreadEntry = {
+  workspaceId: string;
+  ownerUid: number;
+  label: string | null;
+  kind: "thread" | "app" | "shared";
+  state: "active" | "archived";
+  createdAt: number;
+  updatedAt: number;
+  defaultBranch: string;
+  headCommit: string | null;
+  activeProcess: RecentThreadProcess | null;
+  processCount: number;
+};
+
+type WorkspaceListResult = {
+  workspaces?: RecentThreadEntry[];
 };
 
 type AssistantRunState = "streaming" | "complete" | "error";
@@ -79,6 +110,15 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function prettyJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
@@ -110,6 +150,30 @@ function formatTimestamp(ms: number): string {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
   return `${hours}:${minutes}`;
+}
+
+function formatRelativeTime(ms: number): string {
+  const deltaMs = ms - Date.now();
+  const absDeltaMs = Math.abs(deltaMs);
+
+  if (absDeltaMs < 60_000) {
+    return "just now";
+  }
+
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ["day", 24 * 60 * 60_000],
+    ["hour", 60 * 60_000],
+    ["minute", 60_000],
+  ];
+
+  for (const [unit, unitMs] of units) {
+    if (absDeltaMs >= unitMs) {
+      const value = Math.round(deltaMs / unitMs);
+      return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(value, unit);
+    }
+  }
+
+  return "just now";
 }
 
 function maybeParseJsonString(value: string): unknown {
@@ -1243,6 +1307,27 @@ function mapHistoryRole(role: string): ChatRole {
   return "system";
 }
 
+function deriveThreadLabel(message: string): string | undefined {
+  const firstLine = message
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+
+  if (!firstLine) {
+    return undefined;
+  }
+
+  return firstLine.length > 72 ? `${firstLine.slice(0, 69)}...` : firstLine;
+}
+
+function displayThreadLabel(entry: RecentThreadEntry): string {
+  const label = entry.label?.trim();
+  if (label) {
+    return label;
+  }
+  return entry.workspaceId;
+}
+
 function createChatAppController(client: AppKernelClient): AppInstance {
   let composerInput: HTMLTextAreaElement | null = null;
   let composerButton: HTMLButtonElement | null = null;
@@ -1251,6 +1336,12 @@ function createChatAppController(client: AppKernelClient): AppInstance {
   let composerUploadTray: HTMLElement | null = null;
   let composerUploadButtons: HTMLButtonElement[] = [];
   let composerVoicePanel: HTMLElement | null = null;
+  let threadsNode: HTMLElement | null = null;
+  let threadStatusNode: HTMLElement | null = null;
+  let threadNewButton: HTMLButtonElement | null = null;
+  let threadRefreshButton: HTMLButtonElement | null = null;
+  let openFilesButton: HTMLButtonElement | null = null;
+  let openShellButton: HTMLButtonElement | null = null;
   let logNode: HTMLElement | null = null;
   let composeNode: HTMLFormElement | null = null;
   let mounted = false;
@@ -1260,8 +1351,12 @@ function createChatAppController(client: AppKernelClient): AppInstance {
   let wasConnected = false;
   let loadedConnectionId: string | null = null;
   let loadedPid: string | null = null;
-  let activePid: string | null = null;
+  let activeThreadContext: ThreadContext | null = getActiveThreadContext();
+  let activePid: string | null = activeThreadContext?.pid ?? null;
   let appWindowId: string | null = null;
+  let recentThreads: RecentThreadEntry[] = [];
+  let threadsLoading = false;
+  let threadsError = "";
   let historySyntheticRunCounter = 0;
 
   const textRunViewsByRunId = new Map<string, AssistantRunView>();
@@ -1321,6 +1416,118 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       composerVoiceButton.setAttribute("aria-pressed", active ? "true" : "false");
       composerVoiceButton.title = active ? "Stop voice mode" : "Start voice mode";
     }
+  };
+
+  const renderThreadRail = (): void => {
+    if (!threadsNode || !threadStatusNode) {
+      return;
+    }
+
+    const connected = client.getStatus().state === "connected";
+    const hasActiveThread = activeThreadContext !== null;
+
+    if (threadNewButton) {
+      threadNewButton.disabled = suspended;
+    }
+    if (threadRefreshButton) {
+      threadRefreshButton.disabled = suspended || !connected;
+    }
+    if (openFilesButton) {
+      openFilesButton.disabled = !connected || !hasActiveThread;
+    }
+    if (openShellButton) {
+      openShellButton.disabled = !connected || !hasActiveThread;
+    }
+
+    if (!connected) {
+      threadStatusNode.hidden = false;
+      threadStatusNode.textContent = "Unlock desktop session to browse threads.";
+      threadsNode.innerHTML = "";
+      return;
+    }
+
+    if (threadsLoading) {
+      threadStatusNode.hidden = false;
+      threadStatusNode.textContent = "Loading threads...";
+      threadsNode.innerHTML = "";
+      return;
+    }
+
+    if (threadsError) {
+      threadStatusNode.hidden = false;
+      threadStatusNode.textContent = threadsError;
+      threadsNode.innerHTML = "";
+      return;
+    }
+
+    if (recentThreads.length === 0) {
+      threadStatusNode.hidden = false;
+      threadStatusNode.textContent = "No threads yet. Send a message to start one.";
+      threadsNode.innerHTML = "";
+      return;
+    }
+
+    const activeWorkspaceId = activeThreadContext?.workspaceId ?? null;
+    threadStatusNode.hidden = true;
+    threadsNode.innerHTML = recentThreads
+      .map((entry) => {
+        const isActive = activeWorkspaceId !== null && entry.workspaceId === activeWorkspaceId;
+        const state = entry.activeProcess ? "Live" : "Stored";
+        const helpers = entry.processCount > 1 ? ` · ${entry.processCount} agents` : "";
+        return `
+          <button
+            type="button"
+            class="chat-thread-item${isActive ? " is-active" : ""}"
+            data-chat-thread-action="open-thread"
+            data-workspace-id="${escapeHtml(entry.workspaceId)}"
+          >
+            <span class="chat-thread-item-title">${escapeHtml(displayThreadLabel(entry))}</span>
+            <span class="chat-thread-item-meta">${escapeHtml(`${state}${helpers} · ${formatRelativeTime(entry.updatedAt)}`)}</span>
+          </button>
+        `;
+      })
+      .join("");
+  };
+
+  const loadRecentThreads = async (): Promise<void> => {
+    if (!mounted || suspended || client.getStatus().state !== "connected") {
+      renderThreadRail();
+      return;
+    }
+
+    threadsLoading = true;
+    threadsError = "";
+    renderThreadRail();
+
+    try {
+      const payload = await client.request<WorkspaceListResult>("sys.workspace.list", {
+        kind: "thread",
+        limit: 32,
+      });
+      recentThreads = Array.isArray(payload.workspaces) ? payload.workspaces : [];
+      threadsError = "";
+    } catch (error) {
+      recentThreads = [];
+      threadsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      threadsLoading = false;
+      renderThreadRail();
+    }
+  };
+
+  const openCompanionApp = (appId: "files" | "shell"): void => {
+    if (!activeThreadContext) {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent<OpenAppEventDetail>(OPEN_APP_EVENT, {
+        detail: {
+          appId,
+          threadContext: activeThreadContext,
+        },
+      }),
+    );
   };
 
   const updateComposerState = (status: ChatStatus): void => {
@@ -1389,6 +1596,8 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         composerButton.title = "Write a message to send";
       }
     }
+
+    renderThreadRail();
   };
 
   const appendRowNode = (
@@ -1514,8 +1723,107 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     lastAssistantToolRun = null;
   };
 
+  const assignThreadContext = (
+    context: ThreadContext | null,
+    options?: { persist?: boolean },
+  ): void => {
+    activeThreadContext = context;
+    activePid = context?.pid ?? null;
+    if (options?.persist !== false) {
+      setActiveThreadContext(context);
+    }
+    renderThreadRail();
+  };
+
+  const activateThreadContext = async (threadContext: ThreadContext): Promise<void> => {
+    assignThreadContext(threadContext);
+    loadedConnectionId = null;
+    loadedPid = null;
+
+    const status = client.getStatus();
+    if (status.state === "connected") {
+      await loadHistory(status.connectionId);
+      await loadRecentThreads();
+    }
+  };
+
+  const openRecentThread = async (workspaceId: string): Promise<void> => {
+    if (!client.isConnected()) {
+      appendTextRow("system", "session is locked");
+      return;
+    }
+
+    const entry = recentThreads.find((candidate) => candidate.workspaceId === workspaceId);
+    if (!entry) {
+      appendTextRow("system", `thread not found: ${workspaceId}`);
+      return;
+    }
+
+    const liveContext = normalizeThreadContext({
+      pid: entry.activeProcess?.pid,
+      workspaceId: entry.workspaceId,
+      cwd: entry.activeProcess?.cwd,
+    });
+    if (liveContext) {
+      await activateThreadContext(liveContext);
+      return;
+    }
+
+    try {
+      const spawnResult = await client.spawnProcess({
+        label: entry.label ?? undefined,
+        workspace: {
+          mode: "attach",
+          workspaceId: entry.workspaceId,
+        },
+      });
+
+      if (!spawnResult.ok) {
+        appendTextRow("system", `thread reopen failed: ${spawnResult.error}`);
+        return;
+      }
+
+      const reopenedContext = normalizeThreadContext({
+        pid: spawnResult.pid,
+        workspaceId: spawnResult.workspaceId,
+        cwd: spawnResult.cwd,
+      });
+
+      if (!reopenedContext) {
+        appendTextRow("system", "thread reopen failed: invalid proc.spawn result");
+        return;
+      }
+
+      await activateThreadContext(reopenedContext);
+    } catch (error) {
+      appendTextRow("system", `thread reopen failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const resetToNewThread = (): void => {
+    assignThreadContext(null);
+    loadedConnectionId = client.getStatus().connectionId;
+    loadedPid = null;
+    if (client.getStatus().state === "connected") {
+      renderNoThreadState(client.getStatus().connectionId);
+    }
+    composerInput?.focus();
+  };
+
+  const renderNoThreadState = (connectionId: string | null): void => {
+    resetTimeline();
+    appendTextRow("system", "No thread selected. Send a message to start a new thread.");
+    loadedConnectionId = connectionId;
+    loadedPid = null;
+    updateComposerState(client.getStatus());
+  };
+
   const loadHistory = async (connectionId: string | null): Promise<void> => {
     if (!logNode) {
+      return;
+    }
+    if (!activePid) {
+      renderNoThreadState(connectionId);
       return;
     }
 
@@ -1614,26 +1922,6 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     updateComposerState(client.getStatus());
   };
 
-  const switchProcessContext = (pid: string): void => {
-    const normalizedPid = normalizeProcessId(pid);
-    if (!normalizedPid || normalizedPid === activePid) {
-      return;
-    }
-
-    activePid = normalizedPid;
-    loadedConnectionId = null;
-    loadedPid = null;
-
-    if (!mounted) {
-      return;
-    }
-
-    const status = client.getStatus();
-    if (status.state === "connected") {
-      void loadHistory(status.connectionId);
-    }
-  };
-
   const applyConnectionStatus = (status: ChatStatus): void => {
     const connected = status.state === "connected";
     updateComposerState(status);
@@ -1644,8 +1932,17 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       appendTextRow("system", "session disconnected");
     }
 
-    if (connected && (status.connectionId !== loadedConnectionId || activePid !== loadedPid)) {
-      void loadHistory(status.connectionId);
+    if (connected) {
+      if (!wasConnected) {
+        void loadRecentThreads();
+      }
+      if (!activePid) {
+        if (status.connectionId !== loadedConnectionId || loadedPid !== null) {
+          renderNoThreadState(status.connectionId);
+        }
+      } else if (status.connectionId !== loadedConnectionId || activePid !== loadedPid) {
+        void loadHistory(status.connectionId);
+      }
     }
 
     wasConnected = connected;
@@ -1801,6 +2098,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         toolRunViewsByRunId.delete(runId);
       }
       maybeScrollToBottom(shouldStick);
+      void loadRecentThreads();
     }
   };
 
@@ -1808,75 +2106,103 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     mount: (container, context: AppRuntimeContext) => {
       container.innerHTML = `
         <section class="chat-app">
-          <section class="chat-log" data-chat-log></section>
-
-          <form class="chat-composer" data-chat-compose hidden>
-            <div class="chat-compose-surface">
-              <div class="chat-compose-action-cluster">
-                <button
-                  type="button"
-                  class="chat-action-btn chat-action-attach"
-                  data-chat-attach-toggle
-                  data-state="closed"
-                  aria-label="Add media"
-                  aria-expanded="false"
-                  title="Add media"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                </button>
-                <div class="chat-upload-tray" data-chat-upload-tray hidden>
-                  <button type="button" class="chat-upload-btn" data-chat-upload-action="camera" title="Camera">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M5 8h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" />
-                      <path d="M9 8l1.4-2h3.2L15 8" />
-                      <circle cx="12" cy="13" r="3" />
-                    </svg>
-                  </button>
-                  <button type="button" class="chat-upload-btn" data-chat-upload-action="image" title="Image">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <rect x="4" y="4" width="16" height="16" rx="2" />
-                      <circle cx="9" cy="9" r="1.6" />
-                      <path d="m20 15-4.2-4.2a1.8 1.8 0 0 0-2.6 0L6 18" />
-                    </svg>
-                  </button>
-                  <button type="button" class="chat-upload-btn" data-chat-upload-action="file" title="File">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
-                      <path d="M14 3v5h5" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              <textarea
-                data-chat-input
-                rows="3"
-                placeholder="Ask anything... Enter to send, Shift+Enter for newline."
-              ></textarea>
+          <aside class="chat-thread-rail">
+            <div class="chat-thread-rail-head">
+              <button type="button" class="runtime-btn chat-thread-primary-btn" data-chat-thread-new>New Thread</button>
               <button
                 type="button"
-                class="chat-action-btn chat-action-voice"
-                data-chat-voice-toggle
-                data-state="idle"
-                aria-label="Start voice mode"
-                aria-pressed="false"
-                title="Start voice mode"
+                class="runtime-btn chat-thread-icon-btn"
+                data-chat-thread-refresh
+                title="Refresh threads"
+                aria-label="Refresh threads"
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M4 12h2m3-4v8m5-10v12m5-8v8m3-4v4" />
+                  <path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v6h-6" />
                 </svg>
               </button>
-              <button type="submit" class="chat-send-btn" data-chat-send title="Send message">Send</button>
             </div>
-            <div class="chat-voice-panel" data-chat-voice-panel hidden>
-              <div class="chat-voice-orb" aria-hidden="true"></div>
-              <div class="chat-voice-copy">
-                <p class="chat-voice-title">Voice mode preview</p>
-                <p class="chat-voice-hint">Voice capture is not wired yet. Press the voice button again to close.</p>
+            <p class="chat-thread-status" data-chat-thread-status></p>
+            <div class="chat-thread-list" data-chat-thread-list></div>
+          </aside>
+
+          <section class="chat-main">
+            <div class="chat-toolbar">
+              <div class="chat-toolbar-actions">
+                <button type="button" class="runtime-btn chat-toolbar-btn" data-chat-open-files>Files</button>
+                <button type="button" class="runtime-btn chat-toolbar-btn" data-chat-open-shell>Shell</button>
               </div>
             </div>
-          </form>
+
+            <section class="chat-log" data-chat-log></section>
+
+            <form class="chat-composer" data-chat-compose hidden>
+              <div class="chat-compose-surface">
+                <div class="chat-compose-action-cluster">
+                  <button
+                    type="button"
+                    class="chat-action-btn chat-action-attach"
+                    data-chat-attach-toggle
+                    data-state="closed"
+                    aria-label="Add media"
+                    aria-expanded="false"
+                    title="Add media"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </button>
+                  <div class="chat-upload-tray" data-chat-upload-tray hidden>
+                    <button type="button" class="chat-upload-btn" data-chat-upload-action="camera" title="Camera">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 8h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" />
+                        <path d="M9 8l1.4-2h3.2L15 8" />
+                        <circle cx="12" cy="13" r="3" />
+                      </svg>
+                    </button>
+                    <button type="button" class="chat-upload-btn" data-chat-upload-action="image" title="Image">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="4" y="4" width="16" height="16" rx="2" />
+                        <circle cx="9" cy="9" r="1.6" />
+                        <path d="m20 15-4.2-4.2a1.8 1.8 0 0 0-2.6 0L6 18" />
+                      </svg>
+                    </button>
+                    <button type="button" class="chat-upload-btn" data-chat-upload-action="file" title="File">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+                        <path d="M14 3v5h5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  data-chat-input
+                  rows="3"
+                  placeholder="Ask anything... Enter to send, Shift+Enter for newline."
+                ></textarea>
+                <button
+                  type="button"
+                  class="chat-action-btn chat-action-voice"
+                  data-chat-voice-toggle
+                  data-state="idle"
+                  aria-label="Start voice mode"
+                  aria-pressed="false"
+                  title="Start voice mode"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 12h2m3-4v8m5-10v12m5-8v8m3-4v4" />
+                  </svg>
+                </button>
+                <button type="submit" class="chat-send-btn" data-chat-send title="Send message">Send</button>
+              </div>
+              <div class="chat-voice-panel" data-chat-voice-panel hidden>
+                <div class="chat-voice-orb" aria-hidden="true"></div>
+                <div class="chat-voice-copy">
+                  <p class="chat-voice-title">Voice mode preview</p>
+                  <p class="chat-voice-hint">Voice capture is not wired yet. Press the voice button again to close.</p>
+                </div>
+              </div>
+            </form>
+          </section>
         </section>
       `;
 
@@ -1897,8 +2223,29 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       const uploadTray = container.querySelector<HTMLElement>("[data-chat-upload-tray]");
       const uploadButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-chat-upload-action]"));
       const voicePanel = container.querySelector<HTMLElement>("[data-chat-voice-panel]");
+      const threadList = container.querySelector<HTMLElement>("[data-chat-thread-list]");
+      const threadStatus = container.querySelector<HTMLElement>("[data-chat-thread-status]");
+      const newThreadButton = container.querySelector<HTMLButtonElement>("[data-chat-thread-new]");
+      const refreshThreadsButton = container.querySelector<HTMLButtonElement>("[data-chat-thread-refresh]");
+      const filesButton = container.querySelector<HTMLButtonElement>("[data-chat-open-files]");
+      const shellButton = container.querySelector<HTMLButtonElement>("[data-chat-open-shell]");
 
-      if (!chatLog || !chatCompose || !chatInput || !sendButton || !attachButton || !voiceButton || !uploadTray || !voicePanel) {
+      if (
+        !chatLog ||
+        !chatCompose ||
+        !chatInput ||
+        !sendButton ||
+        !attachButton ||
+        !voiceButton ||
+        !uploadTray ||
+        !voicePanel ||
+        !threadList ||
+        !threadStatus ||
+        !newThreadButton ||
+        !refreshThreadsButton ||
+        !filesButton ||
+        !shellButton
+      ) {
         throw new Error("Chat app markup is incomplete");
       }
 
@@ -1909,16 +2256,23 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       composerUploadTray = uploadTray;
       composerUploadButtons = uploadButtons;
       composerVoicePanel = voicePanel;
+      threadsNode = threadList;
+      threadStatusNode = threadStatus;
+      threadNewButton = newThreadButton;
+      threadRefreshButton = refreshThreadsButton;
+      openFilesButton = filesButton;
+      openShellButton = shellButton;
       logNode = chatLog;
       composeNode = chatCompose;
       setUploadExpanded(false);
       setVoiceMode(false);
+      renderThreadRail();
 
       if (appWindowId) {
-        const queuedPid = consumePendingChatProcess(appWindowId);
-        const normalizedPid = normalizeProcessId(queuedPid);
-        if (normalizedPid) {
-          activePid = normalizedPid;
+        const queuedContext = consumePendingChatProcess(appWindowId);
+        const normalizedContext = normalizeThreadContext(queuedContext);
+        if (normalizedContext) {
+          assignThreadContext(normalizedContext);
         }
       }
 
@@ -1943,6 +2297,39 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         updateComposerState(client.getStatus());
 
         try {
+          if (!activePid) {
+            const spawnResult = await client.spawnProcess({
+              label: deriveThreadLabel(message),
+              workspace: {
+                mode: "new",
+                kind: "thread",
+              },
+            });
+
+            if (!spawnResult.ok) {
+              appendTextRow("system", `thread start failed: ${spawnResult.error}`);
+              return;
+            }
+
+            const threadContext = normalizeThreadContext({
+              pid: spawnResult.pid,
+              workspaceId: spawnResult.workspaceId,
+              cwd: spawnResult.cwd,
+            });
+
+            if (!threadContext) {
+              appendTextRow("system", "thread start failed: invalid proc.spawn result");
+              return;
+            }
+
+            assignThreadContext(threadContext);
+            resetTimeline();
+            appendTextRow("user", message);
+            loadedConnectionId = client.getStatus().connectionId;
+            loadedPid = threadContext.pid;
+            void loadRecentThreads();
+          }
+
           const result = await client.sendMessage(message, activePid ?? undefined);
           if (!result.ok) {
             appendTextRow("system", `send failed: ${result.error}`);
@@ -2011,11 +2398,51 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         chatInput.focus();
       };
 
+      const onThreadListClick = (event: MouseEvent): void => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+          return;
+        }
+
+        const actionNode = target.closest<HTMLElement>("[data-chat-thread-action]");
+        if (!actionNode || actionNode.dataset.chatThreadAction !== "open-thread") {
+          return;
+        }
+
+        const workspaceId = actionNode.dataset.workspaceId?.trim();
+        if (!workspaceId) {
+          return;
+        }
+
+        void openRecentThread(workspaceId);
+      };
+
+      const onNewThreadClick = (): void => {
+        resetToNewThread();
+      };
+
+      const onRefreshThreadsClick = (): void => {
+        void loadRecentThreads();
+      };
+
+      const onOpenFilesClick = (): void => {
+        openCompanionApp("files");
+      };
+
+      const onOpenShellClick = (): void => {
+        openCompanionApp("shell");
+      };
+
       chatCompose.addEventListener("submit", onComposeSubmit);
       chatInput.addEventListener("keydown", onComposerKeyDown);
       chatInput.addEventListener("input", onComposerInput);
       attachButton.addEventListener("click", onAttachToggle);
       voiceButton.addEventListener("click", onVoiceToggle);
+      threadList.addEventListener("click", onThreadListClick);
+      newThreadButton.addEventListener("click", onNewThreadClick);
+      refreshThreadsButton.addEventListener("click", onRefreshThreadsClick);
+      filesButton.addEventListener("click", onOpenFilesClick);
+      shellButton.addEventListener("click", onOpenShellClick);
       for (const uploadButton of uploadButtons) {
         uploadButton.addEventListener("click", onUploadActionClick);
       }
@@ -2025,6 +2452,11 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       cleanup.add(() => chatInput.removeEventListener("input", onComposerInput));
       cleanup.add(() => attachButton.removeEventListener("click", onAttachToggle));
       cleanup.add(() => voiceButton.removeEventListener("click", onVoiceToggle));
+      cleanup.add(() => threadList.removeEventListener("click", onThreadListClick));
+      cleanup.add(() => newThreadButton.removeEventListener("click", onNewThreadClick));
+      cleanup.add(() => refreshThreadsButton.removeEventListener("click", onRefreshThreadsClick));
+      cleanup.add(() => filesButton.removeEventListener("click", onOpenFilesClick));
+      cleanup.add(() => shellButton.removeEventListener("click", onOpenShellClick));
       cleanup.add(() => {
         for (const uploadButton of uploadButtons) {
           uploadButton.removeEventListener("click", onUploadActionClick);
@@ -2046,13 +2478,22 @@ function createChatAppController(client: AppKernelClient): AppInstance {
         if (detail?.windowId && appWindowId && detail.windowId !== appWindowId) {
           return;
         }
-        if (!detail?.pid) {
+        const normalized = normalizeThreadContext(detail);
+        if (!normalized) {
           return;
         }
-        if (detail.windowId) {
-          consumePendingChatProcess(detail.windowId);
+        const targetWindowId = detail?.windowId;
+        if (targetWindowId) {
+          consumePendingChatProcess(targetWindowId);
         }
-        switchProcessContext(detail.pid);
+        assignThreadContext(normalized);
+        loadedConnectionId = null;
+        loadedPid = null;
+        const status = client.getStatus();
+        if (status.state === "connected") {
+          void loadHistory(status.connectionId);
+          void loadRecentThreads();
+        }
       };
       window.addEventListener(TARGET_CHAT_PROCESS_EVENT, onTargetProcess as EventListener);
       cleanup.add(() => window.removeEventListener(TARGET_CHAT_PROCESS_EVENT, onTargetProcess as EventListener));
@@ -2093,10 +2534,19 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       composerUploadTray = null;
       composerUploadButtons = [];
       composerVoicePanel = null;
+      threadsNode = null;
+      threadStatusNode = null;
+      threadNewButton = null;
+      threadRefreshButton = null;
+      openFilesButton = null;
+      openShellButton = null;
       logNode = null;
       composeNode = null;
       voiceMode = false;
       uploadExpanded = false;
+      recentThreads = [];
+      threadsLoading = false;
+      threadsError = "";
       loadedPid = null;
       activePid = null;
       appWindowId = null;

@@ -203,6 +203,8 @@ export async function handleSysSetup(
     gids: auth.resolveGids(username, gid),
     username,
     home,
+    cwd: home,
+    workspaceId: null,
   };
 
   const rootShadow = auth.getShadowByUsername("root");

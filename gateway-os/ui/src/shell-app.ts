@@ -1,4 +1,9 @@
 import type { AppElementContext, GsvAppElement } from "./app-sdk";
+import {
+  getActiveThreadContext,
+  subscribeActiveThreadContext,
+  type ThreadContext,
+} from "./thread-context";
 
 type DeviceSummary = {
   deviceId: string;
@@ -154,6 +159,8 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
   private historyDraft = "";
 
   private unsubscribeStatus: (() => void) | null = null;
+  private unsubscribeThreadContext: (() => void) | null = null;
+  private activeThreadContext: ThreadContext | null = getActiveThreadContext();
 
   private readonly onClick = (event: MouseEvent): void => {
     const target = event.target;
@@ -202,6 +209,9 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
           return;
         }
         this.target = target.value;
+        if (normalizeTarget(this.target) === "gsv") {
+          this.workdir = this.preferredGsvWorkdir(this.activeThreadContext);
+        }
         this.render();
         break;
       case "command":
@@ -283,6 +293,7 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.context = context;
     this.kernelState = context.kernel.getStatus().state;
     this.suspended = false;
+    this.applyThreadContext(this.activeThreadContext);
 
     this.unsubscribeStatus?.();
     this.unsubscribeStatus = context.kernel.onStatus((status) => {
@@ -297,6 +308,10 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.addEventListener("click", this.onClick);
     this.addEventListener("input", this.onInput);
     this.addEventListener("keydown", this.onKeyDown);
+    this.unsubscribeThreadContext?.();
+    this.unsubscribeThreadContext = subscribeActiveThreadContext((threadContext) => {
+      this.applyThreadContext(threadContext);
+    });
 
     this.render();
     window.requestAnimationFrame(() => {
@@ -342,6 +357,8 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.removeEventListener("keydown", this.onKeyDown);
     this.unsubscribeStatus?.();
     this.unsubscribeStatus = null;
+    this.unsubscribeThreadContext?.();
+    this.unsubscribeThreadContext = null;
 
     this.context = null;
     this.devices = [];
@@ -360,6 +377,20 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.commandHistory = [];
     this.historyCursor = null;
     this.historyDraft = "";
+  }
+
+  private preferredGsvWorkdir(threadContext: ThreadContext | null): string {
+    return threadContext?.cwd ?? "";
+  }
+
+  private applyThreadContext(threadContext: ThreadContext | null): void {
+    this.activeThreadContext = threadContext;
+    if (normalizeTarget(this.target) !== "gsv") {
+      return;
+    }
+
+    this.workdir = this.preferredGsvWorkdir(threadContext);
+    this.render();
   }
 
   private setStatus(kind: ShellStatusKind, text: string): void {

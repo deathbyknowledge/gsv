@@ -70,6 +70,28 @@ export type ProcSendResult =
   | { ok: true; status: "started"; runId: string; queued?: boolean }
   | { ok: false; error: string };
 
+export type ProcSpawnArgs = {
+  label?: string;
+  prompt?: string;
+  parentPid?: string;
+  workspace?: {
+    mode: "none" | "new" | "inherit" | "attach";
+    label?: string;
+    kind?: "thread" | "app" | "shared";
+    workspaceId?: string;
+  };
+};
+
+export type ProcSpawnResult =
+  | {
+      ok: true;
+      pid: string;
+      label?: string;
+      workspaceId: string | null;
+      cwd: string;
+    }
+  | { ok: false; error: string };
+
 export type ProcHistoryResult =
   | {
       ok: true;
@@ -231,6 +253,11 @@ export class GatewayClient {
       message,
       ...(pid ? { pid } : {}),
     })) as ProcSendResult;
+    return result;
+  }
+
+  async spawnProcess(args: ProcSpawnArgs): Promise<ProcSpawnResult> {
+    const result = (await this.call("proc.spawn", args)) as ProcSpawnResult;
     return result;
   }
 

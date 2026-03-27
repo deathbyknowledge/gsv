@@ -366,6 +366,8 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null
     gids: ctx.auth.resolveGids(user.username, user.gid),
     username: user.username,
     home: user.home,
+    cwd: user.home,
+    workspaceId: null,
   };
 }
 

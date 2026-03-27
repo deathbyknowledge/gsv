@@ -9,6 +9,12 @@
 
 export { GsvFs } from "./gsv-fs";
 export type { KernelRefs, ExtendedStat } from "./gsv-fs";
+export {
+  createWorkspaceBackend,
+  isWorkspaceMountPath,
+  workspaceRootPath,
+} from "./workspace-backend";
+export type { WorkspaceBackend, ExtendedWorkspaceStat } from "./workspace-backend";
 
 /**
  * Resolve a user-facing path, handling ~ expansion and relative paths.

@@ -12,6 +12,7 @@ import { Bash, defineCommand } from "just-bash";
 import type { BashExecResult, ExecResult } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
 import type { ExtendedStat } from "../../fs/gsv-fs";
+import { createWorkspaceBackend, resolveUserPath } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "../../syscalls/system";
@@ -21,8 +22,10 @@ export async function handleShellExec(
   ctx: KernelContext,
 ): Promise<ShellExecResult> {
   const identity = ctx.identity!.process;
-  const bash = createBash(ctx, identity);
-  const cwd = args.workdir ?? identity.home;
+  const cwd = args.workdir
+    ? resolveUserPath(args.workdir, identity.home, identity.cwd)
+    : identity.cwd;
+  const bash = createBash(ctx, identity, cwd);
 
   const timeoutMs = parseInt(
     ctx.config.get("config/shell/timeout_ms") ?? "30000",
@@ -66,11 +69,20 @@ export async function handleShellExec(
   }
 }
 
-function createBash(ctx: KernelContext, identity: ProcessIdentity): Bash {
+function createBash(ctx: KernelContext, identity: ProcessIdentity, cwd: string): Bash {
   const fs = new GsvFs(
     ctx.env.STORAGE,
     identity,
-    { auth: ctx.auth, procs: ctx.procs, devices: ctx.devices, caps: ctx.caps, config: ctx.config },
+    {
+      auth: ctx.auth,
+      procs: ctx.procs,
+      devices: ctx.devices,
+      caps: ctx.caps,
+      config: ctx.config,
+      workspaces: ctx.workspaces,
+    },
+    undefined,
+    createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
   );
 
   const serverName = ctx.config.get("config/server/name") ?? "gsv";
@@ -83,14 +95,14 @@ function createBash(ctx: KernelContext, identity: ProcessIdentity): Bash {
 
   return new Bash({
     fs,
-    cwd: identity.home,
+    cwd,
     env: {
       HOME: identity.home,
       USER: identity.username,
       LOGNAME: identity.username,
       SHELL: "/bin/bash",
       PATH: "/usr/local/bin:/usr/bin:/bin",
-      PWD: identity.home,
+      PWD: cwd,
       TERM: "xterm-256color",
       LANG: "en_US.UTF-8",
       UID: String(identity.uid),

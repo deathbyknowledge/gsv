@@ -2549,11 +2549,141 @@ button:disabled {
 .chat-app {
   height: 100%;
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-columns: 240px minmax(0, 1fr);
   background: var(--surface-2);
 }
 
+.chat-thread-rail {
+  min-width: 0;
+  border-right: var(--surface-border-width) solid color-mix(in srgb, var(--line-soft) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-overlay) 74%, transparent);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.chat-thread-rail-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.chat-thread-primary-btn,
+.chat-toolbar-btn {
+  justify-content: center;
+}
+
+.chat-thread-icon-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.chat-thread-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chat-thread-status {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.chat-thread-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.chat-thread-item {
+  border: var(--surface-border-width) solid color-mix(in srgb, var(--line-soft) 66%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface-overlay) 72%, transparent);
+  box-shadow: var(--elevation-soft);
+  color: var(--text-main);
+  width: 100%;
+  padding: 10px 11px;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.chat-thread-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line-soft));
+}
+
+.chat-thread-item:focus-visible {
+  outline: none;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
+}
+
+.chat-thread-item:active {
+  transform: translateY(1px);
+}
+
+.chat-thread-item.is-active {
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
+}
+
+.chat-thread-item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.chat-thread-item-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.chat-main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.chat-toolbar {
+  min-width: 0;
+  border-bottom: var(--surface-border-width) solid color-mix(in srgb, var(--line-soft) 72%, transparent);
+  padding: 10px 14px 8px;
+  display: flex;
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--surface-overlay) 74%, transparent);
+}
+
+.chat-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .chat-log {
+  min-width: 0;
+  min-height: 0;
   padding: 16px;
   overflow: auto;
   display: grid;
@@ -3104,6 +3234,26 @@ button:disabled {
   display: grid;
   gap: 8px;
   background: var(--surface-overlay);
+}
+
+@media (max-width: 900px) {
+  .chat-app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .chat-thread-rail {
+    border-right: 0;
+    border-bottom: var(--surface-border-width) solid color-mix(in srgb, var(--line-soft) 72%, transparent);
+    grid-template-rows: auto auto auto;
+  }
+
+  .chat-thread-list {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(180px, 220px);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
 }
 
 .chat-compose-surface {
@@ -3784,6 +3934,28 @@ button:disabled {
   background: linear-gradient(180deg, rgba(236, 250, 255, 0.95) 0%, rgba(219, 242, 251, 0.93) 100%);
 }
 
+.desktop-shell[data-theme="frutiger-aero"] .chat-thread-rail,
+.desktop-shell[data-theme="frutiger-aero"] .chat-toolbar {
+  border: 0;
+  background: linear-gradient(180deg, rgba(238, 251, 255, 0.95) 0%, rgba(218, 242, 251, 0.93) 100%);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-thread-item {
+  border: 0;
+  background: linear-gradient(180deg, rgba(250, 255, 255, 0.96) 0%, rgba(228, 246, 253, 0.92) 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.86) inset,
+    0 8px 18px rgba(84, 146, 181, 0.16);
+}
+
+.desktop-shell[data-theme="frutiger-aero"] .chat-thread-item.is-active {
+  background: linear-gradient(180deg, rgba(249, 255, 255, 0.98) 0%, rgba(213, 245, 255, 0.94) 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 0 0 1px rgba(88, 186, 230, 0.28),
+    0 10px 20px rgba(81, 146, 179, 0.18);
+}
+
 .desktop-shell[data-theme="frutiger-aero"] .chat-compose-surface {
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.78) inset,
@@ -3923,13 +4095,26 @@ button:disabled {
   background: var(--surface-overlay);
 }
 
+.desktop-shell[data-theme="neumorphism"] .chat-thread-rail,
+.desktop-shell[data-theme="neumorphism"] .chat-toolbar {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .desktop-shell[data-theme="neumorphism"] .chat-row,
+.desktop-shell[data-theme="neumorphism"] .chat-thread-item,
 .desktop-shell[data-theme="neumorphism"] .tool-card,
 .desktop-shell[data-theme="neumorphism"] .config-group,
 .desktop-shell[data-theme="neumorphism"] .mock-grid article {
   border: 0;
   background: var(--surface-raised);
   box-shadow: var(--elevation-soft);
+}
+
+.desktop-shell[data-theme="neumorphism"] .chat-thread-item.is-active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-raised));
+  box-shadow: var(--elevation-pressed);
 }
 
 .desktop-shell[data-theme="neumorphism"] .chat-row-user {

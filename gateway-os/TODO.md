@@ -22,6 +22,25 @@ Consolidated plan for identity + auth work:
   - done: unknown DM identity challenge + `sys.link.consume`
   - done by design: no inbound replay after linking (first message is intentionally dropped)
 
+## Next slice (threads + workspaces)
+
+User-facing unit: `thread`. Durable object: `workspace`. Execution unit: `process`.
+Threads spawn processes. Processes attach to workspaces. Workspaces outlive processes.
+
+- [x] Add `WorkspaceStore` (kernel SQLite) with `workspace_id`, `owner_uid`, `label`, `kind`, `state`, timestamps, branch/head metadata
+- [x] Add `workspace_id` and `cwd` to kernel `processes` records
+- [x] Extend process identity/runtime context so relative paths resolve against `cwd`, not always `home`
+- [x] Extend `proc.spawn` with workspace attachment modes: `new`, `inherit`, `attach`, `none`
+- [x] Define internal workspace storage API (read/list/stat/apply/search), backed by ripgit through a dedicated internal route on the `RIPGIT` Service Binding
+- [x] Mount canonical workspace path `/workspaces/{workspaceId}` through `GsvFs`
+- [x] Update native `fs.*` handlers to delegate search by backend (workspace backend vs R2 backend)
+- [ ] Move prompt/path loading off direct raw storage assumptions where workspace-backed paths are involved
+- [x] Chat UI: `New Thread` spawns child process + workspace instead of talking directly to init
+- [x] Files UI: open the current thread's workspace directly
+- [x] Shell UI: open in the current thread's workspace (`cwd = /workspaces/{workspaceId}`)
+- [x] Add a minimal `.gsv/` workspace layout: `workspace.json`, `summary.md`, per-process `chat.jsonl`
+- [x] Add a basic "Recent Threads" / workspace list in the UI
+
 ## Unix identity model (`/etc/passwd`, `/etc/shadow`, `/etc/group`)
 
 Use classic Linux flat-file formats so LLM agents can read/parse them naturally.
@@ -182,15 +201,44 @@ Processes produce output; the kernel routes it to the right place based on conte
 
 ## Conversation archival
 
-Active conversation is process RAM (SQLite in DO). Archives go to R2 filesystem.
+Active conversation is process RAM (SQLite in DO). Archived conversations should move to a
+versioned/searchable KnowledgeStore (likely ripgit-backed via Service Binding). The current
+raw R2 blob archive is an interim implementation, not the target architecture.
 
-- [ ] Archive path convention: `/var/sessions/{username}/{processId}/{sessionId}.jsonl.gz`
-- [ ] `proc.reset` archives current conversation to R2, starts fresh in the same process
+- [ ] Archive path convention inside KnowledgeStore: `/var/sessions/{username}/{processId}/{sessionId}.jsonl.gz`
+- [ ] `proc.reset` archives current conversation to KnowledgeStore, starts fresh in the same process
 - [ ] `proc.kill` archives before destroying the Process DO
 - [ ] Ephemeral processes (task/cron) auto-archive on completion, then kernel destroys the DO
-- [ ] Init process periodically compacts: summarize old messages, flush full transcript to R2
-- [ ] Any process can `fs.read` archived conversations to load context
+- [ ] Init process periodically compacts: summarize old messages, flush full transcript to KnowledgeStore
+- [ ] Any process can load archived conversations through KnowledgeStore-backed retrieval
 - [ ] Create `/var/sessions/` directory structure on first boot / user creation
+
+## KnowledgeStore (versioned + searchable knowledge backend)
+
+Knowledge-like data should not live as raw, unindexed R2 blobs when we care about search,
+history, diffs, and efficient retrieval. Introduce a separate KnowledgeStore abstraction,
+likely backed by ripgit via Service Binding, while keeping `GsvFs` as the operational
+filesystem for live files.
+
+- [ ] Define `KnowledgeStore` API:
+  - `read(path, ref?)`
+  - `write(path, content, { message, authorUid })`
+  - `list(prefix, ref?)`
+  - `search(query, { scope, prefix, limit })`
+  - `history(path, limit?)`
+  - `archiveSession(processId, sessionId, messages, summary?)`
+- [ ] Explicit boundary: KnowledgeStore is NOT a replacement for `GsvFs`
+  - good fits: `CONSTITUTION.md`, `context.d/*`, memory notes, archived sessions, skills/app packages later
+  - bad fits: `/sys`, `/proc`, `/dev`, auth/config runtime truth, active process state, scratch files
+- [ ] Repo granularity decision:
+  - one repo per user for home knowledge (`CONSTITUTION.md`, `context.d/`, memory notes)
+  - separate repo per user for session archives if transcript volume/search churn warrants it
+- [ ] Kernel wrapper over ripgit Service Binding — hide git semantics from most of the OS
+- [ ] Migrate prompt assembly from raw R2 `CONSTITUTION.md` + `context.d/*.md` reads to KnowledgeStore retrieval
+- [ ] Migrate conversation archival from raw R2 gzip blobs to KnowledgeStore
+- [ ] Expose KnowledgeStore as a context provider for long-context / recursive process retrieval
+- [ ] Optional later: read-only history mount for browsing archived knowledge (not write-through FS)
+- [ ] Optional later: pass narrow `KNOWLEDGE` capability bindings into Dynamic Worker sandboxes
 
 ## Syscall domain: `shell.*` (device commands)
 

@@ -12,6 +12,8 @@ const ROOT_IDENTITY: ProcessIdentity = {
   gids: [0],
   username: "root",
   home: "/root",
+  cwd: "/root",
+  workspaceId: null,
 };
 
 function makeReq(call: string, args: unknown): RequestFrame {
@@ -79,6 +81,8 @@ describe("Process DO — mechanical", () => {
         gids: [1000, 100],
         username: "sam",
         home: "/home/sam",
+        cwd: "/home/sam",
+        workspaceId: null,
       };
 
       await registerInKernel(pid, identity);
@@ -117,6 +121,8 @@ describe("Process DO — mechanical", () => {
         gids: [1000, 100],
         username: "alice",
         home: "/home/alice",
+        cwd: "/home/alice",
+        workspaceId: null,
       };
       await stub.recvFrame(makeReq("proc.setidentity", { pid, identity: newIdentity }));
 
@@ -411,6 +417,8 @@ describe("Process DO — mechanical", () => {
         gids: [0, 42],
         username: "root",
         home: "/root",
+        cwd: "/root",
+        workspaceId: null,
       };
 
       await stub.recvFrame({

@@ -14,8 +14,15 @@ import type {
   ProcListEntry,
   ProcSpawnArgs,
   ProcSpawnResult,
+  ProcWorkspaceKind,
+  ProcWorkspaceSpec,
 } from "../syscalls/proc";
 import { sendFrameToProcess } from "../shared/utils";
+import type { ProcessIdentity } from "../syscalls/system";
+import {
+  createWorkspaceBackend,
+  workspaceRootPath,
+} from "../fs";
 
 export function handleProcList(
   args: ProcListArgs,
@@ -34,6 +41,8 @@ export function handleProcList(
     state: r.state,
     label: r.label,
     createdAt: r.createdAt,
+    workspaceId: r.workspaceId,
+    cwd: r.cwd,
   }));
 
   return { processes };
@@ -47,9 +56,9 @@ export async function handleProcSpawn(
   const pid = crypto.randomUUID();
 
   const parentPid = args.parentPid ?? `init:${identity.process.uid}`;
+  const parent = ctx.procs.get(parentPid);
 
   if (parentPid !== `init:${identity.process.uid}`) {
-    const parent = ctx.procs.get(parentPid);
     if (!parent || parent.uid !== identity.process.uid) {
       if (identity.process.uid !== 0) {
         return { ok: false, error: `Cannot spawn under foreign process: ${parentPid}` };
@@ -57,16 +66,39 @@ export async function handleProcSpawn(
     }
   }
 
-  ctx.procs.spawn(pid, identity.process, {
+  const baseIdentity = parent
+    ? {
+        uid: parent.uid,
+        gid: parent.gid,
+        gids: parent.gids,
+        username: parent.username,
+        home: parent.home,
+        cwd: parent.cwd,
+        workspaceId: parent.workspaceId,
+      }
+    : identity.process;
+
+  const materialized = await materializeSpawnIdentity(args.workspace, baseIdentity, args.label, ctx);
+  if (!materialized.ok) {
+    return { ok: false, error: materialized.error };
+  }
+
+  ctx.procs.spawn(pid, materialized.identity, {
     parentPid,
     label: args.label,
+    cwd: materialized.identity.cwd,
+    workspaceId: materialized.identity.workspaceId,
   });
+
+  if (materialized.workspaceId) {
+    await ensureWorkspaceProcessFiles(ctx, materialized.workspaceId, pid, materialized.identity);
+  }
 
   await sendFrameToProcess(pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.setidentity",
-    args: { pid, identity: identity.process },
+    args: { pid, identity: materialized.identity },
   });
 
   if (args.prompt) {
@@ -78,7 +110,13 @@ export async function handleProcSpawn(
     });
   }
 
-  return { ok: true, pid, label: args.label };
+  return {
+    ok: true,
+    pid,
+    label: args.label,
+    workspaceId: materialized.identity.workspaceId,
+    cwd: materialized.identity.cwd,
+  };
 }
 
 /**
@@ -103,6 +141,10 @@ export async function forwardToProcess(
   if (proc.uid !== identity.process.uid && identity.process.uid !== 0) {
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
+
+  if (frame.call === "proc.send" && proc.workspaceId) {
+    ctx.workspaces.touch(proc.workspaceId);
+  }
   const response = await sendFrameToProcess(pid, frame);
 
   if (response && response.type === "res") {
@@ -115,4 +157,141 @@ export async function forwardToProcess(
   }
 
   return { ok: true, status: "delivered" };
+}
+
+type SpawnIdentityOutcome =
+  | {
+      ok: true;
+      identity: ProcessIdentity;
+      workspaceId: string | null;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+async function materializeSpawnIdentity(
+  workspace: ProcWorkspaceSpec | undefined,
+  baseIdentity: ProcessIdentity,
+  label: string | undefined,
+  ctx: KernelContext,
+): Promise<SpawnIdentityOutcome> {
+  const spec = workspace ?? defaultWorkspaceSpec(baseIdentity);
+
+  switch (spec.mode) {
+    case "none":
+      return {
+        ok: true,
+        identity: { ...baseIdentity, cwd: baseIdentity.home, workspaceId: null },
+        workspaceId: null,
+      };
+    case "inherit":
+      return {
+        ok: true,
+        identity: {
+          ...baseIdentity,
+          cwd: baseIdentity.workspaceId ? baseIdentity.cwd : baseIdentity.home,
+        },
+        workspaceId: baseIdentity.workspaceId,
+      };
+    case "attach": {
+      const workspaceRecord = ctx.workspaces.get(spec.workspaceId);
+      if (!workspaceRecord) {
+        return { ok: false, error: `Workspace not found: ${spec.workspaceId}` };
+      }
+      if (ctx.identity!.process.uid !== 0 && workspaceRecord.ownerUid !== baseIdentity.uid) {
+        return { ok: false, error: `Permission denied: workspace ${spec.workspaceId}` };
+      }
+
+      ctx.workspaces.touch(spec.workspaceId);
+        return {
+          ok: true,
+          identity: {
+            ...baseIdentity,
+            cwd: workspaceRootPath(spec.workspaceId),
+            workspaceId: spec.workspaceId,
+          },
+          workspaceId: spec.workspaceId,
+      };
+    }
+    case "new": {
+      const workspaceRecord = ctx.workspaces.create(baseIdentity.uid, {
+        label: spec.label ?? label,
+        kind: spec.kind ?? "thread",
+      });
+
+      try {
+        await ensureWorkspaceRoot(ctx, workspaceRecord.workspaceId, baseIdentity, spec.kind ?? "thread");
+      } catch (error) {
+        ctx.workspaces.delete(workspaceRecord.workspaceId);
+        throw error;
+      }
+
+      return {
+        ok: true,
+        identity: {
+          ...baseIdentity,
+          cwd: workspaceRootPath(workspaceRecord.workspaceId),
+          workspaceId: workspaceRecord.workspaceId,
+        },
+        workspaceId: workspaceRecord.workspaceId,
+      };
+    }
+    default:
+      return { ok: false, error: "Invalid workspace mode" };
+  }
+}
+
+function defaultWorkspaceSpec(identity: ProcessIdentity): ProcWorkspaceSpec {
+  return identity.workspaceId ? { mode: "inherit" } : { mode: "none" };
+}
+
+async function ensureWorkspaceRoot(
+  ctx: KernelContext,
+  workspaceId: string,
+  identity: ProcessIdentity,
+  kind: ProcWorkspaceKind,
+): Promise<void> {
+  const backend = requireWorkspaceBackend(ctx, identity);
+  const root = workspaceRootPath(workspaceId);
+  const workspaceJsonPath = `${root}/.gsv/workspace.json`;
+  const summaryPath = `${root}/.gsv/summary.md`;
+
+  const workspaceJsonExists = await backend.exists(workspaceJsonPath);
+  if (!workspaceJsonExists) {
+    const payload = JSON.stringify({
+      workspaceId,
+      ownerUid: identity.uid,
+      label: ctx.workspaces.get(workspaceId)?.label ?? null,
+      kind,
+      createdAt: Date.now(),
+    }, null, 2);
+    await backend.writeFile(workspaceJsonPath, payload);
+  }
+
+  const summaryExists = await backend.exists(summaryPath);
+  if (!summaryExists) {
+    await backend.writeFile(summaryPath, "");
+  }
+}
+
+async function ensureWorkspaceProcessFiles(
+  ctx: KernelContext,
+  workspaceId: string,
+  pid: string,
+  identity: ProcessIdentity,
+): Promise<void> {
+  const backend = requireWorkspaceBackend(ctx, identity);
+  const chatPath = `${workspaceRootPath(workspaceId)}/.gsv/processes/${pid}/chat.jsonl`;
+  const exists = await backend.exists(chatPath);
+  if (exists) return;
+  await backend.writeFile(chatPath, "");
+}
+
+function requireWorkspaceBackend(ctx: KernelContext, identity: ProcessIdentity) {
+  const backend = createWorkspaceBackend(ctx.env, identity, ctx.workspaces);
+  if (!backend) {
+    throw new Error("Workspace backend is not configured");
+  }
+  return backend;
 }

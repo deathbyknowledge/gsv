@@ -23,6 +23,8 @@ export type ProcessRecord = {
   gids: number[];
   username: string;
   home: string;
+  cwd: string;
+  workspaceId: string | null;
   state: ProcessState;
   label: string | null;
   createdAt: number;
@@ -41,17 +43,39 @@ export class ProcessRegistry {
         gids TEXT NOT NULL,
         username TEXT NOT NULL,
         home TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        workspace_id TEXT,
         state TEXT NOT NULL DEFAULT 'running',
         label TEXT,
         created_at INTEGER NOT NULL
       )
     `);
+
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN cwd TEXT");
+    } catch {}
+
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN workspace_id TEXT");
+    } catch {}
+
+    this.sql.exec("UPDATE processes SET cwd = home WHERE cwd IS NULL OR cwd = ''");
   }
 
-  spawn(processId: string, identity: ProcessIdentity, opts?: { parentPid?: string; label?: string }): void {
+  spawn(
+    processId: string,
+    identity: ProcessIdentity,
+    opts?: {
+      parentPid?: string;
+      label?: string;
+      cwd?: string;
+      workspaceId?: string | null;
+    },
+  ): void {
     this.sql.exec(
-      `INSERT OR REPLACE INTO processes (process_id, parent_pid, uid, gid, gids, username, home, state, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
+      `INSERT OR REPLACE INTO processes
+        (process_id, parent_pid, uid, gid, gids, username, home, cwd, workspace_id, state, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
       processId,
       opts?.parentPid ?? null,
       identity.uid,
@@ -59,6 +83,8 @@ export class ProcessRegistry {
       JSON.stringify(identity.gids),
       identity.username,
       identity.home,
+      opts?.cwd ?? identity.cwd,
+      opts?.workspaceId ?? identity.workspaceId,
       opts?.label ?? null,
       Date.now(),
     );
@@ -92,8 +118,10 @@ export class ProcessRegistry {
       gids: string;
       username: string;
       home: string;
+      cwd: string | null;
+      workspace_id: string | null;
     }>(
-      "SELECT uid, gid, gids, username, home FROM processes WHERE process_id = ?",
+      "SELECT uid, gid, gids, username, home, cwd, workspace_id FROM processes WHERE process_id = ?",
       processId,
     )];
 
@@ -106,6 +134,8 @@ export class ProcessRegistry {
       gids: JSON.parse(row.gids),
       username: row.username,
       home: row.home,
+      cwd: row.cwd ?? row.home,
+      workspaceId: row.workspace_id ?? null,
     };
   }
 
@@ -120,13 +150,21 @@ export class ProcessRegistry {
   }
 
   updateIdentity(processId: string, identity: ProcessIdentity): void {
+    const existing = this.get(processId);
+    const nextCwd = existing
+      ? remapCwd(existing.home, identity.home, existing.cwd, existing.workspaceId)
+      : identity.cwd;
+
     this.sql.exec(
-      `UPDATE processes SET uid = ?, gid = ?, gids = ?, username = ?, home = ? WHERE process_id = ?`,
+      `UPDATE processes
+         SET uid = ?, gid = ?, gids = ?, username = ?, home = ?, cwd = ?
+       WHERE process_id = ?`,
       identity.uid,
       identity.gid,
       JSON.stringify(identity.gids),
       identity.username,
       identity.home,
+      nextCwd,
       processId,
     );
   }
@@ -189,6 +227,8 @@ type RowShape = {
   gids: string;
   username: string;
   home: string;
+  cwd: string | null;
+  workspace_id: string | null;
   state: string;
   label: string | null;
   created_at: number;
@@ -203,8 +243,25 @@ function toRecord(row: RowShape): ProcessRecord {
     gids: JSON.parse(row.gids),
     username: row.username,
     home: row.home,
+    cwd: row.cwd ?? row.home,
+    workspaceId: row.workspace_id ?? null,
     state: row.state as ProcessState,
     label: row.label,
     createdAt: row.created_at,
   };
+}
+
+function remapCwd(
+  previousHome: string,
+  nextHome: string,
+  cwd: string,
+  workspaceId: string | null,
+): string {
+  if (workspaceId) return cwd;
+  if (cwd === previousHome) return nextHome;
+  const prefix = previousHome.endsWith("/") ? previousHome : `${previousHome}/`;
+  if (!cwd.startsWith(prefix)) return cwd;
+  const suffix = cwd.slice(prefix.length);
+  const nextPrefix = nextHome.endsWith("/") ? nextHome : `${nextHome}/`;
+  return `${nextPrefix}${suffix}`.replace(/\/+$/, "");
 }

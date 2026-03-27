@@ -11,7 +11,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     iconId: "chat",
     entrypoint: { kind: "component", route: "/apps/chat", tagName: "gsv-chat-app" },
     permissions: ["chat.use"],
-    syscalls: ["proc.send", "proc.history"],
+    syscalls: ["proc.spawn", "proc.send", "proc.history", "sys.workspace.list"],
     windowDefaults: {
       width: 880,
       height: 640,

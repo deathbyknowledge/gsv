@@ -1,6 +1,11 @@
 import type { AppElementContext, GsvAppElement } from "./app-sdk";
 import { renderActionIcon, renderFileIcon } from "./icons";
 import type { FileIconKind } from "./icons";
+import {
+  getActiveThreadContext,
+  subscribeActiveThreadContext,
+  type ThreadContext,
+} from "./thread-context";
 
 type DeviceSummary = {
   deviceId: string;
@@ -250,6 +255,8 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
   private isRefreshingDevices = false;
 
   private unsubscribeStatus: (() => void) | null = null;
+  private unsubscribeThreadContext: (() => void) | null = null;
+  private activeThreadContext: ThreadContext | null = getActiveThreadContext();
 
   private confirmDiscardChanges(): boolean {
     if (!this.isDirty || this.selectedKind !== "file") {
@@ -375,7 +382,9 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
           this.searchMatches = [];
           this.searchTruncated = false;
           this.pathStyle = this.target === "gsv" ? "absolute" : "relative";
-          this.currentPath = this.pathStyle === "absolute" ? "/" : ".";
+          this.currentPath = this.pathStyle === "absolute"
+            ? this.preferredGsvPath(this.activeThreadContext)
+            : ".";
           this.pathInput = this.currentPath;
           this.entries = [];
           this.currentView = "explorer";
@@ -455,6 +464,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.context = context;
     this.kernelState = context.kernel.getStatus().state;
     this.suspended = false;
+    this.applyThreadContext(this.activeThreadContext, { reload: false, confirm: false });
 
     this.unsubscribeStatus?.();
     this.unsubscribeStatus = context.kernel.onStatus((status) => {
@@ -470,6 +480,10 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.addEventListener("click", this.onClick);
     this.addEventListener("input", this.onInput);
     this.addEventListener("keydown", this.onKeyDown);
+    this.unsubscribeThreadContext?.();
+    this.unsubscribeThreadContext = subscribeActiveThreadContext((threadContext) => {
+      this.applyThreadContext(threadContext, { reload: true, confirm: true });
+    });
 
     this.render();
     if (this.kernelState === "connected") {
@@ -508,6 +522,8 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.removeEventListener("keydown", this.onKeyDown);
     this.unsubscribeStatus?.();
     this.unsubscribeStatus = null;
+    this.unsubscribeThreadContext?.();
+    this.unsubscribeThreadContext = null;
     this.context = null;
     this.kernelState = "disconnected";
     this.suspended = false;
@@ -535,6 +551,60 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.isRefreshingDevices = false;
     this.statusKind = "idle";
     this.statusText = "";
+  }
+
+  private preferredGsvPath(threadContext: ThreadContext | null): string {
+    if (threadContext?.workspaceId) {
+      return `/workspaces/${threadContext.workspaceId}`;
+    }
+    if (threadContext?.cwd) {
+      return normalizePath(threadContext.cwd, "absolute");
+    }
+    return "/";
+  }
+
+  private applyThreadContext(
+    threadContext: ThreadContext | null,
+    options?: { reload: boolean; confirm: boolean },
+  ): void {
+    this.activeThreadContext = threadContext;
+    if (normalizeTarget(this.target) !== "gsv") {
+      return;
+    }
+
+    const nextPath = this.preferredGsvPath(threadContext);
+    const normalizedCurrent = normalizePath(this.currentPath, "absolute");
+    const normalizedNext = normalizePath(nextPath, "absolute");
+    if (normalizedCurrent === normalizedNext) {
+      return;
+    }
+
+    if (options?.confirm !== false && !this.confirmDiscardChanges()) {
+      return;
+    }
+
+    this.pathStyle = "absolute";
+    this.currentPath = normalizedNext;
+    this.pathInput = normalizedNext;
+    this.entries = [];
+    this.currentView = "explorer";
+    this.explorerPane = "entries";
+    this.selectedPath = null;
+    this.selectedKind = "empty";
+    this.selectedSize = null;
+    this.editorContent = "";
+    this.imageData = null;
+    this.isDirty = false;
+    this.searchMatches = [];
+    this.searchTruncated = false;
+    this.setStatus("idle", "");
+
+    if (options?.reload && this.context && this.kernelState === "connected" && !this.suspended) {
+      void this.loadDirectory(this.currentPath);
+      return;
+    }
+
+    this.render();
   }
 
   private setStatus(kind: "idle" | "error", text: string): void {

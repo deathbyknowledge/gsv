@@ -29,7 +29,10 @@ import type { CapabilityStore } from "../kernel/capabilities";
 import type { ConfigStore } from "../kernel/config";
 import type { DeviceRegistry } from "../kernel/devices";
 import type { ProcessRegistry } from "../kernel/processes";
+import type { WorkspaceStore } from "../kernel/workspaces";
 import { canReadConfigKey } from "../kernel/config-access";
+import type { WorkspaceBackend } from "./workspace-backend";
+import { isWorkspaceMountPath } from "./workspace-backend";
 
 export type KernelRefs = {
   auth: AuthStore;
@@ -37,6 +40,7 @@ export type KernelRefs = {
   devices: DeviceRegistry;
   caps: CapabilityStore;
   config: ConfigStore;
+  workspaces: WorkspaceStore;
 };
 
 export type ExtendedStat = FsStat & { uid: number; gid: number };
@@ -49,21 +53,28 @@ export class GsvFs implements IFileSystem {
   private identity: ProcessIdentity;
   private kernel: KernelRefs | null;
   private selfPid: string | null;
+  private workspaceBackend: WorkspaceBackend | null;
 
   constructor(
     bucket: R2Bucket,
     identity: ProcessIdentity,
     kernel?: KernelRefs,
     selfPid?: string,
+    workspaceBackend?: WorkspaceBackend | null,
   ) {
     this.bucket = bucket;
     this.identity = identity;
     this.kernel = kernel ?? null;
     this.selfPid = selfPid ?? null;
+    this.workspaceBackend = workspaceBackend ?? null;
   }
 
   async readFile(path: string, _options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string> {
     const p = normalize(path);
+    const workspace = this.getWorkspaceBackend(p);
+    if (workspace) {
+      return workspace.readFile(p, _options);
+    }
     const virt = this.readVirtual(p);
     if (virt !== undefined) return virt;
 
@@ -77,6 +88,10 @@ export class GsvFs implements IFileSystem {
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
     const p = normalize(path);
+    const workspace = this.getWorkspaceBackend(p);
+    if (workspace) {
+      return workspace.readFileBuffer(p);
+    }
 
     if (p === "/dev/random" || p === "/dev/urandom") {
       const buf = new Uint8Array(256);
@@ -97,6 +112,11 @@ export class GsvFs implements IFileSystem {
 
   async writeFile(path: string, content: FileContent, _options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void> {
     const p = normalize(path);
+    const workspace = this.getWorkspaceBackend(p);
+    if (workspace) {
+      await workspace.writeFile(p, content, _options);
+      return;
+    }
 
     if (p.startsWith("/dev/")) {
       if (p === "/dev/null") return;
@@ -133,6 +153,11 @@ export class GsvFs implements IFileSystem {
 
   async appendFile(path: string, content: FileContent, _options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void> {
     const p = normalize(path);
+    const workspace = this.getWorkspaceBackend(p);
+    if (workspace) {
+      await workspace.appendFile(p, content, _options);
+      return;
+    }
 
     if (p === "/dev/null") return;
     if (p.startsWith("/dev/") || p.startsWith("/proc/") || p.startsWith("/sys/")) {
@@ -170,6 +195,11 @@ export class GsvFs implements IFileSystem {
     if (p === "/etc") return true;
     if (this.isEtcAuth(p)) return true;
     if (this.readVirtual(p) !== undefined) return true;
+
+    const workspace = this.getWorkspaceBackend(p);
+    if (workspace) {
+      return workspace.exists(p);
+    }
 
     const key = toKey(p);
     const head = await this.bucket.head(key);
@@ -218,6 +248,11 @@ export class GsvFs implements IFileSystem {
       return { isFile: true, isDirectory: false, isSymbolicLink: false, mode: 0o444, size: 0, mtime: new Date(), uid: 0, gid: 0 };
     }
 
+    const workspace = this.getWorkspaceBackend(p);
+    if (workspace) {
+      return workspace.stat(p);
+    }
+
     const key = toKey(p);
     const head = await this.bucket.head(key);
     if (head) {
@@ -252,6 +287,11 @@ export class GsvFs implements IFileSystem {
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
     const p = normalize(path);
+    const workspace = this.getWorkspaceBackend(p);
+    if (workspace) {
+      await workspace.mkdir(p, options);
+      return;
+    }
 
     if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/")) {
       throw new Error(`EPERM: cannot mkdir in virtual filesystem '${p}'`);
@@ -287,6 +327,11 @@ export class GsvFs implements IFileSystem {
     const virtEntries = this.readdirVirtual(p);
     if (virtEntries !== undefined) return virtEntries;
 
+    const workspace = this.getWorkspaceBackend(p);
+    if (workspace) {
+      return workspace.readdir(p);
+    }
+
     const key = toKey(p);
     const prefix = key ? key + "/" : "";
     const listed = await this.bucket.list({ prefix, delimiter: "/" });
@@ -303,7 +348,7 @@ export class GsvFs implements IFileSystem {
 
     // Merge virtual top-level entries for root listing
     if (p === "/" && this.kernel) {
-      for (const vdir of ["proc", "dev", "sys"]) {
+      for (const vdir of ["proc", "dev", "sys", "workspaces"]) {
         if (!entries.includes(vdir)) entries.push(vdir);
       }
       if (!entries.includes("etc")) entries.push("etc");
@@ -342,6 +387,11 @@ export class GsvFs implements IFileSystem {
 
   async rm(path: string, options?: RmOptions): Promise<void> {
     const p = normalize(path);
+    const workspace = this.getWorkspaceBackend(p);
+    if (workspace) {
+      await workspace.rm(p, options);
+      return;
+    }
     if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/")) {
       throw new Error(`EPERM: cannot remove virtual path '${p}'`);
     }
@@ -406,6 +456,18 @@ export class GsvFs implements IFileSystem {
   async cp(src: string, dest: string, _options?: CpOptions): Promise<void> {
     const sp = normalize(src);
     const dp = normalize(dest);
+    const srcWorkspace = this.getWorkspaceBackend(sp);
+    const destWorkspace = this.getWorkspaceBackend(dp);
+
+    if (srcWorkspace || destWorkspace) {
+      const srcStat = await this.stat(sp);
+      if (srcStat.isDirectory) {
+        throw new Error(`EISDIR: illegal operation on a directory, cp '${sp}'`);
+      }
+      const buf = await this.readFileBuffer(sp);
+      await this.writeFile(dp, buf);
+      return;
+    }
 
     if (sp.startsWith("/proc/") || sp.startsWith("/dev/") || sp.startsWith("/sys/")) {
       const content = this.readVirtual(sp);
@@ -444,6 +506,9 @@ export class GsvFs implements IFileSystem {
 
   async chmod(path: string, mode: number): Promise<void> {
     const p = normalize(path);
+    if (this.getWorkspaceBackend(p)) {
+      throw new Error(`ENOSYS: chmod not supported for workspace paths '${p}'`);
+    }
     if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/")) {
       throw new Error(`EPERM: cannot chmod virtual path '${p}'`);
     }
@@ -471,7 +536,11 @@ export class GsvFs implements IFileSystem {
    * chown — not part of IFileSystem but used by custom bash commands.
    */
   async chown(path: string, newUid?: number, newGid?: number): Promise<void> {
-    const key = toKey(normalize(path));
+    const normalized = normalize(path);
+    if (this.getWorkspaceBackend(normalized)) {
+      throw new Error(`ENOSYS: chown not supported for workspace paths '${normalized}'`);
+    }
+    const key = toKey(normalized);
     const obj = await this.bucket.get(key);
     if (!obj) throw new Error(`ENOENT: no such file or directory, chown '${path}'`);
 
@@ -511,6 +580,11 @@ export class GsvFs implements IFileSystem {
 
   async utimes(path: string, _atime: Date, _mtime: Date): Promise<void> {
     const p = normalize(path);
+    if (this.getWorkspaceBackend(p)) {
+      const exists = await this.exists(p);
+      if (!exists) throw new Error(`ENOENT: no such file or directory, utimes '${p}'`);
+      return;
+    }
     if (p.startsWith("/proc/") || p.startsWith("/dev/") || p.startsWith("/sys/")) return;
     const key = toKey(p);
     const exists = await this.bucket.head(key);
@@ -572,6 +646,7 @@ export class GsvFs implements IFileSystem {
         return JSON.stringify({
           uid: proc.uid, gid: proc.gid, gids: proc.gids,
           username: proc.username, home: proc.home,
+          cwd: proc.cwd, workspaceId: proc.workspaceId,
         }, null, 2) + "\n";
       default:
         return undefined;
@@ -770,6 +845,10 @@ export class GsvFs implements IFileSystem {
 
     if (!this.kernel) return false;
 
+    if (path === "/workspaces") {
+      return true;
+    }
+
     // /proc/{pid} is a directory if that process exists
     if (path.startsWith("/proc/") && !path.slice("/proc/".length).includes("/")) {
       const pid = path.slice("/proc/".length);
@@ -887,6 +966,13 @@ export class GsvFs implements IFileSystem {
       return devices.map((d) => d.device_id).sort();
     }
 
+    if (path === "/workspaces") {
+      const workspaces = this.identity.uid === 0
+        ? this.kernel.workspaces.list()
+        : this.kernel.workspaces.list(this.identity.uid);
+      return workspaces.map((workspace) => workspace.workspaceId).sort();
+    }
+
     if (path === "/sys/capabilities") {
       const caps = this.kernel.caps.list();
       return [...new Set(caps.map((c) => String(c.gid)))].sort();
@@ -913,6 +999,18 @@ export class GsvFs implements IFileSystem {
     }
 
     return undefined;
+  }
+
+  private getWorkspaceBackend(path: string): WorkspaceBackend | null {
+    if (path === "/workspaces") return null;
+    if (!isWorkspaceMountPath(path)) return null;
+    if (!this.kernel) {
+      throw new Error(`ENOSYS: workspace backend is unavailable for '${path}'`);
+    }
+    if (!this.workspaceBackend) {
+      throw new Error(`ENOSYS: workspace backend is unavailable for '${path}'`);
+    }
+    return this.workspaceBackend.handles(path) ? this.workspaceBackend : null;
   }
 
 

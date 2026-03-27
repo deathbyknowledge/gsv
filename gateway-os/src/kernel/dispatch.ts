@@ -31,6 +31,7 @@ import {
 } from "./proc-handlers";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys-config";
 import { handleSysDeviceGet, handleSysDeviceList } from "./sys-device";
+import { handleSysWorkspaceList } from "./sys-workspaces";
 import {
   handleSysTokenCreate,
   handleSysTokenList,
@@ -173,6 +174,9 @@ async function dispatchNative(
         break;
       case "sys.device.get":
         data = handleSysDeviceGet(frame.args, ctx);
+        break;
+      case "sys.workspace.list":
+        data = handleSysWorkspaceList(frame.args, ctx);
         break;
       case "sys.token.create":
         data = await handleSysTokenCreate(frame.args, ctx);

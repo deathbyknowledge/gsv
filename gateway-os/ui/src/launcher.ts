@@ -1,4 +1,5 @@
 import { APP_REGISTRY, type AppManifest } from "./apps";
+import { OPEN_APP_EVENT, type OpenAppEventDetail } from "./app-link";
 import {
   OPEN_CHAT_PROCESS_EVENT,
   TARGET_CHAT_PROCESS_EVENT,
@@ -6,6 +7,7 @@ import {
   queuePendingChatProcess,
   type TargetChatProcessEventDetail,
 } from "./chat-process-link";
+import { normalizeThreadContext, setActiveThreadContext } from "./thread-context";
 import type { WindowManager, WindowSummary } from "./window-manager";
 
 type LauncherOptions = {
@@ -127,9 +129,14 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return;
     }
 
-    const detail = event.detail as { pid?: unknown } | null;
-    const pid = normalizeProcessId(detail?.pid);
-    if (!pid) {
+    const rawDetail = event.detail as { pid?: unknown; workspaceId?: unknown; cwd?: unknown } | null;
+    const pid = normalizeProcessId(rawDetail?.pid);
+    const normalized = normalizeThreadContext({
+      pid,
+      workspaceId: rawDetail?.workspaceId ?? null,
+      cwd: rawDetail?.cwd,
+    });
+    if (!normalized) {
       return;
     }
 
@@ -138,9 +145,29 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return;
     }
 
-    queuePendingChatProcess(chatWindowId, pid);
-    const targetDetail: TargetChatProcessEventDetail = { pid, windowId: chatWindowId };
+    setActiveThreadContext(normalized);
+    queuePendingChatProcess(chatWindowId, normalized);
+    const targetDetail: TargetChatProcessEventDetail = { ...normalized, windowId: chatWindowId };
     window.dispatchEvent(new CustomEvent<TargetChatProcessEventDetail>(TARGET_CHAT_PROCESS_EVENT, { detail: targetDetail }));
+  };
+
+  const onOpenApp = (event: Event): void => {
+    if (!(event instanceof CustomEvent)) {
+      return;
+    }
+
+    const detail = event.detail as OpenAppEventDetail | null;
+    const appId = typeof detail?.appId === "string" ? detail.appId.trim() : "";
+    if (!appId) {
+      return;
+    }
+
+    const normalizedThread = normalizeThreadContext(detail?.threadContext);
+    if (normalizedThread) {
+      setActiveThreadContext(normalizedThread);
+    }
+
+    openApp(appId);
   };
 
   for (const iconNode of iconNodes) {
@@ -151,6 +178,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   }
 
   window.addEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
+  window.addEventListener(OPEN_APP_EVENT, onOpenApp as EventListener);
 
   const unsubscribe = windowManager.subscribe((summaries) => {
     latestSummaries = summaries;
@@ -172,6 +200,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
         iconNode.removeEventListener("focus", onIconFocus);
       }
       window.removeEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
+      window.removeEventListener(OPEN_APP_EVENT, onOpenApp as EventListener);
     },
   };
 }

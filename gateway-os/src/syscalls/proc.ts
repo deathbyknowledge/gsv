@@ -8,15 +8,24 @@
 
 import type { ProcessIdentity } from "./system";
 
+export type ProcWorkspaceKind = "thread" | "app" | "shared";
+
+export type ProcWorkspaceSpec =
+  | { mode: "none" }
+  | { mode: "new"; label?: string; kind?: ProcWorkspaceKind }
+  | { mode: "inherit" }
+  | { mode: "attach"; workspaceId: string };
+
 export type ProcSpawnArgs = {
   label?: string;
   prompt?: string;
   parentPid?: string;
+  workspace?: ProcWorkspaceSpec;
   // NOTE: consider allowing explicit identity override (root only or subset of current identity)
 };
 
 export type ProcSpawnResult =
-  | { ok: true; pid: string; label?: string }
+  | { ok: true; pid: string; label?: string; workspaceId: string | null; cwd: string }
   | { ok: false; error: string };
 
 export type ProcKillArgs = {
@@ -83,6 +92,8 @@ export type ProcListEntry = {
   state: string;
   label: string | null;
   createdAt: number;
+  workspaceId: string | null;
+  cwd: string;
 };
 
 export type ProcListResult = {

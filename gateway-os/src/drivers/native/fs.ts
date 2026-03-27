@@ -8,7 +8,13 @@
  */
 
 import { GsvFs } from "../../fs/gsv-fs";
-import { resolveUserPath, formatSize, isTextContentType, inferContentType } from "../../fs";
+import {
+  createWorkspaceBackend,
+  resolveUserPath,
+  formatSize,
+  isTextContentType,
+  inferContentType,
+} from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
@@ -24,13 +30,22 @@ function makeFs(ctx: KernelContext): GsvFs {
   return new GsvFs(
     ctx.env.STORAGE,
     identity,
-    { auth: ctx.auth, procs: ctx.procs, devices: ctx.devices, caps: ctx.caps, config: ctx.config },
+    {
+      auth: ctx.auth,
+      procs: ctx.procs,
+      devices: ctx.devices,
+      caps: ctx.caps,
+      config: ctx.config,
+      workspaces: ctx.workspaces,
+    },
+    undefined,
+    createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
   );
 }
 
 function resolve(path: string, ctx: KernelContext): string {
   const identity = ctx.identity!.process;
-  return resolveUserPath(path, identity.home, identity.home);
+  return resolveUserPath(path, identity.home, identity.cwd);
 }
 
 export async function handleFsRead(args: FsReadArgs, ctx: KernelContext): Promise<FsReadResult> {
@@ -204,8 +219,6 @@ export async function handleFsDelete(args: FsDeleteArgs, ctx: KernelContext): Pr
 }
 
 export async function handleFsSearch(args: FsSearchArgs, ctx: KernelContext): Promise<FsSearchResult> {
-  const bucket = ctx.env.STORAGE;
-
   let regex: RegExp;
   try {
     regex = new RegExp(args.pattern, "g");
@@ -215,8 +228,28 @@ export async function handleFsSearch(args: FsSearchArgs, ctx: KernelContext): Pr
 
   const identity = ctx.identity!.process;
   const prefix = args.path
-    ? resolveUserPath(args.path, identity.home, identity.home)
-    : "/";
+    ? resolveUserPath(args.path, identity.home, identity.cwd)
+    : identity.cwd;
+
+  const workspaceBackend = createWorkspaceBackend(ctx.env, identity, ctx.workspaces);
+  if (prefix.startsWith("/workspaces/") && !workspaceBackend) {
+    return { ok: false, error: `Workspace backend is unavailable for ${prefix}` };
+  }
+  if (workspaceBackend?.handles(prefix)) {
+    try {
+      const result = await workspaceBackend.search(prefix, regex, args.include);
+      return {
+        ok: true,
+        matches: result.matches,
+        count: result.matches.length,
+        truncated: result.truncated,
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  const bucket = ctx.env.STORAGE;
   const searchPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
 
   const matches: FsSearchMatch[] = [];

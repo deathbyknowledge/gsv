@@ -9,6 +9,8 @@ const ROOT: ProcessIdentity = {
   gids: [0],
   username: "root",
   home: "/root",
+  cwd: "/root",
+  workspaceId: null,
 };
 
 const SAM: ProcessIdentity = {
@@ -17,6 +19,8 @@ const SAM: ProcessIdentity = {
   gids: [1000, 100],
   username: "sam",
   home: "/home/sam",
+  cwd: "/home/sam",
+  workspaceId: null,
 };
 
 const ALICE: ProcessIdentity = {
@@ -25,6 +29,8 @@ const ALICE: ProcessIdentity = {
   gids: [100],
   username: "alice",
   home: "/home/alice",
+  cwd: "/home/alice",
+  workspaceId: null,
 };
 
 function putFile(
@@ -73,6 +79,7 @@ function makeConfigBackedFs(
     devices: null as never,
     caps: null as never,
     config: config as never,
+    workspaces: null as never,
   });
 }
 
@@ -452,6 +459,7 @@ describe("GsvFs virtual /dev", () => {
       devices: null as never,
       caps: null as never,
       config: null as never,
+      workspaces: null as never,
     });
     const entries = await fs.readdir("/dev");
     expect(entries).toContain("null");

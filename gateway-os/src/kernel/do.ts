@@ -21,6 +21,7 @@ import { RoutingTable, type RouteOrigin } from "./routing";
 import { ProcessRegistry } from "./processes";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
+import { WorkspaceStore } from "./workspaces";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -56,6 +57,7 @@ export class Kernel extends Host<Env> {
   private readonly devices: DeviceRegistry;
   private readonly routes: RoutingTable;
   private readonly procs: ProcessRegistry;
+  private readonly workspaces: WorkspaceStore;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
@@ -81,6 +83,9 @@ export class Kernel extends Host<Env> {
 
     this.procs = new ProcessRegistry(ctx.storage.sql);
     this.procs.init();
+
+    this.workspaces = new WorkspaceStore(ctx.storage.sql);
+    this.workspaces.init();
 
     this.adapters = new AdapterStore(ctx.storage.sql);
     this.adapters.init();
@@ -320,6 +325,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      workspaces: this.workspaces,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       connection: null as unknown as Connection,
@@ -374,6 +380,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      workspaces: this.workspaces,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       connection,
@@ -390,6 +397,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      workspaces: this.workspaces,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       connection: null as unknown as Connection,
@@ -500,6 +508,8 @@ export class Kernel extends Host<Env> {
           gids: this.auth.resolveGids(root.username, root.gid),
           username: root.username,
           home: root.home,
+          cwd: root.home,
+          workspaceId: null,
         }
       : {
           uid: 0,
@@ -507,6 +517,8 @@ export class Kernel extends Host<Env> {
           gids: [0],
           username: "root",
           home: "/root",
+          cwd: "/root",
+          workspaceId: null,
         };
 
     return {

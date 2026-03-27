@@ -27,6 +27,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.config.set",
     "sys.device.get",
     "sys.device.list",
+    "sys.workspace.list",
     "sys.link",
     "sys.link.list",
     "sys.token.create",
@@ -57,16 +58,10 @@ export class CapabilityStore {
   }
 
   seed(): void {
-    const existing = this.sql.exec<{ cnt: number }>(
-      `SELECT COUNT(*) as cnt FROM group_capabilities`,
-    ).toArray();
-
-    if (existing[0].cnt > 0) return;
-
     for (const [gid, caps] of DEFAULT_CAPABILITIES) {
       for (const cap of caps) {
         this.sql.exec(
-          `INSERT INTO group_capabilities (gid, capability) VALUES (?, ?)`,
+          `INSERT OR IGNORE INTO group_capabilities (gid, capability) VALUES (?, ?)`,
           gid,
           cap,
         );

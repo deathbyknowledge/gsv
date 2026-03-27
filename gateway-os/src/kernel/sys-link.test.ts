@@ -29,6 +29,8 @@ function makeContext(uid: number, adapters: FakeAdapters): KernelContext {
         gids: [uid],
         username: uid === 0 ? "root" : `user${uid}`,
         home: uid === 0 ? "/root" : `/home/user${uid}`,
+        cwd: uid === 0 ? "/root" : `/home/user${uid}`,
+        workspaceId: null,
       },
       capabilities: ["*"],
     },
