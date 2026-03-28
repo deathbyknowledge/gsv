@@ -166,6 +166,52 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("does not queue a new message while a finished run is checkpointing", async () => {
+      const pid = "mech-send-checkpoint";
+      const identity: ProcessIdentity = {
+        ...ROOT_IDENTITY,
+        cwd: "/workspaces/ws-checkpoint",
+        workspaceId: "ws-checkpoint",
+      };
+      const stub = await initProcess(pid, identity);
+      const runId = "run-checkpoint";
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const proc = instance as any;
+        proc.store.appendMessage("user", "first message");
+        proc.currentRun = {
+          runId,
+          queued: false,
+          config: {
+            profile: "mcp",
+            provider: "openai",
+            model: "gpt-4o-mini",
+            apiKey: "test-key",
+            maxTokens: 512,
+            systemPrompt: "",
+            maxContextBytes: 32768,
+          },
+        };
+        proc.checkpointWorkspace = async () => {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        };
+      });
+
+      const finishing = runInDurableObject(stub, (instance: Process) =>
+        (instance as any).finishRun("turn.complete"),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      const sendRes = (await stub.recvFrame(
+        makeReq("proc.send", { message: "second message" }),
+      )) as ResponseOkFrame;
+      expect(sendRes.ok).toBe(true);
+      expect((sendRes.data as { queued?: boolean }).queued).toBeUndefined();
+
+      await finishing;
+    });
+
     it("queues message, finishRun dequeues and processes it", async () => {
       const pid = "mech-send-queued";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -200,6 +246,68 @@ describe("Process DO — mechanical", () => {
         expect(userMsgs[1].content).toBe("Second message");
         expect(store.queueSize()).toBe(0);
         expect(store.getValue("currentRun")).toBeNull();
+      });
+    });
+  });
+
+  describe("sql.*", () => {
+    it("executes forwarded sql.query requests against the local Process DO sqlite", async () => {
+      const pid = "mech-sql-local";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        (instance as any).store.appendMessage("user", "hello from sql");
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("sql.query", {
+          target: `process:${pid}`,
+          statement: "SELECT COUNT(*) as cnt FROM messages",
+        }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toEqual({
+        ok: true,
+        target: `process:${pid}`,
+        columns: ["cnt"],
+        rows: [{ cnt: 1 }],
+        rowCount: 1,
+        rowsRead: 1,
+        rowsWritten: 0,
+      });
+    });
+
+    it("uses the local fast path for self-target sql syscalls", async () => {
+      const pid = "mech-sql-self-fastpath";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const proc = instance as any;
+        proc.store.appendMessage("user", "hello from self fast path");
+        await proc.dispatchSyscall("run-sql-self", "call-sql-self", "sql.query", {
+          target: `process:${pid}`,
+          statement: "SELECT COUNT(*) as cnt FROM messages",
+        });
+
+        expect(proc.store.getResults("run-sql-self")).toEqual([
+          {
+            id: "call-sql-self",
+            runId: "run-sql-self",
+            call: "sql.query",
+            status: "completed",
+            result: {
+              ok: true,
+              target: `process:${pid}`,
+              columns: ["cnt"],
+              rows: [{ cnt: 1 }],
+              rowCount: 1,
+              rowsRead: 1,
+              rowsWritten: 0,
+            },
+            error: null,
+          },
+        ]);
       });
     });
   });

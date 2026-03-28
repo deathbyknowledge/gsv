@@ -13,6 +13,7 @@
 
 import type { KernelContext } from "./context";
 import type {
+  AiToolsArgs,
   AiToolsResult,
   AiToolsDevice,
   AiConfigArgs,
@@ -27,6 +28,11 @@ import { FS_EDIT_DEFINITION } from "../syscalls/edit";
 import { FS_WRITE_DEFINITION as FS_DELETE_DEFINITION } from "../syscalls/delete";
 import { FS_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
+import {
+  SQL_EXEC_DEFINITION,
+  SQL_QUERY_DEFINITION,
+} from "../syscalls/sql";
+import { hasCapability } from "./capabilities";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -35,15 +41,19 @@ const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.delete": FS_DELETE_DEFINITION,
   "fs.search": FS_SEARCH_DEFINITION,
   "shell.exec": SHELL_EXEC_DEFINITION,
+  "sql.query": SQL_QUERY_DEFINITION,
+  "sql.exec": SQL_EXEC_DEFINITION,
 };
 
 export async function handleAiTools(
+  args: AiToolsArgs | undefined,
   ctx: KernelContext,
 ): Promise<AiToolsResult> {
   const identity = ctx.identity!;
   const capabilities = identity.capabilities;
   const uid = identity.process.uid;
   const gids = identity.process.gids;
+  const profile = args?.profile ?? "task";
 
   const onlineDevices: AiToolsDevice[] = [];
   const deviceIds: string[] = [];
@@ -61,12 +71,11 @@ export async function handleAiTools(
   const tools: ToolDefinition[] = [];
 
   for (const [syscall, baseDef] of Object.entries(SYSCALL_TOOLS)) {
-    const allowed = capabilities.includes("*") || capabilities.some((cap) => {
-      if (cap === syscall) return true;
-      const domain = syscall.split(".")[0];
-      return cap === `${domain}.*`;
-    });
+    const allowed = hasCapability(capabilities, syscall);
     if (!allowed) continue;
+    if ((syscall === "sql.query" || syscall === "sql.exec") && profile !== "mcp") {
+      continue;
+    }
 
     if (isRoutableSyscall(syscall as SyscallName)) {
       tools.push(intoSyscallTool(baseDef, deviceIds));

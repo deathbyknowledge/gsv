@@ -12,7 +12,7 @@ import { Bash, defineCommand } from "just-bash";
 import type { BashExecResult, ExecResult } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
 import type { ExtendedStat } from "../../fs/gsv-fs";
-import { createWorkspaceBackend, resolveUserPath } from "../../fs";
+import { createSourceBackend, createWorkspaceBackend, resolveUserPath } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "../../syscalls/system";
@@ -83,6 +83,7 @@ function createBash(ctx: KernelContext, identity: ProcessIdentity, cwd: string):
     },
     undefined,
     createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
+    createSourceBackend(ctx.env, ctx.config),
   );
 
   const serverName = ctx.config.get("config/server/name") ?? "gsv";

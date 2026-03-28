@@ -47,6 +47,7 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
   private kernelState: "disconnected" | "connecting" | "connected" = "disconnected";
   private isLoading = false;
   private isMutating = false;
+  private isSpawningMcp = false;
   private mutatingPid: string | null = null;
   private suspended = false;
   private statusKind: "idle" | "error" = "idle";
@@ -71,6 +72,11 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
 
     if (action === "refresh") {
       void this.loadProcesses();
+      return;
+    }
+
+    if (action === "spawn-mcp") {
+      void this.spawnMcpProcess();
       return;
     }
 
@@ -169,12 +175,17 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
     this.statusText = "";
     this.isLoading = false;
     this.isMutating = false;
+    this.isSpawningMcp = false;
     this.mutatingPid = null;
   }
 
   private setStatus(kind: "idle" | "error", text: string): void {
     this.statusKind = kind;
     this.statusText = text;
+  }
+
+  private canLaunchMcp(): boolean {
+    return this.context?.kernel.getStatus().username === "root";
   }
 
   private describeViewState(): { kind: ProcessViewState; label: string; detail: string } {
@@ -194,11 +205,15 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
       };
     }
 
-    if (this.isLoading || this.isMutating) {
+    if (this.isSpawningMcp || this.isLoading || this.isMutating) {
       return {
         kind: "working",
-        label: this.isMutating ? "updating" : "refreshing",
-        detail: this.isMutating ? "Updating process state." : "Refreshing process list.",
+        label: this.isSpawningMcp ? "launching" : this.isMutating ? "updating" : "refreshing",
+        detail: this.isSpawningMcp
+          ? "Starting operator process."
+          : this.isMutating
+            ? "Updating process state."
+            : "Refreshing process list.",
       };
     }
 
@@ -254,7 +269,13 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
 
   private async killProcess(pid: string): Promise<void> {
     const context = this.context;
-    if (!context || this.suspended || this.kernelState !== "connected" || this.isMutating) {
+    if (
+      !context ||
+      this.suspended ||
+      this.kernelState !== "connected" ||
+      this.isMutating ||
+      this.isSpawningMcp
+    ) {
       return;
     }
 
@@ -279,6 +300,67 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
     }
   }
 
+  private async spawnMcpProcess(): Promise<void> {
+    const context = this.context;
+    if (
+      !context ||
+      this.suspended ||
+      this.kernelState !== "connected" ||
+      this.isLoading ||
+      this.isMutating ||
+      this.isSpawningMcp
+    ) {
+      return;
+    }
+
+    if (!this.canLaunchMcp()) {
+      this.setStatus("error", "MCP launch requires root");
+      this.render();
+      return;
+    }
+
+    this.isSpawningMcp = true;
+    this.setStatus("idle", "");
+    this.render();
+
+    try {
+      const result = await context.kernel.spawnProcess({
+        profile: "mcp",
+        label: "MCP Operator",
+        workspace: {
+          mode: "new",
+          kind: "shared",
+          label: "MCP Operator",
+        },
+      });
+
+      if (!result.ok) {
+        this.setStatus("error", result.error);
+        return;
+      }
+
+      await this.loadProcesses();
+      window.dispatchEvent(
+        new CustomEvent<OpenChatProcessEventDetail>(OPEN_CHAT_PROCESS_EVENT, {
+          detail: {
+            pid: result.pid,
+            workspaceId: result.workspaceId,
+            cwd: result.cwd,
+          },
+        }),
+      );
+      this.setStatus("idle", "");
+    } catch (error) {
+      this.setStatus("error", error instanceof Error ? error.message : String(error));
+    } finally {
+      if (!this.context) {
+        return;
+      }
+      this.isSpawningMcp = false;
+      this.render();
+    }
+  }
+
   private openChatForProcess(entry: ProcListEntry): void {
     const detail: OpenChatProcessEventDetail = {
       pid: entry.pid,
@@ -298,7 +380,12 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
       .map((entry) => {
         const state = entry.state.trim().toLowerCase();
         const stateClass = state === "running" ? "is-running" : state === "paused" ? "is-paused" : "is-other";
-        const canAct = !this.isLoading && !this.isMutating && this.kernelState === "connected" && !this.suspended;
+        const canAct =
+          !this.isLoading &&
+          !this.isMutating &&
+          !this.isSpawningMcp &&
+          this.kernelState === "connected" &&
+          !this.suspended;
         const isMutatingThisRow = this.mutatingPid === entry.pid;
         const title = entry.label && entry.label.trim().length > 0 ? entry.label.trim() : entry.pid;
 
@@ -347,6 +434,8 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
 
     const viewState = this.describeViewState();
     const refreshLabel = this.isLoading ? "Refreshing processes" : "Refresh processes";
+    const spawnLabel = this.isSpawningMcp ? "Launching MCP" : "Launch MCP";
+    const showMcpLaunch = this.canLaunchMcp();
 
     this.innerHTML = `
       <section class="app-grid process-app">
@@ -354,9 +443,21 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
           <div class="process-page-copy">
             <p class="eyebrow">Process Surface</p>
             <h1>Processes</h1>
-            <p>Inspect process state and jump directly into a process conversation in Chat.</p>
+            <p>Inspect process state, jump into a live conversation, or launch a trusted operator process.${showMcpLaunch ? "" : " Operator launch requires root."}</p>
           </div>
           <div class="process-toolbar-row">
+            ${showMcpLaunch
+              ? `
+                <button
+                  type="button"
+                  class="runtime-btn"
+                  data-action="spawn-mcp"
+                  ${this.isLoading || this.isMutating || this.isSpawningMcp || this.suspended || this.kernelState !== "connected" ? "disabled" : ""}
+                >
+                  ${escapeHtml(spawnLabel)}
+                </button>
+              `
+              : ""}
             <span class="config-state-icon is-${escapeHtml(viewState.kind)}" title="${escapeHtml(viewState.detail)}" aria-label="${escapeHtml(viewState.label)}">
               <span class="config-state-dot" aria-hidden="true"></span>
             </span>
@@ -366,7 +467,7 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
               data-action="refresh"
               title="${escapeHtml(refreshLabel)}"
               aria-label="${escapeHtml(refreshLabel)}"
-              ${this.isLoading || this.isMutating || this.suspended || this.kernelState !== "connected" ? "disabled" : ""}
+              ${this.isLoading || this.isMutating || this.isSpawningMcp || this.suspended || this.kernelState !== "connected" ? "disabled" : ""}
             >
               <span aria-hidden="true">↻</span>
             </button>

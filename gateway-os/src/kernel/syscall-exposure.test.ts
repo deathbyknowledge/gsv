@@ -10,5 +10,6 @@ describe("internal syscall exposure", () => {
   it("keeps user-facing syscalls public", () => {
     expect(isInternalOnlySyscall("proc.send")).toBe(false);
     expect(isInternalOnlySyscall("sys.config.get")).toBe(false);
+    expect(isInternalOnlySyscall("sql.query")).toBe(false);
   });
 });

@@ -27,6 +27,12 @@ import type {
   ProcSetIdentityResult,
 } from "./proc";
 import type {
+  SqlQueryArgs,
+  SqlQueryResult,
+  SqlExecArgs,
+  SqlExecResult,
+} from "./sql";
+import type {
   ConnectArgs,
   ConnectResult,
   SysSetupArgs,
@@ -113,6 +119,10 @@ export type SyscallDomains = {
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
 
+  // Operator SQL
+  "sql.query": { args: SqlQueryArgs; result: SqlQueryResult };
+  "sql.exec": { args: SqlExecArgs; result: SqlExecResult };
+
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
@@ -157,6 +167,7 @@ export type SyscallDomain =
   | "fs"
   | "shell"
   | "proc"
+  | "sql"
   | "sys"
   | "ai"
   | "sched"

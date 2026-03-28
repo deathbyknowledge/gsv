@@ -7,6 +7,9 @@ import { CapabilityStore } from "./capabilities";
 import { ConfigStore } from "./config";
 import { DeviceRegistry } from "./devices";
 import { ProcessRegistry } from "./processes";
+import { WorkspaceStore } from "./workspaces";
+import { AdapterStore } from "./adapter-store";
+import { RunRouteStore } from "./run-routes";
 import { hashPassword } from "../auth/shadow";
 
 type Row = Record<string, unknown>;
@@ -332,13 +335,26 @@ function makeCtx(sql: ReturnType<typeof createMockSql>): KernelContext {
   const procs = new ProcessRegistry(sql as any);
   procs.init();
 
+  const workspaces = new WorkspaceStore(sql as any);
+  workspaces.init();
+
+  const adapters = new AdapterStore(sql as any);
+  adapters.init();
+
+  const runRoutes = new RunRouteStore(sql as any);
+  runRoutes.init();
+
   return {
     env: env as any,
+    sql: sql as any,
     auth,
     caps,
     config,
     devices,
     procs,
+    workspaces,
+    adapters,
+    runRoutes,
     connection: mockConnection,
     serverVersion: "0.0.1-test",
   };

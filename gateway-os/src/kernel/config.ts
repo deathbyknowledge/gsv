@@ -59,6 +59,22 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // The current server version (set at boot, read-only for users).
   "config/server/version": "0.0.1",
 
+  // -- Deployment / Source ----------------------------------------------------
+  // Ripgit owner for the read-only deployed source mirror mounted at /src/gsv.
+  "config/deploy/source_owner": "",
+  // Ripgit repo for the read-only deployed source mirror mounted at /src/gsv.
+  "config/deploy/source_repo": "",
+  // Optional ripgit ref (branch/tag/commit-ish) used for /src/gsv reads.
+  "config/deploy/source_ref": "",
+  // Human-facing deployment ref (branch, tag, release name, etc.).
+  "config/deploy/ref": "",
+  // Exact deployed commit when known.
+  "config/deploy/commit": "",
+  // Deployment timestamp in ISO-8601 form when known.
+  "config/deploy/deployed_at": "",
+  // Deployment actor or automation identity when known.
+  "config/deploy/deployed_by": "",
+
   // -- Shell ------------------------------------------------------------------
   // Default shell timeout in ms for native shell.exec.
   "config/shell/timeout_ms": "30000",

@@ -9,6 +9,7 @@
 
 import { GsvFs } from "../../fs/gsv-fs";
 import {
+  createSourceBackend,
   createWorkspaceBackend,
   resolveUserPath,
   formatSize,
@@ -39,6 +40,7 @@ function makeFs(ctx: KernelContext): GsvFs {
     },
     undefined,
     createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
+    createSourceBackend(ctx.env, ctx.config),
   );
 }
 

@@ -54,11 +54,12 @@ Threads spawn processes. Processes attach to workspaces. Workspaces outlive proc
 `mcp` should be a trusted operator process, not just a task process with a
 different prompt.
 
-- [ ] Add root-only operator SQL surface
-  - `sql.query`
-  - `sql.exec`
-  - targetable at `kernel`, `process:{pid}`, later `ripgit:{owner}/{repo}`
-  - audit/log the target + statement metadata
+- [x] Add root-only operator SQL surface
+  - [x] `sql.query`
+  - [x] `sql.exec`
+  - [x] targetable at `kernel`
+  - [x] targetable at `process:{pid}`
+  - [x] audit/log the target + statement metadata
 - [ ] Add structured operator inspection surfaces
   - runtime snapshot / kernel snapshot
   - routing table inspection
@@ -66,19 +67,21 @@ different prompt.
 - [ ] Add source mirror for the deployed GSV codebase
   - mirror the GSV repo into ripgit on first deploy
   - update the mirror on subsequent deploys
-  - mount it read-only at `/src/gsv`
+  - [x] mount configured mirror read-only at `/src/gsv`
   - keep mutable repair work in `/workspaces/{id}`
 - [ ] Add deployment pointer metadata in kernel
-  - current source repo
-  - deployed commit/ref
-  - deploy time / actor / component versions
+  - [x] current source repo/ref keys under `/sys/config/deploy/*`
+  - [x] deployed commit/ref keys under `/sys/config/deploy/*`
+  - [x] deploy time / actor keys under `/sys/config/deploy/*`
+  - component versions / automatic deploy updates still pending
 - [ ] Add `mcp`-specific context providers
   - architecture index provider
   - runtime snapshot provider
   - deployment pointer provider
-- [ ] Add an explicit `mcp` spawn surface in UI/CLI
-  - open a trusted operator process directly
-  - attach it to a debugging workspace when needed
+- [x] Add an explicit `mcp` spawn surface in UI
+  - [x] open a trusted operator process directly
+  - [x] attach it to a debugging workspace when needed
+- [ ] Add matching CLI `mcp` spawn surface
 
 ## Unix identity model (`/etc/passwd`, `/etc/shadow`, `/etc/group`)
 

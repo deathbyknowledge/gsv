@@ -55,12 +55,21 @@ export async function handleProcSpawn(
   ctx: KernelContext,
 ): Promise<ProcSpawnResult> {
   const identity = ctx.identity!;
-  const pid = crypto.randomUUID();
   const profile = args.profile;
 
   if (!isProcessProfile(profile)) {
     return { ok: false, error: `Invalid process profile: ${String(profile)}` };
   }
+
+  if (profile === "init") {
+    return { ok: false, error: "init profile is kernel-managed" };
+  }
+
+  if (profile === "mcp" && identity.process.uid !== 0) {
+    return { ok: false, error: "Permission denied: mcp profile requires root" };
+  }
+
+  const pid = `${profile}:${crypto.randomUUID()}`;
 
   const parentPid = args.parentPid ?? `init:${identity.process.uid}`;
   const parent = ctx.procs.get(parentPid);

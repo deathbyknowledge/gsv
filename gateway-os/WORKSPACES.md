@@ -110,6 +110,7 @@ Examples:
   - kernel/deployment/source aware
   - full SQLite / internal inspection tooling as needed
   - debugging/devops/operator intent, not general chat intent
+  - root-only spawn path, with `mcp:{id}` process ids and a dedicated debugging shared workspace when launched from the Processes surface
 
 `proc.spawn` now takes explicit process profile metadata, not only workspace
 attachment metadata.
@@ -134,16 +135,19 @@ In a trusted environment, `mcp` should be able to read and write the real
 kernel/process SQLite state. That is the break-glass operator surface, not an
 accidental implementation detail.
 
-Suggested operator SQL surface:
+Implemented v1 operator SQL surface:
 
 - `sql.query`
 - `sql.exec`
+- root-only
+- target string shape defaults to `kernel`
+- `process:{pid}` is supported for live Process DO sqlite inspection/repair
+- `ai.tools` only exposes SQL tools to `mcp` profile processes, while root can still call the syscalls directly
 
-Suggested targets:
+Current targets:
 
 - `kernel`
 - `process:{pid}`
-- `ripgit:{owner}/{repo}`
 
 Higher-level read surfaces are still valuable for normal debugging, but they do
 not replace full SQL access for operator workflows.
@@ -158,6 +162,16 @@ Recommended mount:
 ```text
 /src/gsv
 ```
+
+Current implementation:
+
+- `/src/gsv` is available as a read-only ripgit-backed mount when
+  `/sys/config/deploy/source_owner` and `/sys/config/deploy/source_repo` are set
+- `/sys/config/deploy/source_ref` selects the mounted ref when needed
+- `/sys/config/deploy/ref`, `/sys/config/deploy/commit`,
+  `/sys/config/deploy/deployed_at`, and `/sys/config/deploy/deployed_by` hold
+  deployment pointer metadata
+- automatic mirror seeding/updating is still separate deploy plumbing
 
 Why `/src/gsv` and not `/lib/gsv`:
 

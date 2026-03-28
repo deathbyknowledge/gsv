@@ -12,7 +12,9 @@ export type AiContextProfile = "init" | "task" | "cron" | "mcp" | "app";
 
 // --- ai.tools ---
 
-export type AiToolsArgs = Record<string, never>;
+export type AiToolsArgs = {
+  profile?: AiContextProfile;
+};
 
 export type AiToolsDevice = {
   id: string;

@@ -51,6 +51,7 @@ type ProcSendData = {
 };
 
 export class Kernel extends Host<Env> {
+  private readonly storageSql: SqlStorage;
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
@@ -65,32 +66,34 @@ export class Kernel extends Host<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
 
-    this.auth = new AuthStore(ctx.storage.sql);
+    this.storageSql = ctx.storage.sql;
+
+    this.auth = new AuthStore(this.storageSql);
     this.auth.init();
 
-    this.caps = new CapabilityStore(ctx.storage.sql);
+    this.caps = new CapabilityStore(this.storageSql);
     this.caps.init();
 
-    this.config = new ConfigStore(ctx.storage.sql);
+    this.config = new ConfigStore(this.storageSql);
     this.config.init();
     this.config.seed(SYSTEM_CONFIG_DEFAULTS);
 
-    this.devices = new DeviceRegistry(ctx.storage.sql);
+    this.devices = new DeviceRegistry(this.storageSql);
     this.devices.init();
 
-    this.routes = new RoutingTable(ctx.storage.sql);
+    this.routes = new RoutingTable(this.storageSql);
     this.routes.init();
 
-    this.procs = new ProcessRegistry(ctx.storage.sql);
+    this.procs = new ProcessRegistry(this.storageSql);
     this.procs.init();
 
-    this.workspaces = new WorkspaceStore(ctx.storage.sql);
+    this.workspaces = new WorkspaceStore(this.storageSql);
     this.workspaces.init();
 
-    this.adapters = new AdapterStore(ctx.storage.sql);
+    this.adapters = new AdapterStore(this.storageSql);
     this.adapters.init();
 
-    this.runRoutes = new RunRouteStore(ctx.storage.sql);
+    this.runRoutes = new RunRouteStore(this.storageSql);
     this.runRoutes.init();
 
     this.rehydrateConnections();
@@ -320,6 +323,7 @@ export class Kernel extends Host<Env> {
 
     const ctx: KernelContext = {
       env: this.env,
+      sql: this.storageSql,
       auth: this.auth,
       caps: this.caps,
       config: this.config,
@@ -375,6 +379,7 @@ export class Kernel extends Host<Env> {
     if (!state) throw new Error("Connection state is missing");
     return {
       env: this.env,
+      sql: this.storageSql,
       auth: this.auth,
       caps: this.caps,
       config: this.config,
@@ -392,6 +397,7 @@ export class Kernel extends Host<Env> {
   private buildServiceContext(identity: ConnectionIdentity): KernelContext {
     return {
       env: this.env,
+      sql: this.storageSql,
       auth: this.auth,
       caps: this.caps,
       config: this.config,

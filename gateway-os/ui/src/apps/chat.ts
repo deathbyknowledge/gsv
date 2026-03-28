@@ -381,6 +381,11 @@ function renderToolCallInput(toolName: string, args: unknown): HTMLElement {
     case "Delete":
       addMetaRow(wrapper, "path", record.path);
       break;
+    case "SqlQuery":
+    case "SqlExec":
+      addMetaRow(wrapper, "target", record.target ?? "kernel");
+      addMetaRow(wrapper, "statement", record.statement);
+      break;
     default:
       break;
   }
@@ -716,6 +721,10 @@ function inferToolSyscall(toolName: string, syscall: string | null | undefined):
       return "fs.edit";
     case "Delete":
       return "fs.delete";
+    case "SqlQuery":
+      return "sql.query";
+    case "SqlExec":
+      return "sql.exec";
     default:
       return null;
   }
@@ -763,6 +772,10 @@ function resolveToolTarget(args: unknown): { kind: "gsv" | "device"; label: stri
 
   if (!raw || raw === "gsv" || raw === "gateway" || raw === "<init>" || raw === "init" || raw === "local") {
     return { kind: "gsv", label: "gsv" };
+  }
+
+  if (raw === "kernel" || raw.startsWith("process:")) {
+    return { kind: "gsv", label: raw };
   }
 
   if (raw.startsWith("device:")) {
@@ -839,6 +852,28 @@ function describeToolCard(toolName: string, args: unknown, syscall?: string | nu
     return {
       iconKind: "delete",
       title: path ? `Delete ${basenamePath(path)}` : "Delete file",
+      targetKind: target.kind,
+      targetLabel: target.label,
+    };
+  }
+
+  if (isToolKind(toolName, syscall, "SqlQuery", "sql.query")) {
+    const statement = asString(record?.statement);
+    return {
+      iconKind: "generic",
+      title: "Run SQL query",
+      context: statement ? truncateInline(statement, 64) : undefined,
+      targetKind: target.kind,
+      targetLabel: target.label,
+    };
+  }
+
+  if (isToolKind(toolName, syscall, "SqlExec", "sql.exec")) {
+    const statement = asString(record?.statement);
+    return {
+      iconKind: "generic",
+      title: "Run SQL mutation",
+      context: statement ? truncateInline(statement, 64) : undefined,
       targetKind: target.kind,
       targetLabel: target.label,
     };
@@ -1328,6 +1363,18 @@ function displayThreadLabel(entry: RecentThreadEntry): string {
   return entry.workspaceId;
 }
 
+function describeRecentWorkspaceKind(entry: RecentThreadEntry): string {
+  switch (entry.kind) {
+    case "shared":
+      return "Shared";
+    case "app":
+      return "App";
+    case "thread":
+    default:
+      return "Thread";
+  }
+}
+
 function createChatAppController(client: AppKernelClient): AppInstance {
   let composerInput: HTMLTextAreaElement | null = null;
   let composerButton: HTMLButtonElement | null = null;
@@ -1462,7 +1509,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
 
     if (recentThreads.length === 0) {
       threadStatusNode.hidden = false;
-      threadStatusNode.textContent = "No threads yet. Send a message to start one.";
+      threadStatusNode.textContent = "No conversations yet. Send a message or launch MCP to start one.";
       threadsNode.innerHTML = "";
       return;
     }
@@ -1472,6 +1519,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
     threadsNode.innerHTML = recentThreads
       .map((entry) => {
         const isActive = activeWorkspaceId !== null && entry.workspaceId === activeWorkspaceId;
+        const kindLabel = describeRecentWorkspaceKind(entry);
         const state = entry.activeProcess ? "Live" : "Stored";
         const helpers = entry.processCount > 1 ? ` · ${entry.processCount} agents` : "";
         return `
@@ -1482,7 +1530,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
             data-workspace-id="${escapeHtml(entry.workspaceId)}"
           >
             <span class="chat-thread-item-title">${escapeHtml(displayThreadLabel(entry))}</span>
-            <span class="chat-thread-item-meta">${escapeHtml(`${state}${helpers} · ${formatRelativeTime(entry.updatedAt)}`)}</span>
+            <span class="chat-thread-item-meta">${escapeHtml(`${kindLabel} · ${state}${helpers} · ${formatRelativeTime(entry.updatedAt)}`)}</span>
           </button>
         `;
       })
@@ -1501,10 +1549,10 @@ function createChatAppController(client: AppKernelClient): AppInstance {
 
     try {
       const payload = await client.request<WorkspaceListResult>("sys.workspace.list", {
-        kind: "thread",
         limit: 32,
       });
-      recentThreads = Array.isArray(payload.workspaces) ? payload.workspaces : [];
+      recentThreads = (Array.isArray(payload.workspaces) ? payload.workspaces : [])
+        .filter((entry) => entry.kind === "thread" || entry.kind === "shared");
       threadsError = "";
     } catch (error) {
       recentThreads = [];
@@ -1771,7 +1819,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
 
     try {
       const spawnResult = await client.spawnProcess({
-        profile: "task",
+        profile: entry.kind === "shared" ? "mcp" : "task",
         label: entry.label ?? undefined,
         workspace: {
           mode: "attach",

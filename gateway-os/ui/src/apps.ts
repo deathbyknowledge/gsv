@@ -56,7 +56,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     iconId: "processes",
     entrypoint: { kind: "component", route: "/apps/processes", tagName: "gsv-processes-app" },
     permissions: ["proc.inspect"],
-    syscalls: ["proc.list", "proc.kill"],
+    syscalls: ["proc.list", "proc.kill", "proc.spawn"],
     windowDefaults: {
       width: 920,
       height: 620,

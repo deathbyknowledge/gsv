@@ -3,6 +3,7 @@
  *
  * Explicit mount routing:
  *   /proc/*, /dev/*, /sys/*, /etc/{passwd,shadow,group} → KernelMountBackend
+ *   /src/*                                                    → Source mirror backend
  *   /workspaces/*                                             → Workspace backend
  *   everything else                                           → R2 backend
  *
@@ -25,6 +26,7 @@ import type { KernelRefs } from "./refs";
 import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "./mount";
 import { R2MountBackend } from "./backends/r2";
 import { KernelMountBackend } from "./backends/kernel";
+import { isSourceMountPath } from "./backends/source";
 import { isWorkspaceMountPath } from "./backends/workspace";
 import { normalizePath } from "./utils";
 
@@ -35,6 +37,7 @@ export class GsvFs implements IFileSystem {
   private readonly kernel: KernelRefs | null;
   private readonly r2Backend: MountBackend;
   private readonly kernelBackend: MountBackend;
+  private readonly sourceBackend: MountBackend | null;
   private readonly workspaceBackend: MountBackend | null;
 
   constructor(
@@ -43,11 +46,13 @@ export class GsvFs implements IFileSystem {
     kernel?: KernelRefs,
     selfPid?: string,
     workspaceBackend?: MountBackend | null,
+    sourceBackend?: MountBackend | null,
   ) {
     this.identity = identity;
     this.kernel = kernel ?? null;
     this.r2Backend = new R2MountBackend(bucket, identity);
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
+    this.sourceBackend = sourceBackend ?? null;
     this.workspaceBackend = workspaceBackend ?? null;
   }
 
@@ -246,6 +251,13 @@ export class GsvFs implements IFileSystem {
   }
 
   private backendForPath(path: string): MountBackend {
+    if (isSourceMountPath(path)) {
+      if (!this.sourceBackend) {
+        throw new Error(`ENOENT: no such file or directory, open '${path}'`);
+      }
+      return this.sourceBackend;
+    }
+
     if (isWorkspaceMountPath(path)) {
       if (!this.workspaceBackend) {
         throw new Error(`ENOSYS: workspace backend is unavailable for '${path}'`);
@@ -276,6 +288,10 @@ export class GsvFs implements IFileSystem {
 
     if (this.workspaceBackend) {
       entries.add("workspaces");
+    }
+
+    if (this.sourceBackend) {
+      entries.add("src");
     }
 
     return [...entries].sort();

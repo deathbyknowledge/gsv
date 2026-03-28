@@ -29,6 +29,7 @@ import {
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
+import { handleSqlExec, handleSqlQuery } from "./sql";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
 import { handleSysWorkspaceList } from "./sys/workspaces";
@@ -67,7 +68,7 @@ const DEFAULT_DEVICE_TTL_MS = 60_000;
 /**
  * Domains that support device routing via the `target` field.
  * `shell` always requires a device. `fs` can be native (R2) or device.
- * Other domains (sys, proc, sched, adapter) are always kernel-internal.
+ * Other domains (proc, sql, sys, sched, adapter) are always kernel-internal.
  */
 const ROUTABLE_DOMAINS = new Set(["fs", "shell"]);
 
@@ -149,10 +150,16 @@ async function dispatchNative(
       case "proc.setidentity":
         return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
 
+      case "sql.query":
+        data = await handleSqlQuery(frame.args, ctx);
+        break;
+      case "sql.exec":
+        data = await handleSqlExec(frame.args, ctx);
+        break;
 
       // --- ai.* ---
       case "ai.tools":
-        data = await handleAiTools(ctx);
+        data = await handleAiTools(frame.args, ctx);
         break;
       case "ai.config":
         data = await handleAiConfig(frame.args, ctx);

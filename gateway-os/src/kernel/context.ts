@@ -18,6 +18,7 @@ import type { WorkspaceStore } from "./workspaces";
 
 export type KernelContext = {
   env: Env;
+  sql: SqlStorage;
   auth: AuthStore;
   caps: CapabilityStore;
   config: ConfigStore;

@@ -35,6 +35,12 @@ import type {
   ProcKillResult,
 } from "../syscalls/proc";
 import type {
+  SqlExecArgs,
+  SqlExecResult,
+  SqlQueryArgs,
+  SqlQueryResult,
+} from "../syscalls/sql";
+import type {
   AssistantMessage,
   TextContent,
   ToolCall,
@@ -55,6 +61,15 @@ import { sendFrameToKernel } from "../shared/utils";
 import { TOOL_TO_SYSCALL, SYSCALL_TOOL_NAMES } from "../syscalls/constants";
 import { RipgitClient } from "../fs/ripgit/client";
 import { workspaceRepoRef } from "../fs/ripgit/repos";
+import {
+  auditSql,
+  executeSqlExec,
+  executeSqlQuery,
+  isProcessSqlTargetSelf,
+  prepareSqlExec,
+  prepareSqlQuery,
+  requireSqlRoot,
+} from "../sql/runtime";
 
 type RunState = {
   runId: string;
@@ -64,17 +79,27 @@ type RunState = {
   systemPrompt?: string;
 };
 
+type CheckpointSnapshot = {
+  workspaceId: string;
+  messages: MessageRecord[];
+  checkpointedCount: number;
+  config: AiConfigResult | null;
+};
+
 const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TEXT_ENCODER = new TextEncoder();
 
 export class Process extends Host<Env> {
+  private readonly storageSql: SqlStorage;
   private readonly store: ProcessStore;
   private readonly generation = createGenerationService();
   private readonly ripgit: RipgitClient | null;
+  private checkpointChain: Promise<void> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.store = new ProcessStore(ctx.storage.sql);
+    this.storageSql = ctx.storage.sql;
+    this.store = new ProcessStore(this.storageSql);
     this.store.init();
     this.ripgit = env.RIPGIT
       ? new RipgitClient(env.RIPGIT, env.RIPGIT_INTERNAL_KEY ?? null)
@@ -156,7 +181,7 @@ export class Process extends Host<Env> {
 
   /**
    * Handle a request frame from the kernel.
-   * proc.send, proc.history, proc.reset, proc.kill are delivered here.
+   * proc.* and forwarded sql.* requests are delivered here.
    */
   private async handleReq(frame: RequestFrame): Promise<ResponseFrame | null> {
     try {
@@ -191,6 +216,18 @@ export class Process extends Host<Env> {
         case "proc.kill":
           data = await this.handleProcKill(
             frame.args as { pid?: string; archive?: boolean },
+          );
+          break;
+        case "sql.query":
+          data = this.handleLocalSqlQuery(
+            frame.args as SqlQueryArgs,
+            { requireRoot: false },
+          );
+          break;
+        case "sql.exec":
+          data = this.handleLocalSqlExec(
+            frame.args as SqlExecArgs,
+            { requireRoot: false },
           );
           break;
         default:
@@ -233,6 +270,66 @@ export class Process extends Host<Env> {
     this.scheduleTick(runId);
 
     return { ok: true, status: "started", runId };
+  }
+
+  private handleLocalSqlQuery(
+    args: SqlQueryArgs,
+    options?: { requireRoot?: boolean },
+  ): SqlQueryResult {
+    if (options?.requireRoot !== false) {
+      requireSqlRoot(this.identity.uid, "sql.query");
+    }
+
+    const prepared = prepareSqlQuery(args);
+    if (!isProcessSqlTargetSelf(prepared.target, this.pid)) {
+      throw new Error(`SQL target does not match process: ${this.pid}`);
+    }
+
+    auditSql(
+      "Process",
+      "sql.query",
+      this.identity.uid,
+      prepared.target.raw,
+      prepared.statement,
+      prepared.bindings.length,
+    );
+
+    return executeSqlQuery(
+      this.storageSql,
+      prepared.target,
+      prepared.statement,
+      prepared.bindings,
+    );
+  }
+
+  private handleLocalSqlExec(
+    args: SqlExecArgs,
+    options?: { requireRoot?: boolean },
+  ): SqlExecResult {
+    if (options?.requireRoot !== false) {
+      requireSqlRoot(this.identity.uid, "sql.exec");
+    }
+
+    const prepared = prepareSqlExec(args);
+    if (!isProcessSqlTargetSelf(prepared.target, this.pid)) {
+      throw new Error(`SQL target does not match process: ${this.pid}`);
+    }
+
+    auditSql(
+      "Process",
+      "sql.exec",
+      this.identity.uid,
+      prepared.target.raw,
+      prepared.statement,
+      prepared.bindings.length,
+    );
+
+    return executeSqlExec(
+      this.storageSql,
+      prepared.target,
+      prepared.statement,
+      prepared.bindings,
+    );
   }
 
   private handleProcHistory(args: {
@@ -447,7 +544,9 @@ export class Process extends Host<Env> {
         profile: this.profile,
       });
 
-      const toolsResult = await this.kernelRpc("ai.tools");
+      const toolsResult = await this.kernelRpc("ai.tools", {
+        profile: this.profile,
+      });
       run.tools = toolsResult.tools;
 
       this.currentRun = run;
@@ -592,13 +691,9 @@ export class Process extends Host<Env> {
   }
 
   private async finishRun(reason: string): Promise<void> {
-    try {
-      await this.checkpointWorkspace(reason);
-    } catch (error) {
-      console.error(`[Process] Workspace checkpoint failed (${reason}):`, error);
-    }
-
-    const runId = this.currentRun?.runId;
+    const run = this.currentRun;
+    const runId = run?.runId;
+    const checkpointSnapshot = this.captureCheckpointSnapshot(run);
     this.currentRun = null;
     console.log(`[Process] Finished run ${runId}`);
 
@@ -608,6 +703,65 @@ export class Process extends Host<Env> {
       this.currentRun = { runId: next.runId, queued: false };
       this.scheduleTick(next.runId);
     }
+
+    try {
+      await this.enqueueCheckpoint(reason, checkpointSnapshot);
+    } catch (error) {
+      console.error(`[Process] Workspace checkpoint failed (${reason}):`, error);
+    }
+  }
+
+  private captureCheckpointSnapshot(run: RunState | null): CheckpointSnapshot | null {
+    const workspaceId = this.identity.workspaceId;
+    if (!workspaceId || !this.ripgit) {
+      return null;
+    }
+
+    const messages = this.store.allMessagesForArchive();
+    if (messages.length === 0) {
+      return null;
+    }
+
+    const checkpointedCount = this.getCheckpointedMessageCount();
+    if (checkpointedCount >= messages.length) {
+      return null;
+    }
+
+    return {
+      workspaceId,
+      messages,
+      checkpointedCount,
+      config: run?.config ?? null,
+    };
+  }
+
+  private async enqueueCheckpoint(
+    reason: string,
+    snapshot: CheckpointSnapshot | null,
+  ): Promise<void> {
+    if (!snapshot) {
+      return;
+    }
+
+    const task = this.checkpointChain.then(async () => {
+      await this.checkpointWorkspace(reason, snapshot);
+    });
+    this.checkpointChain = task.catch(() => {});
+    await task;
+  }
+
+  private getCheckpointedMessageCount(): number {
+    return Number.parseInt(
+      this.store.getValue(CHECKPOINTED_MESSAGE_COUNT_KEY) ?? "0",
+      10,
+    );
+  }
+
+  private setCheckpointedMessageCountAtLeast(count: number): void {
+    if (count <= this.getCheckpointedMessageCount()) {
+      return;
+    }
+    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, String(count));
   }
 
   /**
@@ -642,28 +796,22 @@ export class Process extends Host<Env> {
     } as SignalFrame);
   }
 
-  private async checkpointWorkspace(reason: string): Promise<void> {
-    const workspaceId = this.identity.workspaceId;
-    if (!workspaceId || !this.ripgit) {
+  private async checkpointWorkspace(
+    reason: string,
+    snapshot: CheckpointSnapshot | null = this.captureCheckpointSnapshot(this.currentRun),
+  ): Promise<void> {
+    if (!snapshot || !this.ripgit) {
       return;
     }
 
-    const messages = this.store.allMessagesForArchive();
-    if (messages.length === 0) {
-      return;
-    }
-
-    const checkpointedCount = Number.parseInt(
-      this.store.getValue(CHECKPOINTED_MESSAGE_COUNT_KEY) ?? "0",
-      10,
-    );
-    if (checkpointedCount === messages.length) {
+    const { workspaceId, messages, checkpointedCount, config: snapshotConfig } = snapshot;
+    if (checkpointedCount >= messages.length) {
       return;
     }
 
     const repo = workspaceRepoRef(workspaceId, this.identity.uid);
     const existingSummary = await this.readWorkspaceSummary(repo);
-    const config = await this.resolveCheckpointConfig();
+    const config = snapshotConfig ?? await this.resolveCheckpointConfig();
     const transcript = buildCheckpointTranscript(messages);
 
     const summary = await this.generateCheckpointSummary(
@@ -697,7 +845,7 @@ export class Process extends Host<Env> {
       ],
     );
 
-    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, String(messages.length));
+    this.setCheckpointedMessageCountAtLeast(messages.length);
   }
 
   private async readWorkspaceSummary(
@@ -812,25 +960,64 @@ export class Process extends Host<Env> {
   ): Promise<void> {
     this.store.register(id, runId, call, args);
 
-    const reqFrame: RequestFrame = {
-      type: "req",
-      id,
-      call,
-      args,
-    } as RequestFrame;
-
-    const response = await sendFrameToKernel(this.pid, reqFrame);
-
-    if (response && response.type === "res") {
-      const res = response;
-      if (res.ok) {
-        this.store.resolve(id, (res as { data?: unknown }).data);
-      } else {
-        this.store.fail(
-          id,
-          (res as { error: { message: string } }).error.message,
-        );
+    try {
+      if (call === "sql.query") {
+        const prepared = prepareSqlQuery(args as SqlQueryArgs);
+        if (isProcessSqlTargetSelf(prepared.target, this.pid)) {
+          const result = this.handleLocalSqlQuery(
+            {
+              target: prepared.target.raw,
+              statement: prepared.statement,
+              ...(prepared.bindings.length > 0 ? { bindings: prepared.bindings } : {}),
+            },
+            { requireRoot: true },
+          );
+          this.store.resolve(id, result);
+          return;
+        }
       }
+
+      if (call === "sql.exec") {
+        const prepared = prepareSqlExec(args as SqlExecArgs);
+        if (isProcessSqlTargetSelf(prepared.target, this.pid)) {
+          const result = this.handleLocalSqlExec(
+            {
+              target: prepared.target.raw,
+              statement: prepared.statement,
+              ...(prepared.bindings.length > 0 ? { bindings: prepared.bindings } : {}),
+            },
+            { requireRoot: true },
+          );
+          this.store.resolve(id, result);
+          return;
+        }
+      }
+
+      const reqFrame: RequestFrame = {
+        type: "req",
+        id,
+        call,
+        args,
+      } as RequestFrame;
+
+      const response = await sendFrameToKernel(this.pid, reqFrame);
+
+      if (response && response.type === "res") {
+        const res = response;
+        if (res.ok) {
+          this.store.resolve(id, (res as { data?: unknown }).data);
+        } else {
+          this.store.fail(
+            id,
+            (res as { error: { message: string } }).error.message,
+          );
+        }
+      }
+    } catch (error) {
+      this.store.fail(
+        id,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 }
