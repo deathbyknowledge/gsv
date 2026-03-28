@@ -1,4 +1,8 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import type {
+  DynamicWorkerKernelBindingProps,
+} from "./app-runtime/backend";
+import type { ArgsOf, ResultOf, SyscallName } from "./syscalls";
 import { isWebSocketRequest } from "./shared//utils";
 import type {
   GatewayAdapterInterface,
@@ -45,5 +49,21 @@ export class GatewayEntrypoint
       console.error("[GatewayEntrypoint] serviceFrame failed:", e);
       return null;
     }
+  }
+}
+
+export class AppKernelBinding
+  extends WorkerEntrypoint<Env, DynamicWorkerKernelBindingProps>
+{
+  async call<S extends SyscallName>(syscall: S, args: ArgsOf<S>): Promise<ResultOf<S>> {
+    if (!this.ctx.props.allowedSyscalls.includes(syscall)) {
+      throw new Error(`App backend binding denies syscall ${syscall}`);
+    }
+
+    return this.ctx.props.kernel.appBackendSyscall({
+      session: this.ctx.props.session,
+      syscall,
+      args,
+    });
   }
 }

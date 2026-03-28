@@ -65,6 +65,11 @@
 			"binding": "RIPGIT",
 			"service": "ripgit"
 		}
+	],
+	"worker_loaders": [
+		{
+			"binding": "APP_BACKENDS"
+		}
 	]
 	/**
 	 * Smart Placement

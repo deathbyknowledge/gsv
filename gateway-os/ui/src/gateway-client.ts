@@ -108,6 +108,106 @@ export type ProcHistoryResult =
     }
   | { ok: false; error: string };
 
+export type AppThreadSession = {
+  pid: string;
+  cwd: string;
+  workspaceId: string | null;
+};
+
+export type AppWorkspaceSession = {
+  workspaceId: string;
+  root: string;
+  cwd: string;
+  kind: "thread" | "app" | "shared";
+  ownerUid: number;
+};
+
+export type AppBackendBinding =
+  | {
+      kind: "kernel";
+      syscalls: string[];
+    }
+  | {
+      kind: "thread";
+      thread: AppThreadSession;
+    }
+  | {
+      kind: "workspace";
+      access: "read" | "read-write";
+      workspace: AppWorkspaceSession;
+    }
+  | {
+      kind: "service";
+      binding: string;
+      capability: string;
+      status: "configured" | "missing";
+    };
+
+export type AppBackendSession =
+  | {
+      kind: "none";
+      state: "not-required";
+      bindings: [];
+    }
+  | {
+      kind: "dynamic-worker";
+      state: "ready" | "missing_loader";
+      loaderBinding: "APP_BACKENDS";
+      loaderMethod: "get";
+      workerName: string;
+      entrypoint: string;
+      lifecycle: "host" | "workspace" | "shared";
+      instanceKey: string;
+      network: "none" | "gateway";
+      bindings: AppBackendBinding[];
+    };
+
+export type AppSession = {
+  sessionId: string;
+  appId: string;
+  host: {
+    kind: "window" | "shell" | "agent" | "webview";
+    instanceId: string;
+  };
+  surface: {
+    kind: "renderer" | "command";
+    name: string;
+  };
+  ownerUid: number | null;
+  thread: AppThreadSession | null;
+  workspace: AppWorkspaceSession | null;
+  backend: AppBackendSession;
+};
+
+export type AppWindowSession = AppSession;
+
+export type AppSessionOpenArgs = {
+  appId: string;
+  host: {
+    kind: "window" | "shell" | "agent" | "webview";
+    instanceId: string;
+  };
+  surface?: {
+    kind: "renderer" | "command";
+    name: string;
+  };
+  target?: {
+    thread?: {
+      pid?: string;
+      cwd?: string;
+      workspaceId?: string | null;
+    } | null;
+    host?: {
+      cwd?: string;
+      workspaceId?: string | null;
+    } | null;
+  };
+};
+
+export type AppSessionOpenResult = {
+  session: AppSession;
+};
+
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -269,6 +369,11 @@ export class GatewayClient {
       ...(typeof offset === "number" ? { offset } : {}),
       ...(pid ? { pid } : {}),
     })) as ProcHistoryResult;
+    return result;
+  }
+
+  async openAppSession(args: AppSessionOpenArgs): Promise<AppSessionOpenResult> {
+    const result = (await this.call("sys.app.open", args)) as AppSessionOpenResult;
     return result;
   }
 

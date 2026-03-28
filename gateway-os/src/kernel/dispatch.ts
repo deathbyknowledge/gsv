@@ -31,6 +31,7 @@ import {
 } from "./proc-handlers";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
+import { handleSysAppOpen } from "./sys/apps";
 import { handleSysWorkspaceList } from "./sys/workspaces";
 import {
   handleSysTokenCreate,
@@ -168,6 +169,9 @@ async function dispatchNative(
         break;
       case "sys.config.set":
         data = handleSysConfigSet(frame.args, ctx);
+        break;
+      case "sys.app.open":
+        data = handleSysAppOpen(frame.args, ctx);
         break;
       case "sys.device.list":
         data = handleSysDeviceList(frame.args, ctx);

@@ -49,6 +49,39 @@ Threads spawn processes. Processes attach to workspaces. Workspaces outlive proc
   - add `/hyperspace/.../history`
   - add diff/recent-changes UX in Files or Chat
 
+## App runtime contract
+
+Platform-level contract between app hosts, kernel runtime state, and future
+app backends.
+
+- [x] Add `sys.app.open` to resolve a host-scoped app session
+- [x] Generalize app sessions to host + surface resolution (`window`, `shell`,
+  `agent`, `webview`)
+- [x] Define app session payload with thread, workspace, surface, host, and
+  backend descriptors
+- [x] Model backend reuse scope explicitly (`host` | `workspace` | `shared`)
+- [x] Define backend binding descriptors for kernel syscalls, thread context,
+  workspace access, and service bindings
+- [x] Thread app-session resolution into the UI app runtime so mounted apps get
+  a concrete session object
+- [x] Add package-level command and renderer surfaces, with shell command shims
+  registered from package metadata
+- [x] Define three example package shapes:
+  `workspace-doctor`, `ops-console`, and `deploy`
+- [x] Add Dynamic Workers loader seam (`APP_BACKENDS`) to backend descriptors
+  and Wrangler config
+- [x] Start a real Dynamic Worker-backed app backend
+  - [x] shell package commands dispatch into Dynamic Worker entrypoints
+  - [x] built-in backend modules added for `workspace-doctor`, `ops-console`,
+    and `deploy`
+  - [x] add a first Dynamic Worker kernel binding bridge for declared
+    `kernel` syscalls
+  - [x] upgrade `workspace-doctor` to use that bridge for real workspace checks
+  - [ ] materialize `workspace` and `service` bindings as executable RPC
+    bindings instead of session metadata only
+- [ ] Add reconnect/rebind flow so windows opened while locked upgrade from
+  local placeholder sessions to kernel-backed sessions after login
+
 ## MCP operator / deployment awareness
 
 `mcp` should be a trusted operator process, not just a task process with a

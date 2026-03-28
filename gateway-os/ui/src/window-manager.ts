@@ -177,6 +177,16 @@ function createWindowNode(app: AppManifest): HTMLElement {
   return container;
 }
 
+function renderSessionLoading(record: WindowRecord): void {
+  record.contentNode.innerHTML = `
+    <section class="app-grid">
+      <p class="eyebrow">App Runtime</p>
+      <h1>${escapeHtml(record.app.name)}</h1>
+      <p>Preparing window session and backend bindings.</p>
+    </section>
+  `;
+}
+
 function readPersistedLayout(): PersistedLayout | null {
   try {
     const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
@@ -540,22 +550,43 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     };
 
     record.runtime = runtime;
-    record.contentNode.innerHTML = "";
+    renderSessionLoading(record);
 
-    const context: AppRuntimeContext = {
-      windowId: record.windowId,
-      manifest: record.app,
-    };
+    void appRuntime.openWindowSession(record.app, record.windowId)
+      .then((session) => {
+        if (!isCurrentRuntime(record, runtime)) {
+          return;
+        }
 
-    invokeLifecycle(
-      record,
-      runtime,
-      "mount",
-      () => runtime.instance.mount(record.contentNode, context),
-      () => {
-        runtime.suspended = false;
-      },
-    );
+        record.contentNode.innerHTML = "";
+
+        const context: AppRuntimeContext = {
+          windowId: record.windowId,
+          manifest: record.app,
+          session,
+        };
+
+        invokeLifecycle(
+          record,
+          runtime,
+          "mount",
+          () => runtime.instance.mount(record.contentNode, context),
+          () => {
+            runtime.suspended = false;
+            if (record.mode === "minimized") {
+              suspendRuntime(record);
+            }
+          },
+        );
+      })
+      .catch((error) => {
+        if (!isCurrentRuntime(record, runtime)) {
+          return;
+        }
+
+        runtime.crashed = true;
+        renderCrashFallback(record, "mount", error);
+      });
   };
 
   const suspendRuntime = (record: WindowRecord): void => {

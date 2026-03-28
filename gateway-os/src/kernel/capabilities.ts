@@ -25,6 +25,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "adapter.status",
     "sys.config.get",
     "sys.config.set",
+    "sys.app.open",
     "sys.device.get",
     "sys.device.list",
     "sys.workspace.list",

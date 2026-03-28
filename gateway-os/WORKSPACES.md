@@ -259,6 +259,20 @@ history/reopen UX much stronger.
 
 Keep the distinction sharp.
 
+## App runtime attachment
+
+App packages do not redefine the thread/workspace model. `sys.app.open` resolves
+an app package session against the existing host, thread, and workspace
+context, then passes that session into Dynamic Worker app backends.
+
+That means:
+
+- shell/agent command surfaces can inherit the caller's current workspace
+- renderer surfaces can attach to the same workspace through the same session
+  contract
+- backend bindings stay explicit in the resolved session instead of relying on
+  ambient runtime access
+
 Home:
 
 - `~/CONSTITUTION.md`
@@ -348,6 +362,37 @@ thread work. At minimum it should include:
 
 That is the v1 "wow" path.
 
+## App runtime bridge
+
+App hosts now resolve an explicit runtime session from the kernel with
+`sys.app.open`.
+
+- **Host**: shell command, UI window, agent entrypoint, or device webview.
+- **App session**: kernel-resolved runtime contract bound to that host instance.
+- **Backend**: optional execution target owned by the app session.
+
+The session is where app runtime meets the existing thread/workspace model:
+
+- if the app is opened from a live thread, the kernel resolves that thread from
+  the requested `pid`
+- apps can inherit the thread's workspace
+- app-owned backends can instead request a fresh workspace of kind `app`
+
+This keeps the current rule intact: work remains anchored in workspaces, not in
+browser window state.
+
+Backends are modeled separately from windows:
+
+- host-scoped backend: one backend instance per host instance
+- workspace-scoped backend: windows attached to the same workspace reuse the
+  same backend identity
+- shared backend: one backend identity for the app regardless of window
+
+The first backend target is `dynamic-worker`, and shell-style app commands are
+modeled as host shims over that backend. The first real command path now exists
+for package backends, while kernel syscall/service bridging inside those
+backends remains the next step.
+
 ## Non-goals for v1
 
 Keep the first vertical slice strict. Do not expand scope to:
@@ -356,7 +401,6 @@ Keep the first vertical slice strict. Do not expand scope to:
 - branch management UI
 - public git clone/push UX
 - advanced snapshots/forks
-- dynamic-worker app backends
 - rich `.gsv/` state beyond the minimal files above
 
 ## Why this matters

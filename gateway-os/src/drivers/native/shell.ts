@@ -9,10 +9,14 @@
  */
 
 import { Bash, defineCommand } from "just-bash";
-import type { BashExecResult, ExecResult } from "just-bash";
+import type { BashExecResult, CommandContext, ExecResult } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
 import type { ExtendedStat } from "../../fs/gsv-fs";
 import { createWorkspaceBackend, resolveUserPath } from "../../fs";
+import {
+  executeShellAppCommand,
+  listShellAppCommands,
+} from "../../kernel/apps";
 import type { KernelContext } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "../../syscalls/system";
@@ -594,8 +598,20 @@ function buildCustomCommands(
 
   const ls = buildLsCommand(fs, identity, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
+  const appCommands = listShellAppCommands().map((binding) => defineCommand(
+    binding.command.binaryName,
+    async (args, commandCtx: CommandContext): Promise<ExecResult> =>
+      executeShellAppCommand(
+        binding.command.binaryName,
+        args,
+        ctx,
+        {
+          cwd: commandCtx.cwd,
+        },
+      ),
+  ));
 
-  return [whoami, id, hostname, uname, chown, chmod, ps, ls, stat];
+  return [whoami, id, hostname, uname, chown, chmod, ps, ls, stat, ...appCommands];
 }
 
 function truncate(str: string, maxBytes: number): string {

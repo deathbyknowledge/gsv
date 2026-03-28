@@ -185,6 +185,7 @@ describe("CapabilityStore", () => {
       "proc.*",
       "sched.*",
       "shell.*",
+      "sys.app.open",
       "sys.config.get",
       "sys.config.set",
       "sys.device.get",

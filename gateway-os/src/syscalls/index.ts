@@ -57,6 +57,10 @@ import type {
   SysLinkConsumeResult,
 } from "./system";
 import type {
+  SysAppOpenArgs,
+  SysAppOpenResult,
+} from "./app";
+import type {
   SchedulerListArgs,
   SchedulerListResult,
   SchedulerAddArgs,
@@ -121,6 +125,7 @@ export type SyscallDomains = {
   "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
   "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
   "sys.workspace.list": { args: SysWorkspaceListArgs; result: SysWorkspaceListResult };
+  "sys.app.open": { args: SysAppOpenArgs; result: SysAppOpenResult };
   "sys.token.create": { args: SysTokenCreateArgs; result: SysTokenCreateResult };
   "sys.token.list": { args: SysTokenListArgs; result: SysTokenListResult };
   "sys.token.revoke": { args: SysTokenRevokeArgs; result: SysTokenRevokeResult };

@@ -28,6 +28,10 @@ Component apps are custom elements with optional hooks:
 
 - `windowId`
 - `manifest`
+- `session`
+  - `host` / `surface` identify which package surface was opened
+  - `thread` / `workspace` attachment resolved by `sys.app.open`
+  - backend descriptor (`none` or `dynamic-worker`)
 - `kernel` (scoped client)
 - `theme` (token snapshots + subscription)
 
@@ -43,4 +47,3 @@ Component apps are custom elements with optional hooks:
 
 Apps should consume `--gsv-*` tokens via `theme.snapshot()`/`theme.subscribe()`.
 Theme changes emit `window` event `gsv:theme-change`.
-

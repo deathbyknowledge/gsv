@@ -18,6 +18,10 @@ import type { WorkspaceStore } from "./workspaces";
 
 export type KernelContext = {
   env: Env;
+  runtime?: {
+    exports: Cloudflare.Exports;
+    kernelId: DurableObjectId;
+  };
   auth: AuthStore;
   caps: CapabilityStore;
   config: ConfigStore;

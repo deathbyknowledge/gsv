@@ -4,7 +4,9 @@ import {
   Agent as Host,
   type WSMessage,
 } from "agents";
+import type { AppBackendKernelCallRequest } from "../app-runtime/backend";
 import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protocol/frames";
+import type { ResultOf, SyscallName } from "../syscalls";
 import type {
   ConnectionIdentity,
   ProcessIdentity,
@@ -192,6 +194,39 @@ export class Kernel extends Host<Env> {
     return this.handleServiceReq(frame);
   }
 
+  async appBackendSyscall<S extends SyscallName>(
+    request: AppBackendKernelCallRequest<S>,
+  ): Promise<ResultOf<S>> {
+    const rawArgs = (request.args ?? {}) as Record<string, unknown>;
+    const target = rawArgs.target;
+    if (typeof target === "string" && target !== "gsv") {
+      throw new Error(`App backend syscalls cannot target device "${target}"`);
+    }
+
+    const identity = this.buildAppBackendIdentity(request);
+    const ctx = this.buildServiceContext(identity);
+    const origin: RouteOrigin = {
+      type: "process",
+      id: request.session.thread?.pid ?? `init:${identity.process.uid}`,
+    };
+    const frame = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: request.syscall,
+      args: request.args,
+    } as RequestFrame;
+
+    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+    if (!result.handled) {
+      throw new Error(`App backend syscall was not handled: ${request.syscall}`);
+    }
+    if (!result.response.ok) {
+      throw new Error(result.response.error.message);
+    }
+
+    return (result.response.data ?? null) as ResultOf<S>;
+  }
+
   /**
    * Relay process signals using deterministic run route lookups.
    */
@@ -375,6 +410,10 @@ export class Kernel extends Host<Env> {
     if (!state) throw new Error("Connection state is missing");
     return {
       env: this.env,
+      runtime: {
+        exports: this.ctx.exports,
+        kernelId: this.ctx.id,
+      },
       auth: this.auth,
       caps: this.caps,
       config: this.config,
@@ -392,6 +431,10 @@ export class Kernel extends Host<Env> {
   private buildServiceContext(identity: ConnectionIdentity): KernelContext {
     return {
       env: this.env,
+      runtime: {
+        exports: this.ctx.exports,
+        kernelId: this.ctx.id,
+      },
       auth: this.auth,
       caps: this.caps,
       config: this.config,
@@ -403,6 +446,32 @@ export class Kernel extends Host<Env> {
       connection: null as unknown as Connection,
       identity,
       serverVersion: SERVER_VERSION,
+    };
+  }
+
+  private buildAppBackendIdentity(request: AppBackendKernelCallRequest): ConnectionIdentity {
+    const ownerUid = request.session.ownerUid ?? request.session.workspace?.ownerUid ?? 0;
+    const user = this.auth.getPasswdByUid(ownerUid);
+    if (!user) {
+      throw new Error(`App backend owner not found: uid ${ownerUid}`);
+    }
+
+    const gids = this.auth.resolveGids(user.username, user.gid);
+    const kernelCapabilities = request.session.backend.bindings
+      .flatMap((binding) => binding.kind === "kernel" ? binding.syscalls : []);
+
+    return {
+      role: "user",
+      process: {
+        uid: user.uid,
+        gid: user.gid,
+        gids,
+        username: user.username,
+        home: user.home,
+        cwd: request.session.workspace?.cwd ?? request.session.thread?.cwd ?? user.home,
+        workspaceId: request.session.workspace?.workspaceId ?? request.session.thread?.workspaceId ?? null,
+      },
+      capabilities: kernelCapabilities,
     };
   }
 

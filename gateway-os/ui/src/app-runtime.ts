@@ -1,8 +1,10 @@
 import type { AppManifest } from "./apps";
+import type { AppWindowSession } from "./gateway-client";
 
 export type AppRuntimeContext = {
   windowId: string;
   manifest: AppManifest;
+  session: AppWindowSession;
 };
 
 export type AppInstance = {
@@ -13,5 +15,6 @@ export type AppInstance = {
 };
 
 export type AppRuntimeRegistry = {
+  openWindowSession: (manifest: AppManifest, windowId: string) => Promise<AppWindowSession>;
   createInstance: (manifest: AppManifest) => AppInstance;
 };
