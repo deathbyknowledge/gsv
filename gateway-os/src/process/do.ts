@@ -51,6 +51,7 @@ import {
 } from "./checkpoint";
 import { ProcessStore, type MessageRecord } from "./store";
 import { assembleSystemPrompt } from "./context";
+import { createHomeKnowledgeStore } from "../fs/knowledge-store";
 import { sendFrameToKernel } from "../shared/utils";
 import { TOOL_TO_SYSCALL, SYSCALL_TOOL_NAMES } from "../syscalls/constants";
 import { RipgitClient } from "../fs/ripgit/client";
@@ -460,7 +461,7 @@ export class Process extends Host<Env> {
         profile: this.profile,
         purpose: "chat.reply",
         identity: this.identity,
-        storage: this.env.STORAGE,
+        knowledge: createHomeKnowledgeStore(this.env, this.identity.uid),
         ripgit: this.ripgit,
       });
       this.currentRun = run;

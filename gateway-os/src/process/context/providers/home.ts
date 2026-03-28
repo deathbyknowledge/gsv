@@ -1,18 +1,20 @@
 import type { PromptContextProvider, PromptSection } from "../types";
 
 const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
 
 export function createHomeKnowledgeProvider(): PromptContextProvider {
   return {
     name: "home.knowledge",
     async collect(input) {
-      const sections: PromptSection[] = [];
-      const homeKey = input.identity.home.replace(/^\//, "");
+      if (!input.knowledge) {
+        return [];
+      }
 
-      const constitutionKey = `${homeKey}/CONSTITUTION.md`;
-      const constitutionObj = await input.storage.get(constitutionKey);
-      if (constitutionObj) {
-        const text = (await constitutionObj.text()).trim();
+      const sections: PromptSection[] = [];
+      const constitutionResult = await input.knowledge.read("CONSTITUTION.md");
+      if (constitutionResult.kind === "file") {
+        const text = TEXT_DECODER.decode(constitutionResult.bytes).trim();
         if (text) {
           sections.push({
             name: "home.constitution",
@@ -21,23 +23,21 @@ export function createHomeKnowledgeProvider(): PromptContextProvider {
         }
       }
 
-      const contextPrefix = `${homeKey}/context.d/`;
-      const listed = await input.storage.list({ prefix: contextPrefix });
-      const contextFiles = listed.objects
-        .filter((object) => object.key.endsWith(".md"))
-        .map((object) => ({
-          key: object.key,
-          name: object.key.slice(contextPrefix.length),
+      const contextFiles = (await input.knowledge.list("context.d"))
+        .filter((entry) => entry.kind === "file" && entry.path.endsWith(".md"))
+        .map((entry) => ({
+          path: entry.path,
+          name: entry.path.slice("context.d/".length),
         }))
         .sort((left, right) => left.name.localeCompare(right.name));
 
       let usedBytes = 0;
       for (const file of contextFiles) {
-        const object = await input.storage.get(file.key);
-        if (!object) {
+        const result = await input.knowledge.read(file.path);
+        if (result.kind !== "file") {
           continue;
         }
-        const text = (await object.text()).trim();
+        const text = TEXT_DECODER.decode(result.bytes).trim();
         if (!text) {
           continue;
         }

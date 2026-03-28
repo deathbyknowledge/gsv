@@ -271,6 +271,14 @@ Workspace:
 
 Home is durable personal knowledge. Workspace is durable task/app work.
 
+Current migration seam:
+
+- per-user home knowledge now lives in a dedicated KnowledgeStore repo: `uid-{uid}/home`
+- the first mounted surfaces are `~/CONSTITUTION.md` and `~/context.d/`
+- those paths are now sourced from KnowledgeStore/ripgit, not raw R2 objects
+- the rest of `~/` still stays on the operational filesystem for now
+- `~/memory/` and archived sessions remain future migration work
+
 ## Context assembly
 
 Prompt assembly should be a provider pipeline, not one flat storage read path.
@@ -282,8 +290,8 @@ The current shape is:
    - resolved from `/sys/config/ai/profile/{profile}/system_prompt`
    - user overrides can live under `/sys/users/{uid}/ai/profile/{profile}/system_prompt`
 3. home knowledge
-   - `~/CONSTITUTION.md`
-   - `~/context.d/*.md`
+   - `~/CONSTITUTION.md` from the per-user KnowledgeStore repo
+   - `~/context.d/*.md` from the same repo
 4. workspace summary
    - `/workspaces/{id}/.gsv/summary.md`
 
@@ -323,6 +331,11 @@ Next providers:
 The important rule is that active state still lives in the Process DO. Providers
 do not replace live state; they enrich the prompt with durable or retrieved
 context.
+
+For the current home-knowledge seam, provider plumbing should follow the same
+rule as mounts: `CONSTITUTION.md` and `context.d/*` are retrieved from
+KnowledgeStore, while non-migrated home surfaces still come from the operational
+filesystem.
 
 The `mcp` profile should eventually use a different provider plan than normal
 thread work. At minimum it should include:

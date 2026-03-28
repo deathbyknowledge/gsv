@@ -12,6 +12,22 @@ export type {
 } from "./mount";
 export { KernelMountBackend } from "./backends/kernel";
 export { R2MountBackend } from "./backends/r2";
+export {
+  createHomeKnowledgeBackend,
+  HomeKnowledgeMountBackend,
+} from "./backends/home";
+export type {
+  KnowledgeStore,
+  KnowledgeStoreEntry,
+  KnowledgeStoreReadResult,
+  KnowledgeStoreSearchMatch,
+  KnowledgeStoreSearchOptions,
+  KnowledgeStoreWriteOptions,
+} from "./knowledge-store";
+export {
+  RipgitKnowledgeStore,
+  createHomeKnowledgeStore,
+} from "./knowledge-store";
 export { RipgitClient } from "./ripgit/client";
 export type {
   RipgitApplyOp,
@@ -24,6 +40,7 @@ export {
   isWorkspaceMountPath,
   workspaceRootPath,
 } from "./backends/workspace";
+export { homeKnowledgeRepoRef } from "./ripgit/repos";
 export {
   resolveUserPath,
   normalizePath,

@@ -5,7 +5,7 @@ export {
 export type {
   PromptAssemblyInput,
   PromptContextProvider,
+  PromptKnowledgeStore,
   PromptRipgitClient,
   PromptSection,
-  PromptStorage,
 } from "./types";

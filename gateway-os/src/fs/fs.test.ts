@@ -429,6 +429,16 @@ describe("GsvFs root path", () => {
   });
 });
 
+describe("GsvFs resolvePath", () => {
+  it("expands tilde paths for shell-internal resolution", () => {
+    const fs = makeFs(SAM);
+
+    expect(fs.resolvePath("/home/sam", "~/context.d/test.txt")).toBe("/home/sam/context.d/test.txt");
+    expect(fs.resolvePath("/home/sam/projects", "~/context.d/test.txt")).toBe("/home/sam/context.d/test.txt");
+    expect(fs.resolvePath("/home/sam", "context.d/test.txt")).toBe("/home/sam/context.d/test.txt");
+  });
+});
+
 describe("GsvFs virtual /dev", () => {
   it("reads /dev/null as empty string", async () => {
     const fs = makeFs(SAM);

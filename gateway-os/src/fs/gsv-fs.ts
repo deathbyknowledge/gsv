@@ -26,7 +26,7 @@ import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "./m
 import { R2MountBackend } from "./backends/r2";
 import { KernelMountBackend } from "./backends/kernel";
 import { isWorkspaceMountPath } from "./backends/workspace";
-import { normalizePath } from "./utils";
+import { normalizePath, resolveUserPath } from "./utils";
 
 export type ExtendedStat = ExtendedMountStat;
 
@@ -36,6 +36,7 @@ export class GsvFs implements IFileSystem {
   private readonly r2Backend: MountBackend;
   private readonly kernelBackend: MountBackend;
   private readonly workspaceBackend: MountBackend | null;
+  private readonly homeKnowledgeBackend: MountBackend | null;
 
   constructor(
     bucket: R2Bucket,
@@ -43,12 +44,14 @@ export class GsvFs implements IFileSystem {
     kernel?: KernelRefs,
     selfPid?: string,
     workspaceBackend?: MountBackend | null,
+    homeKnowledgeBackend?: MountBackend | null,
   ) {
     this.identity = identity;
     this.kernel = kernel ?? null;
     this.r2Backend = new R2MountBackend(bucket, identity);
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
     this.workspaceBackend = workspaceBackend ?? null;
+    this.homeKnowledgeBackend = homeKnowledgeBackend ?? null;
   }
 
   async readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string> {
@@ -227,9 +230,7 @@ export class GsvFs implements IFileSystem {
   }
 
   resolvePath(base: string, path: string): string {
-    if (path.startsWith("/")) return normalizePath(path);
-    const combined = base.endsWith("/") ? base + path : base + "/" + path;
-    return normalizePath(combined);
+    return resolveUserPath(path, this.identity.home, base);
   }
 
   getAllPaths(): string[] {
@@ -251,6 +252,10 @@ export class GsvFs implements IFileSystem {
         throw new Error(`ENOSYS: workspace backend is unavailable for '${path}'`);
       }
       return this.workspaceBackend;
+    }
+
+    if (this.homeKnowledgeBackend?.handles(path)) {
+      return this.homeKnowledgeBackend;
     }
 
     if (this.kernelBackend.handles(path)) {
@@ -276,6 +281,11 @@ export class GsvFs implements IFileSystem {
 
     if (this.workspaceBackend) {
       entries.add("workspaces");
+    }
+
+    const homeRoot = this.identity.home.split("/").filter(Boolean)[0];
+    if (this.homeKnowledgeBackend && homeRoot) {
+      entries.add(homeRoot);
     }
 
     return [...entries].sort();

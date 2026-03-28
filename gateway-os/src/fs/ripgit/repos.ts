@@ -9,3 +9,10 @@ export function workspaceRepoRef(
     repo: workspaceId,
   };
 }
+
+export function homeKnowledgeRepoRef(ownerUid: number): RipgitRepoRef {
+  return {
+    owner: `uid-${ownerUid}`,
+    repo: "home",
+  };
+}

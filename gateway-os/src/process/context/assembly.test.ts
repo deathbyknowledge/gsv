@@ -88,28 +88,26 @@ describe("createHomeKnowledgeProvider", () => {
     const sections = await provider.collect(
       makeInput({
         config: { ...CONFIG, maxContextBytes: 20 },
-        storage: {
-          async get(key: string) {
-            if (key === "root/CONSTITUTION.md") {
-              return textObject("constitution");
+        knowledge: {
+          async read(path: string) {
+            if (path === "CONSTITUTION.md") {
+              return fileObject("constitution");
             }
-            if (key === "root/context.d/a.md") {
-              return textObject("alpha");
+            if (path === "context.d/a.md") {
+              return fileObject("alpha");
             }
-            if (key === "root/context.d/b.md") {
-              return textObject("beta beta beta beta");
+            if (path === "context.d/b.md") {
+              return fileObject("beta beta beta beta");
             }
-            return null;
+            return { kind: "missing" } as const;
           },
           async list() {
-            return {
-              objects: [
-                { key: "root/context.d/b.md" },
-                { key: "root/context.d/a.md" },
-              ],
-            };
+            return [
+              { path: "context.d/b.md", name: "b.md", kind: "file" as const },
+              { path: "context.d/a.md", name: "a.md", kind: "file" as const },
+            ];
           },
-        } as PromptAssemblyInput["storage"],
+        } as PromptAssemblyInput["knowledge"],
       }),
     );
 
@@ -156,23 +154,16 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     profile: "task",
     purpose: "chat.reply",
     identity: IDENTITY,
-    storage: {
-      async get() {
-        return null;
-      },
-      async list() {
-        return { objects: [] };
-      },
-    },
+    knowledge: null,
     ripgit: null,
     ...overrides,
   };
 }
 
-function textObject(text: string) {
+function fileObject(text: string) {
   return {
-    async text() {
-      return text;
-    },
+    kind: "file" as const,
+    bytes: new TextEncoder().encode(text),
+    size: text.length,
   };
 }

@@ -1,8 +1,9 @@
 import type { AiConfigResult, AiContextProfile } from "../../syscalls/ai";
+import type { KnowledgeStore } from "../../fs/knowledge-store";
 import type { RipgitClient } from "../../fs/ripgit/client";
 import type { ProcessIdentity } from "../../syscalls/system";
 
-export type PromptStorage = Pick<R2Bucket, "get" | "list">;
+export type PromptKnowledgeStore = Pick<KnowledgeStore, "read" | "list">;
 export type PromptRipgitClient = Pick<RipgitClient, "readPath">;
 
 export type PromptAssemblyInput = {
@@ -10,7 +11,7 @@ export type PromptAssemblyInput = {
   profile: AiContextProfile;
   purpose: "chat.reply" | "thread.resume";
   identity: ProcessIdentity;
-  storage: PromptStorage;
+  knowledge: PromptKnowledgeStore | null;
   ripgit: PromptRipgitClient | null;
 };
 

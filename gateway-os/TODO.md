@@ -295,20 +295,27 @@ likely backed by ripgit via Service Binding, while keeping `GsvFs` as the operat
 filesystem for live files.
 
 - [ ] Define `KnowledgeStore` API:
-  - `read(path, ref?)`
-  - `write(path, content, { message, authorUid })`
-  - `list(prefix, ref?)`
-  - `search(query, { scope, prefix, limit })`
+  - [x] first v1 surface for repo-scoped `read/list/write/delete/search`
+  - [ ] `read(path, ref?)`
+  - [ ] `write(path, content, { message, authorUid })`
+  - [ ] `list(prefix, ref?)`
+  - [ ] `search(query, { scope, prefix, limit })`
   - `history(path, limit?)`
   - `archiveSession(processId, sessionId, messages, summary?)`
 - [ ] Explicit boundary: KnowledgeStore is NOT a replacement for `GsvFs`
   - good fits: `CONSTITUTION.md`, `context.d/*`, memory notes, archived sessions, skills/app packages later
   - bad fits: `/sys`, `/proc`, `/dev`, auth/config runtime truth, active process state, scratch files
 - [ ] Repo granularity decision:
-  - one repo per user for home knowledge (`CONSTITUTION.md`, `context.d/`, memory notes)
+  - [x] one repo per user for home knowledge (`CONSTITUTION.md`, `context.d/`, memory notes)
+    - current concrete repo: `uid-{uid}/home`
   - separate repo per user for session archives if transcript volume/search churn warrants it
 - [ ] Kernel wrapper over ripgit Service Binding — hide git semantics from most of the OS
-- [ ] Migrate prompt assembly from raw R2 `CONSTITUTION.md` + `context.d/*.md` reads to KnowledgeStore retrieval
+- [x] Mount the first home knowledge surfaces through KnowledgeStore-backed storage
+  - `~/CONSTITUTION.md`
+  - `~/context.d`
+  - rest of home remains on the current operational filesystem
+- [x] Migrate prompt assembly from raw R2 `CONSTITUTION.md` + `context.d/*.md` reads to KnowledgeStore retrieval
+- [ ] Migrate `~/memory` onto the same seam once retrieval/writes are clearer
 - [ ] Migrate conversation archival from raw R2 gzip blobs to KnowledgeStore
 - [ ] Expose KnowledgeStore as a context provider for long-context / recursive process retrieval
 - [ ] Optional later: read-only history mount for browsing archived knowledge (not write-through FS)
