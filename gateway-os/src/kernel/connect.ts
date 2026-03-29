@@ -32,8 +32,8 @@ export function setupRequiredDetails(): { setupMode: true; next: "sys.setup" } {
 
 export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void> {
   const bootstrapped = await ctx.auth.bootstrap();
+  ctx.caps.seed();
   if (bootstrapped) {
-    ctx.caps.seed();
     await ensureRootHome(ctx.env.STORAGE);
   }
 }

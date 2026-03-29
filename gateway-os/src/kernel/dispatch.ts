@@ -32,6 +32,7 @@ import {
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
 import { handleSysWorkspaceList } from "./sys/workspaces";
+import { handlePkgList } from "./pkg";
 import {
   handleSysTokenCreate,
   handleSysTokenList,
@@ -149,6 +150,10 @@ async function dispatchNative(
       case "proc.setidentity":
         return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
 
+      // --- pkg.* ---
+      case "pkg.list":
+        data = handlePkgList(frame.args, ctx);
+        break;
 
       // --- ai.* ---
       case "ai.tools":

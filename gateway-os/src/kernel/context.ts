@@ -15,6 +15,7 @@ import type { ProcessRegistry } from "./processes";
 import type { AdapterStore } from "./adapter-store";
 import type { RunRouteStore } from "./run-routes";
 import type { WorkspaceStore } from "./workspaces";
+import type { PackageStore } from "./packages";
 
 export type KernelContext = {
   env: Env;
@@ -24,6 +25,7 @@ export type KernelContext = {
   devices: DeviceRegistry;
   procs: ProcessRegistry;
   workspaces: WorkspaceStore;
+  packages: PackageStore;
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
   connection: Connection;

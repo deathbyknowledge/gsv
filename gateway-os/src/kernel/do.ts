@@ -34,6 +34,7 @@ import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import { resolveAdapterServiceForKernel } from "./adapter-handlers";
+import { PackageStore } from "./packages";
 
 const SERVER_VERSION = "0.0.1";
 
@@ -60,38 +61,44 @@ export class Kernel extends Host<Env> {
   private readonly workspaces: WorkspaceStore;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
+  private readonly packages: PackageStore;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    const sql = ctx.storage.sql;
 
-    this.auth = new AuthStore(ctx.storage.sql);
+    this.auth = new AuthStore(sql);
     this.auth.init();
 
-    this.caps = new CapabilityStore(ctx.storage.sql);
+    this.caps = new CapabilityStore(sql);
     this.caps.init();
 
-    this.config = new ConfigStore(ctx.storage.sql);
+    this.config = new ConfigStore(sql);
     this.config.init();
     this.config.seed(SYSTEM_CONFIG_DEFAULTS);
 
-    this.devices = new DeviceRegistry(ctx.storage.sql);
+    this.devices = new DeviceRegistry(sql);
     this.devices.init();
 
-    this.routes = new RoutingTable(ctx.storage.sql);
+    this.routes = new RoutingTable(sql);
     this.routes.init();
 
-    this.procs = new ProcessRegistry(ctx.storage.sql);
+    this.procs = new ProcessRegistry(sql);
     this.procs.init();
 
-    this.workspaces = new WorkspaceStore(ctx.storage.sql);
+    this.workspaces = new WorkspaceStore(sql);
     this.workspaces.init();
 
-    this.adapters = new AdapterStore(ctx.storage.sql);
+    this.adapters = new AdapterStore(sql);
     this.adapters.init();
 
-    this.runRoutes = new RunRouteStore(ctx.storage.sql);
+    this.runRoutes = new RunRouteStore(sql);
     this.runRoutes.init();
+
+    this.packages = new PackageStore(sql);
+    this.packages.init();
+    this.packages.seedBuiltinPackages();
 
     this.rehydrateConnections();
   }
@@ -326,6 +333,7 @@ export class Kernel extends Host<Env> {
       devices: this.devices,
       procs: this.procs,
       workspaces: this.workspaces,
+      packages: this.packages,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       connection: null as unknown as Connection,
@@ -381,6 +389,7 @@ export class Kernel extends Host<Env> {
       devices: this.devices,
       procs: this.procs,
       workspaces: this.workspaces,
+      packages: this.packages,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       connection,
@@ -398,6 +407,7 @@ export class Kernel extends Host<Env> {
       devices: this.devices,
       procs: this.procs,
       workspaces: this.workspaces,
+      packages: this.packages,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       connection: null as unknown as Connection,

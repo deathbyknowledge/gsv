@@ -84,6 +84,10 @@ import type {
   AdapterStatusArgs,
   AdapterStatusResult,
 } from "./adapter";
+import type {
+  PkgListArgs,
+  PkgListResult,
+} from "./packages";
 
 export type ToolDefinition = {
   name: string;
@@ -112,6 +116,9 @@ export type SyscallDomains = {
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
+
+  // Packages
+  "pkg.list": { args: PkgListArgs; result: PkgListResult };
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
@@ -157,6 +164,7 @@ export type SyscallDomain =
   | "fs"
   | "shell"
   | "proc"
+  | "pkg"
   | "sys"
   | "ai"
   | "sched"

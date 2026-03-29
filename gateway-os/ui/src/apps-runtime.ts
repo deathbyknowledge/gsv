@@ -6,6 +6,7 @@ import { ensureChatAppRegistered } from "./apps/chat";
 import { ensureDevicesAppRegistered } from "./apps/devices";
 import { ensureFilesAppRegistered } from "./apps/files";
 import { ensureProcessManagerAppRegistered } from "./apps/process-manager";
+import { ensurePackagesAppRegistered } from "./apps/packages";
 import { ensureShellAppRegistered } from "./apps/shell";
 import type { GatewayClient } from "./gateway-client";
 
@@ -55,6 +56,7 @@ export function createAppRuntime(gatewayClient: GatewayClient): AppRuntimeRegist
   ensureShellAppRegistered();
   ensureDevicesAppRegistered();
   ensureProcessManagerAppRegistered();
+  ensurePackagesAppRegistered();
 
   return {
     createInstance: (manifest) => {
