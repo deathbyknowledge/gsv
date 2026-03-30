@@ -1,4 +1,8 @@
-export type DesktopIconId = "chat" | "shell" | "devices" | "files" | "control" | "processes";
+export type DesktopIconId = "chat" | "shell" | "devices" | "files" | "control" | "processes" | "packages";
+
+export type AppIcon =
+  | { kind: "builtin"; id: DesktopIconId }
+  | { kind: "svg"; svg: string };
 
 export type AppCapability =
   | "chat.use"
@@ -27,13 +31,18 @@ export type ComponentEntrypoint = {
   tagName: `${string}-${string}`;
 };
 
-export type AppEntrypoint = LegacyEntrypoint | ComponentEntrypoint;
+export type WebEntrypoint = {
+  kind: "web";
+  route: string;
+};
+
+export type AppEntrypoint = LegacyEntrypoint | ComponentEntrypoint | WebEntrypoint;
 
 export type AppManifest = {
   id: string;
   name: string;
   description: string;
-  iconId: DesktopIconId;
+  icon: AppIcon;
   entrypoint: AppEntrypoint;
   permissions: readonly AppCapability[];
   syscalls: readonly string[];
@@ -50,6 +59,9 @@ function assertManifest(manifest: AppManifest): void {
   }
   if (!manifest.name.trim()) {
     throw new Error(`App manifest "${manifest.id}" is missing name`);
+  }
+  if (manifest.icon.kind === "svg" && manifest.icon.svg.trim().length === 0) {
+    throw new Error(`App manifest "${manifest.id}" has empty svg icon`);
   }
 
   if (manifest.entrypoint.kind === "component") {

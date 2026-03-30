@@ -1,4 +1,5 @@
-import { APP_REGISTRY, type AppManifest } from "./apps";
+import type { AppManifest } from "./apps";
+import { renderDesktopIcon } from "./icons";
 import { OPEN_APP_EVENT, type OpenAppEventDetail } from "./app-link";
 import {
   OPEN_CHAT_PROCESS_EVENT,
@@ -18,26 +19,56 @@ type LauncherOptions = {
 
 type LauncherController = {
   openApp: (appId: string) => void;
+  setApps: (apps: readonly AppManifest[]) => void;
   destroy: () => void;
 };
 
-function byId(appId: string): AppManifest | undefined {
-  return APP_REGISTRY.find((appItem) => appItem.id === appId);
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 export function createLauncher(options: LauncherOptions): LauncherController {
   const { rootNode, windowManager, initialAppId } = options;
+  const iconsNode = rootNode.querySelector<HTMLElement>("[data-desktop-icons]");
 
-  const iconNodes = Array.from(rootNode.querySelectorAll<HTMLButtonElement>(".desktop-icon[data-app-id]"));
+  if (!iconsNode) {
+    throw new Error("Desktop icon layer is missing");
+  }
 
+  let apps: readonly AppManifest[] = [];
+  let appById = new Map<string, AppManifest>();
   let selectedAppId: string | null = null;
   let latestSummaries: WindowSummary[] = [];
+
+  const getIconNodes = (): HTMLButtonElement[] => {
+    return Array.from(iconsNode.querySelectorAll<HTMLButtonElement>(".desktop-icon[data-app-id]"));
+  };
+
+  const renderIcons = (): void => {
+    iconsNode.innerHTML = apps
+      .map((appItem) => {
+        return `
+          <button type="button" class="desktop-icon" data-app-id="${escapeHtml(appItem.id)}">
+            ${renderDesktopIcon(appItem.icon)}
+            <span>${escapeHtml(appItem.name)}</span>
+          </button>
+        `;
+      })
+      .join("");
+
+    syncIconState();
+  };
 
   const syncIconState = (summaries: WindowSummary[] = latestSummaries): void => {
     const activeSummary = summaries.find((summary) => summary.active && summary.mode !== "minimized");
     const activeAppId = activeSummary?.appId ?? null;
 
-    for (const iconNode of iconNodes) {
+    for (const iconNode of getIconNodes()) {
       const appId = iconNode.dataset.appId;
       const isActive = appId !== undefined && appId === activeAppId;
       const isSelected = appId !== undefined && appId === selectedAppId;
@@ -52,7 +83,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const openWindowForApp = (appId: string): string | null => {
-    const app = byId(appId);
+    const app = appById.get(appId);
     if (!app) {
       return null;
     }
@@ -65,13 +96,23 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     void openWindowForApp(appId);
   };
 
-  const onIconClick = (event: MouseEvent): void => {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLButtonElement)) {
-      return;
+  const getAppIdFromEvent = (event: Event): string | null => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return null;
     }
 
-    const appId = target.dataset.appId;
+    const button = target.closest<HTMLButtonElement>(".desktop-icon[data-app-id]");
+    if (!button || !iconsNode.contains(button)) {
+      return null;
+    }
+
+    const appId = button.dataset.appId;
+    return appId ?? null;
+  };
+
+  const onIconClick = (event: MouseEvent): void => {
+    const appId = getAppIdFromEvent(event);
     if (!appId) {
       return;
     }
@@ -80,12 +121,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const onIconDoubleClick = (event: MouseEvent): void => {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLButtonElement)) {
-      return;
-    }
-
-    const appId = target.dataset.appId;
+    const appId = getAppIdFromEvent(event);
     if (!appId) {
       return;
     }
@@ -94,12 +130,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const onIconKeyDown = (event: KeyboardEvent): void => {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLButtonElement)) {
-      return;
-    }
-
-    const appId = target.dataset.appId;
+    const appId = getAppIdFromEvent(event);
     if (!appId) {
       return;
     }
@@ -111,12 +142,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const onIconFocus = (event: FocusEvent): void => {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLButtonElement)) {
-      return;
-    }
-
-    const appId = target.dataset.appId;
+    const appId = getAppIdFromEvent(event);
     if (!appId) {
       return;
     }
@@ -170,12 +196,10 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     openApp(appId);
   };
 
-  for (const iconNode of iconNodes) {
-    iconNode.addEventListener("click", onIconClick);
-    iconNode.addEventListener("dblclick", onIconDoubleClick);
-    iconNode.addEventListener("keydown", onIconKeyDown);
-    iconNode.addEventListener("focus", onIconFocus);
-  }
+  iconsNode.addEventListener("click", onIconClick);
+  iconsNode.addEventListener("dblclick", onIconDoubleClick);
+  iconsNode.addEventListener("keydown", onIconKeyDown);
+  iconsNode.addEventListener("focusin", onIconFocus as EventListener);
 
   window.addEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
   window.addEventListener(OPEN_APP_EVENT, onOpenApp as EventListener);
@@ -185,20 +209,28 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     syncIconState(summaries);
   });
 
+  const setApps = (nextApps: readonly AppManifest[]): void => {
+    apps = [...nextApps];
+    appById = new Map(apps.map((app) => [app.id, app]));
+    if (selectedAppId && !appById.has(selectedAppId)) {
+      selectedAppId = null;
+    }
+    renderIcons();
+  };
+
   if (initialAppId) {
     openApp(initialAppId);
   }
 
   return {
     openApp,
+    setApps,
     destroy: () => {
       unsubscribe();
-      for (const iconNode of iconNodes) {
-        iconNode.removeEventListener("click", onIconClick);
-        iconNode.removeEventListener("dblclick", onIconDoubleClick);
-        iconNode.removeEventListener("keydown", onIconKeyDown);
-        iconNode.removeEventListener("focus", onIconFocus);
-      }
+      iconsNode.removeEventListener("click", onIconClick);
+      iconsNode.removeEventListener("dblclick", onIconDoubleClick);
+      iconsNode.removeEventListener("keydown", onIconKeyDown);
+      iconsNode.removeEventListener("focusin", onIconFocus as EventListener);
       window.removeEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
       window.removeEventListener(OPEN_APP_EVENT, onOpenApp as EventListener);
     },

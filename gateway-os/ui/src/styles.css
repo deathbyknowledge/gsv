@@ -812,7 +812,7 @@ button:disabled {
 .window-content {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 20px 22px;
+  padding: 0;
   overflow: auto;
   background: var(--surface-2);
 }

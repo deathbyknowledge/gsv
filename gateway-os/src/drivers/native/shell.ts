@@ -14,6 +14,12 @@ import { GsvFs } from "../../fs/gsv-fs";
 import type { ExtendedStat } from "../../fs/gsv-fs";
 import { createWorkspaceBackend, resolveUserPath } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import {
+  packageArtifactToWorkerCode,
+  packageWorkerKey,
+  type InstalledPackageRecord,
+  type PackageEntrypoint,
+} from "../../kernel/packages";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "../../syscalls/system";
 
@@ -176,6 +182,21 @@ function classifyIndicator(st: ExtendedStat): string {
 }
 
 type NameCache = { uid: Map<number, string>; gid: Map<number, string> };
+type PackageCommandInput = {
+  args: string[];
+  cwd: string;
+  uid: number;
+  gid: number;
+  username: string;
+};
+type PackageCommandResult = {
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+};
+type PackageCommandStub = {
+  run: (input?: PackageCommandInput) => Promise<PackageCommandResult>;
+};
 
 function loadNameCache(ctx: KernelContext, identity: ProcessIdentity): NameCache {
   const uid = new Map<number, string>();
@@ -594,8 +615,85 @@ function buildCustomCommands(
 
   const ls = buildLsCommand(fs, identity, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
+  const packageCommands = buildPackageCommands(identity, ctx);
 
-  return [whoami, id, hostname, uname, chown, chmod, ps, ls, stat];
+  return [whoami, id, hostname, uname, chown, chmod, ps, ls, stat, ...packageCommands];
+}
+
+function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
+  const commands = [];
+  const reserved = new Set([
+    "whoami",
+    "id",
+    "hostname",
+    "uname",
+    "chown",
+    "chmod",
+    "ps",
+    "ls",
+    "stat",
+  ]);
+
+  for (const record of ctx.packages.list({ enabled: true })) {
+    for (const entrypoint of record.manifest.entrypoints) {
+      if (entrypoint.kind !== "command") continue;
+      const commandName = entrypoint.command?.trim();
+      if (!commandName || reserved.has(commandName)) continue;
+      reserved.add(commandName);
+      commands.push(defineCommand(commandName, async (args, bashCtx): Promise<ExecResult> => {
+        try {
+          const result = await runPackageCommand(record, entrypoint, args, bashCtx.cwd, identity, ctx);
+          return {
+            stdout: result.stdout ?? "",
+            stderr: result.stderr ?? "",
+            exitCode: result.exitCode ?? 0,
+          };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            stdout: "",
+            stderr: `${commandName}: ${message}\n`,
+            exitCode: 1,
+          };
+        }
+      }));
+    }
+  }
+
+  return commands;
+}
+
+async function runPackageCommand(
+  record: InstalledPackageRecord,
+  entrypoint: PackageEntrypoint,
+  args: string[],
+  cwd: string,
+  identity: ProcessIdentity,
+  ctx: KernelContext,
+): Promise<PackageCommandResult> {
+  const worker = ctx.env.LOADER.get(
+    packageWorkerKey(record),
+    () => packageArtifactToWorkerCode(record.artifact, {
+      PACKAGE_NAME: record.manifest.name,
+      PACKAGE_ID: record.packageId,
+    }),
+  );
+  const stub = worker.getEntrypoint(resolvePackageCommandExportName(entrypoint.exportName)) as unknown as PackageCommandStub;
+
+  return stub.run({
+    args,
+    cwd,
+    uid: identity.uid,
+    gid: identity.gid,
+    username: identity.username,
+  });
+}
+
+function resolvePackageCommandExportName(exportName?: string): string | undefined {
+  if (!exportName || exportName === "default") {
+    return undefined;
+  }
+  return exportName;
 }
 
 function truncate(str: string, maxBytes: number): string {

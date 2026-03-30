@@ -12,7 +12,6 @@ export type PkgEntrypointSummary = {
   description?: string;
   command?: string;
   route?: string;
-  tagName?: `${string}-${string}`;
   icon?:
     | { kind: "builtin"; id: string }
     | { kind: "svg"; svg: string };
@@ -33,13 +32,13 @@ export type PkgSummary = {
   runtime: PkgRuntime;
   enabled: boolean;
   source: {
-    kind: "builtin" | "workspace" | "git" | "registry";
+    repo: string;
     ref: string;
-    revision?: string | null;
+    subdir: string;
+    resolvedCommit?: string | null;
   };
   entrypoints: PkgEntrypointSummary[];
   bindingNames: string[];
-  stateBindings: string[];
   installedAt: number;
   updatedAt: number;
 };

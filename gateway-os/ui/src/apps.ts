@@ -1,14 +1,14 @@
 import { defineAppManifest } from "./app-sdk";
-import type { AppCapability, AppManifest, AppWindowDefaults, DesktopIconId } from "./app-sdk";
+import type { AppCapability, AppIcon, AppManifest, AppWindowDefaults, DesktopIconId } from "./app-sdk";
 
-export type { AppCapability, AppManifest, AppWindowDefaults, DesktopIconId };
+export type { AppCapability, AppIcon, AppManifest, AppWindowDefaults, DesktopIconId };
 
 export const APP_REGISTRY: readonly AppManifest[] = [
   defineAppManifest({
     id: "chat",
     name: "Chat",
     description: "Conversational workspace with agents.",
-    iconId: "chat",
+    icon: { kind: "builtin", id: "chat" },
     entrypoint: { kind: "component", route: "/apps/chat", tagName: "gsv-chat-app" },
     permissions: ["chat.use"],
     syscalls: ["proc.spawn", "proc.send", "proc.history", "sys.workspace.list"],
@@ -23,7 +23,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     id: "shell",
     name: "Shell",
     description: "Interactive command shell for nodes.",
-    iconId: "shell",
+    icon: { kind: "builtin", id: "shell" },
     entrypoint: { kind: "component", route: "/apps/shell", tagName: "gsv-shell-app" },
     permissions: ["shell.exec", "device.inspect"],
     syscalls: ["shell.exec", "sys.device.list"],
@@ -38,7 +38,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     id: "devices",
     name: "Devices",
     description: "Connected machine inventory and runtime device status.",
-    iconId: "devices",
+    icon: { kind: "builtin", id: "devices" },
     entrypoint: { kind: "component", route: "/apps/devices", tagName: "gsv-devices-app" },
     permissions: ["device.inspect"],
     syscalls: ["sys.device.list", "sys.device.get"],
@@ -53,7 +53,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     id: "processes",
     name: "Processes",
     description: "Inspect and manage running agent processes.",
-    iconId: "processes",
+    icon: { kind: "builtin", id: "processes" },
     entrypoint: { kind: "component", route: "/apps/processes", tagName: "gsv-processes-app" },
     permissions: ["proc.inspect"],
     syscalls: ["proc.list", "proc.kill"],
@@ -68,7 +68,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     id: "files",
     name: "Files",
     description: "File browser and workspace management.",
-    iconId: "files",
+    icon: { kind: "builtin", id: "files" },
     entrypoint: { kind: "component", route: "/apps/files", tagName: "gsv-files-app" },
     permissions: ["fs.*", "device.inspect"],
     syscalls: ["fs.read", "fs.search", "fs.write", "fs.edit", "fs.delete", "sys.device.list"],
@@ -80,10 +80,25 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     },
   }),
   defineAppManifest({
+    id: "packages",
+    name: "Packages",
+    description: "Browse built-in packages and scaffold install flows.",
+    icon: { kind: "builtin", id: "packages" },
+    entrypoint: { kind: "component", route: "/apps/packages", tagName: "gsv-packages-app" },
+    permissions: [],
+    syscalls: ["pkg.list"],
+    windowDefaults: {
+      width: 920,
+      height: 620,
+      minWidth: 700,
+      minHeight: 460,
+    },
+  }),
+  defineAppManifest({
     id: "control",
     name: "Control",
     description: "System status, permissions, and settings.",
-    iconId: "control",
+    icon: { kind: "builtin", id: "control" },
     entrypoint: { kind: "component", route: "/apps/control", tagName: "gsv-control-app" },
     permissions: ["system.manage", "proc.inspect"],
     syscalls: [

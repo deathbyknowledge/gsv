@@ -1,6 +1,8 @@
+import type { AppIcon } from "./app-sdk";
+
 export type FileIconKind = "folder" | "image" | "archive" | "text" | "file";
 
-export type DesktopIconId = "chat" | "shell" | "devices" | "processes" | "files" | "control";
+export type DesktopIconId = "chat" | "shell" | "devices" | "processes" | "files" | "control" | "packages";
 
 export type ActionIconId = "new-file";
 
@@ -81,8 +83,16 @@ export function renderActionIcon(kind: ActionIconId): string {
   }
 }
 
-export function renderDesktopIcon(kind: DesktopIconId): string {
-  switch (kind) {
+export function renderDesktopIcon(icon: AppIcon): string {
+  if (icon.kind === "svg") {
+    return `
+      <span class="desktop-glyph is-package-svg" aria-hidden="true">
+        ${icon.svg}
+      </span>
+    `;
+  }
+
+  switch (icon.id) {
     case "chat":
       return `
         <span class="desktop-glyph is-chat" aria-hidden="true">
@@ -153,6 +163,17 @@ export function renderDesktopIcon(kind: DesktopIconId): string {
             <circle class="desktop-icon-stroke" cx="7" cy="9" r="2.4"/>
             <circle class="desktop-icon-stroke" cx="12" cy="14" r="2.4"/>
             <circle class="desktop-icon-stroke" cx="17" cy="10.5" r="2.4"/>
+          </svg>
+        </span>
+      `;
+    case "packages":
+      return `
+        <span class="desktop-glyph is-packages" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path class="desktop-icon-fill" d="M12 4.5 18.5 8v8L12 19.5 5.5 16V8z"/>
+            <path class="desktop-icon-stroke" d="M12 4.5 18.5 8v8L12 19.5 5.5 16V8z"/>
+            <path class="desktop-icon-stroke" d="M12 4.5v15"/>
+            <path class="desktop-icon-stroke" d="M5.8 8 12 11.3 18.2 8"/>
           </svg>
         </span>
       `;

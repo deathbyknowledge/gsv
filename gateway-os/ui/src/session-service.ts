@@ -8,6 +8,8 @@ import type {
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
 const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
 const STORAGE_PENDING_REVOKES = "gsv.ui.session.pending-revokes.v1";
+const APP_SESSION_USER_COOKIE = "gsv_app_user";
+const APP_SESSION_TOKEN_COOKIE = "gsv_app_token";
 const SESSION_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 const SESSION_TOKEN_REFRESH_LEEWAY_MS = 10 * 60 * 1000;
 const LOCK_REVOKE_WAIT_MS = 1_500;
@@ -118,6 +120,8 @@ function storePersistedToken(token: PersistedSessionToken): void {
   } catch {
     // Ignore storage failures.
   }
+
+  syncAppSessionCookies(token);
 }
 
 function deriveGatewayUrlFromOrigin(): string {
@@ -151,6 +155,46 @@ function waitFor(ms: number): Promise<void> {
   });
 }
 
+function writeCookie(name: string, value: string, expiresAt: number | null): void {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "SameSite=Strict",
+  ];
+
+  if (window.location.protocol === "https:") {
+    parts.push("Secure");
+  }
+  if (typeof expiresAt === "number") {
+    parts.push(`Expires=${new Date(expiresAt).toUTCString()}`);
+  }
+
+  document.cookie = parts.join("; ");
+}
+
+function clearCookie(name: string): void {
+  const parts = [
+    `${name}=`,
+    "Path=/",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "SameSite=Strict",
+  ];
+  if (window.location.protocol === "https:") {
+    parts.push("Secure");
+  }
+  document.cookie = parts.join("; ");
+}
+
+function syncAppSessionCookies(token: PersistedSessionToken): void {
+  writeCookie(APP_SESSION_USER_COOKIE, token.username, token.expiresAt);
+  writeCookie(APP_SESSION_TOKEN_COOKIE, token.token, token.expiresAt);
+}
+
+function clearAppSessionCookies(): void {
+  clearCookie(APP_SESSION_USER_COOKIE);
+  clearCookie(APP_SESSION_TOKEN_COOKIE);
+}
+
 export function createSessionService(client: GatewayClient): SessionService {
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
@@ -165,6 +209,12 @@ export function createSessionService(client: GatewayClient): SessionService {
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
   let pendingRevokes = Array.from(new Set(readPersistedRevokes()));
   let refreshTimerId: number | null = null;
+
+  if (currentSessionToken) {
+    syncAppSessionCookies(currentSessionToken);
+  } else {
+    clearAppSessionCookies();
+  }
 
   const emit = (): void => {
     for (const listener of listeners) {
@@ -187,6 +237,7 @@ export function createSessionService(client: GatewayClient): SessionService {
   const clearStoredSessionToken = (): void => {
     currentSessionToken = null;
     removeValue(STORAGE_SESSION_TOKEN);
+    clearAppSessionCookies();
     clearRefreshTimer();
   };
 

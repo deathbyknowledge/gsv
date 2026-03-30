@@ -108,6 +108,17 @@ export type ProcHistoryResult =
     }
   | { ok: false; error: string };
 
+export type GatewayClientLike = {
+  getStatus: () => GatewayClientStatus;
+  isConnected: () => boolean;
+  onSignal: (listener: (signal: string, payload: unknown) => void) => () => void;
+  onStatus: (listener: (status: GatewayClientStatus) => void) => () => void;
+  call: <T = unknown>(call: string, args?: unknown) => Promise<T>;
+  spawnProcess: (args: ProcSpawnArgs) => Promise<ProcSpawnResult>;
+  sendMessage: (message: string, pid?: string) => Promise<ProcSendResult>;
+  getHistory: (limit?: number, pid?: string, offset?: number) => Promise<ProcHistoryResult>;
+};
+
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -133,7 +144,7 @@ function normalizeMessage(value: unknown): string {
   return "Gateway request failed";
 }
 
-export class GatewayClient {
+export class GatewayClient implements GatewayClientLike {
   private socket: WebSocket | null = null;
   private pending = new Map<string, PendingRequest>();
   private signalListeners = new Set<(signal: string, payload: unknown) => void>();

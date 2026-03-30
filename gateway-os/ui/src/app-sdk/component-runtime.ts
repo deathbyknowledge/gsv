@@ -1,5 +1,5 @@
 import type { AppInstance, AppRuntimeContext } from "../app-runtime";
-import type { GatewayClient } from "../gateway-client";
+import type { GatewayClientLike } from "../gateway-client";
 import type { AppManifest } from "./manifest";
 import { createScopedKernelClient } from "./kernel-client";
 import { createThemeClient } from "./theme";
@@ -38,7 +38,7 @@ function assertComponentManifest(manifest: AppManifest): asserts manifest is App
 
 export function createComponentAppInstance(
   manifest: AppManifest,
-  gatewayClient: GatewayClient,
+  gatewayClient: GatewayClientLike,
 ): AppInstance {
   assertComponentManifest(manifest);
 

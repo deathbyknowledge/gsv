@@ -1,5 +1,5 @@
 import type {
-  GatewayClient,
+  GatewayClientLike,
   GatewayClientStatus,
   ProcHistoryResult,
   ProcSendResult,
@@ -45,7 +45,7 @@ function assertAllowed(manifest: AppManifest, syscall: string): void {
 }
 
 export function createScopedKernelClient(
-  gatewayClient: GatewayClient,
+  gatewayClient: GatewayClientLike,
   manifest: AppManifest,
 ): AppKernelClient {
   return {

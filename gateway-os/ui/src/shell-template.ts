@@ -1,25 +1,6 @@
-import { APP_REGISTRY } from "./apps";
-import { renderDesktopIcon } from "./icons";
 import type { ThemeId } from "./themes";
 
-function renderDesktopIcons(): string {
-  return APP_REGISTRY.map((appItem) => {
-    return `
-      <button type="button" class="desktop-icon" data-app-id="${appItem.id}">
-        ${renderDesktopIcon(appItem.iconId)}
-        <span>${appItem.name}</span>
-      </button>
-    `;
-  }).join("");
-}
-
 export function renderDesktopShell(initialTheme: ThemeId): string {
-  if (APP_REGISTRY.length === 0) {
-    throw new Error("App registry is empty");
-  }
-
-  const desktopIconsMarkup = renderDesktopIcons();
-
   return `
     <div class="desktop-shell" data-theme="${initialTheme}">
       <div class="atmosphere">
@@ -59,9 +40,7 @@ export function renderDesktopShell(initialTheme: ThemeId): string {
       </header>
 
       <main class="workspace" role="presentation">
-        <nav class="desktop-icons" aria-label="Desktop applications">
-          ${desktopIconsMarkup}
-        </nav>
+        <nav class="desktop-icons" data-desktop-icons aria-label="Desktop applications"></nav>
         <section class="windows-layer" data-windows-layer></section>
       </main>
 

@@ -1,6 +1,7 @@
 export type {
   AppCapability,
   AppEntrypoint,
+  AppIcon,
   AppManifest,
   AppWindowDefaults,
   DesktopIconId,

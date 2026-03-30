@@ -5,18 +5,30 @@ import type {
 } from "./adapter-interface";
 import type { Frame } from "./protocol/frames";
 import { getAgentByName } from "agents";
+import type { AppFrameContext, PackageAppProps } from "./protocol/app-frame";
 import { packageArtifactToWorkerCode, packageWorkerKey } from "./kernel/packages";
 import type { PackageArtifact } from "./kernel/packages";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
+export { KernelBinding } from "./kernel/packages";
+export { PackageBinding } from "./kernel/packages";
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
       return Response.json({ status: "healthy" });
+    }
+
+    if (url.pathname === "/runtime/theme.css") {
+      return new Response(RUNTIME_THEME_CSS, {
+        headers: {
+          "content-type": "text/css; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
     }
 
     if (url.pathname === "/ws" && isWebSocketRequest(request)) {
@@ -51,7 +63,23 @@ export default {
           PACKAGE_DO_NAME: resolved.packageDoName,
           PACKAGE_ROUTE_BASE: resolved.routeBase,
         }),
-      ).getEntrypoint();
+      ).getEntrypoint(undefined, {
+        props: {
+          appFrame: resolved.appFrame,
+          packageDoName: resolved.packageDoName,
+          kernel: ctx.exports.KernelBinding({
+            props: {
+              appFrame: resolved.appFrame,
+            },
+          }),
+          package: ctx.exports.PackageBinding({
+            props: {
+              appFrame: resolved.appFrame,
+              packageDoName: resolved.packageDoName,
+            },
+          }),
+        } satisfies PackageAppProps,
+      });
 
       return worker.fetch(buildPackageWorkerRequest(request, resolved));
     }
@@ -59,6 +87,27 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+const RUNTIME_THEME_CSS = [
+  ":root {",
+  "  color-scheme: dark;",
+  "  --bg: #07131a;",
+  "  --panel: rgba(14, 30, 38, 0.82);",
+  "  --edge: rgba(125, 211, 252, 0.24);",
+  "  --text: #e6f4f9;",
+  "  --muted: #92a8b3;",
+  "  --accent: #8ae0ff;",
+  "}",
+  "html, body { min-height: 100%; }",
+  "body {",
+  "  margin: 0;",
+  "  font-family: \"Avenir Next\", \"Trebuchet MS\", sans-serif;",
+  "  background: radial-gradient(circle at top, #123040 0%, #07131a 58%, #03070a 100%);",
+  "  color: var(--text);",
+  "}",
+  "* { box-sizing: border-box; }",
+  "a { color: var(--accent); }",
+].join("\n");
 
 type PackageAppSession = {
   username: string;
@@ -72,6 +121,7 @@ type ResolvedPackageRoute = {
   packageDoName: string;
   routeBase: string;
   artifact: PackageArtifact;
+  appFrame: AppFrameContext;
   auth: {
     uid: number;
     username: string;

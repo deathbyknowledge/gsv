@@ -34,7 +34,19 @@ import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import { resolveAdapterServiceForKernel } from "./adapter-handlers";
-import { PackageStore } from "./packages";
+import {
+  type InstalledPackageRecord,
+  PackageStore,
+  type PackageEntrypoint,
+  packageDoName,
+  packageRouteBase,
+  type PackageArtifact,
+} from "./packages";
+import {
+  DEFAULT_APP_FRAME_TTL_MS,
+  isAppFrameContextExpired,
+  type AppFrameContext,
+} from "../protocol/app-frame";
 
 const SERVER_VERSION = "0.0.1";
 
@@ -50,6 +62,33 @@ type ProcSendData = {
   runId?: string;
   queued?: boolean;
 };
+
+type ResolvePackageHttpInput = {
+  packageName: string;
+  username: string;
+  token: string;
+};
+
+type ResolvePackageHttpResult =
+  | {
+      ok: true;
+      packageId: string;
+      packageName: string;
+      packageDoName: string;
+      routeBase: string;
+      artifact: PackageArtifact;
+      appFrame: AppFrameContext;
+      auth: {
+        uid: number;
+        username: string;
+        capabilities: string[];
+      };
+    }
+  | {
+      ok: false;
+      status: number;
+      message: string;
+    };
 
 export class Kernel extends Host<Env> {
   private readonly auth: AuthStore;
@@ -197,6 +236,112 @@ export class Kernel extends Host<Env> {
     }
 
     return this.handleServiceReq(frame);
+  }
+
+  async appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame> {
+    if (isAppFrameContextExpired(appFrame)) {
+      return errFrame(frame.id, 401, "App frame expired");
+    }
+
+    if (isInternalOnlySyscall(frame.call)) {
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+
+    const record = this.packages.get(appFrame.packageId);
+    if (!record || !record.enabled || record.manifest.name !== appFrame.packageName) {
+      return errFrame(frame.id, 404, "Package app not found");
+    }
+
+    const entrypoint = findUiEntrypoint(record.manifest.entrypoints, appFrame.entrypointName, appFrame.routeBase);
+    if (!entrypoint) {
+      return errFrame(frame.id, 404, "Package app entrypoint not found");
+    }
+
+    if (!entrypoint.syscalls?.includes(frame.call)) {
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+
+    const identity = this.buildAppBindingIdentity(appFrame);
+    if (!identity) {
+      return errFrame(frame.id, 401, "Authentication failed");
+    }
+
+    if (!hasCapability(identity.capabilities, frame.call)) {
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+
+    const ctx = this.buildServiceContext(identity);
+    const origin: RouteOrigin = { type: "process", id: `__app_binding__:${appFrame.packageId}:${appFrame.entrypointName}` };
+    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+
+    if (!result.handled) {
+      return errFrame(frame.id, 501, `${frame.call} requires unsupported async routing`);
+    }
+
+    this.applyPostDispatchEffects(frame, result.response);
+    return result.response;
+  }
+
+  async resolvePackageHttpRoute(input: ResolvePackageHttpInput): Promise<ResolvePackageHttpResult> {
+    const packageName = input.packageName.trim();
+    const username = input.username.trim();
+    const token = input.token.trim();
+
+    if (!packageName) {
+      return { ok: false, status: 400, message: "Package name is required" };
+    }
+    if (!username || !token) {
+      return { ok: false, status: 401, message: "Authentication required" };
+    }
+
+    const auth = await this.auth.authenticateToken(username, token, { role: "user" });
+    if (!auth.ok) {
+      return { ok: false, status: 401, message: "Authentication failed" };
+    }
+
+    const routeBase = packageRouteBase(packageName);
+    let record: InstalledPackageRecord | null = null;
+    let entrypoint: PackageEntrypoint | null = null;
+
+    for (const candidate of this.packages.list({ enabled: true, name: packageName, runtime: "web-ui" })) {
+      const matched = candidate.manifest.entrypoints.find((candidateEntrypoint) => {
+        return candidateEntrypoint.kind === "ui" && candidateEntrypoint.route === routeBase;
+      });
+      if (matched) {
+        record = candidate;
+        entrypoint = matched;
+        break;
+      }
+    }
+
+    if (!record || !entrypoint) {
+      return { ok: false, status: 404, message: "Package app not found" };
+    }
+
+    const now = Date.now();
+    return {
+      ok: true,
+      packageId: record.packageId,
+      packageName: record.manifest.name,
+      packageDoName: packageDoName(record.manifest.name),
+      routeBase,
+      artifact: record.artifact,
+      appFrame: {
+        uid: auth.identity.uid,
+        username: auth.identity.username,
+        packageId: record.packageId,
+        packageName: record.manifest.name,
+        entrypointName: entrypoint.name,
+        routeBase,
+        issuedAt: now,
+        expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
+      },
+      auth: {
+        uid: auth.identity.uid,
+        username: auth.identity.username,
+        capabilities: this.caps.resolve(auth.identity.gids),
+      },
+    };
   }
 
   /**
@@ -536,6 +681,28 @@ export class Kernel extends Host<Env> {
       process,
       capabilities: this.caps.resolve([102]),
       channel: adapterHint,
+    };
+  }
+
+  private buildAppBindingIdentity(appFrame: AppFrameContext): ConnectionIdentity | null {
+    const user = this.auth.getPasswdByUid(appFrame.uid);
+    if (!user || user.username !== appFrame.username) {
+      return null;
+    }
+
+    const gids = this.auth.resolveGids(user.username, user.gid);
+    return {
+      role: "user",
+      process: {
+        uid: user.uid,
+        gid: user.gid,
+        gids,
+        username: user.username,
+        home: user.home,
+        cwd: user.home,
+        workspaceId: null,
+      },
+      capabilities: this.caps.resolve(gids),
     };
   }
 
@@ -911,6 +1078,16 @@ export class Kernel extends Host<Env> {
       }),
     );
   }
+}
+
+function findUiEntrypoint(
+  entrypoints: readonly PackageEntrypoint[],
+  entrypointName: string,
+  routeBase: string,
+): PackageEntrypoint | null {
+  return entrypoints.find((entrypoint) => {
+    return entrypoint.kind === "ui" && entrypoint.name === entrypointName && entrypoint.route === routeBase;
+  }) ?? null;
 }
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {

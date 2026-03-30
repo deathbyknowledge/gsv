@@ -41,6 +41,11 @@
 			"binding": "STORAGE",
 			"bucket_name": "gsv-storage-test"
 		}
+	],
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
+		}
 	]
 	// Note: No AI binding, no service bindings for channels
 	// Tests should mock these dependencies

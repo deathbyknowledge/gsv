@@ -6,9 +6,9 @@ import { ensureChatAppRegistered } from "./apps/chat";
 import { ensureDevicesAppRegistered } from "./apps/devices";
 import { ensureFilesAppRegistered } from "./apps/files";
 import { ensureProcessManagerAppRegistered } from "./apps/process-manager";
-import { ensurePackagesAppRegistered } from "./apps/packages";
 import { ensureShellAppRegistered } from "./apps/shell";
-import type { GatewayClient } from "./gateway-client";
+import type { GatewayClientLike } from "./gateway-client";
+import { attachHostBridge } from "./host-bridge";
 
 function escapeHtml(value: string): string {
   return value
@@ -49,19 +49,48 @@ function createLegacyPlaceholder(manifest: AppManifest): AppInstance {
   };
 }
 
-export function createAppRuntime(gatewayClient: GatewayClient): AppRuntimeRegistry {
+function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClientLike): AppInstance {
+  let bridge: ReturnType<typeof attachHostBridge> | null = null;
+
+  return {
+    mount: (container) => {
+      const iframe = document.createElement("iframe");
+      iframe.src = manifest.entrypoint.route;
+      iframe.title = manifest.name;
+      iframe.loading = "eager";
+      iframe.style.width = "100%";
+      iframe.style.height = "100%";
+      iframe.style.border = "0";
+      iframe.style.display = "block";
+      iframe.setAttribute("allow", "clipboard-read; clipboard-write");
+
+      bridge?.destroy();
+      bridge = attachHostBridge(iframe, gatewayClient);
+      container.replaceChildren(iframe);
+    },
+    terminate: () => {
+      bridge?.destroy();
+      bridge = null;
+      void manifest;
+    },
+  };
+}
+
+export function createAppRuntime(gatewayClient: GatewayClientLike): AppRuntimeRegistry {
   ensureBuiltinComponentAppsRegistered();
   ensureChatAppRegistered();
   ensureFilesAppRegistered();
   ensureShellAppRegistered();
   ensureDevicesAppRegistered();
   ensureProcessManagerAppRegistered();
-  ensurePackagesAppRegistered();
 
   return {
     createInstance: (manifest) => {
       if (manifest.entrypoint.kind === "component") {
         return createComponentAppInstance(manifest, gatewayClient);
+      }
+      if (manifest.entrypoint.kind === "web") {
+        return createWebAppInstance(manifest, gatewayClient);
       }
 
       return createLegacyPlaceholder(manifest);
