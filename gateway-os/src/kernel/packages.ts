@@ -590,7 +590,7 @@ function createBuiltinPackagesAppPackage(): PackageSeed {
             kind: "asset",
             module: "ui/packages-icon.svg",
           },
-          syscalls: ["pkg.list"],
+          syscalls: ["pkg.list", "pkg.install", "pkg.remove"],
           windowDefaults: {
             width: 920,
             height: 620,

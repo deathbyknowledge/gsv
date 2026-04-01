@@ -20,6 +20,8 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "shell.*",
     "proc.*",
     "pkg.list",
+    "pkg.install",
+    "pkg.remove",
     "sched.*",
     "adapter.connect",
     "adapter.disconnect",

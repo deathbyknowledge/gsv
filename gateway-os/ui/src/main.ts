@@ -130,6 +130,11 @@ if (embeddedAppId) {
 
     launcher.setApps([]);
   });
+  gatewayClient.onSignal((signal) => {
+    if (signal === "pkg.changed") {
+      void refreshDesktopApps();
+    }
+  });
 
   createSessionUi({
     rootNode: shellEl,

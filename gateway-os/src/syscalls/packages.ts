@@ -46,3 +46,21 @@ export type PkgSummary = {
 export type PkgListResult = {
   packages: PkgSummary[];
 };
+
+export type PkgInstallArgs = {
+  packageId: string;
+};
+
+export type PkgInstallResult = {
+  changed: boolean;
+  package: PkgSummary;
+};
+
+export type PkgRemoveArgs = {
+  packageId: string;
+};
+
+export type PkgRemoveResult = {
+  changed: boolean;
+  package: PkgSummary;
+};

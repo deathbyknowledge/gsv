@@ -27,6 +27,14 @@ import type {
   ProcSetIdentityResult,
 } from "./proc";
 import type {
+  PkgInstallArgs,
+  PkgInstallResult,
+  PkgListArgs,
+  PkgListResult,
+  PkgRemoveArgs,
+  PkgRemoveResult,
+} from "./packages";
+import type {
   ConnectArgs,
   ConnectResult,
   SysSetupArgs,
@@ -119,6 +127,8 @@ export type SyscallDomains = {
 
   // Packages
   "pkg.list": { args: PkgListArgs; result: PkgListResult };
+  "pkg.install": { args: PkgInstallArgs; result: PkgInstallResult };
+  "pkg.remove": { args: PkgRemoveArgs; result: PkgRemoveResult };
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
