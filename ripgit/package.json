@@ -1,0 +1,12 @@
+{
+  "name": "ripgit-tests",
+  "private": true,
+  "scripts": {
+    "build:worker": "cargo install -q \"worker-build@^0.7\" && worker-build --release",
+    "test": "npm run build:worker && NODE_OPTIONS='--experimental-vm-modules' vitest run"
+  },
+  "devDependencies": {
+    "miniflare": "4.20260317.1",
+    "vitest": "3.2.4"
+  }
+}
