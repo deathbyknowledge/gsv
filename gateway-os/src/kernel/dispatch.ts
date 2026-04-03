@@ -32,7 +32,7 @@ import {
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
 import { handleSysWorkspaceList } from "./sys/workspaces";
-import { handlePkgInstall, handlePkgList, handlePkgRemove } from "./pkg";
+import { handlePkgCheckout, handlePkgInstall, handlePkgList, handlePkgRemove } from "./pkg";
 import {
   handleSysTokenCreate,
   handleSysTokenList,
@@ -153,6 +153,9 @@ async function dispatchNative(
       // --- pkg.* ---
       case "pkg.list":
         data = handlePkgList(frame.args, ctx);
+        break;
+      case "pkg.checkout":
+        data = await handlePkgCheckout(frame.args, ctx);
         break;
       case "pkg.install":
         data = handlePkgInstall(frame.args, ctx);

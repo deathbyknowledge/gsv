@@ -11,6 +11,7 @@ export type {
   FsSearchBackendResult,
 } from "./mount";
 export { KernelMountBackend } from "./backends/kernel";
+export { createPackageBackend, isPackageMountPath } from "./backends/packages";
 export { R2MountBackend } from "./backends/r2";
 export { RipgitClient } from "./ripgit/client";
 export type {

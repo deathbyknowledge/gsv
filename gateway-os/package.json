@@ -29,7 +29,7 @@
 	},
 	"dependencies": {
 		"@clack/prompts": "^1.0.0",
-		"@mariozechner/pi-ai": "^0.57.1",
+		"@mariozechner/pi-ai": "^0.64.0",
 		"agents": "^0.7.5",
 		"just-bash": "^2.12.6",
 		"picocolors": "^1.1.1",

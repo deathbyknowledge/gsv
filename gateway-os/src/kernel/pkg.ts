@@ -1,5 +1,7 @@
 import type { KernelContext } from "./context";
 import type {
+  PkgCheckoutArgs,
+  PkgCheckoutResult,
   PkgInstallArgs,
   PkgInstallResult,
   PkgListArgs,
@@ -13,6 +15,7 @@ import type {
   PackageArtifact,
   PackageEntrypoint,
 } from "./packages";
+import { resolvePackageFromRipgitSource } from "./packages";
 
 export function handlePkgList(
   args: PkgListArgs | undefined,
@@ -42,6 +45,42 @@ export function handlePkgInstall(
   return {
     changed: !record.enabled,
     package: toPkgSummary(requirePackage(record.packageId, ctx)),
+  };
+}
+
+export async function handlePkgCheckout(
+  args: PkgCheckoutArgs,
+  ctx: KernelContext,
+): Promise<PkgCheckoutResult> {
+  const record = requirePackage(args.packageId, ctx);
+  const ref = typeof args.ref === "string" ? args.ref.trim() : "";
+  if (!ref) {
+    throw new Error("ref is required");
+  }
+
+  const source = {
+    ...record.manifest.source,
+    ref,
+    resolvedCommit: null,
+  };
+  const resolved = await resolvePackageFromRipgitSource(ctx.env, source);
+  if (resolved.manifest.name !== record.manifest.name) {
+    throw new Error(`Package source mismatch: expected ${record.manifest.name}, got ${resolved.manifest.name}`);
+  }
+
+  const updated = ctx.packages.install({
+    packageId: record.packageId,
+    manifest: resolved.manifest,
+    artifact: resolved.artifact,
+    grants: record.grants,
+    enabled: record.enabled,
+    installedAt: record.installedAt,
+    updatedAt: Date.now(),
+  });
+
+  return {
+    changed: record.manifest.source.ref !== ref || record.artifact.hash !== updated.artifact.hash,
+    package: toPkgSummary(updated),
   };
 }
 

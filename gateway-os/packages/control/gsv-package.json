@@ -1,0 +1,34 @@
+{
+  "name": "control",
+  "description": "System status, permissions, and settings.",
+  "version": "0.1.0",
+  "runtime": "web-ui",
+  "entrypoints": [
+    {
+      "name": "control",
+      "kind": "ui",
+      "route": "/apps/control",
+      "icon": { "kind": "builtin", "id": "control" },
+      "syscalls": ["sys.config.get", "sys.config.set", "sys.token.create", "sys.token.list", "sys.token.revoke", "sys.link", "sys.unlink", "sys.link.list", "sys.link.consume", "adapter.connect", "adapter.disconnect", "adapter.status"],
+      "windowDefaults": { "width": 860, "height": 580, "minWidth": 640, "minHeight": 420 },
+      "module": "ui/worker.ts",
+      "description": "System status, permissions, and settings."
+    }
+  ],
+  "capabilities": {
+    "bindings": [
+      {
+        "binding": "KERNEL",
+        "kind": "kernel",
+        "interfaceName": "gsv.kernel.app.v1",
+        "required": true,
+        "description": "Package-scoped req/res binding for kernel-native syscalls."
+      }
+    ],
+    "egress": { "mode": "none" }
+  },
+  "artifact": {
+    "mainModule": "ui/worker.ts",
+    "compatibilityDate": "2026-01-28"
+  }
+}

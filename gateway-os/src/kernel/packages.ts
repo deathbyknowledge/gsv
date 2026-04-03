@@ -1,5 +1,6 @@
 import { getAgentByName } from "agents";
 import { env, WorkerEntrypoint } from "cloudflare:workers";
+import { RipgitClient } from "../fs/ripgit/client";
 import type {
   AppFrameContext,
   KernelBindingProps,
@@ -7,17 +8,10 @@ import type {
 } from "../protocol/app-frame";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
-import { BUILTIN_CHAT_WORKER_SOURCE } from "./builtin/chat";
-import { BUILTIN_CONTROL_WORKER_SOURCE } from "./builtin/control";
-import { BUILTIN_DEVICES_WORKER_SOURCE } from "./builtin/devices";
-import { BUILTIN_DOCTOR_SOURCE } from "./builtin/doctor";
-import { BUILTIN_FILES_WORKER_SOURCE } from "./builtin/files";
 import {
-  BUILTIN_PACKAGES_ICON_SOURCE,
-  BUILTIN_PACKAGES_WORKER_SOURCE,
-} from "./builtin/packages";
-import { BUILTIN_PROCESSES_WORKER_SOURCE } from "./builtin/processes";
-import { BUILTIN_SHELL_WORKER_SOURCE } from "./builtin/shell";
+  BUILTIN_PACKAGE_SOURCE_TREES,
+  type BuiltinPackageSourceFile,
+} from "./generated/builtin-package-sources";
 
 /**
  * Package model for GSV kernel-managed packages.
@@ -103,6 +97,8 @@ export interface PackageArtifact {
   compatibilityFlags?: string[];
   modules: PackageModuleDef[];
 }
+
+type PackageArtifactInput = Omit<PackageArtifact, "hash">;
 
 export interface PackageEntrypoint {
   name: string;
@@ -229,6 +225,28 @@ export interface PackageManifest {
   capabilities?: PackageCapabilityDeclaration;
 }
 
+interface PackageSourceManifestFile {
+  name: string;
+  description: string;
+  version: string;
+  runtime: PackageRuntime;
+  entrypoints: PackageEntrypoint[];
+  capabilities?: PackageCapabilityDeclaration;
+  artifact: {
+    mainModule: string;
+    compatibilityDate?: string;
+    compatibilityFlags?: string[];
+    include?: string[];
+    moduleKinds?: Record<string, PackageModuleKind>;
+  };
+}
+
+type BuiltinRipgitPackageSpec = {
+  source: PackageSource;
+  grants?: PackageGrantSet;
+  enabled: boolean;
+};
+
 /**
  * Concrete binding grant decided by kernel at install or launch time.
  */
@@ -259,21 +277,124 @@ export interface InstalledPackageRecord {
 
 export type PackageSeed = Omit<InstalledPackageRecord, "installedAt" | "updatedAt">;
 
-export const BUILTIN_PACKAGE_SEEDS: readonly PackageSeed[] = [
-  createBuiltinChatAppPackage(),
-  createBuiltinShellAppPackage(),
-  createBuiltinDevicesAppPackage(),
-  createBuiltinProcessesAppPackage(),
-  createBuiltinFilesAppPackage(),
-  createBuiltinControlAppPackage(),
-  createBuiltinDoctorPackage(),
-  createBuiltinPackagesAppPackage(),
-] as const;
+
+
+// TODO: remove all this crap with a prper runtime sdk and streamline this
+
 
 export const DEFAULT_PACKAGE_COMPATIBILITY_DATE = "2026-01-28";
+export const BUILTIN_SOURCE_REPO = "system/gsv";
+export const BUILTIN_SOURCE_REF = "main";
+
+const BUILTIN_SOURCE_MIRROR_HASH_CONFIG_KEY = "config/packages/builtin_source_mirror_hash";
+const PACKAGE_SOURCE_MANIFEST_FILE = "gsv-package.json";
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
+
+const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
+  createBuiltinRipgitPackageSpec("chat"),
+  createBuiltinRipgitPackageSpec("shell", {
+    bindings: [
+      {
+        binding: "KERNEL",
+        providerKind: "kernel-entrypoint",
+        providerRef: "kernel://app/request",
+      },
+    ],
+    egress: {
+      mode: "none",
+    },
+  }),
+  createBuiltinRipgitPackageSpec("devices", {
+    bindings: [
+      {
+        binding: "KERNEL",
+        providerKind: "kernel-entrypoint",
+        providerRef: "kernel://app/request",
+      },
+    ],
+    egress: {
+      mode: "none",
+    },
+  }),
+  createBuiltinRipgitPackageSpec("processes", {
+    bindings: [
+      {
+        binding: "KERNEL",
+        providerKind: "kernel-entrypoint",
+        providerRef: "kernel://app/request",
+      },
+    ],
+    egress: {
+      mode: "none",
+    },
+  }),
+  createBuiltinRipgitPackageSpec("files", {
+    bindings: [
+      {
+        binding: "KERNEL",
+        providerKind: "kernel-entrypoint",
+        providerRef: "kernel://app/request",
+      },
+    ],
+    egress: {
+      mode: "none",
+    },
+  }),
+  createBuiltinRipgitPackageSpec("control", {
+    bindings: [
+      {
+        binding: "KERNEL",
+        providerKind: "kernel-entrypoint",
+        providerRef: "kernel://app/request",
+      },
+    ],
+    egress: {
+      mode: "none",
+    },
+  }),
+  createBuiltinRipgitPackageSpec("ascii-starfield"),
+  createBuiltinRipgitPackageSpec("doctor"),
+  createBuiltinRipgitPackageSpec("packages", {
+    bindings: [
+      {
+        binding: "PACKAGE",
+        providerKind: "package-do",
+        providerRef: packageDoName("packages"),
+      },
+      {
+        binding: "KERNEL",
+        providerKind: "kernel-entrypoint",
+        providerRef: "kernel://app/request",
+      },
+    ],
+    egress: {
+      mode: "none",
+    },
+  }),
+] as const;
 
 export function packageRouteBase(packageName: string): string {
   return `/apps/${packageName}`;
+}
+
+function createBuiltinRipgitPackageSpec(
+  name: string,
+  grants: PackageGrantSet = {
+    egress: {
+      mode: "none",
+    },
+  },
+): BuiltinRipgitPackageSpec {
+  return {
+    source: {
+      repo: BUILTIN_SOURCE_REPO,
+      ref: BUILTIN_SOURCE_REF,
+      subdir: `packages/${name}`,
+    },
+    grants,
+    enabled: true,
+  };
 }
 
 /**
@@ -374,9 +495,12 @@ export class PackageStore {
     );
   }
 
-  seedBuiltinPackages(now: number = Date.now()): InstalledPackageRecord[] {
+  seedBuiltinPackages(
+    builtinSeeds: readonly PackageSeed[],
+    now: number = Date.now(),
+  ): InstalledPackageRecord[] {
     const installed: InstalledPackageRecord[] = [];
-    const builtinPackageIds = new Set(BUILTIN_PACKAGE_SEEDS.map((seed) => seed.packageId));
+    const builtinPackageIds = new Set(builtinSeeds.map((seed) => seed.packageId));
 
     for (const record of this.list()) {
       if (record.packageId.startsWith("builtin:") && !builtinPackageIds.has(record.packageId)) {
@@ -384,7 +508,7 @@ export class PackageStore {
       }
     }
 
-    for (const seed of BUILTIN_PACKAGE_SEEDS) {
+    for (const seed of builtinSeeds) {
       const existing = this.get(seed.packageId);
       installed.push(this.install({
         ...seed,
@@ -519,322 +643,337 @@ function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
-function createBuiltinDoctorPackage(): PackageSeed {
+export async function buildBuiltinPackageSeeds(
+  env: Env,
+  config: { get(key: string): string | null; set(key: string, value: string): void },
+): Promise<PackageSeed[]> {
+  await ensureBuiltinPackageSourceMirror(env, config);
+
+  const ripgitBinding = env.RIPGIT;
+  if (!ripgitBinding) {
+    throw new Error("RIPGIT binding is required for builtin package resolution");
+  }
+
+  const ripgit = new RipgitClient(ripgitBinding, env.RIPGIT_INTERNAL_KEY ?? null);
+  const ripgitSeeds = await Promise.all(
+    BUILTIN_RIPGIT_PACKAGE_SPECS.map((spec) => resolveBuiltinRipgitPackage(ripgit, spec)),
+  );
+
+  return ripgitSeeds;
+}
+
+export async function resolvePackageFromRipgitSource(
+  env: Env,
+  source: PackageSource,
+): Promise<{ manifest: PackageManifest; artifact: PackageArtifact }> {
+  const ripgitBinding = env.RIPGIT;
+  if (!ripgitBinding) {
+    throw new Error("RIPGIT binding is required for package source resolution");
+  }
+
+  const ripgit = new RipgitClient(ripgitBinding, env.RIPGIT_INTERNAL_KEY ?? null);
+  const files = await readPackageSourceFiles(ripgit, source);
+  const sourceManifest = parsePackageSourceManifest(files);
+
   return {
-    packageId: "builtin:doctor@0.1.0",
     manifest: {
-      name: "doctor",
-      description: "CLI doctor command scaffold for GSV status checks.",
-      version: "0.1.0",
-      runtime: "dynamic-worker",
+      name: sourceManifest.name,
+      description: sourceManifest.description,
+      version: sourceManifest.version,
+      runtime: sourceManifest.runtime,
       source: {
-        repo: "gsv",
-        ref: "main",
-        subdir: "packages/doctor",
+        ...source,
+        resolvedCommit: source.resolvedCommit ?? null,
       },
-      entrypoints: [
-        {
-          name: "doctor",
-          kind: "command",
-          command: "doctor",
-          module: "/src/doctor.ts",
-          exportName: "default",
-          description: "Runs a basic GSV doctor check from the shell.",
-        },
-      ],
-      capabilities: {
-        egress: {
-          mode: "none",
-        },
-      },
+      entrypoints: sourceManifest.entrypoints,
+      capabilities: sourceManifest.capabilities,
     },
-    artifact: {
-      hash: "builtin:doctor@0.1.0",
-      mainModule: "/src/doctor.ts",
-      modules: [
-        {
-          path: "/src/doctor.ts",
-          kind: "esm",
-          content: BUILTIN_DOCTOR_SOURCE,
-        },
-      ],
-    },
-    grants: {
-      egress: {
-        mode: "none",
-      },
-    },
-    enabled: true,
+    artifact: await createPackageArtifactFromSourceFiles(sourceManifest, files),
   };
 }
 
-function createBuiltinPackagesAppPackage(): PackageSeed {
+async function ensureBuiltinPackageSourceMirror(
+  env: Env,
+  config: { get(key: string): string | null; set(key: string, value: string): void },
+): Promise<void> {
+  const snapshotHash = await sha256Hex(JSON.stringify(BUILTIN_PACKAGE_SOURCE_TREES));
+  if (config.get(BUILTIN_SOURCE_MIRROR_HASH_CONFIG_KEY) === snapshotHash) {
+    return;
+  }
+
+  if (!env.RIPGIT) {
+    throw new Error("RIPGIT binding is required for builtin package mirroring");
+  }
+
+  const client = new RipgitClient(env.RIPGIT, env.RIPGIT_INTERNAL_KEY ?? null);
+  const repo = parseRipgitRepoRef({
+    repo: BUILTIN_SOURCE_REPO,
+    ref: BUILTIN_SOURCE_REF,
+  });
+  const ops = BUILTIN_PACKAGE_SOURCE_TREES.flatMap((tree) =>
+    tree.files.map((file) => ({
+      type: "put" as const,
+      path: joinRipgitPath(tree.subdir, file.path),
+      contentBytes: Array.from(TEXT_ENCODER.encode(file.content)),
+    })),
+  );
+
+  await client.apply(
+    repo,
+    "gsv",
+    "gsv@internal",
+    "gsv: mirror builtin package sources",
+    ops,
+  );
+
+  config.set(BUILTIN_SOURCE_MIRROR_HASH_CONFIG_KEY, snapshotHash);
+}
+
+async function resolveBuiltinRipgitPackage(
+  client: RipgitClient,
+  spec: BuiltinRipgitPackageSpec,
+): Promise<PackageSeed> {
+  const files = await readPackageSourceFiles(client, spec.source);
+  const sourceManifest = parsePackageSourceManifest(files);
+  const manifest: PackageManifest = {
+    name: sourceManifest.name,
+    description: sourceManifest.description,
+    version: sourceManifest.version,
+    runtime: sourceManifest.runtime,
+    source: {
+      ...spec.source,
+      resolvedCommit: spec.source.resolvedCommit ?? null,
+    },
+    entrypoints: sourceManifest.entrypoints,
+    capabilities: sourceManifest.capabilities,
+  };
+  const artifact = await createPackageArtifactFromSourceFiles(sourceManifest, files);
+
   return {
-    packageId: "builtin:packages@0.1.0",
-    manifest: {
-      name: "packages",
-      description: "Desktop package manager scaffold for browsing and installing packages.",
-      version: "0.1.0",
-      runtime: "web-ui",
-      source: {
-        repo: "gsv",
-        ref: "main",
-        subdir: "packages/packages",
-      },
-      entrypoints: [
-        {
-          name: "packages",
-          kind: "ui",
-          route: "/apps/packages",
-          icon: {
-            kind: "asset",
-            module: "ui/packages-icon.svg",
-          },
-          syscalls: ["pkg.list", "pkg.install", "pkg.remove"],
-          windowDefaults: {
-            width: 920,
-            height: 620,
-            minWidth: 700,
-            minHeight: 460,
-          },
-          module: "ui/worker.ts",
-          description: "Desktop app entrypoint for package browsing and installation.",
-        },
-      ],
-      capabilities: {
-        bindings: [
-          {
-            binding: "PACKAGE",
-            kind: "package-state",
-            interfaceName: "gsv.package.state.v1",
-            required: true,
-            description: "Stable package state surface backed by the package's own durable Package DO.",
-          },
-          {
-            binding: "KERNEL",
-            kind: "kernel",
-            interfaceName: "gsv.kernel.app.v1",
-            required: true,
-            description: "Package-scoped req/res binding for kernel-native syscalls.",
-          },
-        ],
-        egress: {
-          mode: "none",
-        },
-      },
-    },
-    artifact: {
-      hash: "builtin:packages@0.1.0",
-      compatibilityDate: DEFAULT_PACKAGE_COMPATIBILITY_DATE,
-      mainModule: "ui/worker.ts",
-      modules: [
-        {
-          path: "ui/worker.ts",
-          kind: "esm",
-          content: BUILTIN_PACKAGES_WORKER_SOURCE,
-        },
-        {
-          path: "ui/packages-icon.svg",
-          kind: "text",
-          content: BUILTIN_PACKAGES_ICON_SOURCE,
-        },
-      ],
-    },
-    grants: {
-      bindings: [
-        {
-          binding: "PACKAGE",
-          providerKind: "package-do",
-          providerRef: packageDoName("packages"),
-        },
-        {
-          binding: "KERNEL",
-          providerKind: "kernel-entrypoint",
-          providerRef: "kernel://app/request",
-        },
-      ],
-      egress: {
-        mode: "none",
-      },
-    },
-    enabled: true,
+    packageId: `builtin:${manifest.name}@${manifest.version}`,
+    manifest,
+    artifact,
+    grants: spec.grants,
+    enabled: spec.enabled,
   };
 }
 
-function createBuiltinEmbeddedUiPackage(input: {
-  name: string;
-  description: string;
-  iconId: string;
-  syscalls: string[];
-  windowDefaults: {
-    width: number;
-    height: number;
-    minWidth: number;
-    minHeight: number;
-  };
-  workerSource: string;
-}): PackageSeed {
+function parsePackageSourceManifest(files: BuiltinPackageSourceFile[]): PackageSourceManifestFile {
+  const manifestFile = files.find((file) => file.path === PACKAGE_SOURCE_MANIFEST_FILE);
+  if (!manifestFile) {
+    throw new Error(`Missing ${PACKAGE_SOURCE_MANIFEST_FILE} in package source`);
+  }
+  return normalizePackageSourceManifest(parseJson<PackageSourceManifestFile>(manifestFile.content));
+}
+
+function normalizePackageSourceManifest(
+  manifest: PackageSourceManifestFile,
+): PackageSourceManifestFile {
   return {
-    packageId: `builtin:${input.name}@0.1.0`,
-    manifest: {
-      name: input.name,
-      description: input.description,
-      version: "0.1.0",
-      runtime: "web-ui",
-      source: {
-        repo: "gsv",
-        ref: "main",
-        subdir: `packages/${input.name}`,
-      },
-      entrypoints: [
-        {
-          name: input.name,
-          kind: "ui",
-          route: packageRouteBase(input.name),
-          icon: {
-            kind: "builtin",
-            id: input.iconId,
-          },
-          syscalls: input.syscalls,
-          windowDefaults: input.windowDefaults,
-          module: "ui/worker.ts",
-          description: input.description,
-        },
-      ],
-      capabilities: {
-        egress: {
-          mode: "none",
-        },
-      },
-    },
+    ...manifest,
+    entrypoints: manifest.entrypoints.map((entrypoint) => ({
+      ...entrypoint,
+      module: normalizePackageModulePath(entrypoint.module),
+      icon: entrypoint.icon?.kind === "asset"
+        ? {
+            ...entrypoint.icon,
+            module: normalizePackageModulePath(entrypoint.icon.module),
+          }
+        : entrypoint.icon,
+    })),
     artifact: {
-      hash: `builtin:${input.name}@0.1.0`,
-      compatibilityDate: DEFAULT_PACKAGE_COMPATIBILITY_DATE,
-      mainModule: "ui/worker.ts",
-      modules: [
-        {
-          path: "ui/worker.ts",
-          kind: "esm",
-          content: input.workerSource,
-        },
-      ],
+      ...manifest.artifact,
+      mainModule: normalizePackageModulePath(manifest.artifact.mainModule),
+      include: manifest.artifact.include?.map((path) => normalizePackageModulePath(path)),
+      moduleKinds: manifest.artifact.moduleKinds
+        ? Object.fromEntries(
+            Object.entries(manifest.artifact.moduleKinds).map(([path, kind]) => [
+              normalizePackageModulePath(path),
+              kind,
+            ]),
+          )
+        : undefined,
     },
-    grants: {
-      egress: {
-        mode: "none",
-      },
-    },
-    enabled: true,
   };
 }
 
-function createBuiltinChatAppPackage(): PackageSeed {
-  return createBuiltinEmbeddedUiPackage({
-    name: "chat",
-    description: "Conversational workspace with agents.",
-    iconId: "chat",
-    syscalls: ["proc.spawn", "proc.send", "proc.history", "sys.workspace.list"],
-    windowDefaults: {
-      width: 880,
-      height: 640,
-      minWidth: 620,
-      minHeight: 420,
-    },
-    workerSource: BUILTIN_CHAT_WORKER_SOURCE,
+async function createPackageArtifactFromSourceFiles(
+  manifest: PackageSourceManifestFile,
+  files: BuiltinPackageSourceFile[],
+): Promise<PackageArtifact> {
+  const moduleKindOverrides = manifest.artifact.moduleKinds ?? {};
+  const includePaths = manifest.artifact.include?.map((path) => normalizePackageModulePath(path)) ?? null;
+  const modules = files
+    .filter((file) => file.path !== PACKAGE_SOURCE_MANIFEST_FILE)
+    .map((file) => ({
+      ...file,
+      normalizedPath: normalizePackageModulePath(file.path),
+    }))
+    .filter((file) => shouldIncludePackageArtifactFile(file.normalizedPath, includePaths))
+    .map((file) => {
+      return {
+        path: file.normalizedPath,
+        kind: moduleKindOverrides[file.normalizedPath] ?? inferPackageModuleKind(file.path),
+        content: file.content,
+      };
+    });
+
+  return finalizePackageArtifact({
+    hash: "",
+    mainModule: manifest.artifact.mainModule,
+    compatibilityDate: manifest.artifact.compatibilityDate ?? DEFAULT_PACKAGE_COMPATIBILITY_DATE,
+    compatibilityFlags: manifest.artifact.compatibilityFlags,
+    modules,
   });
 }
 
-function createBuiltinShellAppPackage(): PackageSeed {
-  return createBuiltinEmbeddedUiPackage({
-    name: "shell",
-    description: "Interactive command shell for nodes.",
-    iconId: "shell",
-    syscalls: ["shell.exec", "sys.device.list"],
-    windowDefaults: {
-      width: 980,
-      height: 640,
-      minWidth: 700,
-      minHeight: 420,
-    },
-    workerSource: BUILTIN_SHELL_WORKER_SOURCE,
+async function finalizePackageArtifact(artifact: PackageArtifact): Promise<PackageArtifact> {
+  const input: PackageArtifactInput = {
+    mainModule: artifact.mainModule,
+    compatibilityDate: artifact.compatibilityDate,
+    compatibilityFlags: artifact.compatibilityFlags,
+    modules: artifact.modules,
+  };
+
+  return {
+    ...input,
+    hash: await computePackageArtifactHash(input),
+  };
+}
+
+async function computePackageArtifactHash(artifact: PackageArtifactInput): Promise<string> {
+  const normalized = JSON.stringify({
+    mainModule: artifact.mainModule,
+    compatibilityDate: artifact.compatibilityDate ?? DEFAULT_PACKAGE_COMPATIBILITY_DATE,
+    compatibilityFlags: artifact.compatibilityFlags ?? [],
+    modules: [...artifact.modules]
+      .map((module) => ({
+        path: module.path,
+        kind: module.kind,
+        content: module.content,
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
+  });
+  return sha256Hex(normalized);
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", TEXT_ENCODER.encode(value));
+  const bytes = Array.from(new Uint8Array(digest));
+  return `sha256:${bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function readPackageSourceFiles(
+  client: RipgitClient,
+  source: PackageSource,
+): Promise<BuiltinPackageSourceFile[]> {
+  const root = trimSlashes(source.subdir);
+  if (root.length === 0) {
+    throw new Error("package source subdir is required");
+  }
+  return readRipgitTreeFiles(client, parseRipgitRepoRef(source), root, "");
+}
+
+async function readRipgitTreeFiles(
+  client: RipgitClient,
+  repo: { owner: string; repo: string; branch: string },
+  repoPath: string,
+  relativePath: string,
+): Promise<BuiltinPackageSourceFile[]> {
+  const result = await client.readPath(repo, repoPath);
+  if (result.kind === "missing") {
+    throw new Error(`Missing ripgit package path: ${repo.owner}/${repo.repo}:${repoPath}`);
+  }
+  if (result.kind === "file") {
+    return [{
+      path: relativePath,
+      content: TEXT_DECODER.decode(result.bytes),
+    }];
+  }
+
+  const files: BuiltinPackageSourceFile[] = [];
+  for (const entry of result.entries) {
+    const childRepoPath = joinRipgitPath(repoPath, entry.name);
+    const childRelativePath = relativePath.length > 0
+      ? `${relativePath}/${entry.name}`
+      : entry.name;
+    files.push(...await readRipgitTreeFiles(client, repo, childRepoPath, childRelativePath));
+  }
+  return files;
+}
+
+function parseRipgitRepoRef(source: Pick<PackageSource, "repo" | "ref">): {
+  owner: string;
+  repo: string;
+  branch: string;
+} {
+  const [owner, repo] = source.repo.split("/", 2);
+  if (!owner || !repo) {
+    throw new Error(`package source repo must be '<owner>/<repo>', got '${source.repo}'`);
+  }
+  return {
+    owner,
+    repo,
+    branch: source.ref,
+  };
+}
+
+function shouldIncludePackageArtifactFile(
+  path: string,
+  includePaths: readonly string[] | null,
+): boolean {
+  if (!includePaths || includePaths.length === 0) {
+    return true;
+  }
+  return includePaths.some((includePath) => {
+    if (includePath.endsWith("/")) {
+      return path.startsWith(includePath);
+    }
+    return path === includePath;
   });
 }
 
-function createBuiltinDevicesAppPackage(): PackageSeed {
-  return createBuiltinEmbeddedUiPackage({
-    name: "devices",
-    description: "Connected machine inventory and runtime device status.",
-    iconId: "devices",
-    syscalls: ["sys.device.list", "sys.device.get"],
-    windowDefaults: {
-      width: 940,
-      height: 620,
-      minWidth: 720,
-      minHeight: 460,
-    },
-    workerSource: BUILTIN_DEVICES_WORKER_SOURCE,
-  });
+function inferPackageModuleKind(path: string): PackageModuleKind {
+  const lowerPath = path.toLowerCase();
+  if (
+    lowerPath.endsWith(".ts") ||
+    lowerPath.endsWith(".tsx") ||
+    lowerPath.endsWith(".js") ||
+    lowerPath.endsWith(".mjs")
+  ) {
+    return "esm";
+  }
+  if (lowerPath.endsWith(".cjs")) {
+    return "commonjs";
+  }
+  if (lowerPath.endsWith(".json")) {
+    return "json";
+  }
+  return "text";
 }
 
-function createBuiltinProcessesAppPackage(): PackageSeed {
-  return createBuiltinEmbeddedUiPackage({
-    name: "processes",
-    description: "Inspect and manage running agent processes.",
-    iconId: "processes",
-    syscalls: ["proc.list", "proc.kill"],
-    windowDefaults: {
-      width: 920,
-      height: 620,
-      minWidth: 700,
-      minHeight: 440,
-    },
-    workerSource: BUILTIN_PROCESSES_WORKER_SOURCE,
-  });
+function normalizePackageModulePath(path: string): string {
+  return trimLeadingSlash(path);
 }
 
-function createBuiltinFilesAppPackage(): PackageSeed {
-  return createBuiltinEmbeddedUiPackage({
-    name: "files",
-    description: "File browser and workspace management.",
-    iconId: "files",
-    syscalls: ["fs.read", "fs.search", "fs.write", "fs.edit", "fs.delete", "sys.device.list"],
-    windowDefaults: {
-      width: 980,
-      height: 650,
-      minWidth: 720,
-      minHeight: 460,
-    },
-    workerSource: BUILTIN_FILES_WORKER_SOURCE,
-  });
+function trimLeadingSlash(path: string): string {
+  return path.replace(/^\/+/, "");
 }
 
-function createBuiltinControlAppPackage(): PackageSeed {
-  return createBuiltinEmbeddedUiPackage({
-    name: "control",
-    description: "System status, permissions, and settings.",
-    iconId: "control",
-    syscalls: [
-      "sys.config.get",
-      "sys.config.set",
-      "sys.token.create",
-      "sys.token.list",
-      "sys.token.revoke",
-      "sys.link",
-      "sys.unlink",
-      "sys.link.list",
-      "sys.link.consume",
-      "adapter.connect",
-      "adapter.disconnect",
-      "adapter.status",
-    ],
-    windowDefaults: {
-      width: 860,
-      height: 580,
-      minWidth: 640,
-      minHeight: 420,
-    },
-    workerSource: BUILTIN_CONTROL_WORKER_SOURCE,
-  });
+function trimSlashes(path: string): string {
+  return path.replace(/^\/+|\/+$/g, "");
+}
+
+function joinRipgitPath(base: string, child: string): string {
+  const normalizedBase = trimSlashes(base);
+  const normalizedChild = trimSlashes(child);
+  if (normalizedBase.length === 0) {
+    return normalizedChild;
+  }
+  if (normalizedChild.length === 0) {
+    return normalizedBase;
+  }
+  return `${normalizedBase}/${normalizedChild}`;
 }
 
 function assertValidPackageRecord(record: InstalledPackageRecord): void {

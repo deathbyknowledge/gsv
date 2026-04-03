@@ -3,6 +3,7 @@
  *
  * Explicit mount routing:
  *   /proc/*, /dev/*, /sys/*, /etc/{passwd,shadow,group} → KernelMountBackend
+ *   /usr/local/bin/*                                      → Package backend
  *   /workspaces/*                                             → Workspace backend
  *   everything else                                           → R2 backend
  *
@@ -25,6 +26,7 @@ import type { KernelRefs } from "./refs";
 import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "./mount";
 import { R2MountBackend } from "./backends/r2";
 import { KernelMountBackend } from "./backends/kernel";
+import { isPackageMountPath } from "./backends/packages";
 import { isWorkspaceMountPath } from "./backends/workspace";
 import { normalizePath } from "./utils";
 
@@ -36,6 +38,7 @@ export class GsvFs implements IFileSystem {
   private readonly r2Backend: MountBackend;
   private readonly kernelBackend: MountBackend;
   private readonly workspaceBackend: MountBackend | null;
+  private readonly packageBackend: MountBackend | null;
 
   constructor(
     bucket: R2Bucket,
@@ -43,12 +46,14 @@ export class GsvFs implements IFileSystem {
     kernel?: KernelRefs,
     selfPid?: string,
     workspaceBackend?: MountBackend | null,
+    packageBackend?: MountBackend | null,
   ) {
     this.identity = identity;
     this.kernel = kernel ?? null;
     this.r2Backend = new R2MountBackend(bucket, identity);
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
     this.workspaceBackend = workspaceBackend ?? null;
+    this.packageBackend = packageBackend ?? null;
   }
 
   async readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string> {
@@ -253,6 +258,13 @@ export class GsvFs implements IFileSystem {
       return this.workspaceBackend;
     }
 
+    if (isPackageMountPath(path)) {
+      if (!this.packageBackend) {
+        throw new Error(`ENOSYS: package backend is unavailable for '${path}'`);
+      }
+      return this.packageBackend;
+    }
+
     if (this.kernelBackend.handles(path)) {
       return this.kernelBackend;
     }
@@ -276,6 +288,10 @@ export class GsvFs implements IFileSystem {
 
     if (this.workspaceBackend) {
       entries.add("workspaces");
+    }
+
+    if (this.packageBackend) {
+      entries.add("usr");
     }
 
     return [...entries].sort();

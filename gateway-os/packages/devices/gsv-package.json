@@ -1,0 +1,34 @@
+{
+  "name": "devices",
+  "description": "Connected machine inventory and runtime device status.",
+  "version": "0.1.0",
+  "runtime": "web-ui",
+  "entrypoints": [
+    {
+      "name": "devices",
+      "kind": "ui",
+      "route": "/apps/devices",
+      "icon": { "kind": "builtin", "id": "devices" },
+      "syscalls": ["sys.device.list", "sys.device.get"],
+      "windowDefaults": { "width": 940, "height": 620, "minWidth": 720, "minHeight": 460 },
+      "module": "ui/worker.ts",
+      "description": "Connected machine inventory and runtime device status."
+    }
+  ],
+  "capabilities": {
+    "bindings": [
+      {
+        "binding": "KERNEL",
+        "kind": "kernel",
+        "interfaceName": "gsv.kernel.app.v1",
+        "required": true,
+        "description": "Package-scoped req/res binding for kernel-native syscalls."
+      }
+    ],
+    "egress": { "mode": "none" }
+  },
+  "artifact": {
+    "mainModule": "ui/worker.ts",
+    "compatibilityDate": "2026-01-28"
+  }
+}

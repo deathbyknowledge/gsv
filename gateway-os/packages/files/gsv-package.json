@@ -1,0 +1,34 @@
+{
+  "name": "files",
+  "description": "File browser and workspace management.",
+  "version": "0.1.0",
+  "runtime": "web-ui",
+  "entrypoints": [
+    {
+      "name": "files",
+      "kind": "ui",
+      "route": "/apps/files",
+      "icon": { "kind": "builtin", "id": "files" },
+      "syscalls": ["fs.read", "fs.search", "fs.write", "fs.edit", "fs.delete", "sys.device.list"],
+      "windowDefaults": { "width": 980, "height": 650, "minWidth": 720, "minHeight": 460 },
+      "module": "ui/worker.ts",
+      "description": "File browser and workspace management."
+    }
+  ],
+  "capabilities": {
+    "bindings": [
+      {
+        "binding": "KERNEL",
+        "kind": "kernel",
+        "interfaceName": "gsv.kernel.app.v1",
+        "required": true,
+        "description": "Package-scoped req/res binding for kernel-native syscalls."
+      }
+    ],
+    "egress": { "mode": "none" }
+  },
+  "artifact": {
+    "mainModule": "ui/worker.ts",
+    "compatibilityDate": "2026-01-28"
+  }
+}

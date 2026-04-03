@@ -1,0 +1,216 @@
+import { WorkerEntrypoint } from "cloudflare:workers";
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderPackageAction(pkg) {
+  const packageId = escapeHtml(pkg.packageId ?? "");
+  if (pkg.enabled) {
+    if (pkg.name === "packages") {
+      return '<p class="muted" style="margin-top: 14px;">Core package</p>';
+    }
+
+    return `
+      <form method="post" class="action-row">
+        <input type="hidden" name="action" value="remove" />
+        <input type="hidden" name="packageId" value="${packageId}" />
+        <button type="submit" class="app-action is-danger">Remove</button>
+      </form>`;
+  }
+
+  return `
+    <form method="post" class="action-row">
+      <input type="hidden" name="action" value="install" />
+      <input type="hidden" name="packageId" value="${packageId}" />
+      <button type="submit" class="app-action">Install</button>
+    </form>`;
+}
+
+function renderPackageSourceForm(pkg) {
+  const packageId = escapeHtml(pkg.packageId ?? "");
+  const ref = escapeHtml(pkg.source?.ref ?? "main");
+  return `
+    <form method="post" class="source-row">
+      <input type="hidden" name="action" value="checkout" />
+      <input type="hidden" name="packageId" value="${packageId}" />
+      <label class="source-label">
+        <span class="muted">ref</span>
+        <input type="text" name="ref" value="${ref}" />
+      </label>
+      <button type="submit" class="app-action">Switch</button>
+    </form>`;
+}
+
+function renderPackageCards(packages) {
+  if (!Array.isArray(packages) || packages.length === 0) {
+    return '<article class="panel"><p class="muted">No packages found.</p></article>';
+  }
+
+  return packages.map((pkg) => {
+    const entrypoints = Array.isArray(pkg.entrypoints)
+      ? pkg.entrypoints.map((item) => {
+          const target = item.command ?? item.route ?? item.name;
+          return `<span class="app-tag">${escapeHtml([item.kind, target].filter(Boolean).join(" · "))}</span>`;
+        }).join("")
+      : "";
+    const bindings = Array.isArray(pkg.bindingNames) && pkg.bindingNames.length > 0
+      ? pkg.bindingNames.map((name) => `<span class="app-tag">binding ${escapeHtml(name)}</span>`).join("")
+      : '<span class="app-tag">no bindings</span>';
+    const source = pkg.source ? `${pkg.source.repo}#${pkg.source.ref}:${pkg.source.subdir}` : "unknown";
+    const resolvedCommit = pkg.source?.resolvedCommit ? `<p class="muted">resolved ${escapeHtml(pkg.source.resolvedCommit)}</p>` : "";
+    const action = renderPackageAction(pkg);
+    const sourceForm = renderPackageSourceForm(pkg);
+
+    return `
+      <article class="panel">
+        <div class="app-tag-row">
+          <span class="app-tag">${escapeHtml(pkg.runtime ?? "unknown")}</span>
+          <span class="app-tag">${pkg.enabled ? "enabled" : "disabled"}</span>
+          <span class="app-tag">v${escapeHtml(pkg.version ?? "0")}</span>
+        </div>
+        <h2>${escapeHtml(pkg.name ?? "package")}</h2>
+        <p>${escapeHtml(pkg.description ?? "")}</p>
+        <p class="muted"><code>${escapeHtml(pkg.packageId ?? "")}</code></p>
+        <div class="app-tag-row">${entrypoints}</div>
+        <div class="app-tag-row">${bindings}</div>
+        <p class="muted">source ${escapeHtml(source)}</p>
+        ${resolvedCommit}
+        ${sourceForm}
+        ${action}
+      </article>`;
+  }).join("");
+}
+
+function renderPage(frame, packageDoName, packages, statusText, loadError) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Packages</title>
+    <link rel="stylesheet" href="/runtime/theme.css" />
+    <style>
+      main { max-width: 980px; margin: 0 auto; padding: 28px; }
+      .hero, .panel { border: 1px solid var(--edge); background: var(--panel); backdrop-filter: blur(16px); border-radius: 22px; box-shadow: 0 22px 60px rgba(0, 0, 0, 0.35); }
+      .hero { padding: 24px; margin-bottom: 18px; }
+      .eyebrow { text-transform: uppercase; letter-spacing: 0.16em; font-size: 11px; color: var(--accent); margin: 0 0 8px; }
+      h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 52px); }
+      h2 { margin: 0 0 8px; font-size: 20px; }
+      p { margin: 0; line-height: 1.55; }
+      .muted { color: var(--muted); }
+      .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      .panel { padding: 18px; }
+      .app-tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+      .app-tag { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: rgba(138, 224, 255, 0.12); border: 1px solid rgba(138, 224, 255, 0.16); color: var(--text); font-size: 12px; }
+      .action-row, .source-row { margin-top: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      .source-label { display: grid; gap: 6px; min-width: 180px; }
+      .source-label input { border: 1px solid var(--edge); background: rgba(5, 9, 19, 0.66); color: var(--text); border-radius: 12px; padding: 8px 10px; font: inherit; }
+      .app-action { border: 1px solid rgba(138, 224, 255, 0.24); background: rgba(138, 224, 255, 0.14); color: var(--text); border-radius: 999px; padding: 8px 12px; font: inherit; font-size: 13px; }
+      .app-action.is-danger { border-color: rgba(255, 132, 132, 0.24); background: rgba(255, 132, 132, 0.12); }
+      .status-line { padding: 14px 16px; border-radius: 16px; border: 1px solid rgba(138, 224, 255, 0.18); background: rgba(138, 224, 255, 0.1); }
+      .status-line.is-error { border-color: rgba(255, 132, 132, 0.22); background: rgba(255, 132, 132, 0.1); }
+      .stack { display: grid; gap: 18px; }
+      code { font-family: "SFMono-Regular", "Consolas", monospace; font-size: 13px; color: var(--accent); }
+      @media (max-width: 720px) { main { padding: 16px; } .hero, .panel { border-radius: 18px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <p class="eyebrow">Kernel-served package app</p>
+        <h1>Packages</h1>
+        <p>This page is being served by the package Dynamic Worker through <code>${escapeHtml(frame.routeBase)}</code>.</p>
+      </section>
+      <section class="grid">
+        <article class="panel">
+          <p class="eyebrow">Authenticated user</p>
+          <h2>${escapeHtml(frame.username)}</h2>
+          <p class="muted">The gateway verified the session token before dispatching this request.</p>
+        </article>
+        <article class="panel">
+          <p class="eyebrow">Package DO</p>
+          <h2><code>${escapeHtml(packageDoName)}</code></h2>
+          <p class="muted">Stable durable identity survives package version bumps.</p>
+        </article>
+      </section>
+      <section class="stack" style="margin-top: 18px;">
+        <article class="panel">
+          <p class="eyebrow">Kernel request path</p>
+          <p>This package app is using the request-scoped <code>KERNEL.request(...)</code> binding to manage package inventory and switch active refs.</p>
+        </article>
+        ${statusText ? `<article class="status-line"><p>${escapeHtml(statusText)}</p></article>` : ""}
+        ${loadError ? `<article class="status-line is-error"><p>${escapeHtml(loadError)}</p></article>` : ""}
+        <section class="grid">${renderPackageCards(packages)}</section>
+      </section>
+    </main>
+  </body>
+</html>`;
+}
+
+export default class PackagesApp extends WorkerEntrypoint {
+  async fetch(request) {
+    const appFrame = this.ctx.props.appFrame;
+    const packageDoName = this.ctx.props.packageDoName;
+    const kernel = this.ctx.props.kernel;
+    if (!appFrame || !packageDoName || !kernel) {
+      return new Response("App frame missing", { status: 500 });
+    }
+    const url = new URL(request.url);
+    const routeBase = appFrame.routeBase ?? this.env.PACKAGE_ROUTE_BASE ?? "/apps/packages";
+    if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
+      return new Response("Not Found", { status: 404 });
+    }
+    if (request.method !== "GET" && request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    let packages = [];
+    let statusText = "";
+    let loadError = "";
+    if (request.method === "POST") {
+      try {
+        const formData = await request.formData();
+        const action = String(formData.get("action") ?? "").trim();
+        const packageId = String(formData.get("packageId") ?? "").trim();
+        if (!packageId) {
+          loadError = "packageId is required";
+        } else if (action === "install") {
+          const result = await kernel.request("pkg.install", { packageId });
+          statusText = result?.changed ? `Installed ${result.package?.name ?? packageId}` : `${result.package?.name ?? packageId} was already installed`;
+        } else if (action === "remove") {
+          const result = await kernel.request("pkg.remove", { packageId });
+          statusText = result?.changed ? `Removed ${result.package?.name ?? packageId}` : `${result.package?.name ?? packageId} was already removed`;
+        } else if (action === "checkout") {
+          const ref = String(formData.get("ref") ?? "").trim();
+          const result = await kernel.request("pkg.checkout", { packageId, ref });
+          statusText = result?.changed ? `Switched ${result.package?.name ?? packageId} to ${result.package?.source?.ref ?? ref}` : `${result.package?.name ?? packageId} is already using ${result.package?.source?.ref ?? ref}`;
+        } else {
+          loadError = `Unknown action: ${action}`;
+        }
+      } catch (error) {
+        loadError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    try {
+      const listing = await kernel.request("pkg.list", {});
+      packages = Array.isArray(listing?.packages) ? listing.packages : [];
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      loadError = loadError ? `${loadError} ${message}` : message;
+    }
+
+    return new Response(renderPage(appFrame, packageDoName, packages, statusText, loadError), {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store"
+      }
+    });
+  }
+}

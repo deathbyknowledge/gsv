@@ -56,6 +56,16 @@ export type PkgInstallResult = {
   package: PkgSummary;
 };
 
+export type PkgCheckoutArgs = {
+  packageId: string;
+  ref: string;
+};
+
+export type PkgCheckoutResult = {
+  changed: boolean;
+  package: PkgSummary;
+};
+
 export type PkgRemoveArgs = {
   packageId: string;
 };

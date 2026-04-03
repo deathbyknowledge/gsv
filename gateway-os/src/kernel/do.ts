@@ -35,6 +35,7 @@ import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import { resolveAdapterServiceForKernel } from "./adapter-handlers";
 import {
+  buildBuiltinPackageSeeds,
   type InstalledPackageRecord,
   PackageStore,
   type PackageEntrypoint,
@@ -101,6 +102,7 @@ export class Kernel extends Host<Env> {
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly packages: PackageStore;
+  private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -137,9 +139,16 @@ export class Kernel extends Host<Env> {
 
     this.packages = new PackageStore(sql);
     this.packages.init();
-    this.packages.seedBuiltinPackages();
+    // TODO: move this responsibility away from the Kernel DO.
+    // and make it part of the first deployment/setup step instead.
+    this.ready = this.initializePackages();
 
     this.rehydrateConnections();
+  }
+
+  private async initializePackages(): Promise<void> {
+    const builtinSeeds = await buildBuiltinPackageSeeds(this.env, this.config);
+    this.packages.seedBuiltinPackages(builtinSeeds);
   }
 
   shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
@@ -170,6 +179,7 @@ export class Kernel extends Host<Env> {
   }
 
   async onMessage(connection: Connection<ConnectionState>, message: WSMessage): Promise<void> {
+    await this.ready;
     if (typeof message !== "string") {
       // TODO: binary stream frames
       return;
@@ -209,6 +219,7 @@ export class Kernel extends Host<Env> {
    * via process.recvFrame callback).
    */
   async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
+    await this.ready;
     if (frame.type === "req") {
       return this.handleProcessReq(processId, frame);
     }
@@ -231,6 +242,7 @@ export class Kernel extends Host<Env> {
    * Accepts the same frame format as WS connections/process RPC.
    */
   async serviceFrame(frame: Frame): Promise<Frame | null> {
+    await this.ready;
     if (frame.type !== "req") {
       return null;
     }
@@ -239,6 +251,7 @@ export class Kernel extends Host<Env> {
   }
 
   async appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame> {
+    await this.ready;
     if (isAppFrameContextExpired(appFrame)) {
       return errFrame(frame.id, 401, "App frame expired");
     }
@@ -283,6 +296,7 @@ export class Kernel extends Host<Env> {
   }
 
   async resolvePackageHttpRoute(input: ResolvePackageHttpInput): Promise<ResolvePackageHttpResult> {
+    await this.ready;
     const packageName = input.packageName.trim();
     const username = input.username.trim();
     const token = input.token.trim();
@@ -709,6 +723,44 @@ export class Kernel extends Host<Env> {
   private applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
     if (!response.ok) return;
 
+    if (frame.call === "pkg.install" || frame.call === "pkg.remove" || frame.call === "pkg.checkout") {
+      const args = frame.args as {
+        packageId?: unknown;
+        ref?: unknown;
+      };
+      const data = (response as {
+        data?: {
+          changed?: unknown;
+          package?: {
+            enabled?: unknown;
+            name?: unknown;
+            source?: {
+              ref?: unknown;
+            };
+          };
+        };
+      }).data;
+
+      if (typeof args.packageId === "string") {
+        this.broadcastToRole("user", "pkg.changed", {
+          action: frame.call === "pkg.install"
+            ? "install"
+            : frame.call === "pkg.remove"
+              ? "remove"
+              : "checkout",
+          packageId: args.packageId,
+          ref: typeof data?.package?.source?.ref === "string"
+            ? data.package.source.ref
+            : typeof args.ref === "string"
+              ? args.ref
+              : null,
+          changed: data?.changed === true,
+          enabled: typeof data?.package?.enabled === "boolean" ? data.package.enabled : null,
+          name: typeof data?.package?.name === "string" ? data.package.name : null,
+        });
+      }
+    }
+
     if (frame.call === "adapter.state.update") {
       const args = frame.args as {
         adapter?: unknown;
@@ -829,6 +881,7 @@ export class Kernel extends Host<Env> {
    * Schedule callback — fired when a routing table entry expires.
    */
   async onRouteExpired(routeId: string): Promise<void> {
+    await this.ready;
     const expired = this.routes.expire(routeId);
     if (!expired) return;
 

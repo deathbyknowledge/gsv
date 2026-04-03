@@ -1,0 +1,25 @@
+{
+  "name": "chat",
+  "description": "Conversational workspace with agents.",
+  "version": "0.1.0",
+  "runtime": "web-ui",
+  "entrypoints": [
+    {
+      "name": "chat",
+      "kind": "ui",
+      "route": "/apps/chat",
+      "icon": { "kind": "builtin", "id": "chat" },
+      "syscalls": ["proc.spawn", "proc.send", "proc.history", "sys.workspace.list"],
+      "windowDefaults": { "width": 880, "height": 640, "minWidth": 620, "minHeight": 420 },
+      "module": "ui/worker.ts",
+      "description": "Conversational workspace with agents."
+    }
+  ],
+  "capabilities": {
+    "egress": { "mode": "none" }
+  },
+  "artifact": {
+    "mainModule": "ui/worker.ts",
+    "compatibilityDate": "2026-01-28"
+  }
+}

@@ -27,6 +27,8 @@ import type {
   ProcSetIdentityResult,
 } from "./proc";
 import type {
+  PkgCheckoutArgs,
+  PkgCheckoutResult,
   PkgInstallArgs,
   PkgInstallResult,
   PkgListArgs,
@@ -92,11 +94,6 @@ import type {
   AdapterStatusArgs,
   AdapterStatusResult,
 } from "./adapter";
-import type {
-  PkgListArgs,
-  PkgListResult,
-} from "./packages";
-
 export type ToolDefinition = {
   name: string;
   description: string;
@@ -127,6 +124,7 @@ export type SyscallDomains = {
 
   // Packages
   "pkg.list": { args: PkgListArgs; result: PkgListResult };
+  "pkg.checkout": { args: PkgCheckoutArgs; result: PkgCheckoutResult };
   "pkg.install": { args: PkgInstallArgs; result: PkgInstallResult };
   "pkg.remove": { args: PkgRemoveArgs; result: PkgRemoveResult };
 

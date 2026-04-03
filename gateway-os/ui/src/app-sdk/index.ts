@@ -13,6 +13,3 @@ export { createScopedKernelClient } from "./kernel-client";
 
 export type { AppThemeClient, AppThemeSnapshot } from "./theme";
 export { createThemeClient } from "./theme";
-
-export type { AppElementContext, GsvAppElement } from "./component-runtime";
-export { createComponentAppInstance } from "./component-runtime";

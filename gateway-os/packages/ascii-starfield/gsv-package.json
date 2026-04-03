@@ -1,0 +1,36 @@
+{
+  "name": "ascii-starfield",
+  "description": "Standalone ASCII starfield demo packaged as a desktop app.",
+  "version": "0.1.0",
+  "runtime": "web-ui",
+  "entrypoints": [
+    {
+      "name": "starfield",
+      "kind": "ui",
+      "route": "/apps/ascii-starfield",
+      "windowDefaults": {
+        "width": 1220,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 480
+      },
+      "module": "ui/worker.ts",
+      "description": "ASCII starfield flight demo."
+    }
+  ],
+  "capabilities": {
+    "egress": {
+      "mode": "none"
+    }
+  },
+  "artifact": {
+    "mainModule": "ui/worker.ts",
+    "compatibilityDate": "2026-01-28",
+    "moduleKinds": {
+      "ui/ascii-starfield-worker.js": "text"
+    },
+    "include": [
+      "ui/"
+    ]
+  }
+}

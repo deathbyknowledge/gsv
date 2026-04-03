@@ -71,6 +71,33 @@ UI packages are web apps, not built-in desktop components.
 - Desktop shell opens package UI in a managed window
 - The intended host model is iframe-backed windows
 
+## host bridge model
+
+Browser-side package UI must not open its own gateway connection.
+
+- The desktop shell owns the single browser websocket session.
+- Package UI talks to a runtime-provided `HOST` bridge.
+- `HOST` is runtime-agnostic and may be implemented by:
+  - the web desktop shell via iframe messaging
+  - a CLI daemon host via webview IPC such as `wry`
+- Package UI should target the `HOST` contract, not browser-specific globals.
+
+The initial `HOST` contract is:
+
+- `getStatus()`
+- `onStatus(listener)`
+- `onSignal(listener)`
+- `request(syscall, args)`
+- `spawnProcess(args)`
+- `sendMessage(message, pid?)`
+- `getHistory(limit, pid?, offset?)`
+
+Important boundary:
+
+- `HOST` is an app-facing transport bridge.
+- `KERNEL` is a trusted server-side package worker binding.
+- These are different layers and should not be collapsed into one abstraction.
+
 ## app frame model
 
 Package app execution is frame-native, matching the existing GSV protocol.
@@ -118,7 +145,7 @@ The shell should keep shared runtime assets deliberately small and stable.
 
 - `/runtime/theme.css` is the first shared asset for package apps.
 - Package apps should import it directly rather than depending on shell-internal UI CSS.
-- Additional shared assets, such as a bridge script, can be added later without coupling apps to the shell bundle.
+- Additional shared assets, such as a `HOST` bridge helper, can be added later without coupling apps to the shell bundle.
 
 ## scope
 
@@ -136,6 +163,7 @@ The scope key remains stable across upgrades.
 
 1. Introduce request-scoped `AppFrameContext` injection for `PACKAGE` and `KERNEL`.
 2. Add a real `KERNEL.request(call, args)` path for kernel-native req/res syscalls.
-3. Resolve package source from ripgit repositories instead of inline seed blobs.
-4. Keep expanding shared runtime assets conservatively beyond `theme.css`.
-5. Add an `app` route origin later for async `res` and `sig` delivery.
+3. Keep the `HOST` bridge contract runtime-agnostic across web and daemon hosts.
+4. Resolve package source from ripgit repositories instead of inline seed blobs.
+5. Keep expanding shared runtime assets conservatively beyond `theme.css`.
+6. Add an `app` route origin later for async `res` and `sig` delivery.

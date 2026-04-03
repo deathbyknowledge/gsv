@@ -1,0 +1,11 @@
+{
+  "name": "@gsv/ascii-starfield",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run scripts/build-standalone.mjs"
+  },
+  "dependencies": {
+    "@chenglou/pretext": "0.0.4"
+  }
+}
