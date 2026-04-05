@@ -55,7 +55,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
         return `
           <button type="button" class="desktop-icon" data-app-id="${escapeHtml(appItem.id)}">
             ${renderDesktopIcon(appItem.icon)}
-            <span>${escapeHtml(appItem.name)}</span>
+            <span class="desktop-label">${escapeHtml(appItem.name)}</span>
           </button>
         `;
       })
