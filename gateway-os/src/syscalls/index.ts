@@ -33,6 +33,8 @@ import type {
   PkgInstallResult,
   PkgListArgs,
   PkgListResult,
+  PkgSyncArgs,
+  PkgSyncResult,
   PkgRepoLogArgs,
   PkgRepoLogResult,
   PkgRepoReadArgs,
@@ -130,6 +132,7 @@ export type SyscallDomains = {
 
   // Packages
   "pkg.list": { args: PkgListArgs; result: PkgListResult };
+  "pkg.sync": { args: PkgSyncArgs; result: PkgSyncResult };
   "pkg.checkout": { args: PkgCheckoutArgs; result: PkgCheckoutResult };
   "pkg.install": { args: PkgInstallArgs; result: PkgInstallResult };
   "pkg.remove": { args: PkgRemoveArgs; result: PkgRemoveResult };

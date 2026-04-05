@@ -980,6 +980,13 @@ impl<'a> BundleBuilder<'a> {
         }
 
         let rewritten_source = apply_replacements(source_text, replacements);
+        // TODO: Investigate browser-asset runtime performance here before making this
+        // the default story for performance-sensitive apps. Since moving
+        // `ascii-starfield` off its Bun-built assets and onto this ripgit
+        // transpile/serve path, observed FPS appears worse and can feel closer
+        // to ~30fps. Likely causes are build output quality/module topology
+        // rather than app logic; compare against the previous Bun output before
+        // committing to more compiler work.
         let compiled = match transpile_source_module(&job.repo_path, &rewritten_source) {
             Ok(code) => code,
             Err(err) => {

@@ -40,6 +40,7 @@ import {
   handlePkgRepoLog,
   handlePkgRepoRead,
   handlePkgRepoRefs,
+  handlePkgSync,
 } from "./pkg";
 import {
   handleSysTokenCreate,
@@ -161,6 +162,9 @@ async function dispatchNative(
       // --- pkg.* ---
       case "pkg.list":
         data = handlePkgList(frame.args, ctx);
+        break;
+      case "pkg.sync":
+        data = await handlePkgSync(frame.args, ctx);
         break;
       case "pkg.checkout":
         data = await handlePkgCheckout(frame.args, ctx);

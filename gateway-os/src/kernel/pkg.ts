@@ -6,6 +6,8 @@ import type {
   PkgInstallResult,
   PkgListArgs,
   PkgListResult,
+  PkgSyncArgs,
+  PkgSyncResult,
   PkgRepoLogArgs,
   PkgRepoLogResult,
   PkgRepoReadArgs,
@@ -21,7 +23,7 @@ import type {
   PackageArtifact,
   PackageEntrypoint,
 } from "./packages";
-import { resolvePackageFromRipgitSource } from "./packages";
+import { buildBuiltinPackageSeeds, resolvePackageFromRipgitSource } from "./packages";
 import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 
 const TEXT_DECODER = new TextDecoder();
@@ -55,6 +57,17 @@ export function handlePkgInstall(
   return {
     changed: !record.enabled,
     package: toPkgSummary(requirePackage(record.packageId, ctx)),
+  };
+}
+
+export async function handlePkgSync(
+  _args: PkgSyncArgs | undefined,
+  ctx: KernelContext,
+): Promise<PkgSyncResult> {
+  const builtinSeeds = await buildBuiltinPackageSeeds(ctx.env);
+  const installed = ctx.packages.seedBuiltinPackages(builtinSeeds);
+  return {
+    packages: installed.map(toPkgSummary),
   };
 }
 

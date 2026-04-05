@@ -97,6 +97,12 @@ enum Commands {
         action: ConfigAction,
     },
 
+    /// Package lifecycle and source management
+    Packages {
+        #[command(subcommand)]
+        action: PackagesAction,
+    },
+
     /// Cloudflare infrastructure lifecycle
     Infra {
         #[command(subcommand)]
@@ -310,6 +316,12 @@ enum InfraAction {
         #[arg(long)]
         keep_node: bool,
     },
+}
+
+#[derive(Subcommand, Clone)]
+enum PackagesAction {
+    /// Re-seed builtin packages from the mirrored system/gsv repo
+    Sync,
 }
 
 #[derive(Subcommand)]
@@ -1371,6 +1383,18 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await
             }
+        }
+        Commands::Packages { action } => {
+            run_with_auto_setup_and_login_retry(
+                &url,
+                &cfg,
+                cli_token_override.clone(),
+                cli_user_override.clone(),
+                cli_password_override.clone(),
+                "packages",
+                |auth| async { commands::run_packages(&url, auth, action.clone()).await },
+            )
+            .await
         }
         Commands::Infra { action } => match action {
             InfraAction::Deploy {

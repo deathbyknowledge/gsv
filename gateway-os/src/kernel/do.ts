@@ -35,7 +35,6 @@ import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import { resolveAdapterServiceForKernel } from "./adapter-handlers";
 import {
-  buildBuiltinPackageSeeds,
   type InstalledPackageRecord,
   PackageStore,
   type PackageEntrypoint,
@@ -160,21 +159,9 @@ export class Kernel extends Host<Env> {
 
     this.packages = new PackageStore(sql);
     this.packages.init();
-    // TODO: move this responsibility away from the Kernel DO.
-    // and make it part of the first deployment/setup step instead.
-    this.ready = this.initializePackages();
+    this.ready = Promise.resolve();
 
     this.rehydrateConnections();
-  }
-
-  private async initializePackages(): Promise<void> {
-    try {
-      const builtinSeeds = await buildBuiltinPackageSeeds(this.env);
-      this.packages.seedBuiltinPackages(builtinSeeds);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[Kernel] Builtin packages unavailable at startup: ${message}`);
-    }
   }
 
   shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
@@ -788,6 +775,7 @@ export class Kernel extends Host<Env> {
     if (!response.ok) return;
 
     if (
+      frame.call === "pkg.sync" ||
       frame.call === "pkg.install" ||
       frame.call === "pkg.remove" ||
       frame.call === "pkg.checkout"
@@ -795,6 +783,7 @@ export class Kernel extends Host<Env> {
       const args = frame.args as {
         packageId?: unknown;
         ref?: unknown;
+        name?: unknown;
       };
       const data = (response as {
         data?: {
@@ -806,34 +795,42 @@ export class Kernel extends Host<Env> {
               ref?: unknown;
             };
           };
+          packages?: Array<{
+            name?: unknown;
+            source?: {
+              ref?: unknown;
+            };
+          }>;
         };
       }).data;
 
-      if (typeof args.packageId === "string") {
-        this.broadcastToRole("user", "pkg.changed", {
-          action: frame.call === "pkg.install"
-            ? "install"
-            : frame.call === "pkg.remove"
-              ? "remove"
-              : frame.call === "pkg.checkout"
-                ? "checkout"
-                : "sync",
-          packageId: typeof args.packageId === "string" ? args.packageId : null,
-          ref: typeof data?.package?.source?.ref === "string"
-            ? data.package.source.ref
+      this.broadcastToRole("user", "pkg.changed", {
+        action: frame.call === "pkg.install"
+          ? "install"
+          : frame.call === "pkg.remove"
+            ? "remove"
+            : frame.call === "pkg.checkout"
+              ? "checkout"
+              : "sync",
+        packageId: typeof args.packageId === "string" ? args.packageId : null,
+        ref: typeof data?.package?.source?.ref === "string"
+          ? data.package.source.ref
+          : typeof data?.packages?.[0]?.source?.ref === "string"
+            ? data.packages[0].source.ref
             : typeof args.ref === "string"
               ? args.ref
               : null,
-          changed: data?.changed === true,
-          enabled: typeof data?.package?.enabled === "boolean" ? data.package.enabled : null,
-          name: typeof data?.package?.name === "string"
-            ? data.package.name
+        changed: frame.call === "pkg.sync" ? true : data?.changed === true,
+        enabled: typeof data?.package?.enabled === "boolean" ? data.package.enabled : null,
+        name: typeof data?.package?.name === "string"
+          ? data.package.name
+          : typeof data?.packages?.[0]?.name === "string"
+            ? data.packages[0].name
             : typeof args.name === "string"
               ? args.name
               : null,
-          repo: typeof data?.repo === "string" ? data.repo : null,
-        });
-      }
+        repo: typeof data?.repo === "string" ? data.repo : null,
+      });
     }
 
     if (frame.call === "adapter.state.update") {

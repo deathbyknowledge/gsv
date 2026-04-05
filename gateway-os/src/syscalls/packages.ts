@@ -56,6 +56,12 @@ export type PkgInstallResult = {
   package: PkgSummary;
 };
 
+export type PkgSyncArgs = Record<string, never>;
+
+export type PkgSyncResult = {
+  packages: PkgSummary[];
+};
+
 export type PkgCheckoutArgs = {
   packageId: string;
   ref: string;
