@@ -23,7 +23,7 @@ use super::{
 };
 
 const PACKAGE_BUILD_CACHE_VERSION: &str = "dynamic-worker-build-v3";
-const PACKAGE_NPM_CACHE_VERSION: &str = "npm-package-lock-v1";
+const PACKAGE_NPM_CACHE_VERSION: &str = "npm-lockfile-materialization-v2";
 const GSV_PACKAGE_SDK_NAME: &str = "@gsv/package";
 const GSV_PACKAGE_SDK_ROOT: &str = "__gsv_sdk/@gsv/package";
 const GSV_PACKAGE_SDK_PACKAGE_JSON: &str = r#"{
@@ -148,6 +148,18 @@ struct PackageLockfilePackageEntry {
     #[serde(default)]
     link: bool,
 }
+
+#[derive(Clone, Debug, Deserialize)]
+struct BunLockfile {
+    #[serde(default, rename = "lockfileVersion")]
+    lockfile_version: Option<u32>,
+    #[serde(default)]
+    packages: BTreeMap<String, BunLockfilePackageEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(transparent)]
+struct BunLockfilePackageEntry(Vec<Value>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MaterializedDependencyPlan {
@@ -345,15 +357,21 @@ async fn materialize_lockfile_dependencies(
     source: &ResolvedPackageSource,
     repo_files: &mut BTreeMap<String, String>,
 ) -> Result<()> {
-    let Some(lockfile_text) = repo_files
+    let plans = if let Some(lockfile_text) = repo_files
         .get(&join_posix(&source.subdir, "package-lock.json"))
         .or_else(|| repo_files.get(&join_posix(&source.subdir, "npm-shrinkwrap.json")))
         .cloned()
-    else {
+    {
+        plan_package_lockfile_materialization(&lockfile_text)?
+    } else if let Some(lockfile_text) = repo_files
+        .get(&join_posix(&source.subdir, "bun.lock"))
+        .cloned()
+    {
+        plan_bun_lockfile_materialization(&lockfile_text)?
+    } else {
         return Ok(());
     };
 
-    let plans = plan_lockfile_materialization(&lockfile_text)?;
     for plan in plans {
         let package_json_repo_path = join_posix(&source.subdir, &join_posix(&plan.install_path, "package.json"));
         if repo_files.contains_key(&package_json_repo_path) {
@@ -367,7 +385,7 @@ async fn materialize_lockfile_dependencies(
     Ok(())
 }
 
-fn plan_lockfile_materialization(lockfile_text: &str) -> Result<Vec<MaterializedDependencyPlan>> {
+fn plan_package_lockfile_materialization(lockfile_text: &str) -> Result<Vec<MaterializedDependencyPlan>> {
     let lockfile: PackageLockfile = serde_json::from_str(lockfile_text)
         .map_err(|err| Error::RustError(format!("invalid package-lock.json: {}", err)))?;
     if lockfile.packages.is_empty() {
@@ -399,6 +417,87 @@ fn plan_lockfile_materialization(lockfile_text: &str) -> Result<Vec<Materialized
         });
     }
     Ok(plans)
+}
+
+fn plan_bun_lockfile_materialization(lockfile_text: &str) -> Result<Vec<MaterializedDependencyPlan>> {
+    let lockfile: BunLockfile = json5::from_str(lockfile_text)
+        .map_err(|err| Error::RustError(format!("invalid bun.lock: {}", err)))?;
+    if lockfile.packages.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Some(version) = lockfile.lockfile_version {
+        if version != 1 {
+            return Err(Error::RustError(format!(
+                "unsupported bun.lock version: {}",
+                version
+            )));
+        }
+    }
+
+    let mut plans = Vec::new();
+    for entry in lockfile.packages.into_values() {
+        let Some(plan) = plan_bun_package_entry(&entry)? else {
+            continue;
+        };
+        plans.push(plan);
+    }
+    plans.sort_by(|a, b| a.install_path.cmp(&b.install_path));
+    plans.dedup_by(|a, b| a.install_path == b.install_path);
+    Ok(plans)
+}
+
+fn plan_bun_package_entry(entry: &BunLockfilePackageEntry) -> Result<Option<MaterializedDependencyPlan>> {
+    let package_id = match entry.0.first().and_then(Value::as_str) {
+        Some(value) if !value.is_empty() => value,
+        _ => return Ok(None),
+    };
+    let resolved_hint = entry.0.get(1).and_then(Value::as_str).unwrap_or_default();
+    let integrity = entry
+        .0
+        .get(3)
+        .and_then(Value::as_str)
+        .map(|value| value.to_string())
+        .filter(|value| !value.is_empty());
+    let (package_name, version) = parse_npm_package_id(package_id)?;
+    let resolved_url = if resolved_hint.starts_with("http://") || resolved_hint.starts_with("https://") {
+        resolved_hint.to_string()
+    } else {
+        build_npm_registry_tarball_url(&package_name, &version)
+    };
+    let cache_key = compute_npm_cache_key(&resolved_url, integrity.as_deref());
+    Ok(Some(MaterializedDependencyPlan {
+        install_path: join_posix("node_modules", &package_name),
+        resolved_url,
+        integrity,
+        cache_key,
+    }))
+}
+
+fn parse_npm_package_id(package_id: &str) -> Result<(String, String)> {
+    let Some((package_name, version)) = package_id.rsplit_once('@') else {
+        return Err(Error::RustError(format!(
+            "invalid bun package id: {}",
+            package_id
+        )));
+    };
+    if package_name.is_empty() || version.is_empty() {
+        return Err(Error::RustError(format!(
+            "invalid bun package id: {}",
+            package_id
+        )));
+    }
+    Ok((package_name.to_string(), version.to_string()))
+}
+
+fn build_npm_registry_tarball_url(package_name: &str, version: &str) -> String {
+    let tarball_name = package_name
+        .rsplit('/')
+        .next()
+        .unwrap_or(package_name);
+    format!(
+        "https://registry.npmjs.org/{}/-/{}-{}.tgz",
+        package_name, tarball_name, version
+    )
 }
 
 async fn load_or_fetch_materialized_dependency(
@@ -2139,8 +2238,8 @@ mod tests {
     }
 
     #[test]
-    fn plan_lockfile_materialization_extracts_installable_packages() {
-        let plans = plan_lockfile_materialization(
+    fn plan_package_lockfile_materialization_extracts_installable_packages() {
+        let plans = plan_package_lockfile_materialization(
             r#"{
               "name": "example",
               "lockfileVersion": 3,
@@ -2166,6 +2265,35 @@ mod tests {
         assert_eq!(plans[0].install_path, "node_modules/@scope/pkg");
         assert_eq!(plans[1].install_path, "node_modules/react");
         assert!(plans[0].cache_key.len() >= 8);
+    }
+
+    #[test]
+    fn plan_bun_lockfile_materialization_extracts_installable_packages() {
+        let plans = plan_bun_lockfile_materialization(
+            r#"{
+              "lockfileVersion": 1,
+              "workspaces": {
+                "": {
+                  "name": "@gsv/example",
+                  "dependencies": {
+                    "@scope/pkg": "1.0.0",
+                    "react": "1.0.0",
+                  },
+                },
+              },
+              "packages": {
+                "react": ["react@1.0.0", "", {}, "sha512-AAAA"],
+                "@scope/pkg": ["@scope/pkg@1.0.0", "", {}, "sha512-BBBB"],
+              }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans[0].install_path, "node_modules/@scope/pkg");
+        assert_eq!(plans[0].resolved_url, "https://registry.npmjs.org/@scope/pkg/-/pkg-1.0.0.tgz");
+        assert_eq!(plans[1].install_path, "node_modules/react");
+        assert_eq!(plans[1].resolved_url, "https://registry.npmjs.org/react/-/react-1.0.0.tgz");
     }
 
     #[test]
