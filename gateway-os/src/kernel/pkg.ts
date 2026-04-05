@@ -6,6 +6,12 @@ import type {
   PkgInstallResult,
   PkgListArgs,
   PkgListResult,
+  PkgRepoLogArgs,
+  PkgRepoLogResult,
+  PkgRepoReadArgs,
+  PkgRepoReadResult,
+  PkgRepoRefsArgs,
+  PkgRepoRefsResult,
   PkgRemoveArgs,
   PkgRemoveResult,
   PkgSummary,
@@ -16,6 +22,10 @@ import type {
   PackageEntrypoint,
 } from "./packages";
 import { resolvePackageFromRipgitSource } from "./packages";
+import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
+
+const TEXT_DECODER = new TextDecoder();
+const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 export function handlePkgList(
   args: PkgListArgs | undefined,
@@ -79,7 +89,10 @@ export async function handlePkgCheckout(
   });
 
   return {
-    changed: record.manifest.source.ref !== ref || record.artifact.hash !== updated.artifact.hash,
+    changed:
+      record.manifest.source.ref !== ref ||
+      (record.manifest.source.resolvedCommit ?? null) !== (updated.manifest.source.resolvedCommit ?? null) ||
+      record.artifact.hash !== updated.artifact.hash,
     package: toPkgSummary(updated),
   };
 }
@@ -102,6 +115,96 @@ export function handlePkgRemove(
   return {
     changed: record.enabled,
     package: toPkgSummary(requirePackage(record.packageId, ctx)),
+  };
+}
+
+export async function handlePkgRepoRefs(
+  args: PkgRepoRefsArgs,
+  ctx: KernelContext,
+): Promise<PkgRepoRefsResult> {
+  const { record, repo } = resolvePackageRepoRef(args.packageId, undefined, ctx);
+  const ripgit = requireRipgitClient(ctx);
+  const refs = await ripgit.refs(repo);
+  return {
+    packageId: record.packageId,
+    repo: record.manifest.source.repo,
+    activeRef: record.manifest.source.ref,
+    heads: refs.heads ?? {},
+    tags: refs.tags ?? {},
+  };
+}
+
+export async function handlePkgRepoRead(
+  args: PkgRepoReadArgs,
+  ctx: KernelContext,
+): Promise<PkgRepoReadResult> {
+  const { record, repo, ref } = resolvePackageRepoRef(args.packageId, args.ref, ctx);
+  const ripgit = requireRipgitClient(ctx);
+  const path = normalizeRepoPath(args.path);
+  const root = normalizeRepoPath(record.manifest.source.subdir);
+  const result = await ripgit.readPath(repo, joinRepoPath(root, path));
+
+  if (result.kind === "missing") {
+    throw new Error(`Path not found: ${path || "/"}`);
+  }
+
+  if (result.kind === "tree") {
+    return {
+      packageId: record.packageId,
+      repo: record.manifest.source.repo,
+      ref,
+      path,
+      kind: "tree",
+      entries: result.entries.map((entry) => ({
+        name: entry.name,
+        path: path ? `${path}/${entry.name}` : entry.name,
+        mode: entry.mode,
+        hash: entry.hash,
+        type: entry.type,
+      })),
+    };
+  }
+
+  return {
+    packageId: record.packageId,
+    repo: record.manifest.source.repo,
+    ref,
+    path,
+    kind: "file",
+    size: result.size,
+    isBinary: isBinaryBytes(result.bytes),
+    content: decodeRepoFile(result.bytes),
+  };
+}
+
+export async function handlePkgRepoLog(
+  args: PkgRepoLogArgs,
+  ctx: KernelContext,
+): Promise<PkgRepoLogResult> {
+  const { record, repo, ref } = resolvePackageRepoRef(args.packageId, args.ref, ctx);
+  const ripgit = requireRipgitClient(ctx);
+  const limit = clampRepoLimit(args.limit);
+  const offset = clampRepoOffset(args.offset);
+  const entries = await ripgit.log(repo, { limit, offset });
+
+  return {
+    packageId: record.packageId,
+    repo: record.manifest.source.repo,
+    ref,
+    limit,
+    offset,
+    entries: entries.map((entry) => ({
+      hash: entry.hash,
+      treeHash: entry.tree_hash,
+      author: entry.author,
+      authorEmail: entry.author_email,
+      authorTime: entry.author_time,
+      committer: entry.committer,
+      committerEmail: entry.committer_email,
+      commitTime: entry.commit_time,
+      message: entry.message,
+      parents: Array.isArray(entry.parents) ? entry.parents : [],
+    })),
   };
 }
 
@@ -169,5 +272,91 @@ function resolveEntrypointIcon(
   return {
     kind: "svg",
     svg: module.content,
+  };
+}
+
+function requireRipgitClient(ctx: KernelContext): RipgitClient {
+  const ripgitBinding = ctx.env.RIPGIT;
+  if (!ripgitBinding) {
+    throw new Error("RIPGIT binding is required");
+  }
+  return new RipgitClient(ripgitBinding, ctx.env.RIPGIT_INTERNAL_KEY ?? null);
+}
+
+function resolvePackageRepoRef(
+  packageId: string,
+  maybeRef: string | undefined,
+  ctx: KernelContext,
+): { record: InstalledPackageRecord; repo: RipgitRepoRef; ref: string } {
+  const record = requirePackage(packageId, ctx);
+  const repoRef = parseSyncRepoRef(record.manifest.source.repo);
+  const ref = typeof maybeRef === "string" && maybeRef.trim().length > 0
+    ? maybeRef.trim()
+    : record.manifest.source.ref;
+  return {
+    record,
+    repo: {
+      owner: repoRef.owner,
+      repo: repoRef.repo,
+      branch: ref,
+    },
+    ref,
+  };
+}
+
+function normalizeRepoPath(path: string | undefined): string {
+  const trimmed = typeof path === "string" ? path.trim() : "";
+  return trimmed.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function joinRepoPath(base: string, child: string): string {
+  if (!base) return child;
+  if (!child) return base;
+  return `${base}/${child}`;
+}
+
+function clampRepoLimit(limit: number | undefined): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+    return 30;
+  }
+  return Math.max(1, Math.min(100, Math.trunc(limit)));
+}
+
+function clampRepoOffset(offset: number | undefined): number {
+  if (typeof offset !== "number" || !Number.isFinite(offset)) {
+    return 0;
+  }
+  return Math.max(0, Math.trunc(offset));
+}
+
+function isBinaryBytes(bytes: Uint8Array): boolean {
+  const limit = Math.min(bytes.length, 8192);
+  for (let index = 0; index < limit; index += 1) {
+    if (bytes[index] === 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function decodeRepoFile(bytes: Uint8Array): string | null {
+  if (isBinaryBytes(bytes)) {
+    return null;
+  }
+  try {
+    return STRICT_TEXT_DECODER.decode(bytes);
+  } catch {
+    return TEXT_DECODER.decode(bytes);
+  }
+}
+
+function parseSyncRepoRef(repo: string): RipgitRepoRef {
+  const [owner, name] = repo.split("/", 2);
+  if (!owner || !name) {
+    throw new Error(`repo must be '<owner>/<repo>', got '${repo}'`);
+  }
+  return {
+    owner,
+    repo: name,
   };
 }

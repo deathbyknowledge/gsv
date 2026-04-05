@@ -16,6 +16,8 @@ import { createPackageBackend, createWorkspaceBackend, resolveUserPath } from ".
 import type { KernelContext } from "../../kernel/context";
 import {
   packageArtifactToWorkerCode,
+  packageDoName,
+  packageRouteBase,
   packageWorkerKey,
   type InstalledPackageRecord,
   type PackageEntrypoint,
@@ -677,9 +679,17 @@ async function runPackageCommand(
     () => packageArtifactToWorkerCode(record.artifact, {
       PACKAGE_NAME: record.manifest.name,
       PACKAGE_ID: record.packageId,
+      PACKAGE_DO: ctx.env.PACKAGE_DO,
+      PACKAGE_DO_NAME: packageDoName(record.manifest.name),
     }),
   );
-  const stub = worker.getEntrypoint(resolvePackageCommandExportName(entrypoint.exportName)) as unknown as PackageCommandStub;
+  const stub = worker.getEntrypoint(resolvePackageCommandExportName(entrypoint.exportName), {
+    props: {
+      commandName: entrypoint.command ?? entrypoint.name,
+      packageId: record.packageId,
+      routeBase: packageRouteBase(record.manifest.name),
+    },
+  }) as unknown as PackageCommandStub;
 
   return stub.run({
     args,

@@ -22,7 +22,24 @@ fn actor_from_request(req: &Request) -> Option<Actor> {
     Some(Actor { display_name: name })
 }
 
-fn check_write_access(actor: &Option<Actor>, repo_owner: &str) -> Option<Result<Response>> {
+fn has_internal_access(req: &Request, env: &Env) -> bool {
+    let expected = match env.var("RIPGIT_INTERNAL_KEY") {
+        Ok(value) => value.to_string(),
+        Err(_) => return false,
+    };
+    let provided = req.headers().get("X-Ripgit-Internal-Key").ok().flatten();
+    provided.as_deref() == Some(expected.as_str())
+}
+
+fn check_write_access(
+    req: &Request,
+    env: &Env,
+    actor: &Option<Actor>,
+    repo_owner: &str,
+) -> Option<Result<Response>> {
+    if has_internal_access(req, env) && actor.is_some() {
+        return None;
+    }
     match actor {
         None => Some(unauthorized_401()),
         Some(a) if a.display_name == repo_owner => None,
@@ -135,6 +152,7 @@ impl DurableObject for Repository {
 
         let owner = parts[0];
         let repo_name = parts[1];
+        let repo_slug = format!("{}/{}", owner, repo_name);
         let action = if parts.len() >= 3 { parts[2] } else { "" };
         let actor = actor_from_request(&req);
 
@@ -147,6 +165,15 @@ impl DurableObject for Repository {
                     "read" if req.method() == Method::Get => hyperspace::handle_read(&self.sql, &req).await,
                     "search" if req.method() == Method::Get => hyperspace::handle_search(&self.sql, &req).await,
                     "apply" if req.method() == Method::Post => hyperspace::handle_apply(&self.sql, &mut req).await,
+                    "packages" => match (req.method(), parts.get(4).copied().unwrap_or("")) {
+                        (Method::Get, "analyze") => {
+                            hyperspace::handle_packages_analyze(&self.sql, &req, &repo_slug).await
+                        }
+                        (Method::Get, "build") => {
+                            hyperspace::handle_packages_build(&self.sql, &req, &repo_slug).await
+                        }
+                        _ => Response::error("Not Found", 404),
+                    },
                     _ => Response::error("Not Found", 404),
                 }
             }
@@ -158,7 +185,7 @@ impl DurableObject for Repository {
                     .unwrap_or_default();
                 match service.as_str() {
                     "git-receive-pack" => {
-                        if let Some(resp) = check_write_access(&actor, owner) {
+                        if let Some(resp) = check_write_access(&req, &self.env, &actor, owner) {
                             return resp;
                         }
                         self.advertise_refs("git-receive-pack")
@@ -168,7 +195,7 @@ impl DurableObject for Repository {
                 }
             }
             (Method::Post, "git-receive-pack") => {
-                if let Some(resp) = check_write_access(&actor, owner) {
+                if let Some(resp) = check_write_access(&req, &self.env, &actor, owner) {
                     return resp;
                 }
                 let body = req.bytes().await?;
@@ -179,7 +206,7 @@ impl DurableObject for Repository {
                 git::handle_upload_pack(&self.sql, &body)
             }
             (Method::Delete, "") => {
-                if let Some(resp) = check_write_access(&actor, owner) {
+                if let Some(resp) = check_write_access(&req, &self.env, &actor, owner) {
                     return resp;
                 }
                 self.state.storage().delete_all().await?;
@@ -209,7 +236,7 @@ impl DurableObject for Repository {
                 api::handle_blob(&self.sql, parts.get(3).unwrap_or(&""))
             }
             (Method::Put, "admin") => {
-                if let Some(resp) = check_write_access(&actor, owner) {
+                if let Some(resp) = check_write_access(&req, &self.env, &actor, owner) {
                     return resp;
                 }
                 let sub = parts.get(3).unwrap_or(&"");

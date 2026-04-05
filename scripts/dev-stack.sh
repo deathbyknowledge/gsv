@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_ROOT="$ROOT_DIR/.wrangler/dev-state/v3"
+
+mkdir -p "$STATE_ROOT/do/ripgit-Repository"
+mkdir -p "$STATE_ROOT/do/gsv-os-Kernel"
+mkdir -p "$STATE_ROOT/do/gsv-os-Process"
+
+cd "$ROOT_DIR/ripgit"
+exec bun x wrangler dev -c ../gateway-os/wrangler.jsonc -c wrangler.toml --ip 0.0.0.0 --persist-to ../.wrangler/dev-state

@@ -36,6 +36,37 @@ export default {
       return kernel.fetch(request);
     }
 
+    const gitMatch = matchGitPath(url);
+    if (gitMatch) {
+      const basicAuth = getBasicAuth(request);
+      if (!basicAuth) {
+        return basicAuthChallenge("Authentication required");
+      }
+
+      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const authorized = await kernel.authorizeGitHttp({
+        owner: gitMatch.owner,
+        repo: gitMatch.repo,
+        write: gitMatch.write,
+        username: basicAuth.username,
+        credential: basicAuth.credential,
+      });
+      if (!authorized.ok) {
+        return authorized.status === 401
+          ? basicAuthChallenge(authorized.message)
+          : new Response(authorized.message, { status: authorized.status });
+      }
+
+      return env.RIPGIT.fetch(
+        await buildGitProxyRequest(
+          request,
+          gitMatch,
+          env.RIPGIT_INTERNAL_KEY,
+          authorized.username,
+        ),
+      );
+    }
+
     const appMatch = matchPackageAppPath(url.pathname);
     if (appMatch) {
       const session = getPackageAppSession(request);
@@ -114,6 +145,18 @@ type PackageAppSession = {
   token: string;
 };
 
+type BasicAuth = {
+  username: string;
+  credential: string;
+};
+
+type GitPathMatch = {
+  owner: string;
+  repo: string;
+  suffix: string;
+  write: boolean;
+};
+
 type ResolvedPackageRoute = {
   ok: true;
   packageId: string;
@@ -141,6 +184,65 @@ function matchPackageAppPath(pathname: string): { packageName: string } | null {
   }
 
   return { packageName: rawName };
+}
+
+function matchGitPath(url: URL): GitPathMatch | null {
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "git") {
+    return null;
+  }
+
+  const owner = parts[1]?.trim();
+  const repoPart = parts[2]?.trim();
+  if (!owner || !repoPart) {
+    return null;
+  }
+
+  const repo = repoPart.endsWith(".git") ? repoPart.slice(0, -4) : repoPart;
+  if (!/^[A-Za-z0-9._-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(repo)) {
+    return null;
+  }
+
+  const suffix = parts.slice(3).join("/");
+  const service = url.searchParams.get("service");
+  return {
+    owner,
+    repo,
+    suffix,
+    write: suffix === "git-receive-pack" || (suffix === "info/refs" && service === "git-receive-pack"),
+  };
+}
+
+function getBasicAuth(request: Request): BasicAuth | null {
+  const header = request.headers.get("authorization");
+  if (!header?.startsWith("Basic ")) {
+    return null;
+  }
+
+  try {
+    const decoded = atob(header.slice("Basic ".length).trim());
+    const separator = decoded.indexOf(":");
+    if (separator === -1) {
+      return null;
+    }
+    const username = decoded.slice(0, separator).trim();
+    const credential = decoded.slice(separator + 1);
+    if (!username || !credential) {
+      return null;
+    }
+    return { username, credential };
+  } catch {
+    return null;
+  }
+}
+
+function basicAuthChallenge(message: string): Response {
+  return new Response(message, {
+    status: 401,
+    headers: {
+      "WWW-Authenticate": 'Basic realm="gsv"',
+    },
+  });
 }
 
 function getPackageAppSession(request: Request): PackageAppSession | null {
@@ -202,6 +304,37 @@ function buildPackageWorkerRequest(request: Request, resolved: ResolvedPackageRo
   headers.set("x-gsv-package-do", resolved.packageDoName);
 
   return new Request(request, { headers });
+}
+
+async function buildGitProxyRequest(
+  request: Request,
+  gitMatch: GitPathMatch,
+  internalKey: string | undefined,
+  username: string,
+): Promise<Request> {
+  const sourceUrl = new URL(request.url);
+  const targetUrl = new URL(`https://ripgit/${encodeURIComponent(gitMatch.owner)}/${encodeURIComponent(gitMatch.repo)}/${gitMatch.suffix}`);
+  targetUrl.search = sourceUrl.search;
+
+  const headers = new Headers(request.headers);
+  headers.delete("authorization");
+  headers.delete("cookie");
+  headers.set("x-ripgit-actor-name", username);
+  if (internalKey) {
+    headers.set("x-ripgit-internal-key", internalKey);
+  }
+
+  const init: RequestInit = {
+    method: request.method,
+    headers,
+    redirect: "manual",
+  };
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = await request.arrayBuffer();
+  }
+
+  return new Request(targetUrl.toString(), init);
 }
 
 /**

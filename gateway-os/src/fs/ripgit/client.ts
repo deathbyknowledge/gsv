@@ -40,11 +40,117 @@ export type RipgitSearchMatch = {
   content: string;
 };
 
+export type RipgitRefsResponse = {
+  heads: Record<string, string>;
+  tags: Record<string, string>;
+};
+
+export type RipgitLogEntry = {
+  hash: string;
+  tree_hash: string;
+  author: string;
+  author_email: string;
+  author_time: number;
+  committer: string;
+  committer_email: string;
+  commit_time: number;
+  message: string;
+  parents: string[];
+};
+
+export type RipgitPackageDiagnostic = {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  path: string;
+  line: number;
+  column: number;
+};
+
+export type RipgitPackageAnalyzeResponse = {
+  source: {
+    repo: string;
+    ref: string;
+    resolved_commit: string;
+    subdir: string;
+  };
+  package_root: string;
+  identity: {
+    package_json_name: string;
+    version?: string | null;
+    display_name: string;
+  };
+  package_json: {
+    name: string;
+    version?: string | null;
+    type?: string | null;
+    dependencies: Record<string, string>;
+    dev_dependencies: Record<string, string>;
+  };
+  definition?: {
+    meta: {
+      display_name: string;
+      description?: string | null;
+      icon?: string | null;
+      window?: {
+        width?: number | null;
+        height?: number | null;
+        min_width?: number | null;
+        min_height?: number | null;
+      } | null;
+      capabilities: {
+        kernel: string[];
+        outbound: string[];
+      };
+    };
+    commands: Array<{
+      name: string;
+    }>;
+    app?: {
+      handler: {
+        export_name: string;
+      };
+    } | null;
+    tasks: Array<{
+      name: string;
+    }>;
+  } | null;
+  diagnostics: RipgitPackageDiagnostic[];
+  ok: boolean;
+  analysis_hash: string;
+};
+
+export type RipgitPackageBuildResponse = {
+  source: {
+    repo: string;
+    ref: string;
+    resolved_commit: string;
+    subdir: string;
+  };
+  analysis_hash: string;
+  target: "dynamic-worker";
+  artifact?: {
+    main_module: string;
+    modules: Array<{
+      path: string;
+      kind: "source-module" | "json" | "text";
+      content: string;
+    }>;
+    hash: string;
+  } | null;
+  diagnostics: RipgitPackageDiagnostic[];
+  ok: boolean;
+};
+
 type RipgitApplyResponse = {
   ok: boolean;
   head?: string | null;
   conflict?: boolean;
   error?: string;
+};
+
+export type RipgitApplyResult = {
+  head?: string | null;
 };
 
 type RipgitSearchResponse = {
@@ -94,7 +200,7 @@ export class RipgitClient {
     email: string,
     message: string,
     ops: RipgitApplyOp[],
-  ): Promise<void> {
+  ): Promise<RipgitApplyResult> {
     const response = await this.binding.fetch(this.makeApplyUrl(repo), {
       method: "POST",
       headers: {
@@ -118,6 +224,9 @@ export class RipgitClient {
     if (!payload.ok) {
       throw new Error(payload.error ?? `Failed to apply changes for ${repo.owner}/${repo.repo}`);
     }
+    return {
+      head: payload.head ?? null,
+    };
   }
 
   async search(
@@ -143,6 +252,62 @@ export class RipgitClient {
     };
   }
 
+  async refs(repo: RipgitRepoRef): Promise<RipgitRefsResponse> {
+    const response = await this.binding.fetch(this.makeRefsUrl(repo), {
+      headers: this.makeInternalHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `refs '${repo.owner}/${repo.repo}'`));
+    }
+    return response.json<RipgitRefsResponse>();
+  }
+
+  async log(
+    repo: RipgitRepoRef,
+    options?: {
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<RipgitLogEntry[]> {
+    const response = await this.binding.fetch(
+      this.makeLogUrl(repo, options?.limit, options?.offset),
+      {
+        headers: this.makeInternalHeaders(),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `log '${repo.owner}/${repo.repo}'`));
+    }
+    return response.json<RipgitLogEntry[]>();
+  }
+
+  async analyzePackage(
+    repo: RipgitRepoRef,
+    subdir: string,
+  ): Promise<RipgitPackageAnalyzeResponse> {
+    const response = await this.binding.fetch(this.makePackagesAnalyzeUrl(repo, subdir), {
+      headers: this.makeInternalHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `analyze package '${repo.owner}/${repo.repo}:${subdir}'`));
+    }
+    return response.json<RipgitPackageAnalyzeResponse>();
+  }
+
+  async buildPackage(
+    repo: RipgitRepoRef,
+    subdir: string,
+    target: "dynamic-worker" = "dynamic-worker",
+  ): Promise<RipgitPackageBuildResponse> {
+    const response = await this.binding.fetch(this.makePackagesBuildUrl(repo, subdir, target), {
+      headers: this.makeInternalHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `build package '${repo.owner}/${repo.repo}:${subdir}'`));
+    }
+    return response.json<RipgitPackageBuildResponse>();
+  }
+
   private makeReadUrl(repo: RipgitRepoRef, path: string): URL {
     return this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/read?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&path=${encodeURIComponent(path)}`,
@@ -164,6 +329,41 @@ export class RipgitClient {
     }
     url.searchParams.set("limit", "500");
     return url;
+  }
+
+  private makeRefsUrl(repo: RipgitRepoRef): URL {
+    return this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/refs`,
+    );
+  }
+
+  private makeLogUrl(repo: RipgitRepoRef, limit?: number, offset?: number): URL {
+    const url = this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/log?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}`,
+    );
+    if (typeof limit === "number" && Number.isFinite(limit)) {
+      url.searchParams.set("limit", String(limit));
+    }
+    if (typeof offset === "number" && Number.isFinite(offset)) {
+      url.searchParams.set("offset", String(offset));
+    }
+    return url;
+  }
+
+  private makePackagesAnalyzeUrl(repo: RipgitRepoRef, subdir: string): URL {
+    return this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/packages/analyze?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&subdir=${encodeURIComponent(subdir)}`,
+    );
+  }
+
+  private makePackagesBuildUrl(
+    repo: RipgitRepoRef,
+    subdir: string,
+    target: "dynamic-worker",
+  ): URL {
+    return this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/packages/build?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&subdir=${encodeURIComponent(subdir)}&target=${encodeURIComponent(target)}`,
+    );
   }
 
   private makeUrl(suffix: string): URL {

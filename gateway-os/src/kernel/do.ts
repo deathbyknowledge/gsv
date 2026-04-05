@@ -91,6 +91,27 @@ type ResolvePackageHttpResult =
       message: string;
     };
 
+type AuthorizeGitHttpInput = {
+  owner: string;
+  repo: string;
+  write: boolean;
+  username: string;
+  credential: string;
+};
+
+type AuthorizeGitHttpResult =
+  | {
+      ok: true;
+      username: string;
+      uid: number;
+      capabilities: string[];
+    }
+  | {
+      ok: false;
+      status: number;
+      message: string;
+    };
+
 export class Kernel extends Host<Env> {
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
@@ -147,8 +168,13 @@ export class Kernel extends Host<Env> {
   }
 
   private async initializePackages(): Promise<void> {
-    const builtinSeeds = await buildBuiltinPackageSeeds(this.env, this.config);
-    this.packages.seedBuiltinPackages(builtinSeeds);
+    try {
+      const builtinSeeds = await buildBuiltinPackageSeeds(this.env);
+      this.packages.seedBuiltinPackages(builtinSeeds);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[Kernel] Builtin packages unavailable at startup: ${message}`);
+    }
   }
 
   shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
@@ -355,6 +381,44 @@ export class Kernel extends Host<Env> {
         username: auth.identity.username,
         capabilities: this.caps.resolve(auth.identity.gids),
       },
+    };
+  }
+
+  async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {
+    await this.ready;
+    const owner = input.owner.trim();
+    const username = input.username.trim();
+    const credential = input.credential.trim();
+
+    if (!owner || !username || !credential) {
+      return { ok: false, status: 401, message: "Authentication required" };
+    }
+
+    const passwordAuth = await this.auth.authenticate(username, credential);
+    const auth = passwordAuth.ok
+      ? passwordAuth
+      : await this.auth.authenticateToken(username, credential, { role: "user" });
+
+    if (!auth.ok) {
+      return { ok: false, status: 401, message: "Authentication failed" };
+    }
+
+    const capabilities = this.caps.resolve(auth.identity.gids);
+    if (input.write) {
+      if (owner === "system") {
+        if (auth.identity.uid !== 0 && !hasCapability(capabilities, "*")) {
+          return { ok: false, status: 403, message: "Only root may push system repositories" };
+        }
+      } else if (auth.identity.username !== owner && auth.identity.uid !== 0 && !hasCapability(capabilities, "*")) {
+        return { ok: false, status: 403, message: "Forbidden" };
+      }
+    }
+
+    return {
+      ok: true,
+      username: auth.identity.username,
+      uid: auth.identity.uid,
+      capabilities,
     };
   }
 
@@ -723,7 +787,11 @@ export class Kernel extends Host<Env> {
   private applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
     if (!response.ok) return;
 
-    if (frame.call === "pkg.install" || frame.call === "pkg.remove" || frame.call === "pkg.checkout") {
+    if (
+      frame.call === "pkg.install" ||
+      frame.call === "pkg.remove" ||
+      frame.call === "pkg.checkout"
+    ) {
       const args = frame.args as {
         packageId?: unknown;
         ref?: unknown;
@@ -747,8 +815,10 @@ export class Kernel extends Host<Env> {
             ? "install"
             : frame.call === "pkg.remove"
               ? "remove"
-              : "checkout",
-          packageId: args.packageId,
+              : frame.call === "pkg.checkout"
+                ? "checkout"
+                : "sync",
+          packageId: typeof args.packageId === "string" ? args.packageId : null,
           ref: typeof data?.package?.source?.ref === "string"
             ? data.package.source.ref
             : typeof args.ref === "string"
@@ -756,7 +826,12 @@ export class Kernel extends Host<Env> {
               : null,
           changed: data?.changed === true,
           enabled: typeof data?.package?.enabled === "boolean" ? data.package.enabled : null,
-          name: typeof data?.package?.name === "string" ? data.package.name : null,
+          name: typeof data?.package?.name === "string"
+            ? data.package.name
+            : typeof args.name === "string"
+              ? args.name
+              : null,
+          repo: typeof data?.repo === "string" ? data.repo : null,
         });
       }
     }

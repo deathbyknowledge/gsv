@@ -232,4 +232,28 @@ pub fn init(sql: &SqlStorage) {
         None,
     )
     .expect("create idx_issue_comments_issue");
+
+    // -- Package build and dependency caches --
+
+    sql.exec(
+        "CREATE TABLE IF NOT EXISTS package_build_cache (
+            cache_key   TEXT PRIMARY KEY,
+            build_json  TEXT NOT NULL,
+            updated_at  INTEGER NOT NULL
+        )",
+        None,
+    )
+    .expect("create package_build_cache");
+
+    sql.exec(
+        "CREATE TABLE IF NOT EXISTS package_npm_cache (
+            cache_key     TEXT PRIMARY KEY,
+            resolved_url  TEXT NOT NULL,
+            integrity     TEXT,
+            files_json    TEXT NOT NULL,
+            updated_at    INTEGER NOT NULL
+        )",
+        None,
+    )
+    .expect("create package_npm_cache");
 }

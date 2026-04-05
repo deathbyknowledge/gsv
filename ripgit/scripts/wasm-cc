@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${RIPGIT_WASM_CC:-}" ]]; then
+  exec "${RIPGIT_WASM_CC}" "$@"
+fi
+
+for candidate in clang clang-18 clang-17 clang-16 zig; do
+  if command -v "${candidate}" >/dev/null 2>&1; then
+    if [[ "${candidate}" == "zig" ]]; then
+      exec zig cc "$@"
+    fi
+    exec "${candidate}" "$@"
+  fi
+done
+
+cat >&2 <<'EOF'
+ripgit wasm build requires a clang-compatible C compiler for xpatch/zstd.
+
+Install one of:
+  - clang / llvm-ar on PATH
+  - zig on PATH
+
+Or set RIPGIT_WASM_CC to an explicit compiler binary.
+EOF
+exit 1

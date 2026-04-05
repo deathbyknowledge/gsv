@@ -1,11 +1,11 @@
 mod analyze;
+mod build;
 
 use serde::{Deserialize, Serialize};
 use worker::{Error, Result, SqlStorage};
 
 pub(crate) use analyze::analyze_package;
-pub(crate) use analyze::analyze_package_source;
-pub(crate) use analyze::PackageAnalysis;
+pub(crate) use build::build_package;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -77,7 +77,7 @@ pub(crate) fn normalize_subdir(subdir: &str) -> Result<String> {
     }
 
     if segments.is_empty() {
-        return Err(Error::RustError("package subdir must not be empty".to_string()));
+        return Ok(".".to_string());
     }
 
     Ok(segments.join("/"))

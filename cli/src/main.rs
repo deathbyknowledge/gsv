@@ -2028,8 +2028,9 @@ async fn run_auth_setup(
     node_label: Option<String>,
     node_expires_at: Option<i64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut username =
-        normalize_auth_field(username).or_else(|| normalize_auth_field(cfg.gateway_username()));
+    let cli_username = normalize_auth_field(username);
+    let cfg_username = normalize_auth_field(cfg.gateway_username());
+    let mut username = cli_username.clone().or_else(|| cfg_username.clone());
     let mut password = normalize_auth_field(password);
     let mut root_password = normalize_auth_field(root_password);
     let mut ai_provider = normalize_auth_field(ai_provider).map(|p| p.to_ascii_lowercase());
@@ -2039,8 +2040,12 @@ async fn run_auth_setup(
     let mut node_label = normalize_auth_field(node_label);
     let mut node_expires_at = node_expires_at;
 
-    if username.is_none() && can_prompt_interactively() {
-        username = prompt_line("First gateway username", Some("admin"))?;
+    if can_prompt_interactively() && cli_username.is_none() {
+        let default_username = match cfg_username.as_deref() {
+            Some("root") | None => Some("admin"),
+            Some(value) => Some(value),
+        };
+        username = prompt_line("First gateway username", default_username)?;
     }
     if password.is_none() && can_prompt_interactively() {
         password = prompt_secret("First gateway password (min 8 chars)")?;
@@ -2145,6 +2150,12 @@ async fn run_auth_setup(
 
     let username =
         username.ok_or("Missing username. Pass --username or run in interactive mode.")?;
+    if username == "root" {
+        return Err(
+            "First gateway username cannot be `root`; root is bootstrapped separately. Use a regular username and optionally set a root password in the wizard."
+                .into(),
+        );
+    }
     let password =
         password.ok_or("Missing password. Pass --new-password (or run interactively).")?;
 

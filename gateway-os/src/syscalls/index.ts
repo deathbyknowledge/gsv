@@ -33,6 +33,12 @@ import type {
   PkgInstallResult,
   PkgListArgs,
   PkgListResult,
+  PkgRepoLogArgs,
+  PkgRepoLogResult,
+  PkgRepoReadArgs,
+  PkgRepoReadResult,
+  PkgRepoRefsArgs,
+  PkgRepoRefsResult,
   PkgRemoveArgs,
   PkgRemoveResult,
 } from "./packages";
@@ -127,6 +133,9 @@ export type SyscallDomains = {
   "pkg.checkout": { args: PkgCheckoutArgs; result: PkgCheckoutResult };
   "pkg.install": { args: PkgInstallArgs; result: PkgInstallResult };
   "pkg.remove": { args: PkgRemoveArgs; result: PkgRemoveResult };
+  "pkg.repo.refs": { args: PkgRepoRefsArgs; result: PkgRepoRefsResult };
+  "pkg.repo.read": { args: PkgRepoReadArgs; result: PkgRepoReadResult };
+  "pkg.repo.log": { args: PkgRepoLogArgs; result: PkgRepoLogResult };
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
