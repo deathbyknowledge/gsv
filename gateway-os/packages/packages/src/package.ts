@@ -1,29 +1,5 @@
 import { definePackage } from "@gsv/package/worker";
-import LegacyPackagesApp from "../ui/worker";
-
-function createLegacyEntrypointContext(ctx: {
-  meta: { packageId: string; routeBase: string | null };
-  kernel: unknown;
-  package: unknown;
-}) {
-  const routeBase = ctx.meta.routeBase ?? "/apps/packages";
-  return {
-    ctx: {
-      props: {
-        appFrame: {
-          packageId: ctx.meta.packageId,
-          routeBase,
-        },
-        packageDoName: "package:packages",
-        kernel: ctx.kernel,
-        package: ctx.package,
-      },
-    },
-    env: {
-      PACKAGE_ROUTE_BASE: routeBase,
-    },
-  };
-}
+import { handleFetch } from "../ui/worker";
 
 export default definePackage({
   meta: {
@@ -50,7 +26,21 @@ export default definePackage({
   },
   app: {
     async fetch(request, ctx) {
-      return LegacyPackagesApp.prototype.fetch.call(createLegacyEntrypointContext(ctx), request);
+      const routeBase = ctx.meta.routeBase ?? "/apps/packages";
+      return handleFetch(request, {
+        props: {
+          appFrame: {
+            packageId: ctx.meta.packageId,
+            routeBase,
+          },
+          packageDoName: "package:packages",
+          kernel: ctx.kernel,
+          package: ctx.package,
+        },
+        env: {
+          PACKAGE_ROUTE_BASE: routeBase,
+        },
+      });
     },
   },
 });

@@ -1,28 +1,5 @@
 import { definePackage } from "@gsv/package/worker";
-import LegacyChatApp from "../ui/worker";
-
-function createLegacyEntrypointContext(ctx: {
-  meta: { packageId: string; routeBase: string | null };
-  kernel: unknown;
-  package: unknown;
-}) {
-  const routeBase = ctx.meta.routeBase ?? "/apps/chat";
-  return {
-    ctx: {
-      props: {
-        appFrame: {
-          packageId: ctx.meta.packageId,
-          routeBase,
-        },
-        kernel: ctx.kernel,
-        package: ctx.package,
-      },
-    },
-    env: {
-      PACKAGE_ROUTE_BASE: routeBase,
-    },
-  };
-}
+import { handleFetch } from "../ui/worker";
 
 export default definePackage({
   meta: {
@@ -40,7 +17,15 @@ export default definePackage({
   },
   app: {
     async fetch(request, ctx) {
-      return LegacyChatApp.prototype.fetch.call(createLegacyEntrypointContext(ctx), request);
+      const routeBase = ctx.meta.routeBase ?? "/apps/chat";
+      return handleFetch(request, {
+        props: {
+          appFrame: { packageId: ctx.meta.packageId, routeBase },
+          kernel: ctx.kernel,
+          package: ctx.package,
+        },
+        env: { PACKAGE_ROUTE_BASE: routeBase },
+      });
     },
   },
 });

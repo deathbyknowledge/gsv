@@ -1,4 +1,6 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
+export async function handleFetch(request, context = {}) {
+  const props = context.props ?? {};
+  const env = context.env ?? {};
 
 function escapeHtml(value) {
   return String(value)
@@ -80,16 +82,15 @@ function renderPage(routeBase, devices, error) {
 </html>`;
 }
 
-export default class DevicesApp extends WorkerEntrypoint {
-  async fetch(request) {
-    const appFrame = this.ctx.props.appFrame;
-    const kernel = this.ctx.props.kernel;
+ 
+    const appFrame = props.appFrame;
+    const kernel = props.kernel;
     if (!appFrame || !kernel) {
       return new Response("App frame missing", { status: 500 });
     }
 
     const url = new URL(request.url);
-    const routeBase = appFrame.routeBase ?? this.env.PACKAGE_ROUTE_BASE ?? "/apps/devices";
+    const routeBase = appFrame.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/devices";
     if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
       return new Response("Not Found", { status: 404 });
     }
@@ -112,5 +113,6 @@ export default class DevicesApp extends WorkerEntrypoint {
         "cache-control": "no-store"
       }
     });
-  }
 }
+
+export default { fetch: handleFetch };

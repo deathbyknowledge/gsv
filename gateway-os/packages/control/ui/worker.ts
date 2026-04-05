@@ -1,4 +1,6 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
+export async function handleFetch(request, context = {}) {
+  const props = context.props ?? {};
+  const env = context.env ?? {};
 
 const CONFIG_SECTIONS = [
   {
@@ -559,11 +561,10 @@ async function loadPageData(kernel, state) {
   };
 }
 
-export default class ControlApp extends WorkerEntrypoint {
-  async fetch(request) {
+ 
     const url = new URL(request.url);
-    const routeBase = this.ctx.props.appFrame?.routeBase ?? this.env.PACKAGE_ROUTE_BASE ?? "/apps/control";
-    const kernel = this.ctx.props.kernel;
+    const routeBase = props.appFrame?.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/control";
+    const kernel = props.kernel;
     if (!kernel) {
       return new Response("KERNEL binding is required", { status: 500 });
     }
@@ -724,5 +725,6 @@ export default class ControlApp extends WorkerEntrypoint {
         "cache-control": "no-store",
       },
     });
-  }
 }
+
+export default { fetch: handleFetch };

@@ -1,4 +1,6 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
+export async function handleFetch(request, context = {}) {
+  const props = context.props ?? {};
+  const env = context.env ?? {};
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -977,10 +979,9 @@ function renderPage(routeBase) {
 </html>`;
 }
 
-export default class ChatApp extends WorkerEntrypoint {
-  async fetch(request) {
+ 
     const url = new URL(request.url);
-    const routeBase = this.ctx.props.appFrame?.routeBase ?? this.env.PACKAGE_ROUTE_BASE ?? "/apps/chat";
+    const routeBase = props.appFrame?.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/chat";
     if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
       return new Response("Not Found", { status: 404 });
     }
@@ -993,5 +994,6 @@ export default class ChatApp extends WorkerEntrypoint {
         "cache-control": "no-store",
       },
     });
-  }
 }
+
+export default { fetch: handleFetch };

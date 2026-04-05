@@ -1,4 +1,6 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
+export async function handleFetch(request, context = {}) {
+  const props = context.props ?? {};
+  const env = context.env ?? {};
 
 const COMMIT_PAGE_SIZE = 30;
 
@@ -595,17 +597,16 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
 </html>`;
 }
 
-export default class PackagesApp extends WorkerEntrypoint {
-  async fetch(request) {
-    const appFrame = this.ctx.props.appFrame;
-    const packageDoName = this.ctx.props.packageDoName;
-    const kernel = this.ctx.props.kernel;
+ 
+    const appFrame = props.appFrame;
+    const packageDoName = props.packageDoName;
+    const kernel = props.kernel;
     if (!appFrame || !packageDoName || !kernel) {
       return new Response("App frame missing", { status: 500 });
     }
 
     const url = new URL(request.url);
-    const routeBase = appFrame.routeBase ?? this.env.PACKAGE_ROUTE_BASE ?? "/apps/packages";
+    const routeBase = appFrame.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/packages";
     if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
       return new Response("Not Found", { status: 404 });
     }
@@ -731,5 +732,6 @@ export default class PackagesApp extends WorkerEntrypoint {
         "cache-control": "no-store",
       },
     });
-  }
 }
+
+export default { fetch: handleFetch };

@@ -1,4 +1,6 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
+export async function handleFetch(request, context = {}) {
+  const props = context.props ?? {};
+  const env = context.env ?? {};
 
 function escapeHtml(value) {
   return String(value)
@@ -281,11 +283,10 @@ function renderPage(routeBase, query, processes, error) {
 </html>`;
 }
 
-export default class ProcessesApp extends WorkerEntrypoint {
-  async fetch(request) {
+ 
     const url = new URL(request.url);
-    const routeBase = this.ctx.props.appFrame?.routeBase ?? this.env.PACKAGE_ROUTE_BASE ?? "/apps/processes";
-    const kernel = this.ctx.props.kernel;
+    const routeBase = props.appFrame?.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/processes";
+    const kernel = props.kernel;
     if (!kernel) {
       return new Response("KERNEL binding is required", { status: 500 });
     }
@@ -326,5 +327,6 @@ export default class ProcessesApp extends WorkerEntrypoint {
         "cache-control": "no-store",
       },
     });
-  }
 }
+
+export default { fetch: handleFetch };
