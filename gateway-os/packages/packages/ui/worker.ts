@@ -24,6 +24,14 @@ function buildUrl(routeBase, params) {
   return `${url.pathname}${url.search}`;
 }
 
+function normalizeRoutePath(path) {
+  const trimmed = String(path ?? "").trim();
+  if (!trimmed || trimmed === "/") {
+    return "/";
+  }
+  return `/${trimmed.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+}
+
 function normalizePath(path) {
   return String(path ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
 }
@@ -351,123 +359,301 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Packages</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
+      :root {
+        --bg: #eef3f7;
+        --surface: #f7f9fc;
+        --surface-low: #f1f5f8;
+        --surface-high: #ffffff;
+        --surface-tint: #e8eef3;
+        --text: #191c1e;
+        --text-muted: rgba(25, 28, 30, 0.66);
+        --text-soft: rgba(25, 28, 30, 0.5);
+        --primary: #003466;
+        --primary-soft: #1a4b84;
+        --secondary: #904b36;
+        --focus: rgba(0, 52, 102, 0.14);
+        --shadow-soft: 0 20px 40px rgba(25, 28, 30, 0.06), 0 10px 10px rgba(25, 28, 30, 0.04);
+        --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        --ui: "Manrope", "Segoe UI", sans-serif;
+        --display: "Space Grotesk", "Avenir Next", sans-serif;
+      }
       * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
       body {
         margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        font-family: var(--ui);
         font-size: 14px;
-        color: #1f2328;
-        background: #ffffff;
-        line-height: 1.5;
+        line-height: 1.55;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 16% 0%, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0) 34%),
+          linear-gradient(180deg, #f4f7fa 0%, var(--bg) 100%);
       }
-      a { color: #0969da; text-decoration: none; }
-      a:hover { text-decoration: underline; }
-      header { border-bottom: 1px solid #d1d9e0; background: #ffffff; }
+      a {
+        color: var(--primary);
+        text-decoration: none;
+      }
+      a:hover { text-decoration: none; }
+      header {
+        background: transparent;
+      }
       .global-nav {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        height: 44px;
-        padding: 0 18px;
+        gap: 16px;
+        padding: 20px 24px 12px;
       }
-      .logo { color: #1f2328; font-weight: 700; font-size: 15px; }
-      .global-meta { display: flex; align-items: center; gap: 10px; color: #656d76; font-size: 12px; }
+      .logo {
+        color: var(--text);
+        font-family: var(--display);
+        font-weight: 700;
+        font-size: 0.78rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .global-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--text-soft);
+        font-size: 12px;
+      }
+      .global-meta code {
+        font-family: var(--mono);
+        background: rgba(255, 255, 255, 0.62);
+        padding: 3px 7px;
+        border-radius: 999px;
+      }
       .app-shell {
-        min-height: calc(100vh - 45px);
+        min-height: calc(100vh - 64px);
         display: grid;
         grid-template-columns: 320px minmax(0, 1fr);
+        gap: 18px;
+        padding: 0 18px 18px;
+      }
+      .sidebar,
+      .repo-shell {
+        min-width: 0;
+        background: rgba(247, 249, 252, 0.86);
+        border-radius: 18px;
+        box-shadow: var(--shadow-soft);
       }
       .sidebar {
-        border-right: 1px solid #d1d9e0;
-        background: #f6f8fa;
-        padding: 16px;
+        padding: 22px 18px 18px;
         overflow: auto;
       }
-      .sidebar h1 { margin: 0 0 6px; font-size: 20px; }
-      .sidebar-copy { margin: 0 0 16px; color: #656d76; }
+      .sidebar h1 {
+        margin: 0 0 8px;
+        font-family: var(--display);
+        font-size: clamp(1.8rem, 3vw, 2.3rem);
+        line-height: 1;
+        letter-spacing: -0.03em;
+      }
+      .sidebar-copy {
+        margin: 0 0 18px;
+        max-width: 28ch;
+        color: var(--text-muted);
+      }
       .sidebar-stack { display: grid; gap: 12px; }
       .pkg-card {
-        border: 1px solid #d1d9e0;
-        border-radius: 8px;
-        background: #ffffff;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.7);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
         overflow: hidden;
+        transition: transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
       }
-      .pkg-card.is-selected { border-color: #0969da; box-shadow: inset 0 0 0 1px #0969da; }
-      .pkg-link { display: block; padding: 12px; color: inherit; text-decoration: none; }
-      .pkg-link:hover { text-decoration: none; background: #f6f8fa; }
-      .pkg-title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-      .pkg-description { margin: 6px 0 0; color: #656d76; font-size: 13px; }
-      .pkg-source { margin: 8px 0 0; color: #656d76; font-size: 12px; }
-      .pkg-source-ref { color: #656d76; font-size: 12px; }
-      .pkg-pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+      .pkg-card.is-selected {
+        background: var(--surface-high);
+        box-shadow:
+          0 14px 28px rgba(25, 28, 30, 0.08),
+          inset 0 1px 0 rgba(255, 255, 255, 0.72);
+        transform: translateY(-1px);
+      }
+      .pkg-link {
+        display: block;
+        padding: 14px 14px 10px;
+        color: inherit;
+        text-decoration: none;
+      }
+      .pkg-link:hover { text-decoration: none; }
+      .pkg-title-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .pkg-title-row strong {
+        font-size: 0.95rem;
+        font-weight: 700;
+      }
+      .pkg-description {
+        margin: 7px 0 0;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+      .pkg-source {
+        margin: 10px 0 0;
+        color: var(--text-soft);
+        font-size: 12px;
+      }
+      .pkg-source-ref {
+        color: var(--text-soft);
+        font-size: 11px;
+        font-family: var(--mono);
+      }
+      .pkg-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 12px 0 0;
+      }
       .pkg-pill {
         display: inline-flex;
         align-items: center;
-        padding: 2px 8px;
+        padding: 4px 9px;
         border-radius: 999px;
-        background: #ddf4ff;
-        color: #1f2328;
-        font-size: 12px;
+        background: rgba(232, 238, 243, 0.92);
+        color: rgba(25, 28, 30, 0.78);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
       }
-      .pkg-pill.is-enabled { background: #dafbe1; }
-      .pkg-pill.is-disabled { background: #f6f8fa; color: #656d76; }
-      .pkg-actions { padding: 0 12px 12px; }
-      .pkg-action-note { margin: 0; color: #656d76; font-size: 12px; }
-      .sidebar-empty, .empty-state { color: #656d76; }
+      .pkg-pill.is-enabled {
+        background: rgba(218, 235, 225, 0.92);
+        color: #29533e;
+      }
+      .pkg-pill.is-disabled {
+        background: rgba(240, 243, 246, 0.92);
+        color: rgba(25, 28, 30, 0.54);
+      }
+      .pkg-actions { padding: 0 14px 14px; }
+      .pkg-action-note,
+      .sidebar-empty,
+      .empty-state,
+      .binary-state {
+        margin: 0;
+        color: var(--text-muted);
+      }
       .btn {
-        border: 1px solid #d1d9e0;
-        background: #ffffff;
-        color: #1f2328;
-        border-radius: 6px;
-        padding: 6px 12px;
+        border: 0;
+        background: rgba(232, 238, 243, 0.9);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 9px 14px;
         font: inherit;
+        font-weight: 700;
         cursor: pointer;
+        transition: transform 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
       }
-      .btn:hover { background: #f6f8fa; }
-      .btn-danger { border-color: #cf222e; color: #cf222e; }
+      .btn:hover {
+        background: rgba(225, 233, 239, 1);
+        transform: translateY(-1px);
+      }
+      .btn-danger {
+        background: rgba(144, 75, 54, 0.12);
+        color: var(--secondary);
+      }
       .inline-form { margin: 0; }
-      .repo-shell { min-width: 0; display: flex; flex-direction: column; }
+      .repo-shell {
+        display: flex;
+        flex-direction: column;
+        padding: 16px;
+      }
       .repo-bar-wrap {
-        border-bottom: 1px solid #d1d9e0;
-        background: #f6f8fa;
+        margin-bottom: 18px;
       }
       .repo-bar {
         display: flex;
         align-items: center;
         gap: 16px;
-        padding: 0 24px;
-        min-height: 40px;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        padding: 14px 18px;
+        border-radius: 16px;
+        background: var(--surface-low);
       }
-      .repo-crumb { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-      .repo-tabs { display: flex; align-items: center; gap: 16px; margin-left: auto; }
-      .repo-tabs a { color: #656d76; font-size: 13px; }
-      .repo-tabs a.is-active { color: #1f2328; font-weight: 600; }
-      .owner-name, .repo-name { color: #1f2328; font-weight: 600; }
-      .sep { color: #656d76; }
-      .repo-main { padding: 24px; max-width: 1100px; }
+      .repo-crumb {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+      .repo-tabs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .repo-tabs a {
+        color: var(--text-muted);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 6px 10px;
+        border-radius: 999px;
+      }
+      .repo-tabs a.is-active {
+        color: var(--primary);
+        background: rgba(0, 52, 102, 0.08);
+      }
+      .owner-name,
+      .repo-name {
+        color: var(--text);
+        font-weight: 700;
+      }
+      .sep { color: var(--text-soft); }
+      .repo-main {
+        padding: 0 4px 4px;
+      }
       .repo-meta {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 16px;
+        gap: 18px;
+        margin-bottom: 18px;
       }
-      .repo-title { margin: 0; font-size: 24px; font-weight: 700; }
-      .repo-subtitle { margin: 4px 0 0; color: #656d76; }
-      .repo-meta-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+      .repo-title {
+        margin: 0;
+        font-family: var(--display);
+        font-size: clamp(2rem, 3vw, 2.6rem);
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        line-height: 0.95;
+      }
+      .repo-subtitle {
+        margin: 8px 0 0;
+        max-width: 54ch;
+        color: var(--text-muted);
+      }
+      .repo-meta-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
       .meta-chip {
         display: inline-flex;
         align-items: center;
-        padding: 4px 8px;
-        border: 1px solid #d1d9e0;
+        padding: 5px 9px;
         border-radius: 999px;
-        background: #ffffff;
-        color: #656d76;
-        font-size: 12px;
+        background: rgba(232, 238, 243, 0.92);
+        color: var(--text-muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
       }
-      .repo-breadcrumbs { margin-bottom: 16px; color: #656d76; }
-      .crumb-sep { margin: 0 6px; color: #656d76; }
+      .repo-breadcrumbs {
+        margin-bottom: 16px;
+        color: var(--text-soft);
+        font-size: 13px;
+      }
+      .crumb-sep { margin: 0 6px; color: var(--text-soft); }
       .repo-controls {
         display: flex;
         align-items: flex-end;
@@ -475,100 +661,191 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
         gap: 12px;
         flex-wrap: wrap;
         margin-bottom: 20px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: var(--surface-low);
       }
-      .ref-form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
-      .ref-form label { display: grid; gap: 6px; }
-      .ref-form span { color: #656d76; font-size: 12px; }
+      .ref-form {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .ref-form label {
+        display: grid;
+        gap: 6px;
+      }
+      .ref-form span {
+        color: var(--text-soft);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
       .ref-form select {
         min-width: 180px;
-        border: 1px solid #d1d9e0;
-        border-radius: 6px;
-        background: #ffffff;
-        color: #1f2328;
-        padding: 6px 10px;
+        border: 0;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.88);
+        color: var(--text);
+        padding: 10px 12px;
         font: inherit;
       }
-      .repo-current-ref { color: #0969da; font-size: 12px; font-weight: 600; }
+      .repo-current-ref {
+        color: var(--primary);
+        font-size: 12px;
+        font-weight: 700;
+      }
       .section-block {
-        border: 1px solid #d1d9e0;
-        border-radius: 6px;
-        background: #ffffff;
+        background: var(--surface-low);
+        border-radius: 18px;
         margin-bottom: 20px;
+        padding: 8px;
       }
       .section-title-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        padding: 14px 16px;
-        border-bottom: 1px solid #d1d9e0;
+        padding: 12px 14px 10px;
       }
-      .section-title-row h1, .section-block h2 { margin: 0; font-size: 20px; }
-      .section-block h2 { padding: 14px 16px 0; font-size: 16px; }
-      .section-meta { color: #656d76; font-size: 12px; }
-      .tree-table { width: 100%; border-collapse: collapse; }
-      .tree-table td { padding: 8px 16px; border-top: 1px solid #d1d9e0; }
-      .tree-table tr:first-child td { border-top: none; }
-      .tree-icon { width: 32px; color: #656d76; }
-      .tree-meta { width: 96px; color: #656d76; font-size: 12px; text-transform: lowercase; }
+      .section-title-row h1,
+      .section-block h2 {
+        margin: 0;
+        font-family: var(--display);
+        letter-spacing: -0.03em;
+      }
+      .section-title-row h1 { font-size: 1.3rem; }
+      .section-block h2 {
+        padding: 12px 14px 0;
+        font-size: 1rem;
+      }
+      .section-meta {
+        color: var(--text-soft);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .tree-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+      }
+      .tree-table td {
+        padding: 10px 14px;
+        background: var(--surface-high);
+      }
+      .tree-table td:first-child {
+        border-radius: 12px 0 0 12px;
+      }
+      .tree-table td:last-child {
+        border-radius: 0 12px 12px 0;
+      }
+      .tree-icon {
+        width: 40px;
+        color: var(--text-soft);
+      }
+      .tree-meta {
+        width: 96px;
+        color: var(--text-soft);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
       .file-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        padding: 10px 16px;
-        background: #f6f8fa;
-        border-bottom: 1px solid #d1d9e0;
+        padding: 12px 14px;
+        background: var(--surface-high);
+        border-radius: 12px 12px 0 0;
       }
       .blob-pre {
         margin: 0;
         padding: 16px;
         overflow: auto;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-family: var(--mono);
         font-size: 12px;
         line-height: 1.6;
         white-space: pre-wrap;
         word-break: break-word;
+        background: var(--surface-high);
+        border-radius: 0 0 12px 12px;
       }
-      .binary-state { padding: 16px; color: #656d76; }
-      .commit-list { list-style: none; margin: 0; padding: 0; }
+      .binary-state {
+        padding: 16px;
+        background: var(--surface-high);
+        border-radius: 0 0 12px 12px;
+      }
+      .commit-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }
       .commit-item {
         display: flex;
         align-items: flex-start;
         gap: 12px;
-        padding: 12px 16px;
-        border-top: 1px solid #d1d9e0;
+        padding: 12px 14px;
+        background: var(--surface-high);
+        border-radius: 12px;
       }
-      .commit-item:first-child { border-top: none; }
       .commit-hash {
-        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-family: var(--mono);
         font-size: 12px;
-        color: #0969da;
-        background: #ddf4ff;
-        border-radius: 4px;
-        padding: 2px 6px;
+        color: var(--primary);
+        background: rgba(0, 52, 102, 0.08);
+        border-radius: 999px;
+        padding: 4px 8px;
       }
       .commit-msg { min-width: 0; }
-      .commit-meta { margin-top: 4px; color: #656d76; font-size: 12px; }
+      .commit-meta {
+        margin-top: 4px;
+        color: var(--text-soft);
+        font-size: 12px;
+      }
       .pagination {
         display: flex;
         gap: 12px;
-        padding: 16px;
-        border-top: 1px solid #d1d9e0;
+        padding: 8px 6px 4px;
       }
       .status-line {
-        margin: 0 24px 0;
-        padding: 10px 12px;
-        border-bottom: 1px solid #d1d9e0;
-        background: #fff8c5;
-        color: #1f2328;
+        margin: 0 18px 16px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(0, 52, 102, 0.08);
+        color: var(--text);
       }
-      .status-line.is-error { background: #ffebe9; }
+      .status-line p { margin: 0; }
+      .status-line.is-error {
+        background: rgba(144, 75, 54, 0.12);
+        color: #6f3929;
+      }
       @media (max-width: 980px) {
-        .app-shell { grid-template-columns: 1fr; }
-        .sidebar { border-right: none; border-bottom: 1px solid #d1d9e0; }
-        .repo-main { padding: 16px; }
-        .repo-bar { padding: 0 16px; }
+        .global-nav {
+          padding: 16px 16px 10px;
+        }
+        .app-shell {
+          grid-template-columns: 1fr;
+          gap: 14px;
+          padding: 0 12px 12px;
+        }
+        .sidebar,
+        .repo-shell {
+          border-radius: 16px;
+        }
+        .repo-bar,
+        .repo-controls {
+          padding: 12px;
+        }
+        .repo-meta {
+          flex-direction: column;
+        }
       }
     </style>
   </head>
@@ -607,7 +884,10 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
 
     const url = new URL(request.url);
     const routeBase = appFrame.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/packages";
-    if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
+    const linkRouteBase = typeof url.searchParams.get("windowId") === "string" && url.searchParams.get("windowId")?.trim()
+      ? buildUrl(routeBase, { windowId: url.searchParams.get("windowId")?.trim() })
+      : routeBase;
+    if (normalizeRoutePath(url.pathname) !== normalizeRoutePath(routeBase)) {
       return new Response("Not Found", { status: 404 });
     }
     if (request.method !== "GET" && request.method !== "POST") {
@@ -723,7 +1003,7 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
       selectedPath,
       statusText,
       loadError,
-      routeBase,
+      routeBase: linkRouteBase,
       repoRefs,
       repoState,
     }), {
