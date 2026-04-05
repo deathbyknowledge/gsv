@@ -134,8 +134,9 @@ button:disabled {
   overflow: hidden;
   color: var(--text-main);
   font-family: var(--font-ui);
-  background-image: url("/background.png");
+  background-image: url("/background2.png");
   background-size: cover;
+  background-position: center;
 }
 
 .desktop-shell,
@@ -167,20 +168,70 @@ button:disabled {
 
 .topbar {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: 16px;
+  left: 18px;
+  right: 18px;
   height: var(--topbar-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 14px;
-  background: var(--surface-0);
-  border-bottom: 1px solid var(--line-soft);
-  box-shadow: var(--topbar-shadow);
-  backdrop-filter: var(--panel-backdrop);
+  gap: 18px;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 14px;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 6px 2px rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: blur(10px) saturate(1.05);
+  backdrop-filter: blur(10px) saturate(1.05);
+  overflow: hidden;
   z-index: 30;
+}
+
+.topbar::before,
+.windows-panel::before,
+.session-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.8),
+    transparent
+  );
+  pointer-events: none;
+}
+
+.topbar::after,
+.windows-panel::after,
+.session-card::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 100%;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.8),
+    transparent,
+    rgba(255, 255, 255, 0.3)
+  );
+  pointer-events: none;
+}
+
+.topbar > *,
+.windows-panel > *,
+.session-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .topbar-section {
@@ -190,28 +241,38 @@ button:disabled {
   min-width: 0;
 }
 
+.topbar > .topbar-section:first-child,
+.topbar > .topbar-section:last-child {
+  flex: 1 1 0;
+}
+
 .topbar-windows {
   position: relative;
+  justify-content: center;
+}
+
+.topbar-session {
+  justify-content: flex-end;
 }
 
 .pill {
   display: inline-flex;
   align-items: center;
-  height: 24px;
+  height: 26px;
   padding: 0 10px;
-  border-radius: 999px;
-  border: var(--surface-border-width) solid var(--line-strong);
-  background: color-mix(in srgb, var(--accent) 18%, var(--surface-overlay));
-  box-shadow: var(--elevation-soft);
-  font-size: 0.74rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.34);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  color: #14304d;
+  font-size: 0.7rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .muted {
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  font-size: 0.76rem;
+  color: rgba(24, 49, 79, 0.72);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -236,22 +297,19 @@ button:disabled {
   background: var(--danger);
 }
 
-.topbar-session {
-  gap: 8px;
-}
-
 .session-lock-btn {
-  height: 28px;
-  border: var(--control-border-width) solid var(--control-border);
+  height: 30px;
+  border: 0;
   border-radius: 6px;
-  background: var(--surface-raised);
-  box-shadow: var(--elevation-soft);
-  color: var(--control-text);
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  color: #14304d;
   font-family: var(--font-ui);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  padding: 0 10px;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  letter-spacing: 0.04em;
+  padding: 0 11px;
+  transition: box-shadow 120ms ease, background-color 120ms ease, transform 120ms ease;
 }
 
 .session-lock-btn:disabled {
@@ -262,43 +320,53 @@ button:disabled {
 }
 
 .windows-toggle {
-  height: 28px;
-  border: var(--control-border-width) solid var(--control-border);
+  height: 30px;
+  border: 0;
   border-radius: 6px;
-  background: var(--surface-raised);
-  box-shadow: var(--elevation-soft);
-  color: var(--control-text);
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  color: #14304d;
   font-family: var(--font-ui);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  padding: 0 10px;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  letter-spacing: 0.04em;
+  padding: 0 11px;
+  transition: box-shadow 120ms ease, background-color 120ms ease, transform 120ms ease;
 }
 
 .session-lock-btn:hover,
 .windows-toggle:hover {
-  border-color: var(--control-border-focus);
+  background: rgba(255, 255, 255, 0.4);
+  transform: translateY(-1px);
 }
 
 .session-lock-btn:focus-visible,
 .windows-toggle:focus-visible {
   outline: none;
-  border-color: var(--control-border-focus);
-  box-shadow: var(--control-focus-ring);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 0 0 3px rgba(26, 75, 132, 0.14);
 }
 
 .windows-panel {
   position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  min-width: 230px;
+  top: calc(100% + 10px);
+  left: 50%;
+  min-width: 240px;
   max-width: 290px;
   padding: 10px;
-  border-radius: 8px;
-  border: var(--surface-border-width) solid var(--line-soft);
-  background: var(--surface-overlay);
-  backdrop-filter: var(--panel-backdrop);
-  box-shadow: var(--elevation-raised);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(12px) saturate(1.06);
+  -webkit-backdrop-filter: blur(12px) saturate(1.06);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 6px 2px rgba(255, 255, 255, 0.14);
+  transform: translateX(-50%);
+  overflow: hidden;
   z-index: 40;
 }
 
@@ -316,31 +384,31 @@ button:disabled {
 
 .windows-list button {
   width: 100%;
-  border: var(--control-border-width) solid var(--control-border);
+  border: 0;
   border-radius: 6px;
-  background: var(--surface-raised);
-  box-shadow: var(--elevation-soft);
-  color: var(--control-text);
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  color: #14304d;
   font-family: var(--font-ui);
   font-size: 0.76rem;
   text-align: left;
   padding: 7px 9px;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  transition: box-shadow 120ms ease, background-color 120ms ease, transform 120ms ease;
 }
 
 .windows-list button:hover {
-  border-color: var(--control-border-focus);
+  background: rgba(255, 255, 255, 0.72);
+  transform: translateY(-1px);
 }
 
 .windows-list button:focus-visible {
   outline: none;
-  border-color: var(--control-border-focus);
-  box-shadow: var(--control-focus-ring);
+  box-shadow: 0 0 0 3px rgba(26, 75, 132, 0.14);
 }
 
 .workspace {
   position: absolute;
-  inset: var(--topbar-height) 0 0;
+  inset: calc(var(--topbar-height) + 24px) 0 0;
   z-index: 10;
 }
 
@@ -352,7 +420,7 @@ button:disabled {
   place-items: center;
   background: url("/background4.png");
   background-size: cover;
-  backdrop-filter: blur(2px);
+  background-position: center;
 }
 
 .session-overlay[hidden] {
@@ -361,14 +429,19 @@ button:disabled {
 
 .session-card {
   width: min(480px, calc(100% - 32px));
-  border: 1px solid rgba(255, 255, 255, 0.34);
-  border-radius: 6px;
-  background: rgba(255, 248, 240, 0.44);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
   box-shadow:
-    0 20px 56px rgba(14, 28, 48, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+    0 8px 32px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 6px 3px rgba(255, 255, 255, 0.22);
   color: #18314f;
-  backdrop-filter: blur(24px) saturate(1.04);
+  -webkit-backdrop-filter: blur(15px) saturate(1.05);
+  backdrop-filter: blur(15px) saturate(1.05);
+  position: relative;
+  overflow: hidden;
   padding: 24px 24px 20px;
 }
 
@@ -392,21 +465,23 @@ button:disabled {
 .session-form label {
   display: grid;
   gap: 6px;
-  font-size: 0.76rem;
+  font-size: 0.68rem;
   font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: rgba(24, 49, 79, 0.74);
 }
 
 .session-form input {
   width: 100%;
-  border: 1px solid rgba(86, 119, 156, 0.28);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.46);
+  border: 0;
+  border-radius: 4px;
+  background: rgba(232, 238, 245, 0.72);
   color: #16314f;
   font-family: var(--font-ui);
   font-size: 0.9rem;
   padding: 11px 12px;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  transition: box-shadow 120ms ease, background-color 120ms ease;
 }
 
 .session-form input::placeholder {
@@ -415,8 +490,8 @@ button:disabled {
 
 .session-form input:focus-visible {
   outline: none;
-  border-color: rgba(73, 117, 170, 0.56);
-  box-shadow: 0 0 0 3px rgba(140, 185, 236, 0.24);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: inset 3px 0 0 #003466;
 }
 
 .session-form input:disabled {
@@ -425,16 +500,18 @@ button:disabled {
 }
 
 .session-advanced {
-  border-top: 1px solid rgba(86, 119, 156, 0.16);
-  margin-top: 2px;
-  padding-top: 10px;
+  justify-self: start;
+  margin-top: -2px;
+  padding: 0;
 }
 
 .session-advanced summary {
   cursor: pointer;
   color: rgba(24, 49, 79, 0.68);
-  font-size: 0.76rem;
+  font-size: 0.62rem;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   list-style: none;
 }
 
@@ -443,7 +520,11 @@ button:disabled {
 }
 
 .session-advanced[open] summary {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+}
+
+.session-advanced > label {
+  min-width: 100%;
 }
 
 .session-error {
@@ -454,22 +535,22 @@ button:disabled {
 
 .desktop-icons {
   position: absolute;
-  top: 14px;
-  left: 14px;
+  top: 28px;
+  left: 22px;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
+  gap: 14px;
   z-index: 11;
 }
 
 .desktop-icon {
-  width: var(--icon-tile-size);
-  border: 1px solid transparent;
-  border-radius: var(--icon-radius);
-  background: var(--icon-bg);
-  box-shadow: var(--icon-shadow);
-  color: var(--text-main);
-  padding: 8px 6px;
+  width: 88px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  color: rgba(247, 249, 252, 0.96);
+  padding: 2px 1px 4px;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
@@ -477,32 +558,36 @@ button:disabled {
   font-family: var(--font-ui);
   font-size: var(--icon-label-size);
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
+  transition: transform 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
 }
 
 .desktop-icon:hover {
-  border-color: var(--line-soft);
-  background: var(--icon-bg-hover);
+  background: rgba(247, 249, 252, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
 }
 
 .desktop-icon.is-selected {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-soft));
-  background: color-mix(in srgb, var(--icon-bg-hover) 82%, transparent);
+  background: rgba(247, 249, 252, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .desktop-icon.is-active {
-  border-color: color-mix(in srgb, var(--accent) 56%, var(--line-soft));
-  background: color-mix(in srgb, var(--icon-bg-hover) 70%, var(--accent) 16%);
+  background: rgba(247, 249, 252, 0.16);
+  box-shadow:
+    0 10px 24px rgba(7, 15, 34, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
 }
 
 .desktop-icon:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 72%, white);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(247, 249, 252, 0.14);
 }
 
 .desktop-glyph {
-  width: var(--icon-glyph-size);
-  height: var(--icon-glyph-size);
+  width: 40px;
+  height: 40px;
   position: relative;
   display: grid;
   place-items: center;
@@ -511,7 +596,10 @@ button:disabled {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  color: color-mix(in srgb, var(--text-main) 72%, var(--accent));
+  color: rgba(247, 249, 252, 0.92);
+  filter:
+    drop-shadow(0 6px 14px rgba(7, 15, 34, 0.2))
+    drop-shadow(0 1px 2px rgba(7, 15, 34, 0.42));
 }
 
 .desktop-glyph svg {
@@ -523,38 +611,28 @@ button:disabled {
 
 .desktop-glyph .desktop-icon-fill {
   fill: currentColor;
-  fill-opacity: 0.18;
+  fill-opacity: 0.08;
 }
 
 .desktop-glyph .desktop-icon-stroke {
   stroke: currentColor;
-  stroke-width: 1.55;
+  stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-.desktop-glyph.is-chat {
-  color: color-mix(in srgb, var(--accent) 70%, var(--ok));
-}
-
-.desktop-glyph.is-shell {
-  color: color-mix(in srgb, var(--text-main) 68%, var(--ok));
-}
-
-.desktop-glyph.is-devices {
-  color: color-mix(in srgb, var(--accent) 62%, var(--text-main));
-}
-
-.desktop-glyph.is-processes {
-  color: color-mix(in srgb, var(--warn) 70%, var(--accent));
-}
-
-.desktop-glyph.is-files {
-  color: color-mix(in srgb, var(--warn) 72%, var(--accent));
-}
-
-.desktop-glyph.is-control {
-  color: color-mix(in srgb, var(--text-main) 70%, var(--accent));
+.desktop-label {
+  display: block;
+  max-width: 100%;
+  color: rgba(247, 249, 252, 0.94);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  text-align: center;
+  text-transform: uppercase;
+  text-shadow: 0 1px 2px rgba(7, 15, 34, 0.6);
+  text-wrap: balance;
 }
 
 .inline-icon {
@@ -594,10 +672,14 @@ button:disabled {
   position: absolute;
   top: 0;
   left: 0;
-  border: 1px solid color-mix(in srgb, var(--accent) 68%, white);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 12px;
+  background: rgba(247, 249, 252, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 14px 28px rgba(25, 28, 30, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   pointer-events: none;
 }
 
@@ -609,10 +691,13 @@ button:disabled {
   flex-direction: column;
   border-radius: var(--window-radius);
   overflow: clip;
-  background: var(--surface-1);
-  border: var(--window-border-width) solid var(--window-border-color);
-  box-shadow: var(--window-shadow);
-  backdrop-filter: var(--panel-backdrop);
+  background: rgba(247, 249, 252, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  box-shadow:
+    0 20px 40px rgba(25, 28, 30, 0.06),
+    0 10px 10px rgba(25, 28, 30, 0.04);
+  backdrop-filter: blur(8px) saturate(1.04);
+  -webkit-backdrop-filter: blur(8px) saturate(1.04);
   will-change: transform;
 }
 
@@ -622,8 +707,9 @@ button:disabled {
 
 .mock-window.managed-window.is-active {
   box-shadow:
-    var(--window-shadow),
-    0 0 0 1px color-mix(in srgb, var(--accent) 48%, transparent);
+    0 24px 48px rgba(25, 28, 30, 0.08),
+    0 12px 12px rgba(25, 28, 30, 0.05),
+    0 0 0 1px rgba(0, 52, 102, 0.08);
 }
 
 .mock-window.managed-window.is-maximized {
@@ -645,9 +731,8 @@ button:disabled {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 12px;
-  padding: 11px 14px;
-  background: var(--titlebar-bg);
-  border-bottom: 1px solid var(--line-soft);
+  padding: 5px 11px;
+  background: rgba(244, 247, 251, 0.88);
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
@@ -750,33 +835,38 @@ button:disabled {
 
 .dot {
   border: 0;
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 1px 2px rgba(25, 28, 30, 0.12);
 }
 
 .dot.red {
-  background: var(--danger);
+  background: color-mix(in srgb, var(--danger) 78%, white);
 }
 
 .dot.amber {
-  background: var(--warn);
+  background: color-mix(in srgb, var(--warn) 78%, white);
 }
 
 .dot.green {
-  background: var(--ok);
+  background: color-mix(in srgb, var(--ok) 78%, white);
 }
 
 .window-title {
-  font-size: 0.9rem;
+  color: #18314f;
+  font-size: 0.88rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .window-meta {
   font-family: var(--font-mono);
   font-size: 0.68rem;
-  color: var(--text-muted);
+  color: rgba(24, 49, 79, 0.54);
 }
 
 .window-content {
@@ -784,7 +874,8 @@ button:disabled {
   min-height: 0;
   padding: 0;
   overflow: auto;
-  background: var(--surface-2);
+  background: rgba(247, 249, 252, 0.96);
+  color: #191c1e;
 }
 
 .window-content h1 {
@@ -2482,11 +2573,11 @@ button:disabled {
 
 .session-card .runtime-btn {
   justify-self: start;
-  border-color: rgba(27, 58, 95, 0.16);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(235, 242, 249, 0.96) 100%);
-  box-shadow: 0 10px 24px rgba(20, 33, 54, 0.14);
-  color: #14304d;
-  border-radius: 8px;
+  border: 0;
+  background: linear-gradient(135deg, #003466 0%, #1a4b84 100%);
+  box-shadow: 0 14px 28px rgba(0, 52, 102, 0.18);
+  color: #f7f9fc;
+  border-radius: 6px;
   padding: 10px 16px;
 }
 
@@ -3629,12 +3720,16 @@ button:disabled {
 
 @media (max-width: 980px) {
   .topbar {
+    top: 10px;
+    left: 10px;
+    right: 10px;
     height: 42px;
     padding: 0 10px;
+    gap: 10px;
   }
 
   .workspace {
-    inset: 42px 0 0;
+    inset: 60px 0 0;
   }
 
   .topbar-windows {
@@ -3826,7 +3921,7 @@ button:disabled {
   }
 
   .desktop-icons {
-    top: 10px;
-    left: 8px;
+    top: 14px;
+    left: 10px;
   }
 }
