@@ -1693,7 +1693,7 @@ fn generate_dynamic_worker_main_module(
         .as_ref()
         .and_then(|definition| definition.app.as_ref())
         .and_then(|app| app.browser_entry.as_deref())
-        .map(quote_string)
+        .map(|value| quote_string(&normalize_posix_path(value.trim_start_matches("./"))))
         .unwrap_or_else(|| "null".to_string());
 
     let mut asset_imports = String::new();
