@@ -68,7 +68,9 @@ pub struct ExtractedTaskDefinition {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtractedAppDefinition {
-    pub handler: ExtractedHandlerReference,
+    pub handler: Option<ExtractedHandlerReference>,
+    pub browser_entry: Option<String>,
+    pub assets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -126,8 +128,8 @@ pub(crate) fn analyze_package(
     locator: &PackageSourceLocator,
 ) -> Result<PackageAnalysis> {
     let source = resolve_source(sql, locator)?;
-    let package_json_path = format!("{}/package.json", source.subdir);
-    let package_module_path = format!("{}/src/package.ts", source.subdir);
+    let package_json_path = join_package_path(&source.subdir, "package.json");
+    let package_module_path = join_package_path(&source.subdir, "src/package.ts");
 
     let package_json_text = read_utf8_file_at_commit(sql, &source.resolved_commit, &package_json_path)?
         .ok_or_else(|| Error::RustError(format!("missing package file: {}", package_json_path)))?;
@@ -293,7 +295,7 @@ fn extract_definition(source_text: &str) -> (Option<ExtractedPackageDefinition>,
     for statement in program.body.iter() {
         match statement {
             Statement::ImportDeclaration(import_decl) => {
-                if import_decl.source.value.as_str() != "@gsv/package-worker" {
+                if import_decl.source.value.as_str() != "@gsv/package/worker" {
                     continue;
                 }
                 if let Some(specifiers) = import_decl.specifiers.as_ref() {
@@ -346,7 +348,7 @@ fn extract_definition(source_text: &str) -> (Option<ExtractedPackageDefinition>,
         diagnostics.push(simple_diagnostic(
             PackageDiagnosticSeverity::Error,
             "missing-define-package-import",
-            "src/package.ts must import definePackage directly from @gsv/package-worker".to_string(),
+            "src/package.ts must import definePackage directly from @gsv/package/worker".to_string(),
             "src/package.ts",
             None,
             source_text,
@@ -420,6 +422,13 @@ fn extract_definition(source_text: &str) -> (Option<ExtractedPackageDefinition>,
     } else {
         (definition, diagnostics)
     }
+}
+
+fn join_package_path(root: &str, child: &str) -> String {
+    if root == "." {
+        return child.to_string();
+    }
+    format!("{}/{}", root, child)
 }
 
 fn extract_package_object(
@@ -773,6 +782,8 @@ fn extract_app_definition(
     };
 
     let mut handler = None;
+    let mut browser_entry = None;
+    let mut assets = Vec::new();
     for property in object.properties.iter() {
         let ObjectPropertyKind::ObjectProperty(prop) = property else {
             continue;
@@ -787,6 +798,24 @@ fn extract_app_definition(
             "fetch" => {
                 handler = extract_handler_reference(&prop.value, local_identifiers, source_text, diagnostics)
             }
+            "browser" => {
+                browser_entry = extract_browser_entry(&prop.value, source_text, diagnostics);
+            }
+            "assets" => {
+                let values = extract_string_array(&prop.value);
+                if let Some(value) = values {
+                    assets = value;
+                } else {
+                    diagnostics.push(simple_diagnostic(
+                        PackageDiagnosticSeverity::Error,
+                        "non-literal-app-assets",
+                        "app.assets must be an array of string literals".to_string(),
+                        "src/package.ts",
+                        Some(prop.span),
+                        source_text,
+                    ));
+                }
+            }
             other => diagnostics.push(simple_diagnostic(
                 PackageDiagnosticSeverity::Error,
                 "unknown-app-key",
@@ -798,7 +827,90 @@ fn extract_app_definition(
         }
     }
 
-    handler.map(|handler| ExtractedAppDefinition { handler })
+    if handler.is_none() && browser_entry.is_none() {
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "empty-app-definition",
+            "app must declare fetch and/or browser.entry".to_string(),
+            "src/package.ts",
+            Some(expr.span()),
+            source_text,
+        ));
+        return None;
+    }
+
+    Some(ExtractedAppDefinition {
+        handler,
+        browser_entry,
+        assets,
+    })
+}
+
+fn extract_browser_entry(
+    expr: &Expression<'_>,
+    source_text: &str,
+    diagnostics: &mut Vec<PackageDiagnostic>,
+) -> Option<String> {
+    let Some(object) = get_object_expr(expr) else {
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "non-literal-browser-app",
+            "app.browser must be an object literal".to_string(),
+            "src/package.ts",
+            Some(expr.span()),
+            source_text,
+        ));
+        return None;
+    };
+
+    let mut entry = None;
+    for property in object.properties.iter() {
+        let ObjectPropertyKind::ObjectProperty(prop) = property else {
+            continue;
+        };
+        if prop.computed {
+            continue;
+        }
+        let Some(key) = static_property_name(prop, source_text) else {
+            continue;
+        };
+        match key.as_str() {
+            "entry" => {
+                entry = extract_string_literal(&prop.value);
+                if entry.is_none() {
+                    diagnostics.push(simple_diagnostic(
+                        PackageDiagnosticSeverity::Error,
+                        "non-literal-browser-entry",
+                        "app.browser.entry must be a string literal".to_string(),
+                        "src/package.ts",
+                        Some(prop.span),
+                        source_text,
+                    ));
+                }
+            }
+            other => diagnostics.push(simple_diagnostic(
+                PackageDiagnosticSeverity::Error,
+                "unknown-browser-app-key",
+                format!("unsupported app.browser property: {}", other),
+                "src/package.ts",
+                Some(prop.span),
+                source_text,
+            )),
+        }
+    }
+
+    if entry.is_none() {
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "missing-browser-entry",
+            "app.browser.entry is required".to_string(),
+            "src/package.ts",
+            Some(expr.span()),
+            source_text,
+        ));
+    }
+
+    entry
 }
 
 fn extract_handler_reference(
@@ -977,7 +1089,7 @@ mod tests {
           "type": "module"
         }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package-worker";
+          import { definePackage } from "@gsv/package/worker";
 
           async function doctor(ctx) {
             await ctx.stdout.write("ok\n");
@@ -1017,7 +1129,7 @@ mod tests {
     fn analyze_package_source_supports_local_const_export() {
         let package_json = r#"{ "name": "@gsv/example" }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package-worker";
+          import { definePackage } from "@gsv/package/worker";
           const setup = async (ctx) => { void ctx; };
           const pkg = definePackage({
             meta: { displayName: "Example" },
@@ -1057,7 +1169,7 @@ mod tests {
     fn analyze_package_source_reports_non_literal_display_name() {
         let package_json = r#"{ "name": "@gsv/example" }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package-worker";
+          import { definePackage } from "@gsv/package/worker";
           const title = "Example";
           export default definePackage({
             meta: {

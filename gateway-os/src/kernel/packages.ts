@@ -1,6 +1,10 @@
 import { getAgentByName } from "agents";
 import { env, WorkerEntrypoint } from "cloudflare:workers";
-import { RipgitClient } from "../fs/ripgit/client";
+import {
+  RipgitClient,
+  type RipgitPackageAnalyzeResponse,
+  type RipgitPackageBuildResponse,
+} from "../fs/ripgit/client";
 import type {
   AppFrameContext,
   KernelBindingProps,
@@ -8,10 +12,6 @@ import type {
 } from "../protocol/app-frame";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
-import {
-  BUILTIN_PACKAGE_SOURCE_TREES,
-  type BuiltinPackageSourceFile,
-} from "./generated/builtin-package-sources";
 
 /**
  * Package model for GSV kernel-managed packages.
@@ -97,8 +97,6 @@ export interface PackageArtifact {
   compatibilityFlags?: string[];
   modules: PackageModuleDef[];
 }
-
-type PackageArtifactInput = Omit<PackageArtifact, "hash">;
 
 export interface PackageEntrypoint {
   name: string;
@@ -225,22 +223,6 @@ export interface PackageManifest {
   capabilities?: PackageCapabilityDeclaration;
 }
 
-interface PackageSourceManifestFile {
-  name: string;
-  description: string;
-  version: string;
-  runtime: PackageRuntime;
-  entrypoints: PackageEntrypoint[];
-  capabilities?: PackageCapabilityDeclaration;
-  artifact: {
-    mainModule: string;
-    compatibilityDate?: string;
-    compatibilityFlags?: string[];
-    include?: string[];
-    moduleKinds?: Record<string, PackageModuleKind>;
-  };
-}
-
 type BuiltinRipgitPackageSpec = {
   source: PackageSource;
   grants?: PackageGrantSet;
@@ -283,13 +265,9 @@ export type PackageSeed = Omit<InstalledPackageRecord, "installedAt" | "updatedA
 
 
 export const DEFAULT_PACKAGE_COMPATIBILITY_DATE = "2026-01-28";
-export const BUILTIN_SOURCE_REPO = "system/gsv";
+export const BUILTIN_SOURCE_OWNER = "system";
+export const BUILTIN_SOURCE_REPO = "gsv";
 export const BUILTIN_SOURCE_REF = "main";
-
-const BUILTIN_SOURCE_MIRROR_HASH_CONFIG_KEY = "config/packages/builtin_source_mirror_hash";
-const PACKAGE_SOURCE_MANIFEST_FILE = "gsv-package.json";
-const TEXT_ENCODER = new TextEncoder();
-const TEXT_DECODER = new TextDecoder();
 
 const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
   createBuiltinRipgitPackageSpec("chat"),
@@ -388,9 +366,9 @@ function createBuiltinRipgitPackageSpec(
 ): BuiltinRipgitPackageSpec {
   return {
     source: {
-      repo: BUILTIN_SOURCE_REPO,
+      repo: `${BUILTIN_SOURCE_OWNER}/${BUILTIN_SOURCE_REPO}`,
       ref: BUILTIN_SOURCE_REF,
-      subdir: `packages/${name}`,
+      subdir: `gateway-os/packages/${name}`,
     },
     grants,
     enabled: true,
@@ -645,10 +623,7 @@ function parseJson<T>(value: string): T {
 
 export async function buildBuiltinPackageSeeds(
   env: Env,
-  config: { get(key: string): string | null; set(key: string, value: string): void },
 ): Promise<PackageSeed[]> {
-  await ensureBuiltinPackageSourceMirror(env, config);
-
   const ripgitBinding = env.RIPGIT;
   if (!ripgitBinding) {
     throw new Error("RIPGIT binding is required for builtin package resolution");
@@ -657,7 +632,12 @@ export async function buildBuiltinPackageSeeds(
   const ripgit = new RipgitClient(ripgitBinding, env.RIPGIT_INTERNAL_KEY ?? null);
   const ripgitSeeds = await Promise.all(
     BUILTIN_RIPGIT_PACKAGE_SPECS.map((spec) => resolveBuiltinRipgitPackage(ripgit, spec)),
-  );
+  ).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to resolve builtin packages from ripgit. Push the gsv monorepo to system/gsv first. ${message}`,
+    );
+  });
 
   return ripgitSeeds;
 }
@@ -672,82 +652,113 @@ export async function resolvePackageFromRipgitSource(
   }
 
   const ripgit = new RipgitClient(ripgitBinding, env.RIPGIT_INTERNAL_KEY ?? null);
-  const files = await readPackageSourceFiles(ripgit, source);
-  const sourceManifest = parsePackageSourceManifest(files);
+  return resolvePackageFromRipgitNativeBuild(ripgit, source);
+}
+
+async function resolvePackageFromRipgitNativeBuild(
+  ripgit: RipgitClient,
+  source: PackageSource,
+): Promise<{ manifest: PackageManifest; artifact: PackageArtifact }> {
+  const repo = parseRipgitRepoRef(source);
+  const subdir = normalizePackageSourceSubdir(source.subdir);
+  const analysis = await ripgit.analyzePackage(repo, subdir);
+  const build = await ripgit.buildPackage(repo, subdir, "dynamic-worker");
+
+  if (!analysis.ok || !analysis.definition) {
+    throw new Error(formatRipgitPackageFailure("package analysis failed", analysis.diagnostics));
+  }
+  if (!build.ok || !build.artifact) {
+    throw new Error(formatRipgitPackageFailure("package build failed", build.diagnostics));
+  }
+
+  const packageName = packageNameFromPackageJsonName(analysis.package_json.name);
+  const kernelSyscalls = uniqueStrings(analysis.definition.meta.capabilities.kernel);
+  const outboundAllowlist = uniqueStrings(analysis.definition.meta.capabilities.outbound);
+  const routeBase = packageRouteBase(packageName);
+  const artifact = convertRipgitBuildArtifact(build);
+  const icon = toNativePackageIcon(analysis.definition.meta.icon);
+
+  const entrypoints: PackageEntrypoint[] = [
+    ...analysis.definition.commands.map((command) => ({
+      name: command.name,
+      kind: "command" as const,
+      module: artifact.mainModule,
+      exportName: "GsvCommandEntrypoint",
+      command: command.name,
+      description: analysis.definition?.meta.description ?? undefined,
+    })),
+    ...(analysis.definition.app ? [{
+      name: analysis.definition.meta.display_name,
+      kind: "ui" as const,
+      module: artifact.mainModule,
+      route: routeBase,
+      icon,
+      syscalls: kernelSyscalls,
+      windowDefaults: analysis.definition.meta.window
+        ? {
+            width: analysis.definition.meta.window.width ?? 920,
+            height: analysis.definition.meta.window.height ?? 620,
+            minWidth: analysis.definition.meta.window.min_width ?? 700,
+            minHeight: analysis.definition.meta.window.min_height ?? 460,
+          }
+        : undefined,
+    }] : []),
+    ...analysis.definition.tasks.map((task) => ({
+      name: task.name,
+      kind: "task" as const,
+      module: artifact.mainModule,
+      exportName: "GsvTaskEntrypoint",
+      description: analysis.definition?.meta.description ?? undefined,
+    })),
+  ];
 
   return {
     manifest: {
-      name: sourceManifest.name,
-      description: sourceManifest.description,
-      version: sourceManifest.version,
-      runtime: sourceManifest.runtime,
+      name: packageName,
+      description: analysis.definition.meta.description ?? "",
+      version: analysis.package_json.version?.trim() || "0.0.0",
+      runtime: analysis.definition.app ? "web-ui" : "dynamic-worker",
       source: {
-        ...source,
-        resolvedCommit: source.resolvedCommit ?? null,
+        repo: source.repo,
+        ref: source.ref,
+        subdir: normalizePackageSourceSubdir(build.source.subdir),
+        resolvedCommit: build.source.resolved_commit,
       },
-      entrypoints: sourceManifest.entrypoints,
-      capabilities: sourceManifest.capabilities,
+      entrypoints,
+      capabilities: {
+        bindings: [
+          {
+            binding: "PACKAGE",
+            kind: "package-state",
+            interfaceName: "gsv.package.v1",
+            required: true,
+          },
+          ...(kernelSyscalls.length > 0 ? [{
+            binding: "KERNEL",
+            kind: "kernel",
+            interfaceName: "gsv.kernel.v1",
+            required: true,
+          }] : []),
+        ],
+        egress: outboundAllowlist.length > 0
+          ? {
+              mode: "allowlist",
+              allow: outboundAllowlist,
+            }
+          : {
+              mode: "none",
+            },
+      },
     },
-    artifact: await createPackageArtifactFromSourceFiles(sourceManifest, files),
+    artifact,
   };
-}
-
-async function ensureBuiltinPackageSourceMirror(
-  env: Env,
-  config: { get(key: string): string | null; set(key: string, value: string): void },
-): Promise<void> {
-  const snapshotHash = await sha256Hex(JSON.stringify(BUILTIN_PACKAGE_SOURCE_TREES));
-  if (config.get(BUILTIN_SOURCE_MIRROR_HASH_CONFIG_KEY) === snapshotHash) {
-    return;
-  }
-
-  if (!env.RIPGIT) {
-    throw new Error("RIPGIT binding is required for builtin package mirroring");
-  }
-
-  const client = new RipgitClient(env.RIPGIT, env.RIPGIT_INTERNAL_KEY ?? null);
-  const repo = parseRipgitRepoRef({
-    repo: BUILTIN_SOURCE_REPO,
-    ref: BUILTIN_SOURCE_REF,
-  });
-  const ops = BUILTIN_PACKAGE_SOURCE_TREES.flatMap((tree) =>
-    tree.files.map((file) => ({
-      type: "put" as const,
-      path: joinRipgitPath(tree.subdir, file.path),
-      contentBytes: Array.from(TEXT_ENCODER.encode(file.content)),
-    })),
-  );
-
-  await client.apply(
-    repo,
-    "gsv",
-    "gsv@internal",
-    "gsv: mirror builtin package sources",
-    ops,
-  );
-
-  config.set(BUILTIN_SOURCE_MIRROR_HASH_CONFIG_KEY, snapshotHash);
 }
 
 async function resolveBuiltinRipgitPackage(
   client: RipgitClient,
   spec: BuiltinRipgitPackageSpec,
 ): Promise<PackageSeed> {
-  const files = await readPackageSourceFiles(client, spec.source);
-  const sourceManifest = parsePackageSourceManifest(files);
-  const manifest: PackageManifest = {
-    name: sourceManifest.name,
-    description: sourceManifest.description,
-    version: sourceManifest.version,
-    runtime: sourceManifest.runtime,
-    source: {
-      ...spec.source,
-      resolvedCommit: spec.source.resolvedCommit ?? null,
-    },
-    entrypoints: sourceManifest.entrypoints,
-    capabilities: sourceManifest.capabilities,
-  };
-  const artifact = await createPackageArtifactFromSourceFiles(sourceManifest, files);
+  const { manifest, artifact } = await resolvePackageFromRipgitNativeBuild(client, spec.source);
 
   return {
     packageId: `builtin:${manifest.name}@${manifest.version}`,
@@ -756,150 +767,6 @@ async function resolveBuiltinRipgitPackage(
     grants: spec.grants,
     enabled: spec.enabled,
   };
-}
-
-function parsePackageSourceManifest(files: BuiltinPackageSourceFile[]): PackageSourceManifestFile {
-  const manifestFile = files.find((file) => file.path === PACKAGE_SOURCE_MANIFEST_FILE);
-  if (!manifestFile) {
-    throw new Error(`Missing ${PACKAGE_SOURCE_MANIFEST_FILE} in package source`);
-  }
-  return normalizePackageSourceManifest(parseJson<PackageSourceManifestFile>(manifestFile.content));
-}
-
-function normalizePackageSourceManifest(
-  manifest: PackageSourceManifestFile,
-): PackageSourceManifestFile {
-  return {
-    ...manifest,
-    entrypoints: manifest.entrypoints.map((entrypoint) => ({
-      ...entrypoint,
-      module: normalizePackageModulePath(entrypoint.module),
-      icon: entrypoint.icon?.kind === "asset"
-        ? {
-            ...entrypoint.icon,
-            module: normalizePackageModulePath(entrypoint.icon.module),
-          }
-        : entrypoint.icon,
-    })),
-    artifact: {
-      ...manifest.artifact,
-      mainModule: normalizePackageModulePath(manifest.artifact.mainModule),
-      include: manifest.artifact.include?.map((path) => normalizePackageModulePath(path)),
-      moduleKinds: manifest.artifact.moduleKinds
-        ? Object.fromEntries(
-            Object.entries(manifest.artifact.moduleKinds).map(([path, kind]) => [
-              normalizePackageModulePath(path),
-              kind,
-            ]),
-          )
-        : undefined,
-    },
-  };
-}
-
-async function createPackageArtifactFromSourceFiles(
-  manifest: PackageSourceManifestFile,
-  files: BuiltinPackageSourceFile[],
-): Promise<PackageArtifact> {
-  const moduleKindOverrides = manifest.artifact.moduleKinds ?? {};
-  const includePaths = manifest.artifact.include?.map((path) => normalizePackageModulePath(path)) ?? null;
-  const modules = files
-    .filter((file) => file.path !== PACKAGE_SOURCE_MANIFEST_FILE)
-    .map((file) => ({
-      ...file,
-      normalizedPath: normalizePackageModulePath(file.path),
-    }))
-    .filter((file) => shouldIncludePackageArtifactFile(file.normalizedPath, includePaths))
-    .map((file) => {
-      return {
-        path: file.normalizedPath,
-        kind: moduleKindOverrides[file.normalizedPath] ?? inferPackageModuleKind(file.path),
-        content: file.content,
-      };
-    });
-
-  return finalizePackageArtifact({
-    hash: "",
-    mainModule: manifest.artifact.mainModule,
-    compatibilityDate: manifest.artifact.compatibilityDate ?? DEFAULT_PACKAGE_COMPATIBILITY_DATE,
-    compatibilityFlags: manifest.artifact.compatibilityFlags,
-    modules,
-  });
-}
-
-async function finalizePackageArtifact(artifact: PackageArtifact): Promise<PackageArtifact> {
-  const input: PackageArtifactInput = {
-    mainModule: artifact.mainModule,
-    compatibilityDate: artifact.compatibilityDate,
-    compatibilityFlags: artifact.compatibilityFlags,
-    modules: artifact.modules,
-  };
-
-  return {
-    ...input,
-    hash: await computePackageArtifactHash(input),
-  };
-}
-
-async function computePackageArtifactHash(artifact: PackageArtifactInput): Promise<string> {
-  const normalized = JSON.stringify({
-    mainModule: artifact.mainModule,
-    compatibilityDate: artifact.compatibilityDate ?? DEFAULT_PACKAGE_COMPATIBILITY_DATE,
-    compatibilityFlags: artifact.compatibilityFlags ?? [],
-    modules: [...artifact.modules]
-      .map((module) => ({
-        path: module.path,
-        kind: module.kind,
-        content: module.content,
-      }))
-      .sort((left, right) => left.path.localeCompare(right.path)),
-  });
-  return sha256Hex(normalized);
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", TEXT_ENCODER.encode(value));
-  const bytes = Array.from(new Uint8Array(digest));
-  return `sha256:${bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
-async function readPackageSourceFiles(
-  client: RipgitClient,
-  source: PackageSource,
-): Promise<BuiltinPackageSourceFile[]> {
-  const root = trimSlashes(source.subdir);
-  if (root.length === 0) {
-    throw new Error("package source subdir is required");
-  }
-  return readRipgitTreeFiles(client, parseRipgitRepoRef(source), root, "");
-}
-
-async function readRipgitTreeFiles(
-  client: RipgitClient,
-  repo: { owner: string; repo: string; branch: string },
-  repoPath: string,
-  relativePath: string,
-): Promise<BuiltinPackageSourceFile[]> {
-  const result = await client.readPath(repo, repoPath);
-  if (result.kind === "missing") {
-    throw new Error(`Missing ripgit package path: ${repo.owner}/${repo.repo}:${repoPath}`);
-  }
-  if (result.kind === "file") {
-    return [{
-      path: relativePath,
-      content: TEXT_DECODER.decode(result.bytes),
-    }];
-  }
-
-  const files: BuiltinPackageSourceFile[] = [];
-  for (const entry of result.entries) {
-    const childRepoPath = joinRipgitPath(repoPath, entry.name);
-    const childRelativePath = relativePath.length > 0
-      ? `${relativePath}/${entry.name}`
-      : entry.name;
-    files.push(...await readRipgitTreeFiles(client, repo, childRepoPath, childRelativePath));
-  }
-  return files;
 }
 
 function parseRipgitRepoRef(source: Pick<PackageSource, "repo" | "ref">): {
@@ -918,38 +785,57 @@ function parseRipgitRepoRef(source: Pick<PackageSource, "repo" | "ref">): {
   };
 }
 
-function shouldIncludePackageArtifactFile(
-  path: string,
-  includePaths: readonly string[] | null,
-): boolean {
-  if (!includePaths || includePaths.length === 0) {
-    return true;
+function convertRipgitBuildArtifact(
+  build: RipgitPackageBuildResponse,
+): PackageArtifact {
+  if (!build.artifact) {
+    throw new Error("ripgit build artifact is missing");
   }
-  return includePaths.some((includePath) => {
-    if (includePath.endsWith("/")) {
-      return path.startsWith(includePath);
-    }
-    return path === includePath;
-  });
+
+  return {
+    hash: build.artifact.hash,
+    mainModule: build.artifact.main_module,
+    compatibilityDate: DEFAULT_PACKAGE_COMPATIBILITY_DATE,
+    modules: build.artifact.modules.map((module) => ({
+      path: module.path,
+      kind: module.kind === "source-module" ? "esm" : module.kind,
+      content: module.content,
+    })),
+  };
 }
 
-function inferPackageModuleKind(path: string): PackageModuleKind {
-  const lowerPath = path.toLowerCase();
-  if (
-    lowerPath.endsWith(".ts") ||
-    lowerPath.endsWith(".tsx") ||
-    lowerPath.endsWith(".js") ||
-    lowerPath.endsWith(".mjs")
-  ) {
-    return "esm";
+function packageNameFromPackageJsonName(packageJsonName: string): string {
+  const trimmed = packageJsonName.trim();
+  const candidate = trimmed.split("/").filter(Boolean).at(-1) ?? trimmed;
+  const normalized = candidate.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!normalized) {
+    throw new Error(`Unable to derive package name from package.json name: ${packageJsonName}`);
   }
-  if (lowerPath.endsWith(".cjs")) {
-    return "commonjs";
+  return normalized;
+}
+
+function toNativePackageIcon(iconPath?: string | null): PackageIcon | undefined {
+  if (!iconPath) {
+    return undefined;
   }
-  if (lowerPath.endsWith(".json")) {
-    return "json";
+  return {
+    kind: "asset",
+    module: normalizePackageModulePath(iconPath.replace(/^(\.\/)+/, "")),
+  };
+}
+
+function uniqueStrings(values: readonly string[] | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+}
+
+function formatRipgitPackageFailure(
+  prefix: string,
+  diagnostics: readonly RipgitPackageAnalyzeResponse["diagnostics"],
+): string {
+  if (!Array.isArray(diagnostics) || diagnostics.length === 0) {
+    return prefix;
   }
-  return "text";
+  return `${prefix}: ${diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.message}`).join("; ")}`;
 }
 
 function normalizePackageModulePath(path: string): string {
@@ -962,6 +848,16 @@ function trimLeadingSlash(path: string): string {
 
 function trimSlashes(path: string): string {
   return path.replace(/^\/+|\/+$/g, "");
+}
+
+function normalizePackageSourceRoot(path: string): string {
+  const normalized = trimSlashes(path.trim());
+  return normalized === "." ? "" : normalized;
+}
+
+function normalizePackageSourceSubdir(path: string): string {
+  const normalized = trimSlashes(path.trim());
+  return normalized.length === 0 || normalized === "." ? "." : normalized;
 }
 
 function joinRipgitPath(base: string, child: string): string {

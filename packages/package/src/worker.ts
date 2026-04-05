@@ -79,6 +79,10 @@ export type PackageTaskContext = PackageBaseContext & {
 
 export type PackageAppContext = PackageBaseContext;
 
+export type PackageBrowserAppDefinition = {
+  entry: string;
+};
+
 export type PackageSetupHandler = (
   ctx: PackageSetupContext,
 ) => Promise<void> | void;
@@ -92,7 +96,9 @@ export type PackageTaskHandler = (
 ) => Promise<void> | void;
 
 export type PackageAppDefinition = {
-  fetch(request: Request, ctx: PackageAppContext): Promise<Response> | Response;
+  browser?: PackageBrowserAppDefinition;
+  assets?: string[];
+  fetch?(request: Request, ctx: PackageAppContext): Promise<Response> | Response;
 };
 
 export type PackageDefinition = {

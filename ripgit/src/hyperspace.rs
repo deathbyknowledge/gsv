@@ -1,4 +1,4 @@
-use crate::{api, store, KEYFRAME_INTERVAL};
+use crate::{api, packages, store, KEYFRAME_INTERVAL};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use worker::*;
 
@@ -106,6 +106,46 @@ pub async fn handle_search(sql: &SqlStorage, req: &Request) -> Result<Response> 
         ok: true,
         matches,
         truncated: total_matches >= 500,
+    })
+}
+
+pub async fn handle_packages_analyze(
+    sql: &SqlStorage,
+    req: &Request,
+    repo: &str,
+) -> Result<Response> {
+    let locator = package_source_locator(req, repo)?;
+    let analysis = packages::analyze_package(sql, &locator)?;
+    Response::from_json(&analysis)
+}
+
+pub async fn handle_packages_build(
+    sql: &SqlStorage,
+    req: &Request,
+    repo: &str,
+) -> Result<Response> {
+    let locator = package_source_locator(req, repo)?;
+    let target = match api::get_query(&req.url()?, "target").as_deref() {
+        None | Some("dynamic-worker") => packages::PackageBuildTarget::DynamicWorker,
+        Some(other) => return Response::error(format!("unsupported build target: {}", other), 400),
+    };
+    let build = packages::build_package(sql, &locator, target).await?;
+    Response::from_json(&build)
+}
+
+fn package_source_locator(req: &Request, repo: &str) -> Result<packages::PackageSourceLocator> {
+    let url = req.url()?;
+    let requested_ref = api::get_query(&url, "ref").unwrap_or_else(|| "main".to_string());
+    let Some(subdir) = api::get_query(&url, "subdir") else {
+        return Err(Error::RustError(
+            "missing 'subdir' query parameter".to_string(),
+        ));
+    };
+
+    Ok(packages::PackageSourceLocator {
+        repo: repo.to_string(),
+        requested_ref,
+        subdir,
     })
 }
 

@@ -1,0 +1,16 @@
+{
+  "name": "gsv-app-runtime",
+  "private": true,
+  "workspaces": [
+    "gateway-os",
+    "gateway-os/ui",
+    "gateway-os/packages/*",
+    "packages/*",
+    "ripgit"
+  ],
+  "scripts": {
+    "setup": "bash ./scripts/setup-deps.sh",
+    "dev": "bash ./scripts/dev-stack.sh",
+    "state:reset:ripgit": "bash ./scripts/reset-ripgit-state.sh"
+  }
+}
