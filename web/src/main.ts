@@ -6,10 +6,9 @@ import { packageToAppManifests } from "./package-apps";
 import { createSessionService } from "./session-service";
 import { createSessionUi } from "./session-ui";
 import { renderDesktopShell } from "./shell-template";
-import { createThemeService } from "./theme-service";
 import { createWindowManager } from "./window-manager";
 import { createWindowsPanel } from "./windows-panel";
-import type { PkgListResult } from "../../src/syscalls/packages";
+import type { PkgListResult } from "../../gateway-os/src/syscalls/packages";
 
 const app = document.querySelector<HTMLElement>("#app");
 
@@ -17,8 +16,7 @@ if (!app) {
   throw new Error("Missing #app mount");
 }
 
-const themeService = createThemeService();
-app.innerHTML = renderDesktopShell(themeService.initialTheme);
+app.innerHTML = renderDesktopShell();
 
 const shellEl = app.querySelector<HTMLElement>(".desktop-shell");
 const windowsLayerEl = app.querySelector<HTMLElement>("[data-windows-layer]");
@@ -26,10 +24,6 @@ const windowsLayerEl = app.querySelector<HTMLElement>("[data-windows-layer]");
 if (!shellEl || !windowsLayerEl) {
   throw new Error("Shell markup is incomplete");
 }
-
-themeService.bind({
-  shellNode: shellEl,
-});
 
 const gatewayClient = createGatewayClient();
 const sessionService = createSessionService(gatewayClient);

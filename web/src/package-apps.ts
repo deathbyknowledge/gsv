@@ -1,6 +1,6 @@
 import { defineAppManifest } from "./app-sdk";
 import type { AppIcon, AppManifest, AppWindowDefaults, DesktopIconId } from "./app-sdk";
-import type { PkgSummary } from "../../src/syscalls/packages";
+import type { PkgSummary } from "../../gateway-os/src/syscalls/packages";
 
 const DEFAULT_WINDOW_DEFAULTS: AppWindowDefaults = {
   width: 920,

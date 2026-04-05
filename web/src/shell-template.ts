@@ -1,16 +1,6 @@
-import type { ThemeId } from "./themes";
-
-export function renderDesktopShell(initialTheme: ThemeId): string {
+export function renderDesktopShell(): string {
   return `
-    <div class="desktop-shell" data-theme="${initialTheme}">
-      <div class="atmosphere">
-        <div class="cloud cloud-a"></div>
-        <div class="cloud cloud-b"></div>
-        <div class="cloud cloud-c"></div>
-        <div class="starship-glow"></div>
-        <div class="starship-hull"></div>
-      </div>
-
+    <div class="desktop-shell">
       <header class="topbar">
         <div class="topbar-section">
           <span class="pill">GSV</span>
@@ -46,9 +36,7 @@ export function renderDesktopShell(initialTheme: ThemeId): string {
 
       <section class="session-overlay" data-session-overlay>
         <div class="session-card">
-          <p class="eyebrow">GSV Desktop</p>
-          <h1>Sign in</h1>
-          <p class="muted">Unlock this workspace with your gateway credentials.</p>
+          <h1>Welcome back</h1>
           <form class="session-form" data-session-form>
             <label>
               Username
@@ -58,10 +46,13 @@ export function renderDesktopShell(initialTheme: ThemeId): string {
               Password
               <input data-session-password type="password" autocomplete="current-password" />
             </label>
-            <label>
-              Token (optional)
-              <input data-session-token type="password" autocomplete="off" />
-            </label>
+            <details class="session-advanced">
+              <summary>Advanced</summary>
+              <label>
+                Token (optional)
+                <input data-session-token type="password" autocomplete="off" />
+              </label>
+            </details>
             <p class="session-error" data-session-error hidden></p>
             <button type="submit" class="runtime-btn" data-session-submit>Sign in</button>
           </form>

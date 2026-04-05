@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": [
     "gateway-os",
-    "gateway-os/ui",
+    "web",
     "gateway-os/packages/*",
     "packages/*",
     "ripgit"
