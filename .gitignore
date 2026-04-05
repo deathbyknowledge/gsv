@@ -5,8 +5,6 @@ target/
 
 # Build artifacts
 dist/
-*.lock
-bun.lock
 package-lock.json
 .vitepress/cache/
 
