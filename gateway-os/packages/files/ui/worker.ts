@@ -272,51 +272,51 @@ function baseName(path) {
   return segments[segments.length - 1] ?? normalized;
 }
 
-function renderBreadcrumbs(routeBase, target, currentPath, pathStyle, searchQuery) {
-  const normalized = normalizePath(currentPath, pathStyle);
+function renderBreadcrumbs(routeBase, target, activePath, pathStyle, searchQuery) {
+  const normalized = normalizePath(activePath, pathStyle);
   const parts = [];
+  const absoluteSegments = normalized.split("/").filter(Boolean);
 
   if (pathStyle === "absolute") {
     if (normalized === "/") {
-      return `<a data-nav class="files-crumb is-current" href="${buildHref(routeBase, { target, path: "/", q: searchQuery || undefined })}">/</a>`;
+      return `<a data-nav class="files-crumb is-current" href="${buildHref(routeBase, { target, path: "/" })}">/</a>`;
     }
 
-    parts.push(`<a data-nav class="files-crumb" href="${buildHref(routeBase, { target, path: "/", q: searchQuery || undefined })}">/</a>`);
+    parts.push(`<a data-nav class="files-crumb" href="${buildHref(routeBase, { target, path: "/" })}">/</a>`);
     let current = "";
-    for (const [index, segment] of normalized.split("/").filter(Boolean).entries()) {
+    for (const [index, segment] of absoluteSegments.entries()) {
       current += `/${segment}`;
-      const isLast = index === normalized.split("/").filter(Boolean).length - 1;
-      parts.push(`<span class="files-crumb-sep">/</span>`);
-      parts.push(`<a data-nav class="files-crumb${isLast ? " is-current" : ""}" href="${buildHref(routeBase, { target, path: current, q: searchQuery || undefined })}">${escapeHtml(segment)}</a>`);
+      const isLast = index === absoluteSegments.length - 1;
+      parts.push(`<span class="files-crumb-sep">›</span>`);
+      parts.push(`<a data-nav class="files-crumb${isLast ? " is-current" : ""}" href="${buildHref(routeBase, { target, path: current })}">${escapeHtml(segment)}</a>`);
     }
     return parts.join("");
   }
 
   if (normalized === ".") {
-    return `<a data-nav class="files-crumb is-current" href="${buildHref(routeBase, { target, path: ".", q: searchQuery || undefined })}">workspace</a>`;
+    return `<a data-nav class="files-crumb is-current" href="${buildHref(routeBase, { target, path: "." })}">workspace</a>`;
   }
 
   const segments = normalized.split("/").filter(Boolean);
-  parts.push(`<a data-nav class="files-crumb" href="${buildHref(routeBase, { target, path: ".", q: searchQuery || undefined })}">workspace</a>`);
+  parts.push(`<a data-nav class="files-crumb" href="${buildHref(routeBase, { target, path: "." })}">workspace</a>`);
   let current = "";
   for (const [index, segment] of segments.entries()) {
     current = current ? `${current}/${segment}` : segment;
     const isLast = index === segments.length - 1;
-    parts.push(`<span class="files-crumb-sep">/</span>`);
-    parts.push(`<a data-nav class="files-crumb${isLast ? " is-current" : ""}" href="${buildHref(routeBase, { target, path: current, q: searchQuery || undefined })}">${escapeHtml(segment)}</a>`);
+    parts.push(`<span class="files-crumb-sep">›</span>`);
+    parts.push(`<a data-nav class="files-crumb${isLast ? " is-current" : ""}" href="${buildHref(routeBase, { target, path: current })}">${escapeHtml(segment)}</a>`);
   }
   return parts.join("");
 }
 
-function renderSidebar({ routeBase, target, devices, currentPath, pathStyle, searchQuery, canGoUp }) {
+function renderToolbar({ routeBase, target, devices, currentPath, pathStyle, searchQuery, canGoUp }) {
   const parent = parentPath(currentPath, pathStyle);
   return `
-    <aside class="files-sidebar">
-      <section class="files-sidebar-section">
-        <p class="files-sidebar-eyebrow">Target</p>
-        <form method="get" class="files-stack-form files-nav-form">
+    <section class="files-toolbar">
+      <form method="get" class="files-toolbar-form files-toolbar-form-nav">
+        <div class="files-toolbar-group">
           <label class="files-field">
-            <span>Device</span>
+            <span>Target</span>
             <select name="target">
               ${renderTargetOptions(target, devices)}
             </select>
@@ -325,35 +325,31 @@ function renderSidebar({ routeBase, target, devices, currentPath, pathStyle, sea
             <span>Path</span>
             <input name="path" type="text" value="${escapeHtml(currentPath)}" spellcheck="false" />
           </label>
-          <div class="files-sidebar-actions">
+        </div>
+        <div class="files-toolbar-actions">
+          <div class="files-inline-actions">
             <button type="submit" class="files-btn files-btn-primary">Open</button>
             <a data-nav class="files-btn files-btn-quiet${canGoUp ? "" : " is-disabled"}" href="${canGoUp ? buildHref(routeBase, { target, path: parent, q: searchQuery || undefined }) : "#"}">Up</a>
           </div>
-        </form>
-      </section>
-
-      <section class="files-sidebar-section">
-        <div class="files-sidebar-heading-row">
-          <div>
-            <p class="files-sidebar-eyebrow">Workspace</p>
-            <h2>Search</h2>
-          </div>
           <button type="button" class="files-icon-btn" data-create-file-button aria-label="Create file">＋</button>
         </div>
-        <form method="get" class="files-stack-form">
-          <input type="hidden" name="target" value="${escapeHtml(target)}" />
-          <input type="hidden" name="path" value="${escapeHtml(currentPath)}" />
+      </form>
+      <form method="get" class="files-toolbar-form files-toolbar-form-search">
+        <input type="hidden" name="target" value="${escapeHtml(target)}" />
+        <input type="hidden" name="path" value="${escapeHtml(currentPath)}" />
+        <div class="files-toolbar-group">
           <label class="files-field">
-            <span>Query</span>
+            <span>Search</span>
             <input name="q" type="text" value="${escapeHtml(searchQuery)}" placeholder="Search this folder" spellcheck="false" />
           </label>
-          <div class="files-sidebar-actions">
+        </div>
+        <div class="files-toolbar-actions">
+          <div class="files-inline-actions">
             <button type="submit" class="files-btn files-btn-primary">Search</button>
             <a data-nav class="files-btn files-btn-quiet" href="${buildHref(routeBase, { target, path: currentPath })}">Clear</a>
           </div>
-        </form>
-      </section>
-
+        </div>
+      </form>
       <form method="post" data-create-file-form class="visually-hidden">
         <input type="hidden" name="action" value="create" />
         <input type="hidden" name="target" value="${escapeHtml(target)}" />
@@ -361,7 +357,7 @@ function renderSidebar({ routeBase, target, devices, currentPath, pathStyle, sea
         <input type="hidden" name="q" value="${escapeHtml(searchQuery)}" />
         <input data-create-file-input type="hidden" name="name" value="" />
       </form>
-    </aside>
+    </section>
   `;
 }
 
@@ -413,10 +409,9 @@ function renderSearchResults(routeBase, target, currentPath, searchQuery, search
 
   return `
     <section class="files-search-view">
-      <div class="files-stage-header-row">
-        <div>
-          <p class="files-stage-eyebrow">Search results</p>
-          <h2>${matches.length} match${matches.length === 1 ? "" : "es"}</h2>
+      <div class="files-content-toolbar">
+        <div class="files-inline-meta">
+          <strong>${matches.length} match${matches.length === 1 ? "" : "es"}</strong>
         </div>
         ${searchResult?.truncated ? `<span class="files-pill">Truncated</span>` : ""}
       </div>
@@ -441,18 +436,15 @@ function renderImageContent(contentItems) {
 
 function renderFileView({ routeBase, target, currentPath, searchQuery, filePath, fileResult }) {
   const backHref = buildHref(routeBase, { target, path: currentPath, q: searchQuery || undefined });
-  const title = baseName(filePath);
   const sizeLabel = formatBytes(fileResult?.size);
 
   if (Array.isArray(fileResult?.content)) {
     return `
       <section class="files-file-stage">
-        <header class="files-file-header">
-          <div>
-            <a data-nav class="files-back-link" href="${backHref}">← Back</a>
-            <p class="files-stage-eyebrow">Image preview</p>
-            <h2>${escapeHtml(title)}</h2>
-            <p class="files-subtitle">${escapeHtml(filePath)} · ${escapeHtml(sizeLabel)}</p>
+        <header class="files-content-toolbar">
+          <a data-nav class="files-back-link" href="${backHref}">Back to folder</a>
+          <div class="files-inline-meta">
+            <span>${escapeHtml(sizeLabel)}</span>
           </div>
           <form method="post" data-delete-form>
             <input type="hidden" name="action" value="delete" />
@@ -470,12 +462,10 @@ function renderFileView({ routeBase, target, currentPath, searchQuery, filePath,
 
   return `
     <section class="files-file-stage">
-      <header class="files-file-header">
-        <div>
-          <a data-nav class="files-back-link" href="${backHref}">← Back</a>
-          <p class="files-stage-eyebrow">File editor</p>
-          <h2>${escapeHtml(title)}</h2>
-          <p class="files-subtitle">${escapeHtml(filePath)} · ${escapeHtml(sizeLabel)}</p>
+      <header class="files-content-toolbar">
+        <a data-nav class="files-back-link" href="${backHref}">Back to folder</a>
+        <div class="files-inline-meta">
+          <span>${escapeHtml(sizeLabel)}</span>
         </div>
         <div class="files-file-actions">
           <button type="submit" form="files-save-form" class="files-btn files-btn-primary">Save</button>
@@ -502,17 +492,8 @@ function renderFileView({ routeBase, target, currentPath, searchQuery, filePath,
 }
 
 function renderDirectoryStage({ routeBase, target, currentPath, pathStyle, searchQuery, directoryResult }) {
-  const entryCount = (Array.isArray(directoryResult?.directories) ? directoryResult.directories.length : 0)
-    + (Array.isArray(directoryResult?.files) ? directoryResult.files.length : 0);
   return `
     <section class="files-directory-stage">
-      <div class="files-stage-header-row">
-        <div>
-          <p class="files-stage-eyebrow">Directory</p>
-          <h2>${escapeHtml(baseName(currentPath))}</h2>
-          <p class="files-subtitle">${entryCount} item${entryCount === 1 ? "" : "s"}</p>
-        </div>
-      </div>
       ${renderDirectoryEntries(routeBase, target, currentPath, pathStyle, searchQuery, directoryResult)}
     </section>
   `;
@@ -535,6 +516,7 @@ function renderPage(state) {
   } = state;
 
   const canGoUp = pathStyle === "absolute" ? currentPath !== "/" : currentPath !== ".";
+  const activePath = filePath || currentPath;
   const stage = fileResult
     ? renderFileView({ routeBase, target, currentPath, searchQuery, filePath, fileResult })
     : searchQuery
@@ -587,59 +569,56 @@ function renderPage(state) {
         border: 0;
       }
       main {
-        padding: 22px;
+        min-height: 100vh;
       }
       .files-shell {
         display: grid;
-        grid-template-columns: 280px minmax(0, 1fr);
-        gap: 18px;
-        align-items: start;
+        grid-template-rows: auto minmax(0, 1fr);
+        min-height: 100vh;
       }
-      .files-sidebar,
-      .files-stage {
-        position: relative;
-        background: rgba(255, 255, 255, 0.12);
-        backdrop-filter: blur(12px) saturate(1.08);
-        -webkit-backdrop-filter: blur(12px) saturate(1.08);
-        border-radius: 14px;
-        border: 1px solid rgba(255,255,255,0.28);
-        box-shadow: var(--glass-shadow);
-        overflow: hidden;
-      }
-      .files-sidebar::before,
-      .files-stage::before {
-        content: "";
-        position: absolute;
-        inset: 0 auto auto 0;
-        width: 100%;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.82), transparent);
-      }
-      .files-sidebar::after,
-      .files-stage::after {
-        content: "";
-        position: absolute;
-        inset: 0 auto 0 0;
-        width: 1px;
-        height: 100%;
-        background: linear-gradient(180deg, rgba(255,255,255,0.75), transparent, rgba(255,255,255,0.28));
-      }
-      .files-sidebar {
-        padding: 18px;
+      .files-toolbar {
         display: grid;
-        gap: 18px;
+        grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
+        gap: 12px 18px;
+        align-items: end;
+        padding: 16px 18px 14px;
+        border-bottom: 1px solid rgba(42, 50, 56, 0.1);
+        background: rgba(248, 243, 236, 0.56);
+        backdrop-filter: blur(10px) saturate(1.04);
+        -webkit-backdrop-filter: blur(10px) saturate(1.04);
       }
-      .files-sidebar-section {
+      .files-toolbar-form {
         display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: end;
+      }
+      .files-toolbar-form-nav .files-toolbar-group {
+        display: grid;
+        grid-template-columns: 190px minmax(280px, 1fr);
         gap: 12px;
       }
-      .files-sidebar-heading-row {
+      .files-toolbar-form-search .files-toolbar-group {
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr);
+        gap: 12px;
+      }
+      .files-toolbar-actions,
+      .files-inline-actions {
         display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
       }
-      .files-sidebar-eyebrow,
+      .files-inline-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+      }
       .files-stage-eyebrow {
         margin: 0 0 6px;
         font-size: 11px;
@@ -648,23 +627,12 @@ function renderPage(state) {
         text-transform: uppercase;
         color: var(--muted);
       }
-      .files-sidebar h2,
-      .files-stage h2,
-      .files-file-header h2 {
+      .files-stage h2 {
         margin: 0;
         font-family: "Space Grotesk", system-ui, sans-serif;
         font-size: 24px;
         line-height: 1.06;
         font-weight: 600;
-      }
-      .files-subtitle {
-        margin: 8px 0 0;
-        font-size: 13px;
-        color: var(--muted);
-      }
-      .files-stack-form {
-        display: grid;
-        gap: 12px;
       }
       .files-field {
         display: grid;
@@ -738,19 +706,17 @@ function renderPage(state) {
         opacity: 0.45;
       }
       .files-stage {
-        padding: 18px 18px 20px;
+        padding: 12px 18px 18px;
         display: grid;
         gap: 14px;
-        min-height: calc(100vh - 44px);
+        align-content: start;
+        min-height: 0;
       }
       .files-status-line {
-        border-radius: 10px;
-        padding: 12px 14px;
-        background: rgba(247, 242, 236, 0.78);
+        padding: 8px 0 0;
         color: var(--text);
       }
       .files-status-line.is-error {
-        background: rgba(143, 91, 71, 0.14);
         color: #7b412d;
       }
       .files-breadcrumbs {
@@ -758,7 +724,8 @@ function renderPage(state) {
         align-items: center;
         flex-wrap: wrap;
         gap: 6px;
-        min-height: 30px;
+        min-height: 26px;
+        padding-top: 2px;
       }
       .files-crumb,
       .files-crumb-sep {
@@ -771,20 +738,6 @@ function renderPage(state) {
       .files-crumb.is-current {
         color: var(--text);
         font-weight: 700;
-      }
-      .files-stage-panel {
-        background: rgba(250, 246, 240, 0.86);
-        border-radius: 14px;
-        padding: 18px;
-        box-shadow: 0 18px 42px rgba(44, 46, 52, 0.08);
-      }
-      .files-stage-header-row,
-      .files-file-header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 16px;
       }
       .files-entry-grid,
       .files-search-list {
@@ -863,31 +816,30 @@ function renderPage(state) {
       .files-file-stage,
       .files-directory-stage,
       .files-search-view {
-        background: rgba(250, 246, 240, 0.86);
-        border-radius: 14px;
-        padding: 18px;
-        min-height: 520px;
-        box-shadow: 0 18px 42px rgba(44, 46, 52, 0.08);
+        min-height: calc(100vh - 156px);
       }
-      .files-file-header {
-        margin-bottom: 18px;
+      .files-content-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
       }
       .files-back-link {
-        margin-bottom: 10px;
         padding-inline: 12px;
-        width: fit-content;
       }
       .files-editor-form {
         display: grid;
       }
       .files-editor {
         width: 100%;
-        min-height: 520px;
-        padding: 18px;
+        min-height: calc(100vh - 226px);
+        padding: 16px 18px;
         border-radius: 12px;
         border: 1px solid rgba(38, 48, 56, 0.08);
         border-left: 3px solid transparent;
-        background: rgba(255,255,255,0.82);
+        background: rgba(255,255,255,0.66);
         color: var(--text);
         font: 13px/1.55 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
         resize: vertical;
@@ -939,26 +891,38 @@ function renderPage(state) {
         font-weight: 700;
       }
       @media (max-width: 980px) {
-        main { padding: 14px; }
-        .files-shell { grid-template-columns: 1fr; }
-        .files-stage { min-height: 0; }
+        .files-toolbar {
+          grid-template-columns: 1fr;
+          padding: 12px 14px;
+        }
+        .files-toolbar-form,
+        .files-toolbar-form-nav .files-toolbar-group,
+        .files-toolbar-form-search .files-toolbar-group {
+          grid-template-columns: 1fr;
+        }
+        .files-toolbar-actions,
+        .files-inline-actions {
+          justify-content: flex-start;
+        }
+        .files-stage {
+          padding: 12px 14px 16px;
+        }
         .files-editor,
         .files-file-stage,
         .files-directory-stage,
         .files-search-view { min-height: 0; }
-        .files-stage-header-row,
-        .files-file-header { flex-direction: column; }
+        .files-content-toolbar { align-items: flex-start; }
       }
     </style>
   </head>
   <body>
     <main>
       <section class="files-shell">
-        ${renderSidebar({ routeBase, target, devices, currentPath, pathStyle, searchQuery, canGoUp })}
+        ${renderToolbar({ routeBase, target, devices, currentPath, pathStyle, searchQuery, canGoUp })}
         <section class="files-stage">
           ${statusText ? `<section class="files-status-line"><p>${escapeHtml(statusText)}</p></section>` : ""}
           ${errorText ? `<section class="files-status-line is-error"><p>${escapeHtml(errorText)}</p></section>` : ""}
-          <nav class="files-breadcrumbs">${renderBreadcrumbs(routeBase, target, currentPath, pathStyle, searchQuery)}</nav>
+          <nav class="files-breadcrumbs">${renderBreadcrumbs(routeBase, target, activePath, detectPathStyle(activePath), searchQuery)}</nav>
           ${stage}
         </section>
       </section>
