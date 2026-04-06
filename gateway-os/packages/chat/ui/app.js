@@ -468,7 +468,10 @@ function extractToolResultHistory(content) {
   }
   return {
     toolName,
-    callId: typeof record.callId === "string" ? record.callId : (typeof record.id === "string" ? record.id : null),
+    callId:
+      typeof record.toolCallId === "string"
+        ? record.toolCallId
+        : (typeof record.callId === "string" ? record.callId : (typeof record.id === "string" ? record.id : null)),
     ok: record.ok === true || record.isError !== true,
     output: record.output,
     error: typeof record.error === "string" ? record.error : null,
