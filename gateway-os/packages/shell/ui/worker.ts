@@ -436,15 +436,9 @@ function renderPage(routeBase, devices) {
         -webkit-backdrop-filter: blur(10px);
       }
       .shell-toolbar-copy {
-        display: grid;
-        gap: 4px;
-        align-content: end;
+        display: flex;
+        align-items: center;
       }
-      .shell-toolbar-copy h1 {
-        margin: 0;
-        font: 600 24px/1 "Space Grotesk", system-ui, sans-serif;
-      }
-      .shell-eyebrow,
       .shell-field span,
       .shell-toggle {
         font-size: 11px;
@@ -598,10 +592,7 @@ function renderPage(routeBase, devices) {
   <body data-route-base="${escapeHtml(routeBase)}">
     <main>
       <section class="shell-toolbar">
-        <div class="shell-toolbar-copy">
-          <span class="shell-eyebrow">Command surface</span>
-          <h1>Shell</h1>
-        </div>
+        <div class="shell-toolbar-copy"></div>
         <label class="shell-field">
           <span>Target</span>
           <select data-shell-target>
