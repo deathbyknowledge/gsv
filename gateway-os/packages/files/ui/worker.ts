@@ -375,10 +375,7 @@ function renderDirectoryEntries(routeBase, target, currentPath, pathStyle, searc
     rows.push(`
       <a data-nav class="files-entry-row is-directory" href="${buildHref(routeBase, { target, path: nextPath, q: searchQuery || undefined })}">
         <span class="files-entry-icon">${iconSvg("folder")}</span>
-        <span class="files-entry-body">
-          <strong>${escapeHtml(name)}</strong>
-          <span>Folder</span>
-        </span>
+        <span class="files-entry-name">${escapeHtml(name)}</span>
       </a>
     `);
   }
@@ -389,10 +386,7 @@ function renderDirectoryEntries(routeBase, target, currentPath, pathStyle, searc
     rows.push(`
       <a data-nav class="files-entry-row" href="${buildHref(routeBase, { target, path: currentPath, open: nextPath, q: searchQuery || undefined })}">
         <span class="files-entry-icon">${iconSvg(kind)}</span>
-        <span class="files-entry-body">
-          <strong>${escapeHtml(name)}</strong>
-          <span>${escapeHtml(kind)}</span>
-        </span>
+        <span class="files-entry-name">${escapeHtml(name)}</span>
       </a>
     `);
   }
@@ -401,7 +395,7 @@ function renderDirectoryEntries(routeBase, target, currentPath, pathStyle, searc
     return `<div class="files-empty"><h3>Directory is empty</h3><p>Create a file or open a different folder.</p></div>`;
   }
 
-  return `<div class="files-entry-list">${rows.join("")}</div>`;
+  return `<div class="files-entry-grid">${rows.join("")}</div>`;
 }
 
 function renderSearchResults(routeBase, target, currentPath, searchQuery, searchResult) {
@@ -792,12 +786,33 @@ function renderPage(state) {
         gap: 16px;
         margin-bottom: 16px;
       }
-      .files-entry-list,
+      .files-entry-grid,
       .files-search-list {
         display: grid;
         gap: 10px;
       }
-      .files-entry-row,
+      .files-entry-grid {
+        grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+        gap: 14px;
+      }
+      .files-entry-row {
+        display: grid;
+        justify-items: center;
+        align-content: start;
+        gap: 10px;
+        min-height: 132px;
+        padding: 18px 14px 14px;
+        border-radius: 14px;
+        background: rgba(255,255,255,0.34);
+        color: inherit;
+        text-decoration: none;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.52);
+        text-align: center;
+      }
+      .files-entry-row:hover {
+        background: rgba(255,255,255,0.58);
+        transform: translateY(-1px);
+      }
       .files-search-row {
         display: grid;
         grid-template-columns: auto minmax(0, 1fr);
@@ -810,13 +825,12 @@ function renderPage(state) {
         text-decoration: none;
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
       }
-      .files-entry-row:hover,
       .files-search-row:hover {
         background: rgba(255,255,255,0.76);
       }
       .files-entry-icon {
-        width: 22px;
-        height: 22px;
+        width: 44px;
+        height: 44px;
         color: var(--primary-b);
       }
       .files-entry-icon svg {
@@ -824,17 +838,20 @@ function renderPage(state) {
         height: 100%;
         display: block;
       }
-      .files-entry-body {
-        display: grid;
-        gap: 2px;
-        min-width: 0;
-      }
-      .files-entry-body strong,
+      .files-entry-name,
       .files-search-row strong {
         font-size: 14px;
         line-height: 1.3;
       }
-      .files-entry-body span,
+      .files-entry-name {
+        display: -webkit-box;
+        min-width: 0;
+        overflow: hidden;
+        color: var(--text);
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        word-break: break-word;
+      }
       .files-search-row code {
         color: var(--muted);
         font-size: 12px;
