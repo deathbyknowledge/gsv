@@ -1,7 +1,3 @@
-export async function handleFetch(request, context = {}) {
-  const props = context.props ?? {};
-  const env = context.env ?? {};
-
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -18,221 +14,353 @@ function renderPage(routeBase) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Chat</title>
-    <link rel="stylesheet" href="/runtime/theme.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: light;
+        --page: #eef3f7;
+        --surface: rgba(247, 249, 252, 0.88);
+        --surface-strong: rgba(255, 255, 255, 0.94);
+        --surface-soft: rgba(232, 238, 243, 0.92);
+        --text: #191c1e;
+        --text-muted: rgba(25, 28, 30, 0.62);
+        --text-soft: rgba(25, 28, 30, 0.46);
+        --primary: #003466;
+        --primary-soft: #1a4b84;
+        --accent: #904b36;
+        --shadow: 0 20px 40px rgba(25, 28, 30, 0.06), 0 10px 14px rgba(25, 28, 30, 0.04);
+        --line: rgba(25, 28, 30, 0.08);
+        --display: "Space Grotesk", "Avenir Next", sans-serif;
+        --ui: "Manrope", "Segoe UI", sans-serif;
+        --mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
       body {
         margin: 0;
-        font: 14px/1.5 var(--gsv-font-sans, "Inter", sans-serif);
-        background: var(--gsv-color-bg, #0c111b);
-        color: var(--gsv-color-text, #f3f5f7);
+        font: 14px/1.55 var(--ui);
+        color: var(--text);
+        background:
+          radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0) 34%),
+          linear-gradient(180deg, #f4f7fa 0%, var(--page) 100%);
       }
-      .chat-app {
+      button,
+      textarea {
+        font: inherit;
+      }
+      .chat-shell {
         min-height: 100vh;
-        box-sizing: border-box;
         display: grid;
-        grid-template-columns: 280px 1fr;
-        gap: 16px;
-        padding: 16px;
+        grid-template-columns: 300px minmax(0, 1fr);
+        gap: 18px;
+        padding: 18px;
       }
-      .panel {
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(10, 15, 23, 0.72);
-        border-radius: 18px;
-        box-shadow: 0 14px 38px rgba(0, 0, 0, 0.22);
+      .rail,
+      .stage {
+        min-width: 0;
+        border-radius: 22px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
       }
-      .thread-rail {
+      .rail {
         display: grid;
-        grid-template-rows: auto auto 1fr;
+        grid-template-rows: auto 1fr;
         overflow: hidden;
       }
-      .thread-rail-head,
-      .chat-toolbar,
-      .chat-compose {
-        padding: 16px;
+      .rail-head {
+        padding: 18px 18px 14px;
+        display: grid;
+        gap: 14px;
       }
-      .thread-rail-head { border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+      .eyebrow {
+        margin: 0;
+        color: var(--text-soft);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .rail-title {
+        margin: 0;
+        font-family: var(--display);
+        font-size: 1.75rem;
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+      }
+      .rail-copy {
+        margin: 0;
+        color: var(--text-muted);
+      }
+      .rail-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .thread-status {
+        min-height: 20px;
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
       .thread-list {
-        padding: 12px;
+        padding: 0 12px 12px;
         display: grid;
         gap: 10px;
         overflow: auto;
       }
-      .thread-status {
-        margin: 8px 0 0;
-        color: rgba(193, 205, 224, 0.76);
-        min-height: 20px;
-      }
-      .thread-button {
+      .thread-card {
         width: 100%;
-        text-align: left;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.03);
+        border: 0;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
         color: inherit;
-        border-radius: 14px;
-        padding: 12px;
+        padding: 14px;
+        text-align: left;
         cursor: pointer;
+        transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
       }
-      .thread-button.is-active {
-        border-color: rgba(120, 207, 255, 0.28);
-        background: rgba(120, 207, 255, 0.1);
+      .thread-card:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 22px rgba(25, 28, 30, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.7);
       }
-      .thread-title { display: block; font-weight: 600; }
-      .thread-meta { display: block; margin-top: 4px; font-size: 12px; color: rgba(193, 205, 224, 0.72); }
-      .chat-main {
+      .thread-card.is-active {
+        background: rgba(235, 242, 248, 0.96);
+        box-shadow: 0 16px 28px rgba(25, 28, 30, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+      }
+      .thread-title {
+        display: block;
+        font-weight: 700;
+        font-size: 0.96rem;
+      }
+      .thread-meta {
+        display: block;
+        margin-top: 5px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .stage {
         display: grid;
-        grid-template-rows: auto 1fr auto;
-        min-height: 0;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        overflow: hidden;
       }
-      .chat-toolbar {
+      .stage-head {
+        padding: 20px 22px 18px;
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 16px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
-      .toolbar-actions,
-      .toolbar-status {
+      .stage-title-wrap {
+        min-width: 0;
+      }
+      .stage-title {
+        margin: 0;
+        font-family: var(--display);
+        font-size: 2rem;
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+      }
+      .stage-meta {
+        margin: 8px 0 0;
+        color: var(--text-muted);
+      }
+      .stage-actions {
         display: flex;
         align-items: center;
         gap: 10px;
         flex-wrap: wrap;
+        justify-content: flex-end;
       }
-      .runtime-btn {
+      .pill {
         display: inline-flex;
         align-items: center;
-        justify-content: center;
-        text-decoration: none;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.06);
-        color: inherit;
-        border-radius: 999px;
-        padding: 10px 14px;
-        font: inherit;
-        cursor: pointer;
-      }
-      .runtime-btn:disabled { opacity: 0.45; cursor: default; }
-      .status-pill {
-        border-radius: 999px;
+        gap: 6px;
         padding: 5px 10px;
-        font-size: 12px;
+        border-radius: 999px;
+        background: rgba(232, 238, 243, 0.92);
+        color: var(--text-muted);
+        font-size: 11px;
+        font-weight: 800;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        border: 1px solid rgba(255, 255, 255, 0.12);
       }
-      .status-pill.is-connected { color: #73e2aa; }
-      .status-pill.is-connecting { color: #ffd46c; }
-      .status-pill.is-disconnected { color: #ffb4b4; }
-      .chat-log {
+      .pill.is-connected { color: #29533e; background: rgba(218, 235, 225, 0.92); }
+      .pill.is-connecting { color: #785400; background: rgba(255, 241, 200, 0.92); }
+      .pill.is-disconnected { color: #7a3030; background: rgba(255, 226, 226, 0.92); }
+      .stage-body {
         min-height: 0;
-        overflow: auto;
+        padding: 0 22px 20px;
+      }
+      .transcript {
+        min-height: 100%;
+        height: 100%;
+        border-radius: 20px;
+        background: var(--surface-soft);
         padding: 16px;
         display: grid;
         gap: 12px;
+        overflow: auto;
       }
-      .chat-row {
-        max-width: min(86%, 760px);
+      .message {
+        max-width: min(88%, 760px);
+        border-radius: 18px;
         padding: 12px 14px;
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.04);
+        background: rgba(255, 255, 255, 0.78);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
       }
-      .chat-row-user {
+      .message-user {
         justify-self: end;
-        background: rgba(120, 207, 255, 0.12);
-        border-color: rgba(120, 207, 255, 0.18);
+        background: linear-gradient(180deg, rgba(0, 52, 102, 0.12) 0%, rgba(26, 75, 132, 0.09) 100%), rgba(255, 255, 255, 0.78);
       }
-      .chat-row-assistant {
+      .message-assistant {
         justify-self: start;
       }
-      .chat-row-system {
+      .message-system {
         justify-self: center;
-        max-width: min(92%, 760px);
-        background: rgba(255, 255, 255, 0.02);
+        max-width: min(94%, 760px);
+        background: rgba(255, 255, 255, 0.56);
       }
-      .chat-row-head {
+      .message-head {
         display: flex;
+        align-items: center;
         justify-content: space-between;
         gap: 12px;
         margin-bottom: 8px;
-        font-size: 12px;
-        color: rgba(193, 205, 224, 0.72);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-soft);
       }
-      .chat-row-text {
+      .message-body {
         margin: 0;
+        color: var(--text);
         white-space: pre-wrap;
         word-break: break-word;
         font: inherit;
       }
-      .chat-compose {
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      .composer-wrap {
+        padding: 0 22px 22px;
       }
-      .chat-compose-form {
+      .composer {
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.84);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+        padding: 16px;
         display: grid;
         gap: 12px;
       }
-      .chat-input {
+      .composer-field {
         width: 100%;
-        min-height: 92px;
-        box-sizing: border-box;
-        border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.04);
-        color: inherit;
-        padding: 12px 14px;
+        min-height: 104px;
         resize: vertical;
-        font: inherit;
+        border: 0;
+        border-radius: 14px;
+        background: rgba(232, 238, 243, 0.78);
+        color: var(--text);
+        padding: 14px;
+        outline: none;
       }
-      .chat-compose-actions {
+      .composer-field:focus {
+        box-shadow: inset 3px 0 0 rgba(0, 52, 102, 0.45);
+      }
+      .composer-foot {
         display: flex;
+        align-items: center;
         justify-content: space-between;
-        gap: 10px;
+        gap: 14px;
         flex-wrap: wrap;
       }
-      .muted { color: rgba(193, 205, 224, 0.76); }
-      code, pre { font-family: var(--gsv-font-mono, "SFMono-Regular", "Consolas", monospace); }
-      @media (max-width: 880px) {
-        .chat-app {
+      .composer-note {
+        margin: 0;
+        color: var(--text-muted);
+      }
+      .btn {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 14px;
+        cursor: pointer;
+        font-weight: 700;
+        transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+      }
+      .btn:hover { transform: translateY(-1px); }
+      .btn:disabled { opacity: 0.45; cursor: default; transform: none; }
+      .btn-quiet {
+        background: rgba(232, 238, 243, 0.92);
+        color: var(--text);
+      }
+      .btn-quiet:hover { background: rgba(225, 233, 239, 1); }
+      .btn-primary {
+        color: #f7fbff;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-soft) 100%);
+        box-shadow: 0 12px 24px rgba(0, 52, 102, 0.2);
+      }
+      .btn-primary:hover {
+        box-shadow: 0 14px 26px rgba(0, 52, 102, 0.24);
+      }
+      .mono {
+        font-family: var(--mono);
+      }
+      @media (max-width: 920px) {
+        .chat-shell {
           grid-template-columns: 1fr;
-          grid-template-rows: auto 1fr;
           padding: 12px;
+        }
+        .stage-head,
+        .composer-foot {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .stage-actions {
+          justify-content: flex-start;
         }
       }
     </style>
   </head>
   <body>
-    <main class="chat-app">
-      <aside class="panel thread-rail">
-        <div class="thread-rail-head">
-          <div class="toolbar-actions">
-            <button type="button" class="runtime-btn" id="new-thread">New Thread</button>
-            <button type="button" class="runtime-btn" id="refresh-threads">Refresh</button>
+    <main class="chat-shell">
+      <aside class="rail">
+        <div class="rail-head">
+          <div>
+            <p class="eyebrow">Workspace threads</p>
+            <h1 class="rail-title">Conversations</h1>
+            <p class="rail-copy">Pick up where you left off or start a new thread.</p>
+          </div>
+          <div class="rail-actions">
+            <button type="button" class="btn btn-quiet" id="new-thread">New thread</button>
+            <button type="button" class="btn btn-quiet" id="refresh-threads">Refresh</button>
           </div>
           <p class="thread-status" id="thread-status"></p>
         </div>
         <div class="thread-list" id="thread-list"></div>
       </aside>
 
-      <section class="panel chat-main">
-        <div class="chat-toolbar">
-          <div>
-            <p class="muted" id="active-thread-label">No thread selected.</p>
+      <section class="stage">
+        <header class="stage-head">
+          <div class="stage-title-wrap">
+            <h1 class="stage-title" id="active-thread-title">New conversation</h1>
+            <p class="stage-meta" id="active-thread-meta">Send a message to start a thread or reopen one from the left.</p>
           </div>
-          <div class="toolbar-status">
-            <button type="button" class="runtime-btn" id="open-files">Files</button>
-            <button type="button" class="runtime-btn" id="open-shell">Shell</button>
-            <span class="status-pill is-connecting" id="connection-pill">connecting</span>
+          <div class="stage-actions">
+            <button type="button" class="btn btn-quiet" id="open-files">Files</button>
+            <button type="button" class="btn btn-quiet" id="open-shell">Shell</button>
+            <span class="pill is-connecting" id="connection-pill">connecting</span>
           </div>
+        </header>
+
+        <div class="stage-body">
+          <section class="transcript" id="chat-log"></section>
         </div>
 
-        <section class="chat-log" id="chat-log"></section>
-
-        <div class="chat-compose">
-          <form class="chat-compose-form" id="chat-compose-form">
-            <textarea class="chat-input" id="chat-input" placeholder="Send a message to start or continue a thread"></textarea>
-            <div class="chat-compose-actions">
-              <p class="muted" id="compose-status">Waiting for desktop host.</p>
-              <button type="submit" class="runtime-btn" id="send-button">Send</button>
+        <div class="composer-wrap">
+          <form class="composer" id="chat-compose-form">
+            <textarea class="composer-field" id="chat-input" placeholder="Ask something, continue a thread, or describe the task you want help with."></textarea>
+            <div class="composer-foot">
+              <p class="composer-note" id="compose-status">Waiting for desktop host.</p>
+              <button type="submit" class="btn btn-primary" id="send-button">Send</button>
             </div>
           </form>
         </div>
@@ -535,7 +663,8 @@ function renderPage(routeBase) {
         threadStatus: document.getElementById("thread-status"),
         newThread: document.getElementById("new-thread"),
         refreshThreads: document.getElementById("refresh-threads"),
-        activeThreadLabel: document.getElementById("active-thread-label"),
+        activeThreadTitle: document.getElementById("active-thread-title"),
+        activeThreadMeta: document.getElementById("active-thread-meta"),
         connectionPill: document.getElementById("connection-pill"),
         chatLog: document.getElementById("chat-log"),
         composeForm: document.getElementById("chat-compose-form"),
@@ -570,6 +699,12 @@ function renderPage(routeBase) {
         renderLog();
       }
 
+      function labelForRole(role) {
+        if (role === "user") return "You";
+        if (role === "assistant") return "Assistant";
+        return "System";
+      }
+
       function renderLog() {
         if (!elements.chatLog) {
           return;
@@ -577,9 +712,9 @@ function renderPage(routeBase) {
         elements.chatLog.innerHTML = logRows.map((row) => {
           const role = row.role === "user" ? "user" : row.role === "assistant" ? "assistant" : "system";
           const timestamp = row.timestamp ? formatTimestamp(row.timestamp) : "";
-          return '<article class="chat-row chat-row-' + escapeHtmlClient(role) + '">' +
-            '<div class="chat-row-head"><span>' + escapeHtmlClient(role) + '</span><span>' + escapeHtmlClient(timestamp) + '</span></div>' +
-            '<pre class="chat-row-text">' + escapeHtmlClient(row.text) + '</pre>' +
+          return '<article class="message message-' + escapeHtmlClient(role) + '">' +
+            '<div class="message-head"><span>' + escapeHtmlClient(labelForRole(role)) + '</span><span>' + escapeHtmlClient(timestamp) + '</span></div>' +
+            '<pre class="message-body">' + escapeHtmlClient(row.text) + '</pre>' +
           '</article>';
         }).join("");
         elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
@@ -603,7 +738,7 @@ function renderPage(routeBase) {
           const isActive = activeWorkspaceId && entry.workspaceId === activeWorkspaceId;
           const state = entry.activeProcess ? "Live" : "Stored";
           const helpers = entry.processCount > 1 ? " · " + entry.processCount + " agents" : "";
-          return '<button type="button" class="thread-button' + (isActive ? ' is-active' : '') + '" data-workspace-id="' + escapeHtmlClient(entry.workspaceId) + '">' +
+          return '<button type="button" class="thread-card' + (isActive ? ' is-active' : '') + '" data-workspace-id="' + escapeHtmlClient(entry.workspaceId) + '">' +
             '<span class="thread-title">' + escapeHtmlClient(displayThreadLabel(entry)) + '</span>' +
             '<span class="thread-meta">' + escapeHtmlClient(state + helpers + ' · ' + formatRelativeTime(entry.updatedAt)) + '</span>' +
           '</button>';
@@ -614,7 +749,7 @@ function renderPage(routeBase) {
         const status = client ? client.getStatus() : { state: "disconnected", message: hostError || "HOST unavailable" };
         if (elements.connectionPill) {
           elements.connectionPill.textContent = status.state;
-          elements.connectionPill.className = 'status-pill is-' + status.state;
+          elements.connectionPill.className = 'pill is-' + status.state;
         }
         if (elements.composeStatus) {
           if (hostError) {
@@ -622,15 +757,20 @@ function renderPage(routeBase) {
           } else if (messageBusy) {
             elements.composeStatus.textContent = "Run in progress. Responses will refresh as signals arrive.";
           } else if (activeThreadContext) {
-            elements.composeStatus.textContent = "Active thread " + (activeThreadContext.workspaceId || activeThreadContext.pid);
+            elements.composeStatus.textContent = "Attached to " + (activeThreadContext.workspaceId || activeThreadContext.pid);
           } else {
             elements.composeStatus.textContent = status.state === "connected" ? "Send a message to start a new thread." : (status.message || "Waiting for desktop host.");
           }
         }
-        if (elements.activeThreadLabel) {
-          elements.activeThreadLabel.textContent = activeThreadContext
-            ? ((activeThreadContext.workspaceId || activeThreadContext.pid) + ' · ' + activeThreadContext.cwd)
-            : 'No thread selected.';
+        if (elements.activeThreadTitle) {
+          elements.activeThreadTitle.textContent = activeThreadContext
+            ? (activeThreadContext.workspaceId || activeThreadContext.pid)
+            : "New conversation";
+        }
+        if (elements.activeThreadMeta) {
+          elements.activeThreadMeta.textContent = activeThreadContext
+            ? activeThreadContext.cwd
+            : "Send a message to start a thread or reopen one from the left.";
         }
         const interactive = client && client.isConnected() && !hostError;
         if (elements.chatInput) {
@@ -979,21 +1119,25 @@ function renderPage(routeBase) {
 </html>`;
 }
 
- 
-    const url = new URL(request.url);
-    const routeBase = props.appFrame?.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/chat";
-    if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
-      return new Response("Not Found", { status: 404 });
-    }
-    if (request.method !== "GET") {
-      return new Response("Method Not Allowed", { status: 405 });
-    }
-    return new Response(renderPage(routeBase), {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
+export async function handleFetch(request, context = {}) {
+  const props = context.props ?? {};
+  const env = context.env ?? {};
+  const url = new URL(request.url);
+  const routeBase = props.appFrame?.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/chat";
+
+  if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
+    return new Response("Not Found", { status: 404 });
+  }
+  if (request.method !== "GET") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
+
+  return new Response(renderPage(routeBase), {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
 }
 
 export default { fetch: handleFetch };
