@@ -110,7 +110,7 @@ function renderSidebar(routeBase, packages, selectedPackageId) {
   return packages.map((pkg) => {
     const href = buildUrl(routeBase, {
       packageId: pkg.packageId,
-      view: "code",
+      view: "overview",
       ref: pkg.source?.ref ?? "main",
     });
     const selected = pkg.packageId === selectedPackageId;
@@ -132,6 +132,11 @@ function renderSidebar(routeBase, packages, selectedPackageId) {
 }
 
 function renderRepoTabs(routeBase, pkg, ref, path, view) {
+  const overviewHref = buildUrl(routeBase, {
+    packageId: pkg.packageId,
+    view: "overview",
+    ref,
+  });
   const codeHref = buildUrl(routeBase, {
     packageId: pkg.packageId,
     view: "code",
@@ -145,6 +150,7 @@ function renderRepoTabs(routeBase, pkg, ref, path, view) {
   });
   return `
     <nav class="repo-tabs">
+      <a href="${escapeHtml(overviewHref)}" class="${view === "overview" ? "is-active" : ""}">Overview</a>
       <a href="${escapeHtml(codeHref)}" class="${view === "code" ? "is-active" : ""}">Code</a>
       <a href="${escapeHtml(commitsHref)}" class="${view === "commits" ? "is-active" : ""}">Commits</a>
     </nav>`;
@@ -307,28 +313,67 @@ function renderCommitsView(routeBase, pkg, ref, offset, logResult) {
     </section>`;
 }
 
+function renderOverviewView(pkg, ref, refs) {
+  const activeRef = pkg.source?.ref ?? "main";
+  const resolvedCommit = pkg.source?.resolvedCommit ?? "";
+  const entrypoints = Array.isArray(pkg.entrypoints) ? pkg.entrypoints : [];
+  const heads = Object.keys(refs?.heads ?? {}).sort();
+
+  return `
+    <section class="section-block">
+      <div class="section-title-row">
+        <h1>Overview</h1>
+        <span class="section-meta">${escapeHtml(pkg.runtime ?? "unknown")}</span>
+      </div>
+      <div class="overview-grid">
+        <article class="overview-card">
+          <span class="overview-label">Source</span>
+          <strong>${escapeHtml(pkg.source?.repo ?? "unknown")}</strong>
+          <p>${escapeHtml(pkg.source?.subdir ?? ".")}</p>
+        </article>
+        <article class="overview-card">
+          <span class="overview-label">Installed ref</span>
+          <strong>${escapeHtml(activeRef)}</strong>
+          <p>${resolvedCommit ? escapeHtml(shortHash(resolvedCommit)) : "unresolved"}</p>
+        </article>
+        <article class="overview-card">
+          <span class="overview-label">Browsing ref</span>
+          <strong>${escapeHtml(ref)}</strong>
+          <p>${escapeHtml(String(heads.length || 1))} branch${heads.length === 1 ? "" : "es"}</p>
+        </article>
+      </div>
+    </section>
+    <section class="section-block">
+      <h2>Entrypoints</h2>
+      ${entrypoints.length > 0
+        ? `<ul class="entrypoint-list">
+            ${entrypoints.map((entrypoint) => `
+              <li class="entrypoint-item">
+                <div>
+                  <strong>${escapeHtml(entrypoint.name ?? "entrypoint")}</strong>
+                  <p>${escapeHtml(entrypoint.description ?? entrypoint.kind ?? "")}</p>
+                </div>
+                <span class="meta-chip">${escapeHtml(entrypoint.kind ?? "unknown")}</span>
+              </li>`).join("")}
+          </ul>`
+        : '<p class="empty-state">No entrypoints declared.</p>'}
+    </section>`;
+}
+
 function renderRepoView(routeBase, pkg, refs, ref, view, path, repoState) {
   const activeRef = pkg.source?.ref ?? "main";
   const resolvedCommit = pkg.source?.resolvedCommit ? `<span class="meta-chip">resolved ${escapeHtml(shortHash(pkg.source.resolvedCommit))}</span>` : "";
   const repoLabel = escapeHtml(pkg.source?.repo ?? "unknown");
   const content = view === "commits"
     ? renderCommitsView(routeBase, pkg, ref, repoState.offset, repoState.log)
-    : repoState.read.kind === "tree"
-      ? renderTreeView(routeBase, pkg, ref, path, repoState.read, repoState.recentLog)
-      : renderFileView(path, repoState.read);
+    : view === "code"
+      ? repoState.read.kind === "tree"
+        ? renderTreeView(routeBase, pkg, ref, path, repoState.read, repoState.recentLog)
+        : renderFileView(path, repoState.read)
+      : renderOverviewView(pkg, ref, refs);
 
   return `
     <section class="repo-shell">
-      <div class="repo-bar-wrap">
-        <div class="repo-bar">
-          <div class="repo-crumb">
-            <span class="owner-name">${repoLabel}</span>
-            <span class="sep">#</span>
-            <span class="repo-name">${escapeHtml(ref)}</span>
-          </div>
-          ${renderRepoTabs(routeBase, pkg, ref, path, view)}
-        </div>
-      </div>
       <main class="repo-main">
         <section class="repo-meta">
           <div>
@@ -336,18 +381,22 @@ function renderRepoView(routeBase, pkg, refs, ref, view, path, repoState) {
             <p class="repo-subtitle">${escapeHtml(pkg.description ?? "")}</p>
           </div>
           <div class="repo-meta-chips">
+            <span class="meta-chip">${repoLabel}</span>
             <span class="meta-chip">active ${escapeHtml(activeRef)}</span>
             ${resolvedCommit}
           </div>
         </section>
-        ${renderBreadcrumbs(routeBase, pkg, ref, path)}
+        <section class="repo-nav-block">
+          ${renderRepoTabs(routeBase, pkg, ref, path, view)}
+          ${view === "code" ? renderBreadcrumbs(routeBase, pkg, ref, path) : ""}
+        </section>
         ${renderRepoControls(routeBase, pkg, ref, path, view, refs)}
         ${content}
       </main>
     </section>`;
 }
 
-function renderPage({ frame, packageDoName, packages, selectedPackage, selectedRef, selectedView, selectedPath, statusText, loadError, routeBase, repoRefs, repoState }) {
+function renderPage({ packages, selectedPackage, selectedRef, selectedView, selectedPath, statusText, loadError, routeBase, repoRefs, repoState }) {
   const sidebar = renderSidebar(routeBase, packages, selectedPackage?.packageId ?? null);
   const mainContent = selectedPackage
     ? renderRepoView(routeBase, selectedPackage, repoRefs, selectedRef, selectedView, selectedPath, repoState)
@@ -398,43 +447,12 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
         text-decoration: none;
       }
       a:hover { text-decoration: none; }
-      header {
-        background: transparent;
-      }
-      .global-nav {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        padding: 20px 24px 12px;
-      }
-      .logo {
-        color: var(--text);
-        font-family: var(--display);
-        font-weight: 700;
-        font-size: 0.78rem;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-      }
-      .global-meta {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        color: var(--text-soft);
-        font-size: 12px;
-      }
-      .global-meta code {
-        font-family: var(--mono);
-        background: rgba(255, 255, 255, 0.62);
-        padding: 3px 7px;
-        border-radius: 999px;
-      }
       .app-shell {
-        min-height: calc(100vh - 64px);
+        min-height: 100vh;
         display: grid;
-        grid-template-columns: 320px minmax(0, 1fr);
+        grid-template-columns: 288px minmax(0, 1fr);
         gap: 18px;
-        padding: 0 18px 18px;
+        padding: 18px;
       }
       .sidebar,
       .repo-shell {
@@ -448,16 +466,11 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
         overflow: auto;
       }
       .sidebar h1 {
-        margin: 0 0 8px;
+        margin: 0 0 16px;
         font-family: var(--display);
         font-size: clamp(1.8rem, 3vw, 2.3rem);
         line-height: 1;
         letter-spacing: -0.03em;
-      }
-      .sidebar-copy {
-        margin: 0 0 18px;
-        max-width: 28ch;
-        color: var(--text-muted);
       }
       .sidebar-stack { display: grid; gap: 12px; }
       .pkg-card {
@@ -565,29 +578,11 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
         flex-direction: column;
         padding: 16px;
       }
-      .repo-bar-wrap {
-        margin-bottom: 18px;
-      }
-      .repo-bar {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        padding: 14px 18px;
-        border-radius: 16px;
-        background: var(--surface-low);
-      }
-      .repo-crumb {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        flex-shrink: 0;
-      }
       .repo-tabs {
         display: flex;
         align-items: center;
         gap: 8px;
+        flex-wrap: wrap;
       }
       .repo-tabs a {
         color: var(--text-muted);
@@ -602,12 +597,6 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
         color: var(--primary);
         background: rgba(0, 52, 102, 0.08);
       }
-      .owner-name,
-      .repo-name {
-        color: var(--text);
-        font-weight: 700;
-      }
-      .sep { color: var(--text-soft); }
       .repo-main {
         padding: 0 4px 4px;
       }
@@ -636,6 +625,11 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
         flex-wrap: wrap;
         gap: 8px;
       }
+      .repo-nav-block {
+        display: grid;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
       .meta-chip {
         display: inline-flex;
         align-items: center;
@@ -649,7 +643,6 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
         text-transform: uppercase;
       }
       .repo-breadcrumbs {
-        margin-bottom: 16px;
         color: var(--text-soft);
         font-size: 13px;
       }
@@ -726,6 +719,57 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
         font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;
+      }
+      .overview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        padding: 0 14px 14px;
+      }
+      .overview-card {
+        display: grid;
+        gap: 6px;
+        padding: 14px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.66);
+      }
+      .overview-card strong {
+        font-size: 1rem;
+      }
+      .overview-card p {
+        margin: 0;
+        color: var(--text-muted);
+      }
+      .overview-label {
+        color: var(--text-soft);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .entrypoint-list {
+        list-style: none;
+        margin: 0;
+        padding: 0 14px 14px;
+        display: grid;
+        gap: 10px;
+      }
+      .entrypoint-item {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.66);
+      }
+      .entrypoint-item strong {
+        display: block;
+        margin: 0;
+      }
+      .entrypoint-item p {
+        margin: 4px 0 0;
+        color: var(--text-muted);
       }
       .tree-table {
         width: 100%;
@@ -827,19 +871,15 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
         color: #6f3929;
       }
       @media (max-width: 980px) {
-        .global-nav {
-          padding: 16px 16px 10px;
-        }
         .app-shell {
           grid-template-columns: 1fr;
           gap: 14px;
-          padding: 0 12px 12px;
+          padding: 12px;
         }
         .sidebar,
         .repo-shell {
           border-radius: 16px;
         }
-        .repo-bar,
         .repo-controls {
           padding: 12px;
         }
@@ -850,22 +890,11 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
     </style>
   </head>
   <body>
-    <header>
-      <div class="global-nav">
-        <a href="${escapeHtml(routeBase)}" class="logo">packages</a>
-        <div class="global-meta">
-          <span>${escapeHtml(frame.username)}</span>
-          <span>•</span>
-          <code>${escapeHtml(packageDoName)}</code>
-        </div>
-      </div>
-    </header>
     ${statusText ? `<div class="status-line"><p>${escapeHtml(statusText)}</p></div>` : ""}
     ${loadError ? `<div class="status-line is-error"><p>${escapeHtml(loadError)}</p></div>` : ""}
     <div class="app-shell">
       <aside class="sidebar">
         <h1>Packages</h1>
-        <p class="sidebar-copy">Private repo browser and package control plane, served through the gateway instead of exposing ripgit directly.</p>
         <div class="sidebar-stack">${sidebar}</div>
       </aside>
       ${mainContent}
@@ -876,9 +905,8 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
 
  
     const appFrame = props.appFrame;
-    const packageDoName = props.packageDoName;
     const kernel = props.kernel;
-    if (!appFrame || !packageDoName || !kernel) {
+    if (!appFrame || !kernel) {
       return new Response("App frame missing", { status: 500 });
     }
 
@@ -945,7 +973,11 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
       selectedPackage = pickSelectedPackage(packages, url.searchParams.get("packageId"));
       if (selectedPackage) {
         const selectedRef = url.searchParams.get("ref")?.trim() || selectedPackage.source?.ref || "main";
-        const selectedView = url.searchParams.get("view") === "commits" ? "commits" : "code";
+        const selectedView = url.searchParams.get("view") === "commits"
+          ? "commits"
+          : url.searchParams.get("view") === "code"
+            ? "code"
+            : "overview";
         const selectedPath = normalizePath(url.searchParams.get("path"));
         const offset = clampOffset(url.searchParams.get("offset"));
         repoRefs = await kernel.request("pkg.repo.refs", { packageId: selectedPackage.packageId });
@@ -961,7 +993,7 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
             recentLog: { entries: [] },
             read: { kind: "tree", entries: [] },
           };
-        } else {
+        } else if (selectedView === "code") {
           const read = await kernel.request("pkg.repo.read", {
             packageId: selectedPackage.packageId,
             ref: selectedRef,
@@ -990,12 +1022,14 @@ function renderPage({ frame, packageDoName, packages, selectedPackage, selectedR
     const selectedRef = selectedPackage
       ? (url.searchParams.get("ref")?.trim() || selectedPackage.source?.ref || repoRefs.activeRef || "main")
       : "main";
-    const selectedView = url.searchParams.get("view") === "commits" ? "commits" : "code";
+    const selectedView = url.searchParams.get("view") === "commits"
+      ? "commits"
+      : url.searchParams.get("view") === "code"
+        ? "code"
+        : "overview";
     const selectedPath = normalizePath(url.searchParams.get("path"));
 
     return new Response(renderPage({
-      frame: appFrame,
-      packageDoName,
       packages,
       selectedPackage,
       selectedRef,
