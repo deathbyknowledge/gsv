@@ -1572,7 +1572,7 @@ function renderPage(routeBase) {
       </section>
     </main>
 
-    <script type="module" src="${escapeHtml(routeBase)}?asset=app.js"></script>
+    <script type="module" src="${escapeHtml(routeBase)}/app.js"></script>
   </body>
 </html>`;
 }
@@ -1583,7 +1583,7 @@ export async function handleFetch(request, context = {}) {
   const url = new URL(request.url);
   const routeBase = props.appFrame?.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/chat";
 
-  if (url.searchParams.get("asset") === "app.js") {
+  if (url.pathname === `${routeBase}/app.js`) {
     return new Response(renderClientScript(routeBase), {
       headers: {
         "content-type": "application/javascript; charset=utf-8",
