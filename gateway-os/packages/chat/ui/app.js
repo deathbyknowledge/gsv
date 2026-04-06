@@ -468,6 +468,7 @@ function extractToolResultHistory(content) {
   }
   return {
     toolName,
+    callId: typeof record.callId === "string" ? record.callId : (typeof record.id === "string" ? record.id : null),
     ok: record.ok === true || record.isError !== true,
     output: record.output,
     error: typeof record.error === "string" ? record.error : null,
@@ -628,6 +629,7 @@ let threadsError = "";
 let hostError = "";
 let refreshTimer = null;
 let messageBusy = false;
+let currentUsername = null;
 
 function getActivePid() {
   return activeThreadContext?.pid || null;
@@ -644,9 +646,23 @@ function appendSystemRow(text) {
 }
 
 function labelForRole(role) {
-  if (role === "user") return "You";
+  if (role === "user") return currentUsername || "You";
   if (role === "assistant") return "Assistant";
   return "System";
+}
+
+function activeThreadEntry() {
+  const activeWorkspaceId = activeThreadContext?.workspaceId || null;
+  if (!activeWorkspaceId) {
+    return null;
+  }
+  return recentThreads.find((entry) => entry.workspaceId === activeWorkspaceId) || null;
+}
+
+function activeThreadTitle() {
+  const entry = activeThreadEntry();
+  const label = typeof entry?.label === "string" ? entry.label.trim() : "";
+  return label || "Conversation";
 }
 
 function renderLog() {
@@ -694,6 +710,7 @@ function renderThreads() {
 
 function renderStatus() {
   const status = client ? client.getStatus() : { state: "disconnected", message: hostError || "HOST unavailable" };
+  currentUsername = typeof status.username === "string" && status.username.trim() ? status.username.trim() : null;
   if (elements.connectionPill) {
     elements.connectionPill.textContent = status.state;
     elements.connectionPill.className = 'pill is-' + status.state;
@@ -704,14 +721,14 @@ function renderStatus() {
     } else if (messageBusy) {
       elements.composeStatus.textContent = "Run in progress. Responses will refresh as signals arrive.";
     } else if (activeThreadContext) {
-      elements.composeStatus.textContent = "Attached to " + (activeThreadContext.workspaceId || activeThreadContext.pid);
+      elements.composeStatus.textContent = "Attached to active thread.";
     } else {
       elements.composeStatus.textContent = status.state === "connected" ? "Send a message to start a new thread." : (status.message || "Waiting for desktop host.");
     }
   }
   if (elements.activeThreadTitle) {
     elements.activeThreadTitle.textContent = activeThreadContext
-      ? (activeThreadContext.workspaceId || activeThreadContext.pid)
+      ? activeThreadTitle()
       : "New conversation";
   }
   if (elements.activeThreadMeta) {
@@ -762,17 +779,34 @@ function flattenHistory(messages) {
     if (entry?.role === "toolResult") {
       const parsedResult = extractToolResultHistory(entry.content);
       if (parsedResult) {
-        rows.push({
-          kind: "toolResult",
-          toolName: parsedResult.toolName,
-          callId: parsedResult.callId ?? "tool-result",
-          args: {},
-          syscall: parsedResult.syscall,
-          output: parsedResult.output,
-          ok: parsedResult.ok,
-          error: parsedResult.error ?? null,
-          timestamp,
-        });
+        const callId = parsedResult.callId ?? "tool-result";
+        const priorCallIndex = rows.findIndex((row) => row.kind === "toolCall" && row.callId === callId);
+        if (priorCallIndex >= 0) {
+          const priorCall = rows[priorCallIndex];
+          rows[priorCallIndex] = {
+            kind: "toolResult",
+            toolName: parsedResult.toolName,
+            callId,
+            args: priorCall.args,
+            syscall: parsedResult.syscall ?? priorCall.syscall,
+            output: parsedResult.output,
+            ok: parsedResult.ok,
+            error: parsedResult.error ?? null,
+            timestamp,
+          };
+        } else {
+          rows.push({
+            kind: "toolResult",
+            toolName: parsedResult.toolName,
+            callId,
+            args: {},
+            syscall: parsedResult.syscall,
+            output: parsedResult.output,
+            ok: parsedResult.ok,
+            error: parsedResult.error ?? null,
+            timestamp,
+          });
+        }
       } else {
         rows.push({ kind: "message", role: "system", text: formatMessageContent(entry.content), timestamp });
       }
