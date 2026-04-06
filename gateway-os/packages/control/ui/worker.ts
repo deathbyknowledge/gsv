@@ -56,6 +56,14 @@ const CONFIG_SECTIONS = [
   },
 ];
 
+const CONFIG_SECTION_IDS = new Set(CONFIG_SECTIONS.map((section) => section.id));
+const CONTROL_TABS = [
+  { id: "config", title: "Config" },
+  { id: "access", title: "Access" },
+  { id: "adapters", title: "Adapters" },
+  { id: "advanced", title: "Advanced" },
+];
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -140,6 +148,14 @@ function readUiState(url, formData) {
   };
 
   return {
+    activeTab: (() => {
+      const value = read("activeTab", "config");
+      return CONTROL_TABS.some((tab) => tab.id === value) ? value : "config";
+    })(),
+    activeView: (() => {
+      const value = read("activeView", CONFIG_SECTIONS[0]?.id ?? "ai");
+      return CONFIG_SECTION_IDS.has(value) ? value : (CONFIG_SECTIONS[0]?.id ?? "ai");
+    })(),
     tokenKind: read("tokenKind", "node"),
     tokenLabel: read("tokenLabel"),
     tokenRole: read("tokenRole"),
@@ -160,6 +176,28 @@ function readUiState(url, formData) {
   };
 }
 
+function renderUiStateFields(state) {
+  return `
+    <input type="hidden" name="activeTab" value="${escapeHtml(state.activeTab)}" />
+    <input type="hidden" name="activeView" value="${escapeHtml(state.activeView)}" />
+  `;
+}
+
+function hrefWithState(routeBase, state, overrides = {}) {
+  const url = new URL(`http://local${routeBase}`);
+  const nextState = {
+    activeTab: state.activeTab,
+    activeView: state.activeView,
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(nextState)) {
+    if (value !== undefined && value !== null && String(value).length > 0) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return `${url.pathname}${url.search}`;
+}
+
 function renderField(field, value) {
   if (field.kind === "textarea") {
     return `<textarea name="${escapeHtml(field.key)}" rows="5" placeholder="${escapeHtml(field.placeholder ?? "")}">${escapeHtml(value)}</textarea>`;
@@ -175,39 +213,55 @@ function renderField(field, value) {
   return `<input type="${type}" name="${escapeHtml(field.key)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(field.placeholder ?? "")}" />`;
 }
 
-function renderConfigSections(routeBase, entriesByKey) {
-  return CONFIG_SECTIONS.map((section) => {
-    const fields = section.fields.map((field) => {
-      const value = fieldValue(entriesByKey, field);
-      return `
-        <label class="field-card ${field.kind === "textarea" ? "is-wide" : ""}">
-          ${field.kind === "boolean" ? "" : `<span class="field-label">${escapeHtml(field.label)}</span>`}
-          <span class="field-description">${escapeHtml(field.description ?? "")}</span>
-          ${renderField(field, value)}
-        </label>
-      `;
-    }).join("");
+function renderConfigNav(routeBase, state) {
+  return `
+    <nav class="control-subnav" aria-label="Configuration sections">
+      ${CONFIG_SECTIONS.map((section) => `
+        <a
+          class="control-subnav-link ${state.activeView === section.id ? "is-active" : ""}"
+          href="${escapeHtml(hrefWithState(routeBase, state, { activeTab: "config", activeView: section.id }))}"
+        >
+          <span class="control-subnav-title">${escapeHtml(section.title)}</span>
+          <span class="control-subnav-copy">${escapeHtml(section.description)}</span>
+        </a>
+      `).join("")}
+    </nav>
+  `;
+}
 
+function renderConfigSection(routeBase, entriesByKey, state) {
+  const section = CONFIG_SECTIONS.find((candidate) => candidate.id === state.activeView) ?? CONFIG_SECTIONS[0];
+  const fields = section.fields.map((field) => {
+    const value = fieldValue(entriesByKey, field);
     return `
-      <section class="panel">
-        <div class="section-header">
-          <div>
-            <p class="eyebrow">Config</p>
-            <h2>${escapeHtml(section.title)}</h2>
-            <p class="muted">${escapeHtml(section.description)}</p>
-          </div>
-        </div>
-        <form method="post" action="${escapeHtml(routeBase)}" class="section-form">
-          <input type="hidden" name="action" value="save-section" />
-          <input type="hidden" name="sectionId" value="${escapeHtml(section.id)}" />
-          <div class="field-grid">${fields}</div>
-          <div class="section-actions">
-            <button type="submit" class="runtime-btn">Save ${escapeHtml(section.title)}</button>
-          </div>
-        </form>
-      </section>
+      <label class="field-card ${field.kind === "textarea" ? "is-wide" : ""}">
+        ${field.kind === "boolean" ? "" : `<span class="field-label">${escapeHtml(field.label)}</span>`}
+        <span class="field-description">${escapeHtml(field.description ?? "")}</span>
+        ${renderField(field, value)}
+      </label>
     `;
   }).join("");
+
+  return `
+    <section class="panel control-detail">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Configuration</p>
+          <h2>${escapeHtml(section.title)}</h2>
+          <p class="muted">${escapeHtml(section.description)}</p>
+        </div>
+      </div>
+      <form method="post" action="${escapeHtml(routeBase)}" class="section-form">
+        ${renderUiStateFields(state)}
+        <input type="hidden" name="action" value="save-section" />
+        <input type="hidden" name="sectionId" value="${escapeHtml(section.id)}" />
+        <div class="field-grid">${fields}</div>
+        <div class="section-actions">
+          <button type="submit" class="runtime-btn">Save ${escapeHtml(section.title)}</button>
+        </div>
+      </form>
+    </section>
+  `;
 }
 
 function renderTokens(routeBase, tokens, state, createdToken) {
@@ -222,6 +276,7 @@ function renderTokens(routeBase, tokens, state, createdToken) {
             <p class="muted">created ${escapeHtml(formatTimestampMs(token.createdAt))} · last used ${escapeHtml(formatTimestampMs(token.lastUsedAt))}</p>
           </div>
           <form method="post" action="${escapeHtml(routeBase)}" class="inline-form stack-gap">
+            ${renderUiStateFields(state)}
             <input type="hidden" name="action" value="token-revoke" />
             <input type="hidden" name="tokenId" value="${escapeHtml(token.tokenId)}" />
             <input type="hidden" name="revokeReason" value="${escapeHtml(state.revokeReason)}" />
@@ -241,6 +296,7 @@ function renderTokens(routeBase, tokens, state, createdToken) {
       </div>
       ${createdToken ? `<article class="notice-card"><p class="eyebrow">New token</p><pre>${escapeHtml(createdToken)}</pre></article>` : ""}
       <form method="post" action="${escapeHtml(routeBase)}" class="section-form">
+        ${renderUiStateFields(state)}
         <input type="hidden" name="action" value="token-create" />
         <div class="field-grid">
           <label class="field-card"><span class="field-label">Kind</span><select name="tokenKind"><option value="node" ${state.tokenKind === "node" ? "selected" : ""}>Node</option><option value="service" ${state.tokenKind === "service" ? "selected" : ""}>Service</option><option value="user" ${state.tokenKind === "user" ? "selected" : ""}>User</option></select></label>
@@ -268,6 +324,7 @@ function renderLinks(routeBase, links, state) {
             <p class="muted">actor ${escapeHtml(link.actorId)} · uid ${escapeHtml(link.uid)} · linked ${escapeHtml(formatTimestampMs(link.createdAt))}</p>
           </div>
           <form method="post" action="${escapeHtml(routeBase)}" class="inline-form">
+            ${renderUiStateFields(state)}
             <input type="hidden" name="action" value="unlink" />
             <input type="hidden" name="linkAdapter" value="${escapeHtml(link.adapter)}" />
             <input type="hidden" name="linkAccountId" value="${escapeHtml(link.accountId)}" />
@@ -288,11 +345,13 @@ function renderLinks(routeBase, links, state) {
       </div>
       <div class="sub-grid">
         <form method="post" action="${escapeHtml(routeBase)}" class="section-form">
+          ${renderUiStateFields(state)}
           <input type="hidden" name="action" value="link-code" />
           <label class="field-card is-wide"><span class="field-label">Link Code</span><input type="text" name="linkCode" value="${escapeHtml(state.linkCode)}" placeholder="Paste code from adapter challenge" /></label>
           <div class="section-actions"><button type="submit" class="runtime-btn">Consume code</button></div>
         </form>
         <form method="post" action="${escapeHtml(routeBase)}" class="section-form">
+          ${renderUiStateFields(state)}
           <input type="hidden" name="action" value="link-manual" />
           <div class="field-grid">
             <label class="field-card"><span class="field-label">Adapter</span><input type="text" name="linkAdapter" value="${escapeHtml(state.linkAdapter)}" /></label>
@@ -334,6 +393,7 @@ function renderAdapterSection(routeBase, state, adapterStatus, adapterChallenge,
       ${adapterChallenge ? `<article class="notice-card"><p class="eyebrow">Challenge</p><pre>${escapeHtml(JSON.stringify(adapterChallenge, null, 2))}</pre></article>` : ""}
       ${adapterError ? `<article class="error-card"><p>${escapeHtml(adapterError)}</p></article>` : ""}
       <form method="post" action="${escapeHtml(routeBase)}" class="section-form">
+        ${renderUiStateFields(state)}
         <div class="field-grid">
           <label class="field-card"><span class="field-label">Adapter</span><input type="text" name="adapterId" value="${escapeHtml(state.adapterId)}" /></label>
           <label class="field-card"><span class="field-label">Account ID</span><input type="text" name="adapterAccountId" value="${escapeHtml(state.adapterAccountId)}" /></label>
@@ -370,6 +430,7 @@ function renderAdvanced(routeBase, entries, state) {
         </div>
       </div>
       <form method="post" action="${escapeHtml(routeBase)}" class="section-form">
+        ${renderUiStateFields(state)}
         <input type="hidden" name="action" value="raw-save" />
         <div class="field-grid">
           <label class="field-card"><span class="field-label">Key</span><input type="text" name="rawKey" value="${escapeHtml(state.rawKey)}" placeholder="config/..." /></label>
@@ -382,6 +443,48 @@ function renderAdvanced(routeBase, entries, state) {
   `;
 }
 
+function renderTopTabs(routeBase, state) {
+  return `
+    <nav class="control-tabs" aria-label="Control sections">
+      ${CONTROL_TABS.map((tab) => `
+        <a
+          class="control-tab ${state.activeTab === tab.id ? "is-active" : ""}"
+          href="${escapeHtml(hrefWithState(routeBase, state, { activeTab: tab.id }))}"
+        >
+          ${escapeHtml(tab.title)}
+        </a>
+      `).join("")}
+    </nav>
+  `;
+}
+
+function renderAccessPanel(routeBase, payload) {
+  return `
+    <section class="control-stack">
+      ${renderTokens(routeBase, payload.tokens, payload.state, payload.createdToken)}
+      ${renderLinks(routeBase, payload.links, payload.state)}
+    </section>
+  `;
+}
+
+function renderActivePanel(routeBase, payload, entriesByKey) {
+  if (payload.state.activeTab === "config") {
+    return `
+      <section class="control-layout">
+        ${renderConfigNav(routeBase, payload.state)}
+        ${renderConfigSection(routeBase, entriesByKey, payload.state)}
+      </section>
+    `;
+  }
+  if (payload.state.activeTab === "access") {
+    return renderAccessPanel(routeBase, payload);
+  }
+  if (payload.state.activeTab === "adapters") {
+    return renderAdapterSection(routeBase, payload.state, payload.adapterStatus, payload.adapterChallenge, payload.adapterError);
+  }
+  return renderAdvanced(routeBase, payload.entries, payload.state);
+}
+
 function renderPage(routeBase, payload) {
   const entriesByKey = entryMap(payload.entries);
   return `<!doctype html>
@@ -392,42 +495,127 @@ function renderPage(routeBase, payload) {
     <title>Control</title>
     <link rel="stylesheet" href="/runtime/theme.css" />
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: light;
+        --page: #edf2f6;
+        --surface: rgba(250, 252, 254, 0.94);
+        --surface-soft: rgba(242, 246, 249, 0.96);
+        --surface-muted: rgba(232, 238, 243, 0.9);
+        --text: #191c1e;
+        --text-muted: rgba(25, 28, 30, 0.64);
+        --text-soft: rgba(25, 28, 30, 0.48);
+        --primary: #003466;
+        --primary-soft: #1a4b84;
+        --danger: #8a3b3b;
+        --danger-soft: rgba(255, 232, 230, 0.95);
+        --notice-soft: rgba(228, 240, 252, 0.95);
+        --line: rgba(25, 28, 30, 0.08);
+        --shadow: 0 18px 36px rgba(25, 28, 30, 0.06), 0 8px 16px rgba(25, 28, 30, 0.04);
+        --display: "Space Grotesk", "Avenir Next", sans-serif;
+        --ui: "Manrope", "Segoe UI", sans-serif;
+        --mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+      }
+      * { box-sizing: border-box; }
       body {
         margin: 0;
-        font: 14px/1.5 var(--gsv-font-sans, "Inter", sans-serif);
-        background: var(--gsv-color-bg, #0c111b);
-        color: var(--gsv-color-text, #f3f5f7);
+        font: 14px/1.55 var(--ui);
+        color: var(--text);
+        background:
+          radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0) 30%),
+          linear-gradient(180deg, #f6f8fb 0%, var(--page) 100%);
       }
       main {
-        box-sizing: border-box;
         min-height: 100vh;
-        padding: 24px;
+        padding: 22px;
         display: grid;
-        gap: 18px;
+        gap: 16px;
       }
-      .hero,
       .panel {
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(10, 15, 23, 0.72);
-        border-radius: 18px;
-        box-shadow: 0 14px 38px rgba(0, 0, 0, 0.22);
+        background: var(--surface);
+        border-radius: 20px;
+        box-shadow: var(--shadow);
       }
-      .hero { padding: 22px; }
+      .control-frame {
+        display: grid;
+        gap: 16px;
+      }
       .panel { padding: 18px; }
       .eyebrow {
         margin: 0 0 8px;
+        color: var(--text-soft);
         font-size: 11px;
-        letter-spacing: 0.14em;
+        font-weight: 800;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
-        color: rgba(193, 205, 224, 0.72);
       }
       h1, h2, h3, p { margin: 0; }
-      h1 { font-size: clamp(28px, 5vw, 48px); line-height: 1.05; }
-      h2 { font-size: 22px; }
-      h3 { font-size: 16px; }
-      .muted { color: rgba(193, 205, 224, 0.76); }
-      .section-header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+      h1, h2 { font-family: var(--display); letter-spacing: -0.04em; }
+      h1 { font-size: clamp(2rem, 4vw, 3.2rem); line-height: 0.94; }
+      h2 { font-size: 1.8rem; line-height: 0.96; }
+      h3 { font-size: 0.98rem; }
+      .muted { color: var(--text-muted); }
+      .control-tabs {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .control-tab {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 14px;
+        border-radius: 999px;
+        text-decoration: none;
+        color: var(--text-muted);
+        background: rgba(255, 255, 255, 0.58);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
+        font-weight: 700;
+      }
+      .control-tab.is-active {
+        color: #f7fbff;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-soft) 100%);
+        box-shadow: 0 12px 24px rgba(0, 52, 102, 0.16);
+      }
+      .control-layout {
+        display: grid;
+        grid-template-columns: 280px minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+      .control-subnav {
+        display: grid;
+        gap: 10px;
+      }
+      .control-subnav-link {
+        display: grid;
+        gap: 4px;
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.58);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
+        text-decoration: none;
+        color: inherit;
+      }
+      .control-subnav-link.is-active {
+        background: rgba(233, 241, 248, 0.95);
+        box-shadow: 0 12px 24px rgba(25, 28, 30, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+      }
+      .control-subnav-title {
+        font-weight: 700;
+      }
+      .control-subnav-copy {
+        color: var(--text-muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .control-detail {
+        min-width: 0;
+      }
+      .control-stack {
+        display: grid;
+        gap: 16px;
+      }
+      .section-header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 14px; align-items: start; }
       .section-form,
       .sub-grid { display: grid; gap: 14px; }
       .field-grid {
@@ -439,24 +627,25 @@ function renderPage(routeBase, payload) {
         display: grid;
         gap: 8px;
         padding: 14px;
-        border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.03);
+        border-radius: 16px;
+        background: var(--surface-soft);
       }
       .field-card.is-wide { grid-column: 1 / -1; }
-      .field-label { font-weight: 600; }
-      .field-description { color: rgba(193, 205, 224, 0.7); font-size: 12px; }
+      .field-label { font-weight: 700; }
+      .field-description { color: var(--text-muted); font-size: 12px; }
       .checkbox-row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
       input, select, textarea {
         width: 100%;
-        box-sizing: border-box;
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.04);
-        color: inherit;
+        border-radius: 10px;
+        border: 0;
+        background: rgba(255, 255, 255, 0.7);
+        color: var(--text);
         padding: 10px 12px;
         font: inherit;
+        outline: none;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
       }
+      input:focus, select:focus, textarea:focus { box-shadow: inset 3px 0 0 rgba(0, 52, 102, 0.45); }
       textarea { resize: vertical; }
       .section-actions { display: flex; gap: 10px; flex-wrap: wrap; }
       .runtime-btn {
@@ -464,53 +653,47 @@ function renderPage(routeBase, payload) {
         align-items: center;
         justify-content: center;
         text-decoration: none;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.06);
-        color: inherit;
-        border-radius: 999px;
+        border: 0;
+        background: rgba(232, 238, 243, 0.92);
+        color: var(--text);
+        border-radius: 10px;
         padding: 10px 14px;
         font: inherit;
+        font-weight: 700;
         cursor: pointer;
       }
-      .runtime-btn.danger { border-color: rgba(255, 120, 120, 0.26); color: #ffb4b4; }
+      .runtime-btn.danger { background: var(--danger-soft); color: var(--danger); }
       .list-grid { display: grid; gap: 12px; }
       .list-row {
         display: flex;
         justify-content: space-between;
         gap: 16px;
         padding: 14px;
-        border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.03);
+        border-radius: 16px;
+        background: var(--surface-soft);
       }
       .compact-row { align-items: center; }
       .inline-form,
       .stack-gap { display: inline-flex; }
+      .inline-form { align-self: start; }
       .notice-card,
       .error-card {
         padding: 14px;
-        border-radius: 14px;
-        margin-bottom: 14px;
+        border-radius: 16px;
       }
-      .notice-card {
-        border: 1px solid rgba(120, 207, 255, 0.18);
-        background: rgba(120, 207, 255, 0.08);
-      }
-      .error-card {
-        border: 1px solid rgba(255, 120, 120, 0.22);
-        background: rgba(255, 120, 120, 0.08);
-        color: #ffb4b4;
-      }
-      pre, code {
-        font-family: var(--gsv-font-mono, "SFMono-Regular", "Consolas", monospace);
-      }
+      .notice-card { background: var(--notice-soft); }
+      .error-card { background: var(--danger-soft); color: var(--danger); }
+      pre, code { font-family: var(--mono); }
       pre {
         margin: 10px 0 0;
         white-space: pre-wrap;
         word-break: break-word;
-        background: rgba(5, 9, 19, 0.72);
+        background: rgba(232, 238, 243, 0.82);
         border-radius: 12px;
         padding: 12px;
+      }
+      @media (max-width: 900px) {
+        .control-layout { grid-template-columns: 1fr; }
       }
       @media (max-width: 760px) {
         main { padding: 14px; }
@@ -520,18 +703,12 @@ function renderPage(routeBase, payload) {
   </head>
   <body>
     <main>
-      <section class="hero">
-        <p class="eyebrow">System Control</p>
-        <h1>Control</h1>
-        <p class="muted">Manage kernel config, access credentials, links, and adapter connections. Theme and shell chrome remain host-owned.</p>
+      <section class="control-frame">
+        ${renderTopTabs(routeBase, payload.state)}
+        ${payload.notice ? `<section class="notice-card"><p>${escapeHtml(payload.notice)}</p></section>` : ""}
+        ${payload.error ? `<section class="error-card"><p>${escapeHtml(payload.error)}</p></section>` : ""}
+        ${renderActivePanel(routeBase, payload, entriesByKey)}
       </section>
-      ${payload.notice ? `<section class="notice-card"><p>${escapeHtml(payload.notice)}</p></section>` : ""}
-      ${payload.error ? `<section class="error-card"><p>${escapeHtml(payload.error)}</p></section>` : ""}
-      ${renderConfigSections(routeBase, entriesByKey)}
-      ${renderTokens(routeBase, payload.tokens, payload.state, payload.createdToken)}
-      ${renderLinks(routeBase, payload.links, payload.state)}
-      ${renderAdapterSection(routeBase, payload.state, payload.adapterStatus, payload.adapterChallenge, payload.adapterError)}
-      ${renderAdvanced(routeBase, payload.entries, payload.state)}
     </main>
   </body>
 </html>`;
