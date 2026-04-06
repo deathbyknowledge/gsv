@@ -1,5 +1,5 @@
 const SHELL_APP_SCRIPT = String.raw`
-import ghosttyWeb from 'https://cdn.jsdelivr.net/npm/ghostty-web@0.4.0/+esm';
+import { init, Terminal } from 'https://cdn.jsdelivr.net/npm/ghostty-web@0.4.0/+esm';
 
 const routeBase = document.body.dataset.routeBase || '/apps/shell';
 const streamNode = document.querySelector('[data-shell-terminal]');
@@ -144,8 +144,8 @@ async function runCommand(command) {
   }
 }
 
-await ghosttyWeb.init();
-terminal = new ghosttyWeb.Terminal({
+await init();
+terminal = new Terminal({
   fontFamily: 'JetBrains Mono, SFMono-Regular, Consolas, monospace',
   fontSize: 13,
   theme: {
