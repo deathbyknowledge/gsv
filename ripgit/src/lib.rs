@@ -163,6 +163,11 @@ impl DurableObject for Repository {
                 }
                 match parts.get(3).copied().unwrap_or("") {
                     "read" if req.method() == Method::Get => hyperspace::handle_read(&self.sql, &req).await,
+                    "refs" if req.method() == Method::Get => api::handle_refs(&self.sql),
+                    "log" if req.method() == Method::Get => {
+                        let url = req.url()?;
+                        api::handle_log(&self.sql, &url)
+                    }
                     "search" if req.method() == Method::Get => hyperspace::handle_search(&self.sql, &req).await,
                     "apply" if req.method() == Method::Post => hyperspace::handle_apply(&self.sql, &mut req).await,
                     "packages" => match (req.method(), parts.get(4).copied().unwrap_or("")) {
