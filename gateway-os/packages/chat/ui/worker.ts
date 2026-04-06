@@ -7,489 +7,8 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function renderPage(routeBase) {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Chat</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
-    <style>
-      :root {
-        color-scheme: light;
-        --page: #eef3f7;
-        --surface: rgba(247, 249, 252, 0.88);
-        --surface-strong: rgba(255, 255, 255, 0.94);
-        --surface-soft: rgba(232, 238, 243, 0.92);
-        --text: #191c1e;
-        --text-muted: rgba(25, 28, 30, 0.62);
-        --text-soft: rgba(25, 28, 30, 0.46);
-        --primary: #003466;
-        --primary-soft: #1a4b84;
-        --accent: #904b36;
-        --shadow: 0 20px 40px rgba(25, 28, 30, 0.06), 0 10px 14px rgba(25, 28, 30, 0.04);
-        --line: rgba(25, 28, 30, 0.08);
-        --display: "Space Grotesk", "Avenir Next", sans-serif;
-        --ui: "Manrope", "Segoe UI", sans-serif;
-        --mono: "IBM Plex Mono", "SFMono-Regular", monospace;
-      }
-      * { box-sizing: border-box; }
-      html, body { min-height: 100%; }
-      body {
-        margin: 0;
-        font: 14px/1.55 var(--ui);
-        color: var(--text);
-        background:
-          radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0) 34%),
-          linear-gradient(180deg, #f4f7fa 0%, var(--page) 100%);
-      }
-      button,
-      textarea {
-        font: inherit;
-      }
-      .chat-shell {
-        min-height: 100vh;
-        display: grid;
-        grid-template-columns: 300px minmax(0, 1fr);
-        gap: 18px;
-        padding: 18px;
-      }
-      .rail,
-      .stage {
-        min-width: 0;
-        border-radius: 22px;
-        background: var(--surface);
-        box-shadow: var(--shadow);
-      }
-      .rail {
-        display: grid;
-        grid-template-rows: auto 1fr;
-        overflow: hidden;
-      }
-      .rail-head {
-        padding: 18px 18px 14px;
-        display: grid;
-        gap: 14px;
-      }
-      .eyebrow {
-        margin: 0;
-        color: var(--text-soft);
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-      }
-      .rail-title {
-        margin: 0;
-        font-family: var(--display);
-        font-size: 1.75rem;
-        line-height: 0.95;
-        letter-spacing: -0.04em;
-      }
-      .rail-copy {
-        margin: 0;
-        color: var(--text-muted);
-      }
-      .rail-actions {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-      .thread-status {
-        min-height: 20px;
-        margin: 0;
-        color: var(--text-muted);
-        font-size: 13px;
-      }
-      .thread-list {
-        padding: 0 12px 12px;
-        display: grid;
-        gap: 10px;
-        overflow: auto;
-      }
-      .thread-card {
-        width: 100%;
-        border: 0;
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.72);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
-        color: inherit;
-        padding: 14px;
-        text-align: left;
-        cursor: pointer;
-        transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
-      }
-      .thread-card:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 12px 22px rgba(25, 28, 30, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.7);
-      }
-      .thread-card.is-active {
-        background: rgba(235, 242, 248, 0.96);
-        box-shadow: 0 16px 28px rgba(25, 28, 30, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.78);
-      }
-      .thread-title {
-        display: block;
-        font-weight: 700;
-        font-size: 0.96rem;
-      }
-      .thread-meta {
-        display: block;
-        margin-top: 5px;
-        color: var(--text-muted);
-        font-size: 12px;
-      }
-      .stage {
-        display: grid;
-        grid-template-rows: auto minmax(0, 1fr) auto;
-        overflow: hidden;
-      }
-      .stage-head {
-        padding: 20px 22px 18px;
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 16px;
-      }
-      .stage-title-wrap {
-        min-width: 0;
-      }
-      .stage-title {
-        margin: 0;
-        font-family: var(--display);
-        font-size: 2rem;
-        line-height: 0.95;
-        letter-spacing: -0.04em;
-      }
-      .stage-meta {
-        margin: 8px 0 0;
-        color: var(--text-muted);
-      }
-      .stage-actions {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-      }
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 5px 10px;
-        border-radius: 999px;
-        background: rgba(232, 238, 243, 0.92);
-        color: var(--text-muted);
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .pill.is-connected { color: #29533e; background: rgba(218, 235, 225, 0.92); }
-      .pill.is-connecting { color: #785400; background: rgba(255, 241, 200, 0.92); }
-      .pill.is-disconnected { color: #7a3030; background: rgba(255, 226, 226, 0.92); }
-      .stage-body {
-        min-height: 0;
-        padding: 0 22px 20px;
-      }
-      .transcript {
-        min-height: 100%;
-        height: 100%;
-        border-radius: 20px;
-        background: var(--surface-soft);
-        padding: 16px;
-        display: grid;
-        gap: 12px;
-        overflow: auto;
-      }
-      .message {
-        max-width: min(88%, 760px);
-        border-radius: 18px;
-        padding: 12px 14px;
-        background: rgba(255, 255, 255, 0.78);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
-      }
-      .message-user {
-        justify-self: end;
-        background: linear-gradient(180deg, rgba(0, 52, 102, 0.12) 0%, rgba(26, 75, 132, 0.09) 100%), rgba(255, 255, 255, 0.78);
-      }
-      .message-assistant {
-        justify-self: start;
-      }
-      .message-system {
-        justify-self: center;
-        max-width: min(94%, 760px);
-        background: rgba(255, 255, 255, 0.56);
-      }
-      .message-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 8px;
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--text-soft);
-      }
-      .message-body {
-        margin: 0;
-        color: var(--text);
-        white-space: pre-wrap;
-        word-break: break-word;
-        font: inherit;
-      }
-      .tool-card {
-        justify-self: start;
-        width: min(92%, 760px);
-        border-radius: 18px;
-        padding: 14px;
-        background: rgba(255, 255, 255, 0.72);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
-      }
-      .tool-card.is-pending {
-        background: rgba(245, 247, 250, 0.92);
-      }
-      .tool-card.is-ok {
-        background: rgba(240, 246, 251, 0.95);
-      }
-      .tool-card.is-error {
-        background: rgba(255, 241, 239, 0.95);
-      }
-      .tool-card-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      .tool-card-title {
-        margin: 0;
-        font-size: 0.96rem;
-        font-weight: 700;
-      }
-      .tool-card-subtitle {
-        margin: 6px 0 0;
-        color: var(--text-muted);
-        font-size: 12px;
-      }
-      .tool-status {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 5px 9px;
-        border-radius: 999px;
-        font-size: 10px;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .tool-status.is-pending {
-        background: rgba(232, 238, 243, 0.92);
-        color: #59646d;
-      }
-      .tool-status.is-ok {
-        background: rgba(218, 235, 225, 0.92);
-        color: #29533e;
-      }
-      .tool-status.is-error {
-        background: rgba(255, 226, 226, 0.92);
-        color: #7a3030;
-      }
-      .tool-target {
-        margin-left: 8px;
-        color: var(--text-soft);
-      }
-      .tool-preview {
-        margin-top: 12px;
-        display: grid;
-        gap: 8px;
-      }
-      .tool-preview-line,
-      .tool-error {
-        margin: 0;
-        color: var(--text-muted);
-      }
-      .tool-preview-line.is-error,
-      .tool-error {
-        color: #8a3b3b;
-      }
-      .tool-preview-pre,
-      .tool-details pre {
-        margin: 0;
-        padding: 12px;
-        border-radius: 12px;
-        background: rgba(232, 238, 243, 0.82);
-        color: var(--text);
-        white-space: pre-wrap;
-        word-break: break-word;
-        font: 12px/1.5 var(--mono);
-      }
-      .tool-details {
-        margin-top: 12px;
-      }
-      .tool-details summary {
-        cursor: pointer;
-        color: var(--primary);
-        font-size: 12px;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .tool-detail-block {
-        margin-top: 12px;
-        display: grid;
-        gap: 10px;
-      }
-      .tool-meta-grid {
-        display: grid;
-        gap: 8px;
-      }
-      .tool-meta-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        font-size: 12px;
-      }
-      .tool-meta-label {
-        color: var(--text-soft);
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        font-weight: 800;
-      }
-      .tool-meta-value {
-        color: var(--text);
-        text-align: right;
-      }
-      .composer-wrap {
-        padding: 0 22px 22px;
-      }
-      .composer {
-        border-radius: 20px;
-        background: rgba(255, 255, 255, 0.84);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
-        padding: 16px;
-        display: grid;
-        gap: 12px;
-      }
-      .composer-field {
-        width: 100%;
-        min-height: 104px;
-        resize: vertical;
-        border: 0;
-        border-radius: 14px;
-        background: rgba(232, 238, 243, 0.78);
-        color: var(--text);
-        padding: 14px;
-        outline: none;
-      }
-      .composer-field:focus {
-        box-shadow: inset 3px 0 0 rgba(0, 52, 102, 0.45);
-      }
-      .composer-foot {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 14px;
-        flex-wrap: wrap;
-      }
-      .composer-note {
-        margin: 0;
-        color: var(--text-muted);
-      }
-      .btn {
-        border: 0;
-        border-radius: 10px;
-        padding: 10px 14px;
-        cursor: pointer;
-        font-weight: 700;
-        transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
-      }
-      .btn:hover { transform: translateY(-1px); }
-      .btn:disabled { opacity: 0.45; cursor: default; transform: none; }
-      .btn-quiet {
-        background: rgba(232, 238, 243, 0.92);
-        color: var(--text);
-      }
-      .btn-quiet:hover { background: rgba(225, 233, 239, 1); }
-      .btn-primary {
-        color: #f7fbff;
-        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-soft) 100%);
-        box-shadow: 0 12px 24px rgba(0, 52, 102, 0.2);
-      }
-      .btn-primary:hover {
-        box-shadow: 0 14px 26px rgba(0, 52, 102, 0.24);
-      }
-      .mono {
-        font-family: var(--mono);
-      }
-      @media (max-width: 920px) {
-        .chat-shell {
-          grid-template-columns: 1fr;
-          padding: 12px;
-        }
-        .stage-head,
-        .composer-foot {
-          flex-direction: column;
-          align-items: stretch;
-        }
-        .stage-actions {
-          justify-content: flex-start;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <main class="chat-shell">
-      <aside class="rail">
-        <div class="rail-head">
-          <div>
-            <p class="eyebrow">Workspace threads</p>
-            <h1 class="rail-title">Conversations</h1>
-            <p class="rail-copy">Pick up where you left off or start a new thread.</p>
-          </div>
-          <div class="rail-actions">
-            <button type="button" class="btn btn-quiet" id="new-thread">New thread</button>
-            <button type="button" class="btn btn-quiet" id="refresh-threads">Refresh</button>
-          </div>
-          <p class="thread-status" id="thread-status"></p>
-        </div>
-        <div class="thread-list" id="thread-list"></div>
-      </aside>
-
-      <section class="stage">
-        <header class="stage-head">
-          <div class="stage-title-wrap">
-            <h1 class="stage-title" id="active-thread-title">New conversation</h1>
-            <p class="stage-meta" id="active-thread-meta">Send a message to start a thread or reopen one from the left.</p>
-          </div>
-          <div class="stage-actions">
-            <button type="button" class="btn btn-quiet" id="open-files">Files</button>
-            <button type="button" class="btn btn-quiet" id="open-shell">Shell</button>
-            <span class="pill is-connecting" id="connection-pill">connecting</span>
-          </div>
-        </header>
-
-        <div class="stage-body">
-          <section class="transcript" id="chat-log"></section>
-        </div>
-
-        <div class="composer-wrap">
-          <form class="composer" id="chat-compose-form">
-            <textarea class="composer-field" id="chat-input" placeholder="Ask something, continue a thread, or describe the task you want help with."></textarea>
-            <div class="composer-foot">
-              <p class="composer-note" id="compose-status">Waiting for desktop host.</p>
-              <button type="submit" class="btn btn-primary" id="send-button">Send</button>
-            </div>
-          </form>
-        </div>
-      </section>
-    </main>
-
-    <script>
-      const ROUTE_BASE = ${JSON.stringify(routeBase)};
+function renderClientScript(routeBase) {
+  return `      const ROUTE_BASE = ${JSON.stringify(routeBase)};
       const WINDOW_ID = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
       const ACTIVE_THREAD_CONTEXT_KEY = "gsv.activeThreadContext.v1";
       const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
@@ -1569,8 +1088,491 @@ function renderPage(routeBase) {
         }
       }
 
-      void boot();
-    </script>
+      void boot();`;
+}
+
+function renderPage(routeBase) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        color-scheme: light;
+        --page: #eef3f7;
+        --surface: rgba(247, 249, 252, 0.88);
+        --surface-strong: rgba(255, 255, 255, 0.94);
+        --surface-soft: rgba(232, 238, 243, 0.92);
+        --text: #191c1e;
+        --text-muted: rgba(25, 28, 30, 0.62);
+        --text-soft: rgba(25, 28, 30, 0.46);
+        --primary: #003466;
+        --primary-soft: #1a4b84;
+        --accent: #904b36;
+        --shadow: 0 20px 40px rgba(25, 28, 30, 0.06), 0 10px 14px rgba(25, 28, 30, 0.04);
+        --line: rgba(25, 28, 30, 0.08);
+        --display: "Space Grotesk", "Avenir Next", sans-serif;
+        --ui: "Manrope", "Segoe UI", sans-serif;
+        --mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body {
+        margin: 0;
+        font: 14px/1.55 var(--ui);
+        color: var(--text);
+        background:
+          radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0) 34%),
+          linear-gradient(180deg, #f4f7fa 0%, var(--page) 100%);
+      }
+      button,
+      textarea {
+        font: inherit;
+      }
+      .chat-shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 300px minmax(0, 1fr);
+        gap: 18px;
+        padding: 18px;
+      }
+      .rail,
+      .stage {
+        min-width: 0;
+        border-radius: 22px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+      .rail {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        overflow: hidden;
+      }
+      .rail-head {
+        padding: 18px 18px 14px;
+        display: grid;
+        gap: 14px;
+      }
+      .eyebrow {
+        margin: 0;
+        color: var(--text-soft);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .rail-title {
+        margin: 0;
+        font-family: var(--display);
+        font-size: 1.75rem;
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+      }
+      .rail-copy {
+        margin: 0;
+        color: var(--text-muted);
+      }
+      .rail-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .thread-status {
+        min-height: 20px;
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+      .thread-list {
+        padding: 0 12px 12px;
+        display: grid;
+        gap: 10px;
+        overflow: auto;
+      }
+      .thread-card {
+        width: 100%;
+        border: 0;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+        color: inherit;
+        padding: 14px;
+        text-align: left;
+        cursor: pointer;
+        transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+      }
+      .thread-card:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 22px rgba(25, 28, 30, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+      }
+      .thread-card.is-active {
+        background: rgba(235, 242, 248, 0.96);
+        box-shadow: 0 16px 28px rgba(25, 28, 30, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+      }
+      .thread-title {
+        display: block;
+        font-weight: 700;
+        font-size: 0.96rem;
+      }
+      .thread-meta {
+        display: block;
+        margin-top: 5px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .stage {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        overflow: hidden;
+      }
+      .stage-head {
+        padding: 20px 22px 18px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .stage-title-wrap {
+        min-width: 0;
+      }
+      .stage-title {
+        margin: 0;
+        font-family: var(--display);
+        font-size: 2rem;
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+      }
+      .stage-meta {
+        margin: 8px 0 0;
+        color: var(--text-muted);
+      }
+      .stage-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: rgba(232, 238, 243, 0.92);
+        color: var(--text-muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .pill.is-connected { color: #29533e; background: rgba(218, 235, 225, 0.92); }
+      .pill.is-connecting { color: #785400; background: rgba(255, 241, 200, 0.92); }
+      .pill.is-disconnected { color: #7a3030; background: rgba(255, 226, 226, 0.92); }
+      .stage-body {
+        min-height: 0;
+        padding: 0 22px 20px;
+      }
+      .transcript {
+        min-height: 100%;
+        height: 100%;
+        border-radius: 20px;
+        background: var(--surface-soft);
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+        overflow: auto;
+      }
+      .message {
+        max-width: min(88%, 760px);
+        border-radius: 18px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.78);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+      }
+      .message-user {
+        justify-self: end;
+        background: linear-gradient(180deg, rgba(0, 52, 102, 0.12) 0%, rgba(26, 75, 132, 0.09) 100%), rgba(255, 255, 255, 0.78);
+      }
+      .message-assistant {
+        justify-self: start;
+      }
+      .message-system {
+        justify-self: center;
+        max-width: min(94%, 760px);
+        background: rgba(255, 255, 255, 0.56);
+      }
+      .message-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-soft);
+      }
+      .message-body {
+        margin: 0;
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: inherit;
+      }
+      .tool-card {
+        justify-self: start;
+        width: min(92%, 760px);
+        border-radius: 18px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+      }
+      .tool-card.is-pending {
+        background: rgba(245, 247, 250, 0.92);
+      }
+      .tool-card.is-ok {
+        background: rgba(240, 246, 251, 0.95);
+      }
+      .tool-card.is-error {
+        background: rgba(255, 241, 239, 0.95);
+      }
+      .tool-card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .tool-card-title {
+        margin: 0;
+        font-size: 0.96rem;
+        font-weight: 700;
+      }
+      .tool-card-subtitle {
+        margin: 6px 0 0;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .tool-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 9px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .tool-status.is-pending {
+        background: rgba(232, 238, 243, 0.92);
+        color: #59646d;
+      }
+      .tool-status.is-ok {
+        background: rgba(218, 235, 225, 0.92);
+        color: #29533e;
+      }
+      .tool-status.is-error {
+        background: rgba(255, 226, 226, 0.92);
+        color: #7a3030;
+      }
+      .tool-target {
+        margin-left: 8px;
+        color: var(--text-soft);
+      }
+      .tool-preview {
+        margin-top: 12px;
+        display: grid;
+        gap: 8px;
+      }
+      .tool-preview-line,
+      .tool-error {
+        margin: 0;
+        color: var(--text-muted);
+      }
+      .tool-preview-line.is-error,
+      .tool-error {
+        color: #8a3b3b;
+      }
+      .tool-preview-pre,
+      .tool-details pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 12px;
+        background: rgba(232, 238, 243, 0.82);
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 12px/1.5 var(--mono);
+      }
+      .tool-details {
+        margin-top: 12px;
+      }
+      .tool-details summary {
+        cursor: pointer;
+        color: var(--primary);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .tool-detail-block {
+        margin-top: 12px;
+        display: grid;
+        gap: 10px;
+      }
+      .tool-meta-grid {
+        display: grid;
+        gap: 8px;
+      }
+      .tool-meta-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+      }
+      .tool-meta-label {
+        color: var(--text-soft);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 800;
+      }
+      .tool-meta-value {
+        color: var(--text);
+        text-align: right;
+      }
+      .composer-wrap {
+        padding: 0 22px 22px;
+      }
+      .composer {
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.84);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+      }
+      .composer-field {
+        width: 100%;
+        min-height: 104px;
+        resize: vertical;
+        border: 0;
+        border-radius: 14px;
+        background: rgba(232, 238, 243, 0.78);
+        color: var(--text);
+        padding: 14px;
+        outline: none;
+      }
+      .composer-field:focus {
+        box-shadow: inset 3px 0 0 rgba(0, 52, 102, 0.45);
+      }
+      .composer-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .composer-note {
+        margin: 0;
+        color: var(--text-muted);
+      }
+      .btn {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 14px;
+        cursor: pointer;
+        font-weight: 700;
+        transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+      }
+      .btn:hover { transform: translateY(-1px); }
+      .btn:disabled { opacity: 0.45; cursor: default; transform: none; }
+      .btn-quiet {
+        background: rgba(232, 238, 243, 0.92);
+        color: var(--text);
+      }
+      .btn-quiet:hover { background: rgba(225, 233, 239, 1); }
+      .btn-primary {
+        color: #f7fbff;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-soft) 100%);
+        box-shadow: 0 12px 24px rgba(0, 52, 102, 0.2);
+      }
+      .btn-primary:hover {
+        box-shadow: 0 14px 26px rgba(0, 52, 102, 0.24);
+      }
+      .mono {
+        font-family: var(--mono);
+      }
+      @media (max-width: 920px) {
+        .chat-shell {
+          grid-template-columns: 1fr;
+          padding: 12px;
+        }
+        .stage-head,
+        .composer-foot {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .stage-actions {
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="chat-shell">
+      <aside class="rail">
+        <div class="rail-head">
+          <div>
+            <p class="eyebrow">Workspace threads</p>
+            <h1 class="rail-title">Conversations</h1>
+            <p class="rail-copy">Pick up where you left off or start a new thread.</p>
+          </div>
+          <div class="rail-actions">
+            <button type="button" class="btn btn-quiet" id="new-thread">New thread</button>
+            <button type="button" class="btn btn-quiet" id="refresh-threads">Refresh</button>
+          </div>
+          <p class="thread-status" id="thread-status"></p>
+        </div>
+        <div class="thread-list" id="thread-list"></div>
+      </aside>
+
+      <section class="stage">
+        <header class="stage-head">
+          <div class="stage-title-wrap">
+            <h1 class="stage-title" id="active-thread-title">New conversation</h1>
+            <p class="stage-meta" id="active-thread-meta">Send a message to start a thread or reopen one from the left.</p>
+          </div>
+          <div class="stage-actions">
+            <button type="button" class="btn btn-quiet" id="open-files">Files</button>
+            <button type="button" class="btn btn-quiet" id="open-shell">Shell</button>
+            <span class="pill is-connecting" id="connection-pill">connecting</span>
+          </div>
+        </header>
+
+        <div class="stage-body">
+          <section class="transcript" id="chat-log"></section>
+        </div>
+
+        <div class="composer-wrap">
+          <form class="composer" id="chat-compose-form">
+            <textarea class="composer-field" id="chat-input" placeholder="Ask something, continue a thread, or describe the task you want help with."></textarea>
+            <div class="composer-foot">
+              <p class="composer-note" id="compose-status">Waiting for desktop host.</p>
+              <button type="submit" class="btn btn-primary" id="send-button">Send</button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="${escapeHtml(routeBase)}?asset=app.js"></script>
   </body>
 </html>`;
 }
@@ -1580,6 +1582,15 @@ export async function handleFetch(request, context = {}) {
   const env = context.env ?? {};
   const url = new URL(request.url);
   const routeBase = props.appFrame?.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/chat";
+
+  if (url.searchParams.get("asset") === "app.js") {
+    return new Response(renderClientScript(routeBase), {
+      headers: {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  }
 
   if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
     return new Response("Not Found", { status: 404 });
