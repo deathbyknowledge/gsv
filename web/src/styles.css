@@ -168,18 +168,22 @@ button:disabled {
 
 .topbar {
   position: absolute;
-  top: 16px;
-  left: 18px;
-  right: 18px;
+  top: auto;
+  bottom: 20px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 36px);
   height: var(--topbar-height);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 0 16px;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 12px;
   background: rgba(255, 255, 255, 0.12);
   border: 1px solid rgba(255, 255, 255, 0.26);
-  border-radius: 14px;
+  border-radius: 18px;
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.42),
@@ -237,22 +241,15 @@ button:disabled {
 .topbar-section {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.topbar > .topbar-section:first-child,
-.topbar > .topbar-section:last-child {
-  flex: 1 1 0;
+  gap: 8px;
 }
 
 .topbar-windows {
   position: relative;
-  justify-content: center;
 }
 
 .topbar-session {
-  justify-content: flex-end;
+  gap: 9px;
 }
 
 .pill {
@@ -298,17 +295,17 @@ button:disabled {
 }
 
 .session-lock-btn {
+  width: 30px;
   height: 30px;
   border: 0;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.28);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
   color: #14304d;
-  font-family: var(--font-ui);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   transition: box-shadow 120ms ease, background-color 120ms ease, transform 120ms ease;
 }
 
@@ -320,18 +317,31 @@ button:disabled {
 }
 
 .windows-toggle {
+  width: 30px;
   height: 30px;
   border: 0;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.28);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
   color: #14304d;
-  font-family: var(--font-ui);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   transition: box-shadow 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.topbar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.topbar-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 .session-lock-btn:hover,
@@ -350,7 +360,7 @@ button:disabled {
 
 .windows-panel {
   position: absolute;
-  top: calc(100% + 10px);
+  bottom: calc(100% + 10px);
   left: 50%;
   min-width: 240px;
   max-width: 290px;
@@ -408,7 +418,7 @@ button:disabled {
 
 .workspace {
   position: absolute;
-  inset: calc(var(--topbar-height) + 24px) 0 0;
+  inset: 0 0 calc(var(--topbar-height) + 34px) 0;
   z-index: 10;
 }
 
@@ -535,7 +545,7 @@ button:disabled {
 
 .desktop-icons {
   position: absolute;
-  top: 28px;
+  top: 18px;
   left: 22px;
   display: grid;
   grid-template-columns: 1fr;
@@ -3720,16 +3730,18 @@ button:disabled {
 
 @media (max-width: 980px) {
   .topbar {
-    top: 10px;
-    left: 10px;
-    right: 10px;
+    top: auto;
+    bottom: 12px;
+    left: 50%;
+    right: auto;
     height: 42px;
     padding: 0 10px;
     gap: 10px;
+    max-width: calc(100% - 20px);
   }
 
   .workspace {
-    inset: 60px 0 0;
+    inset: 0 0 58px 0;
   }
 
   .topbar-windows {
