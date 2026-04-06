@@ -4,6 +4,7 @@ import { init, Terminal, FitAddon } from 'https://cdn.jsdelivr.net/npm/ghostty-w
 const routeBase = document.body.dataset.routeBase || '/apps/shell';
 const streamNode = document.querySelector('[data-shell-terminal]');
 const statusNode = document.querySelector('[data-shell-status]');
+const statusTextNode = statusNode ? statusNode.querySelector('span:last-child') : null;
 const targetSelect = document.querySelector('[data-shell-target]');
 const workdirInput = document.querySelector('[data-shell-workdir]');
 const timeoutInput = document.querySelector('[data-shell-timeout]');
@@ -25,7 +26,9 @@ let running = false;
 function setStatus(kind, text) {
   if (!statusNode) return;
   statusNode.dataset.kind = kind;
-  statusNode.textContent = text || '';
+  if (statusTextNode) {
+    statusTextNode.textContent = text || '';
+  }
 }
 
 function currentTarget() {
@@ -479,6 +482,42 @@ function renderPage(routeBase, devices) {
         justify-content: flex-end;
         flex-wrap: wrap;
       }
+      .shell-status-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 36px;
+        padding: 0 10px;
+        border-radius: 999px;
+        background: rgba(18, 34, 53, 0.92);
+        color: var(--shell-muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .shell-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--shell-muted);
+      }
+      .shell-status-indicator[data-kind="working"] {
+        color: var(--shell-prompt);
+      }
+      .shell-status-indicator[data-kind="working"] .shell-status-dot {
+        background: var(--shell-prompt);
+      }
+      .shell-status-indicator[data-kind="error"] {
+        color: var(--shell-stderr);
+      }
+      .shell-status-indicator[data-kind="error"] .shell-status-dot {
+        background: var(--shell-stderr);
+      }
+      .shell-status-indicator[data-kind="ready"] {
+        color: #9dd3a8;
+      }
+      .shell-status-indicator[data-kind="ready"] .shell-status-dot {
+        background: #9dd3a8;
+      }
       .shell-btn,
       .shell-toolbar details summary {
         display: inline-flex;
@@ -530,20 +569,8 @@ function renderPage(routeBase, devices) {
       }
       .shell-stage {
         display: grid;
-        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr);
         min-height: 0;
-      }
-      .shell-status {
-        min-height: 20px;
-        padding: 10px 16px 0;
-        color: var(--shell-muted);
-        font-size: 13px;
-      }
-      .shell-status[data-kind="error"] {
-        color: var(--shell-stderr);
-      }
-      .shell-status[data-kind="working"] {
-        color: var(--shell-prompt);
       }
       .shell-terminal-wrap {
         min-height: 0;
@@ -586,6 +613,10 @@ function renderPage(routeBase, devices) {
           <input data-shell-workdir type="text" value="" placeholder="Optional" spellcheck="false" />
         </label>
         <div class="shell-toolbar-actions">
+          <div class="shell-status-indicator" data-shell-status data-kind="ready">
+            <span class="shell-status-dot" aria-hidden="true"></span>
+            <span>Ready</span>
+          </div>
           <button type="button" class="shell-btn shell-btn-quiet" data-shell-reset>Reset</button>
           <button type="button" class="shell-btn shell-btn-quiet" data-shell-clear>Clear</button>
           <details>
@@ -609,7 +640,6 @@ function renderPage(routeBase, devices) {
       </section>
 
       <section class="shell-stage">
-        <div class="shell-status" data-shell-status></div>
         <div class="shell-terminal-wrap">
           <div class="shell-terminal" data-shell-terminal></div>
         </div>
