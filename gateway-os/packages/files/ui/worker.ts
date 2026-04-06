@@ -148,7 +148,7 @@ function renderTargetOptions(target, devices) {
   return options.join("");
 }
 
-function renderEntries(routeBase, target, currentPath, pathStyle, result) {
+function renderEntries(routeBase, target, currentPath, pathStyle, result, selectedPath = currentPath) {
   const directories = Array.isArray(result?.directories) ? result.directories : [];
   const files = Array.isArray(result?.files) ? result.files : [];
   const parent = parentPath(currentPath, pathStyle);
@@ -168,7 +168,7 @@ function renderEntries(routeBase, target, currentPath, pathStyle, result) {
     const nextPath = joinPath(currentPath, name, pathStyle);
     items.push(`
       <li>
-        <a href="${routeBase}?target=${encodeURIComponent(target)}&path=${encodeURIComponent(nextPath)}" class="entry-link">
+        <a href="${routeBase}?target=${encodeURIComponent(target)}&path=${encodeURIComponent(nextPath)}" class="entry-link${nextPath === selectedPath ? " is-active" : ""}">
           <span class="entry-icon">DIR</span>
           <span>${escapeHtml(name)}</span>
         </a>
@@ -179,7 +179,7 @@ function renderEntries(routeBase, target, currentPath, pathStyle, result) {
     const nextPath = joinPath(currentPath, name, pathStyle);
     items.push(`
       <li>
-        <a href="${routeBase}?target=${encodeURIComponent(target)}&path=${encodeURIComponent(nextPath)}" class="entry-link">
+        <a href="${routeBase}?target=${encodeURIComponent(target)}&path=${encodeURIComponent(nextPath)}" class="entry-link${nextPath === selectedPath ? " is-active" : ""}">
           <span class="entry-icon">FILE</span>
           <span>${escapeHtml(name)}</span>
         </a>
@@ -274,6 +274,76 @@ function renderSearchResults(matches) {
     </li>`).join("")}</ul>`;
 }
 
+function renderDirectoryOverview(currentPath, result) {
+  const directories = Array.isArray(result?.directories) ? result.directories : [];
+  const files = Array.isArray(result?.files) ? result.files : [];
+  return `
+    <section class="panel content-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Directory</p>
+          <h2>${escapeHtml(currentPath)}</h2>
+          <p class="muted">${directories.length} folders · ${files.length} files</p>
+        </div>
+      </div>
+      <div class="directory-overview">
+        <article class="overview-card">
+          <h3>Navigator</h3>
+          <p class="muted">Browse files and folders from the left. Open a file to edit or preview it here.</p>
+        </article>
+        <article class="overview-card">
+          <h3>Current location</h3>
+          <p class="muted"><code>${escapeHtml(currentPath)}</code></p>
+        </article>
+      </div>
+    </section>`;
+}
+
+function renderSidebar(routeBase, target, devices, currentPath, pathStyle, searchQuery, navigator) {
+  return `
+    <aside class="panel sidebar">
+      <div class="sidebar-head">
+        <p class="eyebrow">Workspace files</p>
+        <h1>Files</h1>
+        <p class="muted">Browse target storage, search within the current path, and edit files in place.</p>
+      </div>
+
+      <div class="sidebar-section">
+        <form method="get" class="sidebar-form">
+          <label class="field">
+            <span class="muted">Target</span>
+            <select name="target">${renderTargetOptions(target, devices)}</select>
+          </label>
+          <label class="field">
+            <span class="muted">Path</span>
+            <input type="text" name="path" value="${escapeHtml(currentPath)}" />
+          </label>
+          <button type="submit" class="app-action">Open</button>
+        </form>
+      </div>
+
+      <div class="sidebar-section">
+        <form method="get" class="sidebar-form">
+          <input type="hidden" name="target" value="${escapeHtml(target)}" />
+          <input type="hidden" name="path" value="${escapeHtml(currentPath)}" />
+          <label class="field">
+            <span class="muted">Search</span>
+            <input type="text" name="q" value="${escapeHtml(searchQuery)}" />
+          </label>
+          <button type="submit" class="app-action">Search</button>
+        </form>
+      </div>
+
+      <div class="sidebar-section sidebar-nav">
+        <div class="sidebar-nav-head">
+          <p class="eyebrow">Navigator</p>
+          <p class="muted"><code>${escapeHtml(navigator?.path ?? currentPath)}</code></p>
+        </div>
+        ${navigator ? renderEntries(routeBase, target, navigator.path, navigator.pathStyle, navigator.result, currentPath) : '<p class="muted">No directory context available.</p>'}
+      </div>
+    </aside>`;
+}
+
 function renderPage(input) {
   const {
     routeBase,
@@ -284,21 +354,13 @@ function renderPage(input) {
     statusText,
     errorText,
     searchQuery,
+    navigator,
     view,
   } = input;
 
   let mainContent = "";
   if (view.kind === "directory") {
-    mainContent = `
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">Directory</p>
-            <h2>${escapeHtml(currentPath)}</h2>
-          </div>
-        </div>
-        ${renderEntries(routeBase, target, currentPath, pathStyle, view.result)}
-      </section>`;
+    mainContent = renderDirectoryOverview(currentPath, view.result);
   } else if (view.kind === "file") {
     mainContent = renderFile(routeBase, target, currentPath, view.result);
   } else if (view.kind === "search") {
@@ -327,68 +389,131 @@ function renderPage(input) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Files</title>
-    <link rel="stylesheet" href="/runtime/theme.css" />
     <style>
-      main { max-width: 1120px; margin: 0 auto; padding: 28px; display: grid; gap: 18px; }
-      .panel { border: 1px solid var(--edge); background: var(--panel); border-radius: 22px; padding: 20px; box-shadow: 0 22px 60px rgba(0, 0, 0, 0.35); }
-      .hero h1, .hero p, .panel h2, .panel p { margin: 0; }
-      .hero h1 { font-size: clamp(28px, 5vw, 52px); margin-bottom: 10px; }
-      .eyebrow { text-transform: uppercase; letter-spacing: 0.16em; font-size: 11px; color: var(--accent); margin: 0 0 8px; }
-      .muted { color: var(--muted); }
-      .toolbar { display: grid; gap: 12px; margin-top: 18px; }
-      .toolbar-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
-      .field { display: grid; gap: 6px; min-width: 240px; flex: 1 1 260px; }
-      .field input, .field select, .editor-form textarea { border: 1px solid var(--edge); background: rgba(5, 9, 19, 0.66); color: var(--text); border-radius: 14px; padding: 10px 12px; font: inherit; }
-      .editor-form { display: grid; gap: 12px; margin-top: 18px; }
-      .editor-form textarea { min-height: 460px; resize: vertical; font: 500 14px/1.6 "SFMono-Regular", "Consolas", monospace; }
-      .app-action { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; border: 1px solid rgba(138, 224, 255, 0.24); background: rgba(138, 224, 255, 0.14); color: var(--text); border-radius: 999px; padding: 9px 14px; font: inherit; }
-      .app-action.is-danger { border-color: rgba(255, 132, 132, 0.24); background: rgba(255, 132, 132, 0.12); }
-      .link-action { cursor: pointer; }
-      .status-line { padding: 14px 16px; border-radius: 16px; border: 1px solid rgba(138, 224, 255, 0.18); background: rgba(138, 224, 255, 0.1); }
-      .status-line.is-error, .error-panel { border-color: rgba(255, 132, 132, 0.24); background: rgba(255, 132, 132, 0.1); }
+      :root {
+        color-scheme: light;
+        --page: #ece7df;
+        --surface: rgba(248, 244, 237, 0.94);
+        --surface-soft: rgba(241, 235, 226, 0.96);
+        --surface-muted: rgba(228, 220, 208, 0.9);
+        --text: #191c1e;
+        --text-muted: rgba(25, 28, 30, 0.64);
+        --text-soft: rgba(25, 28, 30, 0.48);
+        --primary: #003466;
+        --primary-soft: #1a4b84;
+        --accent: #904b36;
+        --danger: #8a3b3b;
+        --danger-soft: rgba(255, 232, 230, 0.95);
+        --notice-soft: rgba(241, 231, 220, 0.95);
+        --shadow: 0 18px 36px rgba(25, 28, 30, 0.06), 0 8px 16px rgba(25, 28, 30, 0.04);
+        --display: "Space Grotesk", "Avenir Next", sans-serif;
+        --ui: "Manrope", "Segoe UI", sans-serif;
+        --mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.55 var(--ui);
+        color: var(--text);
+        background:
+          radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0) 30%),
+          linear-gradient(180deg, #f6f8fb 0%, var(--page) 100%);
+      }
+      h1, h2, h3, p { margin: 0; }
+      h1, h2 { font-family: var(--display); letter-spacing: -0.04em; }
+      h1 { font-size: clamp(2rem, 4vw, 3.1rem); line-height: 0.94; }
+      h2 { font-size: 1.8rem; line-height: 0.96; }
+      main { min-height: 100vh; padding: 22px; display: grid; }
+      .files-shell { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; }
+      .panel { background: var(--surface); border-radius: 20px; box-shadow: var(--shadow); padding: 18px; }
+      .sidebar { display: grid; gap: 16px; position: sticky; top: 22px; }
+      .sidebar-head { display: grid; gap: 8px; }
+      .sidebar-section { display: grid; gap: 12px; }
+      .sidebar-form { display: grid; gap: 12px; }
+      .sidebar-nav { min-height: 0; }
+      .sidebar-nav-head { display: grid; gap: 6px; }
+      .eyebrow { text-transform: uppercase; letter-spacing: 0.12em; font-size: 11px; font-weight: 800; color: var(--text-soft); }
+      .muted { color: var(--text-muted); }
+      .field { display: grid; gap: 6px; }
+      .field input, .field select, .editor-form textarea {
+        border: 0;
+        background: rgba(255, 255, 255, 0.7);
+        color: var(--text);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font: inherit;
+        outline: none;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+      }
+      .field input:focus, .field select:focus, .editor-form textarea:focus { box-shadow: inset 3px 0 0 rgba(0, 52, 102, 0.45); }
+      .app-action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-decoration: none;
+        border: 0;
+        background: rgba(228, 220, 208, 0.92);
+        color: var(--text);
+        border-radius: 10px;
+        padding: 10px 14px;
+        font: inherit;
+        font-weight: 700;
+      }
+      .app-action.is-danger { background: var(--danger-soft); color: var(--danger); }
+      .content-stack { display: grid; gap: 14px; }
+      .status-line { padding: 14px 16px; border-radius: 16px; background: var(--notice-soft); }
+      .status-line.is-error, .error-panel { background: var(--danger-soft); color: var(--danger); }
+      .content-panel { min-width: 0; }
       .panel-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: start; justify-content: space-between; margin-bottom: 16px; }
       .inline-form { margin: 0; }
       .entry-list, .search-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-      .entry-link { display: grid; grid-template-columns: 56px 1fr; gap: 12px; align-items: center; text-decoration: none; color: inherit; padding: 12px 14px; border-radius: 14px; background: rgba(138, 224, 255, 0.08); }
+      .entry-link {
+        display: grid;
+        grid-template-columns: 56px 1fr;
+        gap: 12px;
+        align-items: center;
+        text-decoration: none;
+        color: inherit;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(255, 250, 245, 0.62);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
+      }
+      .entry-link.is-active {
+        background: rgba(233, 217, 206, 0.96);
+      }
       .entry-icon { font-size: 11px; letter-spacing: 0.12em; color: var(--accent); }
-      .search-list li { padding: 12px 14px; border-radius: 14px; background: rgba(138, 224, 255, 0.08); }
-      pre { margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; border-radius: 14px; background: rgba(5, 9, 19, 0.8); padding: 12px; color: var(--text); }
-      .image-preview { display: block; max-width: 100%; border-radius: 18px; background: rgba(5, 9, 19, 0.8); margin-top: 12px; }
-      @media (max-width: 720px) { main { padding: 16px; } .panel { border-radius: 18px; } .entry-link { grid-template-columns: 1fr; } }
+      .search-list li, .overview-card {
+        padding: 14px;
+        border-radius: 16px;
+        background: var(--surface-soft);
+      }
+      .directory-overview { display: grid; gap: 12px; }
+      .editor-form { display: grid; gap: 12px; margin-top: 18px; }
+      .editor-form textarea { min-height: 460px; resize: vertical; font: 500 14px/1.6 var(--mono); }
+      pre, code { font-family: var(--mono); }
+      pre { margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; border-radius: 14px; background: rgba(232, 238, 243, 0.82); padding: 12px; color: var(--text); }
+      .image-preview { display: block; max-width: 100%; border-radius: 18px; background: rgba(232, 238, 243, 0.82); margin-top: 12px; }
+      @media (max-width: 900px) {
+        .files-shell { grid-template-columns: 1fr; }
+        .sidebar { position: static; }
+      }
+      @media (max-width: 720px) {
+        main { padding: 14px; }
+        .entry-link { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
     <main>
-      <section class="panel hero">
-        <p class="eyebrow">Package-served files</p>
-        <h1>Files</h1>
-        <p class="muted">This app is served from <code>${escapeHtml(routeBase)}</code> and uses <code>KERNEL.request(...)</code> for file reads, writes, deletes, and search.</p>
-        <div class="toolbar">
-          <form method="get" class="toolbar-row">
-            <label class="field" style="min-width: 180px; flex: 0 0 220px;">
-              <span class="muted">Target</span>
-              <select name="target">${renderTargetOptions(target, devices)}</select>
-            </label>
-            <label class="field">
-              <span class="muted">Path</span>
-              <input type="text" name="path" value="${escapeHtml(currentPath)}" />
-            </label>
-            <button type="submit" class="app-action">Open</button>
-          </form>
-          <form method="get" class="toolbar-row">
-            <input type="hidden" name="target" value="${escapeHtml(target)}" />
-            <input type="hidden" name="path" value="${escapeHtml(currentPath)}" />
-            <label class="field">
-              <span class="muted">Search</span>
-              <input type="text" name="q" value="${escapeHtml(searchQuery)}" />
-            </label>
-            <button type="submit" class="app-action">Search</button>
-          </form>
-        </div>
+      <section class="files-shell">
+        ${renderSidebar(routeBase, target, devices, currentPath, pathStyle, searchQuery, navigator)}
+        <section class="content-stack">
+          ${statusText ? `<section class="status-line"><p>${escapeHtml(statusText)}</p></section>` : ""}
+          ${errorText ? `<section class="status-line is-error"><p>${escapeHtml(errorText)}</p></section>` : ""}
+          ${mainContent}
+        </section>
       </section>
-      ${statusText ? `<section class="status-line"><p>${escapeHtml(statusText)}</p></section>` : ""}
-      ${errorText ? `<section class="status-line is-error"><p>${escapeHtml(errorText)}</p></section>` : ""}
-      ${mainContent}
     </main>
   </body>
 </html>`;
@@ -517,6 +642,25 @@ function renderPage(input) {
       }
     }
 
+    let navigator = null;
+    try {
+      const navigatorBasePath = view?.kind === "file"
+        ? parentPath(currentPath, pathStyle)
+        : currentPath;
+      const navigatorResult = await kernel.request("fs.read", withTarget(target, { path: navigatorBasePath }));
+      if (isDirectoryResult(navigatorResult)) {
+        const normalizedNavigatorPath = normalizePath(
+          navigatorResult.path ?? navigatorBasePath,
+          detectPathStyle(navigatorResult.path ?? navigatorBasePath),
+        );
+        navigator = {
+          path: normalizedNavigatorPath,
+          pathStyle: detectPathStyle(normalizedNavigatorPath),
+          result: navigatorResult,
+        };
+      }
+    } catch {}
+
     return new Response(renderPage({
       routeBase,
       target,
@@ -526,6 +670,7 @@ function renderPage(input) {
       searchQuery,
       statusText,
       errorText,
+      navigator,
       view,
     }), {
       headers: {
