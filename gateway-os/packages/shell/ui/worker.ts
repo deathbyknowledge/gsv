@@ -64,7 +64,7 @@ const SHELL_APP_SCRIPT = String.raw`
 
       const prompt = document.createElement('span');
       prompt.className = 'shell-log-prompt';
-      prompt.textContent = `${entry.target}$`;
+      prompt.textContent = String(entry.target) + '$';
       commandRow.appendChild(prompt);
 
       const command = document.createElement('code');
@@ -176,7 +176,7 @@ const SHELL_APP_SCRIPT = String.raw`
       });
       const data = await response.json();
       if (!response.ok || !data.ok) {
-        throw new Error(data.error || `Request failed with ${response.status}`);
+        throw new Error(data.error || ('Request failed with ' + response.status));
       }
 
       state.transcript = [...state.transcript, data.entry].slice(-120);
@@ -188,7 +188,7 @@ const SHELL_APP_SCRIPT = String.raw`
       }
     } catch (error) {
       state.transcript = [...state.transcript, {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8),
         target: payload.target || 'gsv',
         command,
         stdout: '',
