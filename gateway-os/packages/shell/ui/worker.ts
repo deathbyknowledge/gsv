@@ -314,6 +314,12 @@ function prettyJson(value) {
   }
 }
 
+function serializeScriptJson(value) {
+  return JSON.stringify(value)
+    .replaceAll("<", "\\u003c")
+    .replaceAll("</script", "<\\/script");
+}
+
 function parseOptionalPositiveInt(raw) {
   const trimmed = String(raw ?? "").trim();
   if (!trimmed) {
@@ -695,7 +701,7 @@ function renderPage(routeBase, devices) {
         </form>
       </section>
     </main>
-    <script id="shell-bootstrap" type="application/json">${escapeHtml(JSON.stringify(initialState))}</script>
+    <script id="shell-bootstrap" type="application/json">${serializeScriptJson(initialState)}</script>
     <script type="module" src="${escapeHtml(`${routeBase.replace(/\/$/, "")}/app.js`)}"></script>
   </body>
 </html>`;
