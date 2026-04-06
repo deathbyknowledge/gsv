@@ -242,6 +242,127 @@ function renderPage(routeBase) {
         word-break: break-word;
         font: inherit;
       }
+      .tool-card {
+        justify-self: start;
+        width: min(92%, 760px);
+        border-radius: 18px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+      }
+      .tool-card.is-pending {
+        background: rgba(245, 247, 250, 0.92);
+      }
+      .tool-card.is-ok {
+        background: rgba(240, 246, 251, 0.95);
+      }
+      .tool-card.is-error {
+        background: rgba(255, 241, 239, 0.95);
+      }
+      .tool-card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .tool-card-title {
+        margin: 0;
+        font-size: 0.96rem;
+        font-weight: 700;
+      }
+      .tool-card-subtitle {
+        margin: 6px 0 0;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .tool-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 9px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .tool-status.is-pending {
+        background: rgba(232, 238, 243, 0.92);
+        color: #59646d;
+      }
+      .tool-status.is-ok {
+        background: rgba(218, 235, 225, 0.92);
+        color: #29533e;
+      }
+      .tool-status.is-error {
+        background: rgba(255, 226, 226, 0.92);
+        color: #7a3030;
+      }
+      .tool-target {
+        margin-left: 8px;
+        color: var(--text-soft);
+      }
+      .tool-preview {
+        margin-top: 12px;
+        display: grid;
+        gap: 8px;
+      }
+      .tool-preview-line,
+      .tool-error {
+        margin: 0;
+        color: var(--text-muted);
+      }
+      .tool-preview-line.is-error,
+      .tool-error {
+        color: #8a3b3b;
+      }
+      .tool-preview-pre,
+      .tool-details pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 12px;
+        background: rgba(232, 238, 243, 0.82);
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 12px/1.5 var(--mono);
+      }
+      .tool-details {
+        margin-top: 12px;
+      }
+      .tool-details summary {
+        cursor: pointer;
+        color: var(--primary);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .tool-detail-block {
+        margin-top: 12px;
+        display: grid;
+        gap: 10px;
+      }
+      .tool-meta-grid {
+        display: grid;
+        gap: 8px;
+      }
+      .tool-meta-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+      }
+      .tool-meta-label {
+        color: var(--text-soft);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 800;
+      }
+      .tool-meta-value {
+        color: var(--text);
+        text-align: right;
+      }
       .composer-wrap {
         padding: 0 22px 22px;
       }
@@ -439,6 +560,316 @@ function renderPage(routeBase) {
         return "just now";
       }
 
+      function asBoolean(value) {
+        return typeof value === "boolean" ? value : null;
+      }
+
+      function asNumber(value) {
+        return typeof value === "number" && Number.isFinite(value) ? value : null;
+      }
+
+      function safeText(value) {
+        if (typeof value === "string") {
+          return value;
+        }
+        if (value === null || value === undefined) {
+          return "";
+        }
+        return String(value);
+      }
+
+      function maybeParseJsonString(value) {
+        const trimmed = value.trim();
+        if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) {
+          return value;
+        }
+        try {
+          return JSON.parse(trimmed);
+        } catch {
+          return value;
+        }
+      }
+
+      function normalizeToolOutput(value) {
+        if (typeof value !== "string") {
+          return value;
+        }
+        return maybeParseJsonString(value);
+      }
+
+      function truncateInline(value, maxLength = 80) {
+        const compact = String(value ?? "").replace(/\s+/g, " ").trim();
+        if (compact.length <= maxLength) {
+          return compact;
+        }
+        return compact.slice(0, maxLength) + "...";
+      }
+
+      function truncateBlock(value, maxLength = 1800) {
+        const text = String(value ?? "");
+        if (text.length <= maxLength) {
+          return text;
+        }
+        return text.slice(0, maxLength) + "\n...[truncated]";
+      }
+
+      function basenamePath(path) {
+        const normalized = String(path ?? "").replace(/\/+$/g, "");
+        if (!normalized) {
+          return String(path ?? "");
+        }
+        const segments = normalized.split("/");
+        return segments[segments.length - 1] || normalized;
+      }
+
+      function inferToolSyscall(toolName, syscall) {
+        if (typeof syscall === "string" && syscall.trim()) {
+          return syscall.trim();
+        }
+        switch (toolName) {
+          case "Read":
+            return "fs.read";
+          case "Search":
+            return "fs.search";
+          case "Shell":
+            return "shell.exec";
+          case "Write":
+            return "fs.write";
+          case "Edit":
+            return "fs.edit";
+          case "Delete":
+            return "fs.delete";
+          default:
+            return null;
+        }
+      }
+
+      function resolveToolTarget(args) {
+        const record = asRecord(args);
+        const raw = asString(record?.target)?.trim() ?? "";
+        if (!raw || raw === "gsv" || raw === "gateway" || raw === "<init>" || raw === "init" || raw === "local") {
+          return "gsv";
+        }
+        if (raw.startsWith("device:")) {
+          return raw.slice("device:".length) || raw;
+        }
+        if (raw.startsWith("driver:")) {
+          return raw.slice("driver:".length) || raw;
+        }
+        return raw;
+      }
+
+      function describeToolCard(toolName, args, syscall) {
+        const record = asRecord(args);
+        const path = asString(record?.path);
+        const target = resolveToolTarget(args);
+
+        if (toolName === "Shell" || syscall === "shell.exec") {
+          const command = asString(record?.command);
+          const workdir = asString(record?.workdir);
+          return {
+            title: command ? "Run " + truncateInline(command) : "Run command",
+            subtitle: workdir ? "workdir " + truncateInline(workdir, 36) : "",
+            target,
+          };
+        }
+        if (toolName === "Read" || syscall === "fs.read") {
+          return { title: path ? "Read " + basenamePath(path) : "Read file", subtitle: path ?? "", target };
+        }
+        if (toolName === "Search" || syscall === "fs.search") {
+          const pattern = asString(record?.pattern);
+          return {
+            title: pattern ? "Search " + truncateInline(pattern, 42) : "Search workspace",
+            subtitle: path ?? "",
+            target,
+          };
+        }
+        if (toolName === "Write" || syscall === "fs.write") {
+          return { title: path ? "Write " + basenamePath(path) : "Write file", subtitle: path ?? "", target };
+        }
+        if (toolName === "Edit" || syscall === "fs.edit") {
+          return { title: path ? "Edit " + basenamePath(path) : "Edit file", subtitle: path ?? "", target };
+        }
+        if (toolName === "Delete" || syscall === "fs.delete") {
+          return { title: path ? "Delete " + basenamePath(path) : "Delete file", subtitle: path ?? "", target };
+        }
+        return { title: toolName, subtitle: "", target };
+      }
+
+      function renderToolMetaRows(rows) {
+        const filtered = rows.filter((row) => row[1] !== undefined && row[1] !== null && String(row[1]).length > 0);
+        if (filtered.length === 0) {
+          return "";
+        }
+        return '<div class="tool-meta-grid">' + filtered.map(([label, value]) => (
+          '<div class="tool-meta-row"><span class="tool-meta-label">' + escapeHtmlClient(label) + '</span><span class="tool-meta-value">' + escapeHtmlClient(safeText(value)) + '</span></div>'
+        )).join("") + "</div>";
+      }
+
+      function renderToolPreview(toolName, syscall, output, ok, error) {
+        const normalized = normalizeToolOutput(output);
+        const record = asRecord(normalized);
+        const outputError = asString(record?.error);
+        if (!ok || record?.ok === false) {
+          return '<p class="tool-preview-line is-error">' + escapeHtmlClient(error ?? outputError ?? "Tool call failed.") + "</p>";
+        }
+
+        if (toolName === "Shell" || syscall === "shell.exec") {
+          const stdout = asString(record?.stdout);
+          const stderr = asString(record?.stderr);
+          if (stdout && stdout.trim()) {
+            return '<pre class="tool-preview-pre">' + escapeHtmlClient(truncateBlock(stdout, 800)) + "</pre>";
+          }
+          if (stderr && stderr.trim()) {
+            return '<pre class="tool-preview-pre">' + escapeHtmlClient(truncateBlock(stderr, 800)) + "</pre>";
+          }
+          return '<p class="tool-preview-line">Command completed.</p>';
+        }
+
+        if (toolName === "Read" || syscall === "fs.read") {
+          const directories = Array.isArray(record?.directories) ? record.directories : [];
+          const files = Array.isArray(record?.files) ? record.files : [];
+          if (directories.length || files.length) {
+            const preview = [
+              ...directories.slice(0, 8).map((value) => "dir: " + safeText(value)),
+              ...files.slice(0, 8).map((value) => "file: " + safeText(value)),
+            ].join("\n");
+            return '<p class="tool-preview-line">Listed ' + escapeHtmlClient(String(directories.length)) + ' dirs and ' + escapeHtmlClient(String(files.length)) + ' files.</p>' +
+              (preview ? '<pre class="tool-preview-pre">' + escapeHtmlClient(preview) + "</pre>" : "");
+          }
+          if (typeof record?.content === "string") {
+            return '<pre class="tool-preview-pre">' + escapeHtmlClient(truncateBlock(record.content, 800)) + "</pre>";
+          }
+          return '<p class="tool-preview-line">Read completed.</p>';
+        }
+
+        if (toolName === "Search" || syscall === "fs.search") {
+          const matches = Array.isArray(record?.matches) ? record.matches : [];
+          const count = asNumber(record?.count) ?? matches.length;
+          const preview = matches.slice(0, 10).map((item) => {
+            const match = asRecord(item);
+            if (!match) return safeText(item);
+            return basenamePath(safeText(match.path)) + ":" + safeText(match.line) + ": " + safeText(match.content);
+          }).join("\n");
+          return '<p class="tool-preview-line">' + escapeHtmlClient(String(count)) + ' matches.</p>' +
+            (preview ? '<pre class="tool-preview-pre">' + escapeHtmlClient(preview) + "</pre>" : "");
+        }
+
+        if (toolName === "Write" || syscall === "fs.write") {
+          return '<p class="tool-preview-line">Write completed.</p>';
+        }
+        if (toolName === "Edit" || syscall === "fs.edit") {
+          return '<p class="tool-preview-line">Edit completed.</p>';
+        }
+        if (toolName === "Delete" || syscall === "fs.delete") {
+          return '<p class="tool-preview-line">Delete completed.</p>';
+        }
+
+        if (typeof normalized === "string") {
+          return '<pre class="tool-preview-pre">' + escapeHtmlClient(truncateBlock(normalized, 800)) + "</pre>";
+        }
+        return '<pre class="tool-preview-pre">' + escapeHtmlClient(truncateBlock(prettyJson(normalized), 800)) + "</pre>";
+      }
+
+      function renderToolDetails(toolName, syscall, output, ok, error, args, callId) {
+        const normalized = normalizeToolOutput(output);
+        const record = asRecord(normalized);
+        const outputError = asString(record?.error);
+        const rows = [];
+
+        if (toolName === "Shell" || syscall === "shell.exec") {
+          rows.push(["pid", record?.pid], ["exit", record?.exitCode], ["backgrounded", record?.backgrounded === true ? "true" : null]);
+        } else if (toolName === "Read" || syscall === "fs.read") {
+          rows.push(["path", record?.path ?? asRecord(args)?.path], ["size", record?.size], ["dirs", Array.isArray(record?.directories) ? record.directories.length : null], ["files", Array.isArray(record?.files) ? record.files.length : null]);
+        } else if (toolName === "Search" || syscall === "fs.search") {
+          rows.push(["count", record?.count], ["truncated", record?.truncated === true ? "true" : null]);
+        } else if (toolName === "Write" || syscall === "fs.write") {
+          rows.push(["path", record?.path ?? asRecord(args)?.path], ["bytes", record?.size]);
+        } else if (toolName === "Edit" || syscall === "fs.edit") {
+          rows.push(["path", record?.path ?? asRecord(args)?.path], ["replacements", record?.replacements]);
+        } else if (toolName === "Delete" || syscall === "fs.delete") {
+          rows.push(["path", record?.path ?? asRecord(args)?.path]);
+        }
+
+        let body = renderToolMetaRows([["call", callId], ["syscall", syscall], ...rows]);
+        if (!ok || record?.ok === false) {
+          body += '<p class="tool-error">' + escapeHtmlClient(error ?? outputError ?? "Tool call failed.") + "</p>";
+        }
+        body += '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(prettyJson(args), 2400)) + "</pre></div>";
+
+        if (toolName === "Shell" || syscall === "shell.exec") {
+          const stdout = asString(record?.stdout);
+          const stderr = asString(record?.stderr);
+          if (stdout && stdout.trim()) {
+            body += '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(stdout, 4000)) + "</pre></div>";
+          }
+          if (stderr && stderr.trim()) {
+            body += '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(stderr, 4000)) + "</pre></div>";
+          }
+          return body;
+        }
+
+        if (toolName === "Read" || syscall === "fs.read") {
+          if (typeof record?.content === "string") {
+            body += '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(record.content, 4000)) + "</pre></div>";
+          } else if (Array.isArray(record?.directories) || Array.isArray(record?.files)) {
+            const listing = [
+              ...(Array.isArray(record?.directories) ? record.directories.map((value) => "dir: " + safeText(value)) : []),
+              ...(Array.isArray(record?.files) ? record.files.map((value) => "file: " + safeText(value)) : []),
+            ].join("\n");
+            if (listing) {
+              body += '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(listing, 4000)) + "</pre></div>";
+            }
+          }
+          return body;
+        }
+
+        if (toolName === "Search" || syscall === "fs.search") {
+          const matches = Array.isArray(record?.matches) ? record.matches : [];
+          if (matches.length > 0) {
+            const listing = matches.map((item) => {
+              const match = asRecord(item);
+              if (!match) return safeText(item);
+              return safeText(match.path) + ":" + safeText(match.line) + ": " + safeText(match.content);
+            }).join("\n");
+            body += '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(listing, 4000)) + "</pre></div>";
+          }
+          return body;
+        }
+
+        if (normalized !== undefined) {
+          body += '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(typeof normalized === "string" ? normalized : prettyJson(normalized), 4000)) + "</pre></div>";
+        }
+        return body;
+      }
+
+      function renderToolRow(row) {
+        const syscall = inferToolSyscall(row.toolName, row.syscall);
+        const card = describeToolCard(row.toolName, row.args, syscall);
+        const statusClass = row.kind === "toolCall" ? "is-pending" : (row.ok ? "is-ok" : "is-error");
+        const statusLabel = row.kind === "toolCall" ? "Running" : (row.ok ? "Done" : "Error");
+        const detailsBody = row.kind === "toolCall"
+          ? renderToolMetaRows([["call", row.callId], ["syscall", syscall]]) +
+            '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(prettyJson(row.args), 2400)) + "</pre></div>"
+          : renderToolDetails(row.toolName, syscall, row.output, row.ok, row.error, row.args, row.callId);
+        return '<article class="tool-card ' + statusClass + '">' +
+          '<div class="tool-card-head">' +
+            '<div><h3 class="tool-card-title">' + escapeHtmlClient(card.title) + '</h3>' +
+            (card.subtitle ? '<p class="tool-card-subtitle">' + escapeHtmlClient(card.subtitle) + '</p>' : '') +
+            '</div>' +
+            '<div class="tool-status ' + statusClass + '">' + escapeHtmlClient(statusLabel) + '<span class="tool-target">' + escapeHtmlClient(card.target) + '</span></div>' +
+          '</div>' +
+          '<div class="tool-preview">' + (
+            row.kind === "toolCall"
+              ? '<p class="tool-preview-line">Waiting for result.</p>'
+              : renderToolPreview(row.toolName, syscall, row.output, row.ok, row.error)
+          ) + '</div>' +
+          '<details class="tool-details"><summary>' + escapeHtmlClient(row.kind === "toolCall" ? "Input" : "Details") + '</summary>' +
+            detailsBody +
+          '</details>' +
+        '</article>';
+      }
+
       function normalizeThreadContext(value) {
         const record = asRecord(value);
         if (!record) {
@@ -508,7 +939,7 @@ function renderPage(routeBase) {
             }
             const name = typeof call.name === "string" ? call.name : "tool";
             const callId = typeof call.id === "string" ? call.id : (typeof call.callId === "string" ? call.callId : "hist-call-" + index);
-            return { toolName: name, callId, args: call.arguments ?? call.args ?? {} };
+            return { toolName: name, callId, args: call.arguments ?? call.args ?? {}, syscall: inferToolSyscall(name, asString(call.syscall)) };
           })
           .filter(Boolean);
         return { text, toolCalls };
@@ -528,6 +959,7 @@ function renderPage(routeBase) {
           ok: record.ok === true || record.isError !== true,
           output: record.output,
           error: typeof record.error === "string" ? record.error : null,
+          syscall: inferToolSyscall(toolName, asString(record.syscall)),
         };
       }
 
@@ -710,6 +1142,9 @@ function renderPage(routeBase) {
           return;
         }
         elements.chatLog.innerHTML = logRows.map((row) => {
+          if (row.kind === "toolCall" || row.kind === "toolResult") {
+            return renderToolRow(row);
+          }
           const role = row.role === "user" ? "user" : row.role === "assistant" ? "assistant" : "system";
           const timestamp = row.timestamp ? formatTimestamp(row.timestamp) : "";
           return '<article class="message message-' + escapeHtmlClient(role) + '">' +
@@ -795,28 +1230,47 @@ function renderPage(routeBase) {
           if (entry?.role === "assistant") {
             const parsed = extractAssistantHistory(entry.content);
             if (parsed.text && parsed.text.trim()) {
-              rows.push({ role: "assistant", text: parsed.text, timestamp });
+              rows.push({ kind: "message", role: "assistant", text: parsed.text, timestamp });
             }
             for (const toolCall of parsed.toolCalls) {
-              rows.push({ role: "system", text: "tool call: " + toolCall.toolName + "\n" + prettyJson(toolCall.args), timestamp });
+              rows.push({
+                kind: "toolCall",
+                toolName: toolCall.toolName,
+                callId: toolCall.callId,
+                args: toolCall.args,
+                syscall: toolCall.syscall,
+                output: null,
+                ok: false,
+                error: null,
+                timestamp,
+              });
             }
             continue;
           }
           if (entry?.role === "toolResult") {
             const parsedResult = extractToolResultHistory(entry.content);
             if (parsedResult) {
-              const suffix = parsedResult.ok ? prettyJson(parsedResult.output) : (parsedResult.error || "tool error");
-              rows.push({ role: "system", text: "tool result: " + parsedResult.toolName + "\n" + suffix, timestamp });
+              rows.push({
+                kind: "toolResult",
+                toolName: parsedResult.toolName,
+                callId: parsedResult.callId ?? "tool-result",
+                args: {},
+                syscall: parsedResult.syscall,
+                output: parsedResult.output,
+                ok: parsedResult.ok,
+                error: parsedResult.error ?? null,
+                timestamp,
+              });
             } else {
-              rows.push({ role: "system", text: formatMessageContent(entry.content), timestamp });
+              rows.push({ kind: "message", role: "system", text: formatMessageContent(entry.content), timestamp });
             }
             continue;
           }
           const role = entry?.role === "user" ? "user" : entry?.role === "assistant" ? "assistant" : "system";
-          rows.push({ role, text: formatMessageContent(entry?.content), timestamp });
+          rows.push({ kind: "message", role, text: formatMessageContent(entry?.content), timestamp });
         }
         if (rows.length === 0) {
-          rows.push({ role: "system", text: "No messages yet. Send your first prompt.", timestamp: Date.now() });
+          rows.push({ kind: "message", role: "system", text: "No messages yet. Send your first prompt.", timestamp: Date.now() });
         }
         return rows;
       }
@@ -938,8 +1392,7 @@ function renderPage(routeBase) {
         elements.chatInput?.focus();
       }
 
-      async function sendMessage(event) {
-        event.preventDefault();
+      async function sendMessage() {
         if (!client || !client.isConnected()) {
           appendSystemRow("session is locked");
           return;
@@ -1049,7 +1502,10 @@ function renderPage(routeBase) {
       function bindUi() {
         elements.refreshThreads?.addEventListener("click", () => { void loadThreads(); });
         elements.newThread?.addEventListener("click", () => { resetToNewThread(); });
-        elements.composeForm?.addEventListener("submit", sendMessage);
+        elements.composeForm?.addEventListener("submit", (event) => {
+          event.preventDefault();
+          void sendMessage();
+        });
         elements.chatInput?.addEventListener("input", () => renderStatus());
         elements.chatInput?.addEventListener("keydown", (event) => {
           if (event.key === "Enter" && !event.shiftKey) {
