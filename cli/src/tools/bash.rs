@@ -45,6 +45,8 @@ struct ProcessSnapshot {
     signal: Option<String>,
     timed_out: bool,
     backgrounded: bool,
+    stdout: String,
+    stderr: String,
     output: String,
     tail: String,
     truncated: bool,
@@ -62,6 +64,8 @@ struct ProcessState {
     signal: Option<String>,
     timed_out: bool,
     backgrounded: bool,
+    stdout: String,
+    stderr: String,
     output: String,
     tail: String,
     truncated: bool,
@@ -132,19 +136,35 @@ fn truncate_to_last_chars(text: &str, max_chars: usize) -> String {
         .collect()
 }
 
-fn append_output(state: &mut ProcessState, chunk: &str) {
+#[derive(Clone, Copy)]
+enum OutputStream {
+    Stdout,
+    Stderr,
+}
+
+fn append_capped(text: &mut String, chunk: &str) -> bool {
     if chunk.is_empty() {
-        return;
+        return false;
     }
-    let combined = format!("{}{}", state.output, chunk);
+    let combined = format!("{}{}", text, chunk);
     let combined_chars = combined.chars().count();
     if combined_chars > MAX_OUTPUT_CHARS {
-        state.output = truncate_to_last_chars(&combined, MAX_OUTPUT_CHARS);
-        state.truncated = true;
+        *text = truncate_to_last_chars(&combined, MAX_OUTPUT_CHARS);
+        true
     } else {
-        state.output = combined;
+        *text = combined;
+        false
     }
+}
+
+fn append_output(state: &mut ProcessState, chunk: &str, stream: OutputStream) {
+    let stream_truncated = match stream {
+        OutputStream::Stdout => append_capped(&mut state.stdout, chunk),
+        OutputStream::Stderr => append_capped(&mut state.stderr, chunk),
+    };
+    let output_truncated = append_capped(&mut state.output, chunk);
     state.tail = truncate_to_last_chars(&state.output, TAIL_CHARS);
+    state.truncated = state.truncated || stream_truncated || output_truncated;
 }
 
 fn snapshot_from_state(state: &ProcessState) -> ProcessSnapshot {
@@ -160,6 +180,8 @@ fn snapshot_from_state(state: &ProcessState) -> ProcessSnapshot {
         signal: state.signal.clone(),
         timed_out: state.timed_out,
         backgrounded: state.backgrounded,
+        stdout: state.stdout.clone(),
+        stderr: state.stderr.clone(),
         output: state.output.clone(),
         tail: state.tail.clone(),
         truncated: state.truncated,
@@ -210,6 +232,10 @@ fn running_result(snapshot: &ProcessSnapshot) -> Value {
 
 fn completed_result(snapshot: &ProcessSnapshot) -> Value {
     json!({
+      "ok": true,
+      "pid": snapshot.pid.unwrap_or_default(),
+      "stdout": snapshot.stdout,
+      "stderr": snapshot.stderr,
       "status": if snapshot.status == "completed" { "completed" } else { "failed" },
       "sessionId": snapshot.session_id,
       "exitCode": snapshot.exit_code,
@@ -355,7 +381,7 @@ async fn terminate_pid(pid: u32, force: bool) {
     }
 }
 
-async fn pump_stream<R>(mut reader: R, state: Arc<AsyncMutex<ProcessState>>)
+async fn pump_stream<R>(mut reader: R, state: Arc<AsyncMutex<ProcessState>>, stream: OutputStream)
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
@@ -366,7 +392,7 @@ where
             Ok(count) => {
                 let chunk = String::from_utf8_lossy(&buf[..count]).to_string();
                 let mut lock = state.lock().await;
-                append_output(&mut lock, &chunk);
+                append_output(&mut lock, &chunk, stream);
             }
             Err(_) => return,
         }
@@ -434,6 +460,8 @@ async fn launch_managed_process(
         signal: None,
         timed_out: false,
         backgrounded: false,
+        stdout: String::new(),
+        stderr: String::new(),
         output: String::new(),
         tail: String::new(),
         truncated: false,
@@ -451,10 +479,10 @@ async fn launch_managed_process(
     }
 
     if let Some(stdout) = stdout {
-        tokio::spawn(pump_stream(stdout, state.clone()));
+        tokio::spawn(pump_stream(stdout, state.clone(), OutputStream::Stdout));
     }
     if let Some(stderr) = stderr {
-        tokio::spawn(pump_stream(stderr, state.clone()));
+        tokio::spawn(pump_stream(stderr, state.clone(), OutputStream::Stderr));
     }
 
     if timeout_ms > 0 {
@@ -492,7 +520,11 @@ async fn launch_managed_process(
                 Err(error) => {
                     lock.exit_code = None;
                     lock.signal = Some("wait_error".to_string());
-                    append_output(&mut lock, &format!("\n[wait error] {}", error));
+                    append_output(
+                        &mut lock,
+                        &format!("\n[wait error] {}", error),
+                        OutputStream::Stderr,
+                    );
                 }
             }
 
