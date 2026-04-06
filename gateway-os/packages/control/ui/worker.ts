@@ -497,18 +497,20 @@ function renderPage(routeBase, payload) {
     <style>
       :root {
         color-scheme: light;
-        --page: #edf2f6;
-        --surface: rgba(250, 252, 254, 0.94);
-        --surface-soft: rgba(242, 246, 249, 0.96);
-        --surface-muted: rgba(232, 238, 243, 0.9);
+        --page: #ece7df;
+        --surface: rgba(248, 244, 237, 0.94);
+        --surface-soft: rgba(241, 235, 226, 0.96);
+        --surface-muted: rgba(228, 220, 208, 0.9);
         --text: #191c1e;
         --text-muted: rgba(25, 28, 30, 0.64);
         --text-soft: rgba(25, 28, 30, 0.48);
         --primary: #003466;
         --primary-soft: #1a4b84;
+        --accent: #904b36;
+        --accent-soft: rgba(233, 217, 206, 0.96);
         --danger: #8a3b3b;
         --danger-soft: rgba(255, 232, 230, 0.95);
-        --notice-soft: rgba(228, 240, 252, 0.95);
+        --notice-soft: rgba(241, 231, 220, 0.95);
         --line: rgba(25, 28, 30, 0.08);
         --shadow: 0 18px 36px rgba(25, 28, 30, 0.06), 0 8px 16px rgba(25, 28, 30, 0.04);
         --display: "Space Grotesk", "Avenir Next", sans-serif;
@@ -558,18 +560,23 @@ function renderPage(routeBase, payload) {
         display: flex;
         gap: 10px;
         flex-wrap: wrap;
+        align-items: flex-start;
       }
       .control-tab {
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        min-height: 42px;
+        height: 42px;
         padding: 10px 14px;
         border-radius: 999px;
         text-decoration: none;
         color: var(--text-muted);
-        background: rgba(255, 255, 255, 0.58);
+        background: rgba(255, 250, 245, 0.62);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
         font-weight: 700;
+        white-space: nowrap;
+        flex: 0 0 auto;
       }
       .control-tab.is-active {
         color: #f7fbff;
@@ -591,13 +598,13 @@ function renderPage(routeBase, payload) {
         gap: 4px;
         padding: 14px;
         border-radius: 16px;
-        background: rgba(255, 255, 255, 0.58);
+        background: rgba(255, 250, 245, 0.62);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
         text-decoration: none;
         color: inherit;
       }
       .control-subnav-link.is-active {
-        background: rgba(233, 241, 248, 0.95);
+        background: var(--accent-soft);
         box-shadow: 0 12px 24px rgba(25, 28, 30, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.82);
       }
       .control-subnav-title {
@@ -654,7 +661,7 @@ function renderPage(routeBase, payload) {
         justify-content: center;
         text-decoration: none;
         border: 0;
-        background: rgba(232, 238, 243, 0.92);
+        background: rgba(228, 220, 208, 0.92);
         color: var(--text);
         border-radius: 10px;
         padding: 10px 14px;
