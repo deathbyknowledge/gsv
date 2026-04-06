@@ -1,275 +1,261 @@
 const SHELL_APP_SCRIPT = String.raw`
-(() => {
-  const bootstrapNode = document.getElementById('shell-bootstrap');
-  const routeBase = document.body.dataset.routeBase || '/apps/shell';
-  const initial = bootstrapNode ? JSON.parse(bootstrapNode.textContent || '{}') : {};
+import init, { Terminal } from 'https://cdn.jsdelivr.net/npm/ghostty-web@0.4.0/+esm';
 
-  const state = {
-    transcript: Array.isArray(initial.transcript) ? initial.transcript.slice() : [],
-    history: [],
-    historyCursor: null,
-    historyDraft: '',
-    running: false,
-  };
+const routeBase = document.body.dataset.routeBase || '/apps/shell';
+const streamNode = document.querySelector('[data-shell-terminal]');
+const statusNode = document.querySelector('[data-shell-status]');
+const targetSelect = document.querySelector('[data-shell-target]');
+const workdirInput = document.querySelector('[data-shell-workdir]');
+const timeoutInput = document.querySelector('[data-shell-timeout]');
+const yieldInput = document.querySelector('[data-shell-yield]');
+const backgroundInput = document.querySelector('[data-shell-background]');
+const clearButton = document.querySelector('[data-shell-clear]');
+const resetButton = document.querySelector('[data-shell-reset]');
 
-  const stream = document.querySelector('[data-shell-stream]');
-  const status = document.querySelector('[data-shell-status]');
-  const form = document.querySelector('[data-shell-form]');
-  const commandInput = document.querySelector('[data-shell-command]');
-  const targetSelect = document.querySelector('[data-shell-target]');
-  const workdirInput = document.querySelector('[data-shell-workdir]');
-  const timeoutInput = document.querySelector('[data-shell-timeout]');
-  const yieldMsInput = document.querySelector('[data-shell-yield]');
-  const backgroundInput = document.querySelector('[data-shell-background]');
-  const clearButton = document.querySelector('[data-shell-clear]');
-  const refreshButton = document.querySelector('[data-shell-refresh]');
-  const submitButton = document.querySelector('[data-shell-submit]');
+const terminal = new Terminal({
+  fontFamily: 'JetBrains Mono, SFMono-Regular, Consolas, monospace',
+  fontSize: 13,
+  theme: {
+    background: '#07111d',
+    foreground: '#e3edf7',
+    cursor: '#7fc6ff',
+    black: '#07111d',
+    red: '#ff9d8f',
+    green: '#9dd3a8',
+    yellow: '#e4d39a',
+    blue: '#7fc6ff',
+    magenta: '#c4a6ff',
+    cyan: '#88d4ff',
+    white: '#e3edf7',
+    brightBlack: '#5f7388',
+    brightRed: '#ffb6ad',
+    brightGreen: '#b9e6c0',
+    brightYellow: '#f0e1ad',
+    brightBlue: '#a9dcff',
+    brightMagenta: '#d7c0ff',
+    brightCyan: '#b1e8ff',
+    brightWhite: '#f6fbff',
+  },
+  cursorBlink: true,
+  cursorStyle: 'bar',
+  convertEol: true,
+});
 
-  function setStatus(kind, text) {
-    if (!status) return;
-    status.dataset.kind = kind;
-    status.textContent = text || '';
+let username = localStorage.getItem('gsv.ui.gateway.username') || 'user';
+let currentLine = '';
+let history = [];
+let historyCursor = null;
+let historyDraft = '';
+let running = false;
+
+function setStatus(kind, text) {
+  if (!statusNode) return;
+  statusNode.dataset.kind = kind;
+  statusNode.textContent = text || '';
+}
+
+function currentTarget() {
+  return targetSelect && targetSelect.value ? targetSelect.value : 'gsv';
+}
+
+function currentPath() {
+  const value = workdirInput && workdirInput.value ? workdirInput.value.trim() : '';
+  return value || '~';
+}
+
+function promptText() {
+  return username + '@' + currentTarget() + ':' + currentPath() + ' $ ';
+}
+
+function writePrompt() {
+  terminal.write(promptText());
+}
+
+function syncCurrentLine() {
+  terminal.write('\r\x1b[2K');
+  terminal.write(promptText() + currentLine);
+}
+
+function pushHistory(command) {
+  const trimmed = String(command || '').trim();
+  if (!trimmed) return;
+  if (history[history.length - 1] !== trimmed) {
+    history.push(trimmed);
+  }
+  if (history.length > 200) {
+    history = history.slice(-200);
+  }
+  historyCursor = null;
+  historyDraft = '';
+}
+
+function navigateHistory(direction) {
+  if (history.length === 0) return;
+  if (historyCursor === null) {
+    historyDraft = currentLine;
+    historyCursor = history.length;
+  }
+  const nextIndex = historyCursor + direction;
+  if (nextIndex < 0) {
+    historyCursor = 0;
+  } else if (nextIndex > history.length) {
+    historyCursor = history.length;
+  } else {
+    historyCursor = nextIndex;
+  }
+  currentLine = historyCursor === history.length ? historyDraft : (history[historyCursor] || '');
+  syncCurrentLine();
+}
+
+function clearTerminal() {
+  terminal.reset();
+  currentLine = '';
+  writePrompt();
+}
+
+async function runCommand(command) {
+  const trimmed = String(command || '').trim();
+  if (!trimmed || running) {
+    return;
   }
 
-  function isNearBottom() {
-    if (!stream) return true;
-    const remaining = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
-    return remaining < 96;
+  pushHistory(trimmed);
+  running = true;
+  setStatus('working', 'Running command…');
+
+  terminal.write('\r\n');
+
+  try {
+    const response = await fetch(routeBase, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        target: currentTarget(),
+        command: trimmed,
+        workdir: workdirInput ? workdirInput.value : '',
+        timeout: timeoutInput ? timeoutInput.value : '',
+        yieldMs: yieldInput ? yieldInput.value : '',
+        background: backgroundInput ? backgroundInput.checked : false,
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || ('Request failed with ' + response.status));
+    }
+
+    const entry = data.entry || {};
+    if (entry.stdout && String(entry.stdout).length > 0) {
+      terminal.write(String(entry.stdout).replaceAll('\n', '\r\n'));
+      if (!String(entry.stdout).endsWith('\n')) {
+        terminal.write('\r\n');
+      }
+    }
+    if (entry.stderr && String(entry.stderr).length > 0) {
+      terminal.write('\x1b[38;2;255;182;173m' + String(entry.stderr).replaceAll('\n', '\r\n') + '\x1b[0m');
+      if (!String(entry.stderr).endsWith('\n')) {
+        terminal.write('\r\n');
+      }
+    }
+    setStatus('ready', 'Shell is ready.');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    terminal.write('\x1b[38;2;255;182;173m' + message.replaceAll('\n', '\r\n') + '\x1b[0m\r\n');
+    setStatus('error', message);
+  } finally {
+    running = false;
+    currentLine = '';
+    writePrompt();
+  }
+}
+
+await init();
+terminal.open(streamNode);
+terminal.focus();
+writePrompt();
+setStatus('ready', 'Shell is ready.');
+
+terminal.onData((data) => {
+  if (running) {
+    return;
   }
 
-  function scrollToBottom() {
-    if (!stream) return;
-    stream.scrollTop = stream.scrollHeight;
-  }
-
-  function renderTranscript() {
-    if (!stream) return;
-    stream.innerHTML = '';
-
-    if (state.transcript.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'shell-empty';
-      empty.textContent = 'No commands yet. Type one below and press Enter.';
-      stream.appendChild(empty);
+  switch (data) {
+    case '\r':
+      void runCommand(currentLine);
       return;
-    }
-
-    const fragment = document.createDocumentFragment();
-    for (const entry of state.transcript) {
-      const article = document.createElement('article');
-      article.className = 'shell-log-entry';
-
-      const commandRow = document.createElement('div');
-      commandRow.className = 'shell-log-command-row';
-
-      const prompt = document.createElement('span');
-      prompt.className = 'shell-log-prompt';
-      prompt.textContent = String(entry.target) + '$';
-      commandRow.appendChild(prompt);
-
-      const command = document.createElement('code');
-      command.className = 'shell-log-command';
-      command.textContent = entry.command;
-      commandRow.appendChild(command);
-      article.appendChild(commandRow);
-
-      if (entry.stdout && entry.stdout.trim().length > 0) {
-        const out = document.createElement('pre');
-        out.className = 'shell-log-stream is-stdout';
-        out.textContent = entry.stdout;
-        article.appendChild(out);
+    case '\u007f':
+      if (currentLine.length > 0) {
+        currentLine = currentLine.slice(0, -1);
+        terminal.write('\b \b');
       }
-
-      if (entry.stderr && entry.stderr.trim().length > 0) {
-        const err = document.createElement('pre');
-        err.className = 'shell-log-stream is-stderr';
-        err.textContent = entry.stderr;
-        article.appendChild(err);
-      }
-
-      fragment.appendChild(article);
-    }
-
-    stream.appendChild(fragment);
-  }
-
-  function rememberCommand(command) {
-    const trimmed = String(command || '').trim();
-    if (!trimmed) return;
-    if (state.history[state.history.length - 1] !== trimmed) {
-      state.history.push(trimmed);
-    }
-    if (state.history.length > 200) {
-      state.history = state.history.slice(-200);
-    }
-    state.historyCursor = null;
-    state.historyDraft = '';
-  }
-
-  function navigateHistory(direction) {
-    if (!commandInput || state.history.length === 0) return;
-    if (state.historyCursor === null) {
-      state.historyDraft = commandInput.value;
-      state.historyCursor = state.history.length;
-    }
-
-    const nextIndex = state.historyCursor + direction;
-    if (nextIndex < 0) {
-      state.historyCursor = 0;
-    } else if (nextIndex > state.history.length) {
-      state.historyCursor = state.history.length;
-    } else {
-      state.historyCursor = nextIndex;
-    }
-
-    if (state.historyCursor === state.history.length) {
-      commandInput.value = state.historyDraft;
-    } else {
-      commandInput.value = state.history[state.historyCursor] || '';
-    }
-
-    const cursor = commandInput.value.length;
-    commandInput.setSelectionRange(cursor, cursor);
-  }
-
-  function setRunning(running) {
-    state.running = running;
-    if (submitButton) submitButton.disabled = running;
-    if (commandInput) commandInput.disabled = running;
-    if (targetSelect) targetSelect.disabled = running;
-    if (workdirInput) workdirInput.disabled = running;
-    if (timeoutInput) timeoutInput.disabled = running;
-    if (yieldMsInput) yieldMsInput.disabled = running;
-    if (backgroundInput) backgroundInput.disabled = running;
-  }
-
-  async function runCommand() {
-    if (!commandInput || !targetSelect) return;
-    const command = commandInput.value.trim();
-    if (!command) {
-      setStatus('error', 'Command is required.');
       return;
-    }
-
-    const shouldStick = isNearBottom();
-    const payload = {
-      target: targetSelect.value,
-      command,
-      workdir: workdirInput ? workdirInput.value : '',
-      timeout: timeoutInput ? timeoutInput.value : '',
-      yieldMs: yieldMsInput ? yieldMsInput.value : '',
-      background: backgroundInput ? backgroundInput.checked : false,
-    };
-
-    rememberCommand(command);
-    setRunning(true);
-    setStatus('working', 'Running command…');
-
-    try {
-      const response = await fetch(routeBase, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-shell-json': '1',
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error || ('Request failed with ' + response.status));
-      }
-
-      state.transcript = [...state.transcript, data.entry].slice(-120);
-      renderTranscript();
-      commandInput.value = '';
-      setStatus('ready', 'Shell is ready.');
-      if (shouldStick) {
-        requestAnimationFrame(scrollToBottom);
-      }
-    } catch (error) {
-      state.transcript = [...state.transcript, {
-        id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8),
-        target: payload.target || 'gsv',
-        command,
-        stdout: '',
-        stderr: error instanceof Error ? error.message : String(error),
-      }].slice(-120);
-      renderTranscript();
-      setStatus('error', error instanceof Error ? error.message : String(error));
-      requestAnimationFrame(scrollToBottom);
-    } finally {
-      setRunning(false);
-      requestAnimationFrame(() => {
-        if (commandInput) {
-          commandInput.focus();
-          const cursor = commandInput.value.length;
-          commandInput.setSelectionRange(cursor, cursor);
-        }
-      });
-    }
+    case '\u001b[A':
+      navigateHistory(-1);
+      return;
+    case '\u001b[B':
+      navigateHistory(1);
+      return;
+    case '\u0003':
+      currentLine = '';
+      terminal.write('^C\r\n');
+      writePrompt();
+      return;
+    default:
+      break;
   }
 
-  if (form) {
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      void runCommand();
-    });
+  if (data === '\n') {
+    return;
   }
 
-  if (commandInput) {
-    commandInput.addEventListener('keydown', (event) => {
-      const selectionStart = commandInput.selectionStart || 0;
-      const selectionEnd = commandInput.selectionEnd || 0;
+  currentLine += data;
+  terminal.write(data);
+});
 
-      if (!event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && event.key === 'ArrowUp' && selectionStart === 0 && selectionEnd === 0) {
-        event.preventDefault();
-        navigateHistory(-1);
-        return;
-      }
-
-      if (!event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && event.key === 'ArrowDown' && selectionStart === commandInput.value.length && selectionEnd === commandInput.value.length) {
-        event.preventDefault();
-        navigateHistory(1);
-        return;
-      }
-
-      if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        event.preventDefault();
-        void runCommand();
-      }
-    });
-  }
-
-  if (clearButton) {
-    clearButton.addEventListener('click', () => {
-      state.transcript = [];
-      renderTranscript();
-      setStatus('ready', 'Shell is ready.');
-    });
-  }
-
-  if (refreshButton) {
-    refreshButton.addEventListener('click', () => {
-      window.location.reload();
-    });
-  }
-
-  renderTranscript();
-  setStatus('ready', 'Shell is ready.');
-  requestAnimationFrame(() => {
-    if (commandInput) commandInput.focus();
-    scrollToBottom();
+if (clearButton) {
+  clearButton.addEventListener('click', () => {
+    clearTerminal();
+    setStatus('ready', 'Shell is ready.');
+    terminal.focus();
   });
-})();
+}
+
+if (resetButton) {
+  resetButton.addEventListener('click', () => {
+    history = [];
+    historyCursor = null;
+    historyDraft = '';
+    currentLine = '';
+    clearTerminal();
+    setStatus('ready', 'Shell is ready.');
+    terminal.focus();
+  });
+}
+
+for (const node of [targetSelect, workdirInput, timeoutInput, yieldInput, backgroundInput]) {
+  if (!node) continue;
+  node.addEventListener('change', () => {
+    if (!running && currentLine.length === 0) {
+      syncCurrentLine();
+    }
+  });
+}
+
+window.addEventListener('resize', () => {
+  terminal.focus();
+});
 `;
 
 function escapeHtml(value) {
   return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function asDeviceList(value) {
@@ -283,27 +269,27 @@ function asDeviceList(value) {
 }
 
 function normalizeTarget(raw) {
-  const trimmed = String(raw ?? "").trim();
-  return trimmed.length > 0 ? trimmed : "gsv";
+  const trimmed = String(raw ?? '').trim();
+  return trimmed.length > 0 ? trimmed : 'gsv';
 }
 
 function asRecord(value) {
-  if (!value || typeof value !== "object") {
+  if (!value || typeof value !== 'object') {
     return null;
   }
   return value;
 }
 
 function asString(value) {
-  return typeof value === "string" ? value : null;
+  return typeof value === 'string' ? value : null;
 }
 
 function asNumber(value) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function asBoolean(value) {
-  return typeof value === "boolean" ? value : null;
+  return typeof value === 'boolean' ? value : null;
 }
 
 function prettyJson(value) {
@@ -314,14 +300,8 @@ function prettyJson(value) {
   }
 }
 
-function serializeScriptJson(value) {
-  return JSON.stringify(value)
-    .replaceAll("<", "\\u003c")
-    .replaceAll("</script", "<\\/script");
-}
-
 function parseOptionalPositiveInt(raw) {
-  const trimmed = String(raw ?? "").trim();
+  const trimmed = String(raw ?? '').trim();
   if (!trimmed) {
     return null;
   }
@@ -339,8 +319,8 @@ function normalizeTranscriptEntry(payload, startedAt, target, command) {
     id: `${startedAt}-${completedAt}`,
     target,
     command,
-    stdout: "",
-    stderr: "",
+    stdout: '',
+    stderr: '',
   };
 
   if (!record) {
@@ -349,13 +329,13 @@ function normalizeTranscriptEntry(payload, startedAt, target, command) {
   }
 
   const explicitOk = asBoolean(record.ok);
-  const statusText = (asString(record.status) ?? "").toLowerCase();
+  const statusText = (asString(record.status) ?? '').toLowerCase();
   const exitCode = asNumber(record.exitCode);
   const stdout =
     asString(record.stdout) ??
-    ((statusText === "completed" || statusText === "failed") ? asString(record.output) : null) ??
-    "";
-  const stderr = asString(record.stderr) ?? "";
+    ((statusText === 'completed' || statusText === 'failed') ? asString(record.output) : null) ??
+    '';
+  const stderr = asString(record.stderr) ?? '';
   const errorText = asString(record.error);
 
   entry.stdout = stdout;
@@ -363,15 +343,15 @@ function normalizeTranscriptEntry(payload, startedAt, target, command) {
 
   const backgrounded =
     asBoolean(record.backgrounded) === true ||
-    (statusText === "running" && asString(record.sessionId) !== null);
+    (statusText === 'running' && asString(record.sessionId) !== null);
 
   if (backgrounded) {
-    entry.stdout = asString(record.output) ?? "Started in background.";
-    entry.stderr = "";
+    entry.stdout = asString(record.output) ?? 'Started in background.';
+    entry.stderr = '';
     return entry;
   }
 
-  if (explicitOk === false || statusText === "failed" || errorText) {
+  if (explicitOk === false || statusText === 'failed' || errorText) {
     entry.stderr = errorText ?? entry.stderr;
     return entry;
   }
@@ -384,24 +364,20 @@ function normalizeTranscriptEntry(payload, startedAt, target, command) {
 }
 
 function renderTargetOptions(devices) {
-  const options = [`<option value="gsv">Kernel (gsv)</option>`];
+  const options = ['<option value="gsv">Kernel (gsv)</option>'];
   for (const device of devices) {
-    const deviceId = String(device?.deviceId ?? device?.id ?? "").trim();
+    const deviceId = String(device?.deviceId ?? device?.id ?? '').trim();
     if (!deviceId) {
       continue;
     }
-    const online = typeof device?.online === "boolean" ? device.online : true;
-    const suffix = online ? " · online" : " · offline";
+    const online = typeof device?.online === 'boolean' ? device.online : true;
+    const suffix = online ? ' · online' : ' · offline';
     options.push(`<option value="${escapeHtml(deviceId)}">${escapeHtml(deviceId + suffix)}</option>`);
   }
-  return options.join("");
+  return options.join('');
 }
 
 function renderPage(routeBase, devices) {
-  const initialState = {
-    transcript: [],
-  };
-
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -418,7 +394,6 @@ function renderPage(routeBase, devices) {
         --shell-text: #e3edf7;
         --shell-muted: #8fa3b8;
         --shell-prompt: #7fc6ff;
-        --shell-stdout: #dfeaf7;
         --shell-stderr: #ffb6ad;
         --shell-accent: #4da2ff;
         --shell-accent-2: #1a4b84;
@@ -431,9 +406,6 @@ function renderPage(routeBase, devices) {
       body {
         background: transparent;
         color: var(--shell-text);
-      }
-      body[data-route-base] {
-        display: block;
       }
       main {
         display: grid;
@@ -488,8 +460,7 @@ function renderPage(routeBase, devices) {
         outline: none;
       }
       .shell-field input:focus,
-      .shell-field select:focus,
-      .shell-compose textarea:focus {
+      .shell-field select:focus {
         border-left-color: var(--shell-accent);
         background: rgba(20, 39, 60, 0.98);
       }
@@ -551,7 +522,7 @@ function renderPage(routeBase, devices) {
       }
       .shell-stage {
         display: grid;
-        grid-template-rows: minmax(0, 1fr) auto;
+        grid-template-rows: auto minmax(0, 1fr);
         min-height: 0;
       }
       .shell-status {
@@ -566,69 +537,14 @@ function renderPage(routeBase, devices) {
       .shell-status[data-kind="working"] {
         color: var(--shell-prompt);
       }
-      .shell-stream {
+      .shell-terminal-wrap {
         min-height: 0;
-        overflow: auto;
-        padding: 14px 16px 18px;
-        font: 13px/1.55 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+        padding: 10px 16px 16px;
       }
-      .shell-empty {
-        margin: 0;
-        color: var(--shell-muted);
-      }
-      .shell-log-entry {
-        display: grid;
-        gap: 6px;
-        margin: 0 0 16px;
-      }
-      .shell-log-command-row {
-        display: flex;
-        align-items: flex-start;
-        gap: 10px;
-        white-space: pre-wrap;
-      }
-      .shell-log-prompt,
-      .shell-compose-prompt {
-        color: var(--shell-prompt);
-        font-weight: 700;
-        flex: 0 0 auto;
-      }
-      .shell-log-command {
-        color: var(--shell-text);
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .shell-log-stream {
-        margin: 0;
-        white-space: pre-wrap;
-        word-break: break-word;
-        color: var(--shell-stdout);
-      }
-      .shell-log-stream.is-stderr {
-        color: var(--shell-stderr);
-      }
-      .shell-compose {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        gap: 12px;
-        align-items: end;
-        padding: 14px 16px 16px;
-        border-top: 1px solid var(--shell-line);
-        background: rgba(7, 17, 29, 0.94);
-      }
-      .shell-compose textarea {
+      .shell-terminal {
         width: 100%;
-        min-height: 56px;
-        max-height: 220px;
-        resize: vertical;
-        border: 0;
-        border-left: 2px solid transparent;
-        border-radius: 8px;
-        padding: 12px 14px;
-        background: rgba(18, 34, 53, 0.92);
-        color: var(--shell-text);
-        font: inherit;
-        outline: none;
+        height: calc(100vh - 142px);
+        overflow: hidden;
       }
       @media (max-width: 980px) {
         .shell-toolbar {
@@ -641,12 +557,11 @@ function renderPage(routeBase, devices) {
           position: static;
           min-width: 0;
         }
-        .shell-compose {
-          grid-template-columns: auto minmax(0, 1fr);
+        .shell-terminal-wrap {
+          padding: 10px 14px 14px;
         }
-        .shell-compose .shell-btn-primary {
-          grid-column: 2;
-          justify-self: flex-end;
+        .shell-terminal {
+          height: calc(100vh - 264px);
         }
       }
     </style>
@@ -669,7 +584,7 @@ function renderPage(routeBase, devices) {
           <input data-shell-workdir type="text" value="" placeholder="Optional" spellcheck="false" />
         </label>
         <div class="shell-toolbar-actions">
-          <button type="button" class="shell-btn shell-btn-quiet" data-shell-refresh>Refresh</button>
+          <button type="button" class="shell-btn shell-btn-quiet" data-shell-reset>Reset</button>
           <button type="button" class="shell-btn shell-btn-quiet" data-shell-clear>Clear</button>
           <details>
             <summary>Options</summary>
@@ -693,16 +608,12 @@ function renderPage(routeBase, devices) {
 
       <section class="shell-stage">
         <div class="shell-status" data-shell-status></div>
-        <section class="shell-stream" data-shell-stream></section>
-        <form class="shell-compose" data-shell-form>
-          <span class="shell-compose-prompt">gsv$</span>
-          <textarea data-shell-command spellcheck="false" placeholder="Type command and press Enter. Shift+Enter for newline."></textarea>
-          <button type="submit" class="shell-btn shell-btn-primary" data-shell-submit>Run</button>
-        </form>
+        <div class="shell-terminal-wrap">
+          <div class="shell-terminal" data-shell-terminal></div>
+        </div>
       </section>
     </main>
-    <script id="shell-bootstrap" type="application/json">${serializeScriptJson(initialState)}</script>
-    <script type="module" src="${escapeHtml(`${routeBase.replace(/\/$/, "")}/app.js`)}"></script>
+    <script type="module" src="${escapeHtml(`${routeBase.replace(/\/$/, '')}/app.js`)}"></script>
   </body>
 </html>`;
 }
@@ -713,56 +624,56 @@ export async function handleFetch(request, context = {}) {
   const appFrame = props.appFrame;
   const kernel = props.kernel;
   if (!appFrame || !kernel) {
-    return new Response("App frame missing", { status: 500 });
+    return new Response('App frame missing', { status: 500 });
   }
 
   const url = new URL(request.url);
-  const routeBase = appFrame.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/shell";
-  const assetPath = `${routeBase.replace(/\/$/, "")}/app.js`;
+  const routeBase = appFrame.routeBase ?? env.PACKAGE_ROUTE_BASE ?? '/apps/shell';
+  const assetPath = `${routeBase.replace(/\/$/, '')}/app.js`;
   if (url.pathname === assetPath) {
     return new Response(SHELL_APP_SCRIPT, {
       headers: {
-        "content-type": "text/javascript; charset=utf-8",
-        "cache-control": "no-store",
+        'content-type': 'text/javascript; charset=utf-8',
+        'cache-control': 'no-store',
       },
     });
   }
   if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
-    return new Response("Not Found", { status: 404 });
+    return new Response('Not Found', { status: 404 });
   }
 
-  if (request.method === "POST") {
+  if (request.method === 'POST') {
     try {
       const body = await request.json();
-      const command = String(body?.command ?? "").trim();
+      const command = String(body?.command ?? '').trim();
       if (!command) {
-        return Response.json({ ok: false, error: "Command is required." }, { status: 400 });
+        return Response.json({ ok: false, error: 'Command is required.' }, { status: 400 });
       }
 
-      const target = normalizeTarget(body?.target ?? "gsv");
+      const target = normalizeTarget(body?.target ?? 'gsv');
       const args = { command };
-      if (target !== "gsv") {
+      if (target !== 'gsv') {
         args.target = target;
       }
-      const workdir = String(body?.workdir ?? "").trim();
+      const workdir = String(body?.workdir ?? '').trim();
       if (workdir) {
         args.workdir = workdir;
       }
-      const timeout = parseOptionalPositiveInt(body?.timeout ?? "");
+      const timeout = parseOptionalPositiveInt(body?.timeout ?? '');
       if (timeout !== null) {
         args.timeout = timeout;
       }
       const background = body?.background === true;
       if (background) {
         args.background = true;
-        const yieldMs = parseOptionalPositiveInt(body?.yieldMs ?? "");
+        const yieldMs = parseOptionalPositiveInt(body?.yieldMs ?? '');
         if (yieldMs !== null) {
           args.yieldMs = yieldMs;
         }
       }
 
       const startedAt = Date.now();
-      const payload = await kernel.request("shell.exec", args);
+      const payload = await kernel.request('shell.exec', args);
       const entry = normalizeTranscriptEntry(payload, startedAt, target, command);
       return Response.json({ ok: true, entry });
     } catch (cause) {
@@ -771,23 +682,23 @@ export async function handleFetch(request, context = {}) {
     }
   }
 
-  if (request.method !== "GET") {
-    return new Response("Method Not Allowed", { status: 405 });
+  if (request.method !== 'GET') {
+    return new Response('Method Not Allowed', { status: 405 });
   }
 
   let devices = [];
   try {
-    const listing = await kernel.request("sys.device.list", {});
+    const listing = await kernel.request('sys.device.list', {});
     devices = asDeviceList(listing);
-    devices.sort((left, right) => String(left?.deviceId ?? left?.id ?? "").localeCompare(String(right?.deviceId ?? right?.id ?? "")));
+    devices.sort((left, right) => String(left?.deviceId ?? left?.id ?? '').localeCompare(String(right?.deviceId ?? right?.id ?? '')));
   } catch {
     devices = [];
   }
 
   return new Response(renderPage(routeBase, devices), {
     headers: {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-store",
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
     },
   });
 }
