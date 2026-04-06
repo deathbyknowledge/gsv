@@ -129,7 +129,7 @@ function renderClientScript(routeBase) {
         if (text.length <= maxLength) {
           return text;
         }
-        return text.slice(0, maxLength) + "\n...[truncated]";
+        return text.slice(0, maxLength) + "\\n...[truncated]";
       }
 
       function basenamePath(path) {
@@ -252,7 +252,7 @@ function renderClientScript(routeBase) {
             const preview = [
               ...directories.slice(0, 8).map((value) => "dir: " + safeText(value)),
               ...files.slice(0, 8).map((value) => "file: " + safeText(value)),
-            ].join("\n");
+            ].join("\\n");
             return '<p class="tool-preview-line">Listed ' + escapeHtmlClient(String(directories.length)) + ' dirs and ' + escapeHtmlClient(String(files.length)) + ' files.</p>' +
               (preview ? '<pre class="tool-preview-pre">' + escapeHtmlClient(preview) + "</pre>" : "");
           }
@@ -269,7 +269,7 @@ function renderClientScript(routeBase) {
             const match = asRecord(item);
             if (!match) return safeText(item);
             return basenamePath(safeText(match.path)) + ":" + safeText(match.line) + ": " + safeText(match.content);
-          }).join("\n");
+          }).join("\\n");
           return '<p class="tool-preview-line">' + escapeHtmlClient(String(count)) + ' matches.</p>' +
             (preview ? '<pre class="tool-preview-pre">' + escapeHtmlClient(preview) + "</pre>" : "");
         }
@@ -335,7 +335,7 @@ function renderClientScript(routeBase) {
             const listing = [
               ...(Array.isArray(record?.directories) ? record.directories.map((value) => "dir: " + safeText(value)) : []),
               ...(Array.isArray(record?.files) ? record.files.map((value) => "file: " + safeText(value)) : []),
-            ].join("\n");
+            ].join("\\n");
             if (listing) {
               body += '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(listing, 4000)) + "</pre></div>";
             }
@@ -350,7 +350,7 @@ function renderClientScript(routeBase) {
               const match = asRecord(item);
               if (!match) return safeText(item);
               return safeText(match.path) + ":" + safeText(match.line) + ": " + safeText(match.content);
-            }).join("\n");
+            }).join("\\n");
             body += '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(listing, 4000)) + "</pre></div>";
           }
           return body;
@@ -429,7 +429,7 @@ function renderClientScript(routeBase) {
 
       function deriveThreadLabel(message) {
         const firstLine = String(message ?? "")
-          .split("\n")
+          .split("\\n")
           .map((line) => line.trim())
           .find((line) => line.length > 0);
         if (!firstLine) {
