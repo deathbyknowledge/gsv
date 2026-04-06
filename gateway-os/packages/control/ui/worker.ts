@@ -592,6 +592,7 @@ function renderPage(routeBase, payload) {
       .control-subnav {
         display: grid;
         gap: 10px;
+        align-content: start;
       }
       .control-subnav-link {
         display: grid;
