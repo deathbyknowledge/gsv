@@ -1,5 +1,5 @@
 const SHELL_APP_SCRIPT = String.raw`
-import { init, Terminal } from 'https://cdn.jsdelivr.net/npm/ghostty-web@0.4.0/+esm';
+import { init, Terminal, FitAddon } from 'https://cdn.jsdelivr.net/npm/ghostty-web@0.4.0/+esm';
 
 const routeBase = document.body.dataset.routeBase || '/apps/shell';
 const streamNode = document.querySelector('[data-shell-terminal]');
@@ -13,6 +13,7 @@ const clearButton = document.querySelector('[data-shell-clear]');
 const resetButton = document.querySelector('[data-shell-reset]');
 
 let terminal = null;
+let fitAddon = null;
 
 let username = localStorage.getItem('gsv.ui.gateway.username') || 'user';
 let currentLine = '';
@@ -173,7 +174,10 @@ terminal = new Terminal({
   cursorStyle: 'bar',
   convertEol: true,
 });
+fitAddon = new FitAddon();
+terminal.loadAddon(fitAddon);
 terminal.open(streamNode);
+fitAddon.fit();
 terminal.focus();
 writePrompt();
 setStatus('ready', 'Shell is ready.');
@@ -246,6 +250,9 @@ for (const node of [targetSelect, workdirInput, timeoutInput, yieldInput, backgr
 }
 
 window.addEventListener('resize', () => {
+  if (fitAddon) {
+    fitAddon.fit();
+  }
   terminal.focus();
 });
 `;
@@ -540,11 +547,11 @@ function renderPage(routeBase, devices) {
       }
       .shell-terminal-wrap {
         min-height: 0;
-        padding: 10px 16px 16px;
+        padding: 0;
       }
       .shell-terminal {
         width: 100%;
-        height: calc(100vh - 142px);
+        height: 100%;
         overflow: hidden;
       }
       @media (max-width: 980px) {
@@ -557,12 +564,6 @@ function renderPage(routeBase, devices) {
         .shell-options {
           position: static;
           min-width: 0;
-        }
-        .shell-terminal-wrap {
-          padding: 10px 14px 14px;
-        }
-        .shell-terminal {
-          height: calc(100vh - 264px);
         }
       }
     </style>
