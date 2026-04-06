@@ -12,34 +12,7 @@ const backgroundInput = document.querySelector('[data-shell-background]');
 const clearButton = document.querySelector('[data-shell-clear]');
 const resetButton = document.querySelector('[data-shell-reset]');
 
-const terminal = new Terminal({
-  fontFamily: 'JetBrains Mono, SFMono-Regular, Consolas, monospace',
-  fontSize: 13,
-  theme: {
-    background: '#07111d',
-    foreground: '#e3edf7',
-    cursor: '#7fc6ff',
-    black: '#07111d',
-    red: '#ff9d8f',
-    green: '#9dd3a8',
-    yellow: '#e4d39a',
-    blue: '#7fc6ff',
-    magenta: '#c4a6ff',
-    cyan: '#88d4ff',
-    white: '#e3edf7',
-    brightBlack: '#5f7388',
-    brightRed: '#ffb6ad',
-    brightGreen: '#b9e6c0',
-    brightYellow: '#f0e1ad',
-    brightBlue: '#a9dcff',
-    brightMagenta: '#d7c0ff',
-    brightCyan: '#b1e8ff',
-    brightWhite: '#f6fbff',
-  },
-  cursorBlink: true,
-  cursorStyle: 'bar',
-  convertEol: true,
-});
+let terminal = null;
 
 let username = localStorage.getItem('gsv.ui.gateway.username') || 'user';
 let currentLine = '';
@@ -172,6 +145,34 @@ async function runCommand(command) {
 }
 
 await init();
+terminal = new Terminal({
+  fontFamily: 'JetBrains Mono, SFMono-Regular, Consolas, monospace',
+  fontSize: 13,
+  theme: {
+    background: '#07111d',
+    foreground: '#e3edf7',
+    cursor: '#7fc6ff',
+    black: '#07111d',
+    red: '#ff9d8f',
+    green: '#9dd3a8',
+    yellow: '#e4d39a',
+    blue: '#7fc6ff',
+    magenta: '#c4a6ff',
+    cyan: '#88d4ff',
+    white: '#e3edf7',
+    brightBlack: '#5f7388',
+    brightRed: '#ffb6ad',
+    brightGreen: '#b9e6c0',
+    brightYellow: '#f0e1ad',
+    brightBlue: '#a9dcff',
+    brightMagenta: '#d7c0ff',
+    brightCyan: '#b1e8ff',
+    brightWhite: '#f6fbff',
+  },
+  cursorBlink: true,
+  cursorStyle: 'bar',
+  convertEol: true,
+});
 terminal.open(streamNode);
 terminal.focus();
 writePrompt();
