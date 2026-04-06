@@ -42,7 +42,6 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !tokenInputNode ||
     !errorNode ||
     !submitNode ||
-    !statusNode ||
     !dotNode ||
     !lockNode
   ) {
@@ -50,7 +49,9 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   }
 
   const applySnapshot = (snapshot: SessionSnapshot): void => {
-    statusNode.textContent = statusText(snapshot);
+    if (statusNode) {
+      statusNode.textContent = statusText(snapshot);
+    }
     overlayNode.hidden = snapshot.phase === "ready";
     submitNode.disabled = snapshot.phase === "authenticating";
     lockNode.disabled = snapshot.phase !== "ready";
