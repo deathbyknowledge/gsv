@@ -102,6 +102,48 @@ export type SysSetupResult = {
   };
 };
 
+export type SysBootstrapArgs = {
+  remoteUrl?: string;
+  ref?: string;
+};
+
+export type SysBootstrapResult = {
+  repo: string;
+  remoteUrl: string;
+  ref: string;
+  head: string | null;
+  changed: boolean;
+  packages: Array<{
+    packageId: string;
+    name: string;
+    description: string;
+    version: string;
+    runtime: "dynamic-worker" | "web-ui";
+    enabled: boolean;
+    source: {
+      repo: string;
+      ref: string;
+      subdir: string;
+      resolvedCommit: string | null;
+    };
+    entrypoints: Array<{
+      name: string;
+      kind: "command" | "ui" | "task";
+      description?: string;
+      command?: string;
+      route?: string;
+      icon?: string;
+      syscalls?: string[];
+      windowDefaults?: {
+        width: number;
+        height: number;
+        minWidth: number;
+        minHeight: number;
+      };
+    }>;
+  }>;
+};
+
 // -- sys.config.get / sys.config.set -----------------------------------------
 
 export type SysConfigGetArgs = {

@@ -4,6 +4,12 @@ import type {
   GatewayConnectResult,
   UserSessionToken,
 } from "./gateway-client";
+import type {
+  SysBootstrapArgs,
+  SysBootstrapResult,
+  SysSetupArgs,
+  SysSetupResult,
+} from "../../gateway-os/src/syscalls/system";
 
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
 const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
@@ -21,7 +27,7 @@ type PersistedSessionToken = {
   expiresAt: number | null;
 };
 
-export type SessionPhase = "locked" | "authenticating" | "ready";
+export type SessionPhase = "setup" | "setup-complete" | "locked" | "authenticating" | "ready";
 
 export type SessionSnapshot = {
   phase: SessionPhase;
@@ -29,6 +35,7 @@ export type SessionSnapshot = {
   username: string;
   connectionId: string | null;
   message: string | null;
+  setupResult: SysSetupResult | null;
 };
 
 export type SessionLoginInput = {
@@ -37,11 +44,16 @@ export type SessionLoginInput = {
   token?: string;
 };
 
+export type SessionSetupInput = SysSetupArgs;
+
 export type SessionService = {
   client: GatewayClient;
   snapshot: () => SessionSnapshot;
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
   login: (input: SessionLoginInput) => Promise<GatewayConnectResult>;
+  setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
+  initializeFromUpstream: (args?: SysBootstrapArgs) => Promise<SysBootstrapResult>;
+  continueFromSetup: () => Promise<GatewayConnectResult>;
   lock: (reason?: string) => void;
   start: () => Promise<void>;
 };
@@ -140,6 +152,23 @@ function normalizeMessage(value: unknown): string {
   return "Authentication failed";
 }
 
+function isSetupRequiredError(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const error = value as Error & { code?: number; details?: unknown };
+  if (error.code === 425) {
+    return true;
+  }
+
+  if (!error.details || typeof error.details !== "object") {
+    return false;
+  }
+
+  return (error.details as { setupMode?: unknown }).setupMode === true;
+}
+
 function toPersistedToken(username: string, token: UserSessionToken): PersistedSessionToken {
   return {
     username,
@@ -204,11 +233,14 @@ export function createSessionService(client: GatewayClient): SessionService {
     username: readStored(STORAGE_USERNAME) ?? "",
     connectionId: null,
     message: null,
+    setupResult: null,
   };
 
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
   let pendingRevokes = Array.from(new Set(readPersistedRevokes()));
   let refreshTimerId: number | null = null;
+  let pendingSetupLogin: SessionLoginInput | null = null;
+  let holdReadyUntilBootstrap = false;
 
   if (currentSessionToken) {
     syncAppSessionCookies(currentSessionToken);
@@ -335,6 +367,9 @@ export function createSessionService(client: GatewayClient): SessionService {
 
   client.onStatus((status) => {
     if (status.state === "connected") {
+      if (holdReadyUntilBootstrap) {
+        return;
+      }
       if (snapshot.phase !== "ready") {
         setSnapshot({
           phase: "ready",
@@ -342,6 +377,7 @@ export function createSessionService(client: GatewayClient): SessionService {
           username: status.username ?? snapshot.username,
           connectionId: status.connectionId,
           message: null,
+          setupResult: null,
         });
       }
       return;
@@ -359,6 +395,7 @@ export function createSessionService(client: GatewayClient): SessionService {
         username: snapshot.username,
         connectionId: null,
         message: status.message ?? "Disconnected",
+        setupResult: null,
       });
     }
   });
@@ -375,6 +412,7 @@ export function createSessionService(client: GatewayClient): SessionService {
       username: username || snapshot.username,
       connectionId: null,
       message: "Connecting...",
+      setupResult: null,
     });
 
     const options: GatewayConnectOptions = {
@@ -386,26 +424,146 @@ export function createSessionService(client: GatewayClient): SessionService {
     try {
       const result = await client.connectUser(options);
       storeValue(STORAGE_USERNAME, username);
+      pendingSetupLogin = null;
 
-      setSnapshot({
-        phase: "ready",
-        url,
-        username,
-        connectionId: result.server.connectionId,
-        message: null,
-      });
+      if (!holdReadyUntilBootstrap) {
+        setSnapshot({
+          phase: "ready",
+          url,
+          username,
+          connectionId: result.server.connectionId,
+          message: null,
+          setupResult: null,
+        });
+      }
 
       await drainPendingRevokes("ui session cleanup");
       await refreshSessionToken("post-login");
 
       return result;
     } catch (error) {
+      if (isSetupRequiredError(error)) {
+        setSnapshot({
+          phase: "setup",
+          url,
+          username: username || snapshot.username,
+          connectionId: null,
+          message: null,
+          setupResult: null,
+        });
+        throw error;
+      }
+
       setSnapshot({
         phase: "locked",
         url,
         username: username || snapshot.username,
         connectionId: null,
         message: normalizeMessage(error),
+        setupResult: null,
+      });
+      throw error;
+    }
+  };
+
+  const setup = async (input: SessionSetupInput): Promise<SysSetupResult> => {
+    const url = deriveGatewayUrlFromOrigin();
+    const username = input.username.trim();
+    const password = input.password.trim();
+
+    setSnapshot({
+      phase: "authenticating",
+      url,
+      username: username || snapshot.username,
+      connectionId: null,
+      message: "Configuring gateway...",
+      setupResult: null,
+    });
+
+    try {
+      const result = await client.setupSystem(url, input);
+      pendingSetupLogin = { username, password };
+      storeValue(STORAGE_USERNAME, username);
+
+      setSnapshot({
+        phase: "setup-complete",
+        url,
+        username,
+        connectionId: null,
+        message: null,
+        setupResult: result,
+      });
+
+      return result;
+    } catch (error) {
+      setSnapshot({
+        phase: "setup",
+        url,
+        username: username || snapshot.username,
+        connectionId: null,
+        message: normalizeMessage(error),
+        setupResult: null,
+      });
+      throw error;
+    }
+  };
+
+  const continueFromSetup = async (): Promise<GatewayConnectResult> => {
+    if (!pendingSetupLogin) {
+      throw new Error("Setup credentials are no longer available. Sign in manually.");
+    }
+
+    return await login(pendingSetupLogin);
+  };
+
+  const initializeFromUpstream = async (
+    args: SysBootstrapArgs = {},
+  ): Promise<SysBootstrapResult> => {
+    const url = deriveGatewayUrlFromOrigin();
+    const setupResult = snapshot.setupResult;
+    const username = snapshot.username;
+    const wasConnected = client.isConnected();
+
+    if (!wasConnected) {
+      holdReadyUntilBootstrap = true;
+      setSnapshot({
+        phase: "authenticating",
+        url,
+        username,
+        connectionId: null,
+        message: "Initializing system from upstream...",
+        setupResult,
+      });
+    }
+
+    try {
+      if (!wasConnected) {
+        await continueFromSetup();
+      }
+      const result = await client.bootstrapSystem(args);
+      holdReadyUntilBootstrap = false;
+      const status = client.getStatus();
+      setSnapshot({
+        phase: "ready",
+        url: status.url ?? url,
+        username: status.username ?? username,
+        connectionId: status.connectionId,
+        message: null,
+        setupResult: null,
+      });
+      return result;
+    } catch (error) {
+      holdReadyUntilBootstrap = false;
+      if (!wasConnected && client.isConnected()) {
+        client.disconnect();
+      }
+      setSnapshot({
+        phase: "setup-complete",
+        url,
+        username,
+        connectionId: null,
+        message: normalizeMessage(error),
+        setupResult,
       });
       throw error;
     }
@@ -414,6 +572,7 @@ export function createSessionService(client: GatewayClient): SessionService {
   const lock = (reason = "Session locked"): void => {
     const previousTokenId = currentSessionToken?.tokenId ?? null;
     clearStoredSessionToken();
+    pendingSetupLogin = null;
 
     if (previousTokenId) {
       queueRevoke(previousTokenId);
@@ -432,28 +591,53 @@ export function createSessionService(client: GatewayClient): SessionService {
         username: snapshot.username,
         connectionId: null,
         message: reason,
+        setupResult: null,
       });
     })();
   };
 
   const start = async (): Promise<void> => {
+    const url = deriveGatewayUrlFromOrigin();
     const persisted = currentSessionToken;
+
     if (!persisted) {
+      const setupRequired = await client.probeSetupMode(url);
+      if (setupRequired) {
+        setSnapshot({
+          phase: "setup",
+          url,
+          username: snapshot.username,
+          connectionId: null,
+          message: null,
+          setupResult: null,
+        });
+      }
       return;
     }
 
     if (persisted.expiresAt !== null && persisted.expiresAt <= Date.now()) {
       clearStoredSessionToken();
+      const setupRequired = await client.probeSetupMode(url);
+      if (setupRequired) {
+        setSnapshot({
+          phase: "setup",
+          url,
+          username: snapshot.username,
+          connectionId: null,
+          message: null,
+          setupResult: null,
+        });
+      }
       return;
     }
 
-    const url = deriveGatewayUrlFromOrigin();
     setSnapshot({
       phase: "authenticating",
       url,
       username: persisted.username,
       connectionId: null,
       message: "Restoring session...",
+      setupResult: null,
     });
 
     try {
@@ -469,18 +653,32 @@ export function createSessionService(client: GatewayClient): SessionService {
         username: persisted.username,
         connectionId: result.server.connectionId,
         message: null,
+        setupResult: null,
       });
 
       await drainPendingRevokes("ui session cleanup");
       scheduleRefresh(persisted);
-    } catch {
+    } catch (error) {
       clearStoredSessionToken();
+      if (isSetupRequiredError(error)) {
+        setSnapshot({
+          phase: "setup",
+          url,
+          username: persisted.username,
+          connectionId: null,
+          message: null,
+          setupResult: null,
+        });
+        return;
+      }
+
       setSnapshot({
         phase: "locked",
         url,
         username: persisted.username,
         connectionId: null,
         message: "Session expired. Sign in again.",
+        setupResult: null,
       });
     }
   };
@@ -496,6 +694,9 @@ export function createSessionService(client: GatewayClient): SessionService {
       };
     },
     login,
+    setup,
+    initializeFromUpstream,
+    continueFromSetup,
     lock,
     start,
   };

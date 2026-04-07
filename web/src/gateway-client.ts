@@ -1,3 +1,10 @@
+import type {
+  SysBootstrapArgs,
+  SysBootstrapResult,
+  SysSetupArgs,
+  SysSetupResult,
+} from "../../gateway-os/src/syscalls/system";
+
 type GatewayErrorShape = {
   code: number;
   message: string;
@@ -117,6 +124,9 @@ export type GatewayClientLike = {
   spawnProcess: (args: ProcSpawnArgs) => Promise<ProcSpawnResult>;
   sendMessage: (message: string, pid?: string) => Promise<ProcSendResult>;
   getHistory: (limit?: number, pid?: string, offset?: number) => Promise<ProcHistoryResult>;
+  probeSetupMode: (url: string) => Promise<boolean>;
+  setupSystem: (url: string, args: SysSetupArgs) => Promise<SysSetupResult>;
+  bootstrapSystem: (args?: SysBootstrapArgs) => Promise<SysBootstrapResult>;
 };
 
 type PendingRequest = {
@@ -321,6 +331,42 @@ export class GatewayClient implements GatewayClientLike {
     return raw.revoked === true;
   }
 
+  async probeSetupMode(url: string): Promise<boolean> {
+    try {
+      await this.callWithoutConnect(url, "sys.connect", {
+        protocol: 1,
+        client: {
+          id: "gsv-ui-setup-probe",
+          version: "0.1.0",
+          platform: "browser",
+          role: "user",
+        },
+      });
+      return false;
+    } catch (error) {
+      const rpcError = error as Error & { code?: number; details?: unknown };
+      if (rpcError.code === 425) {
+        return true;
+      }
+      if (
+        rpcError.details &&
+        typeof rpcError.details === "object" &&
+        (rpcError.details as { setupMode?: unknown }).setupMode === true
+      ) {
+        return true;
+      }
+      return false;
+    }
+  }
+
+  async setupSystem(url: string, args: SysSetupArgs): Promise<SysSetupResult> {
+    return await this.callWithoutConnect<SysSetupResult>(url, "sys.setup", args);
+  }
+
+  async bootstrapSystem(args: SysBootstrapArgs = {}): Promise<SysBootstrapResult> {
+    return await this.call<SysBootstrapResult>("sys.bootstrap", args);
+  }
+
   async call<T = unknown>(call: string, args: unknown = {}): Promise<T> {
     return (await this.request(call, args)) as T;
   }
@@ -416,6 +462,17 @@ export class GatewayClient implements GatewayClientLike {
     return socket;
   }
 
+  private async callWithoutConnect<T>(url: string, call: string, args: unknown): Promise<T> {
+    const socket = await this.openSocket(url);
+    try {
+      return await this.requestOverSocket<T>(socket, call, args);
+    } finally {
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close(1000, "ephemeral request complete");
+      }
+    }
+  }
+
   private request(call: string, args: unknown): Promise<unknown> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -443,6 +500,81 @@ export class GatewayClient implements GatewayClientLike {
       } catch (error) {
         this.pending.delete(id);
         window.clearTimeout(timeoutId);
+        reject(error instanceof Error ? error : new Error("Failed to send request"));
+      }
+    });
+  }
+
+  private requestOverSocket<T>(socket: WebSocket, call: string, args: unknown): Promise<T> {
+    const id = makeId();
+    const frame: GatewayRequestFrame = { type: "req", id, call, args };
+
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error(`Request timed out: ${call}`));
+      }, REQUEST_TIMEOUT_MS);
+
+      const cleanup = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        window.clearTimeout(timeoutId);
+        socket.removeEventListener("message", onMessage);
+        socket.removeEventListener("close", onClose);
+        socket.removeEventListener("error", onError);
+      };
+
+      const onClose = (): void => {
+        cleanup();
+        reject(new Error("Connection closed"));
+      };
+
+      const onError = (): void => {
+        cleanup();
+        reject(new Error("WebSocket request failed"));
+      };
+
+      const onMessage = (event: MessageEvent): void => {
+        if (typeof event.data !== "string") {
+          return;
+        }
+
+        let parsed: GatewayFrame;
+        try {
+          parsed = JSON.parse(event.data) as GatewayFrame;
+        } catch {
+          return;
+        }
+
+        if (parsed.type !== "res" || parsed.id !== id) {
+          return;
+        }
+
+        cleanup();
+
+        if (parsed.ok) {
+          resolve((parsed.data ?? {}) as T);
+          return;
+        }
+
+        const message = normalizeMessage(parsed.error?.message);
+        const error = new Error(message);
+        (error as Error & { code?: number; details?: unknown }).code = parsed.error?.code;
+        (error as Error & { code?: number; details?: unknown }).details = parsed.error?.details;
+        reject(error);
+      };
+
+      socket.addEventListener("message", onMessage);
+      socket.addEventListener("close", onClose);
+      socket.addEventListener("error", onError);
+
+      try {
+        socket.send(JSON.stringify(frame));
+      } catch (error) {
+        cleanup();
         reject(error instanceof Error ? error : new Error("Failed to send request"));
       }
     });

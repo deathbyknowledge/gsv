@@ -153,6 +153,21 @@ export type RipgitApplyResult = {
   head?: string | null;
 };
 
+type RipgitImportResponse = {
+  ok: boolean;
+  head?: string | null;
+  changed?: boolean;
+  remote_url?: string;
+  remote_ref?: string;
+};
+
+export type RipgitImportResult = {
+  head?: string | null;
+  changed: boolean;
+  remoteUrl: string;
+  remoteRef: string;
+};
+
 type RipgitSearchResponse = {
   ok: boolean;
   matches?: RipgitSearchMatch[];
@@ -226,6 +241,47 @@ export class RipgitClient {
     }
     return {
       head: payload.head ?? null,
+    };
+  }
+
+  async importFromUpstream(
+    repo: RipgitRepoRef,
+    author: string,
+    email: string,
+    message: string,
+    remoteUrl?: string,
+    remoteRef?: string,
+  ): Promise<RipgitImportResult> {
+    const response = await this.binding.fetch(this.makeImportUrl(repo), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...this.makeInternalHeaders(),
+      },
+      body: JSON.stringify({
+        defaultBranch: repo.branch ?? DEFAULT_BRANCH,
+        author,
+        email,
+        message,
+        ...(remoteUrl ? { remoteUrl } : {}),
+        ...(remoteRef ? { remoteRef } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `import '${repo.owner}/${repo.repo}'`));
+    }
+
+    const payload = await response.json<RipgitImportResponse>();
+    if (!payload.ok || typeof payload.remote_url !== "string" || typeof payload.remote_ref !== "string") {
+      throw new Error(`Failed to import upstream for ${repo.owner}/${repo.repo}`);
+    }
+
+    return {
+      head: payload.head ?? null,
+      changed: payload.changed === true,
+      remoteUrl: payload.remote_url,
+      remoteRef: payload.remote_ref,
     };
   }
 
@@ -317,6 +373,12 @@ export class RipgitClient {
   private makeApplyUrl(repo: RipgitRepoRef): URL {
     return this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/apply`,
+    );
+  }
+
+  private makeImportUrl(repo: RipgitRepoRef): URL {
+    return this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/import`,
     );
   }
 
