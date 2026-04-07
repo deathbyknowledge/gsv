@@ -404,8 +404,8 @@ function renderPage(routeBase, devices) {
         gap: 10px;
         align-items: end;
         padding: 10px 12px 8px;
-        border-bottom: 1px solid rgba(120, 160, 205, 0.08);
-        background: rgba(7, 17, 29, 0.82);
+        border-bottom: 1px solid rgba(42, 50, 56, 0.08);
+        background: rgba(247, 249, 252, 0.52);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
       }
@@ -415,7 +415,7 @@ function renderPage(routeBase, devices) {
         font-weight: 700;
         letter-spacing: 0.14em;
         text-transform: uppercase;
-        color: var(--shell-muted);
+        color: #61737b;
       }
       .shell-field {
         display: grid;
@@ -426,18 +426,19 @@ function renderPage(routeBase, devices) {
         width: 100%;
         min-height: 34px;
         border: 0;
-        border-left: 2px solid transparent;
+        border: 1px solid transparent;
         border-radius: 4px;
         padding: 0 10px;
-        background: rgba(18, 34, 53, 0.92);
-        color: var(--shell-text);
+        background: rgba(255, 255, 255, 0.78);
+        color: #1f2d33;
         font: inherit;
         outline: none;
+        transition: border-color 120ms ease, background 120ms ease;
       }
       .shell-field input:focus,
       .shell-field select:focus {
-        border-left-color: var(--shell-accent);
-        background: rgba(20, 39, 60, 0.98);
+        border-color: rgba(26, 75, 132, 0.24);
+        background: rgba(255, 255, 255, 0.96);
       }
       .shell-toolbar-actions {
         display: flex;
@@ -496,8 +497,8 @@ function renderPage(routeBase, devices) {
       }
       .shell-btn-quiet,
       .shell-toolbar details summary {
-        background: rgba(18, 34, 53, 0.92);
-        color: var(--shell-text);
+        background: rgba(233, 239, 246, 0.76);
+        color: #1f2d33;
       }
       .shell-toolbar details summary {
         list-style: none;
@@ -523,9 +524,9 @@ function renderPage(routeBase, devices) {
         gap: 10px;
         padding: 12px;
         border-radius: 12px;
-        background: rgba(10, 21, 35, 0.98);
-        box-shadow: var(--shell-shadow);
-        border: 1px solid var(--shell-line);
+        background: rgba(247, 249, 252, 0.96);
+        box-shadow: 0 20px 40px rgba(38, 42, 47, 0.12);
+        border: 1px solid rgba(42, 50, 56, 0.08);
       }
       .shell-toggle-row {
         display: flex;
