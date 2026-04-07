@@ -4,6 +4,7 @@ import type {
   GatewayAdapterInterface,
 } from "./adapter-interface";
 import type { Frame } from "./protocol/frames";
+import type { Kernel as KernelEntrypoint } from "./kernel/do";
 import { getAgentByName } from "agents";
 import type { AppFrameContext, PackageAppProps } from "./protocol/app-frame";
 import { packageArtifactToWorkerCode, packageWorkerKey } from "./kernel/packages";
@@ -57,7 +58,7 @@ export default {
           : new Response(authorized.message, { status: authorized.status });
       }
 
-      return env.RIPGIT.fetch(
+      const response = await env.RIPGIT.fetch(
         await buildGitProxyRequest(
           request,
           gitMatch,
@@ -65,6 +66,12 @@ export default {
           authorized.username,
         ),
       );
+      if (shouldAutoSyncBuiltins(gitMatch, response)) {
+        ctx.waitUntil(triggerBuiltinSync(kernel).catch((error) => {
+          console.error("[Gateway] builtin auto-sync failed after git push", error);
+        }));
+      }
+      return response;
     }
 
     const appMatch = matchPackageAppPath(url.pathname);
@@ -243,6 +250,24 @@ function basicAuthChallenge(message: string): Response {
       "WWW-Authenticate": 'Basic realm="gsv"',
     },
   });
+}
+
+function shouldAutoSyncBuiltins(match: GitPathMatch, response: Response): boolean {
+  return response.ok && match.owner === "system" && match.repo === "gsv" && match.suffix === "git-receive-pack";
+}
+
+async function triggerBuiltinSync(kernel: DurableObjectStub<KernelEntrypoint>): Promise<void> {
+  const frame: Frame = {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "pkg.sync",
+    args: {},
+  };
+  const response = await kernel.serviceFrame(frame);
+  if (!response || response.type !== "res" || !response.ok) {
+    const error = response && "error" in response ? response.error?.message : "Unknown error";
+    throw new Error(error ?? "Unknown error");
+  }
 }
 
 function getPackageAppSession(request: Request): PackageAppSession | null {
