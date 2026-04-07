@@ -532,17 +532,17 @@ function renderPage(state) {
     <style>
       :root {
         color-scheme: light;
-        --bg: #f2ede4;
-        --panel: rgba(250, 246, 240, 0.82);
-        --panel-strong: #faf6f0;
-        --panel-soft: #ece4d7;
+        --bg: #f7f9fc;
+        --panel: rgba(247, 249, 252, 0.84);
+        --panel-strong: #ffffff;
+        --panel-soft: #e9eff6;
         --line: rgba(58, 68, 76, 0.12);
         --line-strong: rgba(42, 50, 56, 0.18);
         --text: #1f2d33;
         --muted: #61737b;
         --primary-a: #003466;
         --primary-b: #1a4b84;
-        --accent: #8f5b47;
+        --accent: #5c7895;
         --shadow: 0 28px 80px rgba(38, 42, 47, 0.12);
         --glass-shadow: 0 12px 32px rgba(28, 34, 38, 0.12), inset 0 1px 0 rgba(255,255,255,0.58), inset 0 -1px 0 rgba(255,255,255,0.14), inset 0 0 6px 2px rgba(255,255,255,0.18);
         font-family: Manrope, system-ui, sans-serif;
@@ -583,7 +583,7 @@ function renderPage(state) {
         align-items: end;
         padding: 12px 14px 10px;
         border-bottom: 1px solid rgba(42, 50, 56, 0.08);
-        background: rgba(248, 243, 236, 0.44);
+        background: rgba(247, 249, 252, 0.56);
         backdrop-filter: blur(10px) saturate(1.04);
         -webkit-backdrop-filter: blur(10px) saturate(1.04);
       }
@@ -650,19 +650,19 @@ function renderPage(state) {
         width: 100%;
         min-height: 34px;
         border: 1px solid rgba(38, 48, 56, 0.08);
-        border-left: 3px solid transparent;
         border-radius: 4px;
         padding: 0 10px;
-        background: rgba(247, 242, 236, 0.74);
+        background: rgba(255, 255, 255, 0.78);
         color: var(--text);
         font: inherit;
         outline: none;
+        transition: border-color 120ms ease, background 120ms ease;
       }
       .files-field input:focus,
       .files-field select:focus,
       .files-editor:focus {
-        border-left-color: var(--primary-b);
-        background: rgba(252, 249, 244, 0.92);
+        border-color: rgba(26, 75, 132, 0.24);
+        background: rgba(255, 255, 255, 0.96);
       }
       .files-file-actions {
         display: flex;
@@ -687,7 +687,7 @@ function renderPage(state) {
       }
       .files-icon-btn,
       .files-back-link {
-        background: rgba(248, 242, 234, 0.68);
+        background: rgba(233, 239, 246, 0.76);
         color: var(--text);
       }
       .files-btn-danger {
@@ -755,7 +755,7 @@ function renderPage(state) {
         text-align: center;
       }
       .files-entry-row:hover {
-        background: rgba(255,255,255,0.42);
+        background: rgba(233, 239, 246, 0.68);
         transform: translateY(-1px);
       }
       .files-search-row {
@@ -770,7 +770,7 @@ function renderPage(state) {
         text-decoration: none;
       }
       .files-search-row:hover {
-        background: rgba(255,255,255,0.42);
+        background: rgba(233, 239, 246, 0.68);
       }
       .files-entry-icon {
         width: 44px;
@@ -828,13 +828,13 @@ function renderPage(state) {
         min-height: calc(100vh - 176px);
         padding: 10px 0 0;
         border-radius: 0;
-        border: 0;
-        border-left: 3px solid transparent;
+        border: 1px solid transparent;
         background: transparent;
         color: var(--text);
         font: 13px/1.55 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
         resize: vertical;
         outline: none;
+        transition: border-color 120ms ease;
       }
       .files-file-body.is-image {
         display: grid;

@@ -543,14 +543,14 @@ button:disabled {
 
 .session-form input {
   width: 100%;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 4px;
   background: rgba(232, 238, 245, 0.72);
   color: #16314f;
   font-family: var(--font-ui);
   font-size: 0.9rem;
   padding: 11px 12px;
-  transition: box-shadow 120ms ease, background-color 120ms ease;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
 .session-form input::placeholder {
@@ -560,7 +560,7 @@ button:disabled {
 .session-form input:focus-visible {
   outline: none;
   background: rgba(255, 255, 255, 0.88);
-  box-shadow: inset 3px 0 0 #003466;
+  border-color: rgba(0, 52, 102, 0.22);
 }
 
 .session-form input:disabled {
@@ -589,14 +589,14 @@ button:disabled {
 
 .session-field-grid input {
   width: 100%;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 4px;
   background: rgba(232, 238, 245, 0.72);
   color: #16314f;
   font-family: var(--font-ui);
   font-size: 0.9rem;
   padding: 11px 12px;
-  transition: box-shadow 120ms ease, background-color 120ms ease;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
 .session-field-grid input::placeholder {
@@ -606,7 +606,7 @@ button:disabled {
 .session-field-grid input:focus-visible {
   outline: none;
   background: rgba(255, 255, 255, 0.88);
-  box-shadow: inset 3px 0 0 #003466;
+  border-color: rgba(0, 52, 102, 0.22);
 }
 
 .session-advanced {
