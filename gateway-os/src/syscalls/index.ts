@@ -49,6 +49,8 @@ import type {
   ConnectResult,
   SysSetupArgs,
   SysSetupResult,
+  SysBootstrapArgs,
+  SysBootstrapResult,
   SysConfigGetArgs,
   SysConfigGetResult,
   SysConfigSetArgs,
@@ -143,6 +145,7 @@ export type SyscallDomains = {
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
+  "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
   "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };

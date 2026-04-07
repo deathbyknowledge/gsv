@@ -1,4 +1,4 @@
-use crate::{api, packages, store, KEYFRAME_INTERVAL};
+use crate::{api, git, packages, store, KEYFRAME_INTERVAL};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use worker::*;
 
@@ -11,6 +11,17 @@ pub struct ApplyRequest {
     pub message: String,
     pub expected_head: Option<String>,
     pub ops: Vec<ApplyOp>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportRequest {
+    pub default_branch: Option<String>,
+    pub remote_url: Option<String>,
+    pub remote_ref: Option<String>,
+    pub author: String,
+    pub email: String,
+    pub message: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -37,6 +48,15 @@ struct ApplyResponse<'a> {
     head: Option<&'a str>,
     conflict: bool,
     error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct ImportResponse<'a> {
+    ok: bool,
+    head: Option<&'a str>,
+    changed: bool,
+    remote_url: &'a str,
+    remote_ref: &'a str,
 }
 
 pub fn check_internal_access(req: &Request, env: &Env) -> Option<Result<Response>> {
@@ -264,6 +284,38 @@ pub async fn handle_apply(sql: &SqlStorage, req: &mut Request) -> Result<Respons
         head: Some(commit_hash.as_str()),
         conflict: false,
         error: None,
+    };
+    Response::from_json(&response)
+}
+
+pub async fn handle_import(sql: &SqlStorage, req: &mut Request) -> Result<Response> {
+    let body = req.bytes().await?;
+    let import: ImportRequest = serde_json::from_slice(&body)
+        .map_err(|err| Error::RustError(format!("invalid import request: {}", err)))?;
+
+    let remote_url = import
+        .remote_url
+        .clone()
+        .or_else(|| store::get_config(sql, "upstream.remote_url").ok().flatten())
+        .ok_or_else(|| Error::RustError("remoteUrl is required".to_string()))?;
+    let remote_ref = import
+        .remote_ref
+        .clone()
+        .or_else(|| store::get_config(sql, "upstream.remote_ref").ok().flatten())
+        .unwrap_or_else(|| "main".to_string());
+    let ref_name = workspace_ref_name(import.default_branch.as_deref().unwrap_or("main"));
+    store::set_config(sql, "upstream.remote_url", &remote_url)?;
+    store::set_config(sql, "upstream.remote_ref", &remote_ref)?;
+    store::set_config(sql, "upstream.source", "git-upload-pack")?;
+
+    let fetched = git::fetch_remote_ref(sql, &remote_url, &remote_ref, &ref_name).await?;
+
+    let response = ImportResponse {
+        ok: true,
+        head: Some(fetched.head.as_str()),
+        changed: fetched.changed,
+        remote_url: remote_url.as_str(),
+        remote_ref: remote_ref.as_str(),
     };
     Response::from_json(&response)
 }
@@ -548,6 +600,7 @@ fn git_sha1(obj_type: &str, content: &[u8]) -> String {
     hasher.update(content);
     hasher.digest().to_string()
 }
+
 
 fn hex_to_bytes(hex: &str) -> std::result::Result<[u8; 20], ()> {
     if hex.len() != 40 {

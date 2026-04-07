@@ -197,7 +197,7 @@ button:disabled {
 
 .topbar::before,
 .windows-panel::before,
-.session-card::before {
+.session-panel::before {
   content: "";
   position: absolute;
   top: 0;
@@ -215,7 +215,7 @@ button:disabled {
 
 .topbar::after,
 .windows-panel::after,
-.session-card::after {
+.session-panel::after {
   content: "";
   position: absolute;
   top: 0;
@@ -233,7 +233,7 @@ button:disabled {
 
 .topbar > *,
 .windows-panel > *,
-.session-card > * {
+.session-panel > * {
   position: relative;
   z-index: 1;
 }
@@ -422,25 +422,48 @@ button:disabled {
   z-index: 10;
 }
 
-.session-overlay {
+.desktop-root {
+  position: absolute;
+  inset: 0;
+}
+
+.session-screen {
   position: absolute;
   inset: 0;
   z-index: 60;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
   background: url("/background4.png");
   background-size: cover;
   background-position: center;
+  color: #18314f;
 }
 
-.session-overlay[hidden] {
+.session-screen[hidden] {
   display: none;
 }
 
-.session-card {
-  width: min(480px, calc(100% - 32px));
+.session-stage {
+  width: 100%;
+  min-height: 100%;
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: clamp(24px, 5vw, 48px);
+  background: linear-gradient(
+    90deg,
+    rgba(7, 15, 34, 0.04) 0%,
+    rgba(7, 15, 34, 0.08) 45%,
+    rgba(7, 15, 34, 0.18) 100%
+  );
+}
+
+.session-panel {
+  width: min(480px, 100%);
+  align-self: center;
   border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 12px;
+  border-radius: 5px;
   background: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.1),
@@ -455,15 +478,51 @@ button:disabled {
   padding: 24px 24px 20px;
 }
 
-.session-card .muted {
+.session-panel-wide {
+  width: min(760px, 100%);
+}
+
+.session-panel .muted {
   color: rgba(24, 49, 79, 0.72);
 }
 
-.session-card h1 {
-  margin: 0 0 4px;
+.session-panel-head {
+  display: grid;
+  gap: 6px;
+}
+
+.session-panel-head-with-progress {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  align-items: end;
+  gap: 18px;
+}
+
+.session-panel h1 {
+  margin: 0;
   font-size: clamp(1.5rem, 3vw, 2rem);
   letter-spacing: -0.02em;
-  text-align: center;
+}
+
+.session-panel h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
+}
+
+.session-kicker {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(24, 49, 79, 0.68);
+}
+
+.session-copy {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: rgba(24, 49, 79, 0.76);
 }
 
 .session-form {
@@ -509,6 +568,47 @@ button:disabled {
   color: rgba(24, 49, 79, 0.48);
 }
 
+.session-field-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.session-field-grid label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(24, 49, 79, 0.74);
+}
+
+.session-field-grid label[hidden] {
+  display: none;
+}
+
+.session-field-grid input {
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(232, 238, 245, 0.72);
+  color: #16314f;
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  padding: 11px 12px;
+  transition: box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.session-field-grid input::placeholder {
+  color: rgba(24, 49, 79, 0.42);
+}
+
+.session-field-grid input:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: inset 3px 0 0 #003466;
+}
+
 .session-advanced {
   justify-self: start;
   margin-top: -2px;
@@ -541,6 +641,150 @@ button:disabled {
   margin: 0;
   color: #b34747;
   font-size: 0.78rem;
+}
+
+.session-setup-form {
+  display: grid;
+  gap: 18px;
+}
+
+.setup-step {
+  display: grid;
+  gap: 16px;
+}
+
+.setup-step[hidden] {
+  display: none;
+}
+
+.setup-step-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.setup-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.setup-progress-label {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(24, 49, 79, 0.68);
+  text-align: right;
+}
+
+.setup-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.32);
+  overflow: hidden;
+}
+
+.setup-progress-fill {
+  display: block;
+  width: 25%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #003466 0%, #1a4b84 100%);
+  transition: width 160ms ease;
+}
+
+.session-toggle {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.18);
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+}
+
+.session-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #1a4b84;
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.session-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.session-result-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.session-result-card span {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(24, 49, 79, 0.62);
+}
+
+.session-result-card strong {
+  font-size: 0.96rem;
+  color: #14304d;
+}
+
+.session-token-panel {
+  margin-top: 16px;
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.session-token-panel[hidden] {
+  display: none;
+}
+
+.session-token-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-token-value {
+  min-height: 96px;
+  width: 100%;
+  resize: vertical;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(232, 238, 245, 0.72);
+  color: #16314f;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  padding: 12px;
+}
+
+.session-token-meta {
+  margin: 0;
+  font-size: 0.78rem;
+  color: rgba(24, 49, 79, 0.7);
 }
 
 .desktop-icons {
@@ -2581,7 +2825,7 @@ button:disabled {
   transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
-.session-card .runtime-btn {
+.session-panel .runtime-btn {
   justify-self: start;
   border: 0;
   background: linear-gradient(135deg, #003466 0%, #1a4b84 100%);
@@ -2589,6 +2833,12 @@ button:disabled {
   color: #f7f9fc;
   border-radius: 6px;
   padding: 10px 16px;
+}
+
+.session-panel .session-btn-secondary {
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  color: #14304d;
 }
 
 .runtime-btn:active:not(:disabled) {
@@ -3318,6 +3568,28 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
+  .session-stage {
+    padding: 16px;
+    justify-content: center;
+  }
+
+  .session-panel,
+  .session-panel-wide {
+    width: min(100%, 640px);
+  }
+
+  .session-panel-head-with-progress {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .setup-progress-label {
+    text-align: left;
+  }
+
+  .session-result-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .chat-app {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);

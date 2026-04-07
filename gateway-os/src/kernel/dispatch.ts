@@ -32,6 +32,7 @@ import {
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
 import { handleSysWorkspaceList } from "./sys/workspaces";
+import { handleSysBootstrap } from "./sys/bootstrap";
 import {
   handlePkgCheckout,
   handlePkgInstall,
@@ -198,6 +199,9 @@ async function dispatchNative(
         return errFrame(frame.id, 400, "sys.connect handled separately");
       case "sys.setup":
         return errFrame(frame.id, 400, "sys.setup handled separately");
+      case "sys.bootstrap":
+        data = await handleSysBootstrap(frame.args, ctx);
+        break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);
         break;

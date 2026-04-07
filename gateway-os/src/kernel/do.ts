@@ -124,6 +124,7 @@ export class Kernel extends Host<Env> {
   private readonly packages: PackageStore;
   private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
+  private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -297,13 +298,15 @@ export class Kernel extends Host<Env> {
     }
 
     const ctx = this.buildServiceContext(identity);
-    const origin: RouteOrigin = { type: "process", id: `__app_binding__:${appFrame.packageId}:${appFrame.entrypointName}` };
+    const origin: RouteOrigin = { type: "app", id: frame.id };
+    const pending = this.createPendingAppResponse(frame.id);
     const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
 
     if (!result.handled) {
-      return errFrame(frame.id, 501, `${frame.call} requires unsupported async routing`);
+      return await pending.promise;
     }
 
+    pending.cleanup();
     this.applyPostDispatchEffects(frame, result.response);
     return result.response;
   }
@@ -778,7 +781,8 @@ export class Kernel extends Host<Env> {
       frame.call === "pkg.sync" ||
       frame.call === "pkg.install" ||
       frame.call === "pkg.remove" ||
-      frame.call === "pkg.checkout"
+      frame.call === "pkg.checkout" ||
+      frame.call === "sys.bootstrap"
     ) {
       const args = frame.args as {
         packageId?: unknown;
@@ -811,6 +815,8 @@ export class Kernel extends Host<Env> {
             ? "remove"
             : frame.call === "pkg.checkout"
               ? "checkout"
+              : frame.call === "sys.bootstrap"
+                ? "sync"
               : "sync",
         packageId: typeof args.packageId === "string" ? args.packageId : null,
         ref: typeof data?.package?.source?.ref === "string"
@@ -820,7 +826,7 @@ export class Kernel extends Host<Env> {
             : typeof args.ref === "string"
               ? args.ref
               : null,
-        changed: frame.call === "pkg.sync" ? true : data?.changed === true,
+        changed: frame.call === "pkg.sync" || frame.call === "sys.bootstrap" ? true : data?.changed === true,
         enabled: typeof data?.package?.enabled === "boolean" ? data.package.enabled : null,
         name: typeof data?.package?.name === "string"
           ? data.package.name
@@ -980,7 +986,38 @@ export class Kernel extends Host<Env> {
       sendFrameToProcess(origin.id, frame).catch((err: unknown) => {
         console.error(`[Kernel] Failed to deliver frame to process ${origin.id}:`, err);
       });
+      return;
     }
+
+    if (origin.type === "app") {
+      const resolve = this.pendingAppResponses.get(origin.id);
+      if (resolve) {
+        this.pendingAppResponses.delete(origin.id);
+        resolve(frame);
+      }
+    }
+  }
+
+  private createPendingAppResponse(id: string): {
+    promise: Promise<ResponseFrame>;
+    cleanup: () => void;
+  } {
+    let settled = false;
+    const promise = new Promise<ResponseFrame>((resolve) => {
+      this.pendingAppResponses.set(id, (frame) => {
+        settled = true;
+        resolve(frame);
+      });
+    });
+
+    return {
+      promise,
+      cleanup: () => {
+        if (!settled) {
+          this.pendingAppResponses.delete(id);
+        }
+      },
+    };
   }
 
   private failRoutesForDevice(deviceId: string): void {

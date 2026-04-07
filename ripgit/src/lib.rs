@@ -170,6 +170,7 @@ impl DurableObject for Repository {
                     }
                     "search" if req.method() == Method::Get => hyperspace::handle_search(&self.sql, &req).await,
                     "apply" if req.method() == Method::Post => hyperspace::handle_apply(&self.sql, &mut req).await,
+                    "import" if req.method() == Method::Post => hyperspace::handle_import(&self.sql, &mut req).await,
                     "packages" => match (req.method(), parts.get(4).copied().unwrap_or("")) {
                         (Method::Get, "analyze") => {
                             hyperspace::handle_packages_analyze(&self.sql, &req, &repo_slug).await

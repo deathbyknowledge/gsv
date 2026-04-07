@@ -1,6 +1,7 @@
 //! Git smart HTTP protocol handlers for receive-pack and upload-pack.
 
-use crate::{pack, store, KEYFRAME_INTERVAL};
+use crate::{api, pack, store, KEYFRAME_INTERVAL};
+use js_sys::Uint8Array;
 use std::collections::{HashMap, HashSet, VecDeque};
 use worker::*;
 
@@ -169,7 +170,7 @@ pub fn handle_receive_pack(sql: &SqlStorage, body: &[u8]) -> Result<Response> {
 /// the pack bytes (which stay in memory as the request body), delta chains are
 /// resolved iteratively, and the result is stored in permanent tables then
 /// dropped. Only one resolved object exists in memory at a time.
-fn process_pack_streaming(sql: &SqlStorage, pack_data: &[u8], bulk_mode: bool) -> Result<()> {
+pub(crate) fn process_pack_streaming(sql: &SqlStorage, pack_data: &[u8], bulk_mode: bool) -> Result<()> {
     // --- Build lightweight index ---
     let (index, offset_to_idx) = pack::build_index(pack_data).map_err(|e| Error::RustError(e.0))?;
 
@@ -340,6 +341,61 @@ fn process_pack_streaming(sql: &SqlStorage, pack_data: &[u8], bulk_mode: bool) -
     Ok(())
 }
 
+pub struct RemoteFetchResult {
+    pub head: String,
+    pub changed: bool,
+}
+
+pub async fn fetch_remote_ref(
+    sql: &SqlStorage,
+    remote_url: &str,
+    remote_ref: &str,
+    local_ref: &str,
+) -> Result<RemoteFetchResult> {
+    let remote = normalize_remote_base_url(remote_url)?;
+    let advertised = fetch_advertised_refs(&remote).await?;
+    let remote_ref_name = normalize_remote_ref_name(remote_ref);
+    let wanted_hash = advertised
+        .refs
+        .get(&remote_ref_name)
+        .cloned()
+        .ok_or_else(|| Error::RustError(format!("remote ref not found: {}", remote_ref_name)))?;
+    let current_head = api::resolve_ref(sql, local_ref)?;
+
+    if current_head.as_deref() == Some(wanted_hash.as_str()) {
+        return Ok(RemoteFetchResult {
+            head: wanted_hash,
+            changed: false,
+        });
+    }
+
+    let request_body = build_remote_upload_pack_request(&wanted_hash);
+    let response_body = fetch_upload_pack_result(&remote, &request_body).await?;
+    let pack_bytes = extract_pack_bytes_from_upload_pack_result(&response_body)?;
+    if pack_bytes.len() > pack::MAX_PACK_BYTES {
+        return Err(Error::RustError(format!(
+            "upstream pack too large ({} MB, limit {} MB)",
+            pack_bytes.len() / 1_000_000,
+            pack::MAX_PACK_BYTES / 1_000_000,
+        )));
+    }
+
+    process_pack_streaming(sql, &pack_bytes, false)?;
+    store::update_ref(
+        sql,
+        local_ref,
+        current_head.as_deref().unwrap_or(store::ZERO_HASH),
+        &wanted_hash,
+    )?;
+    store::set_config(sql, "default_branch", local_ref)?;
+    store::rebuild_fts_index(sql, &wanted_hash)?;
+
+    Ok(RemoteFetchResult {
+        head: wanted_hash,
+        changed: true,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // git-upload-pack (handles `git clone` / `git fetch`)
 // ---------------------------------------------------------------------------
@@ -426,6 +482,12 @@ struct UploadRequest {
     done: bool,
 }
 
+#[derive(Debug, Default)]
+struct AdvertisedRefs {
+    refs: HashMap<String, String>,
+    capabilities: HashSet<String>,
+}
+
 /// Parse want/have lines from a git-upload-pack request body.
 ///
 /// Format (pkt-line encoded):
@@ -482,6 +544,57 @@ fn parse_upload_request(data: &[u8]) -> UploadRequest {
     request
 }
 
+fn parse_advertised_refs(data: &[u8]) -> AdvertisedRefs {
+    let mut refs = AdvertisedRefs::default();
+    let mut pos = 0;
+    let mut saw_first_ref = false;
+
+    loop {
+        match read_pkt_line(data, pos) {
+            Some((None, new_pos)) => {
+                pos = new_pos;
+            }
+            Some((Some(line), new_pos)) => {
+                pos = new_pos;
+                let line = if line.last() == Some(&b'\n') {
+                    &line[..line.len() - 1]
+                } else {
+                    line
+                };
+
+                if line.starts_with(b"# service=") {
+                    continue;
+                }
+
+                let (line, capabilities) = match line.iter().position(|&b| b == 0) {
+                    Some(idx) => (&line[..idx], parse_capabilities(&line[idx + 1..])),
+                    None => (line, HashSet::new()),
+                };
+
+                let text = match std::str::from_utf8(line) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+                let mut parts = text.splitn(2, ' ');
+                let hash = parts.next().unwrap_or("");
+                let ref_name = parts.next().unwrap_or("");
+                if hash.len() != 40 || ref_name.is_empty() || ref_name.ends_with("^{}") {
+                    continue;
+                }
+
+                if !saw_first_ref {
+                    refs.capabilities = capabilities;
+                    saw_first_ref = true;
+                }
+                refs.refs.insert(ref_name.to_string(), hash.to_string());
+            }
+            None => break,
+        }
+    }
+
+    refs
+}
+
 fn find_common_haves(sql: &SqlStorage, wants: &[String], haves: &[String]) -> Result<Vec<String>> {
     if wants.is_empty() || haves.is_empty() {
         return Ok(Vec::new());
@@ -526,6 +639,149 @@ fn find_common_haves(sql: &SqlStorage, wants: &[String], haves: &[String]) -> Re
         .filter(|have| found.contains(*have))
         .cloned()
         .collect())
+}
+
+async fn fetch_advertised_refs(remote_base: &str) -> Result<AdvertisedRefs> {
+    let url = worker::Url::parse(&format!(
+        "{}/info/refs?service=git-upload-pack",
+        remote_base.trim_end_matches('/')
+    ))
+    .map_err(|err| Error::RustError(format!("invalid upstream refs url: {}", err)))?;
+    let mut response = Fetch::Url(url).send().await?;
+    let status = response.status_code();
+    if !(200..300).contains(&status) {
+        return Err(Error::RustError(format!(
+            "failed to fetch upstream refs (status {}): {}",
+            status, remote_base
+        )));
+    }
+    let bytes = response.bytes().await?;
+    Ok(parse_advertised_refs(&bytes))
+}
+
+fn build_remote_upload_pack_request(want_hash: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    pkt_line_bytes(&mut body, format!("want {} ofs-delta\n", want_hash).as_bytes());
+    body.extend_from_slice(b"0000");
+    pkt_line_bytes(&mut body, b"done\n");
+    body
+}
+
+async fn fetch_upload_pack_result(remote_base: &str, body: &[u8]) -> Result<Vec<u8>> {
+    let url = format!("{}/git-upload-pack", remote_base.trim_end_matches('/'));
+    let mut headers = Headers::new();
+    headers.set("Content-Type", "application/x-git-upload-pack-request")?;
+    headers.set("Accept", "application/x-git-upload-pack-result")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post);
+    init.with_headers(headers);
+    init.with_body(Some(Uint8Array::from(body).into()));
+
+    let request = Request::new_with_init(&url, &init)?;
+    let mut response = Fetch::Request(request).send().await?;
+    let status = response.status_code();
+    if !(200..300).contains(&status) {
+        return Err(Error::RustError(format!(
+            "failed to fetch upstream pack (status {}): {}",
+            status, remote_base
+        )));
+    }
+    response.bytes().await
+}
+
+fn extract_pack_bytes_from_upload_pack_result(data: &[u8]) -> Result<Vec<u8>> {
+    let mut pos = 0;
+    let mut pack = Vec::new();
+    let mut saw_sideband = false;
+
+    while pos < data.len() {
+        if pos + 4 <= data.len() && &data[pos..pos + 4] == b"PACK" {
+            return Ok(data[pos..].to_vec());
+        }
+
+        let Some((line, new_pos)) = read_pkt_line(data, pos) else {
+            break;
+        };
+        pos = new_pos;
+
+        let Some(line) = line else {
+            continue;
+        };
+
+        if line.starts_with(b"NAK") || line.starts_with(b"ACK ") {
+            continue;
+        }
+        if line.starts_with(b"ERR ") {
+            let message = std::str::from_utf8(line)
+                .map(|value| value.trim_end().to_string())
+                .unwrap_or_else(|_| "ERR upstream upload-pack failed".to_string());
+            return Err(Error::RustError(message));
+        }
+
+        if let Some((&channel, payload)) = line.split_first() {
+            match channel {
+                1 => {
+                    saw_sideband = true;
+                    pack.extend_from_slice(payload);
+                    continue;
+                }
+                2 => {
+                    saw_sideband = true;
+                    continue;
+                }
+                3 => {
+                    let message = String::from_utf8_lossy(payload).trim().to_string();
+                    return Err(Error::RustError(if message.is_empty() {
+                        "upstream upload-pack failed".to_string()
+                    } else {
+                        message
+                    }));
+                }
+                _ => {}
+            }
+        }
+
+        return Err(Error::RustError(
+            "unexpected upstream upload-pack payload".to_string(),
+        ));
+    }
+
+    if saw_sideband && !pack.is_empty() {
+        return Ok(pack);
+    }
+
+    Err(Error::RustError(
+        "upstream upload-pack response did not contain a pack".to_string(),
+    ))
+}
+
+fn normalize_remote_base_url(remote_url: &str) -> Result<String> {
+    let trimmed = remote_url.trim().trim_end_matches('/');
+    if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
+        return Ok(format!(
+            "https://github.com/{}.git",
+            rest.trim_end_matches(".git")
+        ));
+    }
+    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+        if trimmed.ends_with(".git") {
+            return Ok(trimmed.to_string());
+        }
+        return Ok(format!("{}.git", trimmed));
+    }
+    Err(Error::RustError(format!(
+        "unsupported upstream remote url: {}",
+        remote_url
+    )))
+}
+
+fn normalize_remote_ref_name(remote_ref: &str) -> String {
+    if remote_ref.starts_with("refs/") {
+        remote_ref.to_string()
+    } else {
+        format!("refs/heads/{}", remote_ref)
+    }
 }
 
 fn build_negotiation_response(request: &UploadRequest, common_haves: &[String]) -> Vec<u8> {
