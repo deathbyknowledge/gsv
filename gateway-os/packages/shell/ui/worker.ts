@@ -4,14 +4,11 @@ import { init, Terminal, FitAddon } from 'https://cdn.jsdelivr.net/npm/ghostty-w
 const routeBase = document.body.dataset.routeBase || '/apps/shell';
 const streamNode = document.querySelector('[data-shell-terminal]');
 const statusNode = document.querySelector('[data-shell-status]');
-const statusTextNode = statusNode ? statusNode.querySelector('span:last-child') : null;
 const targetSelect = document.querySelector('[data-shell-target]');
 const workdirInput = document.querySelector('[data-shell-workdir]');
 const timeoutInput = document.querySelector('[data-shell-timeout]');
 const yieldInput = document.querySelector('[data-shell-yield]');
 const backgroundInput = document.querySelector('[data-shell-background]');
-const clearButton = document.querySelector('[data-shell-clear]');
-const resetButton = document.querySelector('[data-shell-reset]');
 
 let terminal = null;
 let fitAddon = null;
@@ -23,12 +20,9 @@ let historyCursor = null;
 let historyDraft = '';
 let running = false;
 
-function setStatus(kind, text) {
+function setStatus(kind) {
   if (!statusNode) return;
   statusNode.dataset.kind = kind;
-  if (statusTextNode) {
-    statusTextNode.textContent = text || '';
-  }
 }
 
 function currentTarget() {
@@ -98,7 +92,7 @@ async function runCommand(command) {
 
   pushHistory(trimmed);
   running = true;
-  setStatus('working', 'Running command…');
+  setStatus('working');
 
   terminal.write('\r\n');
 
@@ -136,11 +130,11 @@ async function runCommand(command) {
         terminal.write('\r\n');
       }
     }
-    setStatus('ready', 'Shell is ready.');
+    setStatus('ready');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     terminal.write('\x1b[38;2;255;182;173m' + message.replaceAll('\n', '\r\n') + '\x1b[0m\r\n');
-    setStatus('error', message);
+    setStatus('error');
   } finally {
     running = false;
     currentLine = '';
@@ -183,7 +177,7 @@ terminal.open(streamNode);
 fitAddon.fit();
 terminal.focus();
 writePrompt();
-setStatus('ready', 'Shell is ready.');
+setStatus('ready');
 
 terminal.onData((data) => {
   if (running) {
@@ -222,26 +216,6 @@ terminal.onData((data) => {
   currentLine += data;
   terminal.write(data);
 });
-
-if (clearButton) {
-  clearButton.addEventListener('click', () => {
-    clearTerminal();
-    setStatus('ready', 'Shell is ready.');
-    terminal.focus();
-  });
-}
-
-if (resetButton) {
-  resetButton.addEventListener('click', () => {
-    history = [];
-    historyCursor = null;
-    historyDraft = '';
-    currentLine = '';
-    clearTerminal();
-    setStatus('ready', 'Shell is ready.');
-    terminal.focus();
-  });
-}
 
 for (const node of [targetSelect, workdirInput, timeoutInput, yieldInput, backgroundInput]) {
   if (!node) continue;
@@ -422,26 +396,22 @@ function renderPage(routeBase, devices) {
         display: grid;
         grid-template-rows: auto minmax(0, 1fr);
         min-height: 100vh;
-        background: linear-gradient(180deg, rgba(7,17,29,0.92), rgba(11,22,36,0.98));
+        background: rgba(7, 17, 29, 0.98);
       }
       .shell-toolbar {
         display: grid;
-        grid-template-columns: minmax(160px, auto) minmax(180px, 220px) minmax(220px, 1fr) auto;
-        gap: 12px;
+        grid-template-columns: minmax(180px, 220px) minmax(220px, 1fr) auto auto;
+        gap: 10px;
         align-items: end;
-        padding: 14px 16px 12px;
-        border-bottom: 1px solid var(--shell-line);
-        background: rgba(7, 17, 29, 0.74);
+        padding: 10px 12px 8px;
+        border-bottom: 1px solid rgba(120, 160, 205, 0.08);
+        background: rgba(7, 17, 29, 0.82);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
       }
-      .shell-toolbar-copy {
-        display: flex;
-        align-items: center;
-      }
       .shell-field span,
       .shell-toggle {
-        font-size: 11px;
+        font-size: 10px;
         font-weight: 700;
         letter-spacing: 0.14em;
         text-transform: uppercase;
@@ -449,16 +419,16 @@ function renderPage(routeBase, devices) {
       }
       .shell-field {
         display: grid;
-        gap: 6px;
+        gap: 4px;
       }
       .shell-field input,
       .shell-field select {
         width: 100%;
-        min-height: 38px;
+        min-height: 34px;
         border: 0;
         border-left: 2px solid transparent;
         border-radius: 4px;
-        padding: 0 12px;
+        padding: 0 10px;
         background: rgba(18, 34, 53, 0.92);
         color: var(--shell-text);
         font: inherit;
@@ -479,47 +449,40 @@ function renderPage(routeBase, devices) {
       .shell-status-indicator {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
-        min-height: 36px;
-        padding: 0 10px;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
         border-radius: 999px;
-        background: rgba(18, 34, 53, 0.92);
-        color: var(--shell-muted);
-        font-size: 12px;
-        font-weight: 700;
+        background: transparent;
       }
       .shell-status-dot {
         width: 8px;
         height: 8px;
         border-radius: 999px;
         background: var(--shell-muted);
-      }
-      .shell-status-indicator[data-kind="working"] {
-        color: var(--shell-prompt);
+        box-shadow: 0 0 0 3px rgba(143, 163, 184, 0.16);
       }
       .shell-status-indicator[data-kind="working"] .shell-status-dot {
         background: var(--shell-prompt);
-      }
-      .shell-status-indicator[data-kind="error"] {
-        color: var(--shell-stderr);
+        box-shadow: 0 0 0 3px rgba(127, 198, 255, 0.18);
       }
       .shell-status-indicator[data-kind="error"] .shell-status-dot {
         background: var(--shell-stderr);
-      }
-      .shell-status-indicator[data-kind="ready"] {
-        color: #9dd3a8;
+        box-shadow: 0 0 0 3px rgba(255, 182, 173, 0.16);
       }
       .shell-status-indicator[data-kind="ready"] .shell-status-dot {
         background: #9dd3a8;
+        box-shadow: 0 0 0 3px rgba(157, 211, 168, 0.16);
       }
       .shell-btn,
       .shell-toolbar details summary {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 36px;
-        padding: 0 12px;
-        border-radius: 8px;
+        min-height: 34px;
+        min-width: 34px;
+        padding: 0 10px;
+        border-radius: 6px;
         border: 0;
         font: inherit;
         font-weight: 600;
@@ -535,6 +498,14 @@ function renderPage(routeBase, devices) {
       .shell-toolbar details summary {
         background: rgba(18, 34, 53, 0.92);
         color: var(--shell-text);
+      }
+      .shell-toolbar details summary {
+        list-style: none;
+        padding: 0;
+        font-size: 16px;
+      }
+      .shell-toolbar details summary::-webkit-details-marker {
+        display: none;
       }
       .shell-toolbar details {
         position: relative;
@@ -592,7 +563,6 @@ function renderPage(routeBase, devices) {
   <body data-route-base="${escapeHtml(routeBase)}">
     <main>
       <section class="shell-toolbar">
-        <div class="shell-toolbar-copy"></div>
         <label class="shell-field">
           <span>Target</span>
           <select data-shell-target>
@@ -604,14 +574,11 @@ function renderPage(routeBase, devices) {
           <input data-shell-workdir type="text" value="" placeholder="Optional" spellcheck="false" />
         </label>
         <div class="shell-toolbar-actions">
-          <div class="shell-status-indicator" data-shell-status data-kind="ready">
+          <div class="shell-status-indicator" data-shell-status data-kind="ready" aria-label="Shell status" title="Shell ready">
             <span class="shell-status-dot" aria-hidden="true"></span>
-            <span>Ready</span>
           </div>
-          <button type="button" class="shell-btn shell-btn-quiet" data-shell-reset>Reset</button>
-          <button type="button" class="shell-btn shell-btn-quiet" data-shell-clear>Clear</button>
           <details>
-            <summary>Options</summary>
+            <summary aria-label="Shell options" title="Shell options">⚙</summary>
             <div class="shell-options">
               <label class="shell-field">
                 <span>Timeout (ms)</span>
