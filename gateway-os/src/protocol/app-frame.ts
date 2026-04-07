@@ -32,12 +32,13 @@ export type PackageBindingProps = {
 };
 
 /**
- * V1 app kernel requests are restricted to kernel-native req/res syscalls.
+ * App kernel requests are request/response only.
  *
- * Device-routed async flows and bidirectional signals require a future app
- * route origin in the kernel routing table.
+ * Apps can issue routed syscalls (for example device-targeted fs/shell calls),
+ * but they do not receive arbitrary signals. Routed responses are awaited
+ * directly through the appRequest RPC path.
  */
-export type AppKernelRequestMode = "native-only";
+export type AppKernelRequestMode = "request-response";
 
 export type AppKernelBinding = {
   request: <S extends SyscallName>(call: S, args: ArgsOf<S>) => Promise<ResultOf<S>>;
