@@ -10,7 +10,8 @@ import type { SyscallName } from "../syscalls";
 
 export type RouteOrigin =
   | { type: "connection"; id: string }
-  | { type: "process"; id: string };
+  | { type: "process"; id: string }
+  | { type: "app"; id: string };
 
 export type RouteEntry = {
   id: string;
@@ -86,7 +87,7 @@ export class RoutingTable {
 
     const row = rows[0];
     return {
-      origin: { type: row.origin_type as "connection" | "process", id: row.origin_id },
+      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       call: row.call as SyscallName,
       deviceId: row.device_id,
       scheduleId: row.schedule_id,
@@ -114,7 +115,7 @@ export class RoutingTable {
     return {
       id: row.id,
       call: row.call as SyscallName,
-      origin: { type: row.origin_type as "connection" | "process", id: row.origin_id },
+      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       deviceId: row.device_id,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
@@ -216,7 +217,7 @@ export class RoutingTable {
 
     const row = rows[0];
     return {
-      origin: { type: row.origin_type as "connection" | "process", id: row.origin_id },
+      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       call: row.call as SyscallName,
       deviceId: row.device_id,
     };
