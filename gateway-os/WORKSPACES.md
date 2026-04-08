@@ -240,16 +240,16 @@ the hot source of truth for active state.
 Policy:
 
 - live process state stays in the Process DO
-- `.gsv/` stores durable checkpoints and summaries
-- writes to `.gsv/` should happen at safe boundaries, not every streamed event
+- `.gsv/` stores durable checkpoints, archived transcript slices, and summarized history
+- writes to `.gsv/` should happen at compaction/archive boundaries, not every completed turn
 
 Good checkpoint boundaries:
 
-- completed turn
+- context compaction / history truncation
 - explicit checkpoint
 - `proc.kill`
 - `proc.reset`
-- periodic idle checkpoint
+- periodic idle checkpoint when we want a durable archive snapshot
 
 Checkpoint commits should use AI-generated commit messages. That gives us a
 second searchable semantic layer over the workspace history and makes later
