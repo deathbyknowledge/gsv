@@ -135,9 +135,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             gateway/package-lock.json
-            web/package-lock.json
+            web/package.json
             channels/whatsapp/package-lock.json
-            channels/discord/package-lock.json
+            channels/discord/package.json
 
       - name: Install dependencies
         run: |
