@@ -12,20 +12,20 @@ export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 install_dir() {
   local dir="$1"
   if [[ -f "${dir}/package-lock.json" ]]; then
-    npm ci --prefix "$dir"
+    npm ci --prefix "$dir" --workspaces=false
   else
-    npm install --prefix "$dir" --no-audit --no-fund
+    npm install --prefix "$dir" --workspaces=false --no-audit --no-fund
   fi
 }
 
 echo "==> Installing dependencies"
 install_dir "${ROOT_DIR}/gateway"
-install_dir "${ROOT_DIR}/gateway/ui"
+install_dir "${ROOT_DIR}/web"
 install_dir "${ROOT_DIR}/channels/whatsapp"
 install_dir "${ROOT_DIR}/channels/discord"
 
 echo "==> Building web UI"
-npm run build --prefix "${ROOT_DIR}/gateway/ui"
+npm run build --prefix "${ROOT_DIR}/web"
 
 echo "==> Bundling workers with wrangler --dry-run"
 rm -rf "${DIST_DIR}"
@@ -48,7 +48,7 @@ mkdir -p "${DIST_DIR}/channel-discord/worker"
 
 echo "==> Assembling component metadata"
 cp "${ROOT_DIR}/gateway/wrangler.jsonc" "${DIST_DIR}/gateway/wrangler.jsonc"
-cp -R "${ROOT_DIR}/gateway/ui/dist" "${DIST_DIR}/gateway/assets"
+cp -R "${ROOT_DIR}/web/dist" "${DIST_DIR}/gateway/assets"
 mkdir -p "${DIST_DIR}/gateway/templates"
 cp -R "${ROOT_DIR}/templates/workspace" "${DIST_DIR}/gateway/templates/workspace"
 cp -R "${ROOT_DIR}/templates/skills" "${DIST_DIR}/gateway/templates/skills"

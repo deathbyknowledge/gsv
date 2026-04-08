@@ -25,17 +25,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: gateway/package-lock.json
       
-      - name: Debug gateway checkout
-        working-directory: gateway
-        run: |
-          pwd
-          ls -la
-          test -f package-lock.json
-          node -p "require('./package-lock.json').lockfileVersion"
-
       - name: Install dependencies
         working-directory: gateway
-        run: npm ci
+        run: npm ci --workspaces=false
       
       - name: Type check
         working-directory: gateway
