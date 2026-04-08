@@ -1,3 +1,6 @@
+import { marked } from "marked";
+import DOMPurify from "dompurify";
+
 const PAGE_PATHNAME = window.location.pathname;
 const ROUTE_BASE = PAGE_PATHNAME.endsWith("/index.html")
   ? PAGE_PATHNAME.slice(0, -"/index.html".length)
@@ -36,6 +39,16 @@ function prettyJson(value) {
 
 function formatMessageContent(value) {
   return typeof value === "string" ? value : prettyJson(value);
+}
+
+function renderMarkdownHtml(value) {
+  const source = String(value ?? "");
+  const html = marked.parse(source, {
+    async: false,
+    breaks: true,
+    gfm: true,
+  });
+  return DOMPurify.sanitize(typeof html === "string" ? html : String(html));
 }
 
 function normalizeTimestampMs(value) {
@@ -439,9 +452,20 @@ function displayThreadLabel(entry) {
 function extractAssistantHistory(content) {
   const record = asRecord(content);
   if (!record) {
-    return { text: typeof content === "string" ? content : formatMessageContent(content), toolCalls: [] };
+    return { text: typeof content === "string" ? content : formatMessageContent(content), thinking: [], toolCalls: [] };
   }
   const text = typeof record.text === "string" ? record.text : (typeof content === "string" ? content : "");
+  const rawThinking = Array.isArray(record.thinking) ? record.thinking : [];
+  const thinking = rawThinking
+    .map((item) => {
+      const block = asRecord(item);
+      if (!block) {
+        return null;
+      }
+      const text = asString(block.thinking);
+      return text && text.trim() ? text.trim() : null;
+    })
+    .filter(Boolean);
   const rawToolCalls = Array.isArray(record.toolCalls) ? record.toolCalls : [];
   const toolCalls = rawToolCalls
     .map((item, index) => {
@@ -454,7 +478,7 @@ function extractAssistantHistory(content) {
       return { toolName: name, callId, args: call.arguments ?? call.args ?? {}, syscall: inferToolSyscall(name, asString(call.syscall)) };
     })
     .filter(Boolean);
-  return { text, toolCalls };
+  return { text, thinking, toolCalls };
 }
 
 function extractToolResultHistory(content) {
@@ -633,6 +657,7 @@ let hostError = "";
 let refreshTimer = null;
 let messageBusy = false;
 let currentUsername = null;
+let pendingAssistantState = null;
 
 function getActivePid() {
   return activeThreadContext?.pid || null;
@@ -680,17 +705,29 @@ function renderLog(options = {}) {
   const shouldScroll = options.forceBottom === true
     ? true
     : (options.autoScroll === true ? isNearBottom(elements.chatLog) : false);
-  elements.chatLog.innerHTML = logRows.map((row) => {
+  const rowsHtml = logRows.map((row) => {
     if (row.kind === "toolCall" || row.kind === "toolResult") {
       return renderToolRow(row);
     }
     const role = row.role === "user" ? "user" : row.role === "assistant" ? "assistant" : "system";
     const timestamp = row.timestamp ? formatTimestamp(row.timestamp) : "";
+    const thinking = Array.isArray(row.thinking) ? row.thinking.filter(Boolean) : [];
+    const thinkingHtml = thinking.length > 0
+      ? '<details class="message-thinking"><summary>Reasoning</summary><div class="message-thinking-body">' + escapeHtmlClient(thinking.join("\n\n")) + '</div></details>'
+      : "";
+    const bodyHtml = role === "assistant"
+      ? '<div class="message-body message-markdown">' + renderMarkdownHtml(row.text) + '</div>'
+      : '<pre class="message-body">' + escapeHtmlClient(row.text) + '</pre>';
     return '<article class="message message-' + escapeHtmlClient(role) + '">' +
       '<div class="message-head"><span>' + escapeHtmlClient(labelForRole(role)) + '</span><span>' + escapeHtmlClient(timestamp) + '</span></div>' +
-      '<pre class="message-body">' + escapeHtmlClient(row.text) + '</pre>' +
+      thinkingHtml +
+      bodyHtml +
     '</article>';
   }).join("");
+  const pendingHtml = pendingAssistantState
+    ? '<article class="message-pending"><span class="thinking-indicator" aria-hidden="true"></span><span>' + escapeHtmlClient(pendingAssistantState === "tool" ? "Working..." : "Thinking...") + '</span></article>'
+    : "";
+  elements.chatLog.innerHTML = rowsHtml + pendingHtml;
   if (shouldScroll) {
     elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
   }
@@ -773,8 +810,8 @@ function flattenHistory(messages) {
     const timestamp = normalizeTimestampMs(entry?.timestamp) || Date.now();
     if (entry?.role === "assistant") {
       const parsed = extractAssistantHistory(entry.content);
-      if (parsed.text && parsed.text.trim()) {
-        rows.push({ kind: "message", role: "assistant", text: parsed.text, timestamp });
+      if ((parsed.text && parsed.text.trim()) || parsed.thinking.length > 0) {
+        rows.push({ kind: "message", role: "assistant", text: parsed.text, thinking: parsed.thinking, timestamp });
       }
       for (const toolCall of parsed.toolCalls) {
         rows.push({
@@ -868,6 +905,7 @@ async function loadHistory() {
   if (truncated && offset < messageCount) {
     rows.push({ role: "system", text: 'history truncated at ' + offset + '/' + messageCount + ' messages', timestamp: Date.now() });
   }
+  pendingAssistantState = null;
   setLogRows(rows, { forceBottom: true });
   renderStatus();
 }
@@ -901,6 +939,11 @@ function scheduleRefresh() {
     void loadThreads();
     void loadHistory();
   }, 250);
+}
+
+function setPendingAssistantState(nextState) {
+  pendingAssistantState = nextState;
+  renderLog({ autoScroll: true });
 }
 
 function activateThreadContext(context) {
@@ -947,6 +990,7 @@ async function openThread(workspaceId) {
 
 function resetToNewThread() {
   activeThreadContext = setActiveThreadContext(null);
+  pendingAssistantState = null;
   setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }], { forceBottom: true });
   renderThreads();
   renderStatus();
@@ -990,6 +1034,7 @@ async function sendMessage() {
       appendSystemRow("send failed: " + result.error);
       return;
     }
+    setPendingAssistantState("thinking");
     if (result.queued) {
       appendSystemRow("message queued while process is busy");
     }
@@ -1113,6 +1158,13 @@ async function boot() {
       }
     });
     client.onSignal((signal) => {
+      if (signal === "chat.tool_call") {
+        setPendingAssistantState("tool");
+      } else if (signal === "chat.tool_result" || signal === "chat.text") {
+        setPendingAssistantState("thinking");
+      } else if (signal === "chat.complete" || signal === "chat.error" || signal === "process.exit") {
+        setPendingAssistantState(null);
+      }
       if (signal === "process.exit" || signal.startsWith("chat.")) {
         scheduleRefresh();
       }
