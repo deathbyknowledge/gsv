@@ -233,9 +233,17 @@ function renderConfigSection(routeBase, entriesByKey, state) {
   const section = CONFIG_SECTIONS.find((candidate) => candidate.id === state.activeView) ?? CONFIG_SECTIONS[0];
   const fields = section.fields.map((field) => {
     const value = fieldValue(entriesByKey, field);
+    if (field.kind === "boolean") {
+      return `
+        <div class="field-card field-card-boolean">
+          <span class="field-description">${escapeHtml(field.description ?? "")}</span>
+          ${renderField(field, value)}
+        </div>
+      `;
+    }
     return `
       <label class="field-card ${field.kind === "textarea" ? "is-wide" : ""}">
-        ${field.kind === "boolean" ? "" : `<span class="field-label">${escapeHtml(field.label)}</span>`}
+        <span class="field-label">${escapeHtml(field.label)}</span>
         <span class="field-description">${escapeHtml(field.description ?? "")}</span>
         ${renderField(field, value)}
       </label>
@@ -540,14 +548,16 @@ function renderPage(routeBase, payload) {
       }
       main {
         min-height: 100vh;
-        padding: 16px;
+        padding: 0;
         display: grid;
-        gap: 12px;
+        gap: 0;
       }
       .control-frame {
         display: grid;
-        gap: 12px;
+        gap: 0;
         align-content: start;
+        min-height: 100vh;
+        grid-template-rows: auto auto auto 1fr;
       }
       .eyebrow {
         margin: 0 0 6px;
@@ -564,66 +574,77 @@ function renderPage(routeBase, payload) {
       h3 { font-size: 0.98rem; }
       .muted { color: var(--text-muted); }
       .control-tabs {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        align-items: center;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        align-items: stretch;
+        border-bottom: 1px solid var(--line);
+        background: rgba(248, 250, 253, 0.78);
       }
       .control-tab {
-        display: inline-flex;
+        display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 36px;
-        height: 36px;
-        padding: 8px 12px;
-        border-radius: 10px;
+        min-height: 42px;
+        padding: 10px 12px;
         text-decoration: none;
         color: var(--text-muted);
-        background: rgba(255, 255, 255, 0.5);
-        border: 1px solid rgba(25, 28, 30, 0.06);
+        background: transparent;
+        border-bottom: 2px solid transparent;
         font-weight: 700;
-        white-space: nowrap;
-        flex: 0 0 auto;
       }
       .control-tab.is-active {
-        color: #f7fbff;
-        background: var(--primary);
-        border-color: transparent;
+        color: var(--primary);
+        background: rgba(255, 255, 255, 0.42);
+        border-bottom-color: var(--primary);
       }
       .control-workspace {
-        background: var(--surface);
-        border: 1px solid rgba(25, 28, 30, 0.06);
-        border-radius: 18px;
-        box-shadow: var(--shadow);
-        overflow: hidden;
         min-height: 0;
+        overflow: hidden;
+      }
+      .control-workspace-config {
+        display: grid;
       }
       .control-workspace-stack {
         padding: 18px 20px;
+        align-content: start;
+      }
+      .control-layout,
+      .control-workspace-stack {
+        min-height: 100%;
       }
       .control-layout {
         display: grid;
         grid-template-columns: 240px minmax(0, 1fr);
         align-items: stretch;
+        min-height: 0;
       }
       .control-subnav {
         display: grid;
-        gap: 4px;
+        gap: 2px;
         align-content: start;
         padding: 16px 12px;
         border-right: 1px solid var(--line);
-        background: rgba(243, 247, 251, 0.78);
+        background: rgba(243, 247, 251, 0.54);
       }
       .control-subnav-link {
         display: grid;
-        gap: 4px;
+        gap: 3px;
         padding: 10px 12px;
-        border-radius: 10px;
+        border-radius: 8px;
         text-decoration: none;
         color: inherit;
       }
       .control-subnav-link.is-active {
-        background: var(--accent-soft);
+        background: rgba(222, 231, 245, 0.82);
+      }
+      .control-detail {
+        min-width: 0;
+        padding: 18px 20px 22px;
+      }
+      .control-stack {
+        display: grid;
+        gap: 0;
+        min-height: 0;
       }
       .control-subnav-title {
         font-weight: 700;
@@ -632,14 +653,6 @@ function renderPage(routeBase, payload) {
         color: var(--text-muted);
         font-size: 12px;
         line-height: 1.45;
-      }
-      .control-detail {
-        min-width: 0;
-        padding: 18px 20px;
-      }
-      .control-stack {
-        display: grid;
-        gap: 0;
       }
       .control-section {
         min-width: 0;
@@ -663,6 +676,12 @@ function renderPage(routeBase, payload) {
         padding: 0;
         background: transparent;
       }
+      .field-card-boolean {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
       .field-card.is-wide { grid-column: 1 / -1; }
       .field-label {
         font-size: 12px;
@@ -670,7 +689,19 @@ function renderPage(routeBase, payload) {
         letter-spacing: 0.02em;
       }
       .field-description { color: var(--text-muted); font-size: 12px; }
-      .checkbox-row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+      .checkbox-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        justify-self: start;
+        white-space: nowrap;
+      }
+      .checkbox-row input {
+        width: 16px;
+        height: 16px;
+        margin: 0;
+      }
       input, select, textarea {
         width: 100%;
         border-radius: 8px;
@@ -739,10 +770,17 @@ function renderPage(routeBase, payload) {
         padding: 10px 12px;
       }
       @media (max-width: 900px) {
+        .control-tabs {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
         .control-layout { grid-template-columns: 1fr; }
         .control-subnav {
           border-right: 0;
           border-bottom: 1px solid var(--line);
+        }
+        .field-card-boolean {
+          align-items: flex-start;
+          flex-direction: column;
         }
       }
       @media (max-width: 760px) {
@@ -751,6 +789,9 @@ function renderPage(routeBase, payload) {
         .control-workspace-stack,
         .control-detail {
           padding: 16px;
+        }
+        .control-tabs {
+          grid-template-columns: 1fr;
         }
       }
     </style>
