@@ -679,7 +679,6 @@ async function runPackageCommand(
     () => packageArtifactToWorkerCode(record.artifact, {
       PACKAGE_NAME: record.manifest.name,
       PACKAGE_ID: record.packageId,
-      PACKAGE_DO: ctx.env.PACKAGE_DO,
       PACKAGE_DO_NAME: packageDoName(record.manifest.name),
     }),
   );

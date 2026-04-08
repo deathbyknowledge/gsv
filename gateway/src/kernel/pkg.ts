@@ -23,6 +23,7 @@ import type {
 import type {
   InstalledPackageRecord,
   PackageArtifact,
+  PackageBindingGrant,
   PackageEntrypoint,
   PackageGrantSet,
   PackageManifest,
@@ -31,7 +32,7 @@ import { buildBuiltinPackageSeeds, packageDoName, resolvePackageFromRipgitSource
 import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 
 const TEXT_DECODER = new TextDecoder();
-const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
+const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 export function handlePkgList(
   args: PkgListArgs | undefined,
@@ -73,7 +74,7 @@ export async function handlePkgAdd(
   const ref = "main";
   const subdir = normalizeRepoPath(args.subdir) || ".";
   const ripgit = requireRipgitClient(ctx);
-  const actorName = ctx.identity.process.username;
+  const actorName = requireIdentity(ctx).process.username;
   const imported = await ripgit.importFromUpstream(
     repo,
     actorName,
@@ -318,11 +319,11 @@ function resolveImportRepo(
   ctx: KernelContext,
   upstream: { remoteUrl: string; repoSlug: string | null },
 ): RipgitRepoRef {
-  const owner = ctx.identity.process.username;
+  const owner = requireIdentity(ctx).process.username;
   const nameSource = upstream.repoSlug
     ? upstream.repoSlug.split("/")[1]
     : repoBasenameFromUrl(upstream.remoteUrl);
-  const repoName = sanitizeRepoName(nameSource || explicit);
+  const repoName = sanitizeRepoName(nameSource);
   if (!repoName) {
     throw new Error("Could not derive local repo name");
   }
@@ -363,7 +364,7 @@ function packageIdForSource(manifest: PackageManifest): string {
 function grantsForManifest(manifest: PackageManifest): PackageGrantSet {
   const bindings = manifest.capabilities?.bindings ?? [];
   return {
-    bindings: bindings.flatMap((binding) => {
+    bindings: bindings.flatMap<PackageBindingGrant>((binding): PackageBindingGrant[] => {
       if (binding.binding === "PACKAGE") {
         return [{
           binding: "PACKAGE",
@@ -384,6 +385,13 @@ function grantsForManifest(manifest: PackageManifest): PackageGrantSet {
       mode: "none",
     },
   };
+}
+
+function requireIdentity(ctx: KernelContext): NonNullable<KernelContext["identity"]> {
+  if (!ctx.identity) {
+    throw new Error("Authenticated identity required");
+  }
+  return ctx.identity;
 }
 
 function toPkgSummary(record: InstalledPackageRecord): PkgSummary {

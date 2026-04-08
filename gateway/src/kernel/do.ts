@@ -793,6 +793,7 @@ export class Kernel extends Host<Env> {
       const data = (response as {
         data?: {
           changed?: unknown;
+          repo?: unknown;
           package?: {
             enabled?: unknown;
             name?: unknown;

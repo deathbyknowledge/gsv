@@ -1,7 +1,11 @@
 import type { KernelContext } from "../context";
 import type { SysBootstrapArgs, SysBootstrapResult } from "../../syscalls/system";
 import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
-import { buildBuiltinPackageSeeds } from "../packages";
+import {
+  buildBuiltinPackageSeeds,
+  type PackageEntrypoint,
+  type PackageRuntime,
+} from "../packages";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "codex/app-runtime-from-680877d";
@@ -31,6 +35,9 @@ export async function handleSysBootstrap(
       : DEFAULT_GSV_UPSTREAM_REF;
 
   const ripgit = new RipgitClient(ctx.env.RIPGIT, ctx.env.RIPGIT_INTERNAL_KEY ?? null);
+  if (!ctx.identity) {
+    throw new Error("Authenticated identity required");
+  }
   const actorName = ctx.identity.process.username;
   const imported = await ripgit.importFromUpstream(
     SYSTEM_GSV_REPO,
@@ -55,7 +62,7 @@ export async function handleSysBootstrap(
       name: record.manifest.name,
       description: record.manifest.description,
       version: record.manifest.version,
-      runtime: record.manifest.runtime,
+      runtime: toSysBootstrapRuntime(record.manifest.runtime),
       enabled: record.enabled,
       source: {
         repo: record.manifest.source.repo,
@@ -63,18 +70,31 @@ export async function handleSysBootstrap(
         subdir: record.manifest.source.subdir,
         resolvedCommit: record.manifest.source.resolvedCommit ?? null,
       },
-      entrypoints: record.manifest.entrypoints.map((entrypoint) => ({
-        name: entrypoint.name,
-        kind: entrypoint.kind,
-        description: entrypoint.description,
-        command: entrypoint.command,
-        route: entrypoint.route,
-        icon: entrypoint.icon,
-        syscalls: entrypoint.syscalls,
-        windowDefaults: entrypoint.windowDefaults,
-      })),
+      entrypoints: record.manifest.entrypoints.flatMap(toSysBootstrapEntrypoint),
     })),
   };
+}
+
+function toSysBootstrapRuntime(runtime: PackageRuntime): SysBootstrapResult["packages"][number]["runtime"] {
+  return runtime === "node" ? "node" : runtime;
+}
+
+function toSysBootstrapEntrypoint(
+  entrypoint: PackageEntrypoint,
+): SysBootstrapResult["packages"][number]["entrypoints"] {
+  if (entrypoint.kind !== "command" && entrypoint.kind !== "task" && entrypoint.kind !== "ui") {
+    return [];
+  }
+  return [{
+    name: entrypoint.name,
+    kind: entrypoint.kind,
+    description: entrypoint.description,
+    command: entrypoint.command,
+    route: entrypoint.route,
+    icon: entrypoint.icon?.kind === "builtin" ? entrypoint.icon.id : undefined,
+    syscalls: entrypoint.syscalls,
+    windowDefaults: entrypoint.windowDefaults,
+  }];
 }
 
 function githubRepoUrl(repo: string): string {

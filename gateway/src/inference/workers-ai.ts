@@ -143,7 +143,7 @@ export function buildWorkersAiInput(
   options?: { disableTools?: boolean },
 ): WorkersAiRunInput {
   const input: WorkersAiRunInput = {
-    messages: contextToWorkersAiMessages(request.context),
+    messages: contextToWorkersAiMessages(request.context) as unknown as WorkersAiRunInput["messages"],
     max_completion_tokens: request.maxTokens,
   };
 
@@ -600,7 +600,7 @@ function sanitizeToolParameters(
 
   const propertiesInput = schema.properties;
   const requiredInput = schema.required;
-  const properties: WorkersAiTool["parameters"]["properties"] = {};
+  const properties: NonNullable<WorkersAiTool["function"]["parameters"]>["properties"] = {};
 
   if (propertiesInput && typeof propertiesInput === "object" && !Array.isArray(propertiesInput)) {
     for (const [key, value] of Object.entries(propertiesInput)) {
@@ -628,11 +628,12 @@ function summarizeRunInput(
   input: WorkersAiRunInput,
   sessionAffinityKey?: string,
 ) {
+  const messages = input.messages as unknown as WorkersAiMessage[];
   return {
     model: modelName,
     sessionAffinityKey: sessionAffinityKey ?? null,
-    messageCount: input.messages.length,
-    messageRoles: input.messages.map((message) => ({
+    messageCount: messages.length,
+    messageRoles: messages.map((message) => ({
       role: message.role,
       contentLength: typeof message.content === "string" ? message.content.length : 0,
       toolCalls: message.tool_calls?.length ?? 0,

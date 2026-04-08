@@ -179,7 +179,7 @@ export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
       args,
     };
 
-    const response = await kernel.appRequest(this.getAppFrame(), frame);
+    const response = await kernel.appRequest(this.getAppFrame(), frame as RequestFrame);
     if (!response.ok) {
       throw new Error(response.error.message);
     }
@@ -729,13 +729,13 @@ async function resolvePackageFromRipgitNativeBuild(
         bindings: [
           {
             binding: "PACKAGE",
-            kind: "package-state",
+            kind: "package-state" as const,
             interfaceName: "gsv.package.v1",
             required: true,
           },
           ...(kernelSyscalls.length > 0 ? [{
             binding: "KERNEL",
-            kind: "kernel",
+            kind: "kernel" as const,
             interfaceName: "gsv.kernel.v1",
             required: true,
           }] : []),
@@ -830,7 +830,7 @@ function uniqueStrings(values: readonly string[] | undefined): string[] {
 
 function formatRipgitPackageFailure(
   prefix: string,
-  diagnostics: readonly RipgitPackageAnalyzeResponse["diagnostics"],
+  diagnostics: RipgitPackageAnalyzeResponse["diagnostics"],
 ): string {
   if (!Array.isArray(diagnostics) || diagnostics.length === 0) {
     return prefix;
