@@ -72,6 +72,23 @@
         display: flex;
         gap: 8px;
       }
+      .icon-btn {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .icon-btn svg {
+        width: 16px;
+        height: 16px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
       .thread-status {
         margin: 0;
         color: var(--text-muted);
@@ -432,8 +449,12 @@
             <h1 class="rail-title">Chats</h1>
           </div>
           <div class="rail-actions">
-            <button type="button" class="btn btn-quiet" id="new-thread">New</button>
-            <button type="button" class="btn btn-quiet" id="refresh-threads">Refresh</button>
+            <button type="button" class="btn btn-quiet icon-btn" id="new-thread" title="New thread" aria-label="New thread">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
+            </button>
+            <button type="button" class="btn btn-quiet icon-btn" id="refresh-threads" title="Refresh threads" aria-label="Refresh threads">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0 2 5.5" /><path d="M20 4v7h-7" /></svg>
+            </button>
           </div>
           <p class="thread-status" id="thread-status"></p>
         </div>
@@ -447,8 +468,12 @@
             <p class="stage-meta" id="active-thread-meta">Send a message to start a thread or reopen one from the left.</p>
           </div>
           <div class="stage-actions">
-            <button type="button" class="btn btn-quiet" id="open-files">Files</button>
-            <button type="button" class="btn btn-quiet" id="open-shell">Shell</button>
+            <button type="button" class="btn btn-quiet icon-btn" id="open-files" title="Open Files" aria-label="Open Files">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2H21v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+            </button>
+            <button type="button" class="btn btn-quiet icon-btn" id="open-shell" title="Open Shell" aria-label="Open Shell">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z" /><path d="m7 10 3 2.5L7 15" /><path d="M12.5 15H17" /></svg>
+            </button>
             <span class="pill is-connecting" id="connection-pill" title="connecting" aria-label="connecting"></span>
           </div>
         </header>

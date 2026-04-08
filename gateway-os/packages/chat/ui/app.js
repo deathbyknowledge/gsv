@@ -638,14 +638,19 @@ function getActivePid() {
   return activeThreadContext?.pid || null;
 }
 
-function setLogRows(rows) {
+function isNearBottom(node, thresholdPx = 72) {
+  const remaining = node.scrollHeight - node.scrollTop - node.clientHeight;
+  return remaining <= thresholdPx;
+}
+
+function setLogRows(rows, options = {}) {
   logRows = rows;
-  renderLog();
+  renderLog(options);
 }
 
 function appendSystemRow(text) {
   logRows = logRows.concat([{ role: "system", text: String(text || ""), timestamp: Date.now() }]);
-  renderLog();
+  renderLog({ autoScroll: true });
 }
 
 function labelForRole(role) {
@@ -668,10 +673,13 @@ function activeThreadTitle() {
   return label || "Conversation";
 }
 
-function renderLog() {
+function renderLog(options = {}) {
   if (!elements.chatLog) {
     return;
   }
+  const shouldScroll = options.forceBottom === true
+    ? true
+    : (options.autoScroll === true ? isNearBottom(elements.chatLog) : false);
   elements.chatLog.innerHTML = logRows.map((row) => {
     if (row.kind === "toolCall" || row.kind === "toolResult") {
       return renderToolRow(row);
@@ -683,7 +691,9 @@ function renderLog() {
       '<pre class="message-body">' + escapeHtmlClient(row.text) + '</pre>' +
     '</article>';
   }).join("");
-  elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
+  if (shouldScroll) {
+    elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
+  }
 }
 
 function renderThreads() {
@@ -832,7 +842,7 @@ async function loadHistory() {
   }
   const pid = getActivePid();
   if (!pid) {
-    setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }]);
+    setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }], { forceBottom: true });
     renderStatus();
     return;
   }
@@ -843,7 +853,7 @@ async function loadHistory() {
   for (let page = 0; page < 20; page += 1) {
     const result = await client.getHistory(200, pid, offset);
     if (!result.ok) {
-      setLogRows([{ role: "system", text: "history error: " + result.error, timestamp: Date.now() }]);
+      setLogRows([{ role: "system", text: "history error: " + result.error, timestamp: Date.now() }], { forceBottom: true });
       return;
     }
     merged.push(...result.messages);
@@ -858,7 +868,7 @@ async function loadHistory() {
   if (truncated && offset < messageCount) {
     rows.push({ role: "system", text: 'history truncated at ' + offset + '/' + messageCount + ' messages', timestamp: Date.now() });
   }
-  setLogRows(rows);
+  setLogRows(rows, { forceBottom: true });
   renderStatus();
 }
 
@@ -937,7 +947,7 @@ async function openThread(workspaceId) {
 
 function resetToNewThread() {
   activeThreadContext = setActiveThreadContext(null);
-  setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }]);
+  setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }], { forceBottom: true });
   renderThreads();
   renderStatus();
   elements.chatInput?.focus();
@@ -972,7 +982,7 @@ async function sendMessage() {
     }
     const currentRows = logRows.slice();
     currentRows.push({ role: "user", text: message, timestamp: Date.now() });
-    setLogRows(currentRows);
+    setLogRows(currentRows, { autoScroll: true });
     elements.chatInput.value = "";
     renderStatus();
     const result = await client.sendMessage(message, pid || undefined);
@@ -1027,10 +1037,7 @@ function listenForTargetProcess() {
       return;
     }
     window.parent.addEventListener(TARGET_CHAT_PROCESS_EVENT, (event) => {
-      if (!(event instanceof window.parent.CustomEvent)) {
-        return;
-      }
-      const detail = asRecord(event.detail);
+      const detail = asRecord((event).detail);
       if (!detail) {
         return;
       }
@@ -1089,7 +1096,7 @@ async function boot() {
   listenForTargetProcess();
   renderThreads();
   renderStatus();
-  setLogRows([{ role: "system", text: "Waiting for desktop host.", timestamp: Date.now() }]);
+  setLogRows([{ role: "system", text: "Waiting for desktop host.", timestamp: Date.now() }], { forceBottom: true });
   try {
     client = await connectHostClient();
     client.onStatus(() => {
@@ -1110,12 +1117,12 @@ async function boot() {
     if (activeThreadContext) {
       await loadHistory();
     } else {
-      setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }]);
+      setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }], { forceBottom: true });
     }
     await loadThreads();
   } catch (error) {
     hostError = error instanceof Error ? error.message : String(error);
-    setLogRows([{ role: "system", text: "HOST bridge unavailable. Open Chat from the desktop shell.", timestamp: Date.now() }]);
+    setLogRows([{ role: "system", text: "HOST bridge unavailable. Open Chat from the desktop shell.", timestamp: Date.now() }], { forceBottom: true });
     renderStatus();
   }
 }
