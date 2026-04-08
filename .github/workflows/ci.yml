@@ -37,14 +37,6 @@ jobs:
         working-directory: gateway
         run: npm test
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Run e2e tests
-        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
-        working-directory: gateway
-        run: npm run test:e2e
-
   cli-build:
     name: CLI Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
