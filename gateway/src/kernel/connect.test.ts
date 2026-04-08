@@ -34,10 +34,11 @@ function createMockSql() {
       return { toArray: () => [{ cnt: table.length }] as T[] };
     }
 
-    if (q.startsWith("INSERT INTO group_capabilities")) {
+    if (q.startsWith("INSERT INTO group_capabilities") || q.startsWith("INSERT OR IGNORE INTO group_capabilities")) {
       const table = getTable("group_capabilities");
       const [gid, capability] = bindings as [number, string];
-      table.push({ gid, capability });
+      const exists = table.some((row) => row.gid === gid && row.capability === capability);
+      if (!exists) table.push({ gid, capability });
       return { toArray: () => [] as T[] };
     }
 
