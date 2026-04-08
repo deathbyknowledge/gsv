@@ -21,7 +21,10 @@ describe("buildCheckpointTranscript", () => {
         id: 2,
         role: "assistant",
         content: "reading file",
-        toolCalls: JSON.stringify([{ type: "toolCall", id: "tc1", name: "read", arguments: {} }]),
+        toolCalls: JSON.stringify({
+          thinking: [{ type: "thinking", thinking: "Need to inspect the file first." }],
+          toolCalls: [{ type: "toolCall", id: "tc1", name: "read", arguments: {} }],
+        }),
         toolCallId: null,
         createdAt: 1_700_000_000_100,
       },
@@ -38,6 +41,7 @@ describe("buildCheckpointTranscript", () => {
       {
         role: "assistant",
         content: "reading file",
+        thinking: [{ type: "thinking", thinking: "Need to inspect the file first." }],
         tool_calls: [{ type: "toolCall", id: "tc1", name: "read", arguments: {} }],
         ts: 1_700_000_000_100,
       },

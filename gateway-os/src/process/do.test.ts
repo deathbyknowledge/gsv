@@ -151,9 +151,9 @@ describe("Process DO — mechanical", () => {
       expect(data).not.toHaveProperty("queued");
 
       // Fire the alarm and wait for the agent loop to complete.
-      // No API key is configured so the LLM call will error out
-      // gracefully, but the full lifecycle (tick → continueAgentLoop →
-      // finishRun) should still run.
+      // The test worker has no AI binding configured, so the LLM call
+      // errors out gracefully, but the full lifecycle (tick →
+      // continueAgentLoop → finishRun) should still run.
       await runDurableObjectAlarm(stub);
       await waitForRunComplete(stub);
 
@@ -182,12 +182,12 @@ describe("Process DO — mechanical", () => {
       )) as ResponseOkFrame;
       expect((res2.data as any).queued).toBe(true);
 
-      // Fire alarm for run 1 — fails (no API key), finishRun dequeues
+      // Fire alarm for run 1 — fails (no AI binding in tests), finishRun dequeues
       // "Second message" and starts run 2
       await runDurableObjectAlarm(stub);
       await waitForRunComplete(stub);
 
-      // Fire alarm for run 2 — fails, finishRun finds empty queue, done
+      // Fire alarm for run 2 — fails again, finishRun finds empty queue, done
       await runDurableObjectAlarm(stub);
       await waitForRunComplete(stub);
 
@@ -276,6 +276,43 @@ describe("Process DO — mechanical", () => {
         isError: false,
         toolCallId: "call-1",
         output: "file contents here",
+      });
+    });
+
+    it("includes assistant thinking blocks when present", async () => {
+      const pid = "mech-history-thinking";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("assistant", "Let me inspect that.", {
+          toolCalls: JSON.stringify({
+            thinking: [
+              { type: "thinking", thinking: "Need to inspect config before answering." },
+            ],
+            toolCalls: [
+              { type: "toolCall", id: "call-1", name: "Read", arguments: { path: "package.json" } },
+            ],
+          }),
+        });
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      const data = res.data as any;
+      expect(data.messages).toHaveLength(1);
+      expect(data.messages[0].role).toBe("assistant");
+      expect(data.messages[0].content).toEqual({
+        text: "Let me inspect that.",
+        thinking: [
+          { type: "thinking", thinking: "Need to inspect config before answering." },
+        ],
+        toolCalls: [
+          { type: "toolCall", id: "call-1", name: "Read", arguments: { path: "package.json" } },
+        ],
       });
     });
   });

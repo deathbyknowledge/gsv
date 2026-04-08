@@ -21,11 +21,11 @@
 
 export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // -- AI / LLM ---------------------------------------------------------------
-  // The LLM provider to use (anthropic, openai, google, mistral, etc.)
-  "config/ai/provider": "anthropic", // TODO: should make this workersai
+  // The LLM provider to use (workers-ai, anthropic, openai, google, mistral, etc.)
+  "config/ai/provider": "workers-ai",
   // The model identifier for the LLM provider
-  "config/ai/model": "claude-sonnet-4-20250514",
-  // API key for the LLM provider. Empty = not configured (must be set by root).
+  "config/ai/model": "@cf/nvidia/nemotron-3-120b-a12b",
+  // API key for the LLM provider. Empty is valid for local providers such as Workers AI.
   "config/ai/api_key": "",
   // Reasoning effort/mode hint passed to the model (off, low, medium, high).
   // Only applies to models that support extended thinking.

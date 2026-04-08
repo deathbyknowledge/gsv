@@ -178,6 +178,31 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("converts assistant messages with thinking and tool calls", async () => {
+      const stub = await getProcessByPid("to-msg-assistant-thinking");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("assistant", "Reading file...", {
+          toolCalls: JSON.stringify({
+            thinking: [
+              { type: "thinking", thinking: "First inspect the workspace." },
+            ],
+            toolCalls: [
+              { type: "toolCall", id: "call_1", name: "Read", arguments: { path: "/etc/hostname" } },
+            ],
+          }),
+        });
+
+        const msgs = store.toMessages();
+        const msg = msgs[0] as any;
+        expect(msg.content).toEqual([
+          { type: "thinking", thinking: "First inspect the workspace." },
+          { type: "text", text: "Reading file..." },
+          { type: "toolCall", id: "call_1", name: "Read", arguments: { path: "/etc/hostname" } },
+        ]);
+      });
+    });
+
     it("converts toolResult messages", async () => {
       const stub = await getProcessByPid("to-msg-toolresult");
       await runInDurableObject(stub, (instance: Process) => {

@@ -6,6 +6,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import { completeSimple, getModels, getProviders } from "@mariozechner/pi-ai";
 import type { AiConfigResult } from "../syscalls/ai";
+import { completeWithWorkersAi, isWorkersAiProvider } from "./workers-ai";
 
 export type GenerationPurpose =
   | "chat.reply"
@@ -18,6 +19,7 @@ export type GenerateRequest = {
   purpose: GenerationPurpose;
   config: AiConfigResult;
   context: Context;
+  sessionAffinityKey?: string;
 };
 
 export type GenerationService = {
@@ -36,8 +38,17 @@ type ResolvedGenerationOptions = {
 export function createGenerationService(): GenerationService {
   const generate = async (request: GenerateRequest): Promise<AssistantMessage> => {
     const options = resolveGenerationOptions(request);
-    const model = resolveModel(options.modelProvider, options.modelName);
+    if (isWorkersAiProvider(options.modelProvider)) {
+      return completeWithWorkersAi({
+        modelName: options.modelName,
+        context: request.context,
+        reasoning: options.reasoning,
+        maxTokens: options.maxTokens,
+        sessionAffinityKey: request.sessionAffinityKey,
+      });
+    }
 
+    const model = resolveModel(options.modelProvider, options.modelName);
     return completeSimple(model, request.context, {
       apiKey: options.apiKey,
       reasoning: options.reasoning,

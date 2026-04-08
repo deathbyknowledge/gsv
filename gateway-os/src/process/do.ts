@@ -37,6 +37,7 @@ import type {
 import type {
   AssistantMessage,
   TextContent,
+  ThinkingContent,
   ToolCall,
   Context,
   Tool,
@@ -49,7 +50,12 @@ import {
   normalizeCheckpointCommitMessage,
   normalizeCheckpointSummary,
 } from "./checkpoint";
-import { ProcessStore, type MessageRecord } from "./store";
+import {
+  ProcessStore,
+  parseAssistantMessageMeta,
+  stringifyAssistantMessageMeta,
+  type MessageRecord,
+} from "./store";
 import { assembleSystemPrompt } from "./context";
 import { sendFrameToKernel } from "../shared/utils";
 import { TOOL_TO_SYSCALL, SYSCALL_TOOL_NAMES } from "../syscalls/constants";
@@ -271,18 +277,13 @@ export class Process extends Host<Env> {
       }
 
       if (r.role === "assistant" && r.toolCalls) {
-        let toolCalls: unknown = [];
-        try {
-          toolCalls = JSON.parse(r.toolCalls);
-        } catch {
-          toolCalls = [];
-        }
-
+        const meta = parseAssistantMessageMeta(r.toolCalls);
         return {
           role: r.role,
           content: {
             text: r.content,
-            toolCalls,
+            thinking: meta.thinking ?? [],
+            toolCalls: meta.toolCalls ?? [],
           },
           timestamp: r.createdAt,
         };
@@ -490,6 +491,7 @@ export class Process extends Host<Env> {
         purpose: "chat.reply",
         config: run.config!,
         context,
+        sessionAffinityKey: this.pid,
       });
       console.log(
         `[Process] LLM response: ${response.content?.length ?? 0} blocks, stop=${response.stopReason}`,
@@ -525,6 +527,9 @@ export class Process extends Host<Env> {
       (b): b is TextContent => b.type === "text",
     );
     const text = textBlocks.map((b) => b.text).join("");
+    const thinkingBlocks = response.content.filter(
+      (b): b is ThinkingContent => b.type === "thinking",
+    );
     const toolCalls = response.content.filter(
       (b): b is ToolCall => b.type === "toolCall",
     );
@@ -534,7 +539,10 @@ export class Process extends Host<Env> {
     }
 
     this.store.appendMessage("assistant", text, {
-      toolCalls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : undefined,
+      toolCalls: stringifyAssistantMessageMeta({
+        thinking: thinkingBlocks,
+        toolCalls,
+      }),
     });
 
     if (toolCalls.length > 0) {
@@ -740,6 +748,7 @@ export class Process extends Host<Env> {
         purpose: "checkpoint.summary",
         config,
         context: buildCheckpointSummaryContext(existingSummary, messages),
+        sessionAffinityKey: this.pid,
       });
       return normalizeCheckpointSummary(generated);
     } catch (error) {
@@ -762,6 +771,7 @@ export class Process extends Host<Env> {
         purpose: "checkpoint.commit_message",
         config,
         context: buildCheckpointCommitMessageContext(summary, messages, reason),
+        sessionAffinityKey: this.pid,
       });
       return normalizeCheckpointCommitMessage(generated);
     } catch (error) {
@@ -784,13 +794,7 @@ export class Process extends Host<Env> {
 
     const jsonl = messages
       .map((m) =>
-        JSON.stringify({
-          role: m.role,
-          content: m.content,
-          tool_calls: m.toolCalls ? JSON.parse(m.toolCalls) : undefined,
-          tool_call_id: m.toolCallId ?? undefined,
-          ts: m.createdAt,
-        }),
+        JSON.stringify(serializeArchivedMessage(m)),
       )
       .join("\n");
 
@@ -833,6 +837,28 @@ export class Process extends Host<Env> {
       }
     }
   }
+}
+
+function serializeArchivedMessage(message: MessageRecord): Record<string, unknown> {
+  if (message.role === "assistant") {
+    const meta = parseAssistantMessageMeta(message.toolCalls);
+    return {
+      role: message.role,
+      content: message.content,
+      tool_calls: meta.toolCalls,
+      thinking: meta.thinking,
+      tool_call_id: message.toolCallId ?? undefined,
+      ts: message.createdAt,
+    };
+  }
+
+  return {
+    role: message.role,
+    content: message.content,
+    tool_calls: message.toolCalls ? JSON.parse(message.toolCalls) : undefined,
+    tool_call_id: message.toolCallId ?? undefined,
+    ts: message.createdAt,
+  };
 }
 
 async function gzip(input: string): Promise<ArrayBuffer> {
