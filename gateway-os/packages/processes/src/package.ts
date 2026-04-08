@@ -6,10 +6,10 @@ export default definePackage({
     displayName: "Processes",
     description: "Inspect and manage running agent processes.",
     window: {
-      width: 920,
-      height: 620,
-      minWidth: 700,
-      minHeight: 440,
+      width: 1080,
+      height: 760,
+      minWidth: 760,
+      minHeight: 520,
     },
     capabilities: {
       kernel: ["proc.list", "proc.kill"],

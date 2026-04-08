@@ -21,7 +21,7 @@ function formatTimestampMs(value) {
 
 function renderProcessRows(routeBase, query, entries) {
   if (!Array.isArray(entries) || entries.length === 0) {
-    return '<p class="config-empty muted">No processes match the current filter.</p>';
+    return '<div class="process-empty"><h3>No processes</h3><p>No processes match the current filter.</p></div>';
   }
 
   return entries.map((entry) => {
@@ -34,33 +34,52 @@ function renderProcessRows(routeBase, query, entries) {
     const parentPid = entry?.parentPid == null ? "—" : String(entry.parentPid);
     const workspaceId = entry?.workspaceId == null ? "" : String(entry.workspaceId);
     const cwd = String(entry?.cwd ?? "");
+    const workspaceLabel = workspaceId || "—";
+    const cwdLabel = cwd || "—";
 
     return `
       <article class="process-row">
         <div class="process-row-main">
           <div class="process-row-head">
+            <span class="process-state-pill ${stateClass}">
+              <span class="process-state-dot" aria-hidden="true"></span>
+              ${escapeHtml(state || "unknown")}
+            </span>
             <h3>${escapeHtml(title)}</h3>
-            <span class="process-state-pill ${stateClass}">${escapeHtml(state || "unknown")}</span>
           </div>
-          <p class="muted process-row-meta"><code>${escapeHtml(pid)}</code> · uid ${escapeHtml(uid)} · profile ${escapeHtml(profile)}</p>
-          <p class="muted process-row-meta">parent ${escapeHtml(parentPid)} · created ${escapeHtml(formatTimestampMs(entry?.createdAt))}</p>
+          <p class="muted process-row-meta"><code>${escapeHtml(pid)}</code> · uid ${escapeHtml(uid)} · profile ${escapeHtml(profile)} · parent ${escapeHtml(parentPid)}</p>
+          <p class="muted process-row-meta">created ${escapeHtml(formatTimestampMs(entry?.createdAt))}</p>
+        </div>
+        <div class="process-row-context">
+          <div class="process-context-block">
+            <span class="process-context-label">Workspace</span>
+            <strong>${escapeHtml(workspaceLabel)}</strong>
+          </div>
+          <div class="process-context-block">
+            <span class="process-context-label">Path</span>
+            <code>${escapeHtml(cwdLabel)}</code>
+          </div>
         </div>
         <div class="process-row-actions">
           <button
             type="button"
-            class="runtime-btn"
+            class="process-icon-btn"
             data-action="open-chat"
             data-pid="${escapeHtml(pid)}"
             data-workspace-id="${escapeHtml(workspaceId)}"
             data-cwd="${escapeHtml(cwd)}"
+            aria-label="Open in Chat"
+            title="Open in Chat"
           >
-            Open in Chat
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7.5h12A2.5 2.5 0 0 1 20.5 10v5A2.5 2.5 0 0 1 18 17.5H11l-4.5 3v-3H6A2.5 2.5 0 0 1 3.5 15v-5A2.5 2.5 0 0 1 6 7.5z"/></svg>
           </button>
           <form method="post" action="${escapeHtml(routeBase)}" class="inline-form">
             <input type="hidden" name="action" value="kill" />
             <input type="hidden" name="pid" value="${escapeHtml(pid)}" />
             <input type="hidden" name="q" value="${escapeHtml(query)}" />
-            <button type="submit" class="runtime-btn">Reset</button>
+            <button type="submit" class="process-icon-btn process-icon-btn-danger" aria-label="Reset process" title="Reset process">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>
+            </button>
           </form>
         </div>
       </article>
@@ -89,149 +108,247 @@ function renderPage(routeBase, query, processes, error) {
     <title>Processes</title>
     <link rel="stylesheet" href="/runtime/theme.css" />
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: light;
+        --bg: #eef3f7;
+        --panel: rgba(247, 249, 252, 0.92);
+        --panel-soft: rgba(243, 247, 251, 0.82);
+        --line: rgba(42, 50, 56, 0.08);
+        --line-strong: rgba(42, 50, 56, 0.14);
+        --text: #1f2d33;
+        --muted: #61737b;
+        --primary: #003466;
+        --primary-soft: #1a4b84;
+        --danger: #8a3b3b;
+      }
       body {
         margin: 0;
-        font: 14px/1.5 var(--gsv-font-sans, "Inter", sans-serif);
-        background: var(--gsv-color-bg, #0c111b);
-        color: var(--gsv-color-text, #f3f5f7);
+        font: 14px/1.5 Manrope, system-ui, sans-serif;
+        background: transparent;
+        color: var(--text);
       }
       .process-app {
         min-height: 100vh;
-        box-sizing: border-box;
-        padding: 24px;
         display: grid;
-        gap: 18px;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        background: var(--panel);
       }
-      .process-page-header,
-      .process-toolbar,
-      .process-list {
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(10, 15, 23, 0.72);
-        border-radius: 18px;
-        box-shadow: 0 14px 38px rgba(0, 0, 0, 0.22);
-      }
-      .process-page-header {
-        padding: 20px 22px;
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 18px;
-      }
-      .process-page-copy h1 {
-        margin: 0;
-        font-size: 32px;
-        line-height: 1.1;
-      }
-      .process-page-copy p { margin: 8px 0 0; max-width: 62ch; }
-      .eyebrow {
-        margin: 0 0 8px;
-        font-size: 11px;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: rgba(193, 205, 224, 0.72);
-      }
-      .process-toolbar { padding: 16px 18px; }
-      .process-toolbar-row {
+      .process-toolbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 16px;
+        gap: 12px;
         flex-wrap: wrap;
+        padding: 12px 14px 10px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(247, 249, 252, 0.56);
+        backdrop-filter: blur(10px) saturate(1.04);
+        -webkit-backdrop-filter: blur(10px) saturate(1.04);
       }
-      .process-toolbar label {
+      .process-toolbar-form {
         display: grid;
+        grid-template-columns: minmax(240px, 420px) auto;
         gap: 8px;
-        min-width: min(100%, 360px);
-        font-size: 13px;
-        color: rgba(193, 205, 224, 0.86);
+        align-items: end;
       }
-      .process-toolbar input {
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.04);
-        color: inherit;
-        border-radius: 12px;
-        padding: 10px 12px;
+      .process-field {
+        display: grid;
+        gap: 4px;
       }
-      .toolbar-actions,
+      .process-field span,
+      .process-meta-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .process-field input {
+        width: 100%;
+        min-height: 34px;
+        border: 1px solid rgba(38, 48, 56, 0.08);
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--text);
+        border-radius: 4px;
+        padding: 0 10px;
+        font: inherit;
+        outline: none;
+      }
+      .process-field input:focus {
+        border-color: rgba(26, 75, 132, 0.24);
+        background: rgba(255, 255, 255, 0.96);
+      }
+      .process-toolbar-actions,
       .process-row-actions {
         display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
         align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
       }
-      .runtime-btn {
+      .process-toolbar-meta {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .process-icon-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        text-decoration: none;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.06);
-        color: inherit;
-        border-radius: 999px;
-        padding: 10px 14px;
-        font: inherit;
+        width: 34px;
+        height: 34px;
+        border: 0;
+        border-radius: 6px;
+        background: rgba(233, 239, 246, 0.76);
+        color: var(--text);
         cursor: pointer;
       }
-      .runtime-btn:hover { background: rgba(255, 255, 255, 0.1); }
-      .process-list { padding: 14px; display: grid; gap: 12px; }
+      .process-icon-btn svg {
+        width: 16px;
+        height: 16px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .process-icon-btn-danger {
+        background: rgba(255, 238, 236, 0.92);
+        color: var(--danger);
+      }
+      .process-stage {
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      .process-list-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(220px, 0.95fr) auto;
+        gap: 18px;
+        padding: 10px 14px 8px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .process-list {
+        min-height: 0;
+        overflow: auto;
+        display: grid;
+        align-content: start;
+        padding: 0 14px 14px;
+      }
       .process-row {
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.03);
-        border-radius: 16px;
-        padding: 16px;
-        display: flex;
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(220px, 0.95fr) auto;
+        gap: 18px;
         align-items: flex-start;
-        justify-content: space-between;
-        gap: 16px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
       }
       .process-row-main { min-width: 0; }
       .process-row-head {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
         flex-wrap: wrap;
       }
-      .process-row-head h3 { margin: 0; font-size: 18px; }
-      .process-row-meta { margin: 6px 0 0; }
+      .process-row-head h3 {
+        margin: 0;
+        font-size: 16px;
+        line-height: 1.2;
+      }
+      .process-row-meta { margin: 4px 0 0; }
+      .process-row-context {
+        display: grid;
+        gap: 8px;
+        min-width: 0;
+      }
+      .process-context-block {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      .process-context-label {
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .process-context-block strong,
+      .process-context-block code {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .inline-form { display: inline-flex; }
       .process-state-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         border-radius: 999px;
-        padding: 4px 10px;
-        font-size: 12px;
+        padding: 3px 8px;
+        font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
+        font-weight: 700;
       }
-      .process-state-pill.is-running { background: rgba(73, 209, 148, 0.16); color: #73e2aa; }
-      .process-state-pill.is-paused { background: rgba(255, 208, 84, 0.16); color: #ffd46c; }
-      .process-state-pill.is-other { background: rgba(157, 174, 198, 0.16); color: #d7dfea; }
+      .process-state-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+      .process-state-pill.is-running { background: rgba(73, 209, 148, 0.14); color: #2a6d4e; }
+      .process-state-pill.is-paused { background: rgba(255, 208, 84, 0.16); color: #8b6500; }
+      .process-state-pill.is-other { background: rgba(157, 174, 198, 0.16); color: #5b6d82; }
       .control-error-text,
-      .config-empty,
-      .muted { color: rgba(193, 205, 224, 0.76); }
-      .control-error-text { margin: 0; color: #ffb4b4; }
-      code { font-family: var(--gsv-font-mono, "SFMono-Regular", "Consolas", monospace); }
+      .muted { color: var(--muted); }
+      .control-error-text {
+        margin: 0;
+        padding: 8px 14px 0;
+        color: var(--danger);
+      }
+      .process-empty {
+        display: grid;
+        place-items: center;
+        align-content: center;
+        min-height: 280px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .process-empty h3 {
+        margin: 0;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-size: 22px;
+      }
+      .process-empty p { margin: 8px 0 0; }
+      code { font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace; }
       @media (max-width: 760px) {
-        .process-app { padding: 14px; }
-        .process-page-header,
-        .process-row { grid-template-columns: 1fr; display: grid; }
+        .process-toolbar {
+          align-items: stretch;
+        }
+        .process-toolbar-form {
+          grid-template-columns: 1fr;
+        }
+        .process-list-head {
+          display: none;
+        }
+        .process-row {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
   <body>
     <section class="process-app">
-      <header class="process-page-header">
-        <div class="process-page-copy">
-          <p class="eyebrow">Process Surface</p>
-          <h1>Processes</h1>
-          <p>Inspect process state and jump directly into a process conversation in Chat.</p>
-        </div>
-        <p class="muted">Showing ${filtered.length} of ${processes.length} process${processes.length === 1 ? "" : "es"}.</p>
-      </header>
-
       <section class="process-toolbar">
-        <form method="get" action="${escapeHtml(routeBase)}" class="process-toolbar-row">
-          <label>
-            Search
+        <form method="get" action="${escapeHtml(routeBase)}" class="process-toolbar-form">
+          <label class="process-field">
+            <span>Search</span>
             <input
               type="text"
               name="q"
@@ -239,18 +356,30 @@ function renderPage(routeBase, query, processes, error) {
               placeholder="Filter by pid, label, or parent pid"
             />
           </label>
-          <div class="toolbar-actions">
-            <button type="submit" class="runtime-btn">Apply</button>
-            <a class="runtime-btn" href="${escapeHtml(routeBase)}">Clear</a>
+          <div class="process-toolbar-actions">
+            <button type="submit" class="process-icon-btn" aria-label="Search" title="Search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+            </button>
+            <a class="process-icon-btn" href="${escapeHtml(routeBase)}" aria-label="Clear filter" title="Clear filter">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6 6 18"></path></svg>
+            </a>
           </div>
         </form>
-      </section>
-
-      <section class="process-list">
-        ${renderProcessRows(routeBase, query, filtered)}
+        <div class="process-toolbar-meta">Showing ${filtered.length} of ${processes.length} process${processes.length === 1 ? "" : "es"}.</div>
       </section>
 
       ${error ? `<p class="control-error-text">${escapeHtml(error)}</p>` : ""}
+
+      <section class="process-stage">
+        <div class="process-list-head">
+          <span>Process</span>
+          <span>Workspace</span>
+          <span>Actions</span>
+        </div>
+        <section class="process-list">
+          ${renderProcessRows(routeBase, query, filtered)}
+        </section>
+      </section>
     </section>
     <script>
       document.addEventListener("click", (event) => {
@@ -270,6 +399,10 @@ function renderPage(routeBase, query, processes, error) {
         const workspaceId = button.dataset.workspaceId?.trim() || null;
         try {
           if (window.parent && window.parent !== window) {
+            window.parent.postMessage({
+              type: "gsv:open-chat-process",
+              detail: { pid, workspaceId, cwd },
+            }, window.location.origin);
             window.parent.dispatchEvent(new CustomEvent("gsv:open-chat-process", {
               detail: { pid, workspaceId, cwd },
             }));

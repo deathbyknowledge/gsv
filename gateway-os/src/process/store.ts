@@ -16,6 +16,7 @@ import type {
   AssistantMessage,
   ToolResultMessage,
   TextContent,
+  ThinkingContent,
   ToolCall,
 } from "@mariozechner/pi-ai";
 
@@ -39,6 +40,11 @@ export type MessageRecord = {
   toolCalls: string | null;
   toolCallId: string | null;
   createdAt: number;
+};
+
+export type AssistantMessageMeta = {
+  thinking?: ThinkingContent[];
+  toolCalls?: ToolCall[];
 };
 
 export type QueuedMessage = {
@@ -290,13 +296,16 @@ export class ProcessStore {
           break;
 
         case "assistant": {
-          const content: (TextContent | ToolCall)[] = [];
+          const content: (TextContent | ThinkingContent | ToolCall)[] = [];
+          const meta = parseAssistantMessageMeta(r.toolCalls);
+          if (meta.thinking) {
+            content.push(...meta.thinking);
+          }
           if (r.content) {
             content.push({ type: "text", text: r.content });
           }
-          if (r.toolCalls) {
-            const toolCalls = JSON.parse(r.toolCalls) as ToolCall[];
-            content.push(...toolCalls);
+          if (meta.toolCalls) {
+            content.push(...meta.toolCalls);
           }
           messages.push({
             role: "assistant",
@@ -425,4 +434,53 @@ export class ProcessStore {
     ];
     return rows[0]?.cnt ?? 0;
   }
+}
+
+export function parseAssistantMessageMeta(raw: string | null): AssistantMessageMeta {
+  if (!raw) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+
+  if (Array.isArray(parsed)) {
+    return { toolCalls: parsed as ToolCall[] };
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return {};
+  }
+
+  const meta = parsed as Record<string, unknown>;
+  return {
+    thinking: Array.isArray(meta.thinking)
+      ? meta.thinking as ThinkingContent[]
+      : undefined,
+    toolCalls: Array.isArray(meta.toolCalls)
+      ? meta.toolCalls as ToolCall[]
+      : undefined,
+  };
+}
+
+export function stringifyAssistantMessageMeta(
+  meta: AssistantMessageMeta,
+): string | undefined {
+  const thinking = meta.thinking?.length ? meta.thinking : undefined;
+  const toolCalls = meta.toolCalls?.length ? meta.toolCalls : undefined;
+
+  if (!thinking && !toolCalls) {
+    return undefined;
+  }
+  if (!thinking && toolCalls) {
+    return JSON.stringify(toolCalls);
+  }
+
+  return JSON.stringify({
+    thinking,
+    toolCalls,
+  });
 }
