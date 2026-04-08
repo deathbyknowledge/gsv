@@ -20,6 +20,21 @@ let historyCursor = null;
 let historyDraft = '';
 let running = false;
 
+function readActiveThreadContext() {
+  try {
+    const raw = localStorage.getItem('gsv.activeThreadContext.v1');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const cwd = typeof parsed.cwd === 'string' ? parsed.cwd.trim() : '';
+    const workspaceId = typeof parsed.workspaceId === 'string' ? parsed.workspaceId.trim() : '';
+    if (!cwd) return null;
+    return { cwd, workspaceId };
+  } catch {
+    return null;
+  }
+}
+
 function setStatus(kind) {
   if (!statusNode) return;
   statusNode.dataset.kind = kind;
@@ -176,6 +191,10 @@ terminal.loadAddon(fitAddon);
 terminal.open(streamNode);
 fitAddon.fit();
 terminal.focus();
+const activeThread = readActiveThreadContext();
+if (activeThread && workdirInput && !workdirInput.value.trim()) {
+  workdirInput.value = activeThread.cwd;
+}
 writePrompt();
 setStatus('ready');
 

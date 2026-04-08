@@ -7,6 +7,41 @@ const FILES_APP_SCRIPT = String.raw`
   const createInput = document.querySelector('[data-create-file-input]');
   const saveForm = document.querySelector('[data-save-form]');
 
+  const readActiveThreadContext = () => {
+    try {
+      const raw = window.localStorage.getItem('gsv.activeThreadContext.v1');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const cwd = typeof parsed.cwd === 'string' ? parsed.cwd.trim() : '';
+      if (!cwd) return null;
+      return { cwd };
+    } catch {
+      return null;
+    }
+  };
+
+  const maybeBootstrapFromThreadContext = () => {
+    const url = new URL(window.location.href);
+    const hasExplicitState =
+      url.searchParams.has('path') ||
+      url.searchParams.has('open') ||
+      url.searchParams.has('q') ||
+      url.searchParams.has('target');
+    if (hasExplicitState) {
+      return;
+    }
+    const thread = readActiveThreadContext();
+    if (!thread) {
+      return;
+    }
+    url.searchParams.set('target', 'gsv');
+    url.searchParams.set('path', thread.cwd);
+    window.location.replace(url.pathname + '?' + url.searchParams.toString() + url.hash);
+  };
+
+  maybeBootstrapFromThreadContext();
+
   const markDirty = () => {
     dirty = true;
     document.body.dataset.dirty = 'true';
