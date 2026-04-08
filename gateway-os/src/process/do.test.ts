@@ -318,6 +318,30 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.reset", () => {
+    it("checkpoints only on reset boundaries, not normal turn completion", async () => {
+      const pid = "mech-checkpoint-reset-only";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const checkpointReasons: string[] = [];
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const store = process.store;
+        store.appendMessage("user", "hello");
+
+        process.checkpointWorkspace = async (reason: string) => {
+          checkpointReasons.push(reason);
+        };
+
+        await process.finishRun("turn.complete");
+        expect(store.messageCount()).toBe(1);
+
+        await process.handleProcReset();
+        expect(store.messageCount()).toBe(0);
+      });
+
+      expect(checkpointReasons).toEqual(["proc.reset"]);
+    });
+
     it("archives messages and clears conversation", async () => {
       const pid = "mech-reset-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);

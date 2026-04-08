@@ -600,12 +600,6 @@ export class Process extends Host<Env> {
   }
 
   private async finishRun(reason: string): Promise<void> {
-    try {
-      await this.checkpointWorkspace(reason);
-    } catch (error) {
-      console.error(`[Process] Workspace checkpoint failed (${reason}):`, error);
-    }
-
     const runId = this.currentRun?.runId;
     this.currentRun = null;
     console.log(`[Process] Finished run ${runId}`);
