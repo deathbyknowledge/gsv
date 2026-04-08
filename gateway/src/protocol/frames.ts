@@ -1,4 +1,5 @@
-// base error shape used in responses
+import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
+
 export type ErrorShape = {
   code: number;
   message: string;
@@ -6,23 +7,17 @@ export type ErrorShape = {
   retryable?: boolean;
 };
 
-// generic request frame with method and params
-export type RequestFrame<Method extends string = string, Params = unknown> = {
-  type: "req";
-  id: string;
-  method: Method;
-  params?: Params;
-};
+export type RequestFrame<S extends SyscallName = SyscallName> = {
+  [K in S]: { type: "req"; id: string; call: K; args: ArgsOf<K> };
+}[S];
 
-// successful response frame with result
-export type ResponseOkFrame<Payload = unknown> = {
+export type ResponseOkFrame<S extends SyscallName = SyscallName> = {
   type: "res";
   id: string;
   ok: true;
-  payload?: Payload;
+  data?: ResultOf<S>;
 };
 
-// error response frame with error details
 export type ResponseErrFrame = {
   type: "res";
   id: string;
@@ -30,18 +25,15 @@ export type ResponseErrFrame = {
   error: ErrorShape;
 };
 
-// union response frames
-export type ResponseFrame<Payload = unknown> =
-  | ResponseOkFrame<Payload>
+export type ResponseFrame<S extends SyscallName = SyscallName> =
+  | ResponseOkFrame<S>
   | ResponseErrFrame;
 
-// generic event frame with event name and payload
-export type EventFrame<Payload = unknown> = {
-  type: "evt";
-  event: string;
+export type SignalFrame<Payload = unknown> = {
+  type: "sig";
+  signal: string;
   payload?: Payload;
   seq?: number;
 };
 
-// union frame type
-export type Frame = RequestFrame | ResponseFrame | EventFrame;
+export type Frame = RequestFrame | ResponseFrame | SignalFrame;

@@ -2,9 +2,9 @@
   "name": "gsv-app-runtime",
   "private": true,
   "workspaces": [
-    "gateway-os",
+    "gateway",
     "web",
-    "gateway-os/packages/*",
+    "gateway/packages/*",
     "packages/*",
     "ripgit"
   ],

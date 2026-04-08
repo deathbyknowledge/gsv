@@ -86,7 +86,7 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
   };
 
   /**
-   * Canonical adapter lifecycle entrypoint used by gateway-os.
+   * Canonical adapter lifecycle entrypoint used by gateway.
    */
   async connect(accountId: string, config: Record<string, unknown> = {}): Promise<
     | {
@@ -127,7 +127,7 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
   }
 
   /**
-   * Canonical adapter lifecycle entrypoint used by gateway-os.
+   * Canonical adapter lifecycle entrypoint used by gateway.
    */
   async disconnect(accountId: string): Promise<
     | { ok: true; message?: string }

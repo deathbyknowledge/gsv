@@ -9,7 +9,7 @@ import type {
   SysBootstrapResult,
   SysSetupArgs,
   SysSetupResult,
-} from "../../gateway-os/src/syscalls/system";
+} from "../../gateway/src/syscalls/system";
 
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
 const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";

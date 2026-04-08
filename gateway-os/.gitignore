@@ -1,8 +1,0 @@
-.alchemy/
-.env.local
-.env*.local
-.env.test.local
-.dev.vars
-
-# Localflare generated files
-.localflare/

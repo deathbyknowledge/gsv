@@ -9,4 +9,4 @@ mkdir -p "$STATE_ROOT/do/gsv-os-Kernel"
 mkdir -p "$STATE_ROOT/do/gsv-os-Process"
 
 cd "$ROOT_DIR/ripgit"
-exec bun x wrangler dev -c ../gateway-os/wrangler.jsonc -c wrangler.toml --ip 0.0.0.0 --persist-to ../.wrangler/dev-state
+exec bun x wrangler dev -c ../gateway/wrangler.jsonc -c wrangler.toml --ip 0.0.0.0 --persist-to ../.wrangler/dev-state

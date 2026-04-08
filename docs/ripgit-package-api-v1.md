@@ -409,7 +409,7 @@ This preserves:
 const analysis = await ripgitPackages.analyzePackage({
   repo: "system/gsv",
   ref: "main",
-  subdir: "gateway-os/packages/files",
+  subdir: "gateway/packages/files",
 });
 ```
 
@@ -419,7 +419,7 @@ const analysis = await ripgitPackages.analyzePackage({
 const build = await ripgitPackages.buildPackage({
   repo: "system/gsv",
   ref: "main",
-  subdir: "gateway-os/packages/files",
+  subdir: "gateway/packages/files",
 });
 ```
 
@@ -429,7 +429,7 @@ const build = await ripgitPackages.buildPackage({
 const resolved = await ripgitPackages.resolvePackage({
   repo: "system/gsv",
   ref: "feature/local-files-ui",
-  subdir: "gateway-os/packages/files",
+  subdir: "gateway/packages/files",
 });
 ```
 

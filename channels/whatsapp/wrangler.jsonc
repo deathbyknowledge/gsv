@@ -24,7 +24,7 @@
   "services": [
     {
       "binding": "GATEWAY",
-      "service": "gsv",
+      "service": "gsv-os",
       "entrypoint": "GatewayEntrypoint"
     }
   ],

@@ -12,23 +12,23 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"migrations": [
 		{
-			"new_sqlite_classes": ["Gateway"],
+			"new_sqlite_classes": ["Kernel"],
 			"tag": "v1"
 		},
 		{
-			"new_sqlite_classes": ["Session"],
+			"new_sqlite_classes": ["Process"],
 			"tag": "v2"
 		}
 	],
 	"durable_objects": {
 		"bindings": [
 			{
-				"class_name": "Gateway",
-				"name": "GATEWAY"
+				"class_name": "Kernel",
+				"name": "KERNEL"
 			},
 			{
-				"class_name": "Session",
-				"name": "SESSION"
+				"class_name": "Process",
+				"name": "PROCESS"
 			}
 		]
 	},
@@ -40,6 +40,11 @@
 		{
 			"binding": "STORAGE",
 			"bucket_name": "gsv-storage-test"
+		}
+	],
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
 		}
 	]
 	// Note: No AI binding, no service bindings for channels
