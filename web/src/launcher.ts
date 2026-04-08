@@ -151,11 +151,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const onOpenChatProcess = (event: Event): void => {
-    if (!(event instanceof CustomEvent)) {
-      return;
-    }
-
-    const rawDetail = event.detail as { pid?: unknown; workspaceId?: unknown; cwd?: unknown } | null;
+    const rawDetail = (event as Event & { detail?: { pid?: unknown; workspaceId?: unknown; cwd?: unknown } | null }).detail ?? null;
     const pid = normalizeProcessId(rawDetail?.pid);
     const normalized = normalizeThreadContext({
       pid,
@@ -178,11 +174,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const onOpenApp = (event: Event): void => {
-    if (!(event instanceof CustomEvent)) {
-      return;
-    }
-
-    const detail = event.detail as OpenAppEventDetail | null;
+    const detail = ((event as Event & { detail?: OpenAppEventDetail | null }).detail) ?? null;
     const appId = typeof detail?.appId === "string" ? detail.appId.trim() : "";
     if (!appId) {
       return;
