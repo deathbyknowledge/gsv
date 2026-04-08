@@ -243,7 +243,7 @@ function renderConfigSection(routeBase, entriesByKey, state) {
   }).join("");
 
   return `
-    <section class="panel control-detail">
+    <section class="control-section control-detail">
       <div class="section-header">
         <div>
           <p class="eyebrow">Configuration</p>
@@ -286,7 +286,7 @@ function renderTokens(routeBase, tokens, state, createdToken) {
       `).join("");
 
   return `
-    <section class="panel">
+    <section class="control-section">
       <div class="section-header">
         <div>
           <p class="eyebrow">Access</p>
@@ -335,7 +335,7 @@ function renderLinks(routeBase, links, state) {
       `).join("");
 
   return `
-    <section class="panel">
+    <section class="control-section">
       <div class="section-header">
         <div>
           <p class="eyebrow">Access</p>
@@ -382,7 +382,7 @@ function renderAdapterSection(routeBase, state, adapterStatus, adapterChallenge,
       `).join("");
 
   return `
-    <section class="panel">
+    <section class="control-section">
       <div class="section-header">
         <div>
           <p class="eyebrow">Adapters</p>
@@ -421,7 +421,7 @@ function renderAdvanced(routeBase, entries, state) {
   `).join("");
 
   return `
-    <section class="panel">
+    <section class="control-section">
       <div class="section-header">
         <div>
           <p class="eyebrow">Advanced</p>
@@ -460,9 +460,11 @@ function renderTopTabs(routeBase, state) {
 
 function renderAccessPanel(routeBase, payload) {
   return `
-    <section class="control-stack">
-      ${renderTokens(routeBase, payload.tokens, payload.state, payload.createdToken)}
-      ${renderLinks(routeBase, payload.links, payload.state)}
+    <section class="control-workspace control-workspace-stack">
+      <section class="control-stack">
+        ${renderTokens(routeBase, payload.tokens, payload.state, payload.createdToken)}
+        ${renderLinks(routeBase, payload.links, payload.state)}
+      </section>
     </section>
   `;
 }
@@ -470,9 +472,11 @@ function renderAccessPanel(routeBase, payload) {
 function renderActivePanel(routeBase, payload, entriesByKey) {
   if (payload.state.activeTab === "config") {
     return `
-      <section class="control-layout">
-        ${renderConfigNav(routeBase, payload.state)}
-        ${renderConfigSection(routeBase, entriesByKey, payload.state)}
+      <section class="control-workspace control-workspace-config">
+        <section class="control-layout">
+          ${renderConfigNav(routeBase, payload.state)}
+          ${renderConfigSection(routeBase, entriesByKey, payload.state)}
+        </section>
       </section>
     `;
   }
@@ -480,9 +484,17 @@ function renderActivePanel(routeBase, payload, entriesByKey) {
     return renderAccessPanel(routeBase, payload);
   }
   if (payload.state.activeTab === "adapters") {
-    return renderAdapterSection(routeBase, payload.state, payload.adapterStatus, payload.adapterChallenge, payload.adapterError);
+    return `
+      <section class="control-workspace control-workspace-stack">
+        ${renderAdapterSection(routeBase, payload.state, payload.adapterStatus, payload.adapterChallenge, payload.adapterError)}
+      </section>
+    `;
   }
-  return renderAdvanced(routeBase, payload.entries, payload.state);
+  return `
+    <section class="control-workspace control-workspace-stack">
+      ${renderAdvanced(routeBase, payload.entries, payload.state)}
+    </section>
+  `;
 }
 
 function renderPage(routeBase, payload) {
@@ -497,22 +509,22 @@ function renderPage(routeBase, payload) {
     <style>
       :root {
         color-scheme: light;
-        --page: #ece7df;
-        --surface: rgba(248, 244, 237, 0.94);
-        --surface-soft: rgba(241, 235, 226, 0.96);
-        --surface-muted: rgba(228, 220, 208, 0.9);
+        --page: #e9edf2;
+        --surface: rgba(249, 251, 253, 0.96);
+        --surface-soft: rgba(243, 247, 251, 0.98);
+        --surface-muted: rgba(231, 237, 244, 0.92);
         --text: #191c1e;
         --text-muted: rgba(25, 28, 30, 0.64);
         --text-soft: rgba(25, 28, 30, 0.48);
         --primary: #003466;
         --primary-soft: #1a4b84;
-        --accent: #904b36;
-        --accent-soft: rgba(233, 217, 206, 0.96);
+        --accent: #4d6388;
+        --accent-soft: rgba(226, 233, 245, 0.96);
         --danger: #8a3b3b;
         --danger-soft: rgba(255, 232, 230, 0.95);
-        --notice-soft: rgba(241, 231, 220, 0.95);
-        --line: rgba(25, 28, 30, 0.08);
-        --shadow: 0 18px 36px rgba(25, 28, 30, 0.06), 0 8px 16px rgba(25, 28, 30, 0.04);
+        --notice-soft: rgba(232, 239, 246, 0.95);
+        --line: rgba(25, 28, 30, 0.1);
+        --shadow: 0 12px 24px rgba(25, 28, 30, 0.04), 0 4px 10px rgba(25, 28, 30, 0.03);
         --display: "Space Grotesk", "Avenir Next", sans-serif;
         --ui: "Manrope", "Segoe UI", sans-serif;
         --mono: "IBM Plex Mono", "SFMono-Regular", monospace;
@@ -523,27 +535,22 @@ function renderPage(routeBase, payload) {
         font: 14px/1.55 var(--ui);
         color: var(--text);
         background:
-          radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0) 30%),
+          radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0) 28%),
           linear-gradient(180deg, #f6f8fb 0%, var(--page) 100%);
       }
       main {
         min-height: 100vh;
-        padding: 22px;
+        padding: 16px;
         display: grid;
-        gap: 16px;
-      }
-      .panel {
-        background: var(--surface);
-        border-radius: 20px;
-        box-shadow: var(--shadow);
+        gap: 12px;
       }
       .control-frame {
         display: grid;
-        gap: 16px;
+        gap: 12px;
+        align-content: start;
       }
-      .panel { padding: 18px; }
       .eyebrow {
-        margin: 0 0 8px;
+        margin: 0 0 6px;
         color: var(--text-soft);
         font-size: 11px;
         font-weight: 800;
@@ -558,55 +565,65 @@ function renderPage(routeBase, payload) {
       .muted { color: var(--text-muted); }
       .control-tabs {
         display: flex;
-        gap: 10px;
+        gap: 8px;
         flex-wrap: wrap;
-        align-items: flex-start;
+        align-items: center;
       }
       .control-tab {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 42px;
-        height: 42px;
-        padding: 10px 14px;
-        border-radius: 999px;
+        min-height: 36px;
+        height: 36px;
+        padding: 8px 12px;
+        border-radius: 10px;
         text-decoration: none;
         color: var(--text-muted);
-        background: rgba(255, 250, 245, 0.62);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
+        background: rgba(255, 255, 255, 0.5);
+        border: 1px solid rgba(25, 28, 30, 0.06);
         font-weight: 700;
         white-space: nowrap;
         flex: 0 0 auto;
       }
       .control-tab.is-active {
         color: #f7fbff;
-        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-soft) 100%);
-        box-shadow: 0 12px 24px rgba(0, 52, 102, 0.16);
+        background: var(--primary);
+        border-color: transparent;
+      }
+      .control-workspace {
+        background: var(--surface);
+        border: 1px solid rgba(25, 28, 30, 0.06);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        min-height: 0;
+      }
+      .control-workspace-stack {
+        padding: 18px 20px;
       }
       .control-layout {
         display: grid;
-        grid-template-columns: 280px minmax(0, 1fr);
-        gap: 16px;
-        align-items: start;
+        grid-template-columns: 240px minmax(0, 1fr);
+        align-items: stretch;
       }
       .control-subnav {
         display: grid;
-        gap: 10px;
+        gap: 4px;
         align-content: start;
+        padding: 16px 12px;
+        border-right: 1px solid var(--line);
+        background: rgba(243, 247, 251, 0.78);
       }
       .control-subnav-link {
         display: grid;
         gap: 4px;
-        padding: 14px;
-        border-radius: 16px;
-        background: rgba(255, 250, 245, 0.62);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
+        padding: 10px 12px;
+        border-radius: 10px;
         text-decoration: none;
         color: inherit;
       }
       .control-subnav-link.is-active {
         background: var(--accent-soft);
-        box-shadow: 0 12px 24px rgba(25, 28, 30, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.82);
       }
       .control-subnav-title {
         font-weight: 700;
@@ -618,12 +635,21 @@ function renderPage(routeBase, payload) {
       }
       .control-detail {
         min-width: 0;
+        padding: 18px 20px;
       }
       .control-stack {
         display: grid;
-        gap: 16px;
+        gap: 0;
       }
-      .section-header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 14px; align-items: start; }
+      .control-section {
+        min-width: 0;
+      }
+      .control-stack > .control-section + .control-section {
+        margin-top: 18px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+      }
+      .section-header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 12px; align-items: start; }
       .section-form,
       .sub-grid { display: grid; gap: 14px; }
       .field-grid {
@@ -633,27 +659,33 @@ function renderPage(routeBase, payload) {
       }
       .field-card {
         display: grid;
-        gap: 8px;
-        padding: 14px;
-        border-radius: 16px;
-        background: var(--surface-soft);
+        gap: 6px;
+        padding: 0;
+        background: transparent;
       }
       .field-card.is-wide { grid-column: 1 / -1; }
-      .field-label { font-weight: 700; }
+      .field-label {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
       .field-description { color: var(--text-muted); font-size: 12px; }
       .checkbox-row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
       input, select, textarea {
         width: 100%;
-        border-radius: 10px;
-        border: 0;
-        background: rgba(255, 255, 255, 0.7);
+        border-radius: 8px;
+        border: 1px solid rgba(25, 28, 30, 0.08);
+        background: rgba(255, 255, 255, 0.78);
         color: var(--text);
-        padding: 10px 12px;
+        padding: 9px 11px;
         font: inherit;
         outline: none;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+        box-shadow: none;
       }
-      input:focus, select:focus, textarea:focus { box-shadow: inset 3px 0 0 rgba(0, 52, 102, 0.45); }
+      input:focus, select:focus, textarea:focus {
+        border-color: rgba(0, 52, 102, 0.42);
+        background: rgba(255, 255, 255, 0.96);
+      }
       textarea { resize: vertical; }
       .section-actions { display: flex; gap: 10px; flex-wrap: wrap; }
       .runtime-btn {
@@ -661,24 +693,30 @@ function renderPage(routeBase, payload) {
         align-items: center;
         justify-content: center;
         text-decoration: none;
-        border: 0;
-        background: rgba(228, 220, 208, 0.92);
+        border: 1px solid rgba(25, 28, 30, 0.08);
+        background: rgba(244, 248, 252, 0.95);
         color: var(--text);
-        border-radius: 10px;
-        padding: 10px 14px;
+        border-radius: 9px;
+        padding: 9px 13px;
         font: inherit;
         font-weight: 700;
         cursor: pointer;
       }
-      .runtime-btn.danger { background: var(--danger-soft); color: var(--danger); }
-      .list-grid { display: grid; gap: 12px; }
+      .runtime-btn.danger {
+        background: rgba(255, 238, 236, 0.92);
+        color: var(--danger);
+        border-color: rgba(138, 59, 59, 0.12);
+      }
+      .list-grid {
+        display: grid;
+        gap: 0;
+      }
       .list-row {
         display: flex;
         justify-content: space-between;
         gap: 16px;
-        padding: 14px;
-        border-radius: 16px;
-        background: var(--surface-soft);
+        padding: 12px 0;
+        border-top: 1px solid var(--line);
       }
       .compact-row { align-items: center; }
       .inline-form,
@@ -686,8 +724,8 @@ function renderPage(routeBase, payload) {
       .inline-form { align-self: start; }
       .notice-card,
       .error-card {
-        padding: 14px;
-        border-radius: 16px;
+        padding: 10px 12px;
+        border-radius: 12px;
       }
       .notice-card { background: var(--notice-soft); }
       .error-card { background: var(--danger-soft); color: var(--danger); }
@@ -696,16 +734,24 @@ function renderPage(routeBase, payload) {
         margin: 10px 0 0;
         white-space: pre-wrap;
         word-break: break-word;
-        background: rgba(232, 238, 243, 0.82);
-        border-radius: 12px;
-        padding: 12px;
+        background: rgba(236, 241, 247, 0.92);
+        border-radius: 10px;
+        padding: 10px 12px;
       }
       @media (max-width: 900px) {
         .control-layout { grid-template-columns: 1fr; }
+        .control-subnav {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
       }
       @media (max-width: 760px) {
         main { padding: 14px; }
         .list-row { grid-template-columns: 1fr; display: grid; }
+        .control-workspace-stack,
+        .control-detail {
+          padding: 16px;
+        }
       }
     </style>
   </head>
