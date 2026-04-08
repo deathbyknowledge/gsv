@@ -33,6 +33,7 @@
 
 		/* Enable all strict type-checking options. */
 		"strict": true,
+		"ignoreDeprecations": "6.0",
 
 		/* Skip type checking all .d.ts files. */
 		"skipLibCheck": true,

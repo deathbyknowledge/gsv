@@ -135,14 +135,14 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             gateway/package-lock.json
-            gateway/ui/package-lock.json
+            web/package-lock.json
             channels/whatsapp/package-lock.json
             channels/discord/package-lock.json
 
       - name: Install dependencies
         run: |
           set -euo pipefail
-          for dir in gateway gateway/ui channels/whatsapp channels/discord; do
+          for dir in gateway web channels/whatsapp channels/discord; do
             if [ -f "$dir/package-lock.json" ]; then
               npm ci --prefix "$dir"
             else
@@ -151,7 +151,7 @@ jobs:
           done
 
       - name: Build web UI
-        working-directory: gateway/ui
+        working-directory: web
         run: npm run build
 
       - name: Build worker bundles
@@ -183,7 +183,7 @@ jobs:
 
           # Gateway bundle (worker + static assets + templates)
           cp gateway/wrangler.jsonc "$GITHUB_WORKSPACE/dist/cloudflare/gateway/wrangler.jsonc"
-          cp -R gateway/ui/dist "$GITHUB_WORKSPACE/dist/cloudflare/gateway/assets"
+          cp -R web/dist "$GITHUB_WORKSPACE/dist/cloudflare/gateway/assets"
           mkdir -p "$GITHUB_WORKSPACE/dist/cloudflare/gateway/templates"
           cp -R templates/workspace "$GITHUB_WORKSPACE/dist/cloudflare/gateway/templates/workspace"
           cp -R templates/skills "$GITHUB_WORKSPACE/dist/cloudflare/gateway/templates/skills"

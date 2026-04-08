@@ -119,7 +119,7 @@ export type SysBootstrapResult = {
     name: string;
     description: string;
     version: string;
-    runtime: "dynamic-worker" | "web-ui";
+    runtime: "dynamic-worker" | "node" | "web-ui";
     enabled: boolean;
     source: {
       repo: string;
