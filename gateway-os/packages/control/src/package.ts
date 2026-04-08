@@ -6,10 +6,10 @@ export default definePackage({
     displayName: "Control",
     description: "System status, permissions, and settings.",
     window: {
-      width: 860,
-      height: 580,
-      minWidth: 640,
-      minHeight: 420,
+      width: 1040,
+      height: 720,
+      minWidth: 760,
+      minHeight: 520,
     },
     capabilities: {
       kernel: [
