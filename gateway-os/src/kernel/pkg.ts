@@ -1,5 +1,7 @@
 import type { KernelContext } from "./context";
 import type {
+  PkgAddArgs,
+  PkgAddResult,
   PkgCheckoutArgs,
   PkgCheckoutResult,
   PkgInstallArgs,
@@ -22,8 +24,10 @@ import type {
   InstalledPackageRecord,
   PackageArtifact,
   PackageEntrypoint,
+  PackageGrantSet,
+  PackageManifest,
 } from "./packages";
-import { buildBuiltinPackageSeeds, resolvePackageFromRipgitSource } from "./packages";
+import { buildBuiltinPackageSeeds, packageDoName, resolvePackageFromRipgitSource } from "./packages";
 import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 
 const TEXT_DECODER = new TextDecoder();
@@ -57,6 +61,61 @@ export function handlePkgInstall(
   return {
     changed: !record.enabled,
     package: toPkgSummary(requirePackage(record.packageId, ctx)),
+  };
+}
+
+export async function handlePkgAdd(
+  args: PkgAddArgs,
+  ctx: KernelContext,
+): Promise<PkgAddResult> {
+  const upstream = resolveUpstream(args);
+  const repo = resolveImportRepo(ctx, upstream);
+  const ref = "main";
+  const subdir = normalizeRepoPath(args.subdir) || ".";
+  const ripgit = requireRipgitClient(ctx);
+  const actorName = ctx.identity.process.username;
+  const imported = await ripgit.importFromUpstream(
+    repo,
+    actorName,
+    `${actorName}@gsv.local`,
+    `import ${upstream.remoteUrl}#${upstream.ref}`,
+    upstream.remoteUrl,
+    upstream.ref,
+  );
+
+  const resolved = await resolvePackageFromRipgitSource(ctx.env, {
+    repo: `${repo.owner}/${repo.repo}`,
+    ref,
+    subdir,
+  });
+  const packageId = packageIdForSource(resolved.manifest);
+  const existing = ctx.packages.get(packageId);
+  const enabled = typeof args.enable === "boolean" ? args.enable : existing?.enabled ?? true;
+  const grants = grantsForManifest(resolved.manifest);
+  const updated = ctx.packages.install({
+    packageId,
+    manifest: resolved.manifest,
+    artifact: resolved.artifact,
+    grants,
+    enabled,
+    installedAt: existing?.installedAt,
+    updatedAt: Date.now(),
+  });
+
+  return {
+    changed:
+      !existing ||
+      existing.enabled !== updated.enabled ||
+      existing.artifact.hash !== updated.artifact.hash ||
+      existing.manifest.source.ref !== updated.manifest.source.ref ||
+      (existing.manifest.source.resolvedCommit ?? null) !== (updated.manifest.source.resolvedCommit ?? null),
+    imported: {
+      repo: `${repo.owner}/${repo.repo}`,
+      remoteUrl: imported.remoteUrl,
+      ref: imported.remoteRef,
+      head: imported.head ?? null,
+    },
+    package: toPkgSummary(updated),
   };
 }
 
@@ -232,6 +291,99 @@ function requirePackage(packageId: string, ctx: KernelContext): InstalledPackage
     throw new Error(`Unknown package: ${normalizedPackageId}`);
   }
   return record;
+}
+
+function resolveUpstream(args: PkgAddArgs): { remoteUrl: string; ref: string; repoSlug: string | null } {
+  const remoteUrl = typeof args.remoteUrl === "string" ? args.remoteUrl.trim() : "";
+  const repoSlug = typeof args.repo === "string" ? args.repo.trim().replace(/^\/+|\/+$/g, "") : "";
+  const ref = typeof args.ref === "string" && args.ref.trim().length > 0 ? args.ref.trim() : "main";
+  if (remoteUrl) {
+    return {
+      remoteUrl,
+      ref,
+      repoSlug: null,
+    };
+  }
+  if (!repoSlug || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repoSlug)) {
+    throw new Error("repo or remoteUrl is required");
+  }
+  return {
+    remoteUrl: `https://github.com/${repoSlug}`,
+    ref,
+    repoSlug,
+  };
+}
+
+function resolveImportRepo(
+  ctx: KernelContext,
+  upstream: { remoteUrl: string; repoSlug: string | null },
+): RipgitRepoRef {
+  const owner = ctx.identity.process.username;
+  const nameSource = upstream.repoSlug
+    ? upstream.repoSlug.split("/")[1]
+    : repoBasenameFromUrl(upstream.remoteUrl);
+  const repoName = sanitizeRepoName(nameSource || explicit);
+  if (!repoName) {
+    throw new Error("Could not derive local repo name");
+  }
+  return {
+    owner,
+    repo: repoName,
+    branch: "main",
+  };
+}
+
+function repoBasenameFromUrl(remoteUrl: string): string {
+  const scpStyle = remoteUrl.match(/^[^@]+@[^:]+:(.+)$/);
+  if (scpStyle?.[1]) {
+    const last = scpStyle[1].replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "";
+    return last.replace(/\.git$/i, "");
+  }
+  try {
+    const url = new URL(remoteUrl);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    const last = pathname.split("/").filter(Boolean).pop() ?? "";
+    return last.replace(/\.git$/i, "");
+  } catch {
+    return "";
+  }
+}
+
+function sanitizeRepoName(value: string): string {
+  const trimmed = value.trim().replace(/\.git$/i, "").toLowerCase();
+  const normalized = trimmed.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return /^[a-z0-9._-]+$/.test(normalized) ? normalized : "";
+}
+
+function packageIdForSource(manifest: PackageManifest): string {
+  const source = manifest.source;
+  return `import:${source.repo}:${normalizeRepoPath(source.subdir) || "."}`;
+}
+
+function grantsForManifest(manifest: PackageManifest): PackageGrantSet {
+  const bindings = manifest.capabilities?.bindings ?? [];
+  return {
+    bindings: bindings.flatMap((binding) => {
+      if (binding.binding === "PACKAGE") {
+        return [{
+          binding: "PACKAGE",
+          providerKind: "package-do" as const,
+          providerRef: packageDoName(manifest.name),
+        }];
+      }
+      if (binding.binding === "KERNEL") {
+        return [{
+          binding: "KERNEL",
+          providerKind: "kernel-entrypoint" as const,
+          providerRef: "kernel://app/request",
+        }];
+      }
+      return [];
+    }),
+    egress: manifest.capabilities?.egress ?? {
+      mode: "none",
+    },
+  };
 }
 
 function toPkgSummary(record: InstalledPackageRecord): PkgSummary {

@@ -7,14 +7,15 @@ export default definePackage({
     description: "Desktop package manager scaffold for browsing and installing packages.",
     icon: "ui/packages-icon.svg",
     window: {
-      width: 920,
-      height: 620,
-      minWidth: 700,
-      minHeight: 460,
+      width: 1120,
+      height: 780,
+      minWidth: 820,
+      minHeight: 560,
     },
     capabilities: {
       kernel: [
         "pkg.list",
+        "pkg.add",
         "pkg.checkout",
         "pkg.install",
         "pkg.remove",
