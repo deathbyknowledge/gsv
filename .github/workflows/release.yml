@@ -144,9 +144,9 @@ jobs:
           set -euo pipefail
           for dir in gateway web channels/whatsapp channels/discord; do
             if [ -f "$dir/package-lock.json" ]; then
-              npm ci --prefix "$dir"
+              npm ci --prefix "$dir" --workspaces=false
             else
-              npm install --prefix "$dir" --no-audit --no-fund
+              npm install --prefix "$dir" --workspaces=false --no-audit --no-fund
             fi
           done
 
