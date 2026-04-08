@@ -1,5 +1,5 @@
 import type { Context } from "@mariozechner/pi-ai";
-import type { MessageRecord } from "./store";
+import { parseAssistantMessageMeta, type MessageRecord } from "./store";
 
 const MAX_SUMMARY_WINDOW_CHARS = 16_000;
 const MAX_COMMIT_WINDOW_CHARS = 4_000;
@@ -7,13 +7,7 @@ const MAX_COMMIT_WINDOW_CHARS = 4_000;
 export function buildCheckpointTranscript(messages: MessageRecord[]): string {
   return messages
     .map((message) =>
-      JSON.stringify({
-        role: message.role,
-        content: message.content,
-        tool_calls: parseJsonOrUndefined(message.toolCalls),
-        tool_call_id: message.toolCallId ?? undefined,
-        ts: message.createdAt,
-      }),
+      JSON.stringify(serializeCheckpointMessage(message)),
     )
     .join("\n");
 }
@@ -135,14 +129,46 @@ function formatTranscriptMessage(message: MessageRecord): string {
   if (message.content) {
     lines.push(message.content.trim());
   }
-  const toolCalls = parseJsonOrUndefined(message.toolCalls);
-  if (toolCalls !== undefined) {
-    lines.push(`meta: ${JSON.stringify(toolCalls)}`);
+  if (message.role === "assistant") {
+    const meta = parseAssistantMessageMeta(message.toolCalls);
+    if (meta.thinking !== undefined) {
+      lines.push(`thinking: ${JSON.stringify(meta.thinking)}`);
+    }
+    if (meta.toolCalls !== undefined) {
+      lines.push(`tool_calls: ${JSON.stringify(meta.toolCalls)}`);
+    }
+  } else {
+    const toolCalls = parseJsonOrUndefined(message.toolCalls);
+    if (toolCalls !== undefined) {
+      lines.push(`meta: ${JSON.stringify(toolCalls)}`);
+    }
   }
   if (message.toolCallId) {
     lines.push(`tool_call_id: ${message.toolCallId}`);
   }
   return lines.join("\n");
+}
+
+function serializeCheckpointMessage(message: MessageRecord): Record<string, unknown> {
+  if (message.role === "assistant") {
+    const meta = parseAssistantMessageMeta(message.toolCalls);
+    return {
+      role: message.role,
+      content: message.content,
+      tool_calls: meta.toolCalls,
+      thinking: meta.thinking,
+      tool_call_id: message.toolCallId ?? undefined,
+      ts: message.createdAt,
+    };
+  }
+
+  return {
+    role: message.role,
+    content: message.content,
+    tool_calls: parseJsonOrUndefined(message.toolCalls),
+    tool_call_id: message.toolCallId ?? undefined,
+    ts: message.createdAt,
+  };
 }
 
 function parseJsonOrUndefined(value: string | null): unknown {
