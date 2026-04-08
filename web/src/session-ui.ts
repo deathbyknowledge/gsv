@@ -61,6 +61,10 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupRootEnabledNode = rootNode.querySelector<HTMLInputElement>("[data-setup-root-enabled]");
   const setupRootRowNode = rootNode.querySelector<HTMLElement>("[data-setup-root-row]");
   const setupRootPasswordNode = rootNode.querySelector<HTMLInputElement>("[data-setup-root-password]");
+  const setupAiEnabledNode = rootNode.querySelector<HTMLInputElement>("[data-setup-ai-enabled]");
+  const setupAiProviderRowNode = rootNode.querySelector<HTMLElement>("[data-setup-ai-provider-row]");
+  const setupAiModelRowNode = rootNode.querySelector<HTMLElement>("[data-setup-ai-model-row]");
+  const setupAiKeyRowNode = rootNode.querySelector<HTMLElement>("[data-setup-ai-key-row]");
   const setupAiProviderNode = rootNode.querySelector<HTMLInputElement>("[data-setup-ai-provider]");
   const setupAiModelNode = rootNode.querySelector<HTMLInputElement>("[data-setup-ai-model]");
   const setupAiKeyNode = rootNode.querySelector<HTMLInputElement>("[data-setup-ai-key]");
@@ -73,6 +77,9 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupNodeExpiryNode = rootNode.querySelector<HTMLInputElement>("[data-setup-node-expiry]");
   const setupContinueNode = rootNode.querySelector<HTMLButtonElement>("[data-session-setup-continue]");
   const setupBootstrapNode = rootNode.querySelector<HTMLButtonElement>("[data-session-setup-bootstrap]");
+  const setupBootstrapStatusNode = rootNode.querySelector<HTMLElement>("[data-session-setup-bootstrap-status]");
+  const setupBootstrapSourceNode = rootNode.querySelector<HTMLInputElement>("[data-setup-bootstrap-source]");
+  const setupBootstrapRefNode = rootNode.querySelector<HTMLInputElement>("[data-setup-bootstrap-ref]");
   const setupCopyTokenNode = rootNode.querySelector<HTMLButtonElement>("[data-setup-copy-token]");
   const setupCompleteErrorNode = rootNode.querySelector<HTMLElement>("[data-session-setup-complete-error]");
   const setupResultUsernameNode = rootNode.querySelector<HTMLElement>("[data-setup-result-username]");
@@ -110,6 +117,10 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupRootEnabledNode ||
     !setupRootRowNode ||
     !setupRootPasswordNode ||
+    !setupAiEnabledNode ||
+    !setupAiProviderRowNode ||
+    !setupAiModelRowNode ||
+    !setupAiKeyRowNode ||
     !setupAiProviderNode ||
     !setupAiModelNode ||
     !setupAiKeyNode ||
@@ -122,6 +133,9 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupNodeExpiryNode ||
     !setupContinueNode ||
     !setupBootstrapNode ||
+    !setupBootstrapStatusNode ||
+    !setupBootstrapSourceNode ||
+    !setupBootstrapRefNode ||
     !setupCopyTokenNode ||
     !setupCompleteErrorNode ||
     !setupResultUsernameNode ||
@@ -149,10 +163,16 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
 
   const syncOptionalSetupFields = (): void => {
     setupRootRowNode.hidden = !setupRootEnabledNode.checked;
+    setupAiProviderRowNode.hidden = !setupAiEnabledNode.checked;
+    setupAiModelRowNode.hidden = !setupAiEnabledNode.checked;
+    setupAiKeyRowNode.hidden = !setupAiEnabledNode.checked;
     setupNodeDeviceRowNode.hidden = !setupNodeEnabledNode.checked;
     setupNodeLabelRowNode.hidden = !setupNodeEnabledNode.checked;
     setupNodeExpiryRowNode.hidden = !setupNodeEnabledNode.checked;
     setupRootPasswordNode.disabled = !setupRootEnabledNode.checked;
+    setupAiProviderNode.disabled = !setupAiEnabledNode.checked;
+    setupAiModelNode.disabled = !setupAiEnabledNode.checked;
+    setupAiKeyNode.disabled = !setupAiEnabledNode.checked;
     setupNodeDeviceIdNode.disabled = !setupNodeEnabledNode.checked;
     setupNodeLabelNode.disabled = !setupNodeEnabledNode.checked;
     setupNodeExpiryNode.disabled = !setupNodeEnabledNode.checked;
@@ -237,15 +257,17 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       payload.rootPassword = setupRootPasswordNode.value.trim();
     }
 
-    const aiProvider = setupAiProviderNode.value.trim();
-    const aiModel = setupAiModelNode.value.trim();
-    const aiKey = setupAiKeyNode.value.trim();
-    if (aiProvider || aiModel || aiKey) {
-      payload.ai = {
-        ...(aiProvider ? { provider: aiProvider } : {}),
-        ...(aiModel ? { model: aiModel } : {}),
-        ...(aiKey ? { apiKey: aiKey } : {}),
-      };
+    if (setupAiEnabledNode.checked) {
+      const aiProvider = setupAiProviderNode.value.trim();
+      const aiModel = setupAiModelNode.value.trim();
+      const aiKey = setupAiKeyNode.value.trim();
+      if (aiProvider || aiModel || aiKey) {
+        payload.ai = {
+          ...(aiProvider ? { provider: aiProvider } : {}),
+          ...(aiModel ? { model: aiModel } : {}),
+          ...(aiKey ? { apiKey: aiKey } : {}),
+        };
+      }
     }
 
     if (setupNodeEnabledNode.checked) {
@@ -479,10 +501,30 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
 
   const onSetupBootstrap = async (): Promise<void> => {
     pendingAction = "bootstrap";
+    setupBootstrapStatusNode.hidden = false;
+    setupBootstrapNode.disabled = true;
+    setupContinueNode.disabled = true;
 
     try {
-      await session.initializeFromUpstream();
+      const source = setupBootstrapSourceNode.value.trim();
+      const ref = setupBootstrapRefNode.value.trim();
+      await session.initializeFromUpstream(
+        source || ref
+          ? {
+              ...(source
+                ? source.includes("://") || source.startsWith("git@")
+                  ? { remoteUrl: source }
+                  : { repo: source }
+                : {}),
+              ...(ref ? { ref } : {}),
+            }
+          : undefined,
+      );
     } catch {
+      pendingAction = null;
+      setupBootstrapStatusNode.hidden = true;
+      setupBootstrapNode.disabled = false;
+      setupContinueNode.disabled = false;
       // Error is reflected through session snapshot.
     }
   };
@@ -512,6 +554,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   setupCopyTokenNode.addEventListener("click", onCopyToken);
   lockNode.addEventListener("click", onLockClick);
   setupRootEnabledNode.addEventListener("change", syncOptionalSetupFields);
+  setupAiEnabledNode.addEventListener("change", syncOptionalSetupFields);
   setupNodeEnabledNode.addEventListener("change", syncOptionalSetupFields);
 
   const unsubscribe = session.subscribe((snapshot) => {
@@ -530,6 +573,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       setupCopyTokenNode.removeEventListener("click", onCopyToken);
       lockNode.removeEventListener("click", onLockClick);
       setupRootEnabledNode.removeEventListener("change", syncOptionalSetupFields);
+      setupAiEnabledNode.removeEventListener("change", syncOptionalSetupFields);
       setupNodeEnabledNode.removeEventListener("change", syncOptionalSetupFields);
     },
   };

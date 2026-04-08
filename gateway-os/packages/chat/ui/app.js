@@ -680,6 +680,168 @@ function appendSystemRow(text) {
   renderLog({ autoScroll: true });
 }
 
+function extractThinkingBlocks(value) {
+  const record = asRecord(value);
+  const rawThinking = Array.isArray(record?.thinking) ? record.thinking : [];
+  return rawThinking
+    .map((item) => {
+      if (typeof item === "string") {
+        const text = item.trim();
+        return text || null;
+      }
+      const block = asRecord(item);
+      if (!block) {
+        return null;
+      }
+      const text = asString(block.thinking) ?? asString(block.text);
+      return text && text.trim() ? text.trim() : null;
+    })
+    .filter(Boolean);
+}
+
+function applyAssistantSignal(payload) {
+  const record = asRecord(payload);
+  const pid = asString(record?.pid);
+  if (pid && pid !== getActivePid()) {
+    return;
+  }
+  const text = asString(record?.text) ?? "";
+  const thinking = extractThinkingBlocks(record);
+  if (!text.trim() && thinking.length === 0) {
+    return;
+  }
+  const runId = asString(record?.runId);
+  const nextRows = logRows.slice();
+  const nextRow = {
+    kind: "message",
+    role: "assistant",
+    text,
+    thinking,
+    timestamp: Date.now(),
+    runId: runId ?? null,
+  };
+  const lastRow = nextRows[nextRows.length - 1];
+  if (
+    lastRow &&
+    lastRow.kind === "message" &&
+    lastRow.role === "assistant" &&
+    runId &&
+    lastRow.runId === runId
+  ) {
+    nextRows[nextRows.length - 1] = nextRow;
+  } else {
+    nextRows.push(nextRow);
+  }
+  setLogRows(nextRows, { autoScroll: true });
+}
+
+function findToolRowIndex(rows, callId) {
+  if (!callId) {
+    return -1;
+  }
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if ((row.kind === "toolCall" || row.kind === "toolResult") && row.callId === callId) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function applyToolCallSignal(payload) {
+  const record = asRecord(payload);
+  const pid = asString(record?.pid);
+  if (pid && pid !== getActivePid()) {
+    return;
+  }
+  const callId = asString(record?.callId);
+  if (!callId) {
+    return;
+  }
+  const toolName = asString(record?.name) || "Tool";
+  const syscall = asString(record?.syscall);
+  const args = record?.args ?? {};
+  const runId = asString(record?.runId);
+  const nextRows = logRows.slice();
+  const index = findToolRowIndex(nextRows, callId);
+  const nextRow = {
+    kind: "toolCall",
+    toolName,
+    callId,
+    args,
+    syscall,
+    timestamp: Date.now(),
+    runId: runId ?? null,
+  };
+  if (index >= 0) {
+    const priorRow = nextRows[index];
+    if (priorRow.kind === "toolResult") {
+      nextRows[index] = {
+        kind: "toolResult",
+        toolName,
+        callId,
+        args,
+        syscall: syscall ?? priorRow.syscall,
+        output: priorRow.output,
+        ok: priorRow.ok,
+        error: priorRow.error ?? null,
+        timestamp: priorRow.timestamp,
+        runId: runId ?? priorRow.runId ?? null,
+      };
+    } else {
+      nextRows[index] = nextRow;
+    }
+  } else {
+    nextRows.push(nextRow);
+  }
+  setLogRows(nextRows, { autoScroll: true });
+}
+
+function applyToolResultSignal(payload) {
+  const record = asRecord(payload);
+  const pid = asString(record?.pid);
+  if (pid && pid !== getActivePid()) {
+    return;
+  }
+  const callId = asString(record?.callId);
+  if (!callId) {
+    return;
+  }
+  const toolName = asString(record?.name) || "Tool";
+  const syscall = asString(record?.syscall);
+  const ok = asBoolean(record?.ok);
+  const runId = asString(record?.runId);
+  const nextRows = logRows.slice();
+  const index = findToolRowIndex(nextRows, callId);
+  const priorArgs = index >= 0 && (nextRows[index].kind === "toolCall" || nextRows[index].kind === "toolResult")
+    ? nextRows[index].args
+    : {};
+  const nextRow = {
+    kind: "toolResult",
+    toolName,
+    callId,
+    args: priorArgs ?? {},
+    syscall,
+    output: record?.output,
+    ok: ok !== false,
+    error: asString(record?.error) ?? null,
+    timestamp: Date.now(),
+    runId: runId ?? null,
+  };
+  if (index >= 0) {
+    const priorRow = nextRows[index];
+    nextRows[index] = {
+      ...nextRow,
+      args: priorRow.args ?? nextRow.args,
+      syscall: nextRow.syscall ?? priorRow.syscall,
+      runId: nextRow.runId ?? priorRow.runId ?? null,
+    };
+  } else {
+    nextRows.push(nextRow);
+  }
+  setLogRows(nextRows, { autoScroll: true });
+}
+
 function labelForRole(role) {
   if (role === "user") return currentUsername || "You";
   if (role === "assistant") return "Assistant";
@@ -932,14 +1094,20 @@ async function loadThreads() {
   }
 }
 
-function scheduleRefresh() {
+function scheduleRefresh(options = {}) {
+  const refreshHistory = options.history === true;
+  const refreshThreads = options.threads === true;
   if (refreshTimer !== null) {
     window.clearTimeout(refreshTimer);
   }
   refreshTimer = window.setTimeout(() => {
     refreshTimer = null;
-    void loadThreads();
-    void loadHistory();
+    if (refreshThreads) {
+      void loadThreads();
+    }
+    if (refreshHistory) {
+      void loadHistory();
+    }
   }, 250);
 }
 
@@ -1040,7 +1208,6 @@ async function sendMessage() {
     if (result.queued) {
       appendSystemRow("message queued while process is busy");
     }
-    scheduleRefresh();
   } catch (error) {
     appendSystemRow("send failed: " + (error instanceof Error ? error.message : String(error)));
   } finally {
@@ -1159,16 +1326,23 @@ async function boot() {
         }
       }
     });
-    client.onSignal((signal) => {
+    client.onSignal((signal, payload) => {
       if (signal === "chat.tool_call") {
         setPendingAssistantState("tool");
+        applyToolCallSignal(payload);
       } else if (signal === "chat.tool_result" || signal === "chat.text") {
-        setPendingAssistantState("thinking");
-      } else if (signal === "chat.complete" || signal === "chat.error" || signal === "process.exit") {
+        if (signal === "chat.text") {
+          applyAssistantSignal(payload);
+          setPendingAssistantState(null);
+        } else {
+          applyToolResultSignal(payload);
+          setPendingAssistantState("thinking");
+        }
+      } else if (signal === "chat.complete") {
         setPendingAssistantState(null);
-      }
-      if (signal === "process.exit" || signal.startsWith("chat.")) {
-        scheduleRefresh();
+      } else if (signal === "chat.error" || signal === "process.exit") {
+        setPendingAssistantState(null);
+        scheduleRefresh({ threads: true });
       }
     });
     renderStatus();

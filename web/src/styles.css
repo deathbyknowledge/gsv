@@ -134,7 +134,7 @@ button:disabled {
   overflow: hidden;
   color: var(--text-main);
   font-family: var(--font-ui);
-  background-image: url("/background2.png");
+  background-image: url("/background.png");
   background-size: cover;
   background-position: center;
 }
@@ -611,7 +611,7 @@ button:disabled {
 
 .session-advanced {
   justify-self: start;
-  margin-top: -2px;
+  margin-top: 5px;
   padding: 0;
 }
 
@@ -758,6 +758,33 @@ button:disabled {
 
 .session-token-panel[hidden] {
   display: none;
+}
+
+.session-inline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(24, 34, 48, 0.78);
+  font-size: 0.92rem;
+}
+
+.session-inline-status[hidden] {
+  display: none;
+}
+
+.session-inline-spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  border: 2px solid rgba(14, 52, 102, 0.16);
+  border-top-color: rgba(14, 52, 102, 0.72);
+  animation: session-spin 0.8s linear infinite;
+}
+
+@keyframes session-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .session-token-head {

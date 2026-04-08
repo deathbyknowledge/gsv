@@ -88,18 +88,22 @@ export function renderDesktopShell(): string {
                 <div class="setup-step-copy">
                   <p class="session-kicker">AI</p>
                   <h2>AI defaults</h2>
-                  <p class="session-copy">Optional. Skip this if you want to configure providers after you are inside.</p>
+                  <p class="session-copy">A default provider is already available. Customize this only if you want different AI settings.</p>
                 </div>
                 <div class="session-field-grid">
-                  <label>
+                  <label class="session-toggle">
+                    <input data-setup-ai-enabled type="checkbox" />
+                    <span>Do you want to customize the AI?</span>
+                  </label>
+                  <label data-setup-ai-provider-row hidden>
                     Provider
                     <input data-setup-ai-provider type="text" placeholder="openai" autocomplete="off" />
                   </label>
-                  <label>
+                  <label data-setup-ai-model-row hidden>
                     Model
                     <input data-setup-ai-model type="text" placeholder="gpt-5.4" autocomplete="off" />
                   </label>
-                  <label>
+                  <label data-setup-ai-key-row hidden>
                     API key
                     <input data-setup-ai-key type="password" autocomplete="off" />
                   </label>
@@ -146,7 +150,7 @@ export function renderDesktopShell(): string {
             <div class="session-panel-head">
               <p class="session-kicker">Gateway ready</p>
               <h1>Setup complete</h1>
-              <p class="session-copy">The control plane is initialized. Import the mainstream GSV repo now, or enter the desktop and push your own checkout later.</p>
+              <p class="session-copy">The control plane is initialized. Seed the system repo now, or enter the desktop and push your own checkout later.</p>
             </div>
             <div class="session-result-grid">
               <div class="session-result-card">
@@ -169,9 +173,26 @@ export function renderDesktopShell(): string {
               <textarea class="session-token-value" data-setup-result-node-token readonly></textarea>
               <p class="session-token-meta" data-setup-result-node-meta></p>
             </div>
+            <details class="session-advanced">
+              <summary>Use a custom source</summary>
+              <div class="session-field-grid">
+                <label>
+                  Repository or remote URL
+                  <input data-setup-bootstrap-source type="text" autocomplete="off" placeholder="deathbyknowledge/gsv" />
+                </label>
+                <label>
+                  Ref
+                  <input data-setup-bootstrap-ref type="text" autocomplete="off" placeholder="codex/app-runtime-from-680877d" />
+                </label>
+              </div>
+            </details>
+            <div class="session-inline-status" data-session-setup-bootstrap-status hidden>
+              <span class="session-inline-spinner" aria-hidden="true"></span>
+              <span>Initializing system repo...</span>
+            </div>
             <p class="session-error" data-session-setup-complete-error hidden></p>
             <div class="session-actions">
-              <button type="button" class="runtime-btn" data-session-setup-bootstrap>Initialize from upstream</button>
+              <button type="button" class="runtime-btn" data-session-setup-bootstrap>Initialize system repo</button>
               <button type="button" class="runtime-btn session-btn-secondary" data-session-setup-continue>Enter desktop</button>
             </div>
           </div>
