@@ -6,10 +6,10 @@ export default definePackage({
     displayName: "Files",
     description: "File browser and workspace management.",
     window: {
-      width: 980,
-      height: 650,
-      minWidth: 720,
-      minHeight: 460,
+      width: 1080,
+      height: 760,
+      minWidth: 780,
+      minHeight: 520,
     },
     capabilities: {
       kernel: ["fs.read", "fs.search", "fs.write", "fs.edit", "fs.delete", "sys.device.list"],

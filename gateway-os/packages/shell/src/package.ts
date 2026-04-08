@@ -6,10 +6,10 @@ export default definePackage({
     displayName: "Shell",
     description: "Interactive command shell for nodes.",
     window: {
-      width: 980,
-      height: 640,
-      minWidth: 700,
-      minHeight: 420,
+      width: 1080,
+      height: 760,
+      minWidth: 760,
+      minHeight: 520,
     },
     capabilities: {
       kernel: ["shell.exec", "sys.device.list"],

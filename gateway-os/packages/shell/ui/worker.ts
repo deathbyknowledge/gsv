@@ -405,9 +405,7 @@ function renderPage(routeBase, devices) {
         align-items: end;
         padding: 10px 12px 8px;
         border-bottom: 1px solid rgba(42, 50, 56, 0.08);
-        background: rgba(247, 249, 252, 0.52);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
+        background: transparent;
       }
       .shell-field span,
       .shell-toggle {
@@ -511,13 +509,11 @@ function renderPage(routeBase, devices) {
       .shell-toolbar details {
         position: relative;
       }
-      .shell-toolbar details[open] summary {
-        margin-bottom: 10px;
-      }
       .shell-options {
         position: absolute;
         right: 0;
         top: 100%;
+        margin-top: 10px;
         z-index: 10;
         min-width: 280px;
         display: grid;
@@ -540,7 +536,7 @@ function renderPage(routeBase, devices) {
       }
       .shell-terminal-wrap {
         min-height: 0;
-        padding: 0;
+        padding: 2px;
       }
       .shell-terminal {
         width: 100%;

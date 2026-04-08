@@ -3,10 +3,10 @@ import type { AppIcon, AppManifest, AppWindowDefaults, DesktopIconId } from "./a
 import type { PkgSummary } from "../../gateway-os/src/syscalls/packages";
 
 const DEFAULT_WINDOW_DEFAULTS: AppWindowDefaults = {
-  width: 920,
-  height: 620,
-  minWidth: 700,
-  minHeight: 460,
+  width: 1040,
+  height: 720,
+  minWidth: 760,
+  minHeight: 520,
 };
 
 const DESKTOP_ICON_IDS: readonly DesktopIconId[] = [
