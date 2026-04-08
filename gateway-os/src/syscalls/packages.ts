@@ -56,6 +56,25 @@ export type PkgInstallResult = {
   package: PkgSummary;
 };
 
+export type PkgAddArgs = {
+  remoteUrl?: string;
+  repo?: string;
+  ref?: string;
+  subdir?: string;
+  enable?: boolean;
+};
+
+export type PkgAddResult = {
+  changed: boolean;
+  imported: {
+    repo: string;
+    remoteUrl: string;
+    ref: string;
+    head: string | null;
+  };
+  package: PkgSummary;
+};
+
 export type PkgSyncArgs = Record<string, never>;
 
 export type PkgSyncResult = {

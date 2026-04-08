@@ -22,6 +22,8 @@ export async function handleSysBootstrap(
   const remoteUrl =
     typeof args?.remoteUrl === "string" && args.remoteUrl.trim().length > 0
       ? args.remoteUrl.trim()
+      : typeof args?.repo === "string" && args.repo.trim().length > 0
+        ? githubRepoUrl(args.repo.trim())
       : DEFAULT_GSV_UPSTREAM_URL;
   const ref =
     typeof args?.ref === "string" && args.ref.trim().length > 0
@@ -73,4 +75,12 @@ export async function handleSysBootstrap(
       })),
     })),
   };
+}
+
+function githubRepoUrl(repo: string): string {
+  const trimmed = repo.replace(/^\/+|\/+$/g, "");
+  if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(trimmed)) {
+    throw new Error(`Invalid bootstrap repo: ${repo}`);
+  }
+  return `https://github.com/${trimmed}`;
 }

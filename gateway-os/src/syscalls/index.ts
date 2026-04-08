@@ -27,6 +27,8 @@ import type {
   ProcSetIdentityResult,
 } from "./proc";
 import type {
+  PkgAddArgs,
+  PkgAddResult,
   PkgCheckoutArgs,
   PkgCheckoutResult,
   PkgInstallArgs,
@@ -134,6 +136,7 @@ export type SyscallDomains = {
 
   // Packages
   "pkg.list": { args: PkgListArgs; result: PkgListResult };
+  "pkg.add": { args: PkgAddArgs; result: PkgAddResult };
   "pkg.sync": { args: PkgSyncArgs; result: PkgSyncResult };
   "pkg.checkout": { args: PkgCheckoutArgs; result: PkgCheckoutResult };
   "pkg.install": { args: PkgInstallArgs; result: PkgInstallResult };

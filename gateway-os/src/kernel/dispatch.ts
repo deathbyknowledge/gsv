@@ -34,6 +34,7 @@ import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
 import { handleSysWorkspaceList } from "./sys/workspaces";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import {
+  handlePkgAdd,
   handlePkgCheckout,
   handlePkgInstall,
   handlePkgList,
@@ -163,6 +164,9 @@ async function dispatchNative(
       // --- pkg.* ---
       case "pkg.list":
         data = handlePkgList(frame.args, ctx);
+        break;
+      case "pkg.add":
+        data = await handlePkgAdd(frame.args, ctx);
         break;
       case "pkg.sync":
         data = await handlePkgSync(frame.args, ctx);

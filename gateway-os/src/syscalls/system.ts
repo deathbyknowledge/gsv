@@ -104,6 +104,7 @@ export type SysSetupResult = {
 
 export type SysBootstrapArgs = {
   remoteUrl?: string;
+  repo?: string;
   ref?: string;
 };
 

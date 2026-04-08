@@ -1,11 +1,7 @@
-export async function handleFetch(request, context = {}) {
-  const props = context.props ?? {};
-  const env = context.env ?? {};
-
 const COMMIT_PAGE_SIZE = 30;
 
 function escapeHtml(value) {
-  return String(value)
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -24,24 +20,24 @@ function buildUrl(routeBase, params) {
   return `${url.pathname}${url.search}`;
 }
 
-function normalizeRoutePath(path) {
-  const trimmed = String(path ?? "").trim();
-  if (!trimmed || trimmed === "/") {
-    return "/";
-  }
-  return `/${trimmed.replace(/^\/+/, "").replace(/\/+$/, "")}`;
-}
-
 function normalizePath(path) {
   return String(path ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
 function clampOffset(raw) {
-  const value = Number.parseInt(String(raw ?? "0"), 10);
-  if (!Number.isFinite(value) || value < 0) {
+  const parsed = Number.parseInt(String(raw ?? "0"), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
     return 0;
   }
-  return value;
+  return parsed;
+}
+
+function shortHash(hash) {
+  return String(hash ?? "").slice(0, 7);
+}
+
+function firstLine(message) {
+  return String(message ?? "").split("\n")[0] || "No commit message";
 }
 
 function formatTimestamp(unixSeconds) {
@@ -49,14 +45,6 @@ function formatTimestamp(unixSeconds) {
     return "unknown";
   }
   return new Date(unixSeconds * 1000).toLocaleString();
-}
-
-function firstLine(message) {
-  return String(message ?? "").split("\n")[0] || "No commit message";
-}
-
-function shortHash(hash) {
-  return String(hash ?? "").slice(0, 7);
 }
 
 function pickSelectedPackage(packages, selectedPackageId) {
@@ -72,335 +60,308 @@ function pickSelectedPackage(packages, selectedPackageId) {
   return packages.find((pkg) => pkg.name === "packages") ?? packages[0];
 }
 
-function renderPackageStatusPills(pkg) {
-  return `
-    <div class="pkg-pills">
-      <span class="pkg-pill ${pkg.enabled ? "is-enabled" : "is-disabled"}">${pkg.enabled ? "enabled" : "disabled"}</span>
-      <span class="pkg-pill">v${escapeHtml(pkg.version ?? "0")}</span>
-      <span class="pkg-pill">${escapeHtml(pkg.runtime ?? "unknown")}</span>
-    </div>`;
+function parseImportSource(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) {
+    return { remoteUrl: "", repo: "" };
+  }
+  if (trimmed.includes("://") || trimmed.startsWith("git@")) {
+    return { remoteUrl: trimmed, repo: "" };
+  }
+  return { remoteUrl: "", repo: trimmed.replace(/^\/+|\/+$/g, "") };
 }
 
-function renderPackageActions(pkg) {
-  const packageId = escapeHtml(pkg.packageId ?? "");
-  if (pkg.enabled) {
-    if (pkg.name === "packages") {
-      return '<p class="pkg-action-note">Core package</p>';
-    }
-    return `
-      <form method="post" class="inline-form">
-        <input type="hidden" name="action" value="remove" />
-        <input type="hidden" name="packageId" value="${packageId}" />
-        <button type="submit" class="btn btn-danger">Disable</button>
-      </form>`;
-  }
-  return `
-    <form method="post" class="inline-form">
-      <input type="hidden" name="action" value="install" />
-      <input type="hidden" name="packageId" value="${packageId}" />
-      <button type="submit" class="btn">Enable</button>
-    </form>`;
+function packageHref(routeBase, pkg, view, extras = {}) {
+  return buildUrl(routeBase, {
+    packageId: pkg.packageId,
+    view,
+    ref: extras.ref ?? pkg.source?.ref ?? "main",
+    path: extras.path,
+    offset: extras.offset,
+  });
 }
 
 function renderSidebar(routeBase, packages, selectedPackageId) {
   if (!Array.isArray(packages) || packages.length === 0) {
-    return '<p class="sidebar-empty">No packages installed.</p>';
+    return '<div class="packages-empty">No packages installed yet.</div>';
   }
 
   return packages.map((pkg) => {
-    const href = buildUrl(routeBase, {
-      packageId: pkg.packageId,
-      view: "overview",
-      ref: pkg.source?.ref ?? "main",
-    });
     const selected = pkg.packageId === selectedPackageId;
-    const sourceLabel = `${pkg.source?.repo ?? "unknown"}#${pkg.source?.ref ?? "main"}`;
+    const href = packageHref(routeBase, pkg, "overview");
+    const dotClass = pkg.enabled ? "is-enabled" : "is-disabled";
     return `
-      <article class="pkg-card ${selected ? "is-selected" : ""}">
-        <a href="${escapeHtml(href)}" class="pkg-link">
-          <div class="pkg-title-row">
-            <strong>${escapeHtml(pkg.name ?? "package")}</strong>
-            <span class="pkg-source-ref">${escapeHtml(pkg.source?.ref ?? "main")}</span>
-          </div>
-          <p class="pkg-description">${escapeHtml(pkg.description ?? "")}</p>
-          ${renderPackageStatusPills(pkg)}
-          <p class="pkg-source">${escapeHtml(sourceLabel)}</p>
-        </a>
-        <div class="pkg-actions">${renderPackageActions(pkg)}</div>
-      </article>`;
+      <a class="packages-nav-item ${selected ? "is-selected" : ""}" href="${escapeHtml(href)}">
+        <span class="packages-nav-dot ${dotClass}" aria-hidden="true"></span>
+        <span class="packages-nav-main">
+          <strong>${escapeHtml(pkg.name)}</strong>
+          <span>${escapeHtml(pkg.source?.repo ?? "unknown")}</span>
+        </span>
+        <span class="packages-nav-ref">${escapeHtml(pkg.source?.ref ?? "main")}</span>
+      </a>`;
   }).join("");
 }
 
-function renderRepoTabs(routeBase, pkg, ref, path, view) {
-  const overviewHref = buildUrl(routeBase, {
-    packageId: pkg.packageId,
-    view: "overview",
-    ref,
-  });
-  const codeHref = buildUrl(routeBase, {
-    packageId: pkg.packageId,
-    view: "code",
-    ref,
-    path,
-  });
-  const commitsHref = buildUrl(routeBase, {
-    packageId: pkg.packageId,
-    view: "commits",
-    ref,
-  });
+function renderImportRail(statusText, errorText, sourceValue, refValue, subdirValue) {
   return `
-    <nav class="repo-tabs">
-      <a href="${escapeHtml(overviewHref)}" class="${view === "overview" ? "is-active" : ""}">Overview</a>
-      <a href="${escapeHtml(codeHref)}" class="${view === "code" ? "is-active" : ""}">Code</a>
-      <a href="${escapeHtml(commitsHref)}" class="${view === "commits" ? "is-active" : ""}">Commits</a>
-    </nav>`;
+    <section class="packages-rail">
+      <form method="post" class="packages-import-form">
+        <input type="hidden" name="action" value="add" />
+        <label>
+          <span>Source</span>
+          <input type="text" name="source" value="${escapeHtml(sourceValue)}" placeholder="owner/repo or https://..." spellcheck="false" />
+        </label>
+        <label>
+          <span>Ref</span>
+          <input type="text" name="ref" value="${escapeHtml(refValue)}" placeholder="main" spellcheck="false" />
+        </label>
+        <label>
+          <span>Subdir</span>
+          <input type="text" name="subdir" value="${escapeHtml(subdirValue)}" placeholder="." spellcheck="false" />
+        </label>
+        <label class="packages-check">
+          <input type="checkbox" name="enable" checked />
+          <span>Enable</span>
+        </label>
+        <button type="submit" class="packages-icon-btn" title="Import package" aria-label="Import package">＋</button>
+      </form>
+      ${statusText ? `<p class="packages-status">${escapeHtml(statusText)}</p>` : ""}
+      ${errorText ? `<p class="packages-status is-error">${escapeHtml(errorText)}</p>` : ""}
+    </section>`;
 }
 
-function renderBreadcrumbs(routeBase, pkg, ref, path) {
-  const segments = path ? path.split("/").filter(Boolean) : [];
-  const crumbs = [
-    `<a href="${escapeHtml(buildUrl(routeBase, { packageId: pkg.packageId, view: "code", ref }))}">${escapeHtml(pkg.name)}</a>`,
-  ];
-  for (let index = 0; index < segments.length; index += 1) {
-    const crumbPath = segments.slice(0, index + 1).join("/");
-    crumbs.push(`<span class="crumb-sep">/</span><a href="${escapeHtml(buildUrl(routeBase, { packageId: pkg.packageId, view: "code", ref, path: crumbPath }))}">${escapeHtml(segments[index])}</a>`);
-  }
-  return `<div class="repo-breadcrumbs">${crumbs.join("")}</div>`;
-}
-
-function renderRepoControls(routeBase, pkg, browseRef, path, view, refs) {
-  const branches = Object.keys(refs?.heads ?? {}).sort();
+function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
   const currentRef = browseRef || pkg.source?.ref || "main";
-  const checkoutButton = currentRef !== (pkg.source?.ref ?? "main")
+  const branches = Object.keys(refs?.heads ?? {}).sort();
+  const branchOptions = (branches.length > 0 ? branches : [currentRef]).map((branch) => {
+    const selected = branch === currentRef ? " selected" : "";
+    return `<option value="${escapeHtml(branch)}"${selected}>${escapeHtml(branch)}</option>`;
+  }).join("");
+  const packageAction = pkg.enabled
+    ? (pkg.name === "packages"
+      ? '<span class="packages-static-note">Core package</span>'
+      : `
+        <form method="post">
+          <input type="hidden" name="action" value="remove" />
+          <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
+          <button type="submit" class="packages-icon-btn" title="Disable package" aria-label="Disable package">−</button>
+        </form>`)
+    : `
+      <form method="post">
+        <input type="hidden" name="action" value="install" />
+        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
+        <button type="submit" class="packages-icon-btn" title="Enable package" aria-label="Enable package">▶</button>
+      </form>`;
+
+  const checkoutAction = currentRef !== (pkg.source?.ref ?? "main")
     ? `
-      <form method="post" class="ref-form inline-form">
+      <form method="post">
         <input type="hidden" name="action" value="checkout" />
         <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
         <input type="hidden" name="ref" value="${escapeHtml(currentRef)}" />
-        <button type="submit" class="btn">Use this ref</button>
+        <button type="submit" class="packages-icon-btn" title="Use this ref" aria-label="Use this ref">↺</button>
       </form>`
-    : '<span class="repo-current-ref">Using active ref</span>';
-
-  const branchOptions = branches.length > 0
-    ? branches.map((branch) => {
-        const selected = branch === currentRef ? ' selected' : '';
-        return `<option value="${escapeHtml(branch)}"${selected}>${escapeHtml(branch)}</option>`;
-      }).join("")
-    : `<option value="${escapeHtml(currentRef)}">${escapeHtml(currentRef)}</option>`;
-
-  return `
-    <section class="repo-controls">
-      <form method="get" class="ref-form">
-        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
-        <input type="hidden" name="view" value="${escapeHtml(view)}" />
-        ${path ? `<input type="hidden" name="path" value="${escapeHtml(path)}" />` : ""}
-        <label>
-          <span>browse ref</span>
-          <select name="ref">${branchOptions}</select>
-        </label>
-        <button type="submit" class="btn">Browse</button>
-      </form>
-      ${checkoutButton}
-    </section>`;
-}
-
-function renderCommitList(entries) {
-  if (!Array.isArray(entries) || entries.length === 0) {
-    return '<p class="empty-state">No commits yet.</p>';
-  }
-  return `
-    <ul class="commit-list">
-      ${entries.map((entry) => `
-        <li class="commit-item">
-          <span class="commit-hash">${escapeHtml(shortHash(entry.hash))}</span>
-          <div class="commit-msg">
-            <strong>${escapeHtml(firstLine(entry.message))}</strong>
-            <div class="commit-meta">${escapeHtml(entry.author)} · ${escapeHtml(formatTimestamp(entry.commitTime))}</div>
-          </div>
-        </li>`).join("")}
-    </ul>`;
-}
-
-function renderTreeView(routeBase, pkg, ref, path, readResult, recentLog) {
-  const rows = [];
-  if (path) {
-    const parentPath = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-    rows.push(`
-      <tr>
-        <td class="tree-icon">↩</td>
-        <td class="tree-name"><a href="${escapeHtml(buildUrl(routeBase, { packageId: pkg.packageId, view: "code", ref, path: parentPath }))}">..</a></td>
-        <td class="tree-meta">parent</td>
-      </tr>`);
-  }
-  for (const entry of readResult.entries) {
-    const href = buildUrl(routeBase, {
-      packageId: pkg.packageId,
-      view: "code",
-      ref,
-      path: entry.path,
-    });
-    rows.push(`
-      <tr>
-        <td class="tree-icon">${entry.type === "tree" ? "📁" : entry.type === "symlink" ? "↗" : "📄"}</td>
-        <td class="tree-name"><a href="${escapeHtml(href)}">${escapeHtml(entry.name)}</a></td>
-        <td class="tree-meta">${escapeHtml(entry.type)}</td>
-      </tr>`);
-  }
-
-  const recentSection = recentLog && Array.isArray(recentLog.entries) && recentLog.entries.length > 0
-    ? `
-      <section class="section-block">
-        <h2>Recent commits</h2>
-        ${renderCommitList(recentLog.entries)}
-      </section>`
     : "";
 
   return `
-    <section class="section-block">
-      <div class="section-title-row">
-        <h1>${escapeHtml(path || "/")}</h1>
-        <span class="section-meta">${readResult.entries.length} entries</span>
+    <header class="packages-header">
+      <div class="packages-header-copy">
+        <div class="packages-title-row">
+          <h1>${escapeHtml(pkg.name)}</h1>
+          <span class="packages-runtime">${escapeHtml(pkg.runtime ?? "unknown")}</span>
+          <span class="packages-state ${pkg.enabled ? "is-enabled" : "is-disabled"}">${pkg.enabled ? "enabled" : "disabled"}</span>
+        </div>
+        <p>${escapeHtml(pkg.description || "No description provided.")}</p>
       </div>
-      <table class="tree-table">
-        <tbody>${rows.join("")}</tbody>
-      </table>
-    </section>
-    ${recentSection}`;
+      <div class="packages-header-tools">
+        <form method="get" class="packages-ref-form">
+          <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
+          <input type="hidden" name="view" value="${escapeHtml(view)}" />
+          ${path ? `<input type="hidden" name="path" value="${escapeHtml(path)}" />` : ""}
+          <select name="ref">${branchOptions}</select>
+          <button type="submit" class="packages-icon-btn" title="Browse ref" aria-label="Browse ref">↗</button>
+        </form>
+        ${checkoutAction}
+        ${packageAction}
+      </div>
+    </header>`;
 }
 
-function renderFileView(path, readResult) {
+function renderTabs(routeBase, pkg, ref, path, view) {
+  const tabs = [
+    ["overview", packageHref(routeBase, pkg, "overview", { ref })],
+    ["code", packageHref(routeBase, pkg, "code", { ref, path })],
+    ["commits", packageHref(routeBase, pkg, "commits", { ref })],
+  ];
   return `
-    <section class="section-block">
-      <div class="file-header">
+    <nav class="packages-tabs">
+      ${tabs.map(([name, href]) => `<a class="${view === name ? "is-active" : ""}" href="${escapeHtml(href)}">${escapeHtml(name)}</a>`).join("")}
+    </nav>`;
+}
+
+function renderOverview(pkg, refs) {
+  const resolvedCommit = pkg.source?.resolvedCommit ?? "Not resolved";
+  const heads = Object.keys(refs?.heads ?? {}).sort();
+  const tags = Object.keys(refs?.tags ?? {}).sort();
+  return `
+    <section class="packages-workspace">
+      <section class="packages-meta-grid">
+        <article>
+          <span>Source</span>
+          <strong>${escapeHtml(pkg.source?.repo ?? "unknown")}</strong>
+        </article>
+        <article>
+          <span>Active ref</span>
+          <strong>${escapeHtml(pkg.source?.ref ?? "main")}</strong>
+        </article>
+        <article>
+          <span>Resolved commit</span>
+          <strong class="packages-mono">${escapeHtml(resolvedCommit)}</strong>
+        </article>
+        <article>
+          <span>Version</span>
+          <strong>${escapeHtml(pkg.version ?? "0.0.0")}</strong>
+        </article>
+      </section>
+      <section class="packages-section">
+        <h2>Entrypoints</h2>
+        <ul class="packages-entry-list">
+          ${(Array.isArray(pkg.entrypoints) ? pkg.entrypoints : []).map((entrypoint) => `
+            <li>
+              <strong>${escapeHtml(entrypoint.name)}</strong>
+              <span>${escapeHtml(entrypoint.kind)}</span>
+            </li>`).join("") || '<li><strong>No entrypoints</strong><span>n/a</span></li>'}
+        </ul>
+      </section>
+      <section class="packages-section">
+        <h2>Available refs</h2>
+        <div class="packages-chip-grid">
+          ${heads.map((head) => `<span class="packages-chip">${escapeHtml(head)}</span>`).join("") || '<span class="packages-chip">No branches</span>'}
+          ${tags.map((tag) => `<span class="packages-chip">tag:${escapeHtml(tag)}</span>`).join("")}
+        </div>
+      </section>
+    </section>`;
+}
+
+function renderBreadcrumbs(routeBase, pkg, ref, path) {
+  const normalized = normalizePath(path);
+  const segments = normalized ? normalized.split("/") : [];
+  const crumbs = [
+    `<a href="${escapeHtml(packageHref(routeBase, pkg, "code", { ref }))}">${escapeHtml(pkg.name)}</a>`,
+  ];
+  let current = "";
+  for (const segment of segments) {
+    current = current ? `${current}/${segment}` : segment;
+    crumbs.push(`<span class="packages-crumb-sep">/</span>`);
+    crumbs.push(`<a href="${escapeHtml(packageHref(routeBase, pkg, "code", { ref, path: current }))}">${escapeHtml(segment)}</a>`);
+  }
+  return `<nav class="packages-breadcrumbs">${crumbs.join("")}</nav>`;
+}
+
+function renderTree(routeBase, pkg, ref, path, readResult) {
+  const rows = [];
+  if (path) {
+    const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    rows.push(`
+      <a class="packages-tree-row is-up" href="${escapeHtml(packageHref(routeBase, pkg, "code", { ref, path: parent }))}">
+        <span class="packages-tree-icon">↩</span>
+        <strong>..</strong>
+        <span>parent</span>
+      </a>`);
+  }
+  for (const entry of readResult.entries) {
+    rows.push(`
+      <a class="packages-tree-row" href="${escapeHtml(packageHref(routeBase, pkg, "code", { ref, path: entry.path }))}">
+        <span class="packages-tree-icon">${entry.type === "tree" ? "▣" : entry.type === "symlink" ? "↗" : "≣"}</span>
+        <strong>${escapeHtml(entry.name)}</strong>
+        <span>${escapeHtml(entry.type)}</span>
+      </a>`);
+  }
+  return `
+    ${renderBreadcrumbs(routeBase, pkg, ref, path)}
+    <section class="packages-workspace packages-tree-grid">
+      ${rows.join("") || '<div class="packages-empty">Folder is empty.</div>'}
+    </section>`;
+}
+
+function renderFile(routeBase, pkg, ref, path, readResult) {
+  return `
+    ${renderBreadcrumbs(routeBase, pkg, ref, path)}
+    <section class="packages-workspace">
+      <div class="packages-file-meta">
         <strong>${escapeHtml(path || "/")}</strong>
-        <span class="section-meta">${escapeHtml(String(readResult.size ?? 0))} bytes</span>
+        <span>${escapeHtml(String(readResult.size ?? 0))} bytes</span>
       </div>
       ${readResult.isBinary
-        ? '<div class="binary-state">Binary file. Text preview is intentionally omitted.</div>'
-        : `<pre class="blob-pre">${escapeHtml(readResult.content ?? "")}</pre>`}
+        ? '<div class="packages-empty">Binary file preview omitted.</div>'
+        : `<pre class="packages-code">${escapeHtml(readResult.content ?? "")}</pre>`}
     </section>`;
 }
 
-function renderCommitsView(routeBase, pkg, ref, offset, logResult) {
+function renderCommits(routeBase, pkg, ref, offset, logResult) {
   const prevHref = offset > 0
-    ? buildUrl(routeBase, {
-        packageId: pkg.packageId,
-        view: "commits",
-        ref,
-        offset: Math.max(0, offset - COMMIT_PAGE_SIZE),
-      })
-    : null;
+    ? packageHref(routeBase, pkg, "commits", { ref, offset: Math.max(0, offset - COMMIT_PAGE_SIZE) })
+    : "";
   const nextHref = Array.isArray(logResult.entries) && logResult.entries.length === COMMIT_PAGE_SIZE
-    ? buildUrl(routeBase, {
-        packageId: pkg.packageId,
-        view: "commits",
-        ref,
-        offset: offset + COMMIT_PAGE_SIZE,
-      })
-    : null;
-
+    ? packageHref(routeBase, pkg, "commits", { ref, offset: offset + COMMIT_PAGE_SIZE })
+    : "";
   return `
-    <section class="section-block">
-      <div class="section-title-row">
-        <h1>Commits on ${escapeHtml(ref)}</h1>
-        <span class="section-meta">offset ${escapeHtml(String(offset))}</span>
-      </div>
-      ${renderCommitList(logResult.entries)}
-      <div class="pagination">
-        ${prevHref ? `<a href="${escapeHtml(prevHref)}">Previous</a>` : ""}
-        ${nextHref ? `<a href="${escapeHtml(nextHref)}">Next</a>` : ""}
-      </div>
-    </section>`;
-}
-
-function renderOverviewView(pkg, ref, refs) {
-  const activeRef = pkg.source?.ref ?? "main";
-  const resolvedCommit = pkg.source?.resolvedCommit ?? "";
-  const entrypoints = Array.isArray(pkg.entrypoints) ? pkg.entrypoints : [];
-  const heads = Object.keys(refs?.heads ?? {}).sort();
-
-  return `
-    <section class="section-block">
-      <div class="section-title-row">
-        <h1>Overview</h1>
-        <span class="section-meta">${escapeHtml(pkg.runtime ?? "unknown")}</span>
-      </div>
-      <div class="overview-grid">
-        <article class="overview-card">
-          <span class="overview-label">Source</span>
-          <strong>${escapeHtml(pkg.source?.repo ?? "unknown")}</strong>
-          <p>${escapeHtml(pkg.source?.subdir ?? ".")}</p>
-        </article>
-        <article class="overview-card">
-          <span class="overview-label">Installed ref</span>
-          <strong>${escapeHtml(activeRef)}</strong>
-          <p>${resolvedCommit ? escapeHtml(shortHash(resolvedCommit)) : "unresolved"}</p>
-        </article>
-        <article class="overview-card">
-          <span class="overview-label">Browsing ref</span>
-          <strong>${escapeHtml(ref)}</strong>
-          <p>${escapeHtml(String(heads.length || 1))} branch${heads.length === 1 ? "" : "es"}</p>
-        </article>
-      </div>
-    </section>
-    <section class="section-block">
-      <h2>Entrypoints</h2>
-      ${entrypoints.length > 0
-        ? `<ul class="entrypoint-list">
-            ${entrypoints.map((entrypoint) => `
-              <li class="entrypoint-item">
-                <div>
-                  <strong>${escapeHtml(entrypoint.name ?? "entrypoint")}</strong>
-                  <p>${escapeHtml(entrypoint.description ?? entrypoint.kind ?? "")}</p>
-                </div>
-                <span class="meta-chip">${escapeHtml(entrypoint.kind ?? "unknown")}</span>
-              </li>`).join("")}
-          </ul>`
-        : '<p class="empty-state">No entrypoints declared.</p>'}
-    </section>`;
-}
-
-function renderRepoView(routeBase, pkg, refs, ref, view, path, repoState) {
-  const activeRef = pkg.source?.ref ?? "main";
-  const resolvedCommit = pkg.source?.resolvedCommit ? `<span class="meta-chip">resolved ${escapeHtml(shortHash(pkg.source.resolvedCommit))}</span>` : "";
-  const repoLabel = escapeHtml(pkg.source?.repo ?? "unknown");
-  const content = view === "commits"
-    ? renderCommitsView(routeBase, pkg, ref, repoState.offset, repoState.log)
-    : view === "code"
-      ? repoState.read.kind === "tree"
-        ? renderTreeView(routeBase, pkg, ref, path, repoState.read, repoState.recentLog)
-        : renderFileView(path, repoState.read)
-      : renderOverviewView(pkg, ref, refs);
-
-  return `
-    <section class="repo-shell">
-      <main class="repo-main">
-        <section class="repo-meta">
+    <section class="packages-workspace packages-commit-list">
+      ${(Array.isArray(logResult.entries) ? logResult.entries : []).map((entry) => `
+        <article class="packages-commit-row">
+          <span class="packages-commit-hash">${escapeHtml(shortHash(entry.hash))}</span>
           <div>
-            <p class="repo-title">${escapeHtml(pkg.name)}</p>
-            <p class="repo-subtitle">${escapeHtml(pkg.description ?? "")}</p>
+            <strong>${escapeHtml(firstLine(entry.message))}</strong>
+            <p>${escapeHtml(entry.author)} · ${escapeHtml(formatTimestamp(entry.commitTime))}</p>
           </div>
-          <div class="repo-meta-chips">
-            <span class="meta-chip">${repoLabel}</span>
-            <span class="meta-chip">active ${escapeHtml(activeRef)}</span>
-            ${resolvedCommit}
-          </div>
-        </section>
-        <section class="repo-nav-block">
-          ${renderRepoTabs(routeBase, pkg, ref, path, view)}
-          ${view === "code" ? renderBreadcrumbs(routeBase, pkg, ref, path) : ""}
-        </section>
-        ${renderRepoControls(routeBase, pkg, ref, path, view, refs)}
-        ${content}
-      </main>
+        </article>`).join("") || '<div class="packages-empty">No commits available.</div>'}
+      <div class="packages-pagination">
+        ${prevHref ? `<a href="${escapeHtml(prevHref)}">Previous</a>` : "<span></span>"}
+        ${nextHref ? `<a href="${escapeHtml(nextHref)}">Next</a>` : "<span></span>"}
+      </div>
     </section>`;
 }
 
-function renderPage({ packages, selectedPackage, selectedRef, selectedView, selectedPath, statusText, loadError, routeBase, repoRefs, repoState }) {
-  const sidebar = renderSidebar(routeBase, packages, selectedPackage?.packageId ?? null);
-  const mainContent = selectedPackage
-    ? renderRepoView(routeBase, selectedPackage, repoRefs, selectedRef, selectedView, selectedPath, repoState)
-    : '<section class="repo-shell"><main class="repo-main"><p class="empty-state">No package selected.</p></main></section>';
+function renderMain(routeBase, selectedPkg, view, refs, browseRef, path, readResult, logResult, offset) {
+  if (!selectedPkg) {
+    return '<section class="packages-main-stage"><div class="packages-empty">Import or enable a package to get started.</div></section>';
+  }
+
+  const currentRef = browseRef || selectedPkg.source?.ref || "main";
+  const body = view === "commits"
+    ? renderCommits(routeBase, selectedPkg, currentRef, offset, logResult)
+    : view === "code"
+      ? readResult?.kind === "file"
+        ? renderFile(routeBase, selectedPkg, currentRef, path, readResult)
+        : renderTree(routeBase, selectedPkg, currentRef, path, readResult)
+      : renderOverview(selectedPkg, refs);
+
+  return `
+    <section class="packages-main-stage">
+      ${renderHeader(routeBase, selectedPkg, refs, currentRef, path, view)}
+      ${renderTabs(routeBase, selectedPkg, currentRef, path, view)}
+      ${body}
+    </section>`;
+}
+
+function renderPage(state) {
+  const {
+    routeBase,
+    packages,
+    selectedPkg,
+    view,
+    browseRef,
+    path,
+    refs,
+    readResult,
+    logResult,
+    offset,
+    statusText,
+    errorText,
+    importSource,
+    importRef,
+    importSubdir,
+  } = state;
 
   return `<!doctype html>
 <html lang="en">
@@ -408,644 +369,545 @@ function renderPage({ packages, selectedPackage, selectedRef, selectedView, sele
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Packages</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
       :root {
-        --bg: #eef3f7;
+        color-scheme: light;
         --surface: #f7f9fc;
-        --surface-low: #f1f5f8;
-        --surface-high: #ffffff;
-        --surface-tint: #e8eef3;
-        --text: #191c1e;
-        --text-muted: rgba(25, 28, 30, 0.66);
-        --text-soft: rgba(25, 28, 30, 0.5);
+        --surface-low: #e9eff6;
+        --surface-lowest: #ffffff;
+        --line: rgba(42, 50, 56, 0.08);
+        --text: #1f2d33;
+        --muted: #61737b;
         --primary: #003466;
         --primary-soft: #1a4b84;
-        --secondary: #904b36;
-        --focus: rgba(0, 52, 102, 0.14);
-        --shadow-soft: 0 20px 40px rgba(25, 28, 30, 0.06), 0 10px 10px rgba(25, 28, 30, 0.04);
-        --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        --ui: "Manrope", "Segoe UI", sans-serif;
-        --display: "Space Grotesk", "Avenir Next", sans-serif;
+        --danger: #904b36;
+        font-family: Manrope, system-ui, sans-serif;
       }
       * { box-sizing: border-box; }
-      html, body { min-height: 100%; }
+      html, body { margin: 0; min-height: 100%; }
       body {
-        margin: 0;
-        font-family: var(--ui);
-        font-size: 14px;
-        line-height: 1.55;
+        background: transparent;
         color: var(--text);
-        background:
-          radial-gradient(circle at 16% 0%, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0) 34%),
-          linear-gradient(180deg, #f4f7fa 0%, var(--bg) 100%);
       }
-      a {
-        color: var(--primary);
-        text-decoration: none;
-      }
-      a:hover { text-decoration: none; }
-      .app-shell {
+      main {
         min-height: 100vh;
         display: grid;
-        grid-template-columns: 288px minmax(0, 1fr);
-        gap: 18px;
-        padding: 18px;
+        grid-template-rows: auto minmax(0, 1fr);
       }
-      .sidebar,
-      .repo-shell {
-        min-width: 0;
-        background: rgba(247, 249, 252, 0.86);
-        border-radius: 18px;
-        box-shadow: var(--shadow-soft);
-      }
-      .sidebar {
-        padding: 22px 18px 18px;
-        overflow: auto;
-      }
-      .sidebar h1 {
-        margin: 0 0 16px;
-        font-family: var(--display);
-        font-size: clamp(1.8rem, 3vw, 2.3rem);
-        line-height: 1;
-        letter-spacing: -0.03em;
-      }
-      .sidebar-stack { display: grid; gap: 12px; }
-      .pkg-card {
-        border-radius: 14px;
-        background: rgba(255, 255, 255, 0.7);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
-        overflow: hidden;
-        transition: transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
-      }
-      .pkg-card.is-selected {
-        background: var(--surface-high);
-        box-shadow:
-          0 14px 28px rgba(25, 28, 30, 0.08),
-          inset 0 1px 0 rgba(255, 255, 255, 0.72);
-        transform: translateY(-1px);
-      }
-      .pkg-link {
-        display: block;
-        padding: 14px 14px 10px;
-        color: inherit;
-        text-decoration: none;
-      }
-      .pkg-link:hover { text-decoration: none; }
-      .pkg-title-row {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
+      .packages-rail {
+        display: grid;
         gap: 8px;
+        padding: 12px 14px 10px;
+        background: rgba(247, 249, 252, 0.56);
+        border-bottom: 1px solid var(--line);
       }
-      .pkg-title-row strong {
-        font-size: 0.95rem;
+      .packages-import-form {
+        display: grid;
+        grid-template-columns: minmax(260px, 1.8fr) minmax(110px, 0.4fr) minmax(120px, 0.5fr) auto auto;
+        gap: 8px;
+        align-items: end;
+      }
+      .packages-import-form label,
+      .packages-ref-form,
+      .packages-check {
+        display: grid;
+        gap: 4px;
+      }
+      .packages-import-form span,
+      .packages-check span {
+        font-size: 10px;
         font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
       }
-      .pkg-description {
-        margin: 7px 0 0;
-        color: var(--text-muted);
-        font-size: 13px;
+      .packages-import-form input,
+      .packages-ref-form select {
+        width: 100%;
+        min-height: 34px;
+        padding: 0 10px;
+        border-radius: 4px;
+        border: 1px solid transparent;
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--text);
+        font: inherit;
+        outline: none;
       }
-      .pkg-source {
-        margin: 10px 0 0;
-        color: var(--text-soft);
-        font-size: 12px;
+      .packages-import-form input:focus,
+      .packages-ref-form select:focus {
+        border-color: rgba(26, 75, 132, 0.24);
+        background: rgba(255, 255, 255, 0.96);
       }
-      .pkg-source-ref {
-        color: var(--text-soft);
-        font-size: 11px;
-        font-family: var(--mono);
-      }
-      .pkg-pills {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin: 12px 0 0;
-      }
-      .pkg-pill {
+      .packages-check {
         display: inline-flex;
         align-items: center;
-        padding: 4px 9px;
-        border-radius: 999px;
-        background: rgba(232, 238, 243, 0.92);
-        color: rgba(25, 28, 30, 0.78);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
+        gap: 8px;
+        min-height: 34px;
       }
-      .pkg-pill.is-enabled {
-        background: rgba(218, 235, 225, 0.92);
-        color: #29533e;
-      }
-      .pkg-pill.is-disabled {
-        background: rgba(240, 243, 246, 0.92);
-        color: rgba(25, 28, 30, 0.54);
-      }
-      .pkg-actions { padding: 0 14px 14px; }
-      .pkg-action-note,
-      .sidebar-empty,
-      .empty-state,
-      .binary-state {
+      .packages-check input {
+        width: 14px;
+        height: 14px;
         margin: 0;
-        color: var(--text-muted);
       }
-      .btn {
+      .packages-icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 34px;
+        min-height: 34px;
+        padding: 0 8px;
         border: 0;
-        background: rgba(232, 238, 243, 0.9);
+        border-radius: 6px;
+        background: rgba(233, 239, 246, 0.76);
         color: var(--text);
-        border-radius: 8px;
-        padding: 9px 14px;
         font: inherit;
         font-weight: 700;
         cursor: pointer;
-        transition: transform 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+        text-decoration: none;
       }
-      .btn:hover {
-        background: rgba(225, 233, 239, 1);
-        transform: translateY(-1px);
-      }
-      .btn-danger {
-        background: rgba(144, 75, 54, 0.12);
-        color: var(--secondary);
-      }
-      .inline-form { margin: 0; }
-      .repo-shell {
-        display: flex;
-        flex-direction: column;
-        padding: 16px;
-      }
-      .repo-tabs {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-      .repo-tabs a {
-        color: var(--text-muted);
+      .packages-static-note {
         font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        padding: 6px 10px;
+        color: var(--muted);
+      }
+      .packages-status {
+        margin: 0;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .packages-status.is-error {
+        color: var(--danger);
+      }
+      .packages-shell {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 300px minmax(0, 1fr);
+      }
+      .packages-sidebar {
+        min-height: 0;
+        overflow: auto;
+        padding: 10px;
+        background: rgba(233, 239, 246, 0.56);
+      }
+      .packages-nav-item {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        padding: 10px 12px;
+        border-radius: 10px;
+        color: inherit;
+        text-decoration: none;
+      }
+      .packages-nav-item:hover,
+      .packages-nav-item.is-selected {
+        background: rgba(255, 255, 255, 0.72);
+      }
+      .packages-nav-dot {
+        width: 8px;
+        height: 8px;
         border-radius: 999px;
+        background: #98a7b4;
       }
-      .repo-tabs a.is-active {
-        color: var(--primary);
-        background: rgba(0, 52, 102, 0.08);
+      .packages-nav-dot.is-enabled { background: #5f8a73; }
+      .packages-nav-dot.is-disabled { background: #b3bcc4; }
+      .packages-nav-main {
+        min-width: 0;
+        display: grid;
+        gap: 2px;
       }
-      .repo-main {
-        padding: 0 4px 4px;
+      .packages-nav-main strong,
+      .packages-nav-ref,
+      .packages-runtime,
+      .packages-state,
+      .packages-meta-grid article span,
+      .packages-chip,
+      .packages-file-meta span,
+      .packages-commit-hash,
+      .packages-nav-main span,
+      .packages-commit-row p {
+        font-size: 12px;
       }
-      .repo-meta {
+      .packages-nav-main span,
+      .packages-nav-ref,
+      .packages-runtime,
+      .packages-meta-grid article span,
+      .packages-file-meta span,
+      .packages-commit-row p {
+        color: var(--muted);
+      }
+      .packages-main-stage {
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        padding: 10px 14px 14px;
+      }
+      .packages-header {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 18px;
+        gap: 12px;
+      }
+      .packages-header-copy {
+        display: grid;
+        gap: 6px;
+      }
+      .packages-title-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .packages-title-row h1 {
+        margin: 0;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-size: 1.8rem;
+        line-height: 0.98;
+      }
+      .packages-header-copy p {
+        margin: 0;
+        color: var(--muted);
+        max-width: 60ch;
+      }
+      .packages-state {
+        color: var(--muted);
+      }
+      .packages-state.is-enabled { color: #5f8a73; }
+      .packages-state.is-disabled { color: #8f5b47; }
+      .packages-header-tools,
+      .packages-ref-form {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .packages-ref-form select {
+        min-width: 180px;
+      }
+      .packages-tabs {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 0 8px;
+      }
+      .packages-tabs a {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .packages-tabs a.is-active {
+        color: var(--primary);
+      }
+      .packages-workspace {
+        min-height: 0;
+        overflow: auto;
+        background: rgba(255, 255, 255, 0.54);
+        padding: 14px;
+        border-radius: 12px;
+      }
+      .packages-meta-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
         margin-bottom: 18px;
       }
-      .repo-title {
-        margin: 0;
-        font-family: var(--display);
-        font-size: clamp(2rem, 3vw, 2.6rem);
-        font-weight: 700;
-        letter-spacing: -0.04em;
-        line-height: 0.95;
-      }
-      .repo-subtitle {
-        margin: 8px 0 0;
-        max-width: 54ch;
-        color: var(--text-muted);
-      }
-      .repo-meta-chips {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-      .repo-nav-block {
+      .packages-meta-grid article {
         display: grid;
-        gap: 12px;
-        margin-bottom: 16px;
-      }
-      .meta-chip {
-        display: inline-flex;
-        align-items: center;
-        padding: 5px 9px;
-        border-radius: 999px;
-        background: rgba(232, 238, 243, 0.92);
-        color: var(--text-muted);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-      }
-      .repo-breadcrumbs {
-        color: var(--text-soft);
-        font-size: 13px;
-      }
-      .crumb-sep { margin: 0 6px; color: var(--text-soft); }
-      .repo-controls {
-        display: flex;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-bottom: 20px;
-        padding: 14px 16px;
-        border-radius: 16px;
-        background: var(--surface-low);
-      }
-      .ref-form {
-        display: flex;
-        align-items: flex-end;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-      .ref-form label {
-        display: grid;
-        gap: 6px;
-      }
-      .ref-form span {
-        color: var(--text-soft);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .ref-form select {
-        min-width: 180px;
-        border: 0;
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.88);
-        color: var(--text);
+        gap: 4px;
         padding: 10px 12px;
-        font: inherit;
+        background: rgba(233, 239, 246, 0.56);
+        border-radius: 10px;
       }
-      .repo-current-ref {
-        color: var(--primary);
-        font-size: 12px;
-        font-weight: 700;
+      .packages-meta-grid article strong {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
-      .section-block {
-        background: var(--surface-low);
-        border-radius: 18px;
-        margin-bottom: 20px;
-        padding: 8px;
+      .packages-mono,
+      .packages-code,
+      .packages-commit-hash {
+        font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
       }
-      .section-title-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 12px 14px 10px;
+      .packages-section + .packages-section {
+        margin-top: 18px;
       }
-      .section-title-row h1,
-      .section-block h2 {
-        margin: 0;
-        font-family: var(--display);
-        letter-spacing: -0.03em;
-      }
-      .section-title-row h1 { font-size: 1.3rem; }
-      .section-block h2 {
-        padding: 12px 14px 0;
-        font-size: 1rem;
-      }
-      .section-meta {
-        color: var(--text-soft);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
+      .packages-section h2 {
+        margin: 0 0 10px;
+        font-size: 14px;
         text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--muted);
       }
-      .overview-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 12px;
-        padding: 0 14px 14px;
-      }
-      .overview-card {
-        display: grid;
-        gap: 6px;
-        padding: 14px;
-        border-radius: 14px;
-        background: rgba(255, 255, 255, 0.66);
-      }
-      .overview-card strong {
-        font-size: 1rem;
-      }
-      .overview-card p {
-        margin: 0;
-        color: var(--text-muted);
-      }
-      .overview-label {
-        color: var(--text-soft);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .entrypoint-list {
-        list-style: none;
-        margin: 0;
-        padding: 0 14px 14px;
-        display: grid;
-        gap: 10px;
-      }
-      .entrypoint-item {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 14px;
-        border-radius: 14px;
-        background: rgba(255, 255, 255, 0.66);
-      }
-      .entrypoint-item strong {
-        display: block;
-        margin: 0;
-      }
-      .entrypoint-item p {
-        margin: 4px 0 0;
-        color: var(--text-muted);
-      }
-      .tree-table {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 0 8px;
-      }
-      .tree-table td {
-        padding: 10px 14px;
-        background: var(--surface-high);
-      }
-      .tree-table td:first-child {
-        border-radius: 12px 0 0 12px;
-      }
-      .tree-table td:last-child {
-        border-radius: 0 12px 12px 0;
-      }
-      .tree-icon {
-        width: 40px;
-        color: var(--text-soft);
-      }
-      .tree-meta {
-        width: 96px;
-        color: var(--text-soft);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-      }
-      .file-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 12px 14px;
-        background: var(--surface-high);
-        border-radius: 12px 12px 0 0;
-      }
-      .blob-pre {
-        margin: 0;
-        padding: 16px;
-        overflow: auto;
-        font-family: var(--mono);
-        font-size: 12px;
-        line-height: 1.6;
-        white-space: pre-wrap;
-        word-break: break-word;
-        background: var(--surface-high);
-        border-radius: 0 0 12px 12px;
-      }
-      .binary-state {
-        padding: 16px;
-        background: var(--surface-high);
-        border-radius: 0 0 12px 12px;
-      }
-      .commit-list {
+      .packages-entry-list {
         list-style: none;
         margin: 0;
         padding: 0;
         display: grid;
         gap: 8px;
       }
-      .commit-item {
+      .packages-entry-list li {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
+        justify-content: space-between;
         gap: 12px;
-        padding: 12px 14px;
-        background: var(--surface-high);
-        border-radius: 12px;
+        padding: 10px 12px;
+        background: rgba(233, 239, 246, 0.46);
+        border-radius: 10px;
       }
-      .commit-hash {
-        font-family: var(--mono);
-        font-size: 12px;
-        color: var(--primary);
-        background: rgba(0, 52, 102, 0.08);
+      .packages-chip-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .packages-chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 0 10px;
         border-radius: 999px;
-        padding: 4px 8px;
+        background: rgba(233, 239, 246, 0.7);
       }
-      .commit-msg { min-width: 0; }
-      .commit-meta {
-        margin-top: 4px;
-        color: var(--text-soft);
-        font-size: 12px;
-      }
-      .pagination {
+      .packages-breadcrumbs {
         display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 0 0 8px;
+      }
+      .packages-breadcrumbs a,
+      .packages-pagination a {
+        color: var(--primary);
+        text-decoration: none;
+      }
+      .packages-crumb-sep {
+        color: var(--muted);
+      }
+      .packages-tree-grid,
+      .packages-commit-list {
+        display: grid;
+        gap: 8px;
+      }
+      .packages-tree-row,
+      .packages-commit-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
         gap: 12px;
-        padding: 8px 6px 4px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: rgba(233, 239, 246, 0.46);
+        color: inherit;
+        text-decoration: none;
       }
-      .status-line {
-        margin: 0 18px 16px;
-        padding: 12px 14px;
-        border-radius: 14px;
-        background: rgba(0, 52, 102, 0.08);
-        color: var(--text);
+      .packages-tree-row:hover,
+      .packages-commit-row:hover {
+        background: rgba(233, 239, 246, 0.7);
       }
-      .status-line p { margin: 0; }
-      .status-line.is-error {
-        background: rgba(144, 75, 54, 0.12);
-        color: #6f3929;
+      .packages-tree-row strong,
+      .packages-commit-row strong {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .packages-tree-row span:last-child {
+        color: var(--muted);
+      }
+      .packages-tree-icon {
+        width: 18px;
+        text-align: center;
+        color: var(--primary-soft);
+      }
+      .packages-file-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      .packages-code {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow: auto;
+      }
+      .packages-pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding-top: 8px;
+      }
+      .packages-empty {
+        padding: 16px;
+        color: var(--muted);
       }
       @media (max-width: 980px) {
-        .app-shell {
+        .packages-import-form {
           grid-template-columns: 1fr;
-          gap: 14px;
-          padding: 12px;
         }
-        .sidebar,
-        .repo-shell {
-          border-radius: 16px;
+        .packages-shell {
+          grid-template-columns: 1fr;
         }
-        .repo-controls {
-          padding: 12px;
+        .packages-meta-grid {
+          grid-template-columns: 1fr 1fr;
         }
-        .repo-meta {
-          flex-direction: column;
+        .packages-main-stage {
+          padding: 10px 12px 12px;
         }
       }
     </style>
   </head>
   <body>
-    ${statusText ? `<div class="status-line"><p>${escapeHtml(statusText)}</p></div>` : ""}
-    ${loadError ? `<div class="status-line is-error"><p>${escapeHtml(loadError)}</p></div>` : ""}
-    <div class="app-shell">
-      <aside class="sidebar">
-        <h1>Packages</h1>
-        <div class="sidebar-stack">${sidebar}</div>
-      </aside>
-      ${mainContent}
-    </div>
+    <main>
+      ${renderImportRail(statusText, errorText, importSource, importRef, importSubdir)}
+      <section class="packages-shell">
+        <aside class="packages-sidebar">${renderSidebar(routeBase, packages, selectedPkg?.packageId ?? "")}</aside>
+        ${renderMain(routeBase, selectedPkg, view, refs, browseRef, path, readResult, logResult, offset)}
+      </section>
+    </main>
   </body>
 </html>`;
 }
 
- 
-    const appFrame = props.appFrame;
-    const kernel = props.kernel;
-    if (!appFrame || !kernel) {
-      return new Response("App frame missing", { status: 500 });
-    }
+export async function handleFetch(request, context = {}) {
+  const props = context.props ?? {};
+  const env = context.env ?? {};
+  const appFrame = props.appFrame;
+  const kernel = props.kernel;
+  if (!appFrame || !kernel) {
+    return new Response("App frame missing", { status: 500 });
+  }
 
-    const url = new URL(request.url);
-    const routeBase = appFrame.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/packages";
-    const linkRouteBase = typeof url.searchParams.get("windowId") === "string" && url.searchParams.get("windowId")?.trim()
-      ? buildUrl(routeBase, { windowId: url.searchParams.get("windowId")?.trim() })
-      : routeBase;
-    if (normalizeRoutePath(url.pathname) !== normalizeRoutePath(routeBase)) {
-      return new Response("Not Found", { status: 404 });
-    }
-    if (request.method !== "GET" && request.method !== "POST") {
-      return new Response("Method Not Allowed", { status: 405 });
-    }
+  const routeBase = appFrame.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/packages";
+  const url = new URL(request.url);
+  let statusText = "";
+  let errorText = "";
+  let selectedPackageId = url.searchParams.get("packageId")?.trim() ?? "";
+  let importSource = url.searchParams.get("source")?.trim() ?? "";
+  let importRef = url.searchParams.get("ref")?.trim() ?? "main";
+  let importSubdir = url.searchParams.get("subdir")?.trim() ?? ".";
 
-    let statusText = "";
-    let loadError = "";
-
-    if (request.method === "POST") {
-      try {
-        const formData = await request.formData();
-        const action = String(formData.get("action") ?? "").trim();
-        const packageId = String(formData.get("packageId") ?? "").trim();
-        if (!packageId) {
-          throw new Error("packageId is required");
-        }
-        if (action === "install") {
-          const result = await kernel.request("pkg.install", { packageId });
-          statusText = result?.changed
-            ? `Enabled ${result.package?.name ?? packageId}`
-            : `${result.package?.name ?? packageId} was already enabled`;
-        } else if (action === "remove") {
-          const result = await kernel.request("pkg.remove", { packageId });
-          statusText = result?.changed
-            ? `Disabled ${result.package?.name ?? packageId}`
-            : `${result.package?.name ?? packageId} was already disabled`;
-        } else if (action === "checkout") {
-          const ref = String(formData.get("ref") ?? "").trim();
-          const result = await kernel.request("pkg.checkout", { packageId, ref });
-          statusText = result?.changed
-            ? `Switched ${result.package?.name ?? packageId} to ${result.package?.source?.ref ?? ref}`
-            : `${result.package?.name ?? packageId} is already using ${result.package?.source?.ref ?? ref}`;
-        } else {
-          throw new Error(`Unknown action: ${action}`);
-        }
-      } catch (error) {
-        loadError = error instanceof Error ? error.message : String(error);
-      }
-    }
-
-    let packages = [];
-    let selectedPackage = null;
-    let repoRefs = { heads: {}, tags: {}, activeRef: "main" };
-    let repoState = {
-      offset: 0,
-      log: { entries: [] },
-      recentLog: { entries: [] },
-      read: { kind: "tree", entries: [] },
-    };
-
+  if (request.method === "POST") {
     try {
-      const listing = await kernel.request("pkg.list", {});
-      packages = Array.isArray(listing?.packages) ? listing.packages : [];
-      selectedPackage = pickSelectedPackage(packages, url.searchParams.get("packageId"));
-      if (selectedPackage) {
-        const selectedRef = url.searchParams.get("ref")?.trim() || selectedPackage.source?.ref || "main";
-        const selectedView = url.searchParams.get("view") === "commits"
-          ? "commits"
-          : url.searchParams.get("view") === "code"
-            ? "code"
-            : "overview";
-        const selectedPath = normalizePath(url.searchParams.get("path"));
-        const offset = clampOffset(url.searchParams.get("offset"));
-        repoRefs = await kernel.request("pkg.repo.refs", { packageId: selectedPackage.packageId });
-        if (selectedView === "commits") {
-          repoState = {
-            offset,
-            log: await kernel.request("pkg.repo.log", {
-              packageId: selectedPackage.packageId,
-              ref: selectedRef,
-              limit: COMMIT_PAGE_SIZE,
-              offset,
-            }),
-            recentLog: { entries: [] },
-            read: { kind: "tree", entries: [] },
-          };
-        } else if (selectedView === "code") {
-          const read = await kernel.request("pkg.repo.read", {
-            packageId: selectedPackage.packageId,
-            ref: selectedRef,
-            path: selectedPath,
-          });
-          repoState = {
-            offset,
-            log: { entries: [] },
-            recentLog: read.kind === "tree"
-              ? await kernel.request("pkg.repo.log", {
-                  packageId: selectedPackage.packageId,
-                  ref: selectedRef,
-                  limit: 8,
-                  offset: 0,
-                })
-              : { entries: [] },
-            read,
-          };
-        }
+      const form = await request.formData();
+      const action = String(form.get("action") ?? "").trim();
+      if (action === "add") {
+        importSource = String(form.get("source") ?? "").trim();
+        importRef = String(form.get("ref") ?? "").trim() || "main";
+        importSubdir = String(form.get("subdir") ?? "").trim() || ".";
+        const source = parseImportSource(importSource);
+        const result = await kernel.request("pkg.add", {
+          remoteUrl: source.remoteUrl || undefined,
+          repo: source.repo || undefined,
+          ref: importRef,
+          subdir: importSubdir,
+          enable: form.get("enable") === "on",
+        });
+        selectedPackageId = result.package.packageId;
+        statusText = `Imported ${result.package.name} from ${result.imported.repo}`;
+      } else if (action === "install") {
+        const result = await kernel.request("pkg.install", {
+          packageId: String(form.get("packageId") ?? "").trim(),
+        });
+        selectedPackageId = result.package.packageId;
+        statusText = `Enabled ${result.package.name}`;
+      } else if (action === "remove") {
+        const result = await kernel.request("pkg.remove", {
+          packageId: String(form.get("packageId") ?? "").trim(),
+        });
+        selectedPackageId = result.package.packageId;
+        statusText = `Disabled ${result.package.name}`;
+      } else if (action === "checkout") {
+        const result = await kernel.request("pkg.checkout", {
+          packageId: String(form.get("packageId") ?? "").trim(),
+          ref: String(form.get("ref") ?? "").trim(),
+        });
+        selectedPackageId = result.package.packageId;
+        statusText = `Switched ${result.package.name} to ${result.package.source?.ref ?? "main"}`;
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      loadError = loadError ? `${loadError} ${message}` : message;
+      errorText = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  let packages = [];
+  try {
+    const result = await kernel.request("pkg.list", {});
+    packages = Array.isArray(result?.packages) ? result.packages : [];
+  } catch (error) {
+    errorText = errorText || (error instanceof Error ? error.message : String(error));
+  }
+
+  const selectedPkg = pickSelectedPackage(packages, selectedPackageId);
+  const view = ["overview", "code", "commits"].includes(url.searchParams.get("view") ?? "")
+    ? url.searchParams.get("view")
+    : "overview";
+  const browseRef = url.searchParams.get("ref")?.trim() || selectedPkg?.source?.ref || "main";
+  const path = normalizePath(url.searchParams.get("path") ?? "");
+  const offset = clampOffset(url.searchParams.get("offset"));
+
+  let refs = { heads: {}, tags: {} };
+  let readResult = null;
+  let logResult = { entries: [] };
+
+  if (selectedPkg) {
+    try {
+      refs = await kernel.request("pkg.repo.refs", { packageId: selectedPkg.packageId });
+    } catch (error) {
+      errorText = errorText || (error instanceof Error ? error.message : String(error));
     }
 
-    const selectedRef = selectedPackage
-      ? (url.searchParams.get("ref")?.trim() || selectedPackage.source?.ref || repoRefs.activeRef || "main")
-      : "main";
-    const selectedView = url.searchParams.get("view") === "commits"
-      ? "commits"
-      : url.searchParams.get("view") === "code"
-        ? "code"
-        : "overview";
-    const selectedPath = normalizePath(url.searchParams.get("path"));
+    if (view === "code") {
+      try {
+        readResult = await kernel.request("pkg.repo.read", {
+          packageId: selectedPkg.packageId,
+          ref: browseRef,
+          path,
+        });
+      } catch (error) {
+        errorText = errorText || (error instanceof Error ? error.message : String(error));
+        readResult = { kind: "tree", entries: [] };
+      }
+    }
 
-    return new Response(renderPage({
-      packages,
-      selectedPackage,
-      selectedRef,
-      selectedView,
-      selectedPath,
-      statusText,
-      loadError,
-      routeBase: linkRouteBase,
-      repoRefs,
-      repoState,
-    }), {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
+    if (view === "commits") {
+      try {
+        logResult = await kernel.request("pkg.repo.log", {
+          packageId: selectedPkg.packageId,
+          ref: browseRef,
+          limit: COMMIT_PAGE_SIZE,
+          offset,
+        });
+      } catch (error) {
+        errorText = errorText || (error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
+  return new Response(renderPage({
+    routeBase,
+    packages,
+    selectedPkg,
+    view,
+    browseRef,
+    path,
+    refs,
+    readResult,
+    logResult,
+    offset,
+    statusText,
+    errorText,
+    importSource,
+    importRef,
+    importSubdir,
+  }), {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
 }
 
 export default { fetch: handleFetch };
