@@ -1008,6 +1008,10 @@ function openCompanion(appId) {
   }
   try {
     if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: OPEN_APP_EVENT,
+        detail: { appId, threadContext: activeThreadContext },
+      }, window.location.origin);
       window.parent.dispatchEvent(new CustomEvent(OPEN_APP_EVENT, {
         detail: { appId, threadContext: activeThreadContext },
       }));

@@ -89,12 +89,12 @@ export async function handleAiConfig(
   const provider =
     config.get(`users/${uid}/ai/provider`) ??
     config.get("config/ai/provider") ??
-    "anthropic";
+    "workers-ai";
 
   const model =
     config.get(`users/${uid}/ai/model`) ??
     config.get("config/ai/model") ??
-    "claude-sonnet-4-20250514";
+    "@cf/nvidia/nemotron-3-120b-a12b";
 
   const apiKey =
     config.get(`users/${uid}/ai/api_key`) ??
