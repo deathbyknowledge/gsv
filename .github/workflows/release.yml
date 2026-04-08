@@ -164,15 +164,15 @@ jobs:
 
           (
             cd gateway
-            npx wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/gateway/worker"
+            npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/gateway/worker"
           )
           (
             cd channels/whatsapp
-            npx wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/worker"
+            npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/worker"
           )
           (
             cd channels/discord
-            npx wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/worker"
+            npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/worker"
           )
 
       - name: Assemble deployable bundles
