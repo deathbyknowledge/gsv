@@ -188,6 +188,30 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     openApp(appId);
   };
 
+  const onWindowMessage = (event: MessageEvent): void => {
+    if (event.origin !== window.location.origin) {
+      return;
+    }
+
+    const data = event.data as { type?: unknown; detail?: unknown } | null;
+    if (!data || typeof data !== "object" || typeof data.type !== "string") {
+      return;
+    }
+
+    if (data.type === OPEN_APP_EVENT) {
+      onOpenApp({
+        detail: data.detail as OpenAppEventDetail | null,
+      } as Event & { detail?: OpenAppEventDetail | null });
+      return;
+    }
+
+    if (data.type === OPEN_CHAT_PROCESS_EVENT) {
+      onOpenChatProcess({
+        detail: data.detail as { pid?: unknown; workspaceId?: unknown; cwd?: unknown } | null,
+      } as Event & { detail?: { pid?: unknown; workspaceId?: unknown; cwd?: unknown } | null });
+    }
+  };
+
   iconsNode.addEventListener("click", onIconClick);
   iconsNode.addEventListener("dblclick", onIconDoubleClick);
   iconsNode.addEventListener("keydown", onIconKeyDown);
@@ -195,6 +219,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
 
   window.addEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
   window.addEventListener(OPEN_APP_EVENT, onOpenApp as EventListener);
+  window.addEventListener("message", onWindowMessage);
 
   const unsubscribe = windowManager.subscribe((summaries) => {
     latestSummaries = summaries;
@@ -225,6 +250,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       iconsNode.removeEventListener("focusin", onIconFocus as EventListener);
       window.removeEventListener(OPEN_CHAT_PROCESS_EVENT, onOpenChatProcess as EventListener);
       window.removeEventListener(OPEN_APP_EVENT, onOpenApp as EventListener);
+      window.removeEventListener("message", onWindowMessage);
     },
   };
 }
