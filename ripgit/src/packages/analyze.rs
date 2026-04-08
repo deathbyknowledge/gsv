@@ -1068,7 +1068,7 @@ mod tests {
             repo: "system/gsv".to_string(),
             requested_ref: "main".to_string(),
             resolved_commit: "abc123".to_string(),
-            subdir: "gateway-os/packages/doctor".to_string(),
+            subdir: "gateway/packages/doctor".to_string(),
         }
     }
 
@@ -1076,8 +1076,8 @@ mod tests {
     fn normalize_subdir_rejects_parent_segments() {
         assert!(normalize_subdir("../bad").is_err());
         assert_eq!(
-            normalize_subdir("./gateway-os//packages/doctor").unwrap(),
-            "gateway-os/packages/doctor"
+            normalize_subdir("./gateway//packages/doctor").unwrap(),
+            "gateway/packages/doctor"
         );
     }
 

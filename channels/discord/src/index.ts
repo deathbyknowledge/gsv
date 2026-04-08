@@ -53,7 +53,7 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
   };
 
   /**
-   * Canonical adapter lifecycle entrypoint used by gateway-os.
+   * Canonical adapter lifecycle entrypoint used by gateway.
    */
   async connect(accountId: string, config: Record<string, unknown> = {}): Promise<
     | { ok: true; connected: boolean; authenticated: boolean; message?: string }
@@ -72,7 +72,7 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
   }
 
   /**
-   * Canonical adapter lifecycle entrypoint used by gateway-os.
+   * Canonical adapter lifecycle entrypoint used by gateway.
    */
   async disconnect(accountId: string): Promise<
     | { ok: true; message?: string }

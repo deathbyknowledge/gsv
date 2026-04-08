@@ -66,7 +66,7 @@ Now GSV can run bash commands, read/write files, and search code on your laptop.
 
 ### Channels
 
-Channel command groups are being redesigned for `gateway-os`.
+Channel command groups are being redesigned for `gateway`.
 For now, deploy channel workers with `gsv deploy up -c ...` and configure behavior through `gsv config`.
 
 > [!NOTE]

@@ -3,7 +3,7 @@ import type {
   SysBootstrapResult,
   SysSetupArgs,
   SysSetupResult,
-} from "../../gateway-os/src/syscalls/system";
+} from "../../gateway/src/syscalls/system";
 
 type GatewayErrorShape = {
   code: number;

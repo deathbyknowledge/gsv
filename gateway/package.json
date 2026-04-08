@@ -4,19 +4,12 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"deploy": "bun alchemy/cli.ts",
-		"deploy:up": "bun alchemy/cli.ts up",
-		"deploy:wizard": "bun alchemy/cli.ts wizard",
-		"deploy:destroy": "bun alchemy/cli.ts destroy",
-		"deploy:status": "bun alchemy/cli.ts status",
-		"deploy:wrangler": "wrangler deploy",
+		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"cf-typegen": "wrangler types",
 		"test": "vitest",
-		"test:run": "vitest run",
-		"test:e2e": "bun test --max-concurrency 1 alchemy/e2e/ ",
-		"test:e2e:concurrent": "bun test --concurrent --max-concurrency 8 alchemy/e2e/ "
+		"test:run": "vitest run"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.34",
@@ -28,9 +21,8 @@
 		"wrangler": "^4.61.1"
 	},
 	"dependencies": {
-		"@clack/prompts": "^1.0.0",
-		"@mariozechner/pi-ai": "^0.54.0",
-		"picocolors": "^1.1.1",
-		"ws": "^8.19.0"
+		"@mariozechner/pi-ai": "^0.64.0",
+		"agents": "^0.7.5",
+		"just-bash": "^2.12.6"
 	}
 }

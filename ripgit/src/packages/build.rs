@@ -2114,7 +2114,7 @@ mod tests {
             repo: "system/gsv".to_string(),
             requested_ref: "main".to_string(),
             resolved_commit: "abc123".to_string(),
-            subdir: "gateway-os/packages/example".to_string(),
+            subdir: "gateway/packages/example".to_string(),
         }
     }
 
@@ -2135,11 +2135,11 @@ mod tests {
 
         let repo_files = BTreeMap::from([
             (
-                "gateway-os/packages/example/package.json".to_string(),
+                "gateway/packages/example/package.json".to_string(),
                 r#"{ "name": "@gsv/example", "version": "0.1.0" }"#.to_string(),
             ),
             (
-                "gateway-os/packages/example/src/package.ts".to_string(),
+                "gateway/packages/example/src/package.ts".to_string(),
                 r#"
                   import { definePackage } from "@gsv/package/worker";
                   import { value } from "./util";
@@ -2151,7 +2151,7 @@ mod tests {
                 .to_string(),
             ),
             (
-                "gateway-os/packages/example/src/util.ts".to_string(),
+                "gateway/packages/example/src/util.ts".to_string(),
                 "export const value: string = \"Example\";".to_string(),
             ),
             (
@@ -2196,11 +2196,11 @@ mod tests {
 
         let repo_files = BTreeMap::from([
             (
-                "gateway-os/packages/example/package.json".to_string(),
+                "gateway/packages/example/package.json".to_string(),
                 r#"{ "name": "@gsv/example", "version": "0.1.0" }"#.to_string(),
             ),
             (
-                "gateway-os/packages/example/src/package.ts".to_string(),
+                "gateway/packages/example/src/package.ts".to_string(),
                 "import { definePackage } from \"@gsv/package/worker\"; export default definePackage({ meta: { displayName: \"Example\" } });".to_string(),
             ),
             (
@@ -2345,20 +2345,20 @@ mod tests {
 
         install_materialized_dependency(
             &mut repo_files,
-            "gateway-os/packages/example",
+            "gateway/packages/example",
             "node_modules/left-pad",
             &dep_files,
         );
 
         assert_eq!(
             repo_files
-                .get("gateway-os/packages/example/node_modules/left-pad/package.json")
+                .get("gateway/packages/example/node_modules/left-pad/package.json")
                 .map(String::as_str),
             Some(r#"{ "name": "left-pad" }"#)
         );
         assert_eq!(
             repo_files
-                .get("gateway-os/packages/example/node_modules/left-pad/index.js")
+                .get("gateway/packages/example/node_modules/left-pad/index.js")
                 .map(String::as_str),
             Some("export default 1;")
         );

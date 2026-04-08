@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------
-//  Core frame types — mirrors gateway-os/src/protocol/frames.ts
+//  Core frame types — mirrors gateway/src/protocol/frames.ts
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +51,7 @@ pub struct ErrorShape {
 }
 
 // ---------------------------------------------------------------------------
-//  sys.connect payload — mirrors gateway-os/src/syscalls/system.ts
+//  sys.connect payload — mirrors gateway/src/syscalls/system.ts
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

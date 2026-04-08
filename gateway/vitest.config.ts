@@ -1,8 +1,12 @@
 import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
+import { loadEnv } from "vite";
+
+const env = { ...process.env, ...loadEnv("test", process.cwd(), "") };
 
 export default defineWorkersConfig({
   define: {
-    __PRINT_FULL_PROMPT__: JSON.stringify(process.env.PRINT_FULL_PROMPT === "1"),
+    __PRINT_FULL_PROMPT__: JSON.stringify(env.PRINT_FULL_PROMPT === "1"),
+    __GSV_TEST_OPENAI_KEY__: JSON.stringify(env.GSV_TEST_OPENAI_KEY ?? ""),
   },
   test: {
     // Exclude e2e tests (they use bun:test, not vitest)
@@ -11,12 +15,13 @@ export default defineWorkersConfig({
       optimizer: {
         ssr: {
           include: [
-            // vitest can't seem to properly import
-            // `require('./path/to/anything.json')` files,
-            // which ajv uses (by way of @modelcontextprotocol/sdk)
-            // the workaround is to add the package to the include list
-            "ajv"
-          ]
+            "ajv",
+            "turndown",
+            "@mariozechner/pi-ai",
+          ],
+          esbuildOptions: {
+            external: ["node:sqlite"],
+          },
         }
       }
     },
