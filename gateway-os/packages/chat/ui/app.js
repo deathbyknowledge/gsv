@@ -715,7 +715,9 @@ function renderStatus() {
   const status = client ? client.getStatus() : { state: "disconnected", message: hostError || "HOST unavailable" };
   currentUsername = typeof status.username === "string" && status.username.trim() ? status.username.trim() : null;
   if (elements.connectionPill) {
-    elements.connectionPill.textContent = status.state;
+    elements.connectionPill.textContent = "";
+    elements.connectionPill.title = status.state;
+    elements.connectionPill.setAttribute("aria-label", status.state);
     elements.connectionPill.className = 'pill is-' + status.state;
   }
   if (elements.composeStatus) {

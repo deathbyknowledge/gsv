@@ -11,16 +11,16 @@
       :root {
         color-scheme: light;
         --page: #eef3f7;
-        --surface: rgba(247, 249, 252, 0.88);
-        --surface-strong: rgba(255, 255, 255, 0.94);
-        --surface-soft: rgba(232, 238, 243, 0.92);
+        --surface: rgba(247, 249, 252, 0.96);
+        --surface-strong: rgba(255, 255, 255, 0.92);
+        --surface-soft: rgba(236, 241, 247, 0.96);
         --text: #191c1e;
         --text-muted: rgba(25, 28, 30, 0.62);
         --text-soft: rgba(25, 28, 30, 0.46);
         --primary: #003466;
         --primary-soft: #1a4b84;
-        --accent: #904b36;
-        --shadow: 0 20px 40px rgba(25, 28, 30, 0.06), 0 10px 14px rgba(25, 28, 30, 0.04);
+        --accent: #4d6388;
+        --shadow: 0 14px 28px rgba(25, 28, 30, 0.04), 0 4px 10px rgba(25, 28, 30, 0.03);
         --line: rgba(25, 28, 30, 0.08);
         --display: "Space Grotesk", "Avenir Next", sans-serif;
         --ui: "Manrope", "Segoe UI", sans-serif;
@@ -33,7 +33,7 @@
         font: 14px/1.55 var(--ui);
         color: var(--text);
         background:
-          radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0) 34%),
+          radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0) 34%),
           linear-gradient(180deg, #f4f7fa 0%, var(--page) 100%);
       }
       button,
@@ -43,170 +43,160 @@
       .chat-shell {
         min-height: 100vh;
         display: grid;
-        grid-template-columns: 300px minmax(0, 1fr);
-        gap: 18px;
-        padding: 18px;
-      }
-      .rail,
-      .stage {
-        min-width: 0;
-        border-radius: 22px;
+        grid-template-columns: 260px minmax(0, 1fr);
         background: var(--surface);
-        box-shadow: var(--shadow);
+        border: 1px solid rgba(25, 28, 30, 0.06);
       }
       .rail {
         display: grid;
-        grid-template-rows: auto 1fr;
+        min-width: 0;
+        grid-template-rows: auto minmax(0, 1fr);
         overflow: hidden;
+        border-right: 1px solid var(--line);
+        background: rgba(243, 247, 251, 0.58);
       }
       .rail-head {
-        padding: 18px 18px 14px;
+        padding: 14px 14px 10px;
         display: grid;
-        gap: 14px;
-      }
-      .eyebrow {
-        margin: 0;
-        color: var(--text-soft);
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
+        gap: 10px;
+        border-bottom: 1px solid var(--line);
       }
       .rail-title {
         margin: 0;
         font-family: var(--display);
-        font-size: 1.75rem;
-        line-height: 0.95;
+        font-size: 1rem;
+        line-height: 1;
         letter-spacing: -0.04em;
-      }
-      .rail-copy {
-        margin: 0;
-        color: var(--text-muted);
       }
       .rail-actions {
         display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
+        gap: 8px;
       }
       .thread-status {
-        min-height: 20px;
         margin: 0;
         color: var(--text-muted);
-        font-size: 13px;
+        font-size: 12px;
       }
       .thread-list {
-        padding: 0 12px 12px;
+        padding: 6px 0 8px;
         display: grid;
-        gap: 10px;
+        gap: 0;
         align-content: start;
         overflow: auto;
       }
       .thread-card {
         width: 100%;
         border: 0;
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.72);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+        border-radius: 0;
+        background: transparent;
         color: inherit;
-        padding: 14px;
+        padding: 11px 14px;
         text-align: left;
         cursor: pointer;
-        transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+        border-bottom: 1px solid rgba(25, 28, 30, 0.05);
+        transition: background-color 120ms ease, color 120ms ease;
       }
       .thread-card:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 12px 22px rgba(25, 28, 30, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+        background: rgba(255, 255, 255, 0.54);
       }
       .thread-card.is-active {
-        background: rgba(235, 242, 248, 0.96);
-        box-shadow: 0 16px 28px rgba(25, 28, 30, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+        background: rgba(223, 231, 243, 0.88);
       }
       .thread-title {
         display: block;
         font-weight: 700;
-        font-size: 0.96rem;
+        font-size: 0.92rem;
       }
       .thread-meta {
         display: block;
-        margin-top: 5px;
+        margin-top: 3px;
         color: var(--text-muted);
         font-size: 12px;
       }
       .stage {
         display: grid;
         grid-template-rows: auto minmax(0, 1fr) auto;
+        min-width: 0;
         overflow: hidden;
       }
       .stage-head {
-        padding: 20px 22px 18px;
+        min-height: 44px;
+        padding: 8px 14px;
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         justify-content: space-between;
-        gap: 16px;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(248, 250, 253, 0.72);
       }
       .stage-title-wrap {
         min-width: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
       }
       .stage-title {
         margin: 0;
-        font-family: var(--display);
-        font-size: 2rem;
-        line-height: 0.95;
-        letter-spacing: -0.04em;
+        font-family: var(--ui);
+        font-size: 0.96rem;
+        line-height: 1;
+        letter-spacing: 0;
+        font-weight: 700;
       }
       .stage-meta {
-        margin: 8px 0 0;
+        margin: 0;
         color: var(--text-muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .stage-actions {
         display: flex;
         align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
+        gap: 8px;
         justify-content: flex-end;
       }
       .pill {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        padding: 5px 10px;
+        justify-content: center;
+        width: 10px;
+        height: 10px;
         border-radius: 999px;
         background: rgba(232, 238, 243, 0.92);
-        color: var(--text-muted);
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
+        color: transparent;
+        font-size: 0;
+        flex: 0 0 auto;
       }
       .pill.is-connected { color: #29533e; background: rgba(218, 235, 225, 0.92); }
       .pill.is-connecting { color: #785400; background: rgba(255, 241, 200, 0.92); }
       .pill.is-disconnected { color: #7a3030; background: rgba(255, 226, 226, 0.92); }
       .stage-body {
         min-height: 0;
-        padding: 0 22px 20px;
+        padding: 0;
       }
       .transcript {
         min-height: 100%;
         height: 100%;
-        border-radius: 20px;
-        background: var(--surface-soft);
-        padding: 16px;
+        background: transparent;
+        padding: 14px;
         display: grid;
-        gap: 12px;
+        gap: 10px;
         align-content: start;
         overflow: auto;
       }
       .message {
         max-width: min(88%, 760px);
         align-self: start;
-        border-radius: 18px;
-        padding: 12px 14px;
+        border-radius: 12px;
+        padding: 10px 12px;
         background: rgba(255, 255, 255, 0.78);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(25, 28, 30, 0.05);
       }
       .message-user {
         justify-self: end;
-        background: linear-gradient(180deg, rgba(0, 52, 102, 0.12) 0%, rgba(26, 75, 132, 0.09) 100%), rgba(255, 255, 255, 0.78);
+        background: linear-gradient(180deg, rgba(0, 52, 102, 0.08) 0%, rgba(26, 75, 132, 0.06) 100%), rgba(255, 255, 255, 0.82);
       }
       .message-assistant {
         justify-self: start;
@@ -214,7 +204,7 @@
       .message-system {
         justify-self: center;
         max-width: min(94%, 760px);
-        background: rgba(255, 255, 255, 0.56);
+        background: rgba(248, 250, 253, 0.68);
       }
       .message-head {
         display: flex;
@@ -239,10 +229,10 @@
         justify-self: start;
         align-self: start;
         width: min(92%, 760px);
-        border-radius: 18px;
-        padding: 14px;
+        border-radius: 12px;
+        padding: 12px;
         background: rgba(255, 255, 255, 0.72);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(25, 28, 30, 0.05);
       }
       .tool-card.is-pending {
         background: rgba(245, 247, 250, 0.92);
@@ -273,7 +263,7 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 5px 9px;
+        padding: 4px 8px;
         border-radius: 999px;
         font-size: 10px;
         font-weight: 800;
@@ -313,9 +303,9 @@
       .tool-preview-pre,
       .tool-details pre {
         margin: 0;
-        padding: 12px;
-        border-radius: 12px;
-        background: rgba(232, 238, 243, 0.82);
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: rgba(236, 241, 247, 0.92);
         color: var(--text);
         white-space: pre-wrap;
         word-break: break-word;
@@ -358,63 +348,59 @@
         text-align: right;
       }
       .composer-wrap {
-        padding: 0 22px 22px;
+        padding: 0;
+        border-top: 1px solid var(--line);
+        background: rgba(248, 250, 253, 0.82);
       }
       .composer {
-        border-radius: 20px;
-        background: rgba(255, 255, 255, 0.84);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
-        padding: 16px;
+        padding: 10px 14px 12px;
         display: grid;
-        gap: 12px;
+        gap: 8px;
       }
       .composer-field {
         width: 100%;
-        min-height: 104px;
+        min-height: 88px;
         resize: vertical;
-        border: 0;
-        border-radius: 14px;
-        background: rgba(232, 238, 243, 0.78);
+        border: 1px solid rgba(25, 28, 30, 0.08);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.9);
         color: var(--text);
-        padding: 14px;
+        padding: 12px;
         outline: none;
       }
       .composer-field:focus {
-        box-shadow: inset 3px 0 0 rgba(0, 52, 102, 0.45);
+        border-color: rgba(0, 52, 102, 0.42);
       }
       .composer-foot {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 14px;
+        gap: 10px;
         flex-wrap: wrap;
       }
       .composer-note {
         margin: 0;
         color: var(--text-muted);
+        font-size: 12px;
       }
       .btn {
-        border: 0;
-        border-radius: 10px;
-        padding: 10px 14px;
+        border: 1px solid rgba(25, 28, 30, 0.08);
+        border-radius: 8px;
+        padding: 8px 11px;
         cursor: pointer;
         font-weight: 700;
-        transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+        background-color: transparent;
       }
-      .btn:hover { transform: translateY(-1px); }
-      .btn:disabled { opacity: 0.45; cursor: default; transform: none; }
+      .btn:disabled { opacity: 0.45; cursor: default; }
       .btn-quiet {
-        background: rgba(232, 238, 243, 0.92);
+        background: rgba(255, 255, 255, 0.62);
         color: var(--text);
       }
-      .btn-quiet:hover { background: rgba(225, 233, 239, 1); }
+      .btn-quiet:hover { background: rgba(255, 255, 255, 0.9); }
       .btn-primary {
         color: #f7fbff;
-        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-soft) 100%);
-        box-shadow: 0 12px 24px rgba(0, 52, 102, 0.2);
-      }
-      .btn-primary:hover {
-        box-shadow: 0 14px 26px rgba(0, 52, 102, 0.24);
+        background: var(--primary);
+        border-color: transparent;
       }
       .mono {
         font-family: var(--mono);
@@ -422,7 +408,6 @@
       @media (max-width: 920px) {
         .chat-shell {
           grid-template-columns: 1fr;
-          padding: 12px;
         }
         .stage-head,
         .composer-foot {
@@ -432,6 +417,10 @@
         .stage-actions {
           justify-content: flex-start;
         }
+        .rail {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
       }
     </style>
   </head>
@@ -440,12 +429,10 @@
       <aside class="rail">
         <div class="rail-head">
           <div>
-            <p class="eyebrow">Workspace threads</p>
-            <h1 class="rail-title">Conversations</h1>
-            <p class="rail-copy">Pick up where you left off or start a new thread.</p>
+            <h1 class="rail-title">Chats</h1>
           </div>
           <div class="rail-actions">
-            <button type="button" class="btn btn-quiet" id="new-thread">New thread</button>
+            <button type="button" class="btn btn-quiet" id="new-thread">New</button>
             <button type="button" class="btn btn-quiet" id="refresh-threads">Refresh</button>
           </div>
           <p class="thread-status" id="thread-status"></p>
@@ -462,7 +449,7 @@
           <div class="stage-actions">
             <button type="button" class="btn btn-quiet" id="open-files">Files</button>
             <button type="button" class="btn btn-quiet" id="open-shell">Shell</button>
-            <span class="pill is-connecting" id="connection-pill">connecting</span>
+            <span class="pill is-connecting" id="connection-pill" title="connecting" aria-label="connecting"></span>
           </div>
         </header>
 

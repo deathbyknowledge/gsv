@@ -5,10 +5,10 @@ export default definePackage({
     displayName: "Chat",
     description: "Conversational workspace with agents.",
     window: {
-      width: 880,
-      height: 640,
-      minWidth: 620,
-      minHeight: 420,
+      width: 1080,
+      height: 760,
+      minWidth: 760,
+      minHeight: 520,
     },
     capabilities: {
       kernel: ["proc.spawn", "proc.send", "proc.history", "sys.workspace.list"],
