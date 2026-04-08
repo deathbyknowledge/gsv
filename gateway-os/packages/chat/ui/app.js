@@ -1,6 +1,3 @@
-import { marked } from "marked";
-import DOMPurify from "dompurify";
-
 const PAGE_PATHNAME = window.location.pathname;
 const ROUTE_BASE = PAGE_PATHNAME.endsWith("/index.html")
   ? PAGE_PATHNAME.slice(0, -"/index.html".length)
@@ -43,12 +40,17 @@ function formatMessageContent(value) {
 
 function renderMarkdownHtml(value) {
   const source = String(value ?? "");
-  const html = marked.parse(source, {
+  const markedApi = window.marked;
+  const purifier = window.DOMPurify;
+  if (!markedApi || typeof markedApi.parse !== "function" || !purifier || typeof purifier.sanitize !== "function") {
+    return escapeHtmlClient(source);
+  }
+  const html = markedApi.parse(source, {
     async: false,
     breaks: true,
     gfm: true,
   });
-  return DOMPurify.sanitize(typeof html === "string" ? html : String(html));
+  return purifier.sanitize(typeof html === "string" ? html : String(html));
 }
 
 function normalizeTimestampMs(value) {

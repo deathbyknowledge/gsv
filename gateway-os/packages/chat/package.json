@@ -3,8 +3,6 @@
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
-    "@gsv/package": "workspace:*",
-    "dompurify": "^3.2.7",
-    "marked": "^16.4.0"
+    "@gsv/package": "workspace:*"
   }
 }
