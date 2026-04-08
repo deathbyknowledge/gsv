@@ -696,10 +696,10 @@ async function resolvePackageFromRipgitNativeBuild(
       syscalls: kernelSyscalls,
       windowDefaults: analysis.definition.meta.window
         ? {
-            width: analysis.definition.meta.window.width ?? 920,
-            height: analysis.definition.meta.window.height ?? 620,
-            minWidth: analysis.definition.meta.window.min_width ?? 700,
-            minHeight: analysis.definition.meta.window.min_height ?? 460,
+            width: analysis.definition.meta.window.width ?? 1040,
+            height: analysis.definition.meta.window.height ?? 720,
+            minWidth: analysis.definition.meta.window.min_width ?? 760,
+            minHeight: analysis.definition.meta.window.min_height ?? 520,
           }
         : undefined,
     }] : []),
