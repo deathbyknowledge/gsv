@@ -35,15 +35,15 @@ mkdir -p "${DIST_DIR}/channel-discord/worker"
 
 (
   cd "${ROOT_DIR}/gateway"
-  npx wrangler deploy --dry-run --outdir "${DIST_DIR}/gateway/worker"
+  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/gateway/worker"
 )
 (
   cd "${ROOT_DIR}/channels/whatsapp"
-  npx wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-whatsapp/worker"
+  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-whatsapp/worker"
 )
 (
   cd "${ROOT_DIR}/channels/discord"
-  npx wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-discord/worker"
+  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-discord/worker"
 )
 
 echo "==> Assembling component metadata"
