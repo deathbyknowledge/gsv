@@ -71,7 +71,7 @@ export async function handlePkgAdd(
 ): Promise<PkgAddResult> {
   const upstream = resolveUpstream(args);
   const repo = resolveImportRepo(ctx, upstream);
-  const ref = "main";
+  const ref = upstream.ref;
   const subdir = normalizeRepoPath(args.subdir) || ".";
   const ripgit = requireRipgitClient(ctx);
   const actorName = requireIdentity(ctx).process.username;
@@ -91,7 +91,11 @@ export async function handlePkgAdd(
   });
   const packageId = packageIdForSource(resolved.manifest);
   const existing = ctx.packages.get(packageId);
-  const enabled = typeof args.enable === "boolean" ? args.enable : existing?.enabled ?? true;
+  const isSystemSource = resolved.manifest.source.repo === "system/gsv";
+  const requestedEnable = typeof args.enable === "boolean" ? args.enable : undefined;
+  const enabled = isSystemSource
+    ? (requestedEnable ?? existing?.enabled ?? true)
+    : (existing?.enabled ?? false);
   const grants = grantsForManifest(resolved.manifest);
   const updated = ctx.packages.install({
     packageId,

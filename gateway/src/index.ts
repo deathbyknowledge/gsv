@@ -331,7 +331,7 @@ async function buildGitProxyRequest(
   };
 
   if (request.method !== "GET" && request.method !== "HEAD") {
-    init.body = await request.arrayBuffer();
+    init.body = request.body;
   }
 
   return new Request(targetUrl.toString(), init);
