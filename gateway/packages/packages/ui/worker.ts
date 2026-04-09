@@ -60,6 +60,11 @@ function pickSelectedPackage(packages, selectedPackageId) {
   return packages.find((pkg) => pkg.name === "packages") ?? packages[0];
 }
 
+function isThirdPartyPackage(pkg) {
+  const repo = String(pkg?.source?.repo ?? "").trim();
+  return repo !== "" && repo !== "system/gsv";
+}
+
 function parseImportSource(raw) {
   const trimmed = String(raw ?? "").trim();
   if (!trimmed) {
@@ -89,13 +94,16 @@ function renderSidebar(routeBase, packages, selectedPackageId) {
   return packages.map((pkg) => {
     const selected = pkg.packageId === selectedPackageId;
     const href = packageHref(routeBase, pkg, "overview");
-    const dotClass = pkg.enabled ? "is-enabled" : "is-disabled";
+    const dotClass = pkg.enabled ? "is-enabled" : (isThirdPartyPackage(pkg) ? "is-review" : "is-disabled");
+    const secondary = !pkg.enabled && isThirdPartyPackage(pkg)
+      ? "Review required"
+      : (pkg.source?.repo ?? "unknown");
     return `
       <a class="packages-nav-item ${selected ? "is-selected" : ""}" href="${escapeHtml(href)}">
         <span class="packages-nav-dot ${dotClass}" aria-hidden="true"></span>
         <span class="packages-nav-main">
           <strong>${escapeHtml(pkg.name)}</strong>
-          <span>${escapeHtml(pkg.source?.repo ?? "unknown")}</span>
+          <span>${escapeHtml(secondary)}</span>
         </span>
         <span class="packages-nav-ref">${escapeHtml(pkg.source?.ref ?? "main")}</span>
       </a>`;
@@ -119,12 +127,9 @@ function renderImportRail(statusText, errorText, sourceValue, refValue, subdirVa
           <span>Subdir</span>
           <input type="text" name="subdir" value="${escapeHtml(subdirValue)}" placeholder="." spellcheck="false" />
         </label>
-        <label class="packages-check">
-          <input type="checkbox" name="enable" checked />
-          <span>Enable</span>
-        </label>
         <button type="submit" class="packages-icon-btn" title="Import package" aria-label="Import package">＋</button>
       </form>
+      <p class="packages-rail-note">Imported third-party packages stay disabled until you review their code and capabilities.</p>
       ${statusText ? `<p class="packages-status">${escapeHtml(statusText)}</p>` : ""}
       ${errorText ? `<p class="packages-status is-error">${escapeHtml(errorText)}</p>` : ""}
     </section>`;
@@ -150,7 +155,7 @@ function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
       <form method="post">
         <input type="hidden" name="action" value="install" />
         <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
-        <button type="submit" class="packages-icon-btn" title="Enable package" aria-label="Enable package">▶</button>
+        <button type="submit" class="packages-icon-btn" title="Enable package after review" aria-label="Enable package after review">▶</button>
       </form>`;
 
   const checkoutAction = currentRef !== (pkg.source?.ref ?? "main")
@@ -203,8 +208,22 @@ function renderOverview(pkg, refs) {
   const resolvedCommit = pkg.source?.resolvedCommit ?? "Not resolved";
   const heads = Object.keys(refs?.heads ?? {}).sort();
   const tags = Object.keys(refs?.tags ?? {}).sort();
+  const bindings = Array.isArray(pkg.bindingNames) ? pkg.bindingNames : [];
+  const reviewBanner = isThirdPartyPackage(pkg) && !pkg.enabled
+    ? `
+      <section class="packages-review-banner">
+        <strong>Review required before enable</strong>
+        <p>This package was imported from a third-party source. Inspect its capabilities, code, and commit history before enabling it.</p>
+        <ul class="packages-review-list">
+          <li>Read the declared bindings below.</li>
+          <li>Browse the code and recent commits.</li>
+          <li>Only enable it once you trust the source.</li>
+        </ul>
+      </section>`
+    : "";
   return `
     <section class="packages-workspace">
+      ${reviewBanner}
       <section class="packages-meta-grid">
         <article>
           <span>Source</span>
@@ -222,6 +241,12 @@ function renderOverview(pkg, refs) {
           <span>Version</span>
           <strong>${escapeHtml(pkg.version ?? "0.0.0")}</strong>
         </article>
+      </section>
+      <section class="packages-section">
+        <h2>Granted bindings</h2>
+        <div class="packages-chip-grid">
+          ${bindings.map((binding) => `<span class="packages-chip">${escapeHtml(binding)}</span>`).join("") || '<span class="packages-chip">No bindings</span>'}
+        </div>
       </section>
       <section class="packages-section">
         <h2>Entrypoints</h2>
@@ -403,23 +428,29 @@ function renderPage(state) {
       }
       .packages-import-form {
         display: grid;
-        grid-template-columns: minmax(260px, 1.8fr) minmax(110px, 0.4fr) minmax(120px, 0.5fr) auto auto;
+        grid-template-columns: minmax(260px, 1.8fr) minmax(110px, 0.4fr) minmax(120px, 0.5fr) auto;
         gap: 8px;
         align-items: end;
       }
       .packages-import-form label,
-      .packages-ref-form,
-      .packages-check {
+      .packages-ref-form {
         display: grid;
         gap: 4px;
       }
       .packages-import-form span,
-      .packages-check span {
+      .packages-rail-note {
         font-size: 10px;
         font-weight: 700;
         letter-spacing: 0.12em;
         text-transform: uppercase;
         color: var(--muted);
+      }
+      .packages-rail-note {
+        margin: 0;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0;
+        text-transform: none;
       }
       .packages-import-form input,
       .packages-ref-form select {
@@ -437,17 +468,6 @@ function renderPage(state) {
       .packages-ref-form select:focus {
         border-color: rgba(26, 75, 132, 0.24);
         background: rgba(255, 255, 255, 0.96);
-      }
-      .packages-check {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 34px;
-      }
-      .packages-check input {
-        width: 14px;
-        height: 14px;
-        margin: 0;
       }
       .packages-icon-btn {
         display: inline-flex;
@@ -509,6 +529,7 @@ function renderPage(state) {
         background: #98a7b4;
       }
       .packages-nav-dot.is-enabled { background: #5f8a73; }
+      .packages-nav-dot.is-review { background: #b38a4d; }
       .packages-nav-dot.is-disabled { background: #b3bcc4; }
       .packages-nav-main {
         min-width: 0;
@@ -632,6 +653,29 @@ function renderPage(state) {
       }
       .packages-section + .packages-section {
         margin-top: 18px;
+      }
+      .packages-review-banner {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 18px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: rgba(233, 239, 246, 0.66);
+      }
+      .packages-review-banner strong {
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--primary);
+      }
+      .packages-review-banner p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .packages-review-list {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--text);
       }
       .packages-section h2 {
         margin: 0 0 10px;
@@ -803,10 +847,11 @@ export async function handleFetch(request, context = {}) {
           repo: source.repo || undefined,
           ref: importRef,
           subdir: importSubdir,
-          enable: form.get("enable") === "on",
         });
         selectedPackageId = result.package.packageId;
-        statusText = `Imported ${result.package.name} from ${result.imported.repo}`;
+        statusText = result.package.enabled
+          ? `Imported and enabled ${result.package.name} from ${result.imported.repo}`
+          : `Imported ${result.package.name} from ${result.imported.repo}. Review it before enabling.`;
       } else if (action === "install") {
         const result = await kernel.request("pkg.install", {
           packageId: String(form.get("packageId") ?? "").trim(),
