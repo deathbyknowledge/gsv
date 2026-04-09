@@ -40,6 +40,38 @@ export type RipgitSearchMatch = {
   content: string;
 };
 
+export type RipgitDiffLine = {
+  tag: "context" | "add" | "delete" | "binary";
+  content: string;
+};
+
+export type RipgitDiffHunk = {
+  old_start: number;
+  old_count: number;
+  new_start: number;
+  new_count: number;
+  lines: RipgitDiffLine[];
+};
+
+export type RipgitDiffFile = {
+  path: string;
+  status: "added" | "deleted" | "modified";
+  old_hash?: string;
+  new_hash?: string;
+  hunks?: RipgitDiffHunk[];
+};
+
+export type RipgitCommitDiffResponse = {
+  commit_hash: string;
+  parent_hash?: string | null;
+  files: RipgitDiffFile[];
+  stats: {
+    files_changed: number;
+    additions: number;
+    deletions: number;
+  };
+};
+
 export type RipgitRefsResponse = {
   heads: Record<string, string>;
   tags: Record<string, string>;
@@ -337,6 +369,25 @@ export class RipgitClient {
     return response.json<RipgitLogEntry[]>();
   }
 
+  async diffCommit(
+    repo: RipgitRepoRef,
+    commit: string,
+    options?: {
+      context?: number;
+    },
+  ): Promise<RipgitCommitDiffResponse> {
+    const response = await this.binding.fetch(
+      this.makeDiffUrl(repo, commit, options?.context),
+      {
+        headers: this.makeInternalHeaders(),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `diff '${repo.owner}/${repo.repo}:${commit}'`));
+    }
+    return response.json<RipgitCommitDiffResponse>();
+  }
+
   async analyzePackage(
     repo: RipgitRepoRef,
     subdir: string,
@@ -408,6 +459,16 @@ export class RipgitClient {
     }
     if (typeof offset === "number" && Number.isFinite(offset)) {
       url.searchParams.set("offset", String(offset));
+    }
+    return url;
+  }
+
+  private makeDiffUrl(repo: RipgitRepoRef, commit: string, context?: number): URL {
+    const url = this.makeUrl(
+      `/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/diff/${encodeURIComponent(commit)}`,
+    );
+    if (typeof context === "number" && Number.isFinite(context)) {
+      url.searchParams.set("context", String(context));
     }
     return url;
   }

@@ -45,6 +45,10 @@ import type {
   PkgRepoReadResult,
   PkgRepoRefsArgs,
   PkgRepoRefsResult,
+  PkgRepoSearchArgs,
+  PkgRepoSearchResult,
+  PkgRepoDiffArgs,
+  PkgRepoDiffResult,
   PkgRemoteAddArgs,
   PkgRemoteAddResult,
   PkgRemoteListArgs,
@@ -157,6 +161,8 @@ export type SyscallDomains = {
   "pkg.repo.refs": { args: PkgRepoRefsArgs; result: PkgRepoRefsResult };
   "pkg.repo.read": { args: PkgRepoReadArgs; result: PkgRepoReadResult };
   "pkg.repo.log": { args: PkgRepoLogArgs; result: PkgRepoLogResult };
+  "pkg.repo.search": { args: PkgRepoSearchArgs; result: PkgRepoSearchResult };
+  "pkg.repo.diff": { args: PkgRepoDiffArgs; result: PkgRepoDiffResult };
   "pkg.remote.list": { args: PkgRemoteListArgs; result: PkgRemoteListResult };
   "pkg.remote.add": { args: PkgRemoteAddArgs; result: PkgRemoteAddResult };
   "pkg.remote.remove": { args: PkgRemoteRemoveArgs; result: PkgRemoteRemoveResult };

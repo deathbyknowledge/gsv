@@ -23,6 +23,8 @@ export default definePackage({
         "pkg.repo.refs",
         "pkg.repo.read",
         "pkg.repo.log",
+        "pkg.repo.search",
+        "pkg.repo.diff",
         "pkg.remote.list",
         "pkg.remote.add",
         "pkg.remote.remove",

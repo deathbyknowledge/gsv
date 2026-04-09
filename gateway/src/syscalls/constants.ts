@@ -23,6 +23,8 @@ export const PROC_SETIDENTITY = "proc.setidentity";
 export const PKG_REPO_REFS = "pkg.repo.refs";
 export const PKG_REPO_READ = "pkg.repo.read";
 export const PKG_REPO_LOG = "pkg.repo.log";
+export const PKG_REPO_SEARCH = "pkg.repo.search";
+export const PKG_REPO_DIFF = "pkg.repo.diff";
 
 // System
 export const SYS_CONNECT = "sys.connect";

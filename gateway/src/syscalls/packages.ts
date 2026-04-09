@@ -26,6 +26,11 @@ export type PkgEntrypointSummary = {
 
 export type PkgSummary = {
   packageId: string;
+  scope: {
+    kind: "global" | "user" | "workspace";
+    uid?: number;
+    workspaceId?: string;
+  };
   name: string;
   description: string;
   version: string;
@@ -138,6 +143,7 @@ export type PkgRepoReadArgs = {
   packageId: string;
   ref?: string;
   path?: string;
+  root?: "package" | "repo";
 };
 
 export type PkgRepoReadResult =
@@ -187,6 +193,72 @@ export type PkgRepoLogResult = {
   limit: number;
   offset: number;
   entries: PkgRepoLogEntry[];
+};
+
+export type PkgRepoSearchArgs = {
+  packageId: string;
+  ref?: string;
+  query: string;
+  prefix?: string;
+  root?: "package" | "repo";
+};
+
+export type PkgRepoSearchMatch = {
+  path: string;
+  line: number;
+  content: string;
+};
+
+export type PkgRepoSearchResult = {
+  packageId: string;
+  repo: string;
+  ref: string;
+  query: string;
+  prefix?: string;
+  root: "package" | "repo";
+  truncated?: boolean;
+  matches: PkgRepoSearchMatch[];
+};
+
+export type PkgRepoDiffArgs = {
+  packageId: string;
+  commit: string;
+  context?: number;
+};
+
+export type PkgRepoDiffLine = {
+  tag: "context" | "add" | "delete" | "binary";
+  content: string;
+};
+
+export type PkgRepoDiffHunk = {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: PkgRepoDiffLine[];
+};
+
+export type PkgRepoDiffFile = {
+  path: string;
+  status: "added" | "deleted" | "modified";
+  oldHash?: string;
+  newHash?: string;
+  hunks?: PkgRepoDiffHunk[];
+};
+
+export type PkgRepoDiffResult = {
+  packageId: string;
+  repo: string;
+  ref: string;
+  commitHash: string;
+  parentHash?: string | null;
+  stats: {
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+  };
+  files: PkgRepoDiffFile[];
 };
 
 export type PkgRemoteEntry = {
