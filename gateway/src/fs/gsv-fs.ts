@@ -27,6 +27,7 @@ import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "./m
 import { R2MountBackend } from "./backends/r2";
 import { KernelMountBackend } from "./backends/kernel";
 import { isPackageMountPath } from "./backends/packages";
+import { isProcessSourceMountPath } from "./backends/process-sources";
 import { isWorkspaceMountPath } from "./backends/workspace";
 import { normalizePath } from "./utils";
 
@@ -37,6 +38,7 @@ export class GsvFs implements IFileSystem {
   private readonly kernel: KernelRefs | null;
   private readonly r2Backend: MountBackend;
   private readonly kernelBackend: MountBackend;
+  private readonly sourceMountBackend: MountBackend | null;
   private readonly workspaceBackend: MountBackend | null;
   private readonly packageBackend: MountBackend | null;
 
@@ -45,6 +47,7 @@ export class GsvFs implements IFileSystem {
     identity: ProcessIdentity,
     kernel?: KernelRefs,
     selfPid?: string,
+    sourceMountBackend?: MountBackend | null,
     workspaceBackend?: MountBackend | null,
     packageBackend?: MountBackend | null,
   ) {
@@ -52,6 +55,7 @@ export class GsvFs implements IFileSystem {
     this.kernel = kernel ?? null;
     this.r2Backend = new R2MountBackend(bucket, identity);
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
+    this.sourceMountBackend = sourceMountBackend ?? null;
     this.workspaceBackend = workspaceBackend ?? null;
     this.packageBackend = packageBackend ?? null;
   }
@@ -251,6 +255,13 @@ export class GsvFs implements IFileSystem {
   }
 
   private backendForPath(path: string): MountBackend {
+    if (isProcessSourceMountPath(path)) {
+      if (!this.sourceMountBackend) {
+        throw new Error(`ENOSYS: source mount backend is unavailable for '${path}'`);
+      }
+      return this.sourceMountBackend;
+    }
+
     if (isWorkspaceMountPath(path)) {
       if (!this.workspaceBackend) {
         throw new Error(`ENOSYS: workspace backend is unavailable for '${path}'`);
@@ -288,6 +299,10 @@ export class GsvFs implements IFileSystem {
 
     if (this.workspaceBackend) {
       entries.add("workspaces");
+    }
+
+    if (this.sourceMountBackend) {
+      entries.add("src");
     }
 
     if (this.packageBackend) {

@@ -12,6 +12,7 @@ export type {
 } from "./mount";
 export { KernelMountBackend } from "./backends/kernel";
 export { createPackageBackend, isPackageMountPath } from "./backends/packages";
+export { createProcessSourceBackend, isProcessSourceMountPath } from "./backends/process-sources";
 export { R2MountBackend } from "./backends/r2";
 export { RipgitClient } from "./ripgit/client";
 export type {

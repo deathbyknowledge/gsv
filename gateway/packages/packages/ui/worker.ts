@@ -70,7 +70,6 @@ function needsReviewApproval(pkg) {
 }
 
 function buildReviewPrompt(pkg) {
-  const packageId = String(pkg?.packageId ?? "").trim();
   const name = String(pkg?.name ?? "unknown-package").trim();
   const repo = String(pkg?.source?.repo ?? "unknown").trim();
   const ref = String(pkg?.source?.ref ?? "main").trim();
@@ -85,17 +84,18 @@ function buildReviewPrompt(pkg) {
   return [
     `Review the imported package "${name}".`,
     "",
-    `Exact packageId: ${packageId}`,
+    "The package source is mounted read-only at /src/package.",
+    "The full repository is mounted read-only at /src/repo.",
+    "Start in /src/package and inspect the code there.",
+    "",
     `Source repo: ${repo}`,
     `Source ref: ${ref}`,
     `Subdir: ${subdir}`,
     `Declared bindings: ${bindings}`,
     `Entrypoints: ${entrypoints}`,
     "",
-    "Use only PackageRefs, PackageRead, and PackageLog to inspect the source and recent history.",
-    `Always pass this exact packageId when calling those tools: ${packageId}`,
-    `Example tool argument: {"packageId":"${packageId}"}`,
-    "Do not guess alternate package ids, and do not fall back to Shell or Read for package review.",
+    "Use normal filesystem and shell exploration plus the pkg CLI.",
+    "Helpful commands: pwd, ls, find, grep, cat, pkg manifest, pkg capabilities, pkg refs, pkg log.",
     "Focus on requested capabilities, suspicious behavior, hidden network or shell access, destructive actions, and whether it should be enabled.",
     "Conclude with a clear recommendation: approve or do not approve.",
   ].join("\n");
@@ -947,6 +947,10 @@ export async function handleFetch(request, context = {}) {
           label: `Review ${target.name}`,
           prompt: buildReviewPrompt(target),
           workspace: { mode: "none" },
+          mounts: [
+            { kind: "package-source", packageId: target.packageId, mountPath: "/src/package" },
+            { kind: "package-repo", packageId: target.packageId, mountPath: "/src/repo" },
+          ],
         });
         if (!spawned?.ok) {
           throw new Error(spawned?.error || "Failed to spawn review process");

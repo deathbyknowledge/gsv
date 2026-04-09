@@ -551,6 +551,7 @@ export class Kernel extends Host<Env> {
       runRoutes: this.runRoutes,
       connection: null as unknown as Connection,
       identity: connIdentity,
+      processId,
       serverVersion: SERVER_VERSION,
     };
 
@@ -607,6 +608,7 @@ export class Kernel extends Host<Env> {
       runRoutes: this.runRoutes,
       connection,
       identity: state.identity as ConnectionIdentity,
+      processId: undefined,
       serverVersion: SERVER_VERSION,
     };
   }
@@ -625,6 +627,7 @@ export class Kernel extends Host<Env> {
       runRoutes: this.runRoutes,
       connection: null as unknown as Connection,
       identity,
+      processId: undefined,
       serverVersion: SERVER_VERSION,
     };
   }

@@ -318,7 +318,7 @@ export async function handlePkgRepoLog(
   };
 }
 
-function requirePackage(packageId: string, ctx: KernelContext): InstalledPackageRecord {
+export function resolveInstalledPackage(packageId: string, ctx: KernelContext): InstalledPackageRecord {
   const normalizedPackageId = typeof packageId === "string" ? packageId.trim() : "";
   if (!normalizedPackageId) {
     throw new Error("packageId is required");
@@ -348,6 +348,10 @@ function requirePackage(packageId: string, ctx: KernelContext): InstalledPackage
     throw new Error(`Unknown package: ${normalizedPackageId}`);
   }
   return record;
+}
+
+function requirePackage(packageId: string, ctx: KernelContext): InstalledPackageRecord {
+  return resolveInstalledPackage(packageId, ctx);
 }
 
 function resolveUpstream(args: PkgAddArgs): { remoteUrl: string; ref: string; repoSlug: string | null } {

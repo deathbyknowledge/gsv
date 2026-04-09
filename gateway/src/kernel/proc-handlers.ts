@@ -12,6 +12,7 @@ import type {
   ProcListArgs,
   ProcListResult,
   ProcListEntry,
+  ProcSpawnMountSpec,
   ProcSpawnArgs,
   ProcSpawnResult,
   ProcWorkspaceKind,
@@ -20,10 +21,13 @@ import type {
 import type { AiContextProfile } from "../syscalls/ai";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessMount } from "./processes";
 import {
   createWorkspaceBackend,
+  normalizePath,
   workspaceRootPath,
 } from "../fs";
+import { resolveInstalledPackage } from "./pkg";
 
 export function handleProcList(
   args: ProcListArgs,
@@ -90,23 +94,36 @@ export async function handleProcSpawn(
     return { ok: false, error: materialized.error };
   }
 
-  ctx.procs.spawn(pid, materialized.identity, {
+  const materializedMounts = materializeSpawnMounts(args.mounts, ctx);
+  if (!materializedMounts.ok) {
+    return { ok: false, error: materializedMounts.error };
+  }
+
+  const spawnIdentity: ProcessIdentity = {
+    ...materialized.identity,
+    cwd: materialized.workspaceId
+      ? materialized.identity.cwd
+      : defaultMountCwd(materializedMounts.mounts) ?? materialized.identity.cwd,
+  };
+
+  ctx.procs.spawn(pid, spawnIdentity, {
     parentPid,
     profile,
     label: args.label,
-    cwd: materialized.identity.cwd,
+    cwd: spawnIdentity.cwd,
     workspaceId: materialized.identity.workspaceId,
+    mounts: materializedMounts.mounts,
   });
 
   if (materialized.workspaceId) {
-    await ensureWorkspaceProcessFiles(ctx, materialized.workspaceId, pid, materialized.identity);
+    await ensureWorkspaceProcessFiles(ctx, materialized.workspaceId, pid, spawnIdentity);
   }
 
   await sendFrameToProcess(pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.setidentity",
-    args: { pid, identity: materialized.identity, profile },
+    args: { pid, identity: spawnIdentity, profile },
   });
 
   if (args.prompt) {
@@ -124,7 +141,7 @@ export async function handleProcSpawn(
     label: args.label,
     profile,
     workspaceId: materialized.identity.workspaceId,
-    cwd: materialized.identity.cwd,
+    cwd: spawnIdentity.cwd,
   };
 }
 
@@ -173,6 +190,16 @@ type SpawnIdentityOutcome =
       ok: true;
       identity: ProcessIdentity;
       workspaceId: string | null;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+type SpawnMountOutcome =
+  | {
+      ok: true;
+      mounts: ProcessMount[];
     }
   | {
       ok: false;
@@ -249,6 +276,48 @@ async function materializeSpawnIdentity(
     default:
       return { ok: false, error: "Invalid workspace mode" };
   }
+}
+
+function materializeSpawnMounts(
+  specs: ProcSpawnMountSpec[] | undefined,
+  ctx: KernelContext,
+): SpawnMountOutcome {
+  const mounts: ProcessMount[] = [];
+  const seen = new Set<string>();
+
+  for (const spec of specs ?? []) {
+    const record = resolveInstalledPackage(spec.packageId, ctx);
+    const mountPath = normalizePath(spec.mountPath ?? defaultMountPathForSpec(spec));
+    if (mountPath === "/" || !mountPath.startsWith("/src")) {
+      return { ok: false, error: `Unsupported mount path: ${mountPath}` };
+    }
+    if (seen.has(mountPath)) {
+      return { ok: false, error: `Duplicate mount path: ${mountPath}` };
+    }
+    seen.add(mountPath);
+
+    mounts.push({
+      kind: "ripgit-source",
+      mountPath,
+      packageId: record.packageId,
+      repo: record.manifest.source.repo,
+      ref: record.manifest.source.ref,
+      resolvedCommit: record.manifest.source.resolvedCommit ?? null,
+      subdir: spec.kind === "package-source" ? record.manifest.source.subdir : ".",
+    });
+  }
+
+  return { ok: true, mounts };
+}
+
+function defaultMountPathForSpec(spec: ProcSpawnMountSpec): string {
+  return spec.kind === "package-source" ? "/src/package" : "/src/repo";
+}
+
+function defaultMountCwd(mounts: ProcessMount[]): string | null {
+  return mounts.find((mount) => mount.mountPath === "/src/package")?.mountPath
+    ?? mounts[0]?.mountPath
+    ?? null;
 }
 
 function defaultWorkspaceSpec(identity: ProcessIdentity): ProcWorkspaceSpec {

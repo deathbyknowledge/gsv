@@ -14,6 +14,16 @@ import type { AiContextProfile } from "../syscalls/ai";
 
 export type ProcessState = "running" | "paused" | "killed";
 
+export type ProcessMount = {
+  kind: "ripgit-source";
+  mountPath: string;
+  packageId: string | null;
+  repo: string;
+  ref: string;
+  resolvedCommit: string | null;
+  subdir: string;
+};
+
 export type ProcessRecord = {
   processId: string;
   parentPid: string | null;
@@ -28,6 +38,7 @@ export type ProcessRecord = {
   state: ProcessState;
   label: string | null;
   createdAt: number;
+  mounts: ProcessMount[];
 };
 
 export class ProcessRegistry {
@@ -46,6 +57,7 @@ export class ProcessRegistry {
         home TEXT NOT NULL,
         cwd TEXT NOT NULL,
         workspace_id TEXT,
+        mounts TEXT NOT NULL DEFAULT '[]',
         state TEXT NOT NULL DEFAULT 'running',
         label TEXT,
         created_at INTEGER NOT NULL
@@ -64,7 +76,12 @@ export class ProcessRegistry {
       this.sql.exec("ALTER TABLE processes ADD COLUMN profile TEXT");
     } catch {}
 
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN mounts TEXT");
+    } catch {}
+
     this.sql.exec("UPDATE processes SET cwd = home WHERE cwd IS NULL OR cwd = ''");
+    this.sql.exec("UPDATE processes SET mounts = '[]' WHERE mounts IS NULL OR mounts = ''");
     this.sql.exec("UPDATE processes SET profile = 'init' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'init:%'");
     this.sql.exec("UPDATE processes SET profile = 'task' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'task:%'");
     this.sql.exec("UPDATE processes SET profile = 'cron' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'cron:%'");
@@ -82,12 +99,13 @@ export class ProcessRegistry {
       label?: string;
       cwd?: string;
       workspaceId?: string | null;
+      mounts?: ProcessMount[];
     },
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, workspace_id, state, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
+        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, workspace_id, mounts, state, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
@@ -98,6 +116,7 @@ export class ProcessRegistry {
       identity.home,
       opts.cwd ?? identity.cwd,
       opts.workspaceId ?? identity.workspaceId,
+      JSON.stringify(opts.mounts ?? []),
       opts.label ?? null,
       Date.now(),
     );
@@ -160,6 +179,14 @@ export class ProcessRegistry {
 
     if (rows.length === 0) return null;
     return toRecord(rows[0]);
+  }
+
+  getMounts(processId: string): ProcessMount[] {
+    const rows = [...this.sql.exec<{ mounts: string | null }>(
+      "SELECT mounts FROM processes WHERE process_id = ?",
+      processId,
+    )];
+    return parseMounts(rows[0]?.mounts ?? null);
   }
 
   updateIdentity(processId: string, identity: ProcessIdentity): void {
@@ -243,6 +270,7 @@ type RowShape = {
   home: string;
   cwd: string | null;
   workspace_id: string | null;
+  mounts: string | null;
   state: string;
   label: string | null;
   created_at: number;
@@ -263,7 +291,20 @@ function toRecord(row: RowShape): ProcessRecord {
     state: row.state as ProcessState,
     label: row.label,
     createdAt: row.created_at,
+    mounts: parseMounts(row.mounts),
   };
+}
+
+function parseMounts(value: string | null): ProcessMount[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function remapCwd(
