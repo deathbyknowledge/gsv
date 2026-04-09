@@ -43,6 +43,7 @@ import {
   packageDoName,
   packageRouteBase,
   packageWorkerKey,
+  visiblePackageScopesForActor,
   type InstalledPackageRecord,
   type PackageEntrypoint,
 } from "../../kernel/packages";
@@ -670,7 +671,10 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
     "stat",
   ]);
 
-  for (const record of ctx.packages.list({ enabled: true })) {
+  for (const record of ctx.packages.list({
+    enabled: true,
+    scopes: visiblePackageScopesForActor(identity),
+  })) {
     for (const entrypoint of record.manifest.entrypoints) {
       if (entrypoint.kind !== "command") continue;
       const commandName = entrypoint.command?.trim();
@@ -893,14 +897,16 @@ function requireCommandCapability(ctx: KernelContext, capability: string): void 
 
 function formatPkgList(packages: Array<{
   name: string;
+  scope: { kind: "global" | "user" | "workspace"; uid?: number; workspaceId?: string };
   enabled: boolean;
   review: { required: boolean; approvedAt: number | null };
   source: { repo: string; ref: string; public: boolean };
 }>): string {
-  const lines = ["NAME\tSTATE\tREVIEW\tPUBLIC\tSOURCE\tREF"];
+  const lines = ["NAME\tSCOPE\tSTATE\tREVIEW\tPUBLIC\tSOURCE\tREF"];
   for (const pkg of packages) {
     lines.push([
       pkg.name,
+      formatPkgScope(pkg.scope),
       pkg.enabled ? "enabled" : "disabled",
       pkg.review.required && !pkg.review.approvedAt ? "pending" : (pkg.review.required ? "approved" : "n/a"),
       pkg.source.public ? "yes" : "no",
@@ -931,6 +937,7 @@ function formatPkgStatus(pkg: InstalledPackageRecord, ctx: KernelContext): strin
   return [
     `package: ${pkg.manifest.name}`,
     `packageId: ${pkg.packageId}`,
+    `scope: ${formatPkgScope(pkg.scope)}`,
     `enabled: ${pkg.enabled ? "yes" : "no"}`,
     `review: ${review}`,
     `public: ${isPublic ? "yes" : "no"}`,
@@ -1090,7 +1097,7 @@ function resolvePkgPublicTarget(
     return { packageId: mounted };
   }
 
-  const found = ctx.packages.get(target);
+  const found = ctx.packages.resolve(target, visiblePackageScopesForActor(ctx.identity?.process));
   if (found) {
     return { packageId: found.packageId };
   }
@@ -1100,6 +1107,17 @@ function resolvePkgPublicTarget(
   }
 
   return { packageId: resolveInstalledPackage(target, ctx).packageId };
+}
+
+function formatPkgScope(scope: { kind: "global" | "user" | "workspace"; uid?: number; workspaceId?: string }): string {
+  switch (scope.kind) {
+    case "user":
+      return `user:${scope.uid ?? "?"}`;
+    case "workspace":
+      return `workspace:${scope.workspaceId ?? "?"}`;
+    default:
+      return "global";
+  }
 }
 
 function pkgUsage(): string {
@@ -1147,7 +1165,7 @@ async function runPackageCommand(
     () => packageArtifactToWorkerCode(record.artifact, {
       PACKAGE_NAME: record.manifest.name,
       PACKAGE_ID: record.packageId,
-      PACKAGE_DO_NAME: packageDoName(record.manifest.name),
+      PACKAGE_DO_NAME: packageDoName(record.manifest.name, record.scope),
     }),
   );
   const stub = worker.getEntrypoint(resolvePackageCommandExportName(entrypoint.exportName), {

@@ -249,6 +249,7 @@ export interface PackageGrantSet {
 
 export interface InstalledPackageRecord {
   packageId: string;
+  scope: PackageInstallScope;
   manifest: PackageManifest;
   artifact: PackageArtifact;
   grants?: PackageGrantSet;
@@ -397,6 +398,46 @@ export function packageDoName(
   }
 }
 
+type PackageScopeOwner = { uid: number } | null | undefined;
+
+export function packageScopeKey(scope: PackageInstallScope): string {
+  switch (scope.kind) {
+    case "global":
+      return "global";
+    case "user":
+      return `user:${scope.uid}`;
+    case "workspace":
+      return `workspace:${scope.workspaceId}`;
+  }
+}
+
+export function defaultPackageInstallScopeForActor(
+  actor: PackageScopeOwner,
+): PackageInstallScope {
+  if (actor && actor.uid !== 0) {
+    return { kind: "user", uid: actor.uid };
+  }
+  return { kind: "global" };
+}
+
+export function visiblePackageScopesForActor(
+  actor: PackageScopeOwner,
+): PackageInstallScope[] {
+  const scopes: PackageInstallScope[] = [];
+  if (actor && actor.uid !== 0) {
+    scopes.push({ kind: "user", uid: actor.uid });
+  }
+  scopes.push({ kind: "global" });
+  return scopes;
+}
+
+export function packageScopeEquals(
+  left: PackageInstallScope,
+  right: PackageInstallScope,
+): boolean {
+  return packageScopeKey(left) === packageScopeKey(right);
+}
+
 /**
  * Versioned worker/runtime key.
  *
@@ -454,7 +495,11 @@ export class PackageStore {
   init(): void {
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS packages (
-        package_id       TEXT PRIMARY KEY,
+        package_id       TEXT    NOT NULL,
+        scope_key        TEXT    NOT NULL,
+        scope_kind       TEXT    NOT NULL,
+        scope_uid        INTEGER,
+        scope_workspace_id TEXT,
         name             TEXT    NOT NULL,
         version          TEXT    NOT NULL,
         runtime          TEXT    NOT NULL,
@@ -465,23 +510,19 @@ export class PackageStore {
         installed_at     INTEGER NOT NULL,
         updated_at       INTEGER NOT NULL,
         review_required  INTEGER NOT NULL DEFAULT 0,
-        reviewed_at      INTEGER
+        reviewed_at      INTEGER,
+        UNIQUE(package_id, scope_key)
       )
     `);
-
-    try {
-      this.sql.exec("ALTER TABLE packages ADD COLUMN review_required INTEGER NOT NULL DEFAULT 0");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE packages ADD COLUMN reviewed_at INTEGER");
-    } catch {}
 
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_packages_name_runtime ON packages (name, runtime, updated_at DESC)",
     );
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_packages_enabled ON packages (enabled, name, updated_at DESC)",
+    );
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_packages_scope_name_runtime ON packages (scope_key, name, runtime, updated_at DESC)",
     );
   }
 
@@ -492,14 +533,14 @@ export class PackageStore {
     const installed: InstalledPackageRecord[] = [];
     const builtinPackageIds = new Set(builtinSeeds.map((seed) => seed.packageId));
 
-    for (const record of this.list()) {
+    for (const record of this.list({ scope: { kind: "global" } })) {
       if (record.packageId.startsWith("builtin:") && !builtinPackageIds.has(record.packageId)) {
-        this.remove(record.packageId);
+        this.remove(record.packageId, record.scope);
       }
     }
 
     for (const seed of builtinSeeds) {
-      const existing = this.get(seed.packageId);
+      const existing = this.get(seed.packageId, seed.scope);
       installed.push(this.install({
         ...seed,
         enabled: existing?.enabled ?? seed.enabled,
@@ -528,9 +569,13 @@ export class PackageStore {
 
     this.sql.exec(
       `INSERT OR REPLACE INTO packages
-        (package_id, name, version, runtime, enabled, manifest_json, artifact_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (package_id, scope_key, scope_kind, scope_uid, scope_workspace_id, name, version, runtime, enabled, manifest_json, artifact_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.packageId,
+      packageScopeKey(record.scope),
+      record.scope.kind,
+      record.scope.kind === "user" ? record.scope.uid : null,
+      record.scope.kind === "workspace" ? record.scope.workspaceId : null,
       record.manifest.name,
       record.manifest.version,
       record.manifest.runtime,
@@ -547,21 +592,41 @@ export class PackageStore {
     return record;
   }
 
-  get(packageId: string): InstalledPackageRecord | null {
+  get(
+    packageId: string,
+    scope: PackageInstallScope,
+  ): InstalledPackageRecord | null {
     const rows = this.sql.exec<RowShape>(
-      "SELECT * FROM packages WHERE package_id = ?",
+      "SELECT * FROM packages WHERE package_id = ? AND scope_key = ?",
       packageId,
+      packageScopeKey(scope),
     ).toArray();
     return rows[0] ? toRecord(rows[0]) : null;
+  }
+
+  resolve(
+    packageId: string,
+    scopes: readonly PackageInstallScope[],
+  ): InstalledPackageRecord | null {
+    for (const scope of scopes) {
+      const record = this.get(packageId, scope);
+      if (record) {
+        return record;
+      }
+    }
+    return null;
   }
 
   list(opts?: {
     enabled?: boolean;
     runtime?: PackageRuntime;
     name?: string;
+    scope?: PackageInstallScope;
+    scopes?: readonly PackageInstallScope[];
   }): InstalledPackageRecord[] {
     const where: string[] = [];
     const params: Array<string | number> = [];
+    const scopes = opts?.scopes ?? (opts?.scope ? [opts.scope] : undefined);
 
     if (typeof opts?.enabled === "boolean") {
       where.push("enabled = ?");
@@ -575,49 +640,80 @@ export class PackageStore {
       where.push("name = ?");
       params.push(opts.name);
     }
+    if (scopes && scopes.length === 1) {
+      where.push("scope_key = ?");
+      params.push(packageScopeKey(scopes[0]));
+    } else if (scopes && scopes.length > 1) {
+      where.push(`scope_key IN (${scopes.map(() => "?").join(", ")})`);
+      for (const scope of scopes) {
+        params.push(packageScopeKey(scope));
+      }
+    }
 
     const sql = where.length > 0
       ? `SELECT * FROM packages WHERE ${where.join(" AND ")} ORDER BY name, version, updated_at DESC`
       : "SELECT * FROM packages ORDER BY name, version, updated_at DESC";
 
-    return this.sql.exec<RowShape>(sql, ...params).toArray().map(toRecord);
+    const records = this.sql.exec<RowShape>(sql, ...params).toArray().map(toRecord);
+    if (scopes && scopes.length > 1) {
+      const order = new Map(scopes.map((scope, index) => [packageScopeKey(scope), index]));
+      records.sort((left, right) => {
+        const leftOrder = order.get(packageScopeKey(left.scope)) ?? Number.MAX_SAFE_INTEGER;
+        const rightOrder = order.get(packageScopeKey(right.scope)) ?? Number.MAX_SAFE_INTEGER;
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        const nameOrder = left.manifest.name.localeCompare(right.manifest.name);
+        if (nameOrder !== 0) {
+          return nameOrder;
+        }
+        if (left.updatedAt !== right.updatedAt) {
+          return right.updatedAt - left.updatedAt;
+        }
+        return left.packageId.localeCompare(right.packageId);
+      });
+    }
+    return records;
   }
 
-  setEnabled(packageId: string, enabled: boolean): boolean {
-    const existing = this.get(packageId);
+  setEnabled(packageId: string, enabled: boolean, scope: PackageInstallScope): boolean {
+    const existing = this.get(packageId, scope);
     if (!existing) return false;
 
     this.sql.exec(
-      "UPDATE packages SET enabled = ?, updated_at = ? WHERE package_id = ?",
+      "UPDATE packages SET enabled = ?, updated_at = ? WHERE package_id = ? AND scope_key = ?",
       enabled ? 1 : 0,
       Date.now(),
       packageId,
+      packageScopeKey(scope),
     );
 
     return true;
   }
 
-  setReviewed(packageId: string, reviewedAt: number | null): boolean {
-    const existing = this.get(packageId);
+  setReviewed(packageId: string, reviewedAt: number | null, scope: PackageInstallScope): boolean {
+    const existing = this.get(packageId, scope);
     if (!existing) return false;
 
     this.sql.exec(
-      "UPDATE packages SET reviewed_at = ?, updated_at = ? WHERE package_id = ?",
+      "UPDATE packages SET reviewed_at = ?, updated_at = ? WHERE package_id = ? AND scope_key = ?",
       reviewedAt,
       Date.now(),
       packageId,
+      packageScopeKey(scope),
     );
 
     return true;
   }
 
-  remove(packageId: string): boolean {
-    const existing = this.get(packageId);
+  remove(packageId: string, scope: PackageInstallScope): boolean {
+    const existing = this.get(packageId, scope);
     if (!existing) return false;
 
     this.sql.exec(
-      "DELETE FROM packages WHERE package_id = ?",
+      "DELETE FROM packages WHERE package_id = ? AND scope_key = ?",
       packageId,
+      packageScopeKey(scope),
     );
     return true;
   }
@@ -625,6 +721,10 @@ export class PackageStore {
 
 type RowShape = {
   package_id: string;
+  scope_key: string;
+  scope_kind: string;
+  scope_uid: number | null;
+  scope_workspace_id: string | null;
   manifest_json: string;
   artifact_json: string;
   grants_json: string | null;
@@ -638,6 +738,7 @@ type RowShape = {
 function toRecord(row: RowShape): InstalledPackageRecord {
   return {
     packageId: row.package_id,
+    scope: scopeFromRow(row),
     manifest: parseJson<PackageManifest>(row.manifest_json),
     artifact: parseJson<PackageArtifact>(row.artifact_json),
     grants: row.grants_json ? parseJson<PackageGrantSet>(row.grants_json) : undefined,
@@ -647,6 +748,23 @@ function toRecord(row: RowShape): InstalledPackageRecord {
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
   };
+}
+
+function scopeFromRow(row: Pick<RowShape, "scope_kind" | "scope_uid" | "scope_workspace_id">): PackageInstallScope {
+  switch (row.scope_kind) {
+    case "user":
+      if (typeof row.scope_uid !== "number") {
+        throw new Error("Invalid package row: user scope missing uid");
+      }
+      return { kind: "user", uid: row.scope_uid };
+    case "workspace":
+      if (!row.scope_workspace_id) {
+        throw new Error("Invalid package row: workspace scope missing workspace id");
+      }
+      return { kind: "workspace", workspaceId: row.scope_workspace_id };
+    default:
+      return { kind: "global" };
+  }
 }
 
 function parseJson<T>(value: string): T {
@@ -794,6 +912,7 @@ async function resolveBuiltinRipgitPackage(
 
   return {
     packageId: `builtin:${manifest.name}@${manifest.version}`,
+    scope: { kind: "global" },
     manifest,
     artifact,
     grants: spec.grants,
@@ -909,6 +1028,9 @@ function joinRipgitPath(base: string, child: string): string {
 function assertValidPackageRecord(record: InstalledPackageRecord): void {
   if (record.packageId.trim().length === 0) {
     throw new Error("packageId is required");
+  }
+  if (packageScopeKey(record.scope).trim().length === 0) {
+    throw new Error("scope is required");
   }
   if (record.manifest.name.trim().length === 0) {
     throw new Error("manifest.name is required");

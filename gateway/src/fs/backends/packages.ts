@@ -4,7 +4,11 @@ import type {
   RmOptions,
 } from "just-bash";
 import type { ProcessIdentity } from "../../syscalls/system";
-import type { PackageEntrypoint, PackageStore } from "../../kernel/packages";
+import {
+  type PackageEntrypoint,
+  type PackageStore,
+  visiblePackageScopesForActor,
+} from "../../kernel/packages";
 import type { ExtendedMountStat, MountBackend } from "../mount";
 import { normalizePath } from "../utils";
 
@@ -159,7 +163,10 @@ class PackageMountBackend implements MountBackend {
   private listCommands(): PackageCommandEntry[] {
     const commands = new Map<string, PackageCommandEntry>();
 
-    for (const record of this.packages.list({ enabled: true })) {
+    for (const record of this.packages.list({
+      enabled: true,
+      scopes: visiblePackageScopesForActor(this.identity),
+    })) {
       for (const entrypoint of record.manifest.entrypoints) {
         if (!isCommandEntrypoint(entrypoint)) {
           continue;
