@@ -164,6 +164,24 @@ describe("tool approval policy evaluation", () => {
 
     expect(result).toEqual({ decision: "allow" });
   });
+
+  // MCP tools use the same approval system as everything else.
+  // Users who want restrictions add rules like they would for any tool.
+  it("applies rules to MCP-style tool names", () => {
+    const config: ToolApprovalConfig = {
+      defaultDecision: "allow",
+      rules: [
+        { id: "deny-aeon-write", tool: "aeon__*", decision: "deny" },
+      ],
+    };
+
+    expect(
+      evaluateToolApproval("aeon__recall", {}, config),
+    ).toMatchObject({ decision: "deny", ruleId: "deny-aeon-write" });
+    expect(
+      evaluateToolApproval("context7__query-docs", {}, config),
+    ).toEqual({ decision: "allow" });
+  });
 });
 
 describe("tool approval decision parsing", () => {

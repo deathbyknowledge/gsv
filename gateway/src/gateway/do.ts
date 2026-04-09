@@ -10,6 +10,9 @@ import type {
 import { isWebSocketRequest, validateFrame } from "../shared/utils";
 import { DEFAULT_CONFIG } from "../config/defaults";
 import { GsvConfig, GsvConfigInput, mergeConfig, PendingPair } from "../config";
+import { McpService, isValidMcpServerId, type ResolvedMcpTool } from "./mcp-service";
+import { getNativeToolDefinitions, isNativeTool, executeNativeTool } from "../agents/tools";
+import { tokenize, scoreToolMatch } from "./tool-search";
 import { getDefaultAgentId } from "../config/parsing";
 import {
   HeartbeatState,
@@ -104,6 +107,7 @@ export class Gateway extends DurableObject<Env> {
   readonly nodeService = new GatewayNodeService(
     this.ctx.storage.kv,
   );
+  readonly mcpService = new McpService();
 
   readonly configStore = PersistedObject<Record<string, unknown>>(
     this.ctx.storage.kv,
@@ -243,6 +247,9 @@ export class Gateway extends DurableObject<Env> {
         `[Gateway] Preserving ${detachedRuntimeNodeIds.length} detached runtime entries for known hosts`,
       );
     }
+
+    // Like nodes, MCP tools only appear in the catalog after the cache warms.
+    this.warmMcpCacheIfConfigured();
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -372,10 +379,214 @@ export class Gateway extends DurableObject<Env> {
     }
   }
 
+  private resolveMcp(toolName: string): ResolvedMcpTool | null {
+    const mcpStore = this.configStore["mcp"] as { servers?: Record<string, unknown> } | undefined;
+    if (!mcpStore?.servers || Object.keys(mcpStore.servers).length === 0) return null;
+    return this.mcpService.resolve(toolName, this.getFullConfig().mcp);
+  }
+
   async toolRequest(
     params: ToolRequestParams,
   ): Promise<{ ok: boolean; error?: string }> {
+    // MCP first — always-available remote servers take priority over nodes.
+    const resolved = this.resolveMcp(params.tool);
+    if (resolved) {
+      this.ctx.waitUntil(this.executeMcpToolCall(params, resolved));
+      return { ok: true };
+    }
+
+    // Fall through to node routing
     return this.nodeService.requestToolForSession(params, this.nodes);
+  }
+
+  private async executeMcpToolCall(
+    params: ToolRequestParams,
+    resolved: ResolvedMcpTool,
+  ): Promise<void> {
+    const sessionStub = this.env.SESSION.getByName(params.sessionKey);
+    const mcpResult = await this.mcpService.callTool(
+      resolved.serverConfig,
+      resolved.toolName,
+      params.args,
+      resolved.serverId,
+    );
+    await sessionStub.toolResult({
+      callId: params.callId,
+      result: mcpResult.ok ? mcpResult.result : undefined,
+      error: mcpResult.ok ? undefined : mcpResult.error,
+    });
+  }
+
+  /** @internal Called by handleToolInvoke RPC handler — needs ctx.waitUntil. */
+  executeMcpToolInvoke(
+    ws: WebSocket,
+    frameId: string,
+    resolved: ResolvedMcpTool,
+    args: Record<string, unknown>,
+  ): void {
+    this.ctx.waitUntil(
+      this.mcpService
+        .callTool(resolved.serverConfig, resolved.toolName, args, resolved.serverId)
+        .then((mcpResult) => {
+          if (!mcpResult.ok) {
+            this.sendError(ws, frameId, 500, mcpResult.error || "MCP tool failed");
+          } else {
+            this.sendOk(ws, frameId, { result: mcpResult.result });
+          }
+        })
+        .catch((err) => {
+          console.error("[Gateway] MCP tool invoke error:", err);
+        }),
+    );
+  }
+
+  /**
+   * Search for tools across all sources by keyword.
+   * Matches against tool names, descriptions, and schema property names.
+   */
+  searchTools(
+    query: string,
+    limit: number = 10,
+  ): { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown>; source: string }> } {
+    const config = this.getFullConfig();
+
+    // Collect tools from sources callable via CallTool (native + MCP).
+    // Node tools are excluded — they're in the LLM's tool list for direct use
+    // and can't be executed via CallTool (requires WebSocket dispatch).
+    const allTools: Array<{ tool: ToolDefinition; source: string }> = [];
+    for (const tool of getNativeToolDefinitions()) allTools.push({ tool, source: "native" });
+    for (const tool of this.mcpService.listToolsCached(config.mcp)) allTools.push({ tool, source: "mcp" });
+
+    // Weighted token matching (executor-style scoring)
+    const queryTokens = tokenize(query);
+    if (queryTokens.length === 0) return { tools: [] };
+
+    const scored = allTools
+      .map(({ tool, source }) => ({
+        tool,
+        source,
+        score: scoreToolMatch(queryTokens, tool),
+      }))
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    return {
+      tools: scored.slice(0, limit).map(({ tool, source }) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        source,
+      })),
+    };
+  }
+
+  /**
+   * Execute any tool directly and return the result synchronously.
+   * Used by gsv__CallTool — a single interface for invoking any tool.
+   *
+   * Approval model: gsv__CallTool itself goes through the session's normal
+   * tool approval flow before reaching this method. We don't re-evaluate
+   * approval on the inner tool because GSV's security model prioritizes
+   * capability and simplicity (defaultDecision: "allow", no rules by
+   * default). The user's approval of CallTool is the consent point.
+   *
+   * If the approval model evolves to require per-tool granularity through
+   * CallTool, add a nested evaluateToolApproval check here with the inner
+   * tool name and args, and plumb ask/deny back through the session.
+   */
+  async callToolDirect(
+    toolName: string,
+    args: Record<string, unknown>,
+    agentId: string,
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> {
+    if (toolName === "gsv__CallTool" || toolName === "gsv__SearchTools") {
+      return { ok: false, error: `"${toolName}" cannot be called through CallTool` };
+    }
+
+    // MCP tools
+    const resolved = this.resolveMcp(toolName);
+    if (resolved) {
+      return this.mcpService.callTool(
+        resolved.serverConfig,
+        resolved.toolName,
+        args,
+        resolved.serverId,
+      );
+    }
+
+    // Native tools — get a stub to self for the gateway context
+    if (isNativeTool(toolName)) {
+      const gateway = this.env.GATEWAY.getByName("singleton");
+      return executeNativeTool(
+        { bucket: this.env.STORAGE, agentId, gateway },
+        toolName,
+        args,
+      );
+    }
+
+    // Node tools require WebSocket dispatch — not yet supported via CallTool
+    return {
+      ok: false,
+      error: `Tool "${toolName}" is a node tool. Node tools require a connected device and are not yet callable via CallTool.`,
+    };
+  }
+
+  /** Validate MCP server IDs in a config write at any depth. */
+  private validateMcpConfig(parts: string[], value: unknown): void {
+    // mcp.servers.{serverId}[.*] — validate the specific server ID
+    if (parts.length >= 3 && parts[0] === "mcp" && parts[1] === "servers") {
+      const validation = isValidMcpServerId(parts[2]);
+      if (!validation.valid) {
+        throw new Error(`Invalid MCP server ID "${parts[2]}": ${validation.reason}`);
+      }
+      return;
+    }
+
+    // mcp.servers = { id: {...}, ... } — validate all server IDs in the object
+    if (parts.length === 2 && parts[0] === "mcp" && parts[1] === "servers" && value && typeof value === "object") {
+      this.validateMcpServerIds(value as Record<string, unknown>);
+      return;
+    }
+
+    // mcp = { servers: { id: {...}, ... } } — validate server IDs in nested object
+    if (parts.length === 1 && parts[0] === "mcp" && value && typeof value === "object") {
+      const servers = (value as Record<string, unknown>).servers;
+      if (servers && typeof servers === "object") {
+        this.validateMcpServerIds(servers as Record<string, unknown>);
+      }
+    }
+  }
+
+  private validateMcpServerIds(servers: Record<string, unknown>): void {
+    for (const serverId of Object.keys(servers)) {
+      const validation = isValidMcpServerId(serverId);
+      if (!validation.valid) {
+        throw new Error(`Invalid MCP server ID "${serverId}": ${validation.reason}`);
+      }
+    }
+  }
+
+  /** Invalidate MCP cache and warm after config change. */
+  private onMcpConfigChanged(parts: string[]): void {
+    if (parts.length >= 3 && parts[0] === "mcp" && parts[1] === "servers") {
+      if (this.nodes.has(parts[2])) {
+        console.warn(
+          `[Gateway] MCP server "${parts[2]}" collides with connected node ID. MCP tools will take priority.`,
+        );
+      }
+    }
+    this.mcpService.invalidateCache();
+    this.warmMcpCacheIfConfigured();
+  }
+
+  private warmMcpCacheIfConfigured(): void {
+    const config = this.getFullConfig();
+    if (Object.keys(config.mcp.servers).length === 0) return;
+    this.ctx.waitUntil(
+      this.mcpService.refreshCache(config.mcp).then(() =>
+        this.scheduleGatewayAlarm(),
+      ),
+    );
   }
 
   sendOk(ws: WebSocket, id: string, payload?: unknown) {
@@ -566,6 +777,10 @@ export class Gateway extends DurableObject<Env> {
       `[Gateway]   toolRegistry keys: [${this.nodeService.listToolRegistryNodeIds().join(", ")}]`,
     );
 
+    // Native + node tools go in the LLM's tool list. MCP tools are
+    // deliberately excluded — the agent discovers them via SearchTools
+    // and invokes them via CallTool. This keeps context lean regardless
+    // of how many MCP servers are configured.
     const tools = this.nodeService.listTools(this.nodes.keys());
     const nodeTools = tools.filter(
       (tool) => tool.name.includes("__") && !tool.name.startsWith("gsv__"),
@@ -760,8 +975,15 @@ export class Gateway extends DurableObject<Env> {
   setConfigPath(path: string, value: unknown): void {
     const parts = path.split(".");
 
+    // Validate MCP server IDs before writing — handles both nested and top-level
+    this.validateMcpConfig(parts, value);
+
     if (parts.length === 1) {
       this.configStore[path] = value;
+      // Run post-write hooks for top-level MCP config replacement
+      if (path === "mcp") {
+        this.onMcpConfigChanged(parts);
+      }
       return;
     }
 
@@ -796,6 +1018,10 @@ export class Gateway extends DurableObject<Env> {
 
     // Clean up any flat key that might exist
     delete this.configStore[path];
+
+    if (path === "mcp.servers" || path.startsWith("mcp.servers.")) {
+      this.onMcpConfigChanged(parts);
+    }
   }
 
   getFullConfig(): GsvConfig {
@@ -817,11 +1043,32 @@ export class Gateway extends DurableObject<Env> {
       ...full.auth,
       token: full.auth.token ? "***" : undefined,
     };
+    const mcpServers = Object.fromEntries(
+      Object.entries(full.mcp.servers).map(([id, server]) => [
+        id,
+        { ...server, token: server.token ? "***" : undefined },
+      ]),
+    );
     return {
       ...full,
       apiKeys,
       auth,
+      mcp: { ...full.mcp, servers: mcpServers },
     };
+  }
+
+  getSafeConfigPath(path: string): unknown {
+    const safe = this.getSafeConfig();
+    const parts = path.split(".");
+    let current: unknown = safe;
+    for (const part of parts) {
+      if (current && typeof current === "object" && part in current) {
+        current = (current as Record<string, unknown>)[part];
+      } else {
+        return undefined;
+      }
+    }
+    return current;
   }
 
   getConfig(): GsvConfig {
@@ -967,6 +1214,18 @@ export class Gateway extends DurableObject<Env> {
           await this.asyncExecStateService.deliverPendingAsyncExecDeliveries(
             params.now,
           );
+        },
+      },
+      {
+        name: "mcpCacheRefresh",
+        nextDueMs: this.mcpService.nextCacheExpiryMs(
+          this.getFullConfig().mcp,
+        ),
+        run: async () => {
+          const config = this.getFullConfig();
+          if (Object.keys(config.mcp.servers).length > 0) {
+            await this.mcpService.refreshCache(config.mcp);
+          }
         },
       },
     ];

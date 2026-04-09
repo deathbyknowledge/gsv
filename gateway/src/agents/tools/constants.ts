@@ -11,4 +11,6 @@ export const NATIVE_TOOLS = {
   MESSAGE: `${NATIVE_TOOL_PREFIX}Message`,
   SESSIONS_LIST: `${NATIVE_TOOL_PREFIX}SessionsList`,
   SESSION_SEND: `${NATIVE_TOOL_PREFIX}SessionSend`,
+  SEARCH_TOOLS: `${NATIVE_TOOL_PREFIX}SearchTools`,
+  CALL_TOOL: `${NATIVE_TOOL_PREFIX}CallTool`,
 } as const;

@@ -229,6 +229,14 @@ function buildToolingSection(tools: ToolDefinition[] | undefined): string {
   lines.push(
     "`gsv__*` tools are native Gateway tools. `<nodeId>__<toolName>` tools target a specific connected node.",
   );
+
+  const hasSearchTools = tools.some((t) => t.name === "gsv__SearchTools");
+  if (hasSearchTools) {
+    lines.push(
+      "Remote tool servers are connected with additional capabilities. If you can't do something with the tools below, search for more.",
+    );
+  }
+
   lines.push("Available tools:");
   for (const tool of tools) {
     const description = tool.description?.trim();

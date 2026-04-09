@@ -51,7 +51,7 @@ export const gatewayNativeToolHandlers: NativeToolHandlerMap = {
 
     const path = typeof args.path === "string" ? args.path.trim() : undefined;
     if (path) {
-      const value = await context.gateway.getConfigPath(path);
+      const value = await context.gateway.getSafeConfigPath(path);
       return {
         ok: true,
         result: { path, value },

@@ -3,7 +3,8 @@ import { RpcError } from "../../shared/utils";
 
 export const handleConfigGet: Handler<"config.get"> = ({ gw, params }) => {
   if (params?.path) {
-    // Get specific path
+    // Raw read — authenticated clients need real values (UI edits them).
+    // The AI agent's gsv__ConfigGet uses getSafeConfigPath() instead.
     const value = gw.getConfigPath(params.path);
     return { path: params.path, value };
   } else {
