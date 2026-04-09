@@ -186,12 +186,16 @@ function repoRefForMount(mount: ProcessMount): RipgitRepoRef {
   return {
     owner,
     repo,
-    branch: mount.resolvedCommit ?? mount.ref,
+    branch: mount.ref,
   };
 }
 
 function normalizeRepoPath(path: string | null | undefined): string {
-  return String(path ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  return String(path ?? "")
+    .trim()
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".")
+    .join("/");
 }
 
 function joinRepoPath(base: string, relativePath: string): string {
