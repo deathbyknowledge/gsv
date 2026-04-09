@@ -8,7 +8,7 @@
 
 import type { ToolDefinition } from "./index";
 
-export type AiContextProfile = "init" | "task" | "cron" | "mcp" | "app";
+export type AiContextProfile = "init" | "task" | "review" | "cron" | "mcp" | "app";
 
 // --- ai.tools ---
 

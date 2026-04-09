@@ -19,6 +19,11 @@ export const PROC_HISTORY = "proc.history";
 export const PROC_RESET = "proc.reset";
 export const PROC_SETIDENTITY = "proc.setidentity";
 
+// Packages
+export const PKG_REPO_REFS = "pkg.repo.refs";
+export const PKG_REPO_READ = "pkg.repo.read";
+export const PKG_REPO_LOG = "pkg.repo.log";
+
 // System
 export const SYS_CONNECT = "sys.connect";
 export const SYS_SETUP = "sys.setup";
@@ -62,6 +67,9 @@ export const SYSCALL_TOOL_NAMES: Record<string, string> = {
   [FS_DELETE]: "Delete",
   [FS_SEARCH]: "Search",
   [SHELL_EXEC]: "Shell",
+  [PKG_REPO_REFS]: "PackageRefs",
+  [PKG_REPO_READ]: "PackageRead",
+  [PKG_REPO_LOG]: "PackageLog",
 };
 
 // LLM tool name -> syscall. Reverse mapping of the above

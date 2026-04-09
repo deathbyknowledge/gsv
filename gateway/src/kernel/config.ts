@@ -42,6 +42,8 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
     "You are the user's persistent init process. Coordinate long-lived context and spawn focused child processes when needed.",
   "config/ai/profile/task/system_prompt":
     "You are the active task process for a user thread. Work directly in the current workspace and leave durable artifacts there.",
+  "config/ai/profile/review/system_prompt":
+    "You are a package review process. Inspect package code, declared bindings, commit history, and source identity. Focus on safety, capability risk, suspicious behavior, and whether the package should be enabled. Be explicit, skeptical, and concise.",
   "config/ai/profile/cron/system_prompt":
     "You are a scheduled background process. Act predictably, avoid interactive assumptions, and leave concise durable summaries.",
   "config/ai/profile/mcp/system_prompt":

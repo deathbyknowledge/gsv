@@ -65,6 +65,38 @@ function isThirdPartyPackage(pkg) {
   return repo !== "" && repo !== "system/gsv";
 }
 
+function needsReviewApproval(pkg) {
+  return Boolean(pkg?.review?.required) && !pkg?.review?.approvedAt;
+}
+
+function buildReviewPrompt(pkg) {
+  const packageId = String(pkg?.packageId ?? "").trim();
+  const name = String(pkg?.name ?? "unknown-package").trim();
+  const repo = String(pkg?.source?.repo ?? "unknown").trim();
+  const ref = String(pkg?.source?.ref ?? "main").trim();
+  const subdir = String(pkg?.source?.subdir ?? ".").trim();
+  const bindings = Array.isArray(pkg?.bindingNames) && pkg.bindingNames.length > 0
+    ? pkg.bindingNames.join(", ")
+    : "none declared";
+  const entrypoints = Array.isArray(pkg?.entrypoints) && pkg.entrypoints.length > 0
+    ? pkg.entrypoints.map((entry) => `${entry.name}:${entry.kind}`).join(", ")
+    : "none";
+
+  return [
+    `Review the imported package "${name}" (${packageId}).`,
+    "",
+    `Source repo: ${repo}`,
+    `Source ref: ${ref}`,
+    `Subdir: ${subdir}`,
+    `Declared bindings: ${bindings}`,
+    `Entrypoints: ${entrypoints}`,
+    "",
+    "Use PackageRefs, PackageRead, and PackageLog to inspect the source and recent history.",
+    "Focus on requested capabilities, suspicious behavior, hidden network or shell access, destructive actions, and whether it should be enabled.",
+    "Conclude with a clear recommendation: approve or do not approve.",
+  ].join("\n");
+}
+
 function parseImportSource(raw) {
   const trimmed = String(raw ?? "").trim();
   if (!trimmed) {
@@ -137,6 +169,8 @@ function renderImportRail(statusText, errorText, sourceValue, refValue, subdirVa
 
 function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
   const currentRef = browseRef || pkg.source?.ref || "main";
+  const reviewPending = needsReviewApproval(pkg);
+  const reviewed = Boolean(pkg?.review?.approvedAt);
   const branches = Object.keys(refs?.heads ?? {}).sort();
   const branchOptions = (branches.length > 0 ? branches : [currentRef]).map((branch) => {
     const selected = branch === currentRef ? " selected" : "";
@@ -151,12 +185,30 @@ function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
           <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
           <button type="submit" class="packages-icon-btn" title="Disable package" aria-label="Disable package">−</button>
         </form>`)
-    : `
+    : !reviewPending ? `
       <form method="post">
         <input type="hidden" name="action" value="install" />
         <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
         <button type="submit" class="packages-icon-btn" title="Enable package after review" aria-label="Enable package after review">▶</button>
-      </form>`;
+      </form>` : '<span class="packages-static-note">Review first</span>';
+
+  const reviewAction = isThirdPartyPackage(pkg)
+    ? `
+      <form method="post">
+        <input type="hidden" name="action" value="review" />
+        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
+        <button type="submit" class="packages-icon-btn" title="Open package reviewer" aria-label="Open package reviewer">⌕</button>
+      </form>`
+    : "";
+
+  const approveAction = reviewPending
+    ? `
+      <form method="post">
+        <input type="hidden" name="action" value="review-approve" />
+        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
+        <button type="submit" class="packages-icon-btn" title="Approve review" aria-label="Approve review">✓</button>
+      </form>`
+    : (reviewed ? '<span class="packages-static-note">Reviewed</span>' : "");
 
   const checkoutAction = currentRef !== (pkg.source?.ref ?? "main")
     ? `
@@ -187,6 +239,8 @@ function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
           <button type="submit" class="packages-icon-btn" title="Browse ref" aria-label="Browse ref">↗</button>
         </form>
         ${checkoutAction}
+        ${reviewAction}
+        ${approveAction}
         ${packageAction}
       </div>
     </header>`;
@@ -209,7 +263,7 @@ function renderOverview(pkg, refs) {
   const heads = Object.keys(refs?.heads ?? {}).sort();
   const tags = Object.keys(refs?.tags ?? {}).sort();
   const bindings = Array.isArray(pkg.bindingNames) ? pkg.bindingNames : [];
-  const reviewBanner = isThirdPartyPackage(pkg) && !pkg.enabled
+  const reviewBanner = isThirdPartyPackage(pkg) && needsReviewApproval(pkg)
     ? `
       <section class="packages-review-banner">
         <strong>Review required before enable</strong>
@@ -220,6 +274,12 @@ function renderOverview(pkg, refs) {
           <li>Only enable it once you trust the source.</li>
         </ul>
       </section>`
+    : isThirdPartyPackage(pkg) && pkg?.review?.approvedAt
+      ? `
+        <section class="packages-review-banner is-approved">
+          <strong>Review approved</strong>
+          <p>This package was marked as reviewed on ${escapeHtml(new Date(pkg.review.approvedAt).toLocaleString())}. You can enable it when ready.</p>
+        </section>`
     : "";
   return `
     <section class="packages-workspace">
@@ -386,6 +446,7 @@ function renderPage(state) {
     importSource,
     importRef,
     importSubdir,
+    openChatProcess,
   } = state;
 
   return `<!doctype html>
@@ -668,6 +729,9 @@ function renderPage(state) {
         text-transform: uppercase;
         color: var(--primary);
       }
+      .packages-review-banner.is-approved strong {
+        color: #5f8a73;
+      }
       .packages-review-banner p {
         margin: 0;
         color: var(--muted);
@@ -811,6 +875,12 @@ function renderPage(state) {
         ${renderMain(routeBase, selectedPkg, view, refs, browseRef, path, readResult, logResult, offset)}
       </section>
     </main>
+    ${openChatProcess ? `<script>
+      window.parent.postMessage(${JSON.stringify({
+        type: "gsv:open-chat-process",
+        detail: openChatProcess,
+      })}, window.location.origin);
+    </script>` : ""}
   </body>
 </html>`;
 }
@@ -828,6 +898,7 @@ export async function handleFetch(request, context = {}) {
   const url = new URL(request.url);
   let statusText = "";
   let errorText = "";
+  let openChatProcess = null;
   let selectedPackageId = url.searchParams.get("packageId")?.trim() ?? "";
   let importSource = url.searchParams.get("source")?.trim() ?? "";
   let importRef = url.searchParams.get("ref")?.trim() ?? "main";
@@ -858,6 +929,39 @@ export async function handleFetch(request, context = {}) {
         });
         selectedPackageId = result.package.packageId;
         statusText = `Enabled ${result.package.name}`;
+      } else if (action === "review") {
+        const packageId = String(form.get("packageId") ?? "").trim();
+        const listResult = await kernel.request("pkg.list", {});
+        const target = Array.isArray(listResult?.packages)
+          ? listResult.packages.find((pkg) => pkg.packageId === packageId)
+          : null;
+        if (!target) {
+          throw new Error(`Unknown package: ${packageId}`);
+        }
+        const spawned = await kernel.request("proc.spawn", {
+          profile: "review",
+          label: `Review ${target.name}`,
+          prompt: buildReviewPrompt(target),
+          workspace: { mode: "none" },
+        });
+        if (!spawned?.ok) {
+          throw new Error(spawned?.error || "Failed to spawn review process");
+        }
+        selectedPackageId = target.packageId;
+        openChatProcess = {
+          pid: spawned.pid,
+          workspaceId: spawned.workspaceId,
+          cwd: spawned.cwd,
+        };
+        statusText = `Opened reviewer for ${target.name}`;
+      } else if (action === "review-approve") {
+        const result = await kernel.request("pkg.review.approve", {
+          packageId: String(form.get("packageId") ?? "").trim(),
+        });
+        selectedPackageId = result.package.packageId;
+        statusText = result.changed
+          ? `Approved review for ${result.package.name}`
+          : `${result.package.name} was already approved`;
       } else if (action === "remove") {
         const result = await kernel.request("pkg.remove", {
           packageId: String(form.get("packageId") ?? "").trim(),
@@ -947,6 +1051,7 @@ export async function handleFetch(request, context = {}) {
     importSource,
     importRef,
     importSubdir,
+    openChatProcess,
   }), {
     headers: {
       "content-type": "text/html; charset=utf-8",

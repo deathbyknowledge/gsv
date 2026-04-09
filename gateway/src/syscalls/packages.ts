@@ -1,4 +1,71 @@
+import type { ToolDefinition } from ".";
+
 export type PkgRuntime = "dynamic-worker" | "node" | "web-ui";
+
+export const PKG_REPO_READ_DEFINITION: ToolDefinition = {
+  name: "PackageRead",
+  description: "Read a file from an installed package source or list a directory inside that package repository.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      packageId: {
+        type: "string",
+        description: "Installed package id to inspect.",
+      },
+      ref: {
+        type: "string",
+        description: "Optional ref to browse instead of the package's active ref.",
+      },
+      path: {
+        type: "string",
+        description: "File or directory path within the package source.",
+      },
+    },
+    required: ["packageId"],
+  },
+};
+
+export const PKG_REPO_LOG_DEFINITION: ToolDefinition = {
+  name: "PackageLog",
+  description: "Read recent commits from an installed package source.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      packageId: {
+        type: "string",
+        description: "Installed package id to inspect.",
+      },
+      ref: {
+        type: "string",
+        description: "Optional ref to inspect instead of the package's active ref.",
+      },
+      limit: {
+        type: "number",
+        description: "Maximum number of commits to return.",
+      },
+      offset: {
+        type: "number",
+        description: "Commit offset for pagination.",
+      },
+    },
+    required: ["packageId"],
+  },
+};
+
+export const PKG_REPO_REFS_DEFINITION: ToolDefinition = {
+  name: "PackageRefs",
+  description: "List branches and tags for an installed package source.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      packageId: {
+        type: "string",
+        description: "Installed package id to inspect.",
+      },
+    },
+    required: ["packageId"],
+  },
+};
 
 export type PkgListArgs = {
   enabled?: boolean;
@@ -39,6 +106,10 @@ export type PkgSummary = {
   };
   entrypoints: PkgEntrypointSummary[];
   bindingNames: string[];
+  review: {
+    required: boolean;
+    approvedAt: number | null;
+  };
   installedAt: number;
   updatedAt: number;
 };
@@ -52,6 +123,15 @@ export type PkgInstallArgs = {
 };
 
 export type PkgInstallResult = {
+  changed: boolean;
+  package: PkgSummary;
+};
+
+export type PkgReviewApproveArgs = {
+  packageId: string;
+};
+
+export type PkgReviewApproveResult = {
   changed: boolean;
   package: PkgSummary;
 };

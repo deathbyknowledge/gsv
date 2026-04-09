@@ -306,5 +306,5 @@ function requireWorkspaceBackend(ctx: KernelContext, identity: ProcessIdentity) 
 }
 
 function isProcessProfile(value: unknown): value is AiContextProfile {
-  return value === "init" || value === "task" || value === "cron" || value === "mcp" || value === "app";
+  return value === "init" || value === "task" || value === "review" || value === "cron" || value === "mcp" || value === "app";
 }

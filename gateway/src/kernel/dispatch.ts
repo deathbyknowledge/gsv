@@ -39,6 +39,7 @@ import {
   handlePkgInstall,
   handlePkgList,
   handlePkgRemove,
+  handlePkgReviewApprove,
   handlePkgRepoLog,
   handlePkgRepoRead,
   handlePkgRepoRefs,
@@ -176,6 +177,9 @@ async function dispatchNative(
         break;
       case "pkg.install":
         data = handlePkgInstall(frame.args, ctx);
+        break;
+      case "pkg.review.approve":
+        data = handlePkgReviewApprove(frame.args, ctx);
         break;
       case "pkg.remove":
         data = handlePkgRemove(frame.args, ctx);

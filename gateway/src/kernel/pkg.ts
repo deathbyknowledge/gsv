@@ -6,6 +6,8 @@ import type {
   PkgCheckoutResult,
   PkgInstallArgs,
   PkgInstallResult,
+  PkgReviewApproveArgs,
+  PkgReviewApproveResult,
   PkgListArgs,
   PkgListResult,
   PkgSyncArgs,
@@ -52,6 +54,9 @@ export function handlePkgInstall(
   ctx: KernelContext,
 ): PkgInstallResult {
   const record = requirePackage(args.packageId, ctx);
+  if (record.reviewRequired && !record.reviewedAt) {
+    throw new Error(`Package review approval required before enabling: ${record.manifest.name}`);
+  }
   if (!record.enabled) {
     const updated = ctx.packages.setEnabled(record.packageId, true);
     if (!updated) {
@@ -61,6 +66,30 @@ export function handlePkgInstall(
 
   return {
     changed: !record.enabled,
+    package: toPkgSummary(requirePackage(record.packageId, ctx)),
+  };
+}
+
+export function handlePkgReviewApprove(
+  args: PkgReviewApproveArgs,
+  ctx: KernelContext,
+): PkgReviewApproveResult {
+  const record = requirePackage(args.packageId, ctx);
+  if (!record.reviewRequired) {
+    return {
+      changed: false,
+      package: toPkgSummary(record),
+    };
+  }
+
+  const approvedAt = record.reviewedAt ?? Date.now();
+  const updated = ctx.packages.setReviewed(record.packageId, approvedAt);
+  if (!updated) {
+    throw new Error(`Failed to mark package as reviewed: ${record.packageId}`);
+  }
+
+  return {
+    changed: record.reviewedAt == null,
     package: toPkgSummary(requirePackage(record.packageId, ctx)),
   };
 }
@@ -103,6 +132,8 @@ export async function handlePkgAdd(
     artifact: resolved.artifact,
     grants,
     enabled,
+    reviewRequired: !isSystemSource,
+    reviewedAt: isSystemSource ? Date.now() : existing?.reviewedAt ?? null,
     installedAt: existing?.installedAt,
     updatedAt: Date.now(),
   });
@@ -161,6 +192,8 @@ export async function handlePkgCheckout(
     artifact: resolved.artifact,
     grants: record.grants,
     enabled: record.enabled,
+    reviewRequired: record.reviewRequired,
+    reviewedAt: record.reviewedAt ?? null,
     installedAt: record.installedAt,
     updatedAt: Date.now(),
   });
@@ -423,6 +456,10 @@ function toPkgSummary(record: InstalledPackageRecord): PkgSummary {
       windowDefaults: entrypoint.windowDefaults,
     })),
     bindingNames: (record.manifest.capabilities?.bindings ?? []).map((binding) => binding.binding),
+    review: {
+      required: record.reviewRequired,
+      approvedAt: record.reviewedAt ?? null,
+    },
     installedAt: record.installedAt,
     updatedAt: record.updatedAt,
   };
