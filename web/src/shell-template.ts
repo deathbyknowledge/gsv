@@ -30,109 +30,204 @@ export function renderDesktopShell(): string {
 
           <div class="session-panel session-panel-wide" data-session-setup-view hidden>
             <form class="session-setup-form" data-session-setup-form>
-              <div class="session-panel-head session-panel-head-with-progress">
-                <div>
-                  <p class="session-kicker">First-time setup</p>
-                  <h1>Set up this gateway</h1>
-                  <p class="session-copy">Create the first account, then configure the pieces you actually want right now.</p>
-                </div>
-                <div class="setup-progress">
-                  <p class="setup-progress-label" data-setup-progress-label>Step 1 of 4</p>
-                  <div class="setup-progress-track">
-                    <span class="setup-progress-fill" data-setup-progress-fill></span>
-                  </div>
-                </div>
+              <div class="session-panel-head">
+                <p class="session-kicker">First-time setup</p>
+                <h1 data-setup-heading>Bring this gateway online</h1>
+                <p class="session-copy" data-setup-copy>Choose how much control you want, then review the exact plan before provisioning.</p>
               </div>
 
-              <section class="setup-step" data-setup-step="0">
-                <div class="setup-step-copy">
-                  <p class="session-kicker">Account</p>
-                  <h2>Create the first operator</h2>
-                  <p class="session-copy">This account signs into the desktop and owns the initial workspace.</p>
-                </div>
-                <div class="session-field-grid">
-                  <label>
-                    Username
-                    <input data-setup-username type="text" autocomplete="username" placeholder="hank" />
-                  </label>
-                  <label>
-                    Password
-                    <input data-setup-password type="password" autocomplete="new-password" />
-                  </label>
-                  <label>
-                    Confirm password
-                    <input data-setup-password-confirm type="password" autocomplete="new-password" />
-                  </label>
+              <div class="onboarding-stage-indicator">
+                <span class="onboarding-stage-pill" data-setup-stage-pill="welcome">Choose path</span>
+                <span class="onboarding-stage-pill" data-setup-stage-pill="details">Configure</span>
+                <span class="onboarding-stage-pill" data-setup-stage-pill="review">Review</span>
+              </div>
+
+              <section class="onboarding-stage" data-setup-stage="welcome">
+                <div class="onboarding-mode-grid">
+                  <button type="button" class="onboarding-mode-card" data-setup-lane="quick">
+                    <span class="onboarding-mode-kicker">Recommended</span>
+                    <strong>Quick start</strong>
+                    <p>Smallest setup. Use the default system source and default AI configuration.</p>
+                  </button>
+                  <button type="button" class="onboarding-mode-card" data-setup-lane="customize">
+                    <span class="onboarding-mode-kicker">Guided</span>
+                    <strong>Customize</strong>
+                    <p>Adjust AI, device bootstrap, and source settings without dropping into raw system details.</p>
+                  </button>
+                  <button type="button" class="onboarding-mode-card" data-setup-lane="advanced">
+                    <span class="onboarding-mode-kicker">Full control</span>
+                    <strong>Advanced</strong>
+                    <p>Pick your own source, ref, and detailed boot settings up front.</p>
+                  </button>
                 </div>
               </section>
 
-              <section class="setup-step" data-setup-step="1" hidden>
+              <section class="onboarding-stage" data-setup-stage="details" hidden>
                 <div class="setup-step-copy">
-                  <p class="session-kicker">Root</p>
-                  <h2>Root access</h2>
-                  <p class="session-copy">Keep root locked, or set a root password during bootstrap.</p>
+                  <p class="session-kicker" data-setup-lane-kicker>Quick start</p>
+                  <h2 data-setup-lane-title>Create the first operator</h2>
+                  <p class="session-copy" data-setup-lane-description>Start with the account and admin access. Defaults for AI and system source are already chosen.</p>
                 </div>
-                <div class="session-field-grid">
-                  <label class="session-toggle">
-                    <span>Set a root password now</span>
-                    <input data-setup-root-enabled type="checkbox" />
-                  </label>
-                  <label data-setup-root-row hidden>
-                    Root password
-                    <input data-setup-root-password type="password" autocomplete="new-password" />
-                  </label>
-                </div>
+
+                <section class="onboarding-section" data-setup-detail-step="account">
+                  <div class="onboarding-section-head">
+                    <h3>Account</h3>
+                    <p>Create the first account that signs into the desktop and owns the initial home directory.</p>
+                  </div>
+                  <div class="session-field-grid">
+                    <label>
+                      Username
+                      <input data-setup-username type="text" autocomplete="username" placeholder="hank" />
+                    </label>
+                    <label>
+                      Password
+                      <input data-setup-password type="password" autocomplete="new-password" />
+                    </label>
+                    <label>
+                      Confirm password
+                      <input data-setup-password-confirm type="password" autocomplete="new-password" />
+                    </label>
+                  </div>
+                </section>
+
+                <section class="onboarding-section" data-setup-detail-step="admin">
+                  <div class="onboarding-section-head">
+                    <h3>Admin access</h3>
+                    <p>Admin access is always configured during first boot. Use the same password for simplicity, or set a separate admin password.</p>
+                  </div>
+                  <div class="session-radio-group">
+                    <label class="session-radio-option">
+                      <input data-setup-admin-same type="radio" name="setup-admin-mode" checked />
+                      <span>
+                        <strong>Use the same password</strong>
+                        <small>Simplest option. Your account password is also used for admin access.</small>
+                      </span>
+                    </label>
+                    <label class="session-radio-option">
+                      <input data-setup-admin-custom type="radio" name="setup-admin-mode" />
+                      <span>
+                        <strong>Use a separate admin password</strong>
+                        <small>Best if you want a distinct credential for system-level changes and recovery.</small>
+                      </span>
+                    </label>
+                  </div>
+                  <div class="session-field-grid">
+                    <label data-setup-root-row hidden>
+                      Admin password
+                      <input data-setup-root-password type="password" autocomplete="new-password" />
+                    </label>
+                  </div>
+                </section>
+
+                <section class="onboarding-section" data-setup-detail-step="ai" data-setup-ai-section hidden>
+                  <div class="onboarding-section-head">
+                    <h3>AI defaults</h3>
+                    <p>The gateway already has a working default provider path. Only customize this if you want a different provider or model from the start.</p>
+                  </div>
+                  <div class="session-field-grid">
+                    <label class="session-toggle">
+                      <span>Customize AI settings</span>
+                      <input data-setup-ai-enabled type="checkbox" />
+                    </label>
+                    <label data-setup-ai-provider-row hidden>
+                      Provider
+                      <input data-setup-ai-provider type="text" placeholder="openai" autocomplete="off" />
+                    </label>
+                    <label data-setup-ai-model-row hidden>
+                      Model
+                      <input data-setup-ai-model type="text" placeholder="gpt-5.4" autocomplete="off" />
+                    </label>
+                    <label data-setup-ai-key-row hidden>
+                      API key
+                      <input data-setup-ai-key type="password" autocomplete="off" />
+                    </label>
+                  </div>
+                </section>
+
+                <section class="onboarding-section" data-setup-detail-step="source" data-setup-source-section hidden>
+                  <div class="onboarding-section-head">
+                    <h3>System source</h3>
+                    <p>The system source is bootstrapped during first setup. Leave this on the default upstream, or point at a custom repository and ref now.</p>
+                  </div>
+                  <div class="session-field-grid">
+                    <label class="session-toggle">
+                      <span>Use a custom source</span>
+                      <input data-setup-source-enabled type="checkbox" />
+                    </label>
+                    <label data-setup-source-row hidden>
+                      Repository or remote URL
+                      <input data-setup-bootstrap-source type="text" autocomplete="off" placeholder="deathbyknowledge/gsv" />
+                    </label>
+                    <label data-setup-source-ref-row hidden>
+                      Ref
+                      <input data-setup-bootstrap-ref type="text" autocomplete="off" placeholder="osify" />
+                    </label>
+                  </div>
+                </section>
+
+                <section class="onboarding-section" data-setup-detail-step="device" data-setup-node-section hidden>
+                  <div class="onboarding-section-head">
+                    <h3>Device token</h3>
+                    <p>Optional. Issue a driver token now if you want to bring a node online immediately after setup.</p>
+                  </div>
+                  <div class="session-field-grid">
+                    <label class="session-toggle">
+                      <span>Issue a node token now</span>
+                      <input data-setup-node-enabled type="checkbox" />
+                    </label>
+                    <label data-setup-node-device-row hidden>
+                      Device ID
+                      <input data-setup-node-device-id type="text" autocomplete="off" placeholder="node-rearden" />
+                    </label>
+                    <label data-setup-node-label-row hidden>
+                      Label
+                      <input data-setup-node-label type="text" autocomplete="off" placeholder="rearden" />
+                    </label>
+                    <label data-setup-node-expiry-row hidden>
+                      Expires in days
+                      <input data-setup-node-expiry type="number" min="1" inputmode="numeric" autocomplete="off" placeholder="30" />
+                    </label>
+                  </div>
+                </section>
               </section>
 
-              <section class="setup-step" data-setup-step="2" hidden>
+              <section class="onboarding-stage" data-setup-stage="review" hidden>
                 <div class="setup-step-copy">
-                  <p class="session-kicker">AI</p>
-                  <h2>AI defaults</h2>
-                  <p class="session-copy">A default provider is already available. Customize this only if you want different AI settings.</p>
+                  <p class="session-kicker">Review</p>
+                  <h2>Provisioning plan</h2>
+                  <p class="session-copy">This is the exact first-boot configuration that will be applied.</p>
                 </div>
-                <div class="session-field-grid">
-                  <label class="session-toggle">
-                    <input data-setup-ai-enabled type="checkbox" />
-                    <span>Do you want to customize the AI?</span>
-                  </label>
-                  <label data-setup-ai-provider-row hidden>
-                    Provider
-                    <input data-setup-ai-provider type="text" placeholder="openai" autocomplete="off" />
-                  </label>
-                  <label data-setup-ai-model-row hidden>
-                    Model
-                    <input data-setup-ai-model type="text" placeholder="gpt-5.4" autocomplete="off" />
-                  </label>
-                  <label data-setup-ai-key-row hidden>
-                    API key
-                    <input data-setup-ai-key type="password" autocomplete="off" />
-                  </label>
-                </div>
-              </section>
-
-              <section class="setup-step" data-setup-step="3" hidden>
-                <div class="setup-step-copy">
-                  <p class="session-kicker">Node</p>
-                  <h2>Node bootstrap</h2>
-                  <p class="session-copy">Optional. Issue a driver token now if you want to bring a node online immediately after setup.</p>
-                </div>
-                <div class="session-field-grid">
-                  <label class="session-toggle">
-                    <span>Issue a node token now</span>
-                    <input data-setup-node-enabled type="checkbox" />
-                  </label>
-                  <label data-setup-node-device-row hidden>
-                    Device ID
-                    <input data-setup-node-device-id type="text" autocomplete="off" placeholder="node-rearden" />
-                  </label>
-                  <label data-setup-node-label-row hidden>
-                    Label
-                    <input data-setup-node-label type="text" autocomplete="off" placeholder="rearden" />
-                  </label>
-                  <label data-setup-node-expiry-row hidden>
-                    Expires in days
-                    <input data-setup-node-expiry type="number" min="1" inputmode="numeric" autocomplete="off" placeholder="30" />
-                  </label>
+                <div class="onboarding-summary-grid">
+                  <article class="onboarding-summary-card">
+                    <span>Path</span>
+                    <strong data-setup-summary-lane></strong>
+                    <p data-setup-summary-lane-copy></p>
+                  </article>
+                  <article class="onboarding-summary-card">
+                    <span>Account</span>
+                    <strong data-setup-summary-account></strong>
+                    <p>First desktop user and home directory owner.</p>
+                  </article>
+                  <article class="onboarding-summary-card">
+                    <span>Admin access</span>
+                    <strong data-setup-summary-admin></strong>
+                    <p>System-level recovery and administration path.</p>
+                  </article>
+                  <article class="onboarding-summary-card">
+                    <span>AI</span>
+                    <strong data-setup-summary-ai></strong>
+                    <p>Initial model/provider behavior for the gateway.</p>
+                  </article>
+                  <article class="onboarding-summary-card">
+                    <span>System source</span>
+                    <strong data-setup-summary-source></strong>
+                    <p>The source imported into <code>system/gsv</code> during setup.</p>
+                  </article>
+                  <article class="onboarding-summary-card">
+                    <span>Device token</span>
+                    <strong data-setup-summary-device></strong>
+                    <p>Optional node bootstrap credentials issued during setup.</p>
+                  </article>
                 </div>
               </section>
 
@@ -140,8 +235,8 @@ export function renderDesktopShell(): string {
 
               <div class="session-actions">
                 <button type="button" class="runtime-btn session-btn-secondary" data-setup-back hidden>Back</button>
-                <button type="button" class="runtime-btn session-btn-secondary" data-setup-next>Next</button>
-                <button type="submit" class="runtime-btn" data-setup-submit hidden>Create gateway</button>
+                <button type="button" class="runtime-btn" data-setup-next hidden>Continue</button>
+                <button type="submit" class="runtime-btn" data-setup-submit hidden>Provision gateway</button>
               </div>
             </form>
           </div>
@@ -149,8 +244,8 @@ export function renderDesktopShell(): string {
           <div class="session-panel" data-session-setup-complete hidden>
             <div class="session-panel-head">
               <p class="session-kicker">Gateway ready</p>
-              <h1>Setup complete</h1>
-              <p class="session-copy">The control plane is initialized. Seed the system repo now, or enter the desktop and push your own checkout later.</p>
+              <h1>Provisioning complete</h1>
+              <p class="session-copy">The control plane, first account, and system source are ready. Enter the desktop, or copy the node bootstrap command if you issued one.</p>
             </div>
             <div class="session-result-grid">
               <div class="session-result-card">
@@ -158,8 +253,16 @@ export function renderDesktopShell(): string {
                 <strong data-setup-result-username></strong>
               </div>
               <div class="session-result-card">
-                <span>Root</span>
+                <span>Admin access</span>
                 <strong data-setup-result-root></strong>
+              </div>
+              <div class="session-result-card">
+                <span>System source</span>
+                <strong data-setup-result-source></strong>
+              </div>
+              <div class="session-result-card">
+                <span>Source ref</span>
+                <strong data-setup-result-ref></strong>
               </div>
             </div>
             <div class="session-token-panel" data-setup-node-result hidden>
@@ -173,27 +276,9 @@ export function renderDesktopShell(): string {
               <textarea class="session-token-value" data-setup-result-node-token readonly></textarea>
               <p class="session-token-meta" data-setup-result-node-meta></p>
             </div>
-            <details class="session-advanced">
-              <summary>Use a custom source</summary>
-              <div class="session-field-grid">
-                <label>
-                  Repository or remote URL
-                  <input data-setup-bootstrap-source type="text" autocomplete="off" placeholder="deathbyknowledge/gsv" />
-                </label>
-                <label>
-                  Ref
-                  <input data-setup-bootstrap-ref type="text" autocomplete="off" placeholder="codex/app-runtime-from-680877d" />
-                </label>
-              </div>
-            </details>
-            <div class="session-inline-status" data-session-setup-bootstrap-status hidden>
-              <span class="session-inline-spinner" aria-hidden="true"></span>
-              <span>Initializing system repo...</span>
-            </div>
             <p class="session-error" data-session-setup-complete-error hidden></p>
             <div class="session-actions">
-              <button type="button" class="runtime-btn" data-session-setup-bootstrap>Initialize system repo</button>
-              <button type="button" class="runtime-btn session-btn-secondary" data-session-setup-continue>Enter desktop</button>
+              <button type="button" class="runtime-btn" data-session-setup-continue>Enter desktop</button>
             </div>
           </div>
         </div>
