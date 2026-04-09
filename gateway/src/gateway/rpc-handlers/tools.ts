@@ -30,15 +30,15 @@ function toToolDispatchRpcError(message: string): RpcError {
 }
 
 export const handleToolsList: Handler<"tools.list"> = ({ gw }) => ({
-  tools: gw.nodeService.listTools(gw.nodes.keys()),
+  tools: gw.getAllTools(),
 });
 
-export const handleToolRequest: Handler<"tool.request"> = ({ gw, params }) => {
+export const handleToolRequest: Handler<"tool.request"> = async ({ gw, params }) => {
   if (!params?.callId || !params?.tool || !params?.sessionKey) {
     throw new RpcError(400, "callId, tool, and sessionKey required");
   }
 
-  const result = gw.nodeService.requestToolForSession(params, gw.nodes);
+  const result = await gw.toolRequest(params);
   if (!result.ok) {
     throw toToolDispatchRpcError(result.error ?? "Failed to dispatch tool");
   }
@@ -58,6 +58,17 @@ export const handleToolInvoke: Handler<"tool.invoke"> = (ctx) => {
     throw new RpcError(101, "Not connected");
   }
 
+  // Unified dispatch: try MCP resolution first, then fall through to node.
+  // resolve() returns null fast when cache is cold or server not configured.
+  const resolved = gw.mcpService.resolve(params.tool, gw.getFullConfig().mcp);
+  if (resolved) {
+    // MCP tool: execute via HTTP, send result through WS frame.
+    // Route through gateway.executeMcpToolInvoke to use ctx.waitUntil.
+    gw.executeMcpToolInvoke(ws, frame.id, resolved, params.args ?? {});
+    return DEFER_RESPONSE;
+  }
+
+  // Node tool: async dispatch via WebSocket
   const result = gw.nodeService.requestToolFromClient(
     {
       clientId,

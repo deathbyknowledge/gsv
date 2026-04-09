@@ -84,7 +84,7 @@ export async function executeCronJob(
     await session.chatSend(
       cronMessage,
       runId,
-      JSON.parse(JSON.stringify(gw.nodeService.listTools(gw.nodes.keys()))),
+      JSON.parse(JSON.stringify(gw.getAllTools())),
       JSON.parse(
         JSON.stringify(gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys())),
       ),

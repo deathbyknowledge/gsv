@@ -185,6 +185,22 @@ export interface CronConfig {
   maxConcurrentRuns: number;
 }
 
+export interface McpServerConfig {
+  // MCP server URL. Must be HTTPS except for localhost/127.0.0.1.
+  url: string;
+  // Bearer token for authentication.
+  token?: string;
+  // Tool list cache TTL in milliseconds (default: 300000 / 5 min).
+  cacheTtlMs?: number;
+  // Request timeout in milliseconds (default: 30000).
+  timeoutMs?: number;
+}
+
+export interface McpConfig {
+  // Map of server ID → server configuration.
+  servers: Record<string, McpServerConfig>;
+}
+
 export interface GsvConfig {
   // Model settings 
   model: {
@@ -237,6 +253,9 @@ export interface GsvConfig {
   // Cron job scheduler configuration
   cron: CronConfig;
 
+  // Remote MCP server connections
+  mcp: McpConfig;
+
   // User timezone (IANA string, e.g. "America/Chicago"). Defaults to "UTC".
   // Used in message envelopes, cron scheduling context, and system prompt.
   userTimezone: string;
@@ -268,6 +287,9 @@ export type GsvConfigInput = {
   };
   compaction?: Partial<CompactionConfig>;
   cron?: Partial<CronConfig>;
+  mcp?: {
+    servers?: Record<string, Partial<McpServerConfig>>;
+  };
   userTimezone?: string;
 };
 
