@@ -17,12 +17,17 @@ export type ProcWorkspaceSpec =
   | { mode: "inherit" }
   | { mode: "attach"; workspaceId: string };
 
+export type ProcSpawnMountSpec =
+  | { kind: "package-source"; packageId: string; mountPath?: string }
+  | { kind: "package-repo"; packageId: string; mountPath?: string };
+
 export type ProcSpawnArgs = {
   profile: AiContextProfile;
   label?: string;
   prompt?: string;
   parentPid?: string;
   workspace?: ProcWorkspaceSpec;
+  mounts?: ProcSpawnMountSpec[];
   // NOTE: consider allowing explicit identity override (root only or subset of current identity)
 };
 

@@ -30,5 +30,6 @@ export type KernelContext = {
   runRoutes: RunRouteStore;
   connection: Connection;
   identity?: ConnectionIdentity;
+  processId?: string;
   serverVersion: string;
 };

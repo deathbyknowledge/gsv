@@ -12,8 +12,26 @@ import { Bash, defineCommand } from "just-bash";
 import type { BashExecResult, ExecResult } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
 import type { ExtendedStat } from "../../fs/gsv-fs";
-import { createPackageBackend, createWorkspaceBackend, resolveUserPath } from "../../fs";
+import {
+  createPackageBackend,
+  createProcessSourceBackend,
+  createWorkspaceBackend,
+  RipgitClient,
+  resolveUserPath,
+} from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { hasCapability } from "../../kernel/capabilities";
+import {
+  handlePkgAdd,
+  handlePkgCheckout,
+  handlePkgInstall,
+  handlePkgList,
+  handlePkgRemove,
+  handlePkgRepoLog,
+  handlePkgRepoRefs,
+  handlePkgReviewApprove,
+  resolveInstalledPackage,
+} from "../../kernel/pkg";
 import {
   packageArtifactToWorkerCode,
   packageDoName,
@@ -78,6 +96,12 @@ export async function handleShellExec(
 }
 
 function createBash(ctx: KernelContext, identity: ProcessIdentity, cwd: string): Bash {
+  const mounts = ctx.processId ? ctx.procs.getMounts(ctx.processId) : [];
+  const sourceBackend = createProcessSourceBackend(
+    identity,
+    mounts.length > 0 ? new RipgitClient(ctx.env.RIPGIT, ctx.env.RIPGIT_INTERNAL_KEY ?? null) : null,
+    mounts,
+  );
   const fs = new GsvFs(
     ctx.env.STORAGE,
     identity,
@@ -90,6 +114,7 @@ function createBash(ctx: KernelContext, identity: ProcessIdentity, cwd: string):
       workspaces: ctx.workspaces,
     },
     undefined,
+    sourceBackend,
     createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
     createPackageBackend(identity, ctx.packages),
   );
@@ -618,14 +643,16 @@ function buildCustomCommands(
 
   const ls = buildLsCommand(fs, identity, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
+  const pkg = buildPkgCommand(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
 
-  return [whoami, id, hostname, uname, chown, chmod, ps, ls, stat, ...packageCommands];
+  return [whoami, id, hostname, uname, chown, chmod, ps, ls, stat, pkg, ...packageCommands];
 }
 
 function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
   const commands = [];
   const reserved = new Set([
+    "pkg",
     "whoami",
     "id",
     "hostname",
@@ -664,6 +691,352 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
   }
 
   return commands;
+}
+
+function buildPkgCommand(ctx: KernelContext) {
+  return defineCommand("pkg", async (args): Promise<ExecResult> => {
+    try {
+      return await runPkgCommand(args, ctx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        stdout: "",
+        stderr: `pkg: ${message}\n`,
+        exitCode: 1,
+      };
+    }
+  });
+}
+
+async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecResult> {
+  const [subcommand = "help", ...rest] = args;
+
+  switch (subcommand) {
+    case "help":
+    case "--help":
+    case "-h":
+      return { stdout: pkgUsage(), stderr: "", exitCode: 0 };
+    case "list": {
+      requireCommandCapability(ctx, "pkg.list");
+      const result = handlePkgList({}, ctx);
+      return { stdout: formatPkgList(result.packages), stderr: "", exitCode: 0 };
+    }
+    case "remotes": {
+      requireCommandCapability(ctx, "pkg.list");
+      const result = handlePkgList({}, ctx);
+      return { stdout: formatPkgRemotes(result.packages), stderr: "", exitCode: 0 };
+    }
+    case "show":
+    case "status": {
+      requireCommandCapability(ctx, "pkg.list");
+      const target = resolvePkgTarget(rest[0], ctx);
+      return { stdout: formatPkgStatus(target), stderr: "", exitCode: 0 };
+    }
+    case "manifest": {
+      requireCommandCapability(ctx, "pkg.list");
+      const target = resolvePkgTarget(rest[0], ctx);
+      return { stdout: `${JSON.stringify(target.manifest, null, 2)}\n`, stderr: "", exitCode: 0 };
+    }
+    case "capabilities": {
+      requireCommandCapability(ctx, "pkg.list");
+      const target = resolvePkgTarget(rest[0], ctx);
+      return { stdout: formatPkgCapabilities(target), stderr: "", exitCode: 0 };
+    }
+    case "refs": {
+      requireCommandCapability(ctx, "pkg.repo.refs");
+      const target = resolvePkgTarget(rest[0], ctx);
+      const result = await handlePkgRepoRefs({ packageId: target.packageId }, ctx);
+      return { stdout: formatPkgRefs(result), stderr: "", exitCode: 0 };
+    }
+    case "log": {
+      requireCommandCapability(ctx, "pkg.repo.log");
+      const parsed = parsePkgLogArgs(rest);
+      const target = resolvePkgTarget(parsed.packageId, ctx);
+      const result = await handlePkgRepoLog({
+        packageId: target.packageId,
+        limit: parsed.limit,
+        offset: parsed.offset,
+      }, ctx);
+      return { stdout: formatPkgLog(result), stderr: "", exitCode: 0 };
+    }
+    case "add": {
+      requireCommandCapability(ctx, "pkg.add");
+      const result = await handlePkgAdd(parsePkgAddArgs(rest), ctx);
+      return {
+        stdout: `${result.package.enabled ? "imported and enabled" : "imported"} ${result.package.name} from ${result.imported.repo} (${result.imported.ref})\n`,
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "remote": {
+      const [remoteSubcommand, ...remoteArgs] = rest;
+      if (!remoteSubcommand || remoteSubcommand === "list") {
+        requireCommandCapability(ctx, "pkg.list");
+        const result = handlePkgList({}, ctx);
+        return { stdout: formatPkgRemotes(result.packages), stderr: "", exitCode: 0 };
+      }
+      if (remoteSubcommand === "add") {
+        requireCommandCapability(ctx, "pkg.add");
+        const result = await handlePkgAdd(parsePkgAddArgs(remoteArgs), ctx);
+        return {
+          stdout: `${result.package.enabled ? "imported and enabled" : "imported"} ${result.package.name} from ${result.imported.repo} (${result.imported.ref})\n`,
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      throw new Error(`Unknown pkg remote subcommand: ${remoteSubcommand}`);
+    }
+    case "approve": {
+      requireCommandCapability(ctx, "pkg.review.approve");
+      const target = resolvePkgTarget(rest[0], ctx);
+      const result = handlePkgReviewApprove({ packageId: target.packageId }, ctx);
+      return { stdout: `${result.changed ? "approved" : "already approved"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
+    }
+    case "enable": {
+      requireCommandCapability(ctx, "pkg.install");
+      const target = resolvePkgTarget(rest[0], ctx);
+      const result = handlePkgInstall({ packageId: target.packageId }, ctx);
+      return { stdout: `${result.changed ? "enabled" : "already enabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
+    }
+    case "disable": {
+      requireCommandCapability(ctx, "pkg.remove");
+      const target = resolvePkgTarget(rest[0], ctx);
+      const result = handlePkgRemove({ packageId: target.packageId }, ctx);
+      return { stdout: `${result.changed ? "disabled" : "already disabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
+    }
+    case "checkout": {
+      requireCommandCapability(ctx, "pkg.checkout");
+      const ref = String(rest[0] ?? "").trim();
+      if (!ref) {
+        throw new Error("Usage: pkg checkout <ref> [package]");
+      }
+      const target = resolvePkgTarget(rest[1], ctx);
+      const result = await handlePkgCheckout({ packageId: target.packageId, ref }, ctx);
+      return { stdout: `${result.changed ? "checked out" : "already on"} ${ref} for ${result.package.name}\n`, stderr: "", exitCode: 0 };
+    }
+    default:
+      throw new Error(`Unknown pkg subcommand: ${subcommand}`);
+  }
+}
+
+function resolvePkgTarget(rawPackageId: string | undefined, ctx: KernelContext): InstalledPackageRecord {
+  const packageId = typeof rawPackageId === "string" ? rawPackageId.trim() : "";
+  if (packageId) {
+    return resolveInstalledPackage(packageId, ctx);
+  }
+  const currentPackageId = currentMountedPackageId(ctx);
+  if (currentPackageId) {
+    return resolveInstalledPackage(currentPackageId, ctx);
+  }
+  throw new Error("packageId is required outside a mounted package context");
+}
+
+function currentMountedPackageId(ctx: KernelContext): string | null {
+  if (!ctx.processId) {
+    return null;
+  }
+  const mount = ctx.procs.getMounts(ctx.processId).find((candidate) => candidate.mountPath === "/src/package" && candidate.packageId);
+  return mount?.packageId ?? null;
+}
+
+function requireCommandCapability(ctx: KernelContext, capability: string): void {
+  const capabilities = ctx.identity?.capabilities ?? [];
+  if (!hasCapability(capabilities, capability)) {
+    throw new Error(`Permission denied: ${capability}`);
+  }
+}
+
+function formatPkgList(packages: InstalledPackageRecord[]): string {
+  const lines = ["NAME\tSTATE\tREVIEW\tSOURCE\tREF"];
+  for (const pkg of packages) {
+    lines.push([
+      pkg.manifest.name,
+      pkg.enabled ? "enabled" : "disabled",
+      pkg.reviewRequired && !pkg.reviewedAt ? "pending" : (pkg.reviewRequired ? "approved" : "n/a"),
+      pkg.manifest.source.repo,
+      pkg.manifest.source.ref,
+    ].join("\t"));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatPkgRemotes(packages: InstalledPackageRecord[]): string {
+  const lines = ["REPO\tREF\tPACKAGES"];
+  const grouped = new Map<string, { repo: string; ref: string; packages: string[] }>();
+  for (const pkg of packages) {
+    const key = `${pkg.manifest.source.repo}#${pkg.manifest.source.ref}`;
+    const existing = grouped.get(key) ?? {
+      repo: pkg.manifest.source.repo,
+      ref: pkg.manifest.source.ref,
+      packages: [],
+    };
+    existing.packages.push(pkg.manifest.name);
+    grouped.set(key, existing);
+  }
+  for (const entry of [...grouped.values()].sort((left, right) => left.repo.localeCompare(right.repo))) {
+    lines.push(`${entry.repo}\t${entry.ref}\t${entry.packages.sort().join(", ")}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatPkgStatus(pkg: InstalledPackageRecord): string {
+  const review = pkg.reviewRequired
+    ? (pkg.reviewedAt ? `approved at ${new Date(pkg.reviewedAt).toISOString()}` : "approval required")
+    : "not required";
+  const bindings = pkg.manifest.bindingNames.length > 0 ? pkg.manifest.bindingNames.join(", ") : "none";
+  const entrypoints = pkg.manifest.entrypoints.length > 0
+    ? pkg.manifest.entrypoints.map((entry) => `${entry.name}:${entry.kind}`).join(", ")
+    : "none";
+  return [
+    `package: ${pkg.manifest.name}`,
+    `packageId: ${pkg.packageId}`,
+    `enabled: ${pkg.enabled ? "yes" : "no"}`,
+    `review: ${review}`,
+    `source: ${pkg.manifest.source.repo}`,
+    `ref: ${pkg.manifest.source.ref}`,
+    `subdir: ${pkg.manifest.source.subdir}`,
+    `resolvedCommit: ${pkg.manifest.source.resolvedCommit ?? "unknown"}`,
+    `bindings: ${bindings}`,
+    `entrypoints: ${entrypoints}`,
+    "",
+  ].join("\n");
+}
+
+function formatPkgCapabilities(pkg: InstalledPackageRecord): string {
+  const bindings = pkg.manifest.bindingNames.length > 0 ? pkg.manifest.bindingNames.join("\n- ") : "none";
+  const kernelGrants = pkg.grants.kernel.length > 0 ? pkg.grants.kernel.join("\n- ") : "none";
+  const outboundGrants = pkg.grants.outbound.length > 0 ? pkg.grants.outbound.join("\n- ") : "none";
+  const entrypointSyscalls = pkg.manifest.entrypoints.flatMap((entry) => entry.syscalls ?? []);
+  return [
+    `package: ${pkg.manifest.name}`,
+    "bindings:",
+    bindings === "none" ? "none" : `- ${bindings}`,
+    "kernel grants:",
+    kernelGrants === "none" ? "none" : `- ${kernelGrants}`,
+    "outbound grants:",
+    outboundGrants === "none" ? "none" : `- ${outboundGrants}`,
+    "entrypoint syscalls:",
+    entrypointSyscalls.length > 0 ? `- ${entrypointSyscalls.join("\n- ")}` : "none",
+    "",
+  ].join("\n");
+}
+
+function formatPkgRefs(result: Awaited<ReturnType<typeof handlePkgRepoRefs>>): string {
+  const lines = [`packageId: ${result.packageId}`, `activeRef: ${result.activeRef}`, "", "heads:"];
+  for (const [name, hash] of Object.entries(result.heads).sort(([left], [right]) => left.localeCompare(right))) {
+    lines.push(`- ${name}\t${hash}`);
+  }
+  lines.push("", "tags:");
+  for (const [name, hash] of Object.entries(result.tags).sort(([left], [right]) => left.localeCompare(right))) {
+    lines.push(`- ${name}\t${hash}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+function formatPkgLog(result: Awaited<ReturnType<typeof handlePkgRepoLog>>): string {
+  const lines = [`packageId: ${result.packageId}`, `repo: ${result.repo}`, `ref: ${result.ref}`, ""];
+  for (const entry of result.entries) {
+    lines.push(`${entry.hash.slice(0, 7)} ${entry.message.split("\n")[0] || "No message"}`);
+    lines.push(`  author: ${entry.author} <${entry.authorEmail}>`);
+    lines.push(`  time: ${new Date(entry.commitTime * 1000).toISOString()}`);
+    if (entry.parents.length > 0) {
+      lines.push(`  parents: ${entry.parents.join(", ")}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function parsePkgLogArgs(args: string[]): { packageId?: string; limit?: number; offset?: number } {
+  const parsed: { packageId?: string; limit?: number; offset?: number } = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--limit") {
+      parsed.limit = Number.parseInt(String(args[index + 1] ?? ""), 10);
+      index += 1;
+      continue;
+    }
+    if (current === "--offset") {
+      parsed.offset = Number.parseInt(String(args[index + 1] ?? ""), 10);
+      index += 1;
+      continue;
+    }
+    if (!parsed.packageId) {
+      parsed.packageId = current;
+    }
+  }
+  return parsed;
+}
+
+function parsePkgAddArgs(args: string[]): {
+  repo?: string;
+  remoteUrl?: string;
+  ref?: string;
+  subdir?: string;
+  enable?: boolean;
+} {
+  const parsed: {
+    repo?: string;
+    remoteUrl?: string;
+    ref?: string;
+    subdir?: string;
+    enable?: boolean;
+  } = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--repo") {
+      parsed.repo = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--remote-url" || current === "--url") {
+      parsed.remoteUrl = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--ref") {
+      parsed.ref = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--subdir") {
+      parsed.subdir = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--enable") {
+      parsed.enable = true;
+    }
+  }
+  return parsed;
+}
+
+function pkgUsage(): string {
+  return [
+    "Usage: pkg <subcommand> [args]",
+    "",
+    "Read-only:",
+    "  pkg list",
+    "  pkg remotes",
+    "  pkg show [package]",
+    "  pkg manifest [package]",
+    "  pkg capabilities [package]",
+    "  pkg refs [package]",
+    "  pkg log [package] [--limit N] [--offset N]",
+    "",
+    "Mutating:",
+    "  pkg add --repo owner/repo [--ref main] [--subdir .] [--enable]",
+    "  pkg add --remote-url https://... [--ref main] [--subdir .] [--enable]",
+    "  pkg remote add ...",
+    "  pkg approve [package]",
+    "  pkg enable [package]",
+    "  pkg disable [package]",
+    "  pkg checkout <ref> [package]",
+    "",
+    "When running inside a package review process, [package] defaults to the mounted /src/package target.",
+    "",
+  ].join("\n");
 }
 
 async function runPackageCommand(

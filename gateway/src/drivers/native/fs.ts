@@ -10,7 +10,9 @@
 import { GsvFs } from "../../fs/gsv-fs";
 import {
   createPackageBackend,
+  createProcessSourceBackend,
   createWorkspaceBackend,
+  RipgitClient,
   resolveUserPath,
   formatSize,
   isTextContentType,
@@ -27,6 +29,12 @@ const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
 function makeFs(ctx: KernelContext): GsvFs {
   const identity = ctx.identity!.process;
+  const mounts = ctx.processId ? ctx.procs.getMounts(ctx.processId) : [];
+  const sourceBackend = createProcessSourceBackend(
+    identity,
+    mounts.length > 0 ? new RipgitClient(ctx.env.RIPGIT, ctx.env.RIPGIT_INTERNAL_KEY ?? null) : null,
+    mounts,
+  );
   return new GsvFs(
     ctx.env.STORAGE,
     identity,
@@ -39,6 +47,7 @@ function makeFs(ctx: KernelContext): GsvFs {
       workspaces: ctx.workspaces,
     },
     undefined,
+    sourceBackend,
     createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
     createPackageBackend(identity, ctx.packages),
   );
