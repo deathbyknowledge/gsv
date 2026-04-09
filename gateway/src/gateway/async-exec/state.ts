@@ -732,7 +732,7 @@ export class GatewayAsyncExecStateService implements GatewayAsyncExecStateBridge
   }
 
   listTools(): ToolDefinition[] {
-    return this.#gateway.nodeService.listTools(this.#gateway.nodes.keys());
+    return this.#gateway.getAllTools();
   }
 
   getNodeInventory(): RuntimeNodeInventory {

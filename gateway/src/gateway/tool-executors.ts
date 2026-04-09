@@ -345,7 +345,7 @@ export async function executeSessionSendTool(
   const runId = crypto.randomUUID();
   const sessionStub = env.SESSION.getByName(sessionKey);
 
-  const tools = JSON.parse(JSON.stringify(gw.nodeService.listTools(gw.nodes.keys())));
+  const tools = JSON.parse(JSON.stringify(gw.getAllTools()));
   const runtimeNodes = JSON.parse(
     JSON.stringify(gw.nodeService.getRuntimeNodeInventory(gw.nodes.keys())),
   );
