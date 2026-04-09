@@ -930,7 +930,7 @@ function formatPkgStatus(pkg: InstalledPackageRecord, ctx: KernelContext): strin
     ? (pkg.reviewedAt ? `approved at ${new Date(pkg.reviewedAt).toISOString()}` : "approval required")
     : "not required";
   const isPublic = isRepoPublic(pkg.manifest.source.repo, ctx.config);
-  const bindings = pkg.manifest.bindingNames.length > 0 ? pkg.manifest.bindingNames.join(", ") : "none";
+  const bindings = getPkgDeclaredBindings(pkg).map((binding) => binding.binding);
   const entrypoints = pkg.manifest.entrypoints.length > 0
     ? pkg.manifest.entrypoints.map((entry) => `${entry.name}:${entry.kind}`).join(", ")
     : "none";
@@ -945,29 +945,50 @@ function formatPkgStatus(pkg: InstalledPackageRecord, ctx: KernelContext): strin
     `ref: ${pkg.manifest.source.ref}`,
     `subdir: ${pkg.manifest.source.subdir}`,
     `resolvedCommit: ${pkg.manifest.source.resolvedCommit ?? "unknown"}`,
-    `bindings: ${bindings}`,
+    `bindings: ${bindings.length > 0 ? bindings.join(", ") : "none"}`,
     `entrypoints: ${entrypoints}`,
     "",
   ].join("\n");
 }
 
 function formatPkgCapabilities(pkg: InstalledPackageRecord): string {
-  const bindings = pkg.manifest.bindingNames.length > 0 ? pkg.manifest.bindingNames.join("\n- ") : "none";
-  const kernelGrants = pkg.grants.kernel.length > 0 ? pkg.grants.kernel.join("\n- ") : "none";
-  const outboundGrants = pkg.grants.outbound.length > 0 ? pkg.grants.outbound.join("\n- ") : "none";
-  const entrypointSyscalls = pkg.manifest.entrypoints.flatMap((entry) => entry.syscalls ?? []);
+  const declaredBindings = getPkgDeclaredBindings(pkg);
+  const grantedBindings = pkg.grants?.bindings ?? [];
+  const declaredEgress = pkg.manifest.capabilities?.egress;
+  const grantedEgress = pkg.grants?.egress;
+  const entrypointSyscalls = Array.from(new Set(pkg.manifest.entrypoints.flatMap((entry) => entry.syscalls ?? [])));
   return [
     `package: ${pkg.manifest.name}`,
-    "bindings:",
-    bindings === "none" ? "none" : `- ${bindings}`,
-    "kernel grants:",
-    kernelGrants === "none" ? "none" : `- ${kernelGrants}`,
-    "outbound grants:",
-    outboundGrants === "none" ? "none" : `- ${outboundGrants}`,
+    "declared bindings:",
+    declaredBindings.length > 0
+      ? declaredBindings.map((binding) =>
+        `- ${binding.binding} (${binding.kind}, ${binding.interfaceName}, ${binding.required ? "required" : "optional"})`
+      ).join("\n")
+      : "none",
+    "granted bindings:",
+    grantedBindings.length > 0
+      ? grantedBindings.map((binding) => `- ${binding.binding} -> ${binding.providerKind}:${binding.providerRef}`).join("\n")
+      : "none",
+    "declared egress:",
+    formatPkgEgress(declaredEgress?.mode, declaredEgress?.allow),
+    "granted egress:",
+    formatPkgEgress(grantedEgress?.mode, grantedEgress?.allow),
     "entrypoint syscalls:",
     entrypointSyscalls.length > 0 ? `- ${entrypointSyscalls.join("\n- ")}` : "none",
     "",
   ].join("\n");
+}
+
+function getPkgDeclaredBindings(pkg: InstalledPackageRecord) {
+  return pkg.manifest.capabilities?.bindings ?? [];
+}
+
+function formatPkgEgress(mode?: string, allow?: string[]): string {
+  if (!mode) return "none";
+  if (mode !== "allowlist") return mode;
+  return Array.isArray(allow) && allow.length > 0
+    ? `allowlist (${allow.join(", ")})`
+    : "allowlist";
 }
 
 function formatPkgRefs(result: Awaited<ReturnType<typeof handlePkgRepoRefs>>): string {

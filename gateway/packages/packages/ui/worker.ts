@@ -126,9 +126,9 @@ function buildReviewPrompt(pkg) {
   return [
     `Review the imported package "${name}".`,
     "",
+    "Current directory is already /src/package.",
     "The package source is mounted read-only at /src/package.",
     "The full repository is mounted read-only at /src/repo.",
-    "Start in /src/package and inspect the code there.",
     "",
     `Source repo: ${repo}`,
     `Source ref: ${ref}`,
@@ -136,10 +136,18 @@ function buildReviewPrompt(pkg) {
     `Declared bindings: ${bindings}`,
     `Entrypoints: ${entrypoints}`,
     "",
+    "Review workflow:",
+    "1. Start with pkg manifest, pkg capabilities, pkg refs, and pkg log.",
+    "2. Inspect /src/package, prioritizing manifest, entrypoints, and system integration points.",
+    "3. Search for network access, parent-window messaging, host bridge use, process spawning, filesystem writes, shell execution, eval, and destructive actions.",
+    "4. If a command fails, note it briefly and continue with other evidence. Do not guess.",
+    "5. Keep tool use tight. Do not narrate trivial navigation or run placeholder commands.",
+    "",
     "Use normal filesystem and shell exploration plus the pkg CLI.",
-    "Helpful commands: pwd, ls, find, grep, cat, pkg manifest, pkg capabilities, pkg refs, pkg log.",
+    "Helpful commands: ls, find, grep, cat, pkg manifest, pkg capabilities, pkg refs, pkg log.",
     "Focus on requested capabilities, suspicious behavior, hidden network or shell access, destructive actions, and whether it should be enabled.",
-    "Conclude with a clear recommendation: approve or do not approve.",
+    "Call out privileged integrations explicitly, including host bridge access, parent-window messaging, and process spawning if present.",
+    "Conclude with a short verdict: approve or do not approve, followed by a concise evidence-based summary.",
   ].join("\n");
 }
 
