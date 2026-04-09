@@ -42,6 +42,7 @@ import {
   packageDoName,
   packageRouteBase,
   type PackageArtifact,
+  visiblePackageScopesForActor,
 } from "./packages";
 import {
   DEFAULT_APP_FRAME_TTL_MS,
@@ -277,7 +278,10 @@ export class Kernel extends Host<Env> {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const record = this.packages.get(appFrame.packageId);
+    const record = this.packages.resolve(
+      appFrame.packageId,
+      visiblePackageScopesForActor({ uid: appFrame.uid }),
+    );
     if (!record || !record.enabled || record.manifest.name !== appFrame.packageName) {
       return errFrame(frame.id, 404, "Package app not found");
     }
@@ -336,7 +340,12 @@ export class Kernel extends Host<Env> {
     let record: InstalledPackageRecord | null = null;
     let entrypoint: PackageEntrypoint | null = null;
 
-    for (const candidate of this.packages.list({ enabled: true, name: packageName, runtime: "web-ui" })) {
+    for (const candidate of this.packages.list({
+      enabled: true,
+      name: packageName,
+      runtime: "web-ui",
+      scopes: visiblePackageScopesForActor({ uid: auth.identity.uid }),
+    })) {
       const matched = candidate.manifest.entrypoints.find((candidateEntrypoint) => {
         return candidateEntrypoint.kind === "ui" && candidateEntrypoint.route === routeBase;
       });
@@ -356,7 +365,7 @@ export class Kernel extends Host<Env> {
       ok: true,
       packageId: record.packageId,
       packageName: record.manifest.name,
-      packageDoName: packageDoName(record.manifest.name),
+      packageDoName: packageDoName(record.manifest.name, record.scope),
       routeBase,
       artifact: record.artifact,
       appFrame: {
