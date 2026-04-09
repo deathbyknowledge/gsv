@@ -67,9 +67,6 @@ export const SYSCALL_TOOL_NAMES: Record<string, string> = {
   [FS_DELETE]: "Delete",
   [FS_SEARCH]: "Search",
   [SHELL_EXEC]: "Shell",
-  [PKG_REPO_REFS]: "PackageRefs",
-  [PKG_REPO_READ]: "PackageRead",
-  [PKG_REPO_LOG]: "PackageLog",
 };
 
 // LLM tool name -> syscall. Reverse mapping of the above

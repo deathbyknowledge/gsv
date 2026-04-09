@@ -131,8 +131,10 @@ function renderSidebar(routeBase, packages, selectedPackageId) {
     const selected = pkg.packageId === selectedPackageId;
     const href = packageHref(routeBase, pkg, "overview");
     const dotClass = pkg.enabled ? "is-enabled" : (isThirdPartyPackage(pkg) ? "is-review" : "is-disabled");
-    const secondary = !pkg.enabled && isThirdPartyPackage(pkg)
-      ? "Review required"
+    const secondary = isThirdPartyPackage(pkg)
+      ? (needsReviewApproval(pkg)
+        ? "Review required"
+        : (pkg?.review?.approvedAt ? "Reviewed" : "Third-party"))
       : (pkg.source?.repo ?? "unknown");
     return `
       <a class="packages-nav-item ${selected ? "is-selected" : ""}" href="${escapeHtml(href)}">
@@ -175,6 +177,9 @@ function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
   const currentRef = browseRef || pkg.source?.ref || "main";
   const reviewPending = needsReviewApproval(pkg);
   const reviewed = Boolean(pkg?.review?.approvedAt);
+  const reviewState = isThirdPartyPackage(pkg)
+    ? `<span class="packages-state ${reviewPending ? "is-review" : (reviewed ? "is-approved" : "is-third-party")}">${reviewPending ? "review pending" : (reviewed ? "reviewed" : "third-party")}</span>`
+    : "";
   const branches = Object.keys(refs?.heads ?? {}).sort();
   const branchOptions = (branches.length > 0 ? branches : [currentRef]).map((branch) => {
     const selected = branch === currentRef ? " selected" : "";
@@ -231,6 +236,7 @@ function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
           <h1>${escapeHtml(pkg.name)}</h1>
           <span class="packages-runtime">${escapeHtml(pkg.runtime ?? "unknown")}</span>
           <span class="packages-state ${pkg.enabled ? "is-enabled" : "is-disabled"}">${pkg.enabled ? "enabled" : "disabled"}</span>
+          ${reviewState}
         </div>
         <p>${escapeHtml(pkg.description || "No description provided.")}</p>
       </div>
@@ -267,6 +273,11 @@ function renderOverview(pkg, refs) {
   const heads = Object.keys(refs?.heads ?? {}).sort();
   const tags = Object.keys(refs?.tags ?? {}).sort();
   const bindings = Array.isArray(pkg.bindingNames) ? pkg.bindingNames : [];
+  const reviewStatus = isThirdPartyPackage(pkg)
+    ? (needsReviewApproval(pkg)
+      ? "Pending approval"
+      : (pkg?.review?.approvedAt ? `Approved on ${new Date(pkg.review.approvedAt).toLocaleString()}` : "Third-party"))
+    : "Built-in";
   const reviewBanner = isThirdPartyPackage(pkg) && needsReviewApproval(pkg)
     ? `
       <section class="packages-review-banner">
@@ -304,6 +315,10 @@ function renderOverview(pkg, refs) {
         <article>
           <span>Version</span>
           <strong>${escapeHtml(pkg.version ?? "0.0.0")}</strong>
+        </article>
+        <article>
+          <span>Review</span>
+          <strong>${escapeHtml(reviewStatus)}</strong>
         </article>
       </section>
       <section class="packages-section">
