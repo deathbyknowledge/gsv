@@ -461,6 +461,7 @@ button:disabled {
 
 .session-panel {
   width: min(480px, 100%);
+  max-height: calc(100vh - 48px);
   align-self: center;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 5px;
@@ -474,12 +475,12 @@ button:disabled {
   -webkit-backdrop-filter: blur(15px) saturate(1.05);
   backdrop-filter: blur(15px) saturate(1.05);
   position: relative;
-  overflow: hidden;
+  overflow: auto;
   padding: 24px 24px 20px;
 }
 
 .session-panel-wide {
-  width: min(760px, 100%);
+  width: min(860px, 100%);
 }
 
 .session-panel .muted {
@@ -646,6 +647,201 @@ button:disabled {
 .session-setup-form {
   display: grid;
   gap: 18px;
+}
+
+.onboarding-stage-indicator {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.onboarding-stage-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  color: rgba(24, 49, 79, 0.68);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.onboarding-stage-pill.is-active {
+  background: linear-gradient(135deg, rgba(0, 52, 102, 0.9) 0%, rgba(26, 75, 132, 0.86) 100%);
+  color: #f3f8ff;
+}
+
+.onboarding-stage-pill.is-complete {
+  background: rgba(26, 75, 132, 0.18);
+  color: rgba(24, 49, 79, 0.8);
+}
+
+.onboarding-stage {
+  display: grid;
+  gap: 18px;
+}
+
+.onboarding-stage[hidden] {
+  display: none;
+}
+
+.onboarding-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.onboarding-mode-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-height: 220px;
+  padding: 18px 18px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #16314f;
+  text-align: left;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.onboarding-mode-card:hover,
+.onboarding-mode-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(0, 52, 102, 0.28);
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 14px 26px rgba(12, 32, 58, 0.12);
+  outline: none;
+}
+
+.onboarding-mode-card.is-selected {
+  border-color: rgba(0, 52, 102, 0.36);
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.onboarding-mode-card strong {
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-mode-card p {
+  margin: 0;
+  color: rgba(24, 49, 79, 0.74);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.onboarding-mode-kicker {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(24, 49, 79, 0.58);
+}
+
+.onboarding-section {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.onboarding-section[hidden] {
+  display: none;
+}
+
+.onboarding-section-head {
+  display: grid;
+  gap: 5px;
+}
+
+.onboarding-section-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-section-head p {
+  margin: 0;
+  color: rgba(24, 49, 79, 0.76);
+  line-height: 1.5;
+  font-size: 0.88rem;
+}
+
+.session-radio-group {
+  display: grid;
+  gap: 10px;
+}
+
+.session-radio-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.16);
+  cursor: pointer;
+}
+
+.session-radio-option input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: #1a4b84;
+}
+
+.session-radio-option span {
+  display: grid;
+  gap: 4px;
+}
+
+.session-radio-option strong {
+  font-size: 0.88rem;
+  color: #16314f;
+}
+
+.session-radio-option small {
+  color: rgba(24, 49, 79, 0.72);
+  line-height: 1.45;
+}
+
+.onboarding-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.onboarding-summary-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.onboarding-summary-card span {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(24, 49, 79, 0.62);
+}
+
+.onboarding-summary-card strong {
+  font-size: 0.96rem;
+  color: #14304d;
+}
+
+.onboarding-summary-card p {
+  margin: 0;
+  color: rgba(24, 49, 79, 0.76);
+  line-height: 1.45;
+  font-size: 0.82rem;
 }
 
 .setup-step {
@@ -3603,17 +3799,15 @@ button:disabled {
   .session-panel,
   .session-panel-wide {
     width: min(100%, 640px);
-  }
-
-  .session-panel-head-with-progress {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .setup-progress-label {
-    text-align: left;
+    max-height: calc(100vh - 32px);
   }
 
   .session-result-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .onboarding-mode-grid,
+  .onboarding-summary-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

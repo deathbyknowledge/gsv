@@ -73,6 +73,11 @@ export type SysSetupArgs = {
   username: string;
   password: string;
   rootPassword?: string;
+  bootstrap?: {
+    remoteUrl?: string;
+    repo?: string;
+    ref?: string;
+  };
   ai?: {
     provider?: string;
     model?: string;
@@ -88,6 +93,7 @@ export type SysSetupArgs = {
 export type SysSetupResult = {
   user: ProcessIdentity;
   rootLocked: boolean;
+  bootstrap?: SysBootstrapResult;
   nodeToken?: {
     tokenId: string;
     token: string;

@@ -1,7 +1,8 @@
 import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
 import type { KernelContext } from "../context";
 import type { PasswdEntry } from "../../auth/passwd";
-import type { ProcessIdentity, SysSetupArgs, SysSetupResult } from "../../syscalls/system";
+import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "../../syscalls/system";
+import { handleSysBootstrap } from "./bootstrap";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -138,6 +139,28 @@ export async function handleSysSetup(
   const uid = auth.nextUid();
   const gid = 100;
   const home = `/home/${username}`;
+  const bootstrapProcessIdentity: ProcessIdentity = {
+    uid,
+    gid,
+    gids: [gid],
+    username,
+    home,
+    cwd: home,
+    workspaceId: null,
+  };
+  const bootstrapIdentity: UserIdentity = {
+    role: "user",
+    process: bootstrapProcessIdentity,
+    capabilities: ["*"],
+  };
+  let bootstrap: SysSetupResult["bootstrap"];
+
+  if (ctx.env.RIPGIT && ctx.packages) {
+    bootstrap = await handleSysBootstrap((args as Record<string, unknown>).bootstrap as SysSetupArgs["bootstrap"], {
+      ...ctx,
+      identity: bootstrapIdentity,
+    } as KernelContext);
+  }
 
   auth.addUser({
     username,
@@ -159,6 +182,8 @@ export async function handleSysSetup(
   if (rootPassword) {
     const rootHash = await hashPassword(rootPassword);
     await auth.setPassword("root", rootHash);
+  } else {
+    await auth.setPassword("root", passwordHash);
   }
 
   if (ai.provider !== undefined) {
@@ -213,6 +238,7 @@ export async function handleSysSetup(
   return {
     user: processIdentity,
     rootLocked,
+    bootstrap,
     nodeToken,
   };
 }
