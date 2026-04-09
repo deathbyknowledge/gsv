@@ -30,6 +30,13 @@ function createMockSql() {
       return rows([] as T[]);
     }
 
+    if (q.startsWith("UPDATE processes SET mounts = '[]'")) {
+      for (const row of table.values()) {
+        if (!row.mounts) row.mounts = "[]";
+      }
+      return rows([] as T[]);
+    }
+
     if (q.startsWith("UPDATE processes SET profile = '")) {
       const match = q.match(/SET profile = '([^']+)'/);
       const profile = match?.[1];
@@ -87,6 +94,7 @@ function createMockSql() {
         home,
         cwd,
         workspace_id,
+        mounts,
         label,
         created_at,
       ] = bindings as [
@@ -100,6 +108,7 @@ function createMockSql() {
         string,
         string,
         string | null,
+        string,
         string | null,
         number,
       ];
@@ -115,6 +124,7 @@ function createMockSql() {
         home,
         cwd,
         workspace_id,
+        mounts,
         state: "running",
         label,
         created_at,
@@ -126,6 +136,12 @@ function createMockSql() {
       const [processId] = bindings as [string];
       const row = table.get(processId);
       return rows((row ? [row] : []) as T[]);
+    }
+
+    if (q.startsWith("SELECT mounts FROM processes WHERE process_id = ?")) {
+      const [processId] = bindings as [string];
+      const row = table.get(processId);
+      return rows((row ? [{ mounts: row.mounts ?? "[]" }] : []) as T[]);
     }
 
     if (q.startsWith("SELECT * FROM processes WHERE process_id = ?")) {
@@ -265,5 +281,58 @@ describe("ProcessRegistry", () => {
     expect(record?.profile).toBe("task");
     expect(record?.workspaceId).toBe("ws_shared");
     expect(record?.cwd).toBe("/workspaces/ws_shared");
+  });
+
+  it("stores and returns process mounts on spawn", () => {
+    const sql = createMockSql();
+    const registry = new ProcessRegistry(sql as unknown as SqlStorage);
+    registry.init();
+
+    registry.spawn("task:4", makeIdentity("/home/sam"), {
+      profile: "review",
+      cwd: "/src/package",
+      mounts: [
+        {
+          kind: "ripgit-source",
+          mountPath: "/src/package",
+          packageId: "import:root/pkg-test:.",
+          repo: "root/pkg-test",
+          ref: "main",
+          resolvedCommit: "abc123",
+          subdir: ".",
+        },
+        {
+          kind: "ripgit-source",
+          mountPath: "/src/repo",
+          packageId: "import:root/pkg-test:.",
+          repo: "root/pkg-test",
+          ref: "main",
+          resolvedCommit: "abc123",
+          subdir: ".",
+        },
+      ],
+    });
+
+    expect(registry.get("task:4")?.cwd).toBe("/src/package");
+    expect(registry.getMounts("task:4")).toEqual([
+      {
+        kind: "ripgit-source",
+        mountPath: "/src/package",
+        packageId: "import:root/pkg-test:.",
+        repo: "root/pkg-test",
+        ref: "main",
+        resolvedCommit: "abc123",
+        subdir: ".",
+      },
+      {
+        kind: "ripgit-source",
+        mountPath: "/src/repo",
+        packageId: "import:root/pkg-test:.",
+        repo: "root/pkg-test",
+        ref: "main",
+        resolvedCommit: "abc123",
+        subdir: ".",
+      },
+    ]);
   });
 });
