@@ -24,6 +24,11 @@ function normalizePath(path) {
   return String(path ?? "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
+function normalizeCatalogSelection(value) {
+  const trimmed = String(value ?? "").trim();
+  return trimmed || "local";
+}
+
 function clampOffset(raw) {
   const parsed = Number.parseInt(String(raw ?? "0"), 10);
   if (!Number.isFinite(parsed) || parsed < 0) {
@@ -148,7 +153,60 @@ function renderSidebar(routeBase, packages, selectedPackageId) {
   }).join("");
 }
 
-function renderImportRail(statusText, errorText, sourceValue, refValue, subdirValue) {
+function catalogImportSource(catalog, entry) {
+  if (catalog?.source?.kind === "remote" && catalog?.source?.baseUrl) {
+    const [owner, repo] = String(entry?.source?.repo ?? "").split("/");
+    if (owner && repo) {
+      return `${String(catalog.source.baseUrl).replace(/\/+$/, "")}/git/${owner}/${repo}.git`;
+    }
+  }
+  return String(entry?.source?.repo ?? "");
+}
+
+function renderDiscovery(routeBase, catalog, sourceValue, refValue, subdirValue) {
+  const packages = Array.isArray(catalog?.packages) ? catalog.packages : [];
+  if (packages.length === 0) {
+    return '<div class="packages-discovery-empty">No public packages exposed here yet.</div>';
+  }
+
+  return `
+    <div class="packages-discovery-list">
+      ${packages.map((entry) => {
+        const href = buildUrl(routeBase, {
+          source: catalogImportSource(catalog, entry),
+          ref: entry?.source?.ref ?? refValue ?? "main",
+          subdir: entry?.source?.subdir ?? subdirValue ?? ".",
+          catalog: catalog?.source?.kind === "remote" ? catalog?.source?.name : "local",
+        });
+        return `
+          <a class="packages-discovery-item" href="${escapeHtml(href)}">
+            <span class="packages-discovery-copy">
+              <strong>${escapeHtml(entry.name)}</strong>
+              <span>${escapeHtml(entry.description || entry.source?.repo || "No description")}</span>
+            </span>
+            <span class="packages-discovery-meta">${escapeHtml(entry.source?.repo ?? "unknown")} · ${escapeHtml(entry.source?.ref ?? "main")}</span>
+          </a>`;
+      }).join("")}
+    </div>`;
+}
+
+function renderImportRail(
+  routeBase,
+  statusText,
+  errorText,
+  sourceValue,
+  refValue,
+  subdirValue,
+  remotes,
+  catalogName,
+  catalog,
+  remoteNameValue,
+  remoteUrlValue,
+) {
+  const catalogLinks = [
+    `<a class="packages-catalog-link ${catalogName === "local" ? "is-active" : ""}" href="${escapeHtml(buildUrl(routeBase, { catalog: "local", source: sourceValue, ref: refValue, subdir: subdirValue }))}">Local</a>`,
+    ...((Array.isArray(remotes) ? remotes : []).map((remote) => `<a class="packages-catalog-link ${catalogName === remote.name ? "is-active" : ""}" href="${escapeHtml(buildUrl(routeBase, { catalog: remote.name, source: sourceValue, ref: refValue, subdir: subdirValue }))}">${escapeHtml(remote.name)}</a>`)),
+  ].join("");
   return `
     <section class="packages-rail">
       <form method="post" class="packages-import-form">
@@ -168,6 +226,25 @@ function renderImportRail(statusText, errorText, sourceValue, refValue, subdirVa
         <button type="submit" class="packages-icon-btn" title="Import package" aria-label="Import package">＋</button>
       </form>
       <p class="packages-rail-note">Imported third-party packages stay disabled until you review their code and capabilities.</p>
+      <form method="post" class="packages-remote-form">
+        <input type="hidden" name="action" value="remote-add" />
+        <label>
+          <span>Remote</span>
+          <input type="text" name="remoteName" value="${escapeHtml(remoteNameValue)}" placeholder="lab" spellcheck="false" />
+        </label>
+        <label>
+          <span>Base URL</span>
+          <input type="text" name="remoteUrl" value="${escapeHtml(remoteUrlValue)}" placeholder="https://gsv.example.com" spellcheck="false" />
+        </label>
+        <button type="submit" class="packages-icon-btn" title="Add remote" aria-label="Add remote">⊕</button>
+      </form>
+      <section class="packages-discovery">
+        <div class="packages-discovery-header">
+          <span>Public packages</span>
+          <nav class="packages-catalog-links">${catalogLinks}</nav>
+        </div>
+        ${renderDiscovery(routeBase, catalog, sourceValue, refValue, subdirValue)}
+      </section>
       ${statusText ? `<p class="packages-status">${escapeHtml(statusText)}</p>` : ""}
       ${errorText ? `<p class="packages-status is-error">${escapeHtml(errorText)}</p>` : ""}
     </section>`;
@@ -228,6 +305,15 @@ function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
         <button type="submit" class="packages-icon-btn" title="Use this ref" aria-label="Use this ref">↺</button>
       </form>`
     : "";
+  const visibilityAction = isThirdPartyPackage(pkg)
+    ? `
+      <form method="post">
+        <input type="hidden" name="action" value="public-set" />
+        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
+        <input type="hidden" name="public" value="${pkg.source?.public ? "false" : "true"}" />
+        <button type="submit" class="packages-icon-btn" title="${pkg.source?.public ? "Hide from public catalog" : "Expose in public catalog"}" aria-label="${pkg.source?.public ? "Hide from public catalog" : "Expose in public catalog"}">${pkg.source?.public ? "◌" : "◎"}</button>
+      </form>`
+    : "";
 
   return `
     <header class="packages-header">
@@ -249,6 +335,7 @@ function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
           <button type="submit" class="packages-icon-btn" title="Browse ref" aria-label="Browse ref">↗</button>
         </form>
         ${checkoutAction}
+        ${visibilityAction}
         ${reviewAction}
         ${approveAction}
         ${packageAction}
@@ -315,6 +402,10 @@ function renderOverview(pkg, refs) {
         <article>
           <span>Version</span>
           <strong>${escapeHtml(pkg.version ?? "0.0.0")}</strong>
+        </article>
+        <article>
+          <span>Visibility</span>
+          <strong>${pkg.source?.public ? "Public" : "Private"}</strong>
         </article>
         <article>
           <span>Review</span>
@@ -465,6 +556,11 @@ function renderPage(state) {
     importSource,
     importRef,
     importSubdir,
+    remotes,
+    catalogName,
+    catalog,
+    remoteName,
+    remoteUrl,
     openChatProcess,
   } = state;
 
@@ -512,12 +608,20 @@ function renderPage(state) {
         gap: 8px;
         align-items: end;
       }
+      .packages-remote-form {
+        display: grid;
+        grid-template-columns: minmax(140px, 0.6fr) minmax(260px, 1.2fr) auto;
+        gap: 8px;
+        align-items: end;
+      }
       .packages-import-form label,
+      .packages-remote-form label,
       .packages-ref-form {
         display: grid;
         gap: 4px;
       }
       .packages-import-form span,
+      .packages-remote-form span,
       .packages-rail-note {
         font-size: 10px;
         font-weight: 700;
@@ -533,6 +637,7 @@ function renderPage(state) {
         text-transform: none;
       }
       .packages-import-form input,
+      .packages-remote-form input,
       .packages-ref-form select {
         width: 100%;
         min-height: 34px;
@@ -545,6 +650,7 @@ function renderPage(state) {
         outline: none;
       }
       .packages-import-form input:focus,
+      .packages-remote-form input:focus,
       .packages-ref-form select:focus {
         border-color: rgba(26, 75, 132, 0.24);
         background: rgba(255, 255, 255, 0.96);
@@ -576,6 +682,75 @@ function renderPage(state) {
       }
       .packages-status.is-error {
         color: var(--danger);
+      }
+      .packages-discovery {
+        display: grid;
+        gap: 8px;
+        padding-top: 2px;
+      }
+      .packages-discovery-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .packages-discovery-header span {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .packages-catalog-links {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .packages-catalog-link {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 12px;
+      }
+      .packages-catalog-link.is-active {
+        color: var(--primary);
+        font-weight: 700;
+      }
+      .packages-discovery-list {
+        display: grid;
+        gap: 6px;
+      }
+      .packages-discovery-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.56);
+        color: inherit;
+        text-decoration: none;
+      }
+      .packages-discovery-item:hover {
+        background: rgba(255, 255, 255, 0.82);
+      }
+      .packages-discovery-copy {
+        min-width: 0;
+        display: grid;
+        gap: 2px;
+      }
+      .packages-discovery-copy strong,
+      .packages-discovery-meta,
+      .packages-discovery-copy span {
+        font-size: 12px;
+      }
+      .packages-discovery-copy span,
+      .packages-discovery-meta {
+        color: var(--muted);
+      }
+      .packages-discovery-empty {
+        font-size: 12px;
+        color: var(--muted);
       }
       .packages-shell {
         min-height: 0;
@@ -874,6 +1049,9 @@ function renderPage(state) {
         .packages-import-form {
           grid-template-columns: 1fr;
         }
+        .packages-remote-form {
+          grid-template-columns: 1fr;
+        }
         .packages-shell {
           grid-template-columns: 1fr;
         }
@@ -888,7 +1066,7 @@ function renderPage(state) {
   </head>
   <body>
     <main>
-      ${renderImportRail(statusText, errorText, importSource, importRef, importSubdir)}
+      ${renderImportRail(routeBase, statusText, errorText, importSource, importRef, importSubdir, remotes, catalogName, catalog, remoteName, remoteUrl)}
       <section class="packages-shell">
         <aside class="packages-sidebar">${renderSidebar(routeBase, packages, selectedPkg?.packageId ?? "")}</aside>
         ${renderMain(routeBase, selectedPkg, view, refs, browseRef, path, readResult, logResult, offset)}
@@ -922,6 +1100,9 @@ export async function handleFetch(request, context = {}) {
   let importSource = url.searchParams.get("source")?.trim() ?? "";
   let importRef = url.searchParams.get("ref")?.trim() ?? "main";
   let importSubdir = url.searchParams.get("subdir")?.trim() ?? ".";
+  let catalogName = normalizeCatalogSelection(url.searchParams.get("catalog"));
+  let remoteName = "";
+  let remoteUrl = "";
 
   if (request.method === "POST") {
     try {
@@ -942,6 +1123,17 @@ export async function handleFetch(request, context = {}) {
         statusText = result.package.enabled
           ? `Imported and enabled ${result.package.name} from ${result.imported.repo}`
           : `Imported ${result.package.name} from ${result.imported.repo}. Review it before enabling.`;
+      } else if (action === "remote-add") {
+        remoteName = String(form.get("remoteName") ?? "").trim();
+        remoteUrl = String(form.get("remoteUrl") ?? "").trim();
+        const result = await kernel.request("pkg.remote.add", {
+          name: remoteName,
+          baseUrl: remoteUrl,
+        });
+        catalogName = result.remote.name;
+        remoteName = "";
+        remoteUrl = "";
+        statusText = `${result.changed ? "Added" : "Updated"} remote ${result.remote.name}`;
       } else if (action === "install") {
         const result = await kernel.request("pkg.install", {
           packageId: String(form.get("packageId") ?? "").trim(),
@@ -991,6 +1183,12 @@ export async function handleFetch(request, context = {}) {
         });
         selectedPackageId = result.package.packageId;
         statusText = `Disabled ${result.package.name}`;
+      } else if (action === "public-set") {
+        const result = await kernel.request("pkg.public.set", {
+          packageId: String(form.get("packageId") ?? "").trim() || undefined,
+          public: String(form.get("public") ?? "").trim() === "true",
+        });
+        statusText = `${result.public ? "Exposed" : "Hid"} ${result.repo} ${result.public ? "in" : "from"} the public catalog`;
       } else if (action === "checkout") {
         const result = await kernel.request("pkg.checkout", {
           packageId: String(form.get("packageId") ?? "").trim(),
@@ -1005,9 +1203,25 @@ export async function handleFetch(request, context = {}) {
   }
 
   let packages = [];
+  let remotes = [];
+  let catalog = { routeBase, source: { kind: "local", name: "local" }, packages: [] };
   try {
     const result = await kernel.request("pkg.list", {});
     packages = Array.isArray(result?.packages) ? result.packages : [];
+  } catch (error) {
+    errorText = errorText || (error instanceof Error ? error.message : String(error));
+  }
+  try {
+    const result = await kernel.request("pkg.remote.list", {});
+    remotes = Array.isArray(result?.remotes) ? result.remotes : [];
+  } catch (error) {
+    errorText = errorText || (error instanceof Error ? error.message : String(error));
+  }
+  try {
+    const result = await kernel.request("pkg.public.list", {
+      remote: catalogName === "local" ? undefined : catalogName,
+    });
+    catalog = { ...result, routeBase };
   } catch (error) {
     errorText = errorText || (error instanceof Error ? error.message : String(error));
   }
@@ -1074,6 +1288,11 @@ export async function handleFetch(request, context = {}) {
     importSource,
     importRef,
     importSubdir,
+    remotes,
+    catalogName,
+    catalog,
+    remoteName,
+    remoteUrl,
     openChatProcess,
   }), {
     headers: {

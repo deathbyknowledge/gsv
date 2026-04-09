@@ -38,6 +38,11 @@ import {
   handlePkgCheckout,
   handlePkgInstall,
   handlePkgList,
+  handlePkgPublicList,
+  handlePkgPublicSet,
+  handlePkgRemoteAdd,
+  handlePkgRemoteList,
+  handlePkgRemoteRemove,
   handlePkgRemove,
   handlePkgReviewApprove,
   handlePkgRepoLog,
@@ -192,6 +197,21 @@ async function dispatchNative(
         break;
       case "pkg.repo.log":
         data = await handlePkgRepoLog(frame.args, ctx);
+        break;
+      case "pkg.remote.list":
+        data = handlePkgRemoteList(frame.args, ctx);
+        break;
+      case "pkg.remote.add":
+        data = handlePkgRemoteAdd(frame.args, ctx);
+        break;
+      case "pkg.remote.remove":
+        data = handlePkgRemoteRemove(frame.args, ctx);
+        break;
+      case "pkg.public.list":
+        data = await handlePkgPublicList(frame.args, ctx);
+        break;
+      case "pkg.public.set":
+        data = handlePkgPublicSet(frame.args, ctx);
         break;
 
       // --- ai.* ---
