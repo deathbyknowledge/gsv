@@ -45,8 +45,18 @@ import type {
   PkgRepoReadResult,
   PkgRepoRefsArgs,
   PkgRepoRefsResult,
+  PkgRemoteAddArgs,
+  PkgRemoteAddResult,
+  PkgRemoteListArgs,
+  PkgRemoteListResult,
+  PkgRemoteRemoveArgs,
+  PkgRemoteRemoveResult,
   PkgRemoveArgs,
   PkgRemoveResult,
+  PkgPublicListArgs,
+  PkgPublicListResult,
+  PkgPublicSetArgs,
+  PkgPublicSetResult,
 } from "./packages";
 import type {
   ConnectArgs,
@@ -147,6 +157,11 @@ export type SyscallDomains = {
   "pkg.repo.refs": { args: PkgRepoRefsArgs; result: PkgRepoRefsResult };
   "pkg.repo.read": { args: PkgRepoReadArgs; result: PkgRepoReadResult };
   "pkg.repo.log": { args: PkgRepoLogArgs; result: PkgRepoLogResult };
+  "pkg.remote.list": { args: PkgRemoteListArgs; result: PkgRemoteListResult };
+  "pkg.remote.add": { args: PkgRemoteAddArgs; result: PkgRemoteAddResult };
+  "pkg.remote.remove": { args: PkgRemoteRemoveArgs; result: PkgRemoteRemoveResult };
+  "pkg.public.list": { args: PkgPublicListArgs; result: PkgPublicListResult };
+  "pkg.public.set": { args: PkgPublicSetArgs; result: PkgPublicSetResult };
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };

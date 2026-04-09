@@ -36,6 +36,7 @@ export type PkgSummary = {
     ref: string;
     subdir: string;
     resolvedCommit?: string | null;
+    public: boolean;
   };
   entrypoints: PkgEntrypointSummary[];
   bindingNames: string[];
@@ -186,4 +187,76 @@ export type PkgRepoLogResult = {
   limit: number;
   offset: number;
   entries: PkgRepoLogEntry[];
+};
+
+export type PkgRemoteEntry = {
+  name: string;
+  baseUrl: string;
+};
+
+export type PkgRemoteListArgs = Record<string, never>;
+
+export type PkgRemoteListResult = {
+  remotes: PkgRemoteEntry[];
+};
+
+export type PkgRemoteAddArgs = {
+  name: string;
+  baseUrl: string;
+};
+
+export type PkgRemoteAddResult = {
+  changed: boolean;
+  remote: PkgRemoteEntry;
+  remotes: PkgRemoteEntry[];
+};
+
+export type PkgRemoteRemoveArgs = {
+  name: string;
+};
+
+export type PkgRemoteRemoveResult = {
+  removed: boolean;
+  remotes: PkgRemoteEntry[];
+};
+
+export type PkgCatalogEntry = {
+  name: string;
+  description: string;
+  version: string;
+  runtime: PkgRuntime;
+  source: {
+    repo: string;
+    ref: string;
+    subdir: string;
+    resolvedCommit?: string | null;
+  };
+  entrypoints: PkgEntrypointSummary[];
+  bindingNames: string[];
+};
+
+export type PkgPublicListArgs = {
+  remote?: string;
+};
+
+export type PkgPublicListResult = {
+  serverName: string;
+  source: {
+    kind: "local" | "remote";
+    name: string;
+    baseUrl?: string;
+  };
+  packages: PkgCatalogEntry[];
+};
+
+export type PkgPublicSetArgs = {
+  packageId?: string;
+  repo?: string;
+  public: boolean;
+};
+
+export type PkgPublicSetResult = {
+  changed: boolean;
+  repo: string;
+  public: boolean;
 };

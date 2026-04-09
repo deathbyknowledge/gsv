@@ -18,8 +18,20 @@ import type {
   PkgRepoReadResult,
   PkgRepoRefsArgs,
   PkgRepoRefsResult,
+  PkgRemoteAddArgs,
+  PkgRemoteAddResult,
+  PkgRemoteEntry,
+  PkgRemoteListArgs,
+  PkgRemoteListResult,
+  PkgRemoteRemoveArgs,
+  PkgRemoteRemoveResult,
   PkgRemoveArgs,
   PkgRemoveResult,
+  PkgPublicListArgs,
+  PkgPublicListResult,
+  PkgPublicSetArgs,
+  PkgPublicSetResult,
+  PkgCatalogEntry,
   PkgSummary,
 } from "../syscalls/packages";
 import type {
@@ -45,7 +57,46 @@ export function handlePkgList(
       enabled: typeof args?.enabled === "boolean" ? args.enabled : undefined,
       name: typeof args?.name === "string" && args.name.trim().length > 0 ? args.name.trim() : undefined,
       runtime: args?.runtime,
-    }).map(toPkgSummary),
+    }).map((record) => toPkgSummary(record, ctx)),
+  };
+}
+
+export function handlePkgRemoteList(
+  _args: PkgRemoteListArgs | undefined,
+  ctx: KernelContext,
+): PkgRemoteListResult {
+  const identity = requireIdentity(ctx);
+  return {
+    remotes: listPkgRemotes(ctx, identity.uid),
+  };
+}
+
+export function handlePkgRemoteAdd(
+  args: PkgRemoteAddArgs,
+  ctx: KernelContext,
+): PkgRemoteAddResult {
+  const identity = requireIdentity(ctx);
+  const name = normalizeRemoteName(args.name);
+  const baseUrl = normalizeRemoteBaseUrl(args.baseUrl);
+  const key = remoteConfigKey(identity.uid, name);
+  const existing = ctx.config.get(key);
+  ctx.config.set(key, baseUrl);
+  return {
+    changed: existing !== baseUrl,
+    remote: { name, baseUrl },
+    remotes: listPkgRemotes(ctx, identity.uid),
+  };
+}
+
+export function handlePkgRemoteRemove(
+  args: PkgRemoteRemoveArgs,
+  ctx: KernelContext,
+): PkgRemoteRemoveResult {
+  const identity = requireIdentity(ctx);
+  const removed = ctx.config.delete(remoteConfigKey(identity.uid, normalizeRemoteName(args.name)));
+  return {
+    removed,
+    remotes: listPkgRemotes(ctx, identity.uid),
   };
 }
 
@@ -66,7 +117,7 @@ export function handlePkgInstall(
 
   return {
     changed: !record.enabled,
-    package: toPkgSummary(requirePackage(record.packageId, ctx)),
+    package: toPkgSummary(requirePackage(record.packageId, ctx), ctx),
   };
 }
 
@@ -78,7 +129,7 @@ export function handlePkgReviewApprove(
   if (!record.reviewRequired) {
     return {
       changed: false,
-      package: toPkgSummary(record),
+      package: toPkgSummary(record, ctx),
     };
   }
 
@@ -90,7 +141,65 @@ export function handlePkgReviewApprove(
 
   return {
     changed: record.reviewedAt == null,
-    package: toPkgSummary(requirePackage(record.packageId, ctx)),
+    package: toPkgSummary(requirePackage(record.packageId, ctx), ctx),
+  };
+}
+
+export async function handlePkgPublicList(
+  args: PkgPublicListArgs | undefined,
+  ctx: KernelContext,
+): Promise<PkgPublicListResult> {
+  const identity = requireIdentity(ctx);
+  const requestedRemote = typeof args?.remote === "string" ? args.remote.trim() : "";
+  if (!requestedRemote || requestedRemote === "local") {
+    const serverName = configuredServerName(ctx);
+    return {
+      serverName,
+      source: { kind: "local", name: serverName },
+      packages: listLocalPublicPackages(ctx.config, ctx.packages),
+    };
+  }
+
+  const remote = resolvePkgRemote(ctx, identity.uid, requestedRemote);
+  const response = await fetch(`${remote.baseUrl}/public/packages`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to load public packages from ${remote.name}: ${response.status}`);
+  }
+
+  const payload = await response.json<Partial<PkgPublicListResult>>();
+  const packages = Array.isArray(payload?.packages)
+    ? payload.packages.map(normalizeCatalogEntry).filter(Boolean) as PkgCatalogEntry[]
+    : [];
+  return {
+    serverName: typeof payload?.serverName === "string" && payload.serverName.trim().length > 0
+      ? payload.serverName.trim()
+      : remote.name,
+    source: { kind: "remote", name: remote.name, baseUrl: remote.baseUrl },
+    packages,
+  };
+}
+
+export function handlePkgPublicSet(
+  args: PkgPublicSetArgs,
+  ctx: KernelContext,
+): PkgPublicSetResult {
+  const identity = requireIdentity(ctx);
+  const repo = resolvePublicRepoTarget(args, ctx);
+  assertRepoOwnerOrRoot(repo, identity);
+  const key = publicRepoConfigKey(repo);
+  const nextPublic = args.public === true;
+  const wasPublic = ctx.config.get(key) === "true";
+  if (nextPublic) {
+    ctx.config.set(key, "true");
+  } else {
+    ctx.config.delete(key);
+  }
+  return {
+    changed: wasPublic !== nextPublic,
+    repo,
+    public: nextPublic,
   };
 }
 
@@ -151,7 +260,7 @@ export async function handlePkgAdd(
       ref: imported.remoteRef,
       head: imported.head ?? null,
     },
-    package: toPkgSummary(updated),
+    package: toPkgSummary(updated, ctx),
   };
 }
 
@@ -162,7 +271,7 @@ export async function handlePkgSync(
   const builtinSeeds = await buildBuiltinPackageSeeds(ctx.env);
   const installed = ctx.packages.seedBuiltinPackages(builtinSeeds);
   return {
-    packages: installed.map(toPkgSummary),
+    packages: installed.map((record) => toPkgSummary(record, ctx)),
   };
 }
 
@@ -203,7 +312,7 @@ export async function handlePkgCheckout(
       record.manifest.source.ref !== ref ||
       (record.manifest.source.resolvedCommit ?? null) !== (updated.manifest.source.resolvedCommit ?? null) ||
       record.artifact.hash !== updated.artifact.hash,
-    package: toPkgSummary(updated),
+    package: toPkgSummary(updated, ctx),
   };
 }
 
@@ -224,7 +333,7 @@ export function handlePkgRemove(
 
   return {
     changed: record.enabled,
-    package: toPkgSummary(requirePackage(record.packageId, ctx)),
+    package: toPkgSummary(requirePackage(record.packageId, ctx), ctx),
   };
 }
 
@@ -454,7 +563,18 @@ function requireIdentity(ctx: KernelContext): NonNullable<KernelContext["identit
   return ctx.identity;
 }
 
-function toPkgSummary(record: InstalledPackageRecord): PkgSummary {
+export function listLocalPublicPackages(
+  config: KernelContext["config"],
+  packages: KernelContext["packages"],
+): PkgCatalogEntry[] {
+  return packages
+    .list({})
+    .filter((record) => isRepoPublic(record.manifest.source.repo, config))
+    .sort((left, right) => left.manifest.name.localeCompare(right.manifest.name))
+    .map(toCatalogEntry);
+}
+
+function toPkgSummary(record: InstalledPackageRecord, ctx: KernelContext): PkgSummary {
   return {
     packageId: record.packageId,
     name: record.manifest.name,
@@ -467,6 +587,7 @@ function toPkgSummary(record: InstalledPackageRecord): PkgSummary {
       ref: record.manifest.source.ref,
       subdir: record.manifest.source.subdir,
       resolvedCommit: record.manifest.source.resolvedCommit ?? null,
+      public: isRepoPublic(record.manifest.source.repo, ctx.config),
     },
     entrypoints: record.manifest.entrypoints.map((entrypoint) => ({
       name: entrypoint.name,
@@ -485,6 +606,32 @@ function toPkgSummary(record: InstalledPackageRecord): PkgSummary {
     },
     installedAt: record.installedAt,
     updatedAt: record.updatedAt,
+  };
+}
+
+function toCatalogEntry(record: InstalledPackageRecord): PkgCatalogEntry {
+  return {
+    name: record.manifest.name,
+    description: record.manifest.description,
+    version: record.manifest.version,
+    runtime: record.manifest.runtime,
+    source: {
+      repo: record.manifest.source.repo,
+      ref: record.manifest.source.ref,
+      subdir: record.manifest.source.subdir,
+      resolvedCommit: record.manifest.source.resolvedCommit ?? null,
+    },
+    entrypoints: record.manifest.entrypoints.map((entrypoint) => ({
+      name: entrypoint.name,
+      kind: entrypoint.kind,
+      description: entrypoint.description,
+      command: entrypoint.command,
+      route: entrypoint.route,
+      icon: resolveEntrypointIcon(entrypoint, record.artifact),
+      syscalls: entrypoint.syscalls,
+      windowDefaults: entrypoint.windowDefaults,
+    })),
+    bindingNames: (record.manifest.capabilities?.bindings ?? []).map((binding) => binding.binding),
   };
 }
 
@@ -564,6 +711,136 @@ function clampRepoOffset(offset: number | undefined): number {
     return 0;
   }
   return Math.max(0, Math.trunc(offset));
+}
+
+function configuredServerName(ctx: KernelContext): string {
+  const configured = ctx.config.get("config/server/name")?.trim();
+  return configured && configured.length > 0 ? configured : "gsv";
+}
+
+function publicRepoConfigKey(repo: string): string {
+  return `config/pkg/public-repos/${repo}`;
+}
+
+export function isRepoPublic(repo: string, config: KernelContext["config"]): boolean {
+  return config.get(publicRepoConfigKey(repo)) === "true";
+}
+
+function listPkgRemotes(ctx: KernelContext, uid: number): PkgRemoteEntry[] {
+  const prefix = `users/${uid}/pkg/remotes/`;
+  return ctx.config
+    .list(prefix)
+    .map(({ key, value }) => ({
+      name: key.slice(prefix.length),
+      baseUrl: value,
+    }))
+    .filter((entry) => entry.name.length > 0 && entry.baseUrl.length > 0)
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function remoteConfigKey(uid: number, name: string): string {
+  return `users/${uid}/pkg/remotes/${name}`;
+}
+
+function normalizeRemoteName(raw: string): string {
+  const name = raw.trim();
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
+    throw new Error("Remote name must be alphanumeric and may include dashes");
+  }
+  return name;
+}
+
+function normalizeRemoteBaseUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    throw new Error("Remote URL is required");
+  }
+  const url = new URL(trimmed);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Remote URL must use http or https");
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/+$/, "");
+}
+
+function resolvePkgRemote(ctx: KernelContext, uid: number, raw: string): PkgRemoteEntry {
+  if (raw.includes("://")) {
+    const baseUrl = normalizeRemoteBaseUrl(raw);
+    return {
+      name: new URL(baseUrl).host,
+      baseUrl,
+    };
+  }
+  const name = normalizeRemoteName(raw);
+  const baseUrl = ctx.config.get(remoteConfigKey(uid, name));
+  if (!baseUrl) {
+    throw new Error(`Unknown package remote: ${name}`);
+  }
+  return { name, baseUrl };
+}
+
+function resolvePublicRepoTarget(args: PkgPublicSetArgs, ctx: KernelContext): string {
+  const repo = typeof args.repo === "string" ? args.repo.trim() : "";
+  if (repo) {
+    const parsed = parseSyncRepoRef(repo);
+    return `${parsed.owner}/${parsed.repo}`;
+  }
+  const packageId = typeof args.packageId === "string" ? args.packageId.trim() : "";
+  if (!packageId) {
+    throw new Error("packageId or repo is required");
+  }
+  return requirePackage(packageId, ctx).manifest.source.repo;
+}
+
+function assertRepoOwnerOrRoot(
+  repo: string,
+  identity: NonNullable<KernelContext["identity"]>,
+): void {
+  const { owner } = parseSyncRepoRef(repo);
+  if (identity.uid === 0 || identity.username === owner) {
+    return;
+  }
+  if ((identity.capabilities ?? []).includes("*")) {
+    return;
+  }
+  throw new Error(`Forbidden: only ${owner} or root may change visibility for ${repo}`);
+}
+
+function normalizeCatalogEntry(entry: unknown): PkgCatalogEntry | null {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const value = entry as Record<string, unknown>;
+  const source = value.source;
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  const sourceRecord = source as Record<string, unknown>;
+  const repo = typeof sourceRecord.repo === "string" ? sourceRecord.repo.trim() : "";
+  const ref = typeof sourceRecord.ref === "string" ? sourceRecord.ref.trim() : "main";
+  const subdir = typeof sourceRecord.subdir === "string" ? sourceRecord.subdir.trim() || "." : ".";
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  if (!name || !repo) {
+    return null;
+  }
+  return {
+    name,
+    description: typeof value.description === "string" ? value.description : "",
+    version: typeof value.version === "string" ? value.version : "0.0.0",
+    runtime: value.runtime === "dynamic-worker" || value.runtime === "node" || value.runtime === "web-ui"
+      ? value.runtime
+      : "dynamic-worker",
+    source: {
+      repo,
+      ref,
+      subdir,
+      resolvedCommit: typeof sourceRecord.resolvedCommit === "string" ? sourceRecord.resolvedCommit : null,
+    },
+    entrypoints: Array.isArray(value.entrypoints) ? value.entrypoints as PkgCatalogEntry["entrypoints"] : [],
+    bindingNames: Array.isArray(value.bindingNames) ? value.bindingNames.filter((item): item is string => typeof item === "string") : [],
+  };
 }
 
 function isBinaryBytes(bytes: Uint8Array): boolean {

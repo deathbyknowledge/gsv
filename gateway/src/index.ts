@@ -36,20 +36,27 @@ export default {
       return kernel.fetch(request);
     }
 
+    if (url.pathname === "/public/packages" && request.method === "GET") {
+      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const payload = await kernel.listPublicPackages();
+      return Response.json(payload, {
+        headers: {
+          "cache-control": "no-store",
+          "access-control-allow-origin": "*",
+        },
+      });
+    }
+
     const gitMatch = matchGitPath(url);
     if (gitMatch) {
       const basicAuth = getBasicAuth(request);
-      if (!basicAuth) {
-        return basicAuthChallenge("Authentication required");
-      }
-
       const kernel = await getAgentByName(env.KERNEL, "singleton");
       const authorized = await kernel.authorizeGitHttp({
         owner: gitMatch.owner,
         repo: gitMatch.repo,
         write: gitMatch.write,
-        username: basicAuth.username,
-        credential: basicAuth.credential,
+        username: basicAuth?.username,
+        credential: basicAuth?.credential,
       });
       if (!authorized.ok) {
         return authorized.status === 401
@@ -310,7 +317,7 @@ async function buildGitProxyRequest(
   request: Request,
   gitMatch: GitPathMatch,
   internalKey: string | undefined,
-  username: string,
+  username: string | null,
 ): Promise<Request> {
   const sourceUrl = new URL(request.url);
   const targetUrl = new URL(`https://ripgit/${encodeURIComponent(gitMatch.owner)}/${encodeURIComponent(gitMatch.repo)}/${gitMatch.suffix}`);
@@ -319,7 +326,11 @@ async function buildGitProxyRequest(
   const headers = new Headers(request.headers);
   headers.delete("authorization");
   headers.delete("cookie");
-  headers.set("x-ripgit-actor-name", username);
+  if (username) {
+    headers.set("x-ripgit-actor-name", username);
+  } else {
+    headers.delete("x-ripgit-actor-name");
+  }
   if (internalKey) {
     headers.set("x-ripgit-internal-key", internalKey);
   }

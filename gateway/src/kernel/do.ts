@@ -10,6 +10,7 @@ import type {
   ProcessIdentity,
   SysSetupResult,
 } from "../syscalls/system";
+import type { PkgPublicListResult } from "../syscalls/packages";
 import type {
   AdapterOutboundMessage,
 } from "../adapter-interface";
@@ -47,6 +48,7 @@ import {
   isAppFrameContextExpired,
   type AppFrameContext,
 } from "../protocol/app-frame";
+import { listLocalPublicPackages } from "./pkg";
 
 const SERVER_VERSION = "0.0.1";
 
@@ -94,14 +96,14 @@ type AuthorizeGitHttpInput = {
   owner: string;
   repo: string;
   write: boolean;
-  username: string;
-  credential: string;
+  username?: string;
+  credential?: string;
 };
 
 type AuthorizeGitHttpResult =
   | {
       ok: true;
-      username: string;
+      username: string | null;
       uid: number;
       capabilities: string[];
     }
@@ -377,10 +379,25 @@ export class Kernel extends Host<Env> {
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {
     await this.ready;
     const owner = input.owner.trim();
-    const username = input.username.trim();
-    const credential = input.credential.trim();
+    const repo = input.repo.trim();
+    const username = input.username?.trim() ?? "";
+    const credential = input.credential?.trim() ?? "";
+    const isPublicRead = !input.write && this.config.get(`config/pkg/public-repos/${owner}/${repo}`) === "true";
 
-    if (!owner || !username || !credential) {
+    if (!owner || !repo) {
+      return { ok: false, status: 401, message: "Authentication required" };
+    }
+
+    if (!input.write && (!username || !credential) && isPublicRead) {
+      return {
+        ok: true,
+        username: null,
+        uid: -1,
+        capabilities: [],
+      };
+    }
+
+    if (!username || !credential) {
       return { ok: false, status: 401, message: "Authentication required" };
     }
 
@@ -390,6 +407,14 @@ export class Kernel extends Host<Env> {
       : await this.auth.authenticateToken(username, credential, { role: "user" });
 
     if (!auth.ok) {
+      if (isPublicRead) {
+        return {
+          ok: true,
+          username: null,
+          uid: -1,
+          capabilities: [],
+        };
+      }
       return { ok: false, status: 401, message: "Authentication failed" };
     }
 
@@ -409,6 +434,16 @@ export class Kernel extends Host<Env> {
       username: auth.identity.username,
       uid: auth.identity.uid,
       capabilities,
+    };
+  }
+
+  async listPublicPackages(): Promise<PkgPublicListResult> {
+    await this.ready;
+    const serverName = this.config.get("config/server/name")?.trim() || "gsv";
+    return {
+      serverName,
+      source: { kind: "local", name: serverName },
+      packages: listLocalPublicPackages(this.config, this.packages),
     };
   }
 
