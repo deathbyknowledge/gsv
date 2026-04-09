@@ -137,6 +137,7 @@ export class Kernel extends Host<Env> {
 
     this.caps = new CapabilityStore(sql);
     this.caps.init();
+    this.caps.seed();
 
     this.config = new ConfigStore(sql);
     this.config.init();
