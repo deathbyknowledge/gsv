@@ -83,15 +83,19 @@ function buildReviewPrompt(pkg) {
     : "none";
 
   return [
-    `Review the imported package "${name}" (${packageId}).`,
+    `Review the imported package "${name}".`,
     "",
+    `Exact packageId: ${packageId}`,
     `Source repo: ${repo}`,
     `Source ref: ${ref}`,
     `Subdir: ${subdir}`,
     `Declared bindings: ${bindings}`,
     `Entrypoints: ${entrypoints}`,
     "",
-    "Use PackageRefs, PackageRead, and PackageLog to inspect the source and recent history.",
+    "Use only PackageRefs, PackageRead, and PackageLog to inspect the source and recent history.",
+    `Always pass this exact packageId when calling those tools: ${packageId}`,
+    `Example tool argument: {"packageId":"${packageId}"}`,
+    "Do not guess alternate package ids, and do not fall back to Shell or Read for package review.",
     "Focus on requested capabilities, suspicious behavior, hidden network or shell access, destructive actions, and whether it should be enabled.",
     "Conclude with a clear recommendation: approve or do not approve.",
   ].join("\n");

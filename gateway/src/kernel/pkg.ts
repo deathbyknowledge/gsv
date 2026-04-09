@@ -326,6 +326,25 @@ function requirePackage(packageId: string, ctx: KernelContext): InstalledPackage
 
   const record = ctx.packages.get(normalizedPackageId);
   if (!record) {
+    const candidates = ctx.packages.list().filter((candidate) => {
+      const sourceRepo = candidate.manifest.source.repo;
+      const normalizedSubdir = normalizeRepoPath(candidate.manifest.source.subdir) || ".";
+      const importRepoAlias = `import:${sourceRepo}`;
+      const importPathAlias = `import:${sourceRepo}:${normalizedSubdir}`;
+      return (
+        candidate.manifest.name === normalizedPackageId ||
+        sourceRepo === normalizedPackageId ||
+        importRepoAlias === normalizedPackageId ||
+        importPathAlias === normalizedPackageId
+      );
+    });
+
+    if (candidates.length === 1) {
+      return candidates[0];
+    }
+    if (candidates.length > 1) {
+      throw new Error(`Ambiguous package reference: ${normalizedPackageId}`);
+    }
     throw new Error(`Unknown package: ${normalizedPackageId}`);
   }
   return record;
