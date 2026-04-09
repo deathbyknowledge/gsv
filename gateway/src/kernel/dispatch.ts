@@ -48,6 +48,8 @@ import {
   handlePkgRepoLog,
   handlePkgRepoRead,
   handlePkgRepoRefs,
+  handlePkgRepoSearch,
+  handlePkgRepoDiff,
   handlePkgSync,
 } from "./pkg";
 import {
@@ -197,6 +199,12 @@ async function dispatchNative(
         break;
       case "pkg.repo.log":
         data = await handlePkgRepoLog(frame.args, ctx);
+        break;
+      case "pkg.repo.search":
+        data = await handlePkgRepoSearch(frame.args, ctx);
+        break;
+      case "pkg.repo.diff":
+        data = await handlePkgRepoDiff(frame.args, ctx);
         break;
       case "pkg.remote.list":
         data = handlePkgRemoteList(frame.args, ctx);

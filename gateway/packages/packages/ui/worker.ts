@@ -12,9 +12,7 @@ function escapeHtml(value) {
 function buildUrl(routeBase, params) {
   const url = new URL(routeBase, "https://gsv.local");
   for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === "") {
-      continue;
-    }
+    if (value === undefined || value === null || value === "") continue;
     url.searchParams.set(key, String(value));
   }
   return `${url.pathname}${url.search}`;
@@ -31,9 +29,7 @@ function normalizeCatalogSelection(value) {
 
 function clampOffset(raw) {
   const parsed = Number.parseInt(String(raw ?? "0"), 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return 0;
-  }
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
   return parsed;
 }
 
@@ -52,17 +48,22 @@ function formatTimestamp(unixSeconds) {
   return new Date(unixSeconds * 1000).toLocaleString();
 }
 
-function pickSelectedPackage(packages, selectedPackageId) {
-  if (!Array.isArray(packages) || packages.length === 0) {
-    return null;
+function formatReviewTime(timestamp) {
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+    return "unknown";
   }
-  if (selectedPackageId) {
-    const exact = packages.find((pkg) => pkg.packageId === selectedPackageId);
-    if (exact) {
-      return exact;
-    }
+  return new Date(timestamp).toLocaleString();
+}
+
+function parseImportSource(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) {
+    return { remoteUrl: "", repo: "" };
   }
-  return packages.find((pkg) => pkg.name === "packages") ?? packages[0];
+  if (trimmed.includes("://") || trimmed.startsWith("git@")) {
+    return { remoteUrl: trimmed, repo: "" };
+  }
+  return { remoteUrl: "", repo: trimmed.replace(/^\/+|\/+$/g, "") };
 }
 
 function isThirdPartyPackage(pkg) {
@@ -72,6 +73,42 @@ function isThirdPartyPackage(pkg) {
 
 function needsReviewApproval(pkg) {
   return Boolean(pkg?.review?.required) && !pkg?.review?.approvedAt;
+}
+
+function scopeLabel(scope) {
+  switch (scope?.kind) {
+    case "user":
+      return "Mine";
+    case "workspace":
+      return `Workspace:${scope.workspaceId ?? "?"}`;
+    default:
+      return "System";
+  }
+}
+
+function scopeBadgeClass(scope) {
+  switch (scope?.kind) {
+    case "user":
+      return "is-mine";
+    case "workspace":
+      return "is-workspace";
+    default:
+      return "is-system";
+  }
+}
+
+function packageStateLabel(pkg) {
+  if (pkg?.enabled) return "Enabled";
+  if (needsReviewApproval(pkg)) return "Review required";
+  if (pkg?.review?.approvedAt) return "Reviewed";
+  return "Disabled";
+}
+
+function packageStateClass(pkg) {
+  if (pkg?.enabled) return "is-enabled";
+  if (needsReviewApproval(pkg)) return "is-review";
+  if (pkg?.review?.approvedAt) return "is-reviewed";
+  return "is-disabled";
 }
 
 function buildReviewPrompt(pkg) {
@@ -106,53 +143,6 @@ function buildReviewPrompt(pkg) {
   ].join("\n");
 }
 
-function parseImportSource(raw) {
-  const trimmed = String(raw ?? "").trim();
-  if (!trimmed) {
-    return { remoteUrl: "", repo: "" };
-  }
-  if (trimmed.includes("://") || trimmed.startsWith("git@")) {
-    return { remoteUrl: trimmed, repo: "" };
-  }
-  return { remoteUrl: "", repo: trimmed.replace(/^\/+|\/+$/g, "") };
-}
-
-function packageHref(routeBase, pkg, view, extras = {}) {
-  return buildUrl(routeBase, {
-    packageId: pkg.packageId,
-    view,
-    ref: extras.ref ?? pkg.source?.ref ?? "main",
-    path: extras.path,
-    offset: extras.offset,
-  });
-}
-
-function renderSidebar(routeBase, packages, selectedPackageId) {
-  if (!Array.isArray(packages) || packages.length === 0) {
-    return '<div class="packages-empty">No packages installed yet.</div>';
-  }
-
-  return packages.map((pkg) => {
-    const selected = pkg.packageId === selectedPackageId;
-    const href = packageHref(routeBase, pkg, "overview");
-    const dotClass = pkg.enabled ? "is-enabled" : (isThirdPartyPackage(pkg) ? "is-review" : "is-disabled");
-    const secondary = isThirdPartyPackage(pkg)
-      ? (needsReviewApproval(pkg)
-        ? "Review required"
-        : (pkg?.review?.approvedAt ? "Reviewed" : "Third-party"))
-      : (pkg.source?.repo ?? "unknown");
-    return `
-      <a class="packages-nav-item ${selected ? "is-selected" : ""}" href="${escapeHtml(href)}">
-        <span class="packages-nav-dot ${dotClass}" aria-hidden="true"></span>
-        <span class="packages-nav-main">
-          <strong>${escapeHtml(pkg.name)}</strong>
-          <span>${escapeHtml(secondary)}</span>
-        </span>
-        <span class="packages-nav-ref">${escapeHtml(pkg.source?.ref ?? "main")}</span>
-      </a>`;
-  }).join("");
-}
-
 function catalogImportSource(catalog, entry) {
   if (catalog?.source?.kind === "remote" && catalog?.source?.baseUrl) {
     const [owner, repo] = String(entry?.source?.repo ?? "").split("/");
@@ -163,406 +153,640 @@ function catalogImportSource(catalog, entry) {
   return String(entry?.source?.repo ?? "");
 }
 
-function renderDiscovery(routeBase, catalog, sourceValue, refValue, subdirValue) {
-  const packages = Array.isArray(catalog?.packages) ? catalog.packages : [];
-  if (packages.length === 0) {
-    return '<div class="packages-discovery-empty">No public packages exposed here yet.</div>';
+function packageMatchesScope(pkg, scopeFilter) {
+  if (scopeFilter === "mine") return pkg?.scope?.kind === "user";
+  if (scopeFilter === "system") return pkg?.scope?.kind === "global";
+  return true;
+}
+
+function pickSelectedPackage(packages, selectedPackageId) {
+  if (!Array.isArray(packages) || packages.length === 0) return null;
+  if (selectedPackageId) {
+    const exact = packages.find((pkg) => pkg.packageId === selectedPackageId);
+    if (exact) return exact;
   }
-
-  return `
-    <div class="packages-discovery-list">
-      ${packages.map((entry) => {
-        const href = buildUrl(routeBase, {
-          source: catalogImportSource(catalog, entry),
-          ref: entry?.source?.ref ?? refValue ?? "main",
-          subdir: entry?.source?.subdir ?? subdirValue ?? ".",
-          catalog: catalog?.source?.kind === "remote" ? catalog?.source?.name : "local",
-        });
-        return `
-          <a class="packages-discovery-item" href="${escapeHtml(href)}">
-            <span class="packages-discovery-copy">
-              <strong>${escapeHtml(entry.name)}</strong>
-              <span>${escapeHtml(entry.description || entry.source?.repo || "No description")}</span>
-            </span>
-            <span class="packages-discovery-meta">${escapeHtml(entry.source?.repo ?? "unknown")} · ${escapeHtml(entry.source?.ref ?? "main")}</span>
-          </a>`;
-      }).join("")}
-    </div>`;
+  return packages[0] ?? null;
 }
 
-function renderImportRail(
-  routeBase,
-  statusText,
-  errorText,
-  sourceValue,
-  refValue,
-  subdirValue,
-  remotes,
-  catalogName,
-  catalog,
-  remoteNameValue,
-  remoteUrlValue,
-) {
-  const catalogLinks = [
-    `<a class="packages-catalog-link ${catalogName === "local" ? "is-active" : ""}" href="${escapeHtml(buildUrl(routeBase, { catalog: "local", source: sourceValue, ref: refValue, subdir: subdirValue }))}">Local</a>`,
-    ...((Array.isArray(remotes) ? remotes : []).map((remote) => `<a class="packages-catalog-link ${catalogName === remote.name ? "is-active" : ""}" href="${escapeHtml(buildUrl(routeBase, { catalog: remote.name, source: sourceValue, ref: refValue, subdir: subdirValue }))}">${escapeHtml(remote.name)}</a>`)),
-  ].join("");
-  return `
-    <section class="packages-rail">
-      <form method="post" class="packages-import-form">
-        <input type="hidden" name="action" value="add" />
-        <label>
-          <span>Source</span>
-          <input type="text" name="source" value="${escapeHtml(sourceValue)}" placeholder="owner/repo or https://..." spellcheck="false" />
-        </label>
-        <label>
-          <span>Ref</span>
-          <input type="text" name="ref" value="${escapeHtml(refValue)}" placeholder="main" spellcheck="false" />
-        </label>
-        <label>
-          <span>Subdir</span>
-          <input type="text" name="subdir" value="${escapeHtml(subdirValue)}" placeholder="." spellcheck="false" />
-        </label>
-        <button type="submit" class="packages-icon-btn" title="Import package" aria-label="Import package">＋</button>
-      </form>
-      <p class="packages-rail-note">Imported third-party packages stay disabled until you review their code and capabilities.</p>
-      <form method="post" class="packages-remote-form">
-        <input type="hidden" name="action" value="remote-add" />
-        <label>
-          <span>Remote</span>
-          <input type="text" name="remoteName" value="${escapeHtml(remoteNameValue)}" placeholder="lab" spellcheck="false" />
-        </label>
-        <label>
-          <span>Base URL</span>
-          <input type="text" name="remoteUrl" value="${escapeHtml(remoteUrlValue)}" placeholder="https://gsv.example.com" spellcheck="false" />
-        </label>
-        <button type="submit" class="packages-icon-btn" title="Add remote" aria-label="Add remote">⊕</button>
-      </form>
-      <section class="packages-discovery">
-        <div class="packages-discovery-header">
-          <span>Public packages</span>
-          <nav class="packages-catalog-links">${catalogLinks}</nav>
-        </div>
-        ${renderDiscovery(routeBase, catalog, sourceValue, refValue, subdirValue)}
-      </section>
-      ${statusText ? `<p class="packages-status">${escapeHtml(statusText)}</p>` : ""}
-      ${errorText ? `<p class="packages-status is-error">${escapeHtml(errorText)}</p>` : ""}
-    </section>`;
+function collectRepos(packages) {
+  const byRepo = new Map();
+  for (const pkg of Array.isArray(packages) ? packages : []) {
+    const repo = String(pkg?.source?.repo ?? "").trim();
+    if (!repo) continue;
+    const existing = byRepo.get(repo) ?? {
+      repo,
+      public: Boolean(pkg?.source?.public),
+      packages: [],
+    };
+    existing.public = existing.public || Boolean(pkg?.source?.public);
+    existing.packages.push(pkg);
+    byRepo.set(repo, existing);
+  }
+  const repos = [...byRepo.values()].map((entry) => ({
+    ...entry,
+    primary: entry.packages[0],
+  }));
+  repos.sort((left, right) => left.repo.localeCompare(right.repo));
+  return repos;
 }
 
-function renderHeader(routeBase, pkg, refs, browseRef, path, view) {
-  const currentRef = browseRef || pkg.source?.ref || "main";
-  const reviewPending = needsReviewApproval(pkg);
-  const reviewed = Boolean(pkg?.review?.approvedAt);
-  const reviewState = isThirdPartyPackage(pkg)
-    ? `<span class="packages-state ${reviewPending ? "is-review" : (reviewed ? "is-approved" : "is-third-party")}">${reviewPending ? "review pending" : (reviewed ? "reviewed" : "third-party")}</span>`
-    : "";
-  const branches = Object.keys(refs?.heads ?? {}).sort();
-  const branchOptions = (branches.length > 0 ? branches : [currentRef]).map((branch) => {
-    const selected = branch === currentRef ? " selected" : "";
-    return `<option value="${escapeHtml(branch)}"${selected}>${escapeHtml(branch)}</option>`;
-  }).join("");
-  const packageAction = pkg.enabled
-    ? (pkg.name === "packages"
-      ? '<span class="packages-static-note">Core package</span>'
-      : `
-        <form method="post">
-          <input type="hidden" name="action" value="remove" />
-          <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
-          <button type="submit" class="packages-icon-btn" title="Disable package" aria-label="Disable package">−</button>
-        </form>`)
-    : !reviewPending ? `
-      <form method="post">
-        <input type="hidden" name="action" value="install" />
-        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
-        <button type="submit" class="packages-icon-btn" title="Enable package after review" aria-label="Enable package after review">▶</button>
-      </form>` : '<span class="packages-static-note">Review first</span>';
-
-  const reviewAction = isThirdPartyPackage(pkg)
-    ? `
-      <form method="post">
-        <input type="hidden" name="action" value="review" />
-        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
-        <button type="submit" class="packages-icon-btn" title="Open package reviewer" aria-label="Open package reviewer">⌕</button>
-      </form>`
-    : "";
-
-  const approveAction = reviewPending
-    ? `
-      <form method="post">
-        <input type="hidden" name="action" value="review-approve" />
-        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
-        <button type="submit" class="packages-icon-btn" title="Approve review" aria-label="Approve review">✓</button>
-      </form>`
-    : (reviewed ? '<span class="packages-static-note">Reviewed</span>' : "");
-
-  const checkoutAction = currentRef !== (pkg.source?.ref ?? "main")
-    ? `
-      <form method="post">
-        <input type="hidden" name="action" value="checkout" />
-        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
-        <input type="hidden" name="ref" value="${escapeHtml(currentRef)}" />
-        <button type="submit" class="packages-icon-btn" title="Use this ref" aria-label="Use this ref">↺</button>
-      </form>`
-    : "";
-  const visibilityAction = isThirdPartyPackage(pkg)
-    ? `
-      <form method="post">
-        <input type="hidden" name="action" value="public-set" />
-        <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
-        <input type="hidden" name="public" value="${pkg.source?.public ? "false" : "true"}" />
-        <button type="submit" class="packages-icon-btn" title="${pkg.source?.public ? "Hide from public catalog" : "Expose in public catalog"}" aria-label="${pkg.source?.public ? "Hide from public catalog" : "Expose in public catalog"}">${pkg.source?.public ? "◌" : "◎"}</button>
-      </form>`
-    : "";
-
-  return `
-    <header class="packages-header">
-      <div class="packages-header-copy">
-        <div class="packages-title-row">
-          <h1>${escapeHtml(pkg.name)}</h1>
-          <span class="packages-runtime">${escapeHtml(pkg.runtime ?? "unknown")}</span>
-          <span class="packages-state ${pkg.enabled ? "is-enabled" : "is-disabled"}">${pkg.enabled ? "enabled" : "disabled"}</span>
-          ${reviewState}
-        </div>
-        <p>${escapeHtml(pkg.description || "No description provided.")}</p>
-      </div>
-      <div class="packages-header-tools">
-        <form method="get" class="packages-ref-form">
-          <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
-          <input type="hidden" name="view" value="${escapeHtml(view)}" />
-          ${path ? `<input type="hidden" name="path" value="${escapeHtml(path)}" />` : ""}
-          <select name="ref">${branchOptions}</select>
-          <button type="submit" class="packages-icon-btn" title="Browse ref" aria-label="Browse ref">↗</button>
-        </form>
-        ${checkoutAction}
-        ${visibilityAction}
-        ${reviewAction}
-        ${approveAction}
-        ${packageAction}
-      </div>
-    </header>`;
+function pickSelectedRepo(repos, repoSlug, fallbackPackage) {
+  if (!Array.isArray(repos) || repos.length === 0) return null;
+  if (repoSlug) {
+    const exact = repos.find((repo) => repo.repo === repoSlug);
+    if (exact) return exact;
+  }
+  if (fallbackPackage?.source?.repo) {
+    const matched = repos.find((repo) => repo.repo === fallbackPackage.source.repo);
+    if (matched) return matched;
+  }
+  return repos[0] ?? null;
 }
 
-function renderTabs(routeBase, pkg, ref, path, view) {
-  const tabs = [
-    ["overview", packageHref(routeBase, pkg, "overview", { ref })],
-    ["code", packageHref(routeBase, pkg, "code", { ref, path })],
-    ["commits", packageHref(routeBase, pkg, "commits", { ref })],
+function screenHref(routeBase, screen, extras = {}) {
+  return buildUrl(routeBase, {
+    screen,
+    ...extras,
+  });
+}
+
+function repoHref(routeBase, repo, repoView, extras = {}) {
+  return buildUrl(routeBase, {
+    screen: "repos",
+    repo,
+    repoView,
+    ...extras,
+  });
+}
+
+function packageHref(routeBase, screen, packageId, extras = {}) {
+  return buildUrl(routeBase, {
+    screen,
+    packageId,
+    ...extras,
+  });
+}
+
+function renderAppNav(routeBase, screen, reviewCount) {
+  const items = [
+    ["installed", "Installed", null],
+    ["review", "Review", reviewCount > 0 ? String(reviewCount) : null],
+    ["discover", "Discover", null],
+    ["repos", "Repos", null],
+  ];
+  return items.map(([id, label, badge]) => `
+    <a class="packages-app-nav-item ${screen === id ? "is-selected" : ""}" href="${escapeHtml(screenHref(routeBase, id))}">
+      <span>${escapeHtml(label)}</span>
+      ${badge ? `<span class="packages-app-nav-badge">${escapeHtml(badge)}</span>` : ""}
+    </a>`).join("");
+}
+
+function renderScopeFilters(routeBase, screen, scopeFilter, packageId) {
+  const filters = [
+    ["all", "All"],
+    ["mine", "Mine"],
+    ["system", "System"],
   ];
   return `
-    <nav class="packages-tabs">
-      ${tabs.map(([name, href]) => `<a class="${view === name ? "is-active" : ""}" href="${escapeHtml(href)}">${escapeHtml(name)}</a>`).join("")}
+    <nav class="packages-subfilters">
+      ${filters.map(([value, label]) => `<a class="${scopeFilter === value ? "is-active" : ""}" href="${escapeHtml(buildUrl(routeBase, { screen, scope: value, packageId }))}">${escapeHtml(label)}</a>`).join("")}
     </nav>`;
 }
 
-function renderOverview(pkg, refs) {
-  const resolvedCommit = pkg.source?.resolvedCommit ?? "Not resolved";
-  const heads = Object.keys(refs?.heads ?? {}).sort();
-  const tags = Object.keys(refs?.tags ?? {}).sort();
-  const bindings = Array.isArray(pkg.bindingNames) ? pkg.bindingNames : [];
-  const reviewStatus = isThirdPartyPackage(pkg)
-    ? (needsReviewApproval(pkg)
-      ? "Pending approval"
-      : (pkg?.review?.approvedAt ? `Approved on ${new Date(pkg.review.approvedAt).toLocaleString()}` : "Third-party"))
-    : "Built-in";
-  const reviewBanner = isThirdPartyPackage(pkg) && needsReviewApproval(pkg)
-    ? `
-      <section class="packages-review-banner">
-        <strong>Review required before enable</strong>
-        <p>This package was imported from a third-party source. Inspect its capabilities, code, and commit history before enabling it.</p>
-        <ul class="packages-review-list">
-          <li>Read the declared bindings below.</li>
-          <li>Browse the code and recent commits.</li>
-          <li>Only enable it once you trust the source.</li>
-        </ul>
-      </section>`
-    : isThirdPartyPackage(pkg) && pkg?.review?.approvedAt
-      ? `
-        <section class="packages-review-banner is-approved">
-          <strong>Review approved</strong>
-          <p>This package was marked as reviewed on ${escapeHtml(new Date(pkg.review.approvedAt).toLocaleString())}. You can enable it when ready.</p>
-        </section>`
-    : "";
+function renderPackageListPane(routeBase, screen, packages, selectedPackageId, scopeFilter) {
+  const filtered = packages.filter((pkg) => packageMatchesScope(pkg, scopeFilter));
   return `
-    <section class="packages-workspace">
-      ${reviewBanner}
-      <section class="packages-meta-grid">
-        <article>
-          <span>Source</span>
-          <strong>${escapeHtml(pkg.source?.repo ?? "unknown")}</strong>
-        </article>
-        <article>
-          <span>Active ref</span>
-          <strong>${escapeHtml(pkg.source?.ref ?? "main")}</strong>
-        </article>
-        <article>
-          <span>Resolved commit</span>
-          <strong class="packages-mono">${escapeHtml(resolvedCommit)}</strong>
-        </article>
-        <article>
-          <span>Version</span>
-          <strong>${escapeHtml(pkg.version ?? "0.0.0")}</strong>
-        </article>
-        <article>
-          <span>Visibility</span>
-          <strong>${pkg.source?.public ? "Public" : "Private"}</strong>
-        </article>
-        <article>
-          <span>Review</span>
-          <strong>${escapeHtml(reviewStatus)}</strong>
-        </article>
-      </section>
-      <section class="packages-section">
-        <h2>Granted bindings</h2>
-        <div class="packages-chip-grid">
-          ${bindings.map((binding) => `<span class="packages-chip">${escapeHtml(binding)}</span>`).join("") || '<span class="packages-chip">No bindings</span>'}
+    <section class="packages-list-pane">
+      <header class="packages-pane-header">
+        <div>
+          <strong>${screen === "review" ? "Pending review" : "Packages"}</strong>
+          <span>${filtered.length} visible</span>
         </div>
-      </section>
-      <section class="packages-section">
-        <h2>Entrypoints</h2>
-        <ul class="packages-entry-list">
-          ${(Array.isArray(pkg.entrypoints) ? pkg.entrypoints : []).map((entrypoint) => `
-            <li>
-              <strong>${escapeHtml(entrypoint.name)}</strong>
-              <span>${escapeHtml(entrypoint.kind)}</span>
-            </li>`).join("") || '<li><strong>No entrypoints</strong><span>n/a</span></li>'}
-        </ul>
-      </section>
-      <section class="packages-section">
-        <h2>Available refs</h2>
-        <div class="packages-chip-grid">
-          ${heads.map((head) => `<span class="packages-chip">${escapeHtml(head)}</span>`).join("") || '<span class="packages-chip">No branches</span>'}
-          ${tags.map((tag) => `<span class="packages-chip">tag:${escapeHtml(tag)}</span>`).join("")}
+        ${screen === "installed" ? renderScopeFilters(routeBase, screen, scopeFilter, selectedPackageId) : ""}
+      </header>
+      <div class="packages-list-scroll">
+        ${filtered.length === 0
+          ? '<div class="packages-empty">No packages in this view.</div>'
+          : filtered.map((pkg) => `
+            <a class="packages-list-item ${pkg.packageId === selectedPackageId ? "is-selected" : ""}" href="${escapeHtml(packageHref(routeBase, screen, pkg.packageId, { scope: scopeFilter }))}">
+              <div class="packages-list-copy">
+                <strong>${escapeHtml(pkg.name)}</strong>
+                <span>${escapeHtml(pkg.source?.repo ?? "unknown")}</span>
+              </div>
+              <div class="packages-list-meta">
+                <span class="packages-badge ${scopeBadgeClass(pkg.scope)}">${escapeHtml(scopeLabel(pkg.scope))}</span>
+                <span class="packages-badge ${packageStateClass(pkg)}">${escapeHtml(packageStateLabel(pkg))}</span>
+              </div>
+            </a>`).join("")}
+      </div>
+    </section>`;
+}
+
+function renderRepoListPane(routeBase, repos, selectedRepo, repoView) {
+  return `
+    <section class="packages-list-pane">
+      <header class="packages-pane-header">
+        <div>
+          <strong>Repositories</strong>
+          <span>${repos.length} available</span>
         </div>
+      </header>
+      <div class="packages-list-scroll">
+        ${repos.length === 0
+          ? '<div class="packages-empty">No imported repositories yet.</div>'
+          : repos.map((repo) => `
+            <a class="packages-list-item ${selectedRepo?.repo === repo.repo ? "is-selected" : ""}" href="${escapeHtml(repoHref(routeBase, repo.repo, repoView || "files"))}">
+              <div class="packages-list-copy">
+                <strong>${escapeHtml(repo.repo)}</strong>
+                <span>${escapeHtml(`${repo.packages.length} package${repo.packages.length === 1 ? "" : "s"}`)}</span>
+              </div>
+              <div class="packages-list-meta">
+                <span class="packages-badge ${repo.public ? "is-public" : "is-private"}">${repo.public ? "Public" : "Private"}</span>
+              </div>
+            </a>`).join("")}
+      </div>
+    </section>`;
+}
+
+function renderDiscoverListPane(routeBase, catalog, importSource, importRef, importSubdir, catalogName) {
+  const entries = Array.isArray(catalog?.packages) ? catalog.packages : [];
+  return `
+    <section class="packages-list-pane">
+      <header class="packages-pane-header">
+        <div>
+          <strong>Catalog</strong>
+          <span>${entries.length} public package${entries.length === 1 ? "" : "s"}</span>
+        </div>
+      </header>
+      <div class="packages-list-scroll">
+        ${entries.length === 0
+          ? '<div class="packages-empty">No public packages exposed here yet.</div>'
+          : entries.map((entry) => `
+            <a class="packages-list-item" href="${escapeHtml(buildUrl(routeBase, {
+              screen: "discover",
+              catalog: catalogName,
+              source: catalogImportSource(catalog, entry),
+              ref: entry?.source?.ref ?? importRef ?? "main",
+              subdir: entry?.source?.subdir ?? importSubdir ?? ".",
+            }))}">
+              <div class="packages-list-copy">
+                <strong>${escapeHtml(entry.name)}</strong>
+                <span>${escapeHtml(entry.description || entry.source?.repo || "No description")}</span>
+              </div>
+              <div class="packages-list-meta">
+                <span class="packages-badge is-catalog">${escapeHtml(entry.source?.ref ?? "main")}</span>
+              </div>
+            </a>`).join("")}
+      </div>
+    </section>`;
+}
+
+function renderActionButton(action, payload, label, title, kind = "") {
+  return `
+    <form method="post">
+      <input type="hidden" name="action" value="${escapeHtml(action)}" />
+      ${Object.entries(payload).map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}" />`).join("")}
+      <button type="submit" class="packages-tool-btn ${kind}" title="${escapeHtml(title || label)}">${escapeHtml(label)}</button>
+    </form>`;
+}
+
+function renderPackageStage(routeBase, screen, pkg, refs, browseRef, scopeFilter) {
+  if (!pkg) {
+    return '<section class="packages-stage"><div class="packages-empty">Select a package.</div></section>';
+  }
+
+  const branches = Object.keys(refs?.heads ?? {}).sort();
+  const currentRef = browseRef || pkg.source?.ref || "main";
+  const reviewPending = needsReviewApproval(pkg);
+  const reviewed = Boolean(pkg?.review?.approvedAt);
+  const actions = [
+    renderActionButton("review", { packageId: pkg.packageId }, "Review", "Open reviewer"),
+    reviewPending
+      ? renderActionButton("review-approve", { packageId: pkg.packageId }, "Approve", "Approve review")
+      : "",
+    !pkg.enabled && !reviewPending
+      ? renderActionButton("install", { packageId: pkg.packageId }, "Enable", "Enable package", "is-primary")
+      : "",
+    pkg.enabled && pkg.name !== "packages"
+      ? renderActionButton("remove", { packageId: pkg.packageId }, "Disable", "Disable package")
+      : "",
+    isThirdPartyPackage(pkg)
+      ? renderActionButton(
+        "public-set",
+        { packageId: pkg.packageId, public: pkg.source?.public ? "false" : "true" },
+        pkg.source?.public ? "Hide" : "Publish",
+        pkg.source?.public ? "Hide from public catalog" : "Expose in public catalog",
+      )
+      : "",
+    renderActionButton("checkout", { packageId: pkg.packageId, ref: currentRef }, "Use ref", "Use this ref"),
+  ].filter(Boolean).join("");
+
+  return `
+    <section class="packages-stage">
+      <header class="packages-stage-header">
+        <div class="packages-stage-copy">
+          <div class="packages-title-row">
+            <h1>${escapeHtml(pkg.name)}</h1>
+            <span class="packages-badge ${scopeBadgeClass(pkg.scope)}">${escapeHtml(scopeLabel(pkg.scope))}</span>
+            <span class="packages-badge ${packageStateClass(pkg)}">${escapeHtml(packageStateLabel(pkg))}</span>
+            ${pkg.source?.public ? '<span class="packages-badge is-public">Public</span>' : '<span class="packages-badge is-private">Private</span>'}
+          </div>
+          <p>${escapeHtml(pkg.description || "No description provided.")}</p>
+        </div>
+        <div class="packages-toolbar">${actions}</div>
+      </header>
+      <div class="packages-stage-subbar">
+        <form method="get" class="packages-inline-form">
+          <input type="hidden" name="screen" value="${escapeHtml(screen)}" />
+          <input type="hidden" name="packageId" value="${escapeHtml(pkg.packageId)}" />
+          <input type="hidden" name="scope" value="${escapeHtml(scopeFilter)}" />
+          <label>
+            <span>Browse ref</span>
+            <select name="ref">
+              ${(branches.length > 0 ? branches : [currentRef]).map((branch) => `<option value="${escapeHtml(branch)}"${branch === currentRef ? " selected" : ""}>${escapeHtml(branch)}</option>`).join("")}
+            </select>
+          </label>
+          <button type="submit" class="packages-tool-btn">Browse</button>
+        </form>
+        <a class="packages-link-btn" href="${escapeHtml(repoHref(routeBase, pkg.source?.repo ?? "", "files", { ref: currentRef, packageId: pkg.packageId }))}">Open repo</a>
+      </div>
+      <section class="packages-stage-body">
+        ${isThirdPartyPackage(pkg) && reviewPending ? `
+          <section class="packages-notice is-review">
+            <strong>Review required</strong>
+            <p>This package stays disabled until you inspect it and explicitly approve it.</p>
+          </section>` : ""}
+        ${isThirdPartyPackage(pkg) && reviewed ? `
+          <section class="packages-notice is-reviewed">
+            <strong>Reviewed</strong>
+            <p>Approved on ${escapeHtml(formatReviewTime(pkg.review.approvedAt))}.</p>
+          </section>` : ""}
+        <section class="packages-info-grid">
+          <article><span>Source</span><strong>${escapeHtml(pkg.source?.repo ?? "unknown")}</strong></article>
+          <article><span>Ref</span><strong>${escapeHtml(pkg.source?.ref ?? "main")}</strong></article>
+          <article><span>Resolved commit</span><strong class="packages-mono">${escapeHtml(pkg.source?.resolvedCommit ?? "unknown")}</strong></article>
+          <article><span>Runtime</span><strong>${escapeHtml(pkg.runtime ?? "unknown")}</strong></article>
+          <article><span>Version</span><strong>${escapeHtml(pkg.version ?? "0.0.0")}</strong></article>
+          <article><span>Updated</span><strong>${escapeHtml(new Date(pkg.updatedAt).toLocaleString())}</strong></article>
+        </section>
+        <section class="packages-section-block">
+          <h2>Capabilities</h2>
+          <div class="packages-chip-row">
+            ${(Array.isArray(pkg.bindingNames) && pkg.bindingNames.length > 0)
+              ? pkg.bindingNames.map((binding) => `<span class="packages-chip">${escapeHtml(binding)}</span>`).join("")
+              : '<span class="packages-empty-inline">No declared bindings.</span>'}
+          </div>
+        </section>
+        <section class="packages-section-block">
+          <h2>Entrypoints</h2>
+          <div class="packages-table-list">
+            ${(Array.isArray(pkg.entrypoints) && pkg.entrypoints.length > 0)
+              ? pkg.entrypoints.map((entrypoint) => `
+                <div class="packages-table-row">
+                  <strong>${escapeHtml(entrypoint.name)}</strong>
+                  <span>${escapeHtml(entrypoint.kind)}</span>
+                </div>`).join("")
+              : '<div class="packages-empty-inline">No entrypoints.</div>'}
+          </div>
+        </section>
       </section>
     </section>`;
 }
 
-function renderBreadcrumbs(routeBase, pkg, ref, path) {
+function renderDiscoverStage(routeBase, statusText, errorText, importSource, importRef, importSubdir, remotes, catalogName, remoteName, remoteUrl) {
+  const catalogLinks = [
+    `<a class="${catalogName === "local" ? "is-active" : ""}" href="${escapeHtml(buildUrl(routeBase, { screen: "discover", catalog: "local", source: importSource, ref: importRef, subdir: importSubdir }))}">Local</a>`,
+    ...((Array.isArray(remotes) ? remotes : []).map((remote) => `<a class="${catalogName === remote.name ? "is-active" : ""}" href="${escapeHtml(buildUrl(routeBase, { screen: "discover", catalog: remote.name, source: importSource, ref: importRef, subdir: importSubdir }))}">${escapeHtml(remote.name)}</a>`)),
+  ].join("");
+
+  return `
+    <section class="packages-stage">
+      <header class="packages-stage-header">
+        <div class="packages-stage-copy">
+          <div class="packages-title-row"><h1>Discover</h1></div>
+          <p>Import packages from explicit sources and browse public catalogs exposed by this server or configured remotes.</p>
+        </div>
+      </header>
+      <section class="packages-stage-body packages-discover-body">
+        <section class="packages-section-block">
+          <h2>Import</h2>
+          <form method="post" class="packages-form-grid is-import">
+            <input type="hidden" name="action" value="add" />
+            <label>
+              <span>Source</span>
+              <input type="text" name="source" value="${escapeHtml(importSource)}" placeholder="owner/repo or https://..." spellcheck="false" />
+            </label>
+            <label>
+              <span>Ref</span>
+              <input type="text" name="ref" value="${escapeHtml(importRef)}" placeholder="main" spellcheck="false" />
+            </label>
+            <label>
+              <span>Subdir</span>
+              <input type="text" name="subdir" value="${escapeHtml(importSubdir)}" placeholder="." spellcheck="false" />
+            </label>
+            <button type="submit" class="packages-tool-btn is-primary">Import</button>
+          </form>
+          <p class="packages-note">Third-party imports stay disabled until reviewed.</p>
+        </section>
+        <section class="packages-section-block">
+          <h2>Remotes</h2>
+          <form method="post" class="packages-form-grid is-remote">
+            <input type="hidden" name="action" value="remote-add" />
+            <label>
+              <span>Name</span>
+              <input type="text" name="remoteName" value="${escapeHtml(remoteName)}" placeholder="lab" spellcheck="false" />
+            </label>
+            <label>
+              <span>Base URL</span>
+              <input type="text" name="remoteUrl" value="${escapeHtml(remoteUrl)}" placeholder="https://gsv.example.com" spellcheck="false" />
+            </label>
+            <button type="submit" class="packages-tool-btn">Add remote</button>
+          </form>
+          <nav class="packages-subfilters">${catalogLinks}</nav>
+        </section>
+        ${statusText ? `<p class="packages-status">${escapeHtml(statusText)}</p>` : ""}
+        ${errorText ? `<p class="packages-status is-error">${escapeHtml(errorText)}</p>` : ""}
+      </section>
+    </section>`;
+}
+
+function renderRepoToolbar(routeBase, selectedRepo, repoPrimary, repoView, browseRef, searchQuery, selectedCommit, refs) {
+  const branches = Object.keys(refs?.heads ?? {}).sort();
+  return `
+    <div class="packages-stage-subbar">
+      <form method="get" class="packages-inline-form">
+        <input type="hidden" name="screen" value="repos" />
+        <input type="hidden" name="repo" value="${escapeHtml(selectedRepo.repo)}" />
+        <input type="hidden" name="repoView" value="${escapeHtml(repoView)}" />
+        <input type="hidden" name="q" value="${escapeHtml(searchQuery || "")}" />
+        ${selectedCommit ? `<input type="hidden" name="commit" value="${escapeHtml(selectedCommit)}" />` : ""}
+        <label>
+          <span>Ref</span>
+          <select name="ref">
+            ${(branches.length > 0 ? branches : [browseRef]).map((branch) => `<option value="${escapeHtml(branch)}"${branch === browseRef ? " selected" : ""}>${escapeHtml(branch)}</option>`).join("")}
+          </select>
+        </label>
+        <button type="submit" class="packages-tool-btn">Browse</button>
+      </form>
+      ${repoPrimary && isThirdPartyPackage(repoPrimary)
+        ? renderActionButton(
+          "public-set",
+          { repo: selectedRepo.repo, public: selectedRepo.public ? "false" : "true" },
+          selectedRepo.public ? "Hide" : "Publish",
+          selectedRepo.public ? "Hide repo from public catalog" : "Expose repo in public catalog",
+        )
+        : ""}
+    </div>`;
+}
+
+function renderRepoTabs(routeBase, selectedRepo, repoView, browseRef, path, searchQuery, selectedCommit) {
+  const tabs = [
+    ["files", "Files", { path }],
+    ["commits", "Commits", {}],
+    ["diff", "Diff", { commit: selectedCommit }],
+    ["search", "Search", { q: searchQuery }],
+    ["packages", "Packages", {}],
+  ];
+  return `
+    <nav class="packages-stage-tabs">
+      ${tabs.map(([id, label, extras]) => `<a class="${repoView === id ? "is-active" : ""}" href="${escapeHtml(repoHref(routeBase, selectedRepo.repo, id, { ref: browseRef, ...extras }))}">${escapeHtml(label)}</a>`).join("")}
+    </nav>`;
+}
+
+function renderRepoBreadcrumbs(routeBase, selectedRepo, browseRef, path) {
   const normalized = normalizePath(path);
   const segments = normalized ? normalized.split("/") : [];
   const crumbs = [
-    `<a href="${escapeHtml(packageHref(routeBase, pkg, "code", { ref }))}">${escapeHtml(pkg.name)}</a>`,
+    `<a href="${escapeHtml(repoHref(routeBase, selectedRepo.repo, "files", { ref: browseRef }))}">${escapeHtml(selectedRepo.repo)}</a>`,
   ];
   let current = "";
   for (const segment of segments) {
     current = current ? `${current}/${segment}` : segment;
-    crumbs.push(`<span class="packages-crumb-sep">/</span>`);
-    crumbs.push(`<a href="${escapeHtml(packageHref(routeBase, pkg, "code", { ref, path: current }))}">${escapeHtml(segment)}</a>`);
+    crumbs.push('<span class="packages-crumb-sep">/</span>');
+    crumbs.push(`<a href="${escapeHtml(repoHref(routeBase, selectedRepo.repo, "files", { ref: browseRef, path: current }))}">${escapeHtml(segment)}</a>`);
   }
   return `<nav class="packages-breadcrumbs">${crumbs.join("")}</nav>`;
 }
 
-function renderTree(routeBase, pkg, ref, path, readResult) {
-  const rows = [];
-  if (path) {
-    const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-    rows.push(`
-      <a class="packages-tree-row is-up" href="${escapeHtml(packageHref(routeBase, pkg, "code", { ref, path: parent }))}">
-        <span class="packages-tree-icon">↩</span>
-        <strong>..</strong>
-        <span>parent</span>
-      </a>`);
+function renderRepoFiles(routeBase, selectedRepo, browseRef, path, readResult) {
+  if (!readResult) {
+    return '<div class="packages-empty">No repository content loaded.</div>';
   }
-  for (const entry of readResult.entries) {
-    rows.push(`
-      <a class="packages-tree-row" href="${escapeHtml(packageHref(routeBase, pkg, "code", { ref, path: entry.path }))}">
-        <span class="packages-tree-icon">${entry.type === "tree" ? "▣" : entry.type === "symlink" ? "↗" : "≣"}</span>
-        <strong>${escapeHtml(entry.name)}</strong>
-        <span>${escapeHtml(entry.type)}</span>
-      </a>`);
-  }
-  return `
-    ${renderBreadcrumbs(routeBase, pkg, ref, path)}
-    <section class="packages-workspace packages-tree-grid">
-      ${rows.join("") || '<div class="packages-empty">Folder is empty.</div>'}
-    </section>`;
-}
-
-function renderFile(routeBase, pkg, ref, path, readResult) {
-  return `
-    ${renderBreadcrumbs(routeBase, pkg, ref, path)}
-    <section class="packages-workspace">
-      <div class="packages-file-meta">
+  if (readResult.kind === "file") {
+    return `
+      ${renderRepoBreadcrumbs(routeBase, selectedRepo, browseRef, path)}
+      <div class="packages-repo-file-meta">
         <strong>${escapeHtml(path || "/")}</strong>
         <span>${escapeHtml(String(readResult.size ?? 0))} bytes</span>
       </div>
       ${readResult.isBinary
         ? '<div class="packages-empty">Binary file preview omitted.</div>'
-        : `<pre class="packages-code">${escapeHtml(readResult.content ?? "")}</pre>`}
-    </section>`;
+        : `<pre class="packages-code">${escapeHtml(readResult.content ?? "")}</pre>`}`;
+  }
+
+  const rows = [];
+  if (path) {
+    const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    rows.push(`
+      <a class="packages-table-row is-link" href="${escapeHtml(repoHref(routeBase, selectedRepo.repo, "files", { ref: browseRef, path: parent }))}">
+        <strong>..</strong>
+        <span>parent</span>
+      </a>`);
+  }
+  for (const entry of Array.isArray(readResult.entries) ? readResult.entries : []) {
+    rows.push(`
+      <a class="packages-table-row is-link" href="${escapeHtml(repoHref(routeBase, selectedRepo.repo, "files", { ref: browseRef, path: entry.path }))}">
+        <strong>${escapeHtml(entry.name)}</strong>
+        <span>${escapeHtml(entry.type)}</span>
+      </a>`);
+  }
+  return `
+    ${renderRepoBreadcrumbs(routeBase, selectedRepo, browseRef, path)}
+    <div class="packages-table-list">${rows.join("") || '<div class="packages-empty">Folder is empty.</div>'}</div>`;
 }
 
-function renderCommits(routeBase, pkg, ref, offset, logResult) {
+function renderRepoCommits(routeBase, selectedRepo, browseRef, offset, logResult) {
+  const entries = Array.isArray(logResult?.entries) ? logResult.entries : [];
   const prevHref = offset > 0
-    ? packageHref(routeBase, pkg, "commits", { ref, offset: Math.max(0, offset - COMMIT_PAGE_SIZE) })
+    ? repoHref(routeBase, selectedRepo.repo, "commits", { ref: browseRef, offset: Math.max(0, offset - COMMIT_PAGE_SIZE) })
     : "";
-  const nextHref = Array.isArray(logResult.entries) && logResult.entries.length === COMMIT_PAGE_SIZE
-    ? packageHref(routeBase, pkg, "commits", { ref, offset: offset + COMMIT_PAGE_SIZE })
+  const nextHref = entries.length === COMMIT_PAGE_SIZE
+    ? repoHref(routeBase, selectedRepo.repo, "commits", { ref: browseRef, offset: offset + COMMIT_PAGE_SIZE })
     : "";
   return `
-    <section class="packages-workspace packages-commit-list">
-      ${(Array.isArray(logResult.entries) ? logResult.entries : []).map((entry) => `
-        <article class="packages-commit-row">
-          <span class="packages-commit-hash">${escapeHtml(shortHash(entry.hash))}</span>
-          <div>
+    <div class="packages-table-list">
+      ${entries.length === 0
+        ? '<div class="packages-empty">No commits available.</div>'
+        : entries.map((entry) => `
+          <a class="packages-table-row is-link is-commit" href="${escapeHtml(repoHref(routeBase, selectedRepo.repo, "diff", { ref: browseRef, commit: entry.hash }))}">
+            <span class="packages-mono">${escapeHtml(shortHash(entry.hash))}</span>
             <strong>${escapeHtml(firstLine(entry.message))}</strong>
-            <p>${escapeHtml(entry.author)} · ${escapeHtml(formatTimestamp(entry.commitTime))}</p>
-          </div>
-        </article>`).join("") || '<div class="packages-empty">No commits available.</div>'}
-      <div class="packages-pagination">
-        ${prevHref ? `<a href="${escapeHtml(prevHref)}">Previous</a>` : "<span></span>"}
-        ${nextHref ? `<a href="${escapeHtml(nextHref)}">Next</a>` : "<span></span>"}
+            <span>${escapeHtml(`${entry.author} · ${formatTimestamp(entry.commitTime)}`)}</span>
+          </a>`).join("")}
+    </div>
+    <div class="packages-pagination">
+      ${prevHref ? `<a href="${escapeHtml(prevHref)}">Previous</a>` : "<span></span>"}
+      ${nextHref ? `<a href="${escapeHtml(nextHref)}">Next</a>` : "<span></span>"}
+    </div>`;
+}
+
+function renderRepoDiff(diffResult) {
+  if (!diffResult) {
+    return '<div class="packages-empty">Select a commit to inspect its diff.</div>';
+  }
+  return `
+    <section class="packages-diff-summary">
+      <span class="packages-badge is-catalog">${escapeHtml(shortHash(diffResult.commitHash))}</span>
+      ${diffResult.parentHash ? `<span class="packages-badge is-private">parent ${escapeHtml(shortHash(diffResult.parentHash))}</span>` : ""}
+      <span>${escapeHtml(`${diffResult.stats.filesChanged} files changed`)}</span>
+      <span>${escapeHtml(`+${diffResult.stats.additions} / -${diffResult.stats.deletions}`)}</span>
+    </section>
+    <div class="packages-diff-list">
+      ${(Array.isArray(diffResult.files) ? diffResult.files : []).map((file) => `
+        <article class="packages-diff-file">
+          <header>
+            <strong>${escapeHtml(file.path)}</strong>
+            <span class="packages-badge ${file.status === "added" ? "is-enabled" : file.status === "deleted" ? "is-disabled" : "is-reviewed"}">${escapeHtml(file.status)}</span>
+          </header>
+          ${Array.isArray(file.hunks) && file.hunks.length > 0
+            ? file.hunks.map((hunk) => `
+              <section class="packages-diff-hunk">
+                <div class="packages-diff-hunk-meta">@@ -${escapeHtml(String(hunk.oldStart))},${escapeHtml(String(hunk.oldCount))} +${escapeHtml(String(hunk.newStart))},${escapeHtml(String(hunk.newCount))} @@</div>
+                <pre class="packages-diff-code">${hunk.lines.map((line) => `<span class="packages-diff-line ${line.tag === "add" ? "is-add" : line.tag === "delete" ? "is-delete" : line.tag === "binary" ? "is-binary" : ""}">${escapeHtml(line.tag === "add" ? "+" : line.tag === "delete" ? "-" : line.tag === "binary" ? "!" : " ")}${escapeHtml(line.content)}</span>`).join("\n")}</pre>
+              </section>`).join("")
+            : '<div class="packages-empty-inline">No textual hunks.</div>'}
+        </article>`).join("") || '<div class="packages-empty">No file changes.</div>'}
+    </div>`;
+}
+
+function renderRepoSearch(routeBase, selectedRepo, browseRef, searchQuery, searchResult) {
+  const matches = Array.isArray(searchResult?.matches) ? searchResult.matches : [];
+  return `
+    <section class="packages-search-pane">
+      <form method="get" class="packages-inline-form is-search">
+        <input type="hidden" name="screen" value="repos" />
+        <input type="hidden" name="repo" value="${escapeHtml(selectedRepo.repo)}" />
+        <input type="hidden" name="repoView" value="search" />
+        <input type="hidden" name="ref" value="${escapeHtml(browseRef)}" />
+        <label>
+          <span>Query</span>
+          <input type="text" name="q" value="${escapeHtml(searchQuery)}" placeholder="Search code" spellcheck="false" />
+        </label>
+        <button type="submit" class="packages-tool-btn">Search</button>
+      </form>
+      ${searchQuery
+        ? `<div class="packages-search-meta">${escapeHtml(`${matches.length} match${matches.length === 1 ? "" : "es"}${searchResult?.truncated ? " (truncated)" : ""}`)}</div>`
+        : '<div class="packages-empty-inline">Enter a search query.</div>'}
+      <div class="packages-table-list">
+        ${!searchQuery
+          ? ""
+          : matches.length === 0
+            ? '<div class="packages-empty">No matches.</div>'
+            : matches.map((match) => `
+              <a class="packages-table-row is-link is-search-result" href="${escapeHtml(repoHref(routeBase, selectedRepo.repo, "files", { ref: browseRef, path: match.path }))}">
+                <strong>${escapeHtml(match.path)}</strong>
+                <span>${escapeHtml(`L${match.line} · ${match.content.trim()}`)}</span>
+              </a>`).join("")}
       </div>
     </section>`;
 }
 
-function renderMain(routeBase, selectedPkg, view, refs, browseRef, path, readResult, logResult, offset) {
-  if (!selectedPkg) {
-    return '<section class="packages-main-stage"><div class="packages-empty">Import or enable a package to get started.</div></section>';
+function renderRepoPackages(routeBase, selectedRepo, repoPackages) {
+  return `
+    <div class="packages-table-list">
+      ${repoPackages.length === 0
+        ? '<div class="packages-empty">No packages detected in this repo.</div>'
+        : repoPackages.map((pkg) => `
+          <a class="packages-table-row is-link" href="${escapeHtml(packageHref(routeBase, needsReviewApproval(pkg) ? "review" : "installed", pkg.packageId))}">
+            <strong>${escapeHtml(pkg.name)}</strong>
+            <span>${escapeHtml(`${scopeLabel(pkg.scope)} · ${packageStateLabel(pkg)} · ${pkg.source?.subdir ?? "."}`)}</span>
+          </a>`).join("")}
+    </div>`;
+}
+
+function renderRepoStage(routeBase, selectedRepo, repoPrimary, repoPackages, repoView, browseRef, path, offset, refs, readResult, logResult, diffResult, searchQuery, searchResult, selectedCommit) {
+  if (!selectedRepo || !repoPrimary) {
+    return '<section class="packages-stage"><div class="packages-empty">Select a repository.</div></section>';
   }
 
-  const currentRef = browseRef || selectedPkg.source?.ref || "main";
-  const body = view === "commits"
-    ? renderCommits(routeBase, selectedPkg, currentRef, offset, logResult)
-    : view === "code"
-      ? readResult?.kind === "file"
-        ? renderFile(routeBase, selectedPkg, currentRef, path, readResult)
-        : renderTree(routeBase, selectedPkg, currentRef, path, readResult)
-      : renderOverview(selectedPkg, refs);
+  let body = "";
+  if (repoView === "commits") {
+    body = renderRepoCommits(routeBase, selectedRepo, browseRef, offset, logResult);
+  } else if (repoView === "diff") {
+    body = renderRepoDiff(diffResult);
+  } else if (repoView === "search") {
+    body = renderRepoSearch(routeBase, selectedRepo, browseRef, searchQuery, searchResult);
+  } else if (repoView === "packages") {
+    body = renderRepoPackages(routeBase, selectedRepo, repoPackages);
+  } else {
+    body = renderRepoFiles(routeBase, selectedRepo, browseRef, path, readResult);
+  }
 
   return `
-    <section class="packages-main-stage">
-      ${renderHeader(routeBase, selectedPkg, refs, currentRef, path, view)}
-      ${renderTabs(routeBase, selectedPkg, currentRef, path, view)}
-      ${body}
+    <section class="packages-stage">
+      <header class="packages-stage-header">
+        <div class="packages-stage-copy">
+          <div class="packages-title-row">
+            <h1>${escapeHtml(selectedRepo.repo)}</h1>
+            <span class="packages-badge ${selectedRepo.public ? "is-public" : "is-private"}">${selectedRepo.public ? "Public" : "Private"}</span>
+            <span class="packages-badge is-catalog">${escapeHtml(`${repoPackages.length} package${repoPackages.length === 1 ? "" : "s"}`)}</span>
+          </div>
+          <p>Browse repository contents, commit history, diffs, search results, and detected packages.</p>
+        </div>
+      </header>
+      ${renderRepoToolbar(routeBase, selectedRepo, repoPrimary, repoView, browseRef, searchQuery, selectedCommit, refs)}
+      ${renderRepoTabs(routeBase, selectedRepo, repoView, browseRef, path, searchQuery, selectedCommit)}
+      <section class="packages-stage-body">${body}</section>
     </section>`;
 }
 
-function renderPage(state) {
+function renderLayout(state) {
   const {
     routeBase,
+    screen,
     packages,
     selectedPkg,
-    view,
-    browseRef,
-    path,
-    refs,
-    readResult,
-    logResult,
-    offset,
-    statusText,
-    errorText,
+    scopeFilter,
+    remotes,
+    catalog,
+    catalogName,
     importSource,
     importRef,
     importSubdir,
-    remotes,
-    catalogName,
-    catalog,
     remoteName,
     remoteUrl,
+    statusText,
+    errorText,
+    repos,
+    selectedRepo,
+    repoPrimary,
+    repoPackages,
+    repoView,
+    browseRef,
+    path,
+    offset,
+    refs,
+    readResult,
+    logResult,
+    diffResult,
+    searchQuery,
+    searchResult,
+    selectedCommit,
     openChatProcess,
   } = state;
+
+  const reviewPackages = packages.filter((pkg) => needsReviewApproval(pkg));
+  const listPane = screen === "repos"
+    ? renderRepoListPane(routeBase, repos, selectedRepo, repoView)
+    : screen === "discover"
+      ? renderDiscoverListPane(routeBase, catalog, importSource, importRef, importSubdir, catalogName)
+      : renderPackageListPane(routeBase, screen, screen === "review" ? reviewPackages : packages, selectedPkg?.packageId ?? "", scopeFilter);
+
+  const stage = screen === "repos"
+    ? renderRepoStage(routeBase, selectedRepo, repoPrimary, repoPackages, repoView, browseRef, path, offset, refs, readResult, logResult, diffResult, searchQuery, searchResult, selectedCommit)
+    : screen === "discover"
+      ? renderDiscoverStage(routeBase, statusText, errorText, importSource, importRef, importSubdir, remotes, catalogName, remoteName, remoteUrl)
+      : renderPackageStage(routeBase, screen, selectedPkg, refs, browseRef, scopeFilter);
 
   return `<!doctype html>
 <html lang="en">
@@ -573,504 +797,556 @@ function renderPage(state) {
     <style>
       :root {
         color-scheme: light;
-        --surface: #f7f9fc;
-        --surface-low: #e9eff6;
-        --surface-lowest: #ffffff;
-        --line: rgba(42, 50, 56, 0.08);
-        --text: #1f2d33;
-        --muted: #61737b;
-        --primary: #003466;
-        --primary-soft: #1a4b84;
-        --danger: #904b36;
-        font-family: Manrope, system-ui, sans-serif;
+        --bg: #eef3f8;
+        --pane: rgba(247, 250, 253, 0.92);
+        --pane-strong: rgba(255, 255, 255, 0.96);
+        --line: rgba(28, 44, 56, 0.09);
+        --line-strong: rgba(28, 44, 56, 0.16);
+        --text: #18303c;
+        --muted: #68808e;
+        --accent: #174e87;
+        --accent-soft: rgba(23, 78, 135, 0.1);
+        --ok: #2a7b57;
+        --warn: #9c6a2d;
+        --danger: #975441;
+        --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+        --sans: Manrope, system-ui, sans-serif;
       }
       * { box-sizing: border-box; }
       html, body { margin: 0; min-height: 100%; }
       body {
         background: transparent;
         color: var(--text);
+        font-family: var(--sans);
       }
+      a { color: inherit; }
       main {
         min-height: 100vh;
         display: grid;
-        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-columns: 168px 320px minmax(0, 1fr);
+        background: linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08));
       }
-      .packages-rail {
+      .packages-app-nav,
+      .packages-list-pane,
+      .packages-stage {
+        min-height: 0;
+      }
+      .packages-app-nav {
         display: grid;
-        gap: 8px;
-        padding: 12px 14px 10px;
-        background: rgba(247, 249, 252, 0.56);
+        grid-template-rows: auto minmax(0, 1fr);
+        border-right: 1px solid var(--line);
+        background: rgba(238, 243, 248, 0.88);
+      }
+      .packages-app-nav header {
+        padding: 14px 14px 10px;
         border-bottom: 1px solid var(--line);
       }
-      .packages-import-form {
-        display: grid;
-        grid-template-columns: minmax(260px, 1.8fr) minmax(110px, 0.4fr) minmax(120px, 0.5fr) auto;
-        gap: 8px;
-        align-items: end;
-      }
-      .packages-remote-form {
-        display: grid;
-        grid-template-columns: minmax(140px, 0.6fr) minmax(260px, 1.2fr) auto;
-        gap: 8px;
-        align-items: end;
-      }
-      .packages-import-form label,
-      .packages-remote-form label,
-      .packages-ref-form {
-        display: grid;
-        gap: 4px;
-      }
-      .packages-import-form span,
-      .packages-remote-form span,
-      .packages-rail-note {
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.12em;
+      .packages-app-nav header strong {
+        display: block;
+        font-size: 12px;
+        letter-spacing: 0.14em;
         text-transform: uppercase;
         color: var(--muted);
       }
-      .packages-rail-note {
-        margin: 0;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0;
-        text-transform: none;
-      }
-      .packages-import-form input,
-      .packages-remote-form input,
-      .packages-ref-form select {
-        width: 100%;
-        min-height: 34px;
-        padding: 0 10px;
-        border-radius: 4px;
-        border: 1px solid transparent;
-        background: rgba(255, 255, 255, 0.78);
-        color: var(--text);
-        font: inherit;
-        outline: none;
-      }
-      .packages-import-form input:focus,
-      .packages-remote-form input:focus,
-      .packages-ref-form select:focus {
-        border-color: rgba(26, 75, 132, 0.24);
-        background: rgba(255, 255, 255, 0.96);
-      }
-      .packages-icon-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 34px;
-        min-height: 34px;
-        padding: 0 8px;
-        border: 0;
-        border-radius: 6px;
-        background: rgba(233, 239, 246, 0.76);
-        color: var(--text);
-        font: inherit;
-        font-weight: 700;
-        cursor: pointer;
-        text-decoration: none;
-      }
-      .packages-static-note {
-        font-size: 12px;
-        color: var(--muted);
-      }
-      .packages-status {
-        margin: 0;
-        font-size: 12px;
-        color: var(--muted);
-      }
-      .packages-status.is-error {
-        color: var(--danger);
-      }
-      .packages-discovery {
+      .packages-app-nav-items {
         display: grid;
-        gap: 8px;
-        padding-top: 2px;
+        align-content: start;
+        gap: 2px;
+        padding: 10px 8px;
       }
-      .packages-discovery-header {
+      .packages-app-nav-item {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
-      }
-      .packages-discovery-header span {
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      .packages-catalog-links {
-        display: flex;
-        align-items: center;
         gap: 8px;
-        flex-wrap: wrap;
-      }
-      .packages-catalog-link {
-        color: var(--muted);
+        min-height: 34px;
+        padding: 0 10px;
+        border-radius: 8px;
         text-decoration: none;
-        font-size: 12px;
-      }
-      .packages-catalog-link.is-active {
-        color: var(--primary);
+        color: var(--muted);
+        font-size: 13px;
         font-weight: 700;
       }
-      .packages-discovery-list {
-        display: grid;
-        gap: 6px;
-      }
-      .packages-discovery-item {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 12px;
-        align-items: center;
-        padding: 10px 12px;
-        border-radius: 10px;
-        background: rgba(255, 255, 255, 0.56);
-        color: inherit;
-        text-decoration: none;
-      }
-      .packages-discovery-item:hover {
-        background: rgba(255, 255, 255, 0.82);
-      }
-      .packages-discovery-copy {
-        min-width: 0;
-        display: grid;
-        gap: 2px;
-      }
-      .packages-discovery-copy strong,
-      .packages-discovery-meta,
-      .packages-discovery-copy span {
-        font-size: 12px;
-      }
-      .packages-discovery-copy span,
-      .packages-discovery-meta {
-        color: var(--muted);
-      }
-      .packages-discovery-empty {
-        font-size: 12px;
-        color: var(--muted);
-      }
-      .packages-shell {
-        min-height: 0;
-        display: grid;
-        grid-template-columns: 300px minmax(0, 1fr);
-      }
-      .packages-sidebar {
-        min-height: 0;
-        overflow: auto;
-        padding: 10px;
-        background: rgba(233, 239, 246, 0.56);
-      }
-      .packages-nav-item {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        gap: 10px;
-        align-items: center;
-        padding: 10px 12px;
-        border-radius: 10px;
-        color: inherit;
-        text-decoration: none;
-      }
-      .packages-nav-item:hover,
-      .packages-nav-item.is-selected {
+      .packages-app-nav-item:hover,
+      .packages-app-nav-item.is-selected {
         background: rgba(255, 255, 255, 0.72);
+        color: var(--text);
       }
-      .packages-nav-dot {
-        width: 8px;
-        height: 8px;
+      .packages-app-nav-badge {
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         border-radius: 999px;
-        background: #98a7b4;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 11px;
       }
-      .packages-nav-dot.is-enabled { background: #5f8a73; }
-      .packages-nav-dot.is-review { background: #b38a4d; }
-      .packages-nav-dot.is-disabled { background: #b3bcc4; }
-      .packages-nav-main {
-        min-width: 0;
+      .packages-list-pane {
         display: grid;
-        gap: 2px;
+        grid-template-rows: auto minmax(0, 1fr);
+        border-right: 1px solid var(--line);
+        background: rgba(244, 248, 252, 0.9);
       }
-      .packages-nav-main strong,
-      .packages-nav-ref,
-      .packages-runtime,
-      .packages-state,
-      .packages-meta-grid article span,
-      .packages-chip,
-      .packages-file-meta span,
-      .packages-commit-hash,
-      .packages-nav-main span,
-      .packages-commit-row p {
-        font-size: 12px;
-      }
-      .packages-nav-main span,
-      .packages-nav-ref,
-      .packages-runtime,
-      .packages-meta-grid article span,
-      .packages-file-meta span,
-      .packages-commit-row p {
-        color: var(--muted);
-      }
-      .packages-main-stage {
-        min-height: 0;
-        display: grid;
-        grid-template-rows: auto auto minmax(0, 1fr);
-        padding: 10px 14px 14px;
-      }
-      .packages-header {
+      .packages-pane-header {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
         gap: 12px;
+        padding: 14px 16px 10px;
+        border-bottom: 1px solid var(--line);
       }
-      .packages-header-copy {
+      .packages-pane-header strong {
+        display: block;
+        font-size: 13px;
+      }
+      .packages-pane-header span {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .packages-subfilters {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .packages-subfilters a {
+        font-size: 12px;
+        color: var(--muted);
+        text-decoration: none;
+      }
+      .packages-subfilters a.is-active {
+        color: var(--accent);
+        font-weight: 700;
+      }
+      .packages-list-scroll {
+        min-height: 0;
+        overflow: auto;
+        padding: 8px;
+        display: grid;
+        align-content: start;
+        gap: 2px;
+      }
+      .packages-list-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: start;
+        min-height: 52px;
+        padding: 10px 10px;
+        border-radius: 8px;
+        text-decoration: none;
+      }
+      .packages-list-item:hover,
+      .packages-list-item.is-selected {
+        background: rgba(255, 255, 255, 0.8);
+      }
+      .packages-list-copy,
+      .packages-list-meta {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+      .packages-list-copy strong,
+      .packages-table-row strong,
+      .packages-stage-copy h1 {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .packages-list-copy span,
+      .packages-table-row span,
+      .packages-note,
+      .packages-status,
+      .packages-stage-copy p,
+      .packages-repo-file-meta span,
+      .packages-empty-inline,
+      .packages-empty {
+        color: var(--muted);
+      }
+      .packages-list-copy span,
+      .packages-list-meta,
+      .packages-table-row span,
+      .packages-status,
+      .packages-note,
+      .packages-empty-inline,
+      .packages-empty,
+      .packages-repo-file-meta span {
+        font-size: 12px;
+      }
+      .packages-list-meta {
+        justify-items: end;
+      }
+      .packages-stage {
+        display: grid;
+        grid-template-rows: auto auto auto minmax(0, 1fr);
+        min-height: 0;
+        background: rgba(249, 251, 253, 0.88);
+      }
+      .packages-stage-header,
+      .packages-stage-subbar,
+      .packages-stage-tabs {
+        padding-left: 18px;
+        padding-right: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+      .packages-stage-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding-top: 16px;
+        padding-bottom: 14px;
+      }
+      .packages-stage-copy {
         display: grid;
         gap: 6px;
+        min-width: 0;
       }
       .packages-title-row {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         flex-wrap: wrap;
       }
       .packages-title-row h1 {
         margin: 0;
-        font-family: "Space Grotesk", system-ui, sans-serif;
-        font-size: 1.8rem;
-        line-height: 0.98;
+        font-size: 1.55rem;
+        line-height: 1;
+        font-family: "Space Grotesk", var(--sans);
       }
-      .packages-header-copy p {
+      .packages-stage-copy p {
         margin: 0;
-        color: var(--muted);
-        max-width: 60ch;
+        max-width: 72ch;
       }
-      .packages-state {
-        color: var(--muted);
-      }
-      .packages-state.is-enabled { color: #5f8a73; }
-      .packages-state.is-disabled { color: #8f5b47; }
-      .packages-header-tools,
-      .packages-ref-form {
+      .packages-toolbar,
+      .packages-inline-form,
+      .packages-stage-tabs {
         display: flex;
         align-items: center;
         gap: 8px;
+        flex-wrap: wrap;
       }
-      .packages-ref-form select {
-        min-width: 180px;
-      }
-      .packages-tabs {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        padding: 10px 0 8px;
-      }
-      .packages-tabs a {
-        color: var(--muted);
-        text-decoration: none;
-        font-size: 13px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-      }
-      .packages-tabs a.is-active {
-        color: var(--primary);
-      }
-      .packages-workspace {
-        min-height: 0;
-        overflow: auto;
-        background: rgba(255, 255, 255, 0.54);
-        padding: 14px;
-        border-radius: 12px;
-      }
-      .packages-meta-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
-        margin-bottom: 18px;
-      }
-      .packages-meta-grid article {
-        display: grid;
-        gap: 4px;
-        padding: 10px 12px;
-        background: rgba(233, 239, 246, 0.56);
-        border-radius: 10px;
-      }
-      .packages-meta-grid article strong {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .packages-mono,
-      .packages-code,
-      .packages-commit-hash {
-        font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-      }
-      .packages-section + .packages-section {
-        margin-top: 18px;
-      }
-      .packages-review-banner {
-        display: grid;
-        gap: 8px;
-        margin-bottom: 18px;
-        padding: 12px 14px;
-        border-radius: 10px;
-        background: rgba(233, 239, 246, 0.66);
-      }
-      .packages-review-banner strong {
-        font-size: 13px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--primary);
-      }
-      .packages-review-banner.is-approved strong {
-        color: #5f8a73;
-      }
-      .packages-review-banner p {
-        margin: 0;
-        color: var(--muted);
-      }
-      .packages-review-list {
-        margin: 0;
-        padding-left: 18px;
-        color: var(--text);
-      }
-      .packages-section h2 {
-        margin: 0 0 10px;
-        font-size: 14px;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: var(--muted);
-      }
-      .packages-entry-list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: grid;
-        gap: 8px;
-      }
-      .packages-entry-list li {
+      .packages-stage-subbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        padding: 10px 12px;
-        background: rgba(233, 239, 246, 0.46);
-        border-radius: 10px;
+        padding-top: 10px;
+        padding-bottom: 10px;
       }
-      .packages-chip-grid {
+      .packages-inline-form label,
+      .packages-form-grid label {
+        display: grid;
+        gap: 4px;
+      }
+      .packages-inline-form label span,
+      .packages-form-grid label span {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .packages-inline-form select,
+      .packages-inline-form input,
+      .packages-form-grid input {
+        min-height: 34px;
+        padding: 0 10px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        background: rgba(255,255,255,0.92);
+        color: var(--text);
+        font: inherit;
+        outline: none;
+      }
+      .packages-inline-form select:focus,
+      .packages-inline-form input:focus,
+      .packages-form-grid input:focus {
+        border-color: rgba(23, 78, 135, 0.24);
+      }
+      .packages-stage-tabs {
+        padding-top: 8px;
+        padding-bottom: 8px;
+      }
+      .packages-stage-tabs a {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .packages-stage-tabs a.is-active {
+        color: var(--accent);
+      }
+      .packages-stage-body {
+        min-height: 0;
+        overflow: auto;
+        padding: 18px;
+        display: grid;
+        align-content: start;
+        gap: 18px;
+      }
+      .packages-info-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1px;
+        border: 1px solid var(--line);
+        background: var(--line);
+      }
+      .packages-info-grid article {
+        display: grid;
+        gap: 4px;
+        min-height: 64px;
+        padding: 12px 12px;
+        background: var(--pane-strong);
+      }
+      .packages-info-grid article span {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .packages-section-block {
+        display: grid;
+        gap: 10px;
+      }
+      .packages-section-block h2 {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .packages-chip-row {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
       }
-      .packages-chip {
+      .packages-chip,
+      .packages-badge {
         display: inline-flex;
         align-items: center;
-        min-height: 28px;
-        padding: 0 10px;
+        min-height: 24px;
+        padding: 0 8px;
         border-radius: 999px;
-        background: rgba(233, 239, 246, 0.7);
+        font-size: 12px;
+        line-height: 1;
+        background: rgba(23, 78, 135, 0.08);
+        color: var(--text);
+      }
+      .packages-badge.is-mine,
+      .packages-badge.is-reviewed { background: rgba(39, 123, 87, 0.12); color: var(--ok); }
+      .packages-badge.is-system,
+      .packages-badge.is-catalog { background: rgba(23, 78, 135, 0.1); color: var(--accent); }
+      .packages-badge.is-workspace,
+      .packages-badge.is-review { background: rgba(156, 106, 45, 0.12); color: var(--warn); }
+      .packages-badge.is-public,
+      .packages-badge.is-enabled { background: rgba(39, 123, 87, 0.12); color: var(--ok); }
+      .packages-badge.is-private,
+      .packages-badge.is-disabled { background: rgba(151, 84, 65, 0.12); color: var(--danger); }
+      .packages-table-list,
+      .packages-diff-list {
+        display: grid;
+        gap: 1px;
+        border: 1px solid var(--line);
+        background: var(--line);
+      }
+      .packages-table-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        min-height: 42px;
+        padding: 10px 12px;
+        background: var(--pane-strong);
+      }
+      .packages-table-row.is-link {
+        text-decoration: none;
+      }
+      .packages-table-row.is-link:hover {
+        background: #ffffff;
+      }
+      .packages-table-row.is-commit {
+        grid-template-columns: 76px minmax(0, 1fr) auto;
+      }
+      .packages-table-row.is-search-result {
+        grid-template-columns: minmax(0, 1fr);
       }
       .packages-breadcrumbs {
         display: flex;
         align-items: center;
-        flex-wrap: wrap;
         gap: 6px;
-        padding: 0 0 8px;
+        flex-wrap: wrap;
       }
       .packages-breadcrumbs a,
-      .packages-pagination a {
-        color: var(--primary);
+      .packages-pagination a,
+      .packages-link-btn {
+        color: var(--accent);
         text-decoration: none;
       }
-      .packages-crumb-sep {
-        color: var(--muted);
-      }
-      .packages-tree-grid,
-      .packages-commit-list {
-        display: grid;
-        gap: 8px;
-      }
-      .packages-tree-row,
-      .packages-commit-row {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        align-items: center;
-        gap: 12px;
-        padding: 10px 12px;
-        border-radius: 10px;
-        background: rgba(233, 239, 246, 0.46);
-        color: inherit;
-        text-decoration: none;
-      }
-      .packages-tree-row:hover,
-      .packages-commit-row:hover {
-        background: rgba(233, 239, 246, 0.7);
-      }
-      .packages-tree-row strong,
-      .packages-commit-row strong {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .packages-tree-row span:last-child {
-        color: var(--muted);
-      }
-      .packages-tree-icon {
-        width: 18px;
-        text-align: center;
-        color: var(--primary-soft);
-      }
-      .packages-file-meta {
+      .packages-crumb-sep { color: var(--muted); }
+      .packages-repo-file-meta,
+      .packages-search-meta,
+      .packages-diff-summary {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 10px;
+        gap: 10px;
+        flex-wrap: wrap;
+        font-size: 12px;
       }
-      .packages-code {
+      .packages-code,
+      .packages-diff-code,
+      .packages-mono {
+        font-family: var(--mono);
+      }
+      .packages-code,
+      .packages-diff-code {
         margin: 0;
-        white-space: pre-wrap;
+        padding: 14px;
         overflow: auto;
+        border: 1px solid var(--line);
+        background: #fbfdff;
+        font-size: 12px;
+        line-height: 1.55;
       }
-      .packages-pagination {
+      .packages-diff-file {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        background: var(--pane-strong);
+      }
+      .packages-diff-file header {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 10px;
-        padding-top: 8px;
       }
-      .packages-empty {
-        padding: 16px;
+      .packages-diff-hunk { display: grid; gap: 6px; }
+      .packages-diff-hunk-meta {
+        font-size: 11px;
         color: var(--muted);
+        font-family: var(--mono);
       }
-      @media (max-width: 980px) {
-        .packages-import-form {
+      .packages-diff-line { display: block; }
+      .packages-diff-line.is-add { color: var(--ok); }
+      .packages-diff-line.is-delete { color: var(--danger); }
+      .packages-diff-line.is-binary { color: var(--warn); }
+      .packages-form-grid {
+        display: grid;
+        gap: 10px;
+      }
+      .packages-form-grid.is-import {
+        grid-template-columns: minmax(280px, 1.7fr) 140px 140px auto;
+        align-items: end;
+      }
+      .packages-form-grid.is-remote {
+        grid-template-columns: 180px minmax(280px, 1.4fr) auto;
+        align-items: end;
+      }
+      .packages-tool-btn,
+      .packages-link-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 34px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 6px;
+        background: rgba(232, 238, 245, 0.9);
+        color: var(--text);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .packages-tool-btn.is-primary {
+        background: var(--accent);
+        color: white;
+      }
+      .packages-status { margin: 0; }
+      .packages-status.is-error { color: var(--danger); }
+      .packages-notice {
+        display: grid;
+        gap: 4px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        background: var(--pane-strong);
+      }
+      .packages-notice strong {
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .packages-notice.is-review strong { color: var(--warn); }
+      .packages-notice.is-reviewed strong { color: var(--ok); }
+      .packages-notice p { margin: 0; color: var(--muted); }
+      .packages-pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .packages-search-pane {
+        display: grid;
+        gap: 12px;
+      }
+      .packages-inline-form.is-search {
+        align-items: end;
+      }
+      .packages-inline-form.is-search label {
+        min-width: min(420px, 100%);
+      }
+      .packages-empty,
+      .packages-empty-inline {
+        padding: 4px 0;
+      }
+      @media (max-width: 1120px) {
+        main {
+          grid-template-columns: 152px 280px minmax(0, 1fr);
+        }
+        .packages-info-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      @media (max-width: 900px) {
+        main {
           grid-template-columns: 1fr;
+          grid-template-rows: auto auto minmax(0, 1fr);
         }
-        .packages-remote-form {
+        .packages-app-nav,
+        .packages-list-pane {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .packages-app-nav-items {
+          grid-auto-flow: column;
+          grid-auto-columns: max-content;
+          overflow: auto;
+        }
+        .packages-form-grid.is-import,
+        .packages-form-grid.is-remote,
+        .packages-info-grid {
           grid-template-columns: 1fr;
-        }
-        .packages-shell {
-          grid-template-columns: 1fr;
-        }
-        .packages-meta-grid {
-          grid-template-columns: 1fr 1fr;
-        }
-        .packages-main-stage {
-          padding: 10px 12px 12px;
         }
       }
     </style>
   </head>
   <body>
     <main>
-      ${renderImportRail(routeBase, statusText, errorText, importSource, importRef, importSubdir, remotes, catalogName, catalog, remoteName, remoteUrl)}
-      <section class="packages-shell">
-        <aside class="packages-sidebar">${renderSidebar(routeBase, packages, selectedPkg?.packageId ?? "")}</aside>
-        ${renderMain(routeBase, selectedPkg, view, refs, browseRef, path, readResult, logResult, offset)}
-      </section>
+      <aside class="packages-app-nav">
+        <header><strong>Packages</strong></header>
+        <nav class="packages-app-nav-items">${renderAppNav(routeBase, screen, reviewPackages.length)}</nav>
+      </aside>
+      ${listPane}
+      ${stage}
     </main>
     ${openChatProcess ? `<script>
       window.parent.postMessage(${JSON.stringify({
@@ -1093,16 +1369,23 @@ export async function handleFetch(request, context = {}) {
 
   const routeBase = appFrame.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/packages";
   const url = new URL(request.url);
+  const screen = ["installed", "review", "discover", "repos"].includes(url.searchParams.get("screen") ?? "")
+    ? url.searchParams.get("screen")
+    : "installed";
   let statusText = "";
   let errorText = "";
   let openChatProcess = null;
   let selectedPackageId = url.searchParams.get("packageId")?.trim() ?? "";
+  let selectedRepoSlug = url.searchParams.get("repo")?.trim() ?? "";
   let importSource = url.searchParams.get("source")?.trim() ?? "";
   let importRef = url.searchParams.get("ref")?.trim() ?? "main";
   let importSubdir = url.searchParams.get("subdir")?.trim() ?? ".";
   let catalogName = normalizeCatalogSelection(url.searchParams.get("catalog"));
   let remoteName = "";
   let remoteUrl = "";
+  const scopeFilter = ["all", "mine", "system"].includes(url.searchParams.get("scope") ?? "")
+    ? url.searchParams.get("scope")
+    : "all";
 
   if (request.method === "POST") {
     try {
@@ -1120,6 +1403,7 @@ export async function handleFetch(request, context = {}) {
           subdir: importSubdir,
         });
         selectedPackageId = result.package.packageId;
+        selectedRepoSlug = result.package.source?.repo ?? selectedRepoSlug;
         statusText = result.package.enabled
           ? `Imported and enabled ${result.package.name} from ${result.imported.repo}`
           : `Imported ${result.package.name} from ${result.imported.repo}. Review it before enabling.`;
@@ -1139,6 +1423,7 @@ export async function handleFetch(request, context = {}) {
           packageId: String(form.get("packageId") ?? "").trim(),
         });
         selectedPackageId = result.package.packageId;
+        selectedRepoSlug = result.package.source?.repo ?? selectedRepoSlug;
         statusText = `Enabled ${result.package.name}`;
       } else if (action === "review") {
         const packageId = String(form.get("packageId") ?? "").trim();
@@ -1163,6 +1448,7 @@ export async function handleFetch(request, context = {}) {
           throw new Error(spawned?.error || "Failed to spawn review process");
         }
         selectedPackageId = target.packageId;
+        selectedRepoSlug = target.source?.repo ?? selectedRepoSlug;
         openChatProcess = {
           pid: spawned.pid,
           workspaceId: spawned.workspaceId,
@@ -1174,6 +1460,7 @@ export async function handleFetch(request, context = {}) {
           packageId: String(form.get("packageId") ?? "").trim(),
         });
         selectedPackageId = result.package.packageId;
+        selectedRepoSlug = result.package.source?.repo ?? selectedRepoSlug;
         statusText = result.changed
           ? `Approved review for ${result.package.name}`
           : `${result.package.name} was already approved`;
@@ -1182,12 +1469,15 @@ export async function handleFetch(request, context = {}) {
           packageId: String(form.get("packageId") ?? "").trim(),
         });
         selectedPackageId = result.package.packageId;
+        selectedRepoSlug = result.package.source?.repo ?? selectedRepoSlug;
         statusText = `Disabled ${result.package.name}`;
       } else if (action === "public-set") {
         const result = await kernel.request("pkg.public.set", {
           packageId: String(form.get("packageId") ?? "").trim() || undefined,
+          repo: String(form.get("repo") ?? "").trim() || undefined,
           public: String(form.get("public") ?? "").trim() === "true",
         });
+        selectedRepoSlug = result.repo;
         statusText = `${result.public ? "Exposed" : "Hid"} ${result.repo} ${result.public ? "in" : "from"} the public catalog`;
       } else if (action === "checkout") {
         const result = await kernel.request("pkg.checkout", {
@@ -1195,6 +1485,8 @@ export async function handleFetch(request, context = {}) {
           ref: String(form.get("ref") ?? "").trim(),
         });
         selectedPackageId = result.package.packageId;
+        selectedRepoSlug = result.package.source?.repo ?? selectedRepoSlug;
+        importRef = result.package.source?.ref ?? importRef;
         statusText = `Switched ${result.package.name} to ${result.package.source?.ref ?? "main"}`;
       }
     } catch (error) {
@@ -1204,7 +1496,7 @@ export async function handleFetch(request, context = {}) {
 
   let packages = [];
   let remotes = [];
-  let catalog = { routeBase, source: { kind: "local", name: "local" }, packages: [] };
+  let catalog = { source: { kind: "local", name: "local" }, packages: [] };
   try {
     const result = await kernel.request("pkg.list", {});
     packages = Array.isArray(result?.packages) ? result.packages : [];
@@ -1221,80 +1513,127 @@ export async function handleFetch(request, context = {}) {
     const result = await kernel.request("pkg.public.list", {
       remote: catalogName === "local" ? undefined : catalogName,
     });
-    catalog = { ...result, routeBase };
+    catalog = result;
   } catch (error) {
     errorText = errorText || (error instanceof Error ? error.message : String(error));
   }
 
-  const selectedPkg = pickSelectedPackage(packages, selectedPackageId);
-  const view = ["overview", "code", "commits"].includes(url.searchParams.get("view") ?? "")
-    ? url.searchParams.get("view")
-    : "overview";
-  const browseRef = url.searchParams.get("ref")?.trim() || selectedPkg?.source?.ref || "main";
+  const visiblePackages = screen === "review"
+    ? packages.filter((pkg) => needsReviewApproval(pkg))
+    : packages;
+  const selectedPkg = pickSelectedPackage(visiblePackages, selectedPackageId);
+  const repos = collectRepos(packages);
+  const selectedRepo = pickSelectedRepo(repos, selectedRepoSlug, selectedPkg);
+  const repoPackages = selectedRepo ? selectedRepo.packages : [];
+  const repoPrimary = selectedRepo?.primary ?? null;
+  const repoView = ["files", "commits", "diff", "search", "packages"].includes(url.searchParams.get("repoView") ?? "")
+    ? url.searchParams.get("repoView")
+    : "files";
+  const browseRef = url.searchParams.get("ref")?.trim()
+    || selectedPkg?.source?.ref
+    || repoPrimary?.source?.ref
+    || "main";
   const path = normalizePath(url.searchParams.get("path") ?? "");
   const offset = clampOffset(url.searchParams.get("offset"));
+  const searchQuery = url.searchParams.get("q")?.trim() ?? "";
+  let selectedCommit = url.searchParams.get("commit")?.trim() ?? "";
 
   let refs = { heads: {}, tags: {} };
   let readResult = null;
   let logResult = { entries: [] };
+  let diffResult = null;
+  let searchResult = { matches: [], truncated: false };
 
-  if (selectedPkg) {
+  const repoTargetPkg = screen === "repos" ? repoPrimary : selectedPkg;
+  if (repoTargetPkg) {
     try {
-      refs = await kernel.request("pkg.repo.refs", { packageId: selectedPkg.packageId });
+      refs = await kernel.request("pkg.repo.refs", { packageId: repoTargetPkg.packageId });
     } catch (error) {
       errorText = errorText || (error instanceof Error ? error.message : String(error));
     }
+  }
 
-    if (view === "code") {
-      try {
+  if (screen === "repos" && repoPrimary) {
+    try {
+      if (repoView === "files") {
         readResult = await kernel.request("pkg.repo.read", {
-          packageId: selectedPkg.packageId,
+          packageId: repoPrimary.packageId,
           ref: browseRef,
           path,
+          root: "repo",
         });
-      } catch (error) {
-        errorText = errorText || (error instanceof Error ? error.message : String(error));
-        readResult = { kind: "tree", entries: [] };
-      }
-    }
-
-    if (view === "commits") {
-      try {
+      } else if (repoView === "commits") {
         logResult = await kernel.request("pkg.repo.log", {
-          packageId: selectedPkg.packageId,
+          packageId: repoPrimary.packageId,
           ref: browseRef,
           limit: COMMIT_PAGE_SIZE,
           offset,
         });
-      } catch (error) {
-        errorText = errorText || (error instanceof Error ? error.message : String(error));
+      } else if (repoView === "diff") {
+        if (!selectedCommit) {
+          const headLog = await kernel.request("pkg.repo.log", {
+            packageId: repoPrimary.packageId,
+            ref: browseRef,
+            limit: 1,
+            offset: 0,
+          });
+          selectedCommit = headLog?.entries?.[0]?.hash ?? "";
+        }
+        if (selectedCommit) {
+          diffResult = await kernel.request("pkg.repo.diff", {
+            packageId: repoPrimary.packageId,
+            commit: selectedCommit,
+            context: 3,
+          });
+        }
+      } else if (repoView === "search" && searchQuery) {
+        searchResult = await kernel.request("pkg.repo.search", {
+          packageId: repoPrimary.packageId,
+          ref: browseRef,
+          query: searchQuery,
+          root: "repo",
+        });
       }
+    } catch (error) {
+      errorText = errorText || (error instanceof Error ? error.message : String(error));
     }
   }
 
-  return new Response(renderPage({
+  const html = renderLayout({
     routeBase,
+    screen,
     packages,
     selectedPkg,
-    view,
-    browseRef,
-    path,
-    refs,
-    readResult,
-    logResult,
-    offset,
-    statusText,
-    errorText,
+    scopeFilter,
+    remotes,
+    catalog,
+    catalogName,
     importSource,
     importRef,
     importSubdir,
-    remotes,
-    catalogName,
-    catalog,
     remoteName,
     remoteUrl,
+    statusText,
+    errorText,
+    repos,
+    selectedRepo,
+    repoPrimary,
+    repoPackages,
+    repoView,
+    browseRef,
+    path,
+    offset,
+    refs,
+    readResult,
+    logResult,
+    diffResult,
+    searchQuery,
+    searchResult,
+    selectedCommit,
     openChatProcess,
-  }), {
+  });
+
+  return new Response(html, {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",

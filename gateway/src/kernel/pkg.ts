@@ -18,6 +18,10 @@ import type {
   PkgRepoReadResult,
   PkgRepoRefsArgs,
   PkgRepoRefsResult,
+  PkgRepoSearchArgs,
+  PkgRepoSearchResult,
+  PkgRepoDiffArgs,
+  PkgRepoDiffResult,
   PkgRemoteAddArgs,
   PkgRemoteAddResult,
   PkgRemoteEntry,
@@ -40,9 +44,17 @@ import type {
   PackageBindingGrant,
   PackageEntrypoint,
   PackageGrantSet,
+  PackageInstallScope,
   PackageManifest,
 } from "./packages";
-import { buildBuiltinPackageSeeds, packageDoName, resolvePackageFromRipgitSource } from "./packages";
+import {
+  buildBuiltinPackageSeeds,
+  defaultPackageInstallScopeForActor,
+  packageDoName,
+  packageScopeEquals,
+  resolvePackageFromRipgitSource,
+  visiblePackageScopesForActor,
+} from "./packages";
 import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 
 const TEXT_DECODER = new TextDecoder();
@@ -57,6 +69,7 @@ export function handlePkgList(
       enabled: typeof args?.enabled === "boolean" ? args.enabled : undefined,
       name: typeof args?.name === "string" && args.name.trim().length > 0 ? args.name.trim() : undefined,
       runtime: args?.runtime,
+      scopes: visiblePackageScopesForActor(ctx.identity?.process),
     }).map((record) => toPkgSummary(record, ctx)),
   };
 }
@@ -105,11 +118,12 @@ export function handlePkgInstall(
   ctx: KernelContext,
 ): PkgInstallResult {
   const record = requirePackage(args.packageId, ctx);
+  assertMutablePackageAccess(record, ctx);
   if (record.reviewRequired && !record.reviewedAt) {
     throw new Error(`Package review approval required before enabling: ${record.manifest.name}`);
   }
   if (!record.enabled) {
-    const updated = ctx.packages.setEnabled(record.packageId, true);
+    const updated = ctx.packages.setEnabled(record.packageId, true, record.scope);
     if (!updated) {
       throw new Error(`Failed to enable package: ${record.packageId}`);
     }
@@ -126,6 +140,7 @@ export function handlePkgReviewApprove(
   ctx: KernelContext,
 ): PkgReviewApproveResult {
   const record = requirePackage(args.packageId, ctx);
+  assertMutablePackageAccess(record, ctx);
   if (!record.reviewRequired) {
     return {
       changed: false,
@@ -134,7 +149,7 @@ export function handlePkgReviewApprove(
   }
 
   const approvedAt = record.reviewedAt ?? Date.now();
-  const updated = ctx.packages.setReviewed(record.packageId, approvedAt);
+  const updated = ctx.packages.setReviewed(record.packageId, approvedAt, record.scope);
   if (!updated) {
     throw new Error(`Failed to mark package as reviewed: ${record.packageId}`);
   }
@@ -228,15 +243,17 @@ export async function handlePkgAdd(
     subdir,
   });
   const packageId = packageIdForSource(resolved.manifest);
-  const existing = ctx.packages.get(packageId);
+  const scope = installScopeForActor(ctx);
+  const existing = ctx.packages.get(packageId, scope);
   const isSystemSource = resolved.manifest.source.repo === "system/gsv";
   const requestedEnable = typeof args.enable === "boolean" ? args.enable : undefined;
   const enabled = isSystemSource
     ? (requestedEnable ?? existing?.enabled ?? true)
     : (existing?.enabled ?? false);
-  const grants = grantsForManifest(resolved.manifest);
+  const grants = grantsForManifest(resolved.manifest, scope);
   const updated = ctx.packages.install({
     packageId,
+    scope,
     manifest: resolved.manifest,
     artifact: resolved.artifact,
     grants,
@@ -280,6 +297,7 @@ export async function handlePkgCheckout(
   ctx: KernelContext,
 ): Promise<PkgCheckoutResult> {
   const record = requirePackage(args.packageId, ctx);
+  assertMutablePackageAccess(record, ctx);
   const ref = typeof args.ref === "string" ? args.ref.trim() : "";
   if (!ref) {
     throw new Error("ref is required");
@@ -297,6 +315,7 @@ export async function handlePkgCheckout(
 
   const updated = ctx.packages.install({
     packageId: record.packageId,
+    scope: record.scope,
     manifest: resolved.manifest,
     artifact: resolved.artifact,
     grants: record.grants,
@@ -321,11 +340,12 @@ export function handlePkgRemove(
   ctx: KernelContext,
 ): PkgRemoveResult {
   const record = requirePackage(args.packageId, ctx);
+  assertMutablePackageAccess(record, ctx);
   if (record.manifest.name === "packages") {
     throw new Error("Cannot remove the packages manager");
   }
   if (record.enabled) {
-    const updated = ctx.packages.setEnabled(record.packageId, false);
+    const updated = ctx.packages.setEnabled(record.packageId, false, record.scope);
     if (!updated) {
       throw new Error(`Failed to disable package: ${record.packageId}`);
     }
@@ -360,7 +380,7 @@ export async function handlePkgRepoRead(
   const { record, repo, ref } = resolvePackageRepoRef(args.packageId, args.ref, ctx);
   const ripgit = requireRipgitClient(ctx);
   const path = normalizeRepoPath(args.path);
-  const root = normalizeRepoPath(record.manifest.source.subdir);
+  const root = resolveRepoRoot(record, args.root);
   const result = await ripgit.readPath(repo, joinRepoPath(root, path));
 
   if (result.kind === "missing") {
@@ -396,6 +416,37 @@ export async function handlePkgRepoRead(
   };
 }
 
+export async function handlePkgRepoSearch(
+  args: PkgRepoSearchArgs,
+  ctx: KernelContext,
+): Promise<PkgRepoSearchResult> {
+  const { record, repo, ref } = resolvePackageRepoRef(args.packageId, args.ref, ctx);
+  const ripgit = requireRipgitClient(ctx);
+  const query = String(args.query ?? "").trim();
+  if (!query) {
+    throw new Error("query is required");
+  }
+  const requestedPrefix = normalizeRepoPath(args.prefix);
+  const root = resolveRepoRoot(record, args.root);
+  const prefix = joinRepoPath(root, requestedPrefix);
+  const result = await ripgit.search(repo, query, prefix || undefined);
+
+  return {
+    packageId: record.packageId,
+    repo: record.manifest.source.repo,
+    ref,
+    query,
+    prefix: requestedPrefix || undefined,
+    root: args.root === "repo" ? "repo" : "package",
+    truncated: result.truncated,
+    matches: result.matches.map((match) => ({
+      path: root ? trimRepoRoot(match.path, root) : match.path,
+      line: match.line,
+      content: match.content,
+    })),
+  };
+}
+
 export async function handlePkgRepoLog(
   args: PkgRepoLogArgs,
   ctx: KernelContext,
@@ -427,15 +478,63 @@ export async function handlePkgRepoLog(
   };
 }
 
+export async function handlePkgRepoDiff(
+  args: PkgRepoDiffArgs,
+  ctx: KernelContext,
+): Promise<PkgRepoDiffResult> {
+  const { record, repo, ref } = resolvePackageRepoRef(args.packageId, undefined, ctx);
+  const ripgit = requireRipgitClient(ctx);
+  const commit = String(args.commit ?? "").trim();
+  if (!commit) {
+    throw new Error("commit is required");
+  }
+  const contextLines = typeof args.context === "number" && Number.isFinite(args.context)
+    ? Math.max(0, Math.min(20, Math.trunc(args.context)))
+    : 3;
+  const diff = await ripgit.diffCommit(repo, commit, { context: contextLines });
+
+  return {
+    packageId: record.packageId,
+    repo: record.manifest.source.repo,
+    ref,
+    commitHash: diff.commit_hash,
+    parentHash: diff.parent_hash ?? null,
+    stats: {
+      filesChanged: diff.stats.files_changed,
+      additions: diff.stats.additions,
+      deletions: diff.stats.deletions,
+    },
+    files: diff.files.map((file) => ({
+      path: file.path,
+      status: file.status,
+      oldHash: file.old_hash,
+      newHash: file.new_hash,
+      hunks: Array.isArray(file.hunks)
+        ? file.hunks.map((hunk) => ({
+          oldStart: hunk.old_start,
+          oldCount: hunk.old_count,
+          newStart: hunk.new_start,
+          newCount: hunk.new_count,
+          lines: Array.isArray(hunk.lines) ? hunk.lines.map((line) => ({
+            tag: line.tag,
+            content: line.content,
+          })) : [],
+        }))
+        : undefined,
+    })),
+  };
+}
+
 export function resolveInstalledPackage(packageId: string, ctx: KernelContext): InstalledPackageRecord {
   const normalizedPackageId = typeof packageId === "string" ? packageId.trim() : "";
   if (!normalizedPackageId) {
     throw new Error("packageId is required");
   }
 
-  const record = ctx.packages.get(normalizedPackageId);
+  const scopes = visiblePackageScopesForActor(ctx.identity?.process);
+  const record = ctx.packages.resolve(normalizedPackageId, scopes);
   if (!record) {
-    const candidates = ctx.packages.list().filter((candidate) => {
+    const candidates = ctx.packages.list({ scopes }).filter((candidate) => {
       const sourceRepo = candidate.manifest.source.repo;
       const normalizedSubdir = normalizeRepoPath(candidate.manifest.source.subdir) || ".";
       const importRepoAlias = `import:${sourceRepo}`;
@@ -530,7 +629,7 @@ function packageIdForSource(manifest: PackageManifest): string {
   return `import:${source.repo}:${normalizeRepoPath(source.subdir) || "."}`;
 }
 
-function grantsForManifest(manifest: PackageManifest): PackageGrantSet {
+function grantsForManifest(manifest: PackageManifest, scope: PackageInstallScope): PackageGrantSet {
   const bindings = manifest.capabilities?.bindings ?? [];
   return {
     bindings: bindings.flatMap<PackageBindingGrant>((binding): PackageBindingGrant[] => {
@@ -538,7 +637,7 @@ function grantsForManifest(manifest: PackageManifest): PackageGrantSet {
         return [{
           binding: "PACKAGE",
           providerKind: "package-do" as const,
-          providerRef: packageDoName(manifest.name),
+          providerRef: packageDoName(manifest.name, scope),
         }];
       }
       if (binding.binding === "KERNEL") {
@@ -563,6 +662,21 @@ function requireIdentity(ctx: KernelContext): NonNullable<KernelContext["identit
   return ctx.identity;
 }
 
+function installScopeForActor(ctx: KernelContext): PackageInstallScope {
+  return defaultPackageInstallScopeForActor(requireIdentity(ctx).process);
+}
+
+function assertMutablePackageAccess(record: InstalledPackageRecord, ctx: KernelContext): void {
+  const identity = requireIdentity(ctx);
+  if (identity.uid === 0 || (identity.capabilities ?? []).includes("*")) {
+    return;
+  }
+  if (packageScopeEquals(record.scope, { kind: "user", uid: identity.uid })) {
+    return;
+  }
+  throw new Error(`Forbidden: ${record.packageId} is not installed in your package scope`);
+}
+
 export function listLocalPublicPackages(
   config: KernelContext["config"],
   packages: KernelContext["packages"],
@@ -577,6 +691,11 @@ export function listLocalPublicPackages(
 function toPkgSummary(record: InstalledPackageRecord, ctx: KernelContext): PkgSummary {
   return {
     packageId: record.packageId,
+    scope: {
+      kind: record.scope.kind,
+      uid: record.scope.kind === "user" ? record.scope.uid : undefined,
+      workspaceId: record.scope.kind === "workspace" ? record.scope.workspaceId : undefined,
+    },
     name: record.manifest.name,
     description: record.manifest.description,
     version: record.manifest.version,
@@ -686,6 +805,31 @@ function resolvePackageRepoRef(
     },
     ref,
   };
+}
+
+function resolveRepoRoot(
+  record: InstalledPackageRecord,
+  root: "package" | "repo" | undefined,
+): string {
+  if (root === "repo") {
+    return "";
+  }
+  return normalizeRepoPath(record.manifest.source.subdir);
+}
+
+function trimRepoRoot(path: string, root: string): string {
+  if (!root) {
+    return path;
+  }
+  const normalizedPath = normalizeRepoPath(path);
+  if (!normalizedPath) {
+    return "";
+  }
+  if (normalizedPath === root) {
+    return "";
+  }
+  const prefix = `${root}/`;
+  return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : normalizedPath;
 }
 
 function normalizeRepoPath(path: string | undefined): string {
