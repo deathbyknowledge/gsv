@@ -27,6 +27,11 @@ import { FS_EDIT_DEFINITION } from "../syscalls/edit";
 import { FS_WRITE_DEFINITION as FS_DELETE_DEFINITION } from "../syscalls/delete";
 import { FS_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
+import {
+  PKG_REPO_LOG_DEFINITION,
+  PKG_REPO_READ_DEFINITION,
+  PKG_REPO_REFS_DEFINITION,
+} from "../syscalls/packages";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -35,6 +40,9 @@ const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.delete": FS_DELETE_DEFINITION,
   "fs.search": FS_SEARCH_DEFINITION,
   "shell.exec": SHELL_EXEC_DEFINITION,
+  "pkg.repo.read": PKG_REPO_READ_DEFINITION,
+  "pkg.repo.log": PKG_REPO_LOG_DEFINITION,
+  "pkg.repo.refs": PKG_REPO_REFS_DEFINITION,
 };
 
 export async function handleAiTools(

@@ -253,6 +253,8 @@ export interface InstalledPackageRecord {
   artifact: PackageArtifact;
   grants?: PackageGrantSet;
   enabled: boolean;
+  reviewRequired: boolean;
+  reviewedAt?: number | null;
   installedAt: number;
   updatedAt: number;
 }
@@ -461,9 +463,19 @@ export class PackageStore {
         artifact_json    TEXT    NOT NULL,
         grants_json      TEXT,
         installed_at     INTEGER NOT NULL,
-        updated_at       INTEGER NOT NULL
+        updated_at       INTEGER NOT NULL,
+        review_required  INTEGER NOT NULL DEFAULT 0,
+        reviewed_at      INTEGER
       )
     `);
+
+    try {
+      this.sql.exec("ALTER TABLE packages ADD COLUMN review_required INTEGER NOT NULL DEFAULT 0");
+    } catch {}
+
+    try {
+      this.sql.exec("ALTER TABLE packages ADD COLUMN reviewed_at INTEGER");
+    } catch {}
 
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_packages_name_runtime ON packages (name, runtime, updated_at DESC)",
@@ -516,8 +528,8 @@ export class PackageStore {
 
     this.sql.exec(
       `INSERT OR REPLACE INTO packages
-        (package_id, name, version, runtime, enabled, manifest_json, artifact_json, grants_json, installed_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (package_id, name, version, runtime, enabled, manifest_json, artifact_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.packageId,
       record.manifest.name,
       record.manifest.version,
@@ -528,6 +540,8 @@ export class PackageStore {
       record.grants ? JSON.stringify(record.grants) : null,
       record.installedAt,
       record.updatedAt,
+      record.reviewRequired ? 1 : 0,
+      record.reviewedAt ?? null,
     );
 
     return record;
@@ -583,6 +597,20 @@ export class PackageStore {
     return true;
   }
 
+  setReviewed(packageId: string, reviewedAt: number | null): boolean {
+    const existing = this.get(packageId);
+    if (!existing) return false;
+
+    this.sql.exec(
+      "UPDATE packages SET reviewed_at = ?, updated_at = ? WHERE package_id = ?",
+      reviewedAt,
+      Date.now(),
+      packageId,
+    );
+
+    return true;
+  }
+
   remove(packageId: string): boolean {
     const existing = this.get(packageId);
     if (!existing) return false;
@@ -603,6 +631,8 @@ type RowShape = {
   enabled: number;
   installed_at: number;
   updated_at: number;
+  review_required: number | null;
+  reviewed_at: number | null;
 };
 
 function toRecord(row: RowShape): InstalledPackageRecord {
@@ -612,6 +642,8 @@ function toRecord(row: RowShape): InstalledPackageRecord {
     artifact: parseJson<PackageArtifact>(row.artifact_json),
     grants: row.grants_json ? parseJson<PackageGrantSet>(row.grants_json) : undefined,
     enabled: row.enabled !== 0,
+    reviewRequired: row.review_required !== 0,
+    reviewedAt: row.reviewed_at ?? null,
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
   };
@@ -766,6 +798,8 @@ async function resolveBuiltinRipgitPackage(
     artifact,
     grants: spec.grants,
     enabled: spec.enabled,
+    reviewRequired: false,
+    reviewedAt: Date.now(),
   };
 }
 

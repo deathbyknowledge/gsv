@@ -29,6 +29,8 @@ export function resolvePromptProviders(
       return [...basePlan, HOME_PROVIDER, WORKSPACE_PROVIDER];
     case "mcp":
       return [...basePlan, HOME_PROVIDER, WORKSPACE_PROVIDER];
+    case "review":
+      return [...basePlan, HOME_PROVIDER, WORKSPACE_PROVIDER];
     case "task":
     default:
       return [...basePlan, HOME_PROVIDER, WORKSPACE_PROVIDER];
