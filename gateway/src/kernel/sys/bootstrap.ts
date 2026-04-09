@@ -8,7 +8,7 @@ import {
 } from "../packages";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
-const DEFAULT_GSV_UPSTREAM_REF = "codex/app-runtime-from-680877d";
+const DEFAULT_GSV_UPSTREAM_REF = "osify";
 const SYSTEM_GSV_REPO: RipgitRepoRef = {
   owner: "system",
   repo: "gsv",

@@ -82,7 +82,7 @@ describe("handleSysBootstrap", () => {
     vi.clearAllMocks();
     importFromUpstreamMock.mockResolvedValue({
       remoteUrl: "https://github.com/deathbyknowledge/gsv",
-      remoteRef: "codex/app-runtime-from-680877d",
+      remoteRef: "osify",
       head: "abc123",
       changed: true,
     });
@@ -98,16 +98,16 @@ describe("handleSysBootstrap", () => {
       { owner: "system", repo: "gsv", branch: "main" },
       "root",
       "root@gsv.local",
-      "bootstrap system/gsv from https://github.com/deathbyknowledge/gsv#codex/app-runtime-from-680877d",
+      "bootstrap system/gsv from https://github.com/deathbyknowledge/gsv#osify",
       "https://github.com/deathbyknowledge/gsv",
-      "codex/app-runtime-from-680877d",
+      "osify",
     );
     expect(buildBuiltinPackageSeedsMock).toHaveBeenCalledWith(ctx.env);
     expect(ctx.packages.seedBuiltinPackages).toHaveBeenCalledWith([{ name: "chat-seed" }]);
     expect(result).toEqual({
       repo: "system/gsv",
       remoteUrl: "https://github.com/deathbyknowledge/gsv",
-      ref: "codex/app-runtime-from-680877d",
+      ref: "osify",
       head: "abc123",
       changed: true,
       packages: [
