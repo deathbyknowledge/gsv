@@ -171,7 +171,7 @@ export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
   }
 
   async request<S extends SyscallName>(call: S, args: ArgsOf<S>): Promise<ResultOf<S>> {
-    const kernel = await getAgentByName(env.KERNEL, "singleton") as unknown as KernelAppStub;
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as unknown as KernelAppStub;
     const frame: RequestFrame<S> = {
       type: "req",
       id: crypto.randomUUID(),

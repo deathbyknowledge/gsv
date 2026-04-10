@@ -349,11 +349,11 @@ function renderPage(routeBase, state, payload) {
     <link rel="stylesheet" href="/runtime/theme.css" />
     <style>
       :root {
-        --panel-1: rgba(255, 255, 255, 0.015);
-        --panel-2: rgba(255, 255, 255, 0.025);
-        --panel-3: rgba(255, 255, 255, 0.02);
+        --panel-1: rgba(255, 255, 255, 0.02);
+        --panel-2: rgba(255, 255, 255, 0.038);
+        --panel-3: rgba(255, 255, 255, 0.03);
         --surface: rgba(255, 255, 255, 0.03);
-        --line: rgba(255, 255, 255, 0.07);
+        --line: rgba(255, 255, 255, 0.1);
         --line-strong: var(--edge);
         --good: var(--accent);
         --warn: var(--muted);
@@ -372,9 +372,17 @@ function renderPage(routeBase, state, payload) {
         min-width: 0;
         border-right: 1px solid var(--line);
         background: var(--panel-1);
+        box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03);
       }
       .adapters-rail-secondary {
         background: var(--panel-2);
+      }
+      .detail-shell {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        background: var(--panel-3);
+        box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.03);
       }
       .rail-head {
         height: 56px;
@@ -478,6 +486,7 @@ function renderPage(routeBase, state, payload) {
         display: grid;
         grid-template-rows: 56px minmax(0, 1fr);
         background: var(--panel-3);
+        border-left: 1px solid var(--line);
       }
       .detail-toolbar {
         display: flex;
