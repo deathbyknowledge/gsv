@@ -57,7 +57,6 @@ function makeContext(options?: {
     env: {
       STORAGE: env.STORAGE,
       RIPGIT: {} as Fetcher,
-      RIPGIT_INTERNAL_KEY: "secret",
       LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
     } as unknown as Env,
     auth: null as never,

@@ -83,7 +83,7 @@ export class Process extends Host<Env> {
     this.store = new ProcessStore(ctx.storage.sql);
     this.store.init();
     this.ripgit = env.RIPGIT
-      ? new RipgitClient(env.RIPGIT, env.RIPGIT_INTERNAL_KEY ?? null)
+      ? new RipgitClient(env.RIPGIT)
       : null;
   }
 

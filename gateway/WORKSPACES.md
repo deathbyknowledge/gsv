@@ -202,7 +202,7 @@ Current concrete direction:
 
 - separate `ripgit` Worker/repo
 - `gateway` binds to it through the `RIPGIT` Service Binding
-- reads and writes go through a narrow internal `/hyperspace/repos/:owner/:repo/*` route guarded by `RIPGIT_INTERNAL_KEY`
+- reads and writes go through a narrow internal `/hyperspace/repos/:owner/:repo/*` route over the private gateway-to-ripgit binding
 - reads still use repo/file-style fetches; the kernel hides those details behind the workspace backend
 
 The canonical mount is:

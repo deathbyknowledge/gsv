@@ -32,7 +32,7 @@ function makeFs(ctx: KernelContext): GsvFs {
   const mounts = ctx.processId ? ctx.procs.getMounts(ctx.processId) : [];
   const sourceBackend = createProcessSourceBackend(
     identity,
-    mounts.length > 0 ? new RipgitClient(ctx.env.RIPGIT, ctx.env.RIPGIT_INTERNAL_KEY ?? null) : null,
+    mounts.length > 0 ? new RipgitClient(ctx.env.RIPGIT) : null,
     mounts,
   );
   return new GsvFs(

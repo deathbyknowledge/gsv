@@ -779,7 +779,7 @@ export async function buildBuiltinPackageSeeds(
     throw new Error("RIPGIT binding is required for builtin package resolution");
   }
 
-  const ripgit = new RipgitClient(ripgitBinding, env.RIPGIT_INTERNAL_KEY ?? null);
+  const ripgit = new RipgitClient(ripgitBinding);
   const ripgitSeeds = await Promise.all(
     BUILTIN_RIPGIT_PACKAGE_SPECS.map((spec) => resolveBuiltinRipgitPackage(ripgit, spec)),
   ).catch((error) => {
@@ -801,7 +801,7 @@ export async function resolvePackageFromRipgitSource(
     throw new Error("RIPGIT binding is required for package source resolution");
   }
 
-  const ripgit = new RipgitClient(ripgitBinding, env.RIPGIT_INTERNAL_KEY ?? null);
+  const ripgit = new RipgitClient(ripgitBinding);
   return resolvePackageFromRipgitNativeBuild(ripgit, source);
 }
 

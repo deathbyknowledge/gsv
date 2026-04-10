@@ -41,7 +41,7 @@ export async function handleSysBootstrap(
       ? args.ref.trim()
       : DEFAULT_GSV_UPSTREAM_REF;
 
-  const ripgit = new RipgitClient(ctx.env.RIPGIT, ctx.env.RIPGIT_INTERNAL_KEY ?? null);
+  const ripgit = new RipgitClient(ctx.env.RIPGIT);
   if (!ctx.identity) {
     throw new Error("Authenticated identity required");
   }

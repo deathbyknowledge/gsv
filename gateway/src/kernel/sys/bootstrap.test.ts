@@ -56,7 +56,6 @@ function makeContext(): KernelContext {
   return {
     env: {
       RIPGIT: {} as Fetcher,
-      RIPGIT_INTERNAL_KEY: "secret",
     } as Env,
     identity: {
       role: "user",

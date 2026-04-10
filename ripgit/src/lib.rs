@@ -22,31 +22,14 @@ fn actor_from_request(req: &Request) -> Option<Actor> {
     Some(Actor { display_name: name })
 }
 
-fn has_internal_access(req: &Request, env: &Env) -> bool {
-    let expected = match env.var("RIPGIT_INTERNAL_KEY") {
-        Ok(value) => value.to_string(),
-        Err(_) => return false,
-    };
-    let provided = req.headers().get("X-Ripgit-Internal-Key").ok().flatten();
-    provided.as_deref() == Some(expected.as_str())
-}
-
 fn check_write_access(
-    req: &Request,
-    env: &Env,
+    _req: &Request,
     actor: &Option<Actor>,
-    repo_owner: &str,
+    _repo_owner: &str,
 ) -> Option<Result<Response>> {
-    if has_internal_access(req, env) && actor.is_some() {
-        return None;
-    }
     match actor {
+        Some(_) => None,
         None => Some(unauthorized_401()),
-        Some(a) if a.display_name == repo_owner => None,
-        Some(_) => Some(Response::error(
-            "Forbidden: you don't own this repository",
-            403,
-        )),
     }
 }
 
@@ -191,7 +174,7 @@ impl DurableObject for Repository {
                     .unwrap_or_default();
                 match service.as_str() {
                     "git-receive-pack" => {
-                        if let Some(resp) = check_write_access(&req, &self.env, &actor, owner) {
+                        if let Some(resp) = check_write_access(&req, &actor, owner) {
                             return resp;
                         }
                         self.advertise_refs("git-receive-pack")
@@ -201,7 +184,7 @@ impl DurableObject for Repository {
                 }
             }
             (Method::Post, "git-receive-pack") => {
-                if let Some(resp) = check_write_access(&req, &self.env, &actor, owner) {
+                if let Some(resp) = check_write_access(&req, &actor, owner) {
                     return resp;
                 }
                 let body = req.bytes().await?;
@@ -212,7 +195,7 @@ impl DurableObject for Repository {
                 git::handle_upload_pack(&self.sql, &body)
             }
             (Method::Delete, "") => {
-                if let Some(resp) = check_write_access(&req, &self.env, &actor, owner) {
+                if let Some(resp) = check_write_access(&req, &actor, owner) {
                     return resp;
                 }
                 self.state.storage().delete_all().await?;
@@ -242,7 +225,7 @@ impl DurableObject for Repository {
                 api::handle_blob(&self.sql, parts.get(3).unwrap_or(&""))
             }
             (Method::Put, "admin") => {
-                if let Some(resp) = check_write_access(&req, &self.env, &actor, owner) {
+                if let Some(resp) = check_write_access(&req, &actor, owner) {
                     return resp;
                 }
                 let sub = parts.get(3).unwrap_or(&"");
