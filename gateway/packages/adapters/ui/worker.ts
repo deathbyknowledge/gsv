@@ -696,29 +696,34 @@ function renderPage(routeBase, state, payload) {
         ${renderDetailPane(routeBase, state, adapter, accounts, payload.challenge)}
       </div>
     </main>
-    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/lib/browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
     <script>
       console.log("[adapters] build probe:", ${JSON.stringify(BUILD_PROBE)});
       const renderQrGraphics = () => {
-        const api = globalThis.QRCode;
-        if (!api || typeof api.toString !== "function") {
-          console.warn("[adapters] QRCode browser bundle unavailable");
+        const factory = globalThis.qrcode;
+        if (typeof factory !== "function") {
+          console.warn("[adapters] qrcode-generator bundle unavailable");
           return;
         }
         document.querySelectorAll(".qr-graphic[data-qr]").forEach((node) => {
           const qrText = node.getAttribute("data-qr");
           if (!qrText) return;
-          api.toString(qrText, { type: "svg", margin: 1, width: 280 }, (error, svg) => {
-            if (error) {
-              console.error("[adapters] failed to render QR challenge", error);
-              return;
-            }
-            node.innerHTML = svg;
+          try {
+            const qr = factory(0, "M");
+            qr.addData(qrText);
+            qr.make();
+            node.innerHTML = qr.createSvgTag({
+              cellSize: 6,
+              margin: 0,
+              scalable: true,
+            });
             const fallback = node.parentElement?.querySelector("[data-qr-fallback]");
             if (fallback instanceof HTMLElement) {
               fallback.hidden = true;
             }
-          });
+          } catch (error) {
+            console.error("[adapters] failed to render QR challenge", error);
+          }
         });
       };
       if (document.readyState === "loading") {
