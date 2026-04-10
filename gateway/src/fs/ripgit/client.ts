@@ -210,10 +210,7 @@ type RipgitSearchResponse = {
 const DEFAULT_BRANCH = "main";
 
 export class RipgitClient {
-  constructor(
-    private readonly binding: Fetcher,
-    private readonly internalKey: string | null,
-  ) {}
+  constructor(private readonly binding: Fetcher) {}
 
   async readPath(repo: RipgitRepoRef, path: string): Promise<RipgitPathResult> {
     const response = await this.binding.fetch(this.makeReadUrl(repo, path), {
@@ -494,12 +491,7 @@ export class RipgitClient {
   }
 
   private makeInternalHeaders(): Record<string, string> {
-    if (!this.internalKey) {
-      throw new Error("RIPGIT_INTERNAL_KEY is not configured");
-    }
-    return {
-      "X-Ripgit-Internal-Key": this.internalKey,
-    };
+    return {};
   }
 
   private isTreeResponse(response: Response): boolean {

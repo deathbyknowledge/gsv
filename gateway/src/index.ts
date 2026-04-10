@@ -81,7 +81,6 @@ export default {
         await buildGitProxyRequest(
           request,
           gitMatch,
-          env.RIPGIT_INTERNAL_KEY,
           authorized.username,
         ),
       );
@@ -409,7 +408,6 @@ function buildPackageWorkerRequest(request: Request, resolved: ResolvedPackageRo
 async function buildGitProxyRequest(
   request: Request,
   gitMatch: GitPathMatch,
-  internalKey: string | undefined,
   username: string | null,
 ): Promise<Request> {
   const sourceUrl = new URL(request.url);
@@ -423,9 +421,6 @@ async function buildGitProxyRequest(
     headers.set("x-ripgit-actor-name", username);
   } else {
     headers.delete("x-ripgit-actor-name");
-  }
-  if (internalKey) {
-    headers.set("x-ripgit-internal-key", internalKey);
   }
 
   const init: RequestInit = {

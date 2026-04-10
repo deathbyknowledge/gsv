@@ -40,7 +40,7 @@ export function createWorkspaceBackend(
   }
 
   return new WorkspaceMountBackend(
-    new RipgitClient(binding, env.RIPGIT_INTERNAL_KEY ?? null),
+    new RipgitClient(binding),
     identity,
     workspaces,
   );

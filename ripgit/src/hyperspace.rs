@@ -59,22 +59,7 @@ struct ImportResponse<'a> {
     remote_ref: &'a str,
 }
 
-pub fn check_internal_access(req: &Request, env: &Env) -> Option<Result<Response>> {
-    let expected = match env.var("RIPGIT_INTERNAL_KEY") {
-        Ok(value) => value.to_string(),
-        Err(_) => {
-            return Some(Response::error(
-                "RIPGIT_INTERNAL_KEY is not configured",
-                500,
-            ))
-        }
-    };
-
-    let provided = req.headers().get("X-Ripgit-Internal-Key").ok().flatten();
-    if provided.as_deref() != Some(expected.as_str()) {
-        return Some(Response::error("Unauthorized", 401));
-    }
-
+pub fn check_internal_access(_req: &Request, _env: &Env) -> Option<Result<Response>> {
     None
 }
 

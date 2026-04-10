@@ -80,7 +80,7 @@ export function handlePkgRemoteList(
 ): PkgRemoteListResult {
   const identity = requireIdentity(ctx);
   return {
-    remotes: listPkgRemotes(ctx, identity.uid),
+    remotes: listPkgRemotes(ctx, identity.process.uid),
   };
 }
 
@@ -91,13 +91,13 @@ export function handlePkgRemoteAdd(
   const identity = requireIdentity(ctx);
   const name = normalizeRemoteName(args.name);
   const baseUrl = normalizeRemoteBaseUrl(args.baseUrl);
-  const key = remoteConfigKey(identity.uid, name);
+  const key = remoteConfigKey(identity.process.uid, name);
   const existing = ctx.config.get(key);
   ctx.config.set(key, baseUrl);
   return {
     changed: existing !== baseUrl,
     remote: { name, baseUrl },
-    remotes: listPkgRemotes(ctx, identity.uid),
+    remotes: listPkgRemotes(ctx, identity.process.uid),
   };
 }
 
@@ -106,10 +106,10 @@ export function handlePkgRemoteRemove(
   ctx: KernelContext,
 ): PkgRemoteRemoveResult {
   const identity = requireIdentity(ctx);
-  const removed = ctx.config.delete(remoteConfigKey(identity.uid, normalizeRemoteName(args.name)));
+  const removed = ctx.config.delete(remoteConfigKey(identity.process.uid, normalizeRemoteName(args.name)));
   return {
     removed,
-    remotes: listPkgRemotes(ctx, identity.uid),
+    remotes: listPkgRemotes(ctx, identity.process.uid),
   };
 }
 
@@ -175,7 +175,7 @@ export async function handlePkgPublicList(
     };
   }
 
-  const remote = resolvePkgRemote(ctx, identity.uid, requestedRemote);
+  const remote = resolvePkgRemote(ctx, identity.process.uid, requestedRemote);
   const response = await fetch(`${remote.baseUrl}/public/packages`, {
     headers: { Accept: "application/json" },
   });
@@ -668,10 +668,10 @@ function installScopeForActor(ctx: KernelContext): PackageInstallScope {
 
 function assertMutablePackageAccess(record: InstalledPackageRecord, ctx: KernelContext): void {
   const identity = requireIdentity(ctx);
-  if (identity.uid === 0 || (identity.capabilities ?? []).includes("*")) {
+  if (identity.process.uid === 0 || (identity.capabilities ?? []).includes("*")) {
     return;
   }
-  if (packageScopeEquals(record.scope, { kind: "user", uid: identity.uid })) {
+  if (packageScopeEquals(record.scope, { kind: "user", uid: identity.process.uid })) {
     return;
   }
   throw new Error(`Forbidden: ${record.packageId} is not installed in your package scope`);
@@ -783,7 +783,7 @@ function requireRipgitClient(ctx: KernelContext): RipgitClient {
   if (!ripgitBinding) {
     throw new Error("RIPGIT binding is required");
   }
-  return new RipgitClient(ripgitBinding, ctx.env.RIPGIT_INTERNAL_KEY ?? null);
+  return new RipgitClient(ripgitBinding);
 }
 
 function resolvePackageRepoRef(
@@ -943,7 +943,7 @@ function assertRepoOwnerOrRoot(
   identity: NonNullable<KernelContext["identity"]>,
 ): void {
   const { owner } = parseSyncRepoRef(repo);
-  if (identity.uid === 0 || identity.username === owner) {
+  if (identity.process.uid === 0 || identity.process.username === owner) {
     return;
   }
   if ((identity.capabilities ?? []).includes("*")) {
