@@ -1,3 +1,5 @@
+import QRCode from "qrcode";
+
 const ADAPTERS = [
   {
     id: "whatsapp",
@@ -237,16 +239,21 @@ function renderStatusList(adapter, account) {
 }
 
 function renderQrChallenge(challenge) {
-  if (!challenge || challenge.type !== "qr" || !challenge.data) {
+  if (!challenge || challenge.type !== "qr") {
     return "";
   }
+  const qrMarkup = challenge.renderSvg
+    ? `<div class="qr-graphic" aria-label="WhatsApp QR code">${challenge.renderSvg}</div>`
+    : challenge.data
+      ? `<pre class="qr-raw">${escapeHtml(challenge.data)}</pre>`
+      : "";
   return `
     <section class="detail-section qr-section">
       <div class="section-titlebar">
         <h2>Pair phone</h2>
       </div>
       <div class="qr-layout">
-        <img class="qr-image" src="${escapeHtml(challenge.data)}" alt="WhatsApp QR code" />
+        ${qrMarkup}
         <div class="qr-copy">
           <p>${escapeHtml(challenge.message || "Open WhatsApp on your phone and scan this code from Linked Devices.")}</p>
           <ol>
@@ -628,6 +635,28 @@ function renderPage(routeBase, state, payload) {
         background: white;
         padding: 16px;
       }
+      .qr-graphic {
+        width: 100%;
+        max-width: 280px;
+        background: white;
+        padding: 16px;
+        box-sizing: border-box;
+      }
+      .qr-graphic svg {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+      .qr-raw {
+        width: 100%;
+        max-width: 280px;
+        margin: 0;
+        padding: 16px;
+        overflow: auto;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
       .qr-copy {
         color: var(--muted);
         line-height: 1.6;
@@ -685,6 +714,26 @@ async function loadStatusByAdapter(kernel) {
         : [];
   }
   return statusByAdapter;
+}
+
+async function prepareChallenge(challenge) {
+  if (!challenge || challenge.type !== "qr" || !challenge.data) {
+    return challenge;
+  }
+  try {
+    const renderSvg = await QRCode.toString(String(challenge.data), {
+      type: "svg",
+      margin: 1,
+      width: 280,
+    });
+    return {
+      ...challenge,
+      renderSvg,
+    };
+  } catch (error) {
+    console.error("[adapters] failed to render QR challenge", error);
+    return challenge;
+  }
 }
 
 function requireAccountId(formData, adapterId, state) {
@@ -791,6 +840,7 @@ export async function handleFetch(request, context = {}) {
     }
   }
 
+  challenge = await prepareChallenge(challenge);
   const statusByAdapter = await loadStatusByAdapter(kernel);
   return new Response(renderPage(routeBase, state, {
     notice,
