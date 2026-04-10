@@ -16,6 +16,7 @@ const ADAPTERS = [
 ];
 
 const ADAPTER_IDS = new Set(ADAPTERS.map((adapter) => adapter.id));
+const BUILD_PROBE = "adapters-probe-2026-04-10-b";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -124,6 +125,7 @@ function renderAdapterRail(routeBase, state, statusByAdapter) {
     <aside class="adapters-rail adapters-rail-primary">
       <div class="rail-head">
         <span class="rail-title">Adapters</span>
+        <span class="rail-probe">${escapeHtml(BUILD_PROBE)}</span>
       </div>
       <nav class="adapter-list" aria-label="Adapters">
         ${ADAPTERS.map((adapter) => {
@@ -399,6 +401,11 @@ function renderPage(routeBase, state, payload) {
         letter-spacing: 0.12em;
         color: var(--muted);
       }
+      .rail-probe {
+        font-size: 11px;
+        color: var(--accent);
+        opacity: 0.9;
+      }
       .adapter-list,
       .account-list {
         display: flex;
@@ -655,6 +662,9 @@ function renderPage(routeBase, state, payload) {
         ${renderDetailPane(routeBase, state, adapter, accounts, payload.challenge)}
       </div>
     </main>
+    <script>
+      console.log("[adapters] build probe:", ${JSON.stringify(BUILD_PROBE)});
+    </script>
   </body>
 </html>`;
 }
