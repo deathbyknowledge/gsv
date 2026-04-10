@@ -33,6 +33,7 @@ import { dispatch, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
+import { handleSysSetupAssist } from "./sys/setup-assist";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import { resolveAdapterServiceForKernel } from "./adapter-handlers";
 import {
@@ -612,7 +613,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleServiceReq(frame: RequestFrame): Promise<ResponseFrame> {
-    if (frame.call === "sys.connect" || frame.call === "sys.setup") {
+    if (frame.call === "sys.connect" || frame.call === "sys.setup" || frame.call === "sys.setup.assist") {
       return errFrame(frame.id, 400, `${frame.call} is not supported via serviceFrame`);
     }
 
@@ -701,6 +702,11 @@ export class Kernel extends Host<Env> {
         return;
       }
       await this.handleSysConnect(connection, frame);
+      return;
+    }
+
+    if (frame.call === "sys.setup.assist") {
+      await this.handleSysSetupAssist(connection, frame as RequestFrame<"sys.setup.assist">);
       return;
     }
 
@@ -989,6 +995,33 @@ export class Kernel extends Host<Env> {
       const data = await handleKernelSetup(frame.args, ctx);
       const setup = data as SysSetupResult;
       await this.ensureUserInitProcess(setup.user);
+      this.sendOk(connection, frame.id, data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sendError(connection, frame.id, 400, message);
+    }
+  }
+
+  private async handleSysSetupAssist(
+    connection: Connection<ConnectionState>,
+    frame: RequestFrame<"sys.setup.assist">,
+  ): Promise<void> {
+    const state = connection.state as ConnectionState | undefined;
+    if (state?.step === "connected") {
+      this.sendError(connection, frame.id, 409, "Already connected");
+      return;
+    }
+
+    const ctx = this.buildContext(connection);
+    await ensureKernelBootstrapped(ctx);
+
+    if (!this.auth.isSetupMode()) {
+      this.sendError(connection, frame.id, 409, "System already initialized");
+      return;
+    }
+
+    try {
+      const data = await handleSysSetupAssist(frame.args, ctx);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

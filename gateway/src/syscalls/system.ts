@@ -90,6 +90,80 @@ export type SysSetupArgs = {
   };
 };
 
+export type OnboardingLane = "quick" | "customize" | "advanced";
+export type OnboardingMode = "manual" | "guided";
+export type OnboardingStage = "welcome" | "details" | "review";
+export type OnboardingDetailStep = "account" | "admin" | "ai" | "source" | "device";
+
+export type OnboardingDraft = {
+  lane: OnboardingLane;
+  mode: OnboardingMode;
+  stage: OnboardingStage;
+  detailStep: OnboardingDetailStep;
+  account: {
+    username: string;
+    password: string;
+    passwordConfirm: string;
+  };
+  admin: {
+    mode: "same" | "custom";
+    password: string;
+  };
+  ai: {
+    enabled: boolean;
+    provider: string;
+    model: string;
+    apiKey: string;
+  };
+  source: {
+    enabled: boolean;
+    value: string;
+    ref: string;
+  };
+  device: {
+    enabled: boolean;
+    deviceId: string;
+    label: string;
+    expiryDays: string;
+  };
+};
+
+export type OnboardingAssistMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type OnboardingAssistPatch = {
+  op: "set" | "clear";
+  path:
+    | "account.username"
+    | "admin.mode"
+    | "ai.enabled"
+    | "ai.provider"
+    | "ai.model"
+    | "source.enabled"
+    | "source.value"
+    | "source.ref"
+    | "device.enabled"
+    | "device.deviceId"
+    | "device.label"
+    | "device.expiryDays";
+  value?: string | boolean;
+};
+
+export type SysSetupAssistArgs = {
+  lane: OnboardingLane;
+  draft: OnboardingDraft;
+  messages: OnboardingAssistMessage[];
+};
+
+export type SysSetupAssistResult = {
+  message: string;
+  patches: OnboardingAssistPatch[];
+  reviewReady: boolean;
+  focus?: string;
+};
+
 export type SysSetupResult = {
   user: ProcessIdentity;
   rootLocked: boolean;
