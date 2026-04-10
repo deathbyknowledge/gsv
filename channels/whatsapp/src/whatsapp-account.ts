@@ -155,7 +155,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     connected: false,
   };
   private qrCode: string | null = null;
-  private qrResolvers: Array<(qr: string) => void> = [];
+  private waitResolvers: Array<(result: { connected?: boolean; qr?: string }) => void> = [];
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -435,13 +435,15 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private handleConnectionUpdate(update: Partial<BaileysEventMap["connection.update"]>): void {
     const { connection, lastDisconnect, qr } = update;
+    const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+    console.log(
+      `[WA:${this.state.accountId}] connection.update connection=${connection ?? "none"} qr=${qr ? "true" : "false"} statusCode=${statusCode ?? "none"}`,
+    );
 
     if (qr) {
       this.qrCode = qr;
-      for (const resolve of this.qrResolvers) {
-        resolve(qr);
-      }
-      this.qrResolvers = [];
+      console.log(`[WA:${this.state.accountId}] QR received`);
+      this.resolveWaiters({ qr });
     }
 
     if (connection === "open") {
@@ -458,19 +460,20 @@ export class WhatsAppAccount extends DurableObject<Env> {
       
       this.ctx.storage.delete("login_pending").catch(() => {});
       console.log(`[WA:${this.state.accountId}] Connected as ${this.state.selfE164 || this.state.selfJid}`);
+      this.resolveWaiters({ connected: true });
       
       this.notifyGatewayStatus().catch(() => {});
       this.scheduleKeepAlive();
     }
 
     if (connection === "close") {
-      const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
       const isLoggedOut = statusCode === DisconnectReason.loggedOut;
       const isConnectionReplaced = statusCode === 515;
       
       this.state.connected = false;
       this.state.lastDisconnectedAt = Date.now();
       this.sock = null;
+      this.resolveWaiters({});
 
       this.notifyGatewayStatus().catch(() => {});
 
@@ -749,13 +752,25 @@ export class WhatsAppAccount extends DurableObject<Env> {
         return;
       }
 
-      const timeout = setTimeout(() => resolve({}), timeoutMs);
+      const timeout = setTimeout(() => {
+        console.warn(`[WA:${this.state.accountId}] waitForQrOrConnection timed out after ${timeoutMs}ms`);
+        resolve({});
+      }, timeoutMs);
 
-      this.qrResolvers.push((qr) => {
+      this.waitResolvers.push((result) => {
         clearTimeout(timeout);
-        resolve({ qr });
+        resolve(result);
       });
     });
+  }
+
+  private resolveWaiters(result: { connected?: boolean; qr?: string }): void {
+    if (this.waitResolvers.length === 0) return;
+    const waiters = this.waitResolvers;
+    this.waitResolvers = [];
+    for (const resolve of waiters) {
+      resolve(result);
+    }
   }
 
   private static readonly KEEP_ALIVE_INTERVAL_MS = 10_000;
