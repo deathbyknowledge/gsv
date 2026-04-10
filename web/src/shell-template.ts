@@ -277,11 +277,28 @@ export function renderDesktopShell(): string {
             </form>
           </div>
 
+          <div class="session-panel" data-session-provisioning-view hidden>
+            <div class="session-panel-head">
+              <p class="session-kicker">Provisioning</p>
+              <h1 data-session-provisioning-title>Provisioning gateway</h1>
+              <p class="session-copy" data-session-provisioning-copy>Importing the system source, mirroring CLI binaries, and finalizing first-boot state.</p>
+            </div>
+            <div class="session-progress-shell">
+              <div class="session-progress-bar" aria-hidden="true">
+                <span></span>
+              </div>
+              <div class="session-progress-note">
+                <strong>Keep this tab open</strong>
+                <p>First boot can take a few seconds while the gateway prepares the system source and local download artifacts.</p>
+              </div>
+            </div>
+          </div>
+
           <div class="session-panel" data-session-setup-complete hidden>
             <div class="session-panel-head">
               <p class="session-kicker">Gateway ready</p>
               <h1>Provisioning complete</h1>
-              <p class="session-copy">The control plane, first account, and system source are ready. Enter the desktop, or copy the node bootstrap command if you issued one.</p>
+              <p class="session-copy">The control plane, first account, and system source are ready. Install the CLI on the next machine from this deployment, then bring a device online when you are ready.</p>
             </div>
             <div class="session-result-grid">
               <div class="session-result-card">
@@ -301,13 +318,24 @@ export function renderDesktopShell(): string {
                 <strong data-setup-result-ref></strong>
               </div>
             </div>
+            <div class="session-token-panel">
+              <div class="session-token-head">
+                <div>
+                  <p class="session-kicker">CLI install</p>
+                  <h2 data-setup-result-cli-label>Install on this machine</h2>
+                </div>
+                <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-cli>Copy install command</button>
+              </div>
+              <textarea class="session-token-value" data-setup-result-cli-command readonly></textarea>
+              <p class="session-token-meta" data-setup-result-cli-meta></p>
+            </div>
             <div class="session-token-panel" data-setup-node-result hidden>
               <div class="session-token-head">
                 <div>
-                  <p class="session-kicker">Node token</p>
-                  <h2 data-setup-result-node-label>CLI bootstrap</h2>
+                  <p class="session-kicker">New device</p>
+                  <h2 data-setup-result-node-label>Bootstrap device</h2>
                 </div>
-                <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-token>Copy CLI command</button>
+                <button type="button" class="runtime-btn session-btn-secondary" data-setup-copy-token>Copy device steps</button>
               </div>
               <textarea class="session-token-value" data-setup-result-node-token readonly></textarea>
               <p class="session-token-meta" data-setup-result-node-meta></p>

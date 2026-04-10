@@ -188,12 +188,19 @@ export type SysBootstrapArgs = {
   ref?: string;
 };
 
+export type SysCliReleaseChannel = "stable" | "dev";
+
 export type SysBootstrapResult = {
   repo: string;
   remoteUrl: string;
   ref: string;
   head: string | null;
   changed: boolean;
+  cli: {
+    defaultChannel: SysCliReleaseChannel;
+    mirroredChannels: SysCliReleaseChannel[];
+    assets: string[];
+  };
   packages: Array<{
     packageId: string;
     name: string;

@@ -61,6 +61,61 @@ export async function handleFetch(request, context = {}) {
     return count;
   }
 
+  function detectPlatform(userAgent) {
+    const normalized = String(userAgent ?? "").toLowerCase();
+    if (normalized.includes("windows")) {
+      return "windows";
+    }
+    if (normalized.includes("mac os") || normalized.includes("macintosh") || normalized.includes("darwin")) {
+      return "macos";
+    }
+    return "linux";
+  }
+
+  function platformLabel(platform) {
+    switch (platform) {
+      case "macos":
+        return "macOS";
+      case "windows":
+        return "Windows";
+      default:
+        return "Linux";
+    }
+  }
+
+  function gatewayWsUrl(origin) {
+    if (origin.startsWith("https://")) {
+      return `wss://${origin.slice("https://".length)}/ws`;
+    }
+    if (origin.startsWith("http://")) {
+      return `ws://${origin.slice("http://".length)}/ws`;
+    }
+    return `${origin.replace(/\/+$/g, "")}/ws`;
+  }
+
+  function installCommand(origin, platform) {
+    return platform === "windows"
+      ? `irm ${origin}/downloads/cli/install.ps1 | iex`
+      : `curl -fsSL ${origin}/downloads/cli/install.sh | bash`;
+  }
+
+  function defaultWorkspace(platform) {
+    return platform === "windows" ? "%USERPROFILE%\\projects" : "~/projects";
+  }
+
+  function buildBootstrapCommand(origin, platform, deviceId, token) {
+    const escapedDeviceId = String(deviceId).replaceAll('"', '\\"');
+    const escapedToken = String(token).replaceAll('"', '\\"');
+    const escapedGatewayUrl = gatewayWsUrl(origin).replaceAll('"', '\\"');
+    return [
+      installCommand(origin, platform),
+      `gsv local-config set gateway.url "${escapedGatewayUrl}"`,
+      `gsv local-config set node.id "${escapedDeviceId}"`,
+      `gsv local-config set node.token "${escapedToken}"`,
+      `gsv node install --id "${escapedDeviceId}" --workspace ${defaultWorkspace(platform)}`,
+    ].join("\n");
+  }
+
   function renderSummary(devices) {
     const total = devices.length;
     const online = countBy(devices, (device) => device.online);
@@ -89,7 +144,7 @@ export async function handleFetch(request, context = {}) {
         <div class="devices-toolbar-copy">
           <p class="devices-eyebrow">Fleet</p>
           <h1>Devices</h1>
-          <p class="devices-subtitle">Operational endpoints known to the gateway.</p>
+          <p class="devices-subtitle">Operational endpoints known to the gateway, plus the fastest path to bring the next one online.</p>
         </div>
         ${renderSummary(devices)}
         <form method="get" class="devices-toolbar-form">
@@ -128,7 +183,7 @@ export async function handleFetch(request, context = {}) {
       items.push(`<span>${escapeHtml(device.version)}</span>`);
     }
     items.push(`<code>${escapeHtml(device.id)}</code>`);
-    return items.join("<span class=\"devices-meta-sep\">•</span>");
+    return items.join('<span class="devices-meta-sep">•</span>');
   }
 
   function renderDevices(devices) {
@@ -136,7 +191,7 @@ export async function handleFetch(request, context = {}) {
       return `
         <section class="devices-empty">
           <h2>No matching devices</h2>
-          <p>Adjust the filter or wait for a device to report in.</p>
+          <p>Adjust the filter or issue a token for the next machine you want to connect.</p>
         </section>
       `;
     }
@@ -163,7 +218,72 @@ export async function handleFetch(request, context = {}) {
     `;
   }
 
-  function renderPage(routeBase, devices, filteredDevices, query, scope, error) {
+  function renderProvisioner(routeBase, state, defaultPlatform) {
+    const platform = state.form.platform || defaultPlatform;
+    const expiresValue = state.form.expiresDays || "30";
+    return `
+      <section class="devices-provision-card">
+        <div class="devices-provision-head">
+          <div>
+            <p class="devices-eyebrow">New device</p>
+            <h2>Issue a node token</h2>
+          </div>
+          <p class="devices-subtitle">This creates a driver token bound to one device id, then shows the exact install and bootstrap steps for that platform.</p>
+        </div>
+        <form method="post" class="devices-provision-form">
+          <label class="devices-field">
+            <span>Device ID</span>
+            <input name="deviceId" type="text" value="${escapeHtml(state.form.deviceId)}" placeholder="macbook" spellcheck="false" required />
+          </label>
+          <label class="devices-field">
+            <span>Label</span>
+            <input name="label" type="text" value="${escapeHtml(state.form.label)}" placeholder="MacBook Pro" spellcheck="false" />
+          </label>
+          <label class="devices-field">
+            <span>Platform</span>
+            <select name="platform">
+              <option value="macos"${platform === "macos" ? " selected" : ""}>macOS</option>
+              <option value="linux"${platform === "linux" ? " selected" : ""}>Linux</option>
+              <option value="windows"${platform === "windows" ? " selected" : ""}>Windows</option>
+            </select>
+          </label>
+          <label class="devices-field">
+            <span>Expires in days</span>
+            <input name="expiresDays" type="number" min="1" inputmode="numeric" value="${escapeHtml(expiresValue)}" />
+          </label>
+          <div class="devices-provision-actions">
+            <button type="submit" class="devices-btn devices-btn-primary">Issue token</button>
+          </div>
+        </form>
+        ${state.result ? `
+          <div class="devices-provision-result">
+            <div class="devices-command-card">
+              <div class="devices-command-head">
+                <div>
+                  <p class="devices-eyebrow">Install CLI</p>
+                  <h3>Install on ${escapeHtml(platformLabel(platform))}</h3>
+                </div>
+              </div>
+              <textarea readonly>${escapeHtml(state.result.install)}</textarea>
+              <p class="devices-command-meta">Uses this deployment directly. ${platform === "windows" ? "If Windows binaries are not mirrored yet, the PowerShell installer will tell you clearly." : "The installer auto-detects the correct binary for that machine."}</p>
+            </div>
+            <div class="devices-command-card">
+              <div class="devices-command-head">
+                <div>
+                  <p class="devices-eyebrow">Bootstrap</p>
+                  <h3>${escapeHtml(state.result.label)}</h3>
+                </div>
+              </div>
+              <textarea readonly>${escapeHtml(state.result.bootstrap)}</textarea>
+              <p class="devices-command-meta">${escapeHtml(state.result.meta)}</p>
+            </div>
+          </div>
+        ` : ""}
+      </section>
+    `;
+  }
+
+  function renderPage(routeBase, devices, filteredDevices, query, scope, error, provisioner) {
     return `<!doctype html>
 <html lang="en">
   <head>
@@ -207,7 +327,9 @@ export async function handleFetch(request, context = {}) {
       }
       .devices-toolbar-copy h1,
       .devices-item h2,
-      .devices-empty h2 {
+      .devices-empty h2,
+      .devices-provision-head h2,
+      .devices-command-head h3 {
         margin: 0;
         font-family: "Space Grotesk", system-ui, sans-serif;
         font-weight: 600;
@@ -226,7 +348,8 @@ export async function handleFetch(request, context = {}) {
       }
       .devices-subtitle,
       .devices-meta,
-      .devices-empty p {
+      .devices-empty p,
+      .devices-command-meta {
         margin: 8px 0 0;
         color: var(--muted);
         font-size: 13px;
@@ -259,24 +382,34 @@ export async function handleFetch(request, context = {}) {
         gap: 6px;
       }
       .devices-field input,
-      .devices-field select {
+      .devices-field select,
+      .devices-command-card textarea {
         width: 100%;
-        min-height: 42px;
         border: 0;
         border-left: 2px solid transparent;
-        border-radius: 4px;
+        border-radius: 8px;
         padding: 0 12px;
         background: var(--surface-low);
         color: var(--text);
         font: inherit;
         outline: none;
       }
+      .devices-field input,
+      .devices-field select { min-height: 42px; }
+      .devices-command-card textarea {
+        min-height: 124px;
+        padding: 12px;
+        resize: vertical;
+        font: 12px/1.55 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      }
       .devices-field input:focus,
-      .devices-field select:focus {
+      .devices-field select:focus,
+      .devices-command-card textarea:focus {
         background: var(--surface-lowest);
         border-left-color: var(--accent);
       }
-      .devices-toolbar-actions {
+      .devices-toolbar-actions,
+      .devices-provision-actions {
         display: flex;
         gap: 8px;
         align-items: center;
@@ -310,23 +443,50 @@ export async function handleFetch(request, context = {}) {
         gap: 14px;
         padding: 14px 20px 20px;
       }
-      .devices-error {
-        color: #7b412d;
-        background: rgba(144, 75, 54, 0.12);
-        padding: 10px 12px;
-        border-radius: 10px;
-      }
-      .devices-grid {
+      .devices-layout {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 14px;
+        gap: 16px;
       }
+      .devices-provision-card,
       .devices-item,
       .devices-empty {
         background: var(--surface-low);
         border-radius: 14px;
         padding: 16px;
         box-shadow: var(--shadow);
+      }
+      .devices-provision-head {
+        display: grid;
+        gap: 4px;
+        margin-bottom: 14px;
+      }
+      .devices-provision-form {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        align-items: end;
+      }
+      .devices-provision-actions {
+        grid-column: 1 / -1;
+        justify-content: flex-start;
+      }
+      .devices-provision-result {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 16px;
+      }
+      .devices-command-card {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.54);
+      }
+      .devices-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 14px;
       }
       .devices-item-header {
         display: flex;
@@ -383,15 +543,24 @@ export async function handleFetch(request, context = {}) {
         font: 12px/1.5 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
         color: var(--muted);
       }
+      .devices-error {
+        color: #7b412d;
+        background: rgba(144, 75, 54, 0.12);
+        padding: 10px 12px;
+        border-radius: 10px;
+      }
       @media (max-width: 980px) {
         .devices-toolbar {
           grid-template-columns: 1fr;
           padding: 14px;
         }
-        .devices-toolbar-form {
+        .devices-toolbar-form,
+        .devices-provision-form,
+        .devices-provision-result {
           grid-template-columns: 1fr;
         }
-        .devices-toolbar-actions {
+        .devices-toolbar-actions,
+        .devices-provision-actions {
           justify-content: flex-start;
         }
         .devices-stage {
@@ -405,7 +574,10 @@ export async function handleFetch(request, context = {}) {
       ${renderToolbar(routeBase, query, scope, devices)}
       <section class="devices-stage">
         ${error ? `<section class="devices-error">${escapeHtml(error)}</section>` : ""}
-        ${renderDevices(filteredDevices)}
+        <section class="devices-layout">
+          ${renderProvisioner(routeBase, provisioner, detectPlatform(navigatorUserAgent))}
+          ${renderDevices(filteredDevices)}
+        </section>
       </section>
     </main>
   </body>
@@ -419,11 +591,13 @@ export async function handleFetch(request, context = {}) {
   }
 
   const url = new URL(request.url);
+  const origin = url.origin;
+  const navigatorUserAgent = request.headers.get("user-agent") ?? "";
   const routeBase = appFrame.routeBase ?? env.PACKAGE_ROUTE_BASE ?? "/apps/devices";
   if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
     return new Response("Not Found", { status: 404 });
   }
-  if (request.method !== "GET") {
+  if (request.method !== "GET" && request.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
@@ -433,6 +607,61 @@ export async function handleFetch(request, context = {}) {
 
   let devices = [];
   let error = "";
+  const provisioner = {
+    form: {
+      deviceId: "",
+      label: "",
+      platform: detectPlatform(navigatorUserAgent),
+      expiresDays: "30",
+    },
+    result: null,
+  };
+
+  if (request.method === "POST") {
+    try {
+      const formData = await request.formData();
+      const deviceId = String(formData.get("deviceId") ?? "").trim();
+      const label = String(formData.get("label") ?? "").trim();
+      const platform = String(formData.get("platform") ?? provisioner.form.platform).trim();
+      const expiresDays = String(formData.get("expiresDays") ?? "30").trim();
+      provisioner.form = { deviceId, label, platform, expiresDays };
+
+      if (!/^[A-Za-z0-9._-]+$/.test(deviceId)) {
+        throw new Error("Device id must use letters, numbers, dots, dashes, or underscores.");
+      }
+      if (!["macos", "linux", "windows"].includes(platform)) {
+        throw new Error("Choose a supported platform.");
+      }
+      const expiresAt = expiresDays
+        ? Date.now() + Math.floor(Number(expiresDays) * 24 * 60 * 60 * 1000)
+        : undefined;
+      if (expiresDays && (!Number.isFinite(Number(expiresDays)) || Number(expiresDays) <= 0)) {
+        throw new Error("Expiry must be a positive number of days.");
+      }
+
+      const created = await kernel.request("sys.token.create", {
+        kind: "node",
+        allowedRole: "driver",
+        allowedDeviceId: deviceId,
+        ...(label ? { label } : {}),
+        ...(typeof expiresAt === "number" ? { expiresAt } : {}),
+      });
+      const token = created?.token ?? created;
+      const effectiveLabel = token?.label ?? label || deviceId;
+      const expiresLabel = typeof token?.expiresAt === "number"
+        ? `Expires ${new Date(token.expiresAt).toLocaleString()}`
+        : "No expiry";
+      provisioner.result = {
+        label: effectiveLabel,
+        install: installCommand(origin, platform),
+        bootstrap: buildBootstrapCommand(origin, platform, token?.allowedDeviceId ?? deviceId, token?.token ?? ""),
+        meta: `${token?.allowedDeviceId ?? deviceId} · ${expiresLabel} · ${platformLabel(platform)} steps shown`,
+      };
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
   try {
     const listing = await kernel.request("sys.device.list", {});
     devices = asDeviceList(listing).map(normalizeDevice);
@@ -443,12 +672,12 @@ export async function handleFetch(request, context = {}) {
       return left.label.localeCompare(right.label);
     });
   } catch (cause) {
-    error = cause instanceof Error ? cause.message : String(cause);
+    error = error || (cause instanceof Error ? cause.message : String(cause));
   }
 
   const filteredDevices = filterDevices(devices, query, scope);
 
-  return new Response(renderPage(routeBase, devices, filteredDevices, query, scope, error), {
+  return new Response(renderPage(routeBase, devices, filteredDevices, query, scope, error, provisioner), {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
