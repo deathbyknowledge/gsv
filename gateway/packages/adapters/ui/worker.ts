@@ -2,24 +2,16 @@ const ADAPTERS = [
   {
     id: "whatsapp",
     name: "WhatsApp",
-    eyebrow: "Personal messaging",
-    summary: "Connect a phone by scanning a QR code. Best for direct messages and small-group interactions.",
-    detail: "Use one account id per phone. The gateway keeps the account state and reconnects after the initial pairing.",
-    accountLabel: "Connection name",
+    summary: "Phone-based direct messages and groups.",
+    detail: "Pair a phone once, then let the gateway keep the session alive.",
     accountPlaceholder: "primary",
-    connectLabel: "Open QR flow",
-    disconnectLabel: "Disconnect phone",
   },
   {
     id: "discord",
     name: "Discord",
-    eyebrow: "Server and channel messaging",
-    summary: "Connect a bot account with a token. Best for channels, threads, and community-style automation.",
-    detail: "Bring a bot token here or leave it blank to use the deployment default if one is configured.",
-    accountLabel: "Bot account name",
+    summary: "Bot-driven channels, threads, and communities.",
+    detail: "Connect a bot token or rely on the deployment default.",
     accountPlaceholder: "main",
-    connectLabel: "Connect bot",
-    disconnectLabel: "Disconnect bot",
   },
 ];
 
@@ -35,14 +27,36 @@ function escapeHtml(value) {
 }
 
 function formatTimestampMs(value) {
-  if (value === null || value === undefined) {
-    return "—";
-  }
+  if (value === null || value === undefined) return "—";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
+  if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString();
+}
+
+function iconSvg(kind) {
+  if (kind === "whatsapp") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6A9.4 9.4 0 0 0 4 16.8L2.7 21.3l4.7-1.2A9.4 9.4 0 1 0 12 2.6m0 1.9a7.5 7.5 0 0 1 6.4 11.4l-.3.5.8 2.8-2.9-.7-.4.2A7.5 7.5 0 1 1 12 4.5m-2.4 3.8c-.2 0-.4 0-.6.5-.2.4-.7 1.3-.7 2.5s.8 2.3.9 2.5c.1.2 1.6 2.7 3.9 3.7 1.9.8 2.3.7 2.7.6.4 0 1.3-.5 1.5-1 .2-.5.2-.9.1-1-.1-.1-.4-.2-.9-.4s-1.3-.6-1.5-.7c-.2-.1-.4-.1-.5.1-.2.2-.6.7-.8.9-.2.2-.3.2-.6.1-.3-.2-1.1-.4-2.1-1.3-.8-.7-1.4-1.7-1.6-2-.2-.3 0-.4.1-.5l.4-.5.2-.4c.1-.2 0-.3 0-.4l-.7-1.7c-.2-.4-.3-.4-.5-.4Z" fill="currentColor"/></svg>`;
+  }
+  if (kind === "discord") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.7 5.7A15.9 15.9 0 0 0 15.8 4l-.2.4c1.7.4 2.5 1 2.5 1a9.7 9.7 0 0 0-6.1-1.8c-2.1 0-4.1.6-6 1.8 0 0 .8-.6 2.5-1l-.2-.4c-1.4.2-2.8.8-3.9 1.7C1.7 9.4 1 13 1.2 16.6a16.5 16.5 0 0 0 4.8 2.4l1-1.6c-.6-.2-1.2-.5-1.8-.8.2.1.4.2.6.3 1.9.9 3.9 1.3 6.2 1.3 2.3 0 4.3-.4 6.2-1.3l.6-.3c-.6.3-1.2.6-1.8.8l1 1.6a16.6 16.6 0 0 0 4.8-2.4c.3-4.1-.4-7.6-2.8-10.9M9.4 14.5c-.8 0-1.4-.7-1.4-1.6 0-.9.6-1.6 1.4-1.6.8 0 1.4.7 1.4 1.6 0 .9-.6 1.6-1.4 1.6m5.2 0c-.8 0-1.4-.7-1.4-1.6 0-.9.6-1.6 1.4-1.6.8 0 1.4.7 1.4 1.6 0 .9-.6 1.6-1.4 1.6" fill="currentColor"/></svg>`;
+  }
+  if (kind === "new") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7z" fill="currentColor"/></svg>`;
+  }
+  if (kind === "refresh") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5a7 7 0 0 1 6.1 3.5V6h2v6h-6v-2h3.7A5 5 0 1 0 17 16h2a7 7 0 1 1-7-11Z" fill="currentColor"/></svg>`;
+  }
+  if (kind === "link") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.6 13.4a1 1 0 0 1 0-1.4l3-3a3 3 0 1 1 4.2 4.2l-2.2 2.2-1.4-1.4 2.2-2.2a1 1 0 0 0-1.4-1.4l-3 3a1 1 0 0 1-1.4 0m2.8-2.8a1 1 0 0 1 0 1.4l-3 3a3 3 0 0 1-4.2-4.2l2.2-2.2 1.4 1.4-2.2 2.2A1 1 0 0 0 9 13.6l3-3a1 1 0 0 1 1.4 0" fill="currentColor"/></svg>`;
+  }
+  if (kind === "power") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v10h-2zm1 18a8 8 0 0 1-5.7-13.7l1.4 1.4A6 6 0 1 0 12 6V4a8 8 0 0 1 0 16" fill="currentColor"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>`;
+}
+
+function adapterDef(adapterId) {
+  return ADAPTERS.find((adapter) => adapter.id === adapterId) ?? ADAPTERS[0];
 }
 
 function readState(url, formData) {
@@ -55,293 +69,276 @@ function readState(url, formData) {
   };
 
   const adapter = read("adapter", "whatsapp");
-  const whatsappForceValue = read("whatsappForce");
+  const selectedAccount = read("account", "new");
+  const whatsappForce = read("whatsappForce") === "true" || read("whatsappForce") === "on";
   return {
     adapter: ADAPTER_IDS.has(adapter) ? adapter : "whatsapp",
+    account: selectedAccount || "new",
     whatsappAccountId: read("whatsappAccountId", "primary"),
-    whatsappForce: whatsappForceValue === "true" || whatsappForceValue === "on",
+    whatsappForce,
     discordAccountId: read("discordAccountId", "main"),
-    discordBotToken: read("discordBotToken"),
   };
 }
 
-function selectedAdapterDef(state) {
-  return ADAPTERS.find((adapter) => adapter.id === state.adapter) ?? ADAPTERS[0];
-}
-
-function hiddenStateFields(state) {
-  return [
-    `<input type="hidden" name="adapter" value="${escapeHtml(state.adapter)}" />`,
-    `<input type="hidden" name="whatsappAccountId" value="${escapeHtml(state.whatsappAccountId)}" />`,
-    `<input type="hidden" name="whatsappForce" value="${state.whatsappForce ? "true" : ""}" />`,
-    `<input type="hidden" name="discordAccountId" value="${escapeHtml(state.discordAccountId)}" />`,
-  ].join("");
-}
-
-function hrefWithState(routeBase, state, overrides = {}) {
+function stateHref(routeBase, state, overrides = {}) {
   const url = new URL(`http://local${routeBase}`);
   const next = {
     adapter: state.adapter,
+    account: state.account,
     whatsappAccountId: state.whatsappAccountId,
     whatsappForce: state.whatsappForce ? "true" : "",
     discordAccountId: state.discordAccountId,
     ...overrides,
   };
   for (const [key, value] of Object.entries(next)) {
-    if (value === null || value === undefined || String(value).length === 0) {
-      continue;
-    }
+    if (value === null || value === undefined || String(value).length === 0) continue;
     url.searchParams.set(key, String(value));
   }
   return `${url.pathname}${url.search}`;
 }
 
-function countConnected(accounts) {
-  let connected = 0;
-  for (const account of accounts) {
-    if (account?.connected) {
-      connected += 1;
-    }
-  }
-  return connected;
+function hiddenStateFields(state, overrides = {}) {
+  const next = {
+    adapter: state.adapter,
+    account: state.account,
+    whatsappAccountId: state.whatsappAccountId,
+    whatsappForce: state.whatsappForce ? "true" : "",
+    discordAccountId: state.discordAccountId,
+    ...overrides,
+  };
+  return Object.entries(next)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}" />`)
+    .join("");
 }
 
-function renderAdapterNav(routeBase, state, statusByAdapter) {
+function adapterTone(accounts) {
+  const connected = accounts.filter((account) => account.connected).length;
+  if (connected > 0) return "is-good";
+  if (accounts.length > 0) return "is-warn";
+  return "is-idle";
+}
+
+function renderAdapterRail(routeBase, state, statusByAdapter) {
   return `
-    <nav class="adapters-nav" aria-label="Adapter types">
-      ${ADAPTERS.map((adapter) => {
-        const accounts = statusByAdapter[adapter.id] ?? [];
-        const connected = countConnected(accounts);
-        return `
-          <a class="adapters-nav-card ${state.adapter === adapter.id ? "is-active" : ""}" href="${escapeHtml(hrefWithState(routeBase, state, { adapter: adapter.id }))}">
-            <span class="adapters-nav-eyebrow">${escapeHtml(adapter.eyebrow)}</span>
-            <strong>${escapeHtml(adapter.name)}</strong>
-            <span class="adapters-nav-copy">${escapeHtml(adapter.summary)}</span>
-            <span class="adapters-nav-meta">${accounts.length} known · ${connected} connected</span>
-          </a>
-        `;
-      }).join("")}
-    </nav>
+    <aside class="adapters-rail adapters-rail-primary">
+      <div class="rail-head">
+        <span class="rail-title">Adapters</span>
+      </div>
+      <nav class="adapter-list" aria-label="Adapters">
+        ${ADAPTERS.map((adapter) => {
+          const accounts = statusByAdapter[adapter.id] ?? [];
+          const tone = adapterTone(accounts);
+          return `
+            <a class="adapter-row ${state.adapter === adapter.id ? "is-active" : ""}" href="${escapeHtml(stateHref(routeBase, state, { adapter: adapter.id, account: "new" }))}">
+              <span class="adapter-row-icon">${iconSvg(adapter.id)}</span>
+              <span class="adapter-row-copy">
+                <strong>${escapeHtml(adapter.name)}</strong>
+                <span>${escapeHtml(adapter.summary)}</span>
+              </span>
+              <span class="adapter-dot ${tone}"></span>
+            </a>
+          `;
+        }).join("")}
+      </nav>
+    </aside>
   `;
 }
 
-function renderAccountStatus(account) {
-  const pills = [
-    `<span class="adapters-pill ${account.connected ? "is-good" : "is-muted"}">${account.connected ? "connected" : "offline"}</span>`,
-    `<span class="adapters-pill ${account.authenticated ? "is-good" : "is-warn"}">${account.authenticated ? "authenticated" : "needs auth"}</span>`,
-  ];
-  if (account.mode) {
-    pills.push(`<span class="adapters-pill">${escapeHtml(account.mode)}</span>`);
-  }
-  return pills.join("");
+function renderAccountRail(routeBase, state, adapter, accounts) {
+  return `
+    <aside class="adapters-rail adapters-rail-secondary">
+      <div class="rail-head">
+        <span class="rail-title">${escapeHtml(adapter.name)}</span>
+        <a class="icon-nav ${state.account === "new" ? "is-active" : ""}" href="${escapeHtml(stateHref(routeBase, state, { account: "new" }))}" title="New connection" aria-label="New connection">
+          ${iconSvg("new")}
+        </a>
+      </div>
+      <nav class="account-list" aria-label="Accounts">
+        <a class="account-row ${state.account === "new" ? "is-active" : ""}" href="${escapeHtml(stateHref(routeBase, state, { account: "new" }))}">
+          <span class="account-row-icon">${iconSvg("new")}</span>
+          <span class="account-row-copy">
+            <strong>New connection</strong>
+            <span>${escapeHtml(adapter.detail)}</span>
+          </span>
+        </a>
+        ${accounts.map((account) => {
+          const tone = account.connected ? "is-good" : account.authenticated ? "is-warn" : "is-idle";
+          return `
+            <a class="account-row ${state.account === account.accountId ? "is-active" : ""}" href="${escapeHtml(stateHref(routeBase, state, { account: account.accountId }))}">
+              <span class="account-row-icon">${iconSvg(adapter.id)}</span>
+              <span class="account-row-copy">
+                <strong>${escapeHtml(account.accountId)}</strong>
+                <span>${escapeHtml(account.connected ? "Connected" : account.authenticated ? "Authorized" : "Pending")}</span>
+              </span>
+              <span class="adapter-dot ${tone}"></span>
+            </a>
+          `;
+        }).join("")}
+      </nav>
+    </aside>
+  `;
 }
 
-function renderAccountMeta(adapterId, account) {
-  const items = [`<code>${escapeHtml(account.accountId)}</code>`];
-  if (account.lastActivity) {
-    items.push(`last activity ${escapeHtml(formatTimestampMs(account.lastActivity))}`);
-  }
-  if (adapterId === "whatsapp") {
+function renderToolbar(state, adapter, selectedAccount) {
+  const accountId = selectedAccount?.accountId ?? (adapter.id === "whatsapp" ? state.whatsappAccountId : state.discordAccountId);
+  return `
+    <header class="detail-toolbar">
+      <div class="detail-toolbar-copy">
+        <span class="detail-kicker">${escapeHtml(adapter.name)}</span>
+        <h1>${escapeHtml(selectedAccount ? selectedAccount.accountId : "New connection")}</h1>
+      </div>
+      <div class="detail-toolbar-actions">
+        <form method="post">
+          ${hiddenStateFields(state, { action: "refresh", adapter: adapter.id, account: selectedAccount?.accountId ?? state.account, accountId })}
+          <button type="submit" class="icon-button" title="Refresh status" aria-label="Refresh status">${iconSvg("refresh")}</button>
+        </form>
+        ${selectedAccount ? `
+          <form method="post">
+            ${hiddenStateFields(state, { action: "disconnect", adapter: adapter.id, account: selectedAccount.accountId, accountId: selectedAccount.accountId })}
+            <button type="submit" class="icon-button" title="Disconnect" aria-label="Disconnect">${iconSvg("power")}</button>
+          </form>
+        ` : ""}
+      </div>
+    </header>
+  `;
+}
+
+function renderStatusList(adapter, account) {
+  const rows = [
+    ["Connection", account.connected ? "Connected" : "Offline"],
+    ["Authentication", account.authenticated ? "Authenticated" : "Needs attention"],
+    ["Mode", account.mode || "—"],
+    ["Last activity", formatTimestampMs(account.lastActivity)],
+  ];
+  if (adapter.id === "whatsapp") {
     const selfE164 = String(account?.extra?.selfE164 ?? "").trim();
     const selfJid = String(account?.extra?.selfJid ?? "").trim();
-    if (selfE164) {
-      items.push(`phone ${escapeHtml(selfE164)}`);
-    } else if (selfJid) {
-      items.push(`jid ${escapeHtml(selfJid)}`);
-    }
+    rows.push(["Phone", selfE164 || selfJid || "—"]);
   }
-  return items.join(' <span class="adapters-meta-sep">•</span> ');
-}
-
-function renderAccounts(routeBase, state, adapter, accounts) {
-  if (accounts.length === 0) {
-    return `
-      <section class="adapters-section">
-        <div class="adapters-section-head">
-          <div>
-            <p class="adapters-eyebrow">Known accounts</p>
-            <h2>No ${escapeHtml(adapter.name)} accounts yet</h2>
-          </div>
-          <p class="adapters-muted">Connect the first account above. Once an adapter has reported status, it shows up here for reconnect, review, and disconnect operations.</p>
-        </div>
-      </section>
-    `;
-  }
-
   return `
-    <section class="adapters-section">
-      <div class="adapters-section-head">
-        <div>
-          <p class="adapters-eyebrow">Known accounts</p>
-          <h2>${escapeHtml(adapter.name)} connections</h2>
-        </div>
-        <p class="adapters-muted">These are the last known account states held by the gateway.</p>
+    <section class="detail-section">
+      <div class="section-titlebar">
+        <h2>Status</h2>
       </div>
-      <div class="adapters-account-grid">
-        ${accounts.map((account) => `
-          <article class="adapters-account-card">
-            <div class="adapters-account-header">
-              <div>
-                <h3>${escapeHtml(account.accountId)}</h3>
-                <p class="adapters-meta">${renderAccountMeta(adapter.id, account)}</p>
-              </div>
-              <div class="adapters-pill-row">${renderAccountStatus(account)}</div>
-            </div>
-            ${account.error ? `<p class="adapters-error-inline">${escapeHtml(account.error)}</p>` : ""}
-            <div class="adapters-account-actions">
-              <a class="adapters-btn adapters-btn-quiet" href="${escapeHtml(hrefWithState(routeBase, state, adapter.id === "whatsapp"
-                ? { adapter: adapter.id, whatsappAccountId: account.accountId }
-                : { adapter: adapter.id, discordAccountId: account.accountId }))}">Use this account</a>
-              <form method="post">
-                ${hiddenStateFields(state)}
-                <input type="hidden" name="action" value="refresh" />
-                <input type="hidden" name="adapter" value="${escapeHtml(adapter.id)}" />
-                <input type="hidden" name="accountId" value="${escapeHtml(account.accountId)}" />
-                <button type="submit" class="adapters-btn adapters-btn-quiet">Refresh</button>
-              </form>
-              <form method="post">
-                ${hiddenStateFields(state)}
-                <input type="hidden" name="action" value="disconnect" />
-                <input type="hidden" name="adapter" value="${escapeHtml(adapter.id)}" />
-                <input type="hidden" name="accountId" value="${escapeHtml(account.accountId)}" />
-                <button type="submit" class="adapters-btn adapters-btn-danger">Disconnect</button>
-              </form>
-            </div>
-          </article>
+      <dl class="property-list">
+        ${rows.map(([label, value]) => `
+          <div class="property-row">
+            <dt>${escapeHtml(label)}</dt>
+            <dd>${escapeHtml(value)}</dd>
+          </div>
         `).join("")}
-      </div>
+      </dl>
+      ${account.error ? `<p class="inline-error">${escapeHtml(account.error)}</p>` : ""}
     </section>
   `;
 }
 
-function renderChallenge(challenge) {
-  if (!challenge) {
+function renderQrChallenge(challenge) {
+  if (!challenge || challenge.type !== "qr" || !challenge.data) {
     return "";
   }
-
-  if (challenge.type === "qr" && challenge.data) {
-    return `
-      <section class="adapters-section adapters-challenge-section">
-        <div class="adapters-section-head">
-          <div>
-            <p class="adapters-eyebrow">Authentication required</p>
-            <h2>Scan the QR code</h2>
-          </div>
-          <p class="adapters-muted">${escapeHtml(challenge.message || "Open WhatsApp on your phone, then scan this code from Linked Devices.")}</p>
-        </div>
-        <div class="adapters-qr-layout">
-          <img class="adapters-qr" src="${escapeHtml(challenge.data)}" alt="WhatsApp QR code" />
-          <div class="adapters-qr-copy">
-            <ol>
-              <li>Open WhatsApp on your phone.</li>
-              <li>Go to Linked Devices.</li>
-              <li>Scan this code before it expires.</li>
-            </ol>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-
   return `
-    <section class="adapters-section adapters-challenge-section">
-      <div class="adapters-section-head">
-        <div>
-          <p class="adapters-eyebrow">Adapter challenge</p>
-          <h2>${escapeHtml(challenge.type || "Additional action required")}</h2>
-        </div>
-        <p class="adapters-muted">${escapeHtml(challenge.message || "Complete the adapter challenge, then refresh status.")}</p>
+    <section class="detail-section qr-section">
+      <div class="section-titlebar">
+        <h2>Pair phone</h2>
       </div>
-      <pre class="adapters-challenge-dump">${escapeHtml(JSON.stringify(challenge, null, 2))}</pre>
+      <div class="qr-layout">
+        <img class="qr-image" src="${escapeHtml(challenge.data)}" alt="WhatsApp QR code" />
+        <div class="qr-copy">
+          <p>${escapeHtml(challenge.message || "Open WhatsApp on your phone and scan this code from Linked Devices.")}</p>
+          <ol>
+            <li>Open WhatsApp.</li>
+            <li>Open Linked Devices.</li>
+            <li>Scan this code.</li>
+          </ol>
+        </div>
+      </div>
     </section>
   `;
 }
 
-function renderConnectForm(state, adapter) {
+function renderGenericChallenge(challenge) {
+  if (!challenge || (challenge.type === "qr" && challenge.data)) {
+    return "";
+  }
+  return `
+    <section class="detail-section">
+      <div class="section-titlebar">
+        <h2>Next step</h2>
+      </div>
+      <p>${escapeHtml(challenge.message || "Complete the adapter challenge, then refresh status.")}</p>
+    </section>
+  `;
+}
+
+function renderNewConnection(adapter, state, challenge) {
   if (adapter.id === "whatsapp") {
     return `
-      <form method="post" class="adapters-form">
-        ${hiddenStateFields(state)}
-        <input type="hidden" name="action" value="connect" />
-        <input type="hidden" name="adapter" value="whatsapp" />
-        <label class="adapters-field">
-          <span>${escapeHtml(adapter.accountLabel)}</span>
-          <input type="text" name="whatsappAccountId" value="${escapeHtml(state.whatsappAccountId)}" placeholder="${escapeHtml(adapter.accountPlaceholder)}" spellcheck="false" required />
-        </label>
-        <label class="adapters-checkbox">
-          <input type="checkbox" name="whatsappForce" value="true" ${state.whatsappForce ? "checked" : ""} />
-          <span>Force a fresh QR session</span>
-        </label>
-        <div class="adapters-actions">
-          <button type="submit" class="adapters-btn adapters-btn-primary">${escapeHtml(adapter.connectLabel)}</button>
+      <section class="detail-section">
+        <div class="section-titlebar">
+          <h2>Open pairing flow</h2>
         </div>
-      </form>
+        <form method="post" class="editor-form">
+          ${hiddenStateFields(state, { action: "connect", adapter: "whatsapp", account: "new" })}
+          <label class="field-row">
+            <span>Name</span>
+            <input type="text" name="whatsappAccountId" value="${escapeHtml(state.whatsappAccountId)}" placeholder="${escapeHtml(adapter.accountPlaceholder)}" spellcheck="false" required />
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" name="whatsappForce" value="true" ${state.whatsappForce ? "checked" : ""} />
+            <span>Force a fresh QR session</span>
+          </label>
+          <div class="editor-actions">
+            <button type="submit" class="icon-button is-primary" title="Open QR flow" aria-label="Open QR flow">${iconSvg("link")}</button>
+          </div>
+        </form>
+      </section>
+      ${renderQrChallenge(challenge)}
+      ${renderGenericChallenge(challenge)}
     `;
   }
 
   return `
-    <form method="post" class="adapters-form">
-      ${hiddenStateFields(state)}
-      <input type="hidden" name="action" value="connect" />
-      <input type="hidden" name="adapter" value="discord" />
-      <label class="adapters-field">
-        <span>${escapeHtml(adapter.accountLabel)}</span>
-        <input type="text" name="discordAccountId" value="${escapeHtml(state.discordAccountId)}" placeholder="${escapeHtml(adapter.accountPlaceholder)}" spellcheck="false" required />
-      </label>
-      <label class="adapters-field">
-        <span>Bot token</span>
-        <input type="password" name="discordBotToken" value="" placeholder="Leave blank to use the deployment default" />
-      </label>
-      <p class="adapters-muted">This connects immediately if the bot token is valid. It does not use a QR or browser login flow.</p>
-      <div class="adapters-actions">
-        <button type="submit" class="adapters-btn adapters-btn-primary">${escapeHtml(adapter.connectLabel)}</button>
+    <section class="detail-section">
+      <div class="section-titlebar">
+        <h2>Connect bot</h2>
       </div>
-    </form>
+      <form method="post" class="editor-form">
+        ${hiddenStateFields(state, { action: "connect", adapter: "discord", account: "new" })}
+        <label class="field-row">
+          <span>Name</span>
+          <input type="text" name="discordAccountId" value="${escapeHtml(state.discordAccountId)}" placeholder="${escapeHtml(adapter.accountPlaceholder)}" spellcheck="false" required />
+        </label>
+        <label class="field-row">
+          <span>Bot token</span>
+          <input type="password" name="discordBotToken" value="" placeholder="Leave blank to use the deployment default" />
+        </label>
+        <p class="hint-copy">Use a dedicated bot account. If the deployment already has a default bot token, you can leave the field empty.</p>
+        <div class="editor-actions">
+          <button type="submit" class="icon-button is-primary" title="Connect bot" aria-label="Connect bot">${iconSvg("link")}</button>
+        </div>
+      </form>
+    </section>
   `;
 }
 
-function renderSelectedAdapter(routeBase, state, adapter, accounts) {
-  const accountId = adapter.id === "whatsapp" ? state.whatsappAccountId : state.discordAccountId;
+function renderDetailPane(routeBase, state, adapter, accounts, challenge) {
+  const selectedAccount = accounts.find((account) => account.accountId === state.account) ?? null;
   return `
-    <section class="adapters-section adapters-hero">
-      <div>
-        <p class="adapters-eyebrow">${escapeHtml(adapter.eyebrow)}</p>
-        <h1>${escapeHtml(adapter.name)}</h1>
-        <p class="adapters-lead">${escapeHtml(adapter.summary)}</p>
-        <p class="adapters-muted">${escapeHtml(adapter.detail)}</p>
-      </div>
-      <div class="adapters-hero-actions">
-        <form method="post">
-          ${hiddenStateFields(state)}
-          <input type="hidden" name="action" value="refresh" />
-          <input type="hidden" name="adapter" value="${escapeHtml(adapter.id)}" />
-          <input type="hidden" name="accountId" value="${escapeHtml(accountId)}" />
-          <button type="submit" class="adapters-btn adapters-btn-quiet">Refresh status</button>
-        </form>
-        <form method="post">
-          ${hiddenStateFields(state)}
-          <input type="hidden" name="action" value="disconnect" />
-          <input type="hidden" name="adapter" value="${escapeHtml(adapter.id)}" />
-          <input type="hidden" name="accountId" value="${escapeHtml(accountId)}" />
-          <button type="submit" class="adapters-btn adapters-btn-danger">${escapeHtml(adapter.disconnectLabel)}</button>
-        </form>
+    <section class="detail-pane">
+      ${renderToolbar(state, adapter, selectedAccount)}
+      <div class="detail-body">
+        ${selectedAccount
+          ? `${renderStatusList(adapter, selectedAccount)}${renderQrChallenge(challenge)}${renderGenericChallenge(challenge)}`
+          : renderNewConnection(adapter, state, challenge)}
       </div>
     </section>
-    <section class="adapters-section">
-      <div class="adapters-section-head">
-        <div>
-          <p class="adapters-eyebrow">Setup</p>
-          <h2>Connect ${escapeHtml(adapter.name)}</h2>
-        </div>
-      </div>
-      ${renderConnectForm(state, adapter)}
-    </section>
-    ${renderAccounts(routeBase, state, adapter, accounts)}
   `;
 }
 
 function renderPage(routeBase, state, payload) {
-  const adapter = selectedAdapterDef(state);
+  const adapter = adapterDef(state.adapter);
   const accounts = payload.statusByAdapter[adapter.id] ?? [];
   return `<!doctype html>
 <html lang="en">
@@ -352,143 +349,296 @@ function renderPage(routeBase, state, payload) {
     <link rel="stylesheet" href="/runtime/theme.css" />
     <style>
       :root {
-        --panel-strong: rgba(12, 25, 33, 0.9);
-        --panel-soft: rgba(16, 36, 47, 0.82);
-        --edge-strong: rgba(138, 224, 255, 0.24);
-        --edge-soft: rgba(138, 224, 255, 0.14);
-        --good: #7dd3a7;
-        --warn: #f7c66e;
-        --danger: #ff8f8f;
+        --panel-1: rgba(9, 19, 26, 0.96);
+        --panel-2: rgba(13, 27, 36, 0.94);
+        --panel-3: rgba(17, 34, 45, 0.9);
+        --line: rgba(138, 224, 255, 0.14);
+        --line-strong: rgba(138, 224, 255, 0.24);
+        --good: #8ae0b2;
+        --warn: #f0d284;
+        --idle: #6f8794;
+        --danger: #ff9f9f;
       }
-      body { margin: 0; min-height: 100vh; }
-      main { max-width: 1180px; margin: 0 auto; padding: 28px; }
-      .adapters-frame { display: grid; gap: 18px; }
-      .adapters-nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
-      .adapters-nav-card,
-      .adapters-section,
-      .adapters-account-card {
-        border: 1px solid var(--edge-soft);
-        background: var(--panel-soft);
-        border-radius: 18px;
-        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
-      }
-      .adapters-nav-card {
+      html, body { min-height: 100%; }
+      body { margin: 0; }
+      main {
+        min-height: 100vh;
         display: grid;
-        gap: 8px;
-        padding: 18px;
-        color: inherit;
-        text-decoration: none;
+        grid-template-columns: 250px 280px minmax(0, 1fr);
+        background: linear-gradient(180deg, rgba(6, 13, 18, 0.92), rgba(7, 16, 22, 0.98));
       }
-      .adapters-nav-card.is-active {
-        border-color: var(--edge-strong);
-        background: linear-gradient(180deg, rgba(22, 49, 61, 0.96), rgba(12, 25, 33, 0.92));
+      .adapters-rail {
+        min-width: 0;
+        border-right: 1px solid var(--line);
+        background: var(--panel-1);
       }
-      .adapters-nav-eyebrow,
-      .adapters-eyebrow {
-        margin: 0;
+      .adapters-rail-secondary {
+        background: var(--panel-2);
+      }
+      .rail-head {
+        height: 56px;
+        padding: 0 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--line);
+      }
+      .rail-title {
+        font-size: 12px;
         text-transform: uppercase;
         letter-spacing: 0.12em;
-        font-size: 11px;
         color: var(--muted);
       }
-      .adapters-nav-copy,
-      .adapters-muted { color: var(--muted); line-height: 1.5; }
-      .adapters-nav-meta { font-size: 13px; color: var(--accent); }
-      .adapters-section { padding: 22px; }
-      .adapters-hero { display: flex; justify-content: space-between; gap: 20px; align-items: start; }
-      .adapters-hero h1,
-      .adapters-section h2,
-      .adapters-account-card h3 { margin: 6px 0 0; }
-      .adapters-lead { max-width: 72ch; line-height: 1.6; }
-      .adapters-section-head { display: flex; justify-content: space-between; gap: 20px; align-items: start; margin-bottom: 18px; }
-      .adapters-form { display: grid; gap: 16px; max-width: 560px; }
-      .adapters-field { display: grid; gap: 8px; }
-      .adapters-field span { font-size: 13px; color: var(--muted); }
-      .adapters-field input {
-        width: 100%;
-        padding: 12px 14px;
-        border-radius: 12px;
-        border: 1px solid var(--edge-soft);
-        background: rgba(4, 11, 15, 0.72);
-        color: var(--text);
+      .adapter-list,
+      .account-list {
+        display: flex;
+        flex-direction: column;
+        padding: 8px;
       }
-      .adapters-checkbox { display: flex; gap: 10px; align-items: center; color: var(--text); }
-      .adapters-actions,
-      .adapters-hero-actions,
-      .adapters-account-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-      .adapters-btn {
-        appearance: none;
-        border: 1px solid var(--edge-soft);
-        border-radius: 999px;
-        padding: 10px 14px;
-        background: rgba(7, 18, 24, 0.9);
-        color: var(--text);
+      .adapter-row,
+      .account-row {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr) 8px;
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+        color: inherit;
         text-decoration: none;
-        font: inherit;
-        cursor: pointer;
+        border-radius: 10px;
       }
-      .adapters-btn-primary {
-        background: linear-gradient(180deg, rgba(138, 224, 255, 0.2), rgba(138, 224, 255, 0.1));
-        border-color: var(--edge-strong);
+      .adapter-row.is-active,
+      .account-row.is-active {
+        background: rgba(138, 224, 255, 0.08);
       }
-      .adapters-btn-danger { border-color: rgba(255, 143, 143, 0.28); color: #ffd0d0; }
-      .adapters-btn-quiet { background: rgba(255, 255, 255, 0.03); }
-      .adapters-account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
-      .adapters-account-card { padding: 18px; display: grid; gap: 14px; }
-      .adapters-account-header { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
-      .adapters-meta { color: var(--muted); font-size: 13px; line-height: 1.5; }
-      .adapters-meta-sep { color: rgba(255, 255, 255, 0.2); margin: 0 6px; }
-      .adapters-pill-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: end; }
-      .adapters-pill {
-        display: inline-flex;
-        padding: 5px 10px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.06);
-        color: var(--text);
+      .adapter-row-icon,
+      .account-row-icon,
+      .icon-button svg,
+      .icon-nav svg {
+        width: 18px;
+        height: 18px;
+        display: inline-block;
+      }
+      .adapter-row-copy,
+      .account-row-copy {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .adapter-row-copy strong,
+      .account-row-copy strong {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .adapter-row-copy span,
+      .account-row-copy span {
         font-size: 12px;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
-      .adapters-pill.is-good { color: var(--good); }
-      .adapters-pill.is-warn { color: var(--warn); }
-      .adapters-pill.is-muted { color: var(--muted); }
-      .adapters-error-inline,
-      .adapters-error-card { color: var(--danger); }
-      .adapters-notice-card,
-      .adapters-error-card {
-        padding: 14px 18px;
-        border-radius: 14px;
-        border: 1px solid var(--edge-soft);
-        background: var(--panel-strong);
+      .adapter-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--idle);
       }
-      .adapters-challenge-section { border-color: var(--edge-strong); }
-      .adapters-qr-layout { display: flex; gap: 24px; flex-wrap: wrap; align-items: center; }
-      .adapters-qr {
-        width: min(320px, 100%);
-        aspect-ratio: 1;
-        object-fit: contain;
-        border-radius: 16px;
-        background: white;
+      .adapter-dot.is-good { background: var(--good); }
+      .adapter-dot.is-warn { background: var(--warn); }
+      .adapter-dot.is-idle { background: var(--idle); }
+      .icon-nav,
+      .icon-button {
+        width: 32px;
+        height: 32px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text);
+        border-radius: 8px;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .icon-nav:hover,
+      .icon-button:hover,
+      .icon-nav.is-active {
+        background: rgba(138, 224, 255, 0.08);
+        border-color: var(--line-strong);
+      }
+      .icon-button.is-primary {
+        background: rgba(138, 224, 255, 0.1);
+        border-color: var(--line-strong);
+      }
+      .detail-pane {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: 56px minmax(0, 1fr);
+        background: var(--panel-3);
+      }
+      .detail-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--line);
+      }
+      .detail-toolbar-copy {
+        min-width: 0;
+      }
+      .detail-kicker {
+        display: block;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+      }
+      .detail-toolbar h1 {
+        margin: 2px 0 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .detail-toolbar-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .detail-body {
+        min-width: 0;
+        overflow: auto;
         padding: 18px;
+        display: grid;
+        gap: 18px;
+        align-content: start;
       }
-      .adapters-qr-copy { max-width: 34ch; }
-      .adapters-qr-copy ol { margin: 0; padding-left: 20px; line-height: 1.7; }
-      .adapters-challenge-dump { overflow: auto; padding: 14px; border-radius: 12px; background: rgba(0, 0, 0, 0.3); }
-      @media (max-width: 900px) {
-        main { padding: 18px; }
-        .adapters-hero,
-        .adapters-section-head,
-        .adapters-account-header { display: grid; grid-template-columns: 1fr; }
-        .adapters-pill-row { justify-content: start; }
+      .detail-section {
+        border: 1px solid var(--line);
+        background: rgba(6, 12, 16, 0.36);
+      }
+      .section-titlebar {
+        height: 44px;
+        display: flex;
+        align-items: center;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .section-titlebar h2 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .editor-form,
+      .property-list,
+      .qr-layout {
+        padding: 14px;
+      }
+      .editor-form {
+        display: grid;
+        gap: 12px;
+      }
+      .field-row {
+        display: grid;
+        grid-template-columns: 120px minmax(0, 1fr);
+        align-items: center;
+        gap: 12px;
+      }
+      .field-row span,
+      .hint-copy,
+      .toggle-row,
+      .inline-note {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .field-row input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.2);
+        color: var(--text);
+      }
+      .toggle-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding-left: 132px;
+      }
+      .editor-actions {
+        display: flex;
+        justify-content: flex-end;
+      }
+      .property-list {
+        margin: 0;
+        display: grid;
+        gap: 1px;
+      }
+      .property-row {
+        display: grid;
+        grid-template-columns: 140px minmax(0, 1fr);
+        gap: 14px;
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+      }
+      .property-row:last-child { border-bottom: 0; }
+      .property-row dt {
+        color: var(--muted);
+      }
+      .property-row dd {
+        margin: 0;
+      }
+      .inline-error {
+        margin: 0;
+        padding: 0 14px 14px;
+        color: var(--danger);
+      }
+      .qr-layout {
+        display: grid;
+        grid-template-columns: 280px minmax(0, 1fr);
+        gap: 18px;
+        align-items: center;
+      }
+      .qr-image {
+        width: 100%;
+        max-width: 280px;
+        background: white;
+        padding: 16px;
+      }
+      .qr-copy {
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .qr-copy ol { margin: 0; padding-left: 18px; }
+      .notice-strip,
+      .error-strip {
+        margin: 18px 18px 0;
+        padding: 10px 14px;
+        border: 1px solid var(--line);
+        background: rgba(0,0,0,0.18);
+      }
+      .error-strip { color: var(--danger); }
+      @media (max-width: 1100px) {
+        main { grid-template-columns: 220px 240px minmax(0, 1fr); }
+        .field-row { grid-template-columns: 96px minmax(0, 1fr); }
+        .toggle-row { padding-left: 108px; }
+        .qr-layout { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 860px) {
+        main { grid-template-columns: 1fr; }
+        .adapters-rail { border-right: 0; border-bottom: 1px solid var(--line); }
+        .detail-pane { grid-template-rows: auto minmax(0, 1fr); }
       }
     </style>
   </head>
   <body>
     <main>
-      <div class="adapters-frame">
-        ${renderAdapterNav(routeBase, state, payload.statusByAdapter)}
-        ${payload.notice ? `<section class="adapters-notice-card">${escapeHtml(payload.notice)}</section>` : ""}
-        ${payload.error ? `<section class="adapters-error-card">${escapeHtml(payload.error)}</section>` : ""}
-        ${renderChallenge(payload.challenge)}
-        ${renderSelectedAdapter(routeBase, state, adapter, accounts)}
+      ${renderAdapterRail(routeBase, state, payload.statusByAdapter)}
+      ${renderAccountRail(routeBase, state, adapter, accounts)}
+      <div class="detail-shell">
+        ${payload.notice ? `<div class="notice-strip">${escapeHtml(payload.notice)}</div>` : ""}
+        ${payload.error ? `<div class="error-strip">${escapeHtml(payload.error)}</div>` : ""}
+        ${renderDetailPane(routeBase, state, adapter, accounts, payload.challenge)}
       </div>
     </main>
   </body>
@@ -513,24 +663,19 @@ async function loadStatusByAdapter(kernel) {
 
 function requireAccountId(formData, adapterId, state) {
   const explicit = String(formData.get("accountId") ?? "").trim();
-  if (explicit) {
-    return explicit;
-  }
+  if (explicit) return explicit;
   if (adapterId === "whatsapp") {
     return String(formData.get("whatsappAccountId") ?? state.whatsappAccountId ?? "").trim();
   }
   return String(formData.get("discordAccountId") ?? state.discordAccountId ?? "").trim();
 }
 
-function buildConnectConfig(adapterId, formData, state) {
+function buildConnectConfig(adapterId, formData) {
   if (adapterId === "whatsapp") {
-    const formValue = String(formData.get("whatsappForce") ?? "");
-    const force = formData.has("whatsappForce")
-      ? formValue === "true" || formValue === "on"
-      : state.whatsappForce;
-    return force ? { force: true } : {};
+    const forceValue = String(formData.get("whatsappForce") ?? "");
+    return forceValue === "true" || forceValue === "on" ? { force: true } : {};
   }
-  const botToken = String(formData.get("discordBotToken") ?? state.discordBotToken ?? "").trim();
+  const botToken = String(formData.get("discordBotToken") ?? "").trim();
   return botToken ? { botToken } : {};
 }
 
@@ -565,12 +710,13 @@ export async function handleFetch(request, context = {}) {
         const result = await kernel.request("adapter.connect", {
           adapter: adapterId,
           accountId,
-          config: buildConnectConfig(adapterId, formData, state),
+          config: buildConnectConfig(adapterId, formData),
         });
         if (!result?.ok) {
           throw new Error(String(result?.error ?? "Adapter connection failed."));
         }
         challenge = result.challenge ?? null;
+        state.account = result.accountId || accountId;
         notice = result.message
           ? String(result.message)
           : challenge
@@ -588,6 +734,7 @@ export async function handleFetch(request, context = {}) {
         if (!result?.ok) {
           throw new Error(String(result?.error ?? "Adapter disconnect failed."));
         }
+        state.account = "new";
         notice = result.message ? String(result.message) : `Disconnected ${adapterId}/${accountId}.`;
       } else if (action === "refresh") {
         const accountId = requireAccountId(formData, adapterId, state);
@@ -601,8 +748,6 @@ export async function handleFetch(request, context = {}) {
       error = err instanceof Error ? err.message : String(err);
     }
   }
-
-  state.discordBotToken = "";
 
   const statusByAdapter = await loadStatusByAdapter(kernel);
   return new Response(renderPage(routeBase, state, {
