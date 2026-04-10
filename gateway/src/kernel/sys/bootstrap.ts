@@ -2,6 +2,13 @@ import type { KernelContext } from "../context";
 import type { SysBootstrapArgs, SysBootstrapResult } from "../../syscalls/system";
 import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
 import {
+  CLI_BINARY_ASSETS,
+  CLI_RELEASE_CHANNELS,
+  inferDefaultCliChannel,
+  mirrorCliChannel,
+  storeDefaultCliChannel,
+} from "../../downloads/cli";
+import {
   buildBuiltinPackageSeeds,
   type PackageEntrypoint,
   type PackageRuntime,
@@ -50,6 +57,16 @@ export async function handleSysBootstrap(
 
   const builtinSeeds = await buildBuiltinPackageSeeds(ctx.env);
   const installed = ctx.packages.seedBuiltinPackages(builtinSeeds);
+  const defaultCliChannel = inferDefaultCliChannel(imported.remoteRef);
+  const mirroredChannels: Array<"stable" | "dev"> = [];
+  if (!ctx.env.STORAGE) {
+    throw new Error("STORAGE binding is required for CLI bootstrap");
+  }
+  for (const channel of CLI_RELEASE_CHANNELS) {
+    await mirrorCliChannel(ctx.env.STORAGE, channel);
+    mirroredChannels.push(channel);
+  }
+  await storeDefaultCliChannel(ctx.env.STORAGE, defaultCliChannel);
 
   return {
     repo: "system/gsv",
@@ -57,6 +74,11 @@ export async function handleSysBootstrap(
     ref: imported.remoteRef,
     head: imported.head ?? null,
     changed: imported.changed,
+    cli: {
+      defaultChannel: defaultCliChannel,
+      mirroredChannels,
+      assets: [...CLI_BINARY_ASSETS],
+    },
     packages: installed.map((record) => ({
       packageId: record.packageId,
       name: record.manifest.name,

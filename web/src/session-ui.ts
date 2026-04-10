@@ -32,6 +32,8 @@ type ValidationResult = {
   step?: OnboardingDetailStep;
 };
 
+type InstallPlatform = "macos" | "linux" | "windows";
+
 const DEFAULT_SOURCE_LABEL = "Default upstream (deathbyknowledge/gsv#osify)";
 const DEFAULT_SOURCE_REF = "osify";
 
@@ -87,6 +89,73 @@ function sourceLooksLikeRemote(value: string): boolean {
   return value.includes("://") || value.startsWith("git@");
 }
 
+function detectBrowserInstallPlatform(): InstallPlatform {
+  if (typeof navigator === "undefined") {
+    return "linux";
+  }
+  const platform = `${navigator.userAgent} ${navigator.platform}`.toLowerCase();
+  if (platform.includes("win")) {
+    return "windows";
+  }
+  if (platform.includes("mac") || platform.includes("darwin")) {
+    return "macos";
+  }
+  return "linux";
+}
+
+function installPlatformLabel(platform: InstallPlatform): string {
+  switch (platform) {
+    case "macos":
+      return "macOS";
+    case "windows":
+      return "Windows";
+    default:
+      return "Linux";
+  }
+}
+
+function gatewayOrigin(): string {
+  return typeof window === "undefined" ? "http://localhost:8787" : window.location.origin;
+}
+
+function gatewayWsUrl(origin: string): string {
+  if (origin.startsWith("https://")) {
+    return `wss://${origin.slice("https://".length)}/ws`;
+  }
+  if (origin.startsWith("http://")) {
+    return `ws://${origin.slice("http://".length)}/ws`;
+  }
+  return `${origin.replace(/\/+$/g, "")}/ws`;
+}
+
+function cliInstallCommand(origin: string, platform: InstallPlatform): string {
+  return platform === "windows"
+    ? `irm ${origin}/downloads/cli/install.ps1 | iex`
+    : `curl -fsSL ${origin}/downloads/cli/install.sh | bash`;
+}
+
+function defaultWorkspacePath(platform: InstallPlatform): string {
+  return platform === "windows" ? "%USERPROFILE%\\projects" : "~/projects";
+}
+
+function buildNodeBootstrapCommand(
+  origin: string,
+  platform: InstallPlatform,
+  deviceId: string,
+  token: string,
+): string {
+  const escapedDeviceId = deviceId.replaceAll("\"", "\\\"");
+  const escapedToken = token.replaceAll("\"", "\\\"");
+  const escapedGatewayUrl = gatewayWsUrl(origin).replaceAll("\"", "\\\"");
+  return [
+    cliInstallCommand(origin, platform),
+    `gsv local-config set gateway.url "${escapedGatewayUrl}"`,
+    `gsv local-config set node.id "${escapedDeviceId}"`,
+    `gsv local-config set node.token "${escapedToken}"`,
+    `gsv node install --id "${escapedDeviceId}" --workspace ${defaultWorkspacePath(platform)}`,
+  ].join("\n");
+}
+
 export function createSessionUi(options: SessionUiOptions): SessionUiController {
   const { rootNode, session } = options;
 
@@ -94,6 +163,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const desktopRootNode = rootNode.querySelector<HTMLElement>("[data-desktop-root]");
   const loginViewNode = rootNode.querySelector<HTMLElement>("[data-session-login-view]");
   const setupViewNode = rootNode.querySelector<HTMLElement>("[data-session-setup-view]");
+  const provisioningViewNode = rootNode.querySelector<HTMLElement>("[data-session-provisioning-view]");
   const setupCompleteNode = rootNode.querySelector<HTMLElement>("[data-session-setup-complete]");
   const loginFormNode = rootNode.querySelector<HTMLFormElement>("[data-session-login-form]");
   const setupFormNode = rootNode.querySelector<HTMLFormElement>("[data-session-setup-form]");
@@ -166,12 +236,18 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupSummarySourceNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-source]");
   const setupSummaryDeviceNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-device]");
   const setupContinueNode = rootNode.querySelector<HTMLButtonElement>("[data-session-setup-continue]");
+  const provisioningTitleNode = rootNode.querySelector<HTMLElement>("[data-session-provisioning-title]");
+  const provisioningCopyNode = rootNode.querySelector<HTMLElement>("[data-session-provisioning-copy]");
+  const setupCopyCliNode = rootNode.querySelector<HTMLButtonElement>("[data-setup-copy-cli]");
   const setupCopyTokenNode = rootNode.querySelector<HTMLButtonElement>("[data-setup-copy-token]");
   const setupCompleteErrorNode = rootNode.querySelector<HTMLElement>("[data-session-setup-complete-error]");
   const setupResultUsernameNode = rootNode.querySelector<HTMLElement>("[data-setup-result-username]");
   const setupResultRootNode = rootNode.querySelector<HTMLElement>("[data-setup-result-root]");
   const setupResultSourceNode = rootNode.querySelector<HTMLElement>("[data-setup-result-source]");
   const setupResultRefNode = rootNode.querySelector<HTMLElement>("[data-setup-result-ref]");
+  const setupResultCliLabelNode = rootNode.querySelector<HTMLElement>("[data-setup-result-cli-label]");
+  const setupResultCliCommandNode = rootNode.querySelector<HTMLTextAreaElement>("[data-setup-result-cli-command]");
+  const setupResultCliMetaNode = rootNode.querySelector<HTMLElement>("[data-setup-result-cli-meta]");
   const setupNodeResultNode = rootNode.querySelector<HTMLElement>("[data-setup-node-result]");
   const setupResultNodeLabelNode = rootNode.querySelector<HTMLElement>("[data-setup-result-node-label]");
   const setupResultNodeTokenNode = rootNode.querySelector<HTMLTextAreaElement>("[data-setup-result-node-token]");
@@ -182,6 +258,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !desktopRootNode ||
     !loginViewNode ||
     !setupViewNode ||
+    !provisioningViewNode ||
     !setupCompleteNode ||
     !loginFormNode ||
     !setupFormNode ||
@@ -253,12 +330,18 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupSummarySourceNode ||
     !setupSummaryDeviceNode ||
     !setupContinueNode ||
+    !provisioningTitleNode ||
+    !provisioningCopyNode ||
+    !setupCopyCliNode ||
     !setupCopyTokenNode ||
     !setupCompleteErrorNode ||
     !setupResultUsernameNode ||
     !setupResultRootNode ||
     !setupResultSourceNode ||
     !setupResultRefNode ||
+    !setupResultCliLabelNode ||
+    !setupResultCliCommandNode ||
+    !setupResultCliMetaNode ||
     !setupNodeResultNode ||
     !setupResultNodeLabelNode ||
     !setupResultNodeTokenNode ||
@@ -696,6 +779,14 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const renderSetupResult = (snapshot: SessionSnapshot): void => {
     const result = snapshot.setupResult;
     const adminMode = onboardingSnapshot.draft.admin.mode ?? lastAdminMode;
+    const origin = gatewayOrigin();
+    const platform = detectBrowserInstallPlatform();
+    const defaultChannel = result?.bootstrap?.cli.defaultChannel ?? "stable";
+    setupResultCliLabelNode.textContent = `Install on ${installPlatformLabel(platform)}`;
+    setupResultCliCommandNode.value = cliInstallCommand(origin, platform);
+    setupResultCliMetaNode.textContent = platform === "windows"
+      ? `Uses the ${defaultChannel} channel from this deployment. The PowerShell installer will report clearly if Windows binaries are not mirrored yet.`
+      : `Uses the ${defaultChannel} channel from this deployment and auto-detects the correct binary for this machine.`;
     if (!result) {
       setupResultUsernameNode.textContent = snapshot.username || "Unknown";
       setupResultRootNode.textContent = adminMode === "custom" ? "Separate admin password" : "Same as account password";
@@ -720,11 +811,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     }
 
     const deviceId = result.nodeToken.allowedDeviceId ?? "node-id";
-    const escapedDeviceId = deviceId.replaceAll("\"", "\\\"");
-    const escapedToken = result.nodeToken.token.replaceAll("\"", "\\\"");
-    const bootstrapCommand =
-      `gsv config --local set node.id \"${escapedDeviceId}\" && ` +
-      `gsv config --local set node.token \"${escapedToken}\"`;
+    const bootstrapCommand = buildNodeBootstrapCommand(origin, platform, deviceId, result.nodeToken.token);
     const expiresLabel = typeof result.nodeToken.expiresAt === "number"
       ? `Expires ${new Date(result.nodeToken.expiresAt).toLocaleString()}`
       : "No expiry";
@@ -732,12 +819,18 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupNodeResultNode.hidden = false;
     setupResultNodeLabelNode.textContent = result.nodeToken.label ?? deviceId;
     setupResultNodeTokenNode.value = bootstrapCommand;
-    setupResultNodeMetaNode.textContent = `${deviceId} · ${expiresLabel}`;
+    setupResultNodeMetaNode.textContent = `${deviceId} · ${expiresLabel} · ${installPlatformLabel(platform)} steps shown`;
   };
 
-  const resolveVisibleView = (snapshot: SessionSnapshot): "login" | "setup" | "complete" | "desktop" => {
+  const resolveVisibleView = (snapshot: SessionSnapshot): "login" | "setup" | "provisioning" | "complete" | "desktop" => {
     if (snapshot.phase === "ready") {
       return "desktop";
+    }
+    if (pendingAction === "setup" && snapshot.phase !== "setup-complete") {
+      return "provisioning";
+    }
+    if (pendingAction === "continue" && snapshot.phase !== "ready") {
+      return "provisioning";
     }
     if (snapshot.phase === "setup-complete") {
       return "complete";
@@ -762,7 +855,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       statusNode.textContent = statusText(sessionSnapshot);
     }
 
-    if (sessionSnapshot.phase === "locked" || sessionSnapshot.phase === "setup" || sessionSnapshot.phase === "setup-complete" || sessionSnapshot.phase === "ready") {
+    if (sessionSnapshot.phase === "setup-complete" || sessionSnapshot.phase === "ready") {
       pendingAction = null;
     }
 
@@ -772,7 +865,19 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     desktopRootNode.hidden = !ready;
     loginViewNode.hidden = visibleView !== "login";
     setupViewNode.hidden = visibleView !== "setup";
+    provisioningViewNode.hidden = visibleView !== "provisioning";
     setupCompleteNode.hidden = visibleView !== "complete";
+
+    if (pendingAction === "setup") {
+      provisioningTitleNode.textContent = "Provisioning gateway";
+      provisioningCopyNode.textContent = "Importing the system source, mirroring CLI binaries, and finalizing first-boot state.";
+    } else if (pendingAction === "continue") {
+      provisioningTitleNode.textContent = "Opening desktop";
+      provisioningCopyNode.textContent = "Finalizing the first session and loading the desktop.";
+    } else {
+      provisioningTitleNode.textContent = "Provisioning gateway";
+      provisioningCopyNode.textContent = "Preparing the first session.";
+    }
 
     submitNode.disabled = sessionSnapshot.phase === "authenticating";
     setupBackNode.disabled = sessionSnapshot.phase === "authenticating";
@@ -950,6 +1055,8 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     try {
       await session.setup(buildSetupPayload());
     } catch {
+      pendingAction = null;
+      render();
       // Error is reflected through session snapshot.
     }
   };
@@ -961,6 +1068,8 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     try {
       await session.continueFromSetup();
     } catch {
+      pendingAction = null;
+      render();
       // Error is reflected through session snapshot.
     }
   };
@@ -974,6 +1083,18 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       await navigator.clipboard.writeText(setupResultNodeTokenNode.value);
     } catch {
       setupResultNodeTokenNode.select();
+    }
+  };
+
+  const onCopyCli = async (): Promise<void> => {
+    if (!setupResultCliCommandNode.value) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(setupResultCliCommandNode.value);
+    } catch {
+      setupResultCliCommandNode.select();
     }
   };
 
@@ -1010,6 +1131,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   setupBackNode.addEventListener("click", onSetupBackClick);
   setupNextNode.addEventListener("click", onSetupNextClick);
   setupContinueNode.addEventListener("click", onSetupContinue);
+  setupCopyCliNode.addEventListener("click", onCopyCli);
   setupCopyTokenNode.addEventListener("click", onCopyToken);
   lockNode.addEventListener("click", onLockClick);
   for (const button of setupLaneButtons) {
@@ -1208,6 +1330,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       setupBackNode.removeEventListener("click", onSetupBackClick);
       setupNextNode.removeEventListener("click", onSetupNextClick);
       setupContinueNode.removeEventListener("click", onSetupContinue);
+      setupCopyCliNode.removeEventListener("click", onCopyCli);
       setupCopyTokenNode.removeEventListener("click", onCopyToken);
       lockNode.removeEventListener("click", onLockClick);
       for (const button of setupLaneButtons) {

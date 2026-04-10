@@ -12,7 +12,7 @@ export default definePackage({
       minHeight: 460,
     },
     capabilities: {
-      kernel: ["sys.device.list", "sys.device.get"],
+      kernel: ["sys.device.list", "sys.device.get", "sys.token.create"],
     },
   },
   app: {

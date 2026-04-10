@@ -4529,3 +4529,55 @@ button:disabled {
     left: 10px;
   }
 }
+
+.session-progress-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.session-progress-bar {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.session-progress-bar > span {
+  position: absolute;
+  inset: 0 auto 0 -28%;
+  width: 28%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(138, 224, 255, 0.12), rgba(138, 224, 255, 0.92), rgba(230, 244, 249, 0.18));
+  animation: session-progress-slide 1.1s ease-in-out infinite;
+}
+
+.session-progress-note {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.session-progress-note strong {
+  font-size: 0.96rem;
+}
+
+.session-progress-note p {
+  margin: 0;
+  color: var(--shell-muted, rgba(230, 244, 249, 0.72));
+}
+
+@keyframes session-progress-slide {
+  0% {
+    transform: translateX(0%);
+  }
+
+  100% {
+    transform: translateX(460%);
+  }
+}
