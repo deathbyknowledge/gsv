@@ -647,7 +647,7 @@ export async function handleFetch(request, context = {}) {
         ...(typeof expiresAt === "number" ? { expiresAt } : {}),
       });
       const token = created?.token ?? created;
-      const effectiveLabel = token?.label ?? label || deviceId;
+      const effectiveLabel = (token?.label ?? label) || deviceId;
       const expiresLabel = typeof token?.expiresAt === "number"
         ? `Expires ${new Date(token.expiresAt).toLocaleString()}`
         : "No expiry";
