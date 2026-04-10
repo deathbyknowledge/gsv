@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
-    "@gsv/package": "workspace:*",
-    "qrcode": "^1.5.4"
+    "@gsv/package": "workspace:*"
   }
 }

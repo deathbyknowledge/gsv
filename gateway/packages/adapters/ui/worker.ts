@@ -1,5 +1,3 @@
-import QRCode from "qrcode";
-
 const ADAPTERS = [
   {
     id: "whatsapp",
@@ -239,21 +237,19 @@ function renderStatusList(adapter, account) {
 }
 
 function renderQrChallenge(challenge) {
-  if (!challenge || challenge.type !== "qr") {
+  if (!challenge || challenge.type !== "qr" || !challenge.data) {
     return "";
   }
-  const qrMarkup = challenge.renderSvg
-    ? `<div class="qr-graphic" aria-label="WhatsApp QR code">${challenge.renderSvg}</div>`
-    : challenge.data
-      ? `<pre class="qr-raw">${escapeHtml(challenge.data)}</pre>`
-      : "";
   return `
     <section class="detail-section qr-section">
       <div class="section-titlebar">
         <h2>Pair phone</h2>
       </div>
       <div class="qr-layout">
-        ${qrMarkup}
+        <div class="qr-graphic" data-qr="${escapeHtml(challenge.data)}" aria-label="WhatsApp QR code">
+          <span class="qr-loading">Preparing QR…</span>
+        </div>
+        <pre class="qr-raw" data-qr-fallback>${escapeHtml(challenge.data)}</pre>
         <div class="qr-copy">
           <p>${escapeHtml(challenge.message || "Open WhatsApp on your phone and scan this code from Linked Devices.")}</p>
           <ol>
@@ -642,6 +638,13 @@ function renderPage(routeBase, state, payload) {
         padding: 16px;
         box-sizing: border-box;
       }
+      .qr-loading {
+        display: block;
+        color: #4b5563;
+        font-size: 12px;
+        text-align: center;
+        padding: 96px 0;
+      }
       .qr-graphic svg {
         width: 100%;
         height: auto;
@@ -693,8 +696,36 @@ function renderPage(routeBase, state, payload) {
         ${renderDetailPane(routeBase, state, adapter, accounts, payload.challenge)}
       </div>
     </main>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/lib/browser.min.js"></script>
     <script>
       console.log("[adapters] build probe:", ${JSON.stringify(BUILD_PROBE)});
+      const renderQrGraphics = () => {
+        const api = globalThis.QRCode;
+        if (!api || typeof api.toString !== "function") {
+          console.warn("[adapters] QRCode browser bundle unavailable");
+          return;
+        }
+        document.querySelectorAll(".qr-graphic[data-qr]").forEach((node) => {
+          const qrText = node.getAttribute("data-qr");
+          if (!qrText) return;
+          api.toString(qrText, { type: "svg", margin: 1, width: 280 }, (error, svg) => {
+            if (error) {
+              console.error("[adapters] failed to render QR challenge", error);
+              return;
+            }
+            node.innerHTML = svg;
+            const fallback = node.parentElement?.querySelector("[data-qr-fallback]");
+            if (fallback instanceof HTMLElement) {
+              fallback.hidden = true;
+            }
+          });
+        });
+      };
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", renderQrGraphics, { once: true });
+      } else {
+        renderQrGraphics();
+      }
     </script>
   </body>
 </html>`;
@@ -714,26 +745,6 @@ async function loadStatusByAdapter(kernel) {
         : [];
   }
   return statusByAdapter;
-}
-
-async function prepareChallenge(challenge) {
-  if (!challenge || challenge.type !== "qr" || !challenge.data) {
-    return challenge;
-  }
-  try {
-    const renderSvg = await QRCode.toString(String(challenge.data), {
-      type: "svg",
-      margin: 1,
-      width: 280,
-    });
-    return {
-      ...challenge,
-      renderSvg,
-    };
-  } catch (error) {
-    console.error("[adapters] failed to render QR challenge", error);
-    return challenge;
-  }
 }
 
 function requireAccountId(formData, adapterId, state) {
@@ -840,7 +851,6 @@ export async function handleFetch(request, context = {}) {
     }
   }
 
-  challenge = await prepareChallenge(challenge);
   const statusByAdapter = await loadStatusByAdapter(kernel);
   return new Response(renderPage(routeBase, state, {
     notice,
