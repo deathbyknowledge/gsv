@@ -60,7 +60,6 @@ const CONFIG_SECTION_IDS = new Set(CONFIG_SECTIONS.map((section) => section.id))
 const CONTROL_TABS = [
   { id: "config", title: "Config" },
   { id: "access", title: "Access" },
-  { id: "adapters", title: "Adapters" },
   { id: "advanced", title: "Advanced" },
 ];
 
@@ -810,22 +809,18 @@ function renderPage(routeBase, payload) {
 }
 
 async function loadPageData(kernel, state) {
-  const [configResult, tokenResult, linkResult, adapterResult] = await Promise.allSettled([
+  const [configResult, tokenResult, linkResult] = await Promise.allSettled([
     kernel.request("sys.config.get", {}),
     kernel.request("sys.token.list", {}),
     kernel.request("sys.link.list", {}),
-    kernel.request("adapter.status", {
-      adapter: state.adapterId,
-      accountId: state.adapterAccountId.trim() || undefined,
-    }),
   ]);
 
   return {
     entries: configResult.status === "fulfilled" && Array.isArray(configResult.value?.entries) ? configResult.value.entries : [],
     tokens: tokenResult.status === "fulfilled" && Array.isArray(tokenResult.value?.tokens) ? [...tokenResult.value.tokens].sort((left, right) => Number(right?.createdAt ?? 0) - Number(left?.createdAt ?? 0)) : [],
     links: linkResult.status === "fulfilled" && Array.isArray(linkResult.value?.links) ? [...linkResult.value.links].sort((left, right) => Number(right?.createdAt ?? 0) - Number(left?.createdAt ?? 0)) : [],
-    adapterStatus: adapterResult.status === "fulfilled" && Array.isArray(adapterResult.value?.accounts) ? adapterResult.value.accounts : [],
-    adapterError: adapterResult.status === "rejected" ? (adapterResult.reason instanceof Error ? adapterResult.reason.message : String(adapterResult.reason)) : "",
+    adapterStatus: [],
+    adapterError: "",
     loadError: [configResult, tokenResult, linkResult]
       .filter((result) => result.status === "rejected")
       .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason))
