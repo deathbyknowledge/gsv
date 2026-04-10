@@ -349,15 +349,17 @@ function renderPage(routeBase, state, payload) {
     <link rel="stylesheet" href="/runtime/theme.css" />
     <style>
       :root {
-        --panel-1: rgba(9, 19, 26, 0.96);
-        --panel-2: rgba(13, 27, 36, 0.94);
-        --panel-3: rgba(17, 34, 45, 0.9);
-        --line: rgba(138, 224, 255, 0.14);
-        --line-strong: rgba(138, 224, 255, 0.24);
-        --good: #8ae0b2;
-        --warn: #f0d284;
-        --idle: #6f8794;
-        --danger: #ff9f9f;
+        --panel-1: rgba(7, 19, 26, 0.96);
+        --panel-2: rgba(10, 23, 31, 0.95);
+        --panel-3: rgba(12, 28, 36, 0.92);
+        --surface: rgba(14, 30, 38, 0.82);
+        --surface-soft: rgba(255, 255, 255, 0.03);
+        --line: rgba(125, 211, 252, 0.12);
+        --line-strong: rgba(125, 211, 252, 0.22);
+        --good: rgba(138, 224, 255, 0.92);
+        --warn: rgba(146, 168, 179, 0.92);
+        --idle: rgba(146, 168, 179, 0.55);
+        --danger: #ffb6ad;
       }
       html, body { min-height: 100%; }
       body { margin: 0; }
@@ -408,7 +410,7 @@ function renderPage(routeBase, state, payload) {
       }
       .adapter-row.is-active,
       .account-row.is-active {
-        background: rgba(138, 224, 255, 0.08);
+        background: rgba(125, 211, 252, 0.08);
       }
       .adapter-row-icon,
       .account-row-icon,
@@ -464,11 +466,11 @@ function renderPage(routeBase, state, payload) {
       .icon-nav:hover,
       .icon-button:hover,
       .icon-nav.is-active {
-        background: rgba(138, 224, 255, 0.08);
+        background: rgba(125, 211, 252, 0.08);
         border-color: var(--line-strong);
       }
       .icon-button.is-primary {
-        background: rgba(138, 224, 255, 0.1);
+        background: rgba(125, 211, 252, 0.1);
         border-color: var(--line-strong);
       }
       .detail-pane {
@@ -515,7 +517,7 @@ function renderPage(routeBase, state, payload) {
       }
       .detail-section {
         border: 1px solid var(--line);
-        background: rgba(6, 12, 16, 0.36);
+        background: var(--surface);
       }
       .section-titlebar {
         height: 44px;
@@ -556,7 +558,7 @@ function renderPage(routeBase, state, payload) {
         padding: 10px 12px;
         border: 1px solid var(--line);
         border-radius: 8px;
-        background: rgba(0, 0, 0, 0.2);
+        background: rgba(255, 255, 255, 0.03);
         color: var(--text);
       }
       .toggle-row {
@@ -615,7 +617,7 @@ function renderPage(routeBase, state, payload) {
         margin: 18px 18px 0;
         padding: 10px 14px;
         border: 1px solid var(--line);
-        background: rgba(0,0,0,0.18);
+        background: var(--surface);
       }
       .error-strip { color: var(--danger); }
       @media (max-width: 1100px) {
