@@ -349,16 +349,15 @@ function renderPage(routeBase, state, payload) {
     <link rel="stylesheet" href="/runtime/theme.css" />
     <style>
       :root {
-        --panel-1: rgba(7, 19, 26, 0.96);
-        --panel-2: rgba(10, 23, 31, 0.95);
-        --panel-3: rgba(12, 28, 36, 0.92);
-        --surface: rgba(14, 30, 38, 0.82);
-        --surface-soft: rgba(255, 255, 255, 0.03);
-        --line: rgba(125, 211, 252, 0.12);
-        --line-strong: rgba(125, 211, 252, 0.22);
-        --good: rgba(138, 224, 255, 0.92);
-        --warn: rgba(146, 168, 179, 0.92);
-        --idle: rgba(146, 168, 179, 0.55);
+        --panel-1: rgba(255, 255, 255, 0.015);
+        --panel-2: rgba(255, 255, 255, 0.025);
+        --panel-3: rgba(255, 255, 255, 0.02);
+        --surface: rgba(255, 255, 255, 0.03);
+        --line: rgba(255, 255, 255, 0.07);
+        --line-strong: var(--edge);
+        --good: var(--accent);
+        --warn: var(--muted);
+        --idle: rgba(255, 255, 255, 0.16);
         --danger: #ffb6ad;
       }
       html, body { min-height: 100%; }
@@ -367,7 +366,7 @@ function renderPage(routeBase, state, payload) {
         min-height: 100vh;
         display: grid;
         grid-template-columns: 250px 280px minmax(0, 1fr);
-        background: linear-gradient(180deg, rgba(6, 13, 18, 0.92), rgba(7, 16, 22, 0.98));
+        background: transparent;
       }
       .adapters-rail {
         min-width: 0;
@@ -410,7 +409,8 @@ function renderPage(routeBase, state, payload) {
       }
       .adapter-row.is-active,
       .account-row.is-active {
-        background: rgba(125, 211, 252, 0.08);
+        background: rgba(255, 255, 255, 0.045);
+        box-shadow: inset 0 0 0 1px var(--line-strong);
       }
       .adapter-row-icon,
       .account-row-icon,
@@ -466,11 +466,11 @@ function renderPage(routeBase, state, payload) {
       .icon-nav:hover,
       .icon-button:hover,
       .icon-nav.is-active {
-        background: rgba(125, 211, 252, 0.08);
+        background: rgba(255, 255, 255, 0.05);
         border-color: var(--line-strong);
       }
       .icon-button.is-primary {
-        background: rgba(125, 211, 252, 0.1);
+        background: rgba(255, 255, 255, 0.06);
         border-color: var(--line-strong);
       }
       .detail-pane {
@@ -558,7 +558,7 @@ function renderPage(routeBase, state, payload) {
         padding: 10px 12px;
         border: 1px solid var(--line);
         border-radius: 8px;
-        background: rgba(255, 255, 255, 0.03);
+        background: rgba(255, 255, 255, 0.02);
         color: var(--text);
       }
       .toggle-row {
