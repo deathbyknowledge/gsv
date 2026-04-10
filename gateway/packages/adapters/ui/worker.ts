@@ -351,24 +351,27 @@ function renderPage(routeBase, state, payload) {
     <link rel="stylesheet" href="/runtime/theme.css" />
     <style>
       :root {
-        --panel-1: rgba(255, 255, 255, 0.02);
-        --panel-2: rgba(255, 255, 255, 0.038);
-        --panel-3: rgba(255, 255, 255, 0.03);
-        --surface: rgba(255, 255, 255, 0.03);
-        --line: rgba(255, 255, 255, 0.1);
-        --line-strong: var(--edge);
-        --good: var(--accent);
-        --warn: var(--muted);
+        --panel-1: rgba(255, 255, 255, 0.012);
+        --panel-2: rgba(255, 255, 255, 0.02);
+        --panel-3: rgba(255, 255, 255, 0.016);
+        --surface: rgba(255, 255, 255, 0.024);
+        --line: rgba(255, 255, 255, 0.08);
+        --line-strong: rgba(255, 255, 255, 0.14);
+        --good: rgba(255, 255, 255, 0.82);
+        --warn: rgba(255, 255, 255, 0.55);
         --idle: rgba(255, 255, 255, 0.16);
         --danger: #ffb6ad;
       }
       html, body { min-height: 100%; }
-      body { margin: 0; }
+      body {
+        margin: 0;
+        background: #071019;
+      }
       main {
         min-height: 100vh;
         display: grid;
         grid-template-columns: 250px 280px minmax(0, 1fr);
-        background: transparent;
+        background: rgba(255, 255, 255, 0.01);
       }
       .adapters-rail {
         min-width: 0;
@@ -403,8 +406,7 @@ function renderPage(routeBase, state, payload) {
       }
       .rail-probe {
         font-size: 11px;
-        color: var(--accent);
-        opacity: 0.9;
+        color: rgba(255, 255, 255, 0.45);
       }
       .adapter-list,
       .account-list {
@@ -426,7 +428,7 @@ function renderPage(routeBase, state, payload) {
       }
       .adapter-row.is-active,
       .account-row.is-active {
-        background: rgba(255, 255, 255, 0.045);
+        background: rgba(255, 255, 255, 0.04);
         box-shadow: inset 0 0 0 1px var(--line-strong);
       }
       .adapter-row-icon,
@@ -483,11 +485,11 @@ function renderPage(routeBase, state, payload) {
       .icon-nav:hover,
       .icon-button:hover,
       .icon-nav.is-active {
-        background: rgba(255, 255, 255, 0.05);
+        background: rgba(255, 255, 255, 0.04);
         border-color: var(--line-strong);
       }
       .icon-button.is-primary {
-        background: rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.05);
         border-color: var(--line-strong);
       }
       .detail-pane {
