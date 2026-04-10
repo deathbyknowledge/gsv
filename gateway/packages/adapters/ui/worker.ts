@@ -726,6 +726,7 @@ export async function handleFetch(request, context = {}) {
     const rawAdapterId = String(formData.get("adapter") ?? "").trim();
     const adapterId = ADAPTER_IDS.has(rawAdapterId) ? rawAdapterId : state.adapter;
     const action = String(formData.get("action") ?? "").trim();
+    const traceId = crypto.randomUUID().slice(0, 8);
 
     try {
       if (action === "connect") {
@@ -733,11 +734,21 @@ export async function handleFetch(request, context = {}) {
         if (!accountId) {
           throw new Error("Account id is required.");
         }
+        const config = {
+          ...buildConnectConfig(adapterId, formData),
+          __traceId: traceId,
+        };
+        console.log(
+          `[adapters:${traceId}] connect submit adapter=${adapterId} accountId=${accountId} route=${routeBase}`,
+        );
         const result = await kernel.request("adapter.connect", {
           adapter: adapterId,
           accountId,
-          config: buildConnectConfig(adapterId, formData),
+          config,
         });
+        console.log(
+          `[adapters:${traceId}] connect result ok=${result?.ok === true} challenge=${Boolean(result?.challenge)}`,
+        );
         if (!result?.ok) {
           throw new Error(String(result?.error ?? "Adapter connection failed."));
         }
@@ -753,10 +764,12 @@ export async function handleFetch(request, context = {}) {
         if (!accountId) {
           throw new Error("Account id is required.");
         }
+        console.log(`[adapters:${traceId}] disconnect submit adapter=${adapterId} accountId=${accountId}`);
         const result = await kernel.request("adapter.disconnect", {
           adapter: adapterId,
           accountId,
         });
+        console.log(`[adapters:${traceId}] disconnect result ok=${result?.ok === true}`);
         if (!result?.ok) {
           throw new Error(String(result?.error ?? "Adapter disconnect failed."));
         }
@@ -764,13 +777,16 @@ export async function handleFetch(request, context = {}) {
         notice = result.message ? String(result.message) : `Disconnected ${adapterId}/${accountId}.`;
       } else if (action === "refresh") {
         const accountId = requireAccountId(formData, adapterId, state);
+        console.log(`[adapters:${traceId}] refresh submit adapter=${adapterId} accountId=${accountId}`);
         await kernel.request("adapter.status", {
           adapter: adapterId,
           accountId: accountId || undefined,
         });
+        console.log(`[adapters:${traceId}] refresh complete adapter=${adapterId} accountId=${accountId}`);
         notice = accountId ? `Refreshed ${adapterId}/${accountId}.` : `Refreshed ${adapterId} status.`;
       }
     } catch (err) {
+      console.error(`[adapters:${traceId}] action=${action} failed adapter=${adapterId}`, err);
       error = err instanceof Error ? err.message : String(err);
     }
   }

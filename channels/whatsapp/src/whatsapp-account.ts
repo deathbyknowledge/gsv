@@ -171,6 +171,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     // Ensure accountId is set from header (required on all requests)
     const headerAccountId = request.headers.get("X-Account-Id");
+    const traceId = request.headers.get("X-Trace-Id")?.trim() || "no-trace";
     if (headerAccountId && !this.state.accountId) {
       this.state.accountId = headerAccountId;
       this.ctx.storage.kv.put("accountId", headerAccountId);
@@ -183,13 +184,16 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     const url = new URL(request.url);
     const path = url.pathname;
+    console.log(
+      `[whatsapp.do:${traceId}] fetch accountId=${this.state.accountId} method=${request.method} path=${path}${url.search}`,
+    );
 
     try {
       switch (path) {
         case "/status":
           return this.handleStatus();
         case "/login":
-          return await this.handleLogin(url, request.method === "POST");
+          return await this.handleLogin(url, request.method === "POST", traceId);
         case "/logout":
           return await this.handleLogout();
         case "/stop":
@@ -221,17 +225,22 @@ export class WhatsAppAccount extends DurableObject<Env> {
     });
   }
 
-  private async handleLogin(url: URL, isPost: boolean): Promise<Response> {
+  private async handleLogin(url: URL, isPost: boolean, traceId: string): Promise<Response> {
     const force = url.searchParams.get("force") === "true";
+    console.log(
+      `[whatsapp.do:${traceId}] handleLogin accountId=${this.state.accountId} force=${force ? "true" : "false"} isPost=${isPost ? "true" : "false"} connected=${this.state.connected ? "true" : "false"} hasSocket=${this.sock ? "true" : "false"}`,
+    );
     
     // If already connected, return success
     if (this.state.connected && this.sock) {
+      console.log(`[whatsapp.do:${traceId}] handleLogin already connected`);
       return Response.json({ connected: true, message: "Already connected" });
     }
 
     // Only clear auth if explicitly requested with force=true
     // This prevents rate-limiting issues from repeated new device pairing attempts
     const hasAuth = await hasAuthState(this.ctx.storage);
+    console.log(`[whatsapp.do:${traceId}] handleLogin hasAuth=${hasAuth ? "true" : "false"}`);
     if (force && hasAuth) {
       console.log(`[WA] Force login: clearing existing auth state`);
       await clearAuthState(this.ctx.storage);
@@ -243,11 +252,15 @@ export class WhatsAppAccount extends DurableObject<Env> {
     
     // Start the socket
     if (!this.sock) {
+      console.log(`[whatsapp.do:${traceId}] handleLogin starting socket`);
       await this.startSocket();
     }
 
     // Wait for QR code to be generated (60s to allow time for scanning)
     const result = await this.waitForQrOrConnection(60000);
+    console.log(
+      `[whatsapp.do:${traceId}] handleLogin wait result connected=${result.connected ? "true" : "false"} qr=${result.qr ? "true" : "false"}`,
+    );
     
     if (result.connected) {
       // Login succeeded - clear pending flag and schedule keep-alive
