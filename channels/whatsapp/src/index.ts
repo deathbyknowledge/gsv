@@ -99,7 +99,17 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     | { ok: false; error: string }
   > {
     const force = config.force === true || config.force === "true";
-    const login = await this.login(accountId, { force });
+    const traceId =
+      typeof config.__traceId === "string" && config.__traceId.trim().length > 0
+        ? config.__traceId.trim()
+        : "no-trace";
+    console.log(
+      `[whatsapp.connect:${traceId}] start accountId=${accountId} force=${force ? "true" : "false"}`,
+    );
+    const login = await this.login(accountId, { force, traceId });
+    console.log(
+      `[whatsapp.connect:${traceId}] login ok=${login.ok === true} qr=${Boolean(login.ok && "qrDataUrl" in login && login.qrDataUrl)}`,
+    );
     if (!login.ok) {
       return { ok: false, error: login.error };
     }
@@ -217,11 +227,16 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     }
   }
 
-  async login(accountId: string, options?: { force?: boolean }): Promise<LoginResult> {
+  async login(accountId: string, options?: { force?: boolean; traceId?: string }): Promise<LoginResult> {
     try {
+      const traceId = options?.traceId?.trim() || "no-trace";
       const path = options?.force ? "/login?force=true" : "/login";
-      const res = await this.doFetch(accountId, path, { method: "POST" });
+      console.log(`[whatsapp.login:${traceId}] forwarding accountId=${accountId} path=${path}`);
+      const res = await this.doFetch(accountId, path, { method: "POST" }, traceId);
       const data = await res.json() as { connected?: boolean; qr?: string; message?: string; error?: string };
+      console.log(
+        `[whatsapp.login:${traceId}] response status=${res.status} connected=${Boolean(data.connected)} qr=${Boolean(data.qr)} error=${data.error ?? ""}`,
+      );
       if (data.connected) {
         return { ok: true, message: data.message || "Connected" };
       }
@@ -249,11 +264,22 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     return this.env.WHATSAPP_ACCOUNT.get(id);
   }
 
-  private doFetch(accountId: string, path: string, init?: RequestInit): Promise<Response> {
+  private doFetch(
+    accountId: string,
+    path: string,
+    init?: RequestInit,
+    traceId?: string,
+  ): Promise<Response> {
     const stub = this.getDO(accountId);
     const headers = new Headers(init?.headers);
     headers.set("X-Account-Id", accountId);
+    if (traceId) {
+      headers.set("X-Trace-Id", traceId);
+    }
     const url = new URL(path, "https://whatsapp-account.internal");
+    console.log(
+      `[whatsapp.doFetch${traceId ? `:${traceId}` : ""}] accountId=${accountId} path=${url.pathname}${url.search}`,
+    );
     return stub.fetch(new Request(url.toString(), { ...init, headers }));
   }
 }
