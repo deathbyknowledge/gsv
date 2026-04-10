@@ -253,7 +253,8 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     const stub = this.getDO(accountId);
     const headers = new Headers(init?.headers);
     headers.set("X-Account-Id", accountId);
-    return stub.fetch(new Request(`http://do${path}`, { ...init, headers }));
+    const url = new URL(path, "https://whatsapp-account.internal");
+    return stub.fetch(new Request(url.toString(), { ...init, headers }));
   }
 }
 

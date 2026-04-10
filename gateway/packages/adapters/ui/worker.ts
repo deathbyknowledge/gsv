@@ -376,6 +376,7 @@ function renderPage(routeBase, state, payload) {
       }
       .adapters-rail-secondary {
         background: var(--panel-2);
+        border-right: 1px solid var(--line);
       }
       .detail-shell {
         min-width: 0;
@@ -403,6 +404,7 @@ function renderPage(routeBase, state, payload) {
         display: flex;
         flex-direction: column;
         padding: 8px;
+        gap: 2px;
       }
       .adapter-row,
       .account-row {
@@ -523,6 +525,7 @@ function renderPage(routeBase, state, payload) {
         display: grid;
         gap: 18px;
         align-content: start;
+        background: rgba(255, 255, 255, 0.01);
       }
       .detail-section {
         border: 1px solid var(--line);
