@@ -33,6 +33,7 @@ import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
 import { handleSysWorkspaceList } from "./sys/workspaces";
 import { handleSysBootstrap } from "./sys/bootstrap";
+import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
   handlePkgAdd,
   handlePkgCheckout,
@@ -233,6 +234,9 @@ async function dispatchNative(
       // --- sys.* ---
       case "sys.connect":
         return errFrame(frame.id, 400, "sys.connect handled separately");
+      case "sys.setup.assist":
+        data = await handleSysSetupAssist(frame.args, ctx);
+        break;
       case "sys.setup":
         return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.bootstrap":

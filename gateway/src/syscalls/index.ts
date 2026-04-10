@@ -65,6 +65,8 @@ import type {
 import type {
   ConnectArgs,
   ConnectResult,
+  SysSetupAssistArgs,
+  SysSetupAssistResult,
   SysSetupArgs,
   SysSetupResult,
   SysBootstrapArgs,
@@ -171,6 +173,7 @@ export type SyscallDomains = {
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
+  "sys.setup.assist": { args: SysSetupAssistArgs; result: SysSetupAssistResult };
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };

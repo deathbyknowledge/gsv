@@ -1,4 +1,11 @@
 import type { SessionService, SessionSnapshot, SessionSetupInput } from "./session-service";
+import { createOnboardingService } from "./onboarding-service";
+import type {
+  OnboardingDetailStep,
+  OnboardingDraft,
+  OnboardingLane,
+  OnboardingStage,
+} from "../../gateway/src/syscalls/system";
 
 type SessionUiOptions = {
   rootNode: HTMLElement;
@@ -10,9 +17,6 @@ type SessionUiController = {
 };
 
 type PendingAction = "login" | "setup" | "continue" | null;
-type SetupLane = "quick" | "customize" | "advanced";
-type SetupStage = "welcome" | "details" | "review";
-type SetupDetailStep = "account" | "admin" | "ai" | "source" | "device";
 type AdminMode = "same" | "custom";
 
 type SetupLaneMeta = {
@@ -23,10 +27,15 @@ type SetupLaneMeta = {
   reviewCopy: string;
 };
 
+type ValidationResult = {
+  message: string | null;
+  step?: OnboardingDetailStep;
+};
+
 const DEFAULT_SOURCE_LABEL = "Default upstream (deathbyknowledge/gsv#osify)";
 const DEFAULT_SOURCE_REF = "osify";
 
-const SETUP_LANE_META: Record<SetupLane, SetupLaneMeta> = {
+const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
   quick: {
     label: "Quick start",
     kicker: "Quick start",
@@ -140,6 +149,15 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupNodeDeviceIdNode = rootNode.querySelector<HTMLInputElement>("[data-setup-node-device-id]");
   const setupNodeLabelNode = rootNode.querySelector<HTMLInputElement>("[data-setup-node-label]");
   const setupNodeExpiryNode = rootNode.querySelector<HTMLInputElement>("[data-setup-node-expiry]");
+  const setupAssistToggleNode = rootNode.querySelector<HTMLElement>("[data-setup-assist-toggle]");
+  const setupModeManualNode = rootNode.querySelector<HTMLInputElement>("[data-setup-mode-manual]");
+  const setupModeGuidedNode = rootNode.querySelector<HTMLInputElement>("[data-setup-mode-guided]");
+  const setupGuidePanelNode = rootNode.querySelector<HTMLElement>("[data-setup-guide-panel]");
+  const setupGuideLogNode = rootNode.querySelector<HTMLElement>("[data-setup-guide-log]");
+  const setupGuideErrorNode = rootNode.querySelector<HTMLElement>("[data-setup-guide-error]");
+  const setupGuideFormNode = rootNode.querySelector<HTMLElement>("[data-setup-guide-form]");
+  const setupGuideInputNode = rootNode.querySelector<HTMLInputElement>("[data-setup-guide-input]");
+  const setupGuideSendNode = rootNode.querySelector<HTMLButtonElement>("[data-setup-guide-send]");
   const setupSummaryLaneNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-lane]");
   const setupSummaryLaneCopyNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-lane-copy]");
   const setupSummaryAccountNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-account]");
@@ -218,6 +236,15 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupNodeDeviceIdNode ||
     !setupNodeLabelNode ||
     !setupNodeExpiryNode ||
+    !setupAssistToggleNode ||
+    !setupModeManualNode ||
+    !setupModeGuidedNode ||
+    !setupGuidePanelNode ||
+    !setupGuideLogNode ||
+    !setupGuideErrorNode ||
+    !setupGuideFormNode ||
+    !setupGuideInputNode ||
+    !setupGuideSendNode ||
     !setupSummaryLaneNode ||
     !setupSummaryLaneCopyNode ||
     !setupSummaryAccountNode ||
@@ -240,11 +267,13 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     throw new Error("Session UI markup is incomplete");
   }
 
-  let setupLane: SetupLane | null = null;
-  let setupStage: SetupStage = "welcome";
-  let setupDetailStepIndex = 0;
+  let sessionSnapshot = session.snapshot();
+  const onboarding = createOnboardingService(session.client, sessionSnapshot.username);
+  let onboardingSnapshot = onboarding.snapshot();
   let pendingAction: PendingAction = null;
-  let lastAdminMode: AdminMode = "same";
+  let lastAdminMode: AdminMode = onboardingSnapshot.draft.admin.mode;
+  let loginValidationError: string | null = null;
+  let setupValidationError: string | null = null;
 
   const setVisibleError = (node: HTMLElement, message: string | null): void => {
     if (message) {
@@ -256,47 +285,95 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     node.textContent = "";
   };
 
-  const activeLaneMeta = (): SetupLaneMeta | null => {
-    return setupLane ? SETUP_LANE_META[setupLane] : null;
+  const activeLaneMeta = (): SetupLaneMeta => {
+    return SETUP_LANE_META[onboardingSnapshot.draft.lane];
   };
 
-  const detailStepsForLane = (): SetupDetailStep[] => {
-    if (setupLane === "quick") return ["account", "admin"];
+  const detailStepsForLane = (lane = onboardingSnapshot.draft.lane): OnboardingDetailStep[] => {
+    if (lane === "quick") return ["account", "admin"];
     return ["account", "admin", "ai", "source", "device"];
   };
 
-  const currentDetailStep = (): SetupDetailStep => {
+  const currentDetailStep = (): OnboardingDetailStep => {
     const steps = detailStepsForLane();
-    const clampedIndex = Math.max(0, Math.min(setupDetailStepIndex, steps.length - 1));
-    return steps[clampedIndex] ?? "account";
+    const current = onboardingSnapshot.draft.detailStep;
+    return steps.includes(current) ? current : steps[0] ?? "account";
+  };
+
+  const advancedSectionsVisible = (): boolean => {
+    return onboardingSnapshot.draft.lane === "customize" || onboardingSnapshot.draft.lane === "advanced";
+  };
+
+  const guideShortcutReady = (): boolean => {
+    return onboardingSnapshot.draft.mode === "guided" && onboardingSnapshot.reviewReady;
+  };
+
+  const clearSetupError = (): void => {
+    if (!setupValidationError) return;
+    setupValidationError = null;
+    render();
+  };
+
+  const updateDraft = (updater: (draft: OnboardingDraft) => OnboardingDraft): void => {
+    setupValidationError = null;
+    onboarding.updateDraft(updater);
+  };
+
+  const applyDraftToFields = (): void => {
+    const { draft } = onboardingSnapshot;
+
+    if (setupUsernameNode.value !== draft.account.username) setupUsernameNode.value = draft.account.username;
+    if (setupPasswordNode.value !== draft.account.password) setupPasswordNode.value = draft.account.password;
+    if (setupPasswordConfirmNode.value !== draft.account.passwordConfirm) {
+      setupPasswordConfirmNode.value = draft.account.passwordConfirm;
+    }
+    setupAdminSameNode.checked = draft.admin.mode === "same";
+    setupAdminCustomNode.checked = draft.admin.mode === "custom";
+    if (setupRootPasswordNode.value !== draft.admin.password) setupRootPasswordNode.value = draft.admin.password;
+
+    setupAiEnabledNode.checked = draft.ai.enabled;
+    if (setupAiProviderNode.value !== draft.ai.provider) setupAiProviderNode.value = draft.ai.provider;
+    if (setupAiModelNode.value !== draft.ai.model) setupAiModelNode.value = draft.ai.model;
+    if (setupAiKeyNode.value !== draft.ai.apiKey) setupAiKeyNode.value = draft.ai.apiKey;
+
+    setupSourceEnabledNode.checked = draft.source.enabled;
+    if (setupBootstrapSourceNode.value !== draft.source.value) setupBootstrapSourceNode.value = draft.source.value;
+    if (setupBootstrapRefNode.value !== draft.source.ref) setupBootstrapRefNode.value = draft.source.ref;
+
+    setupNodeEnabledNode.checked = draft.device.enabled;
+    if (setupNodeDeviceIdNode.value !== draft.device.deviceId) setupNodeDeviceIdNode.value = draft.device.deviceId;
+    if (setupNodeLabelNode.value !== draft.device.label) setupNodeLabelNode.value = draft.device.label;
+    if (setupNodeExpiryNode.value !== draft.device.expiryDays) setupNodeExpiryNode.value = draft.device.expiryDays;
+
+    setupModeManualNode.checked = draft.mode === "manual";
+    setupModeGuidedNode.checked = draft.mode === "guided";
   };
 
   const applyDetailSections = (): void => {
     const activeStep = currentDetailStep();
     const showAdvanced = advancedSectionsVisible();
     for (const section of setupDetailSections) {
-      const step = section.dataset.setupDetailStep as SetupDetailStep | undefined;
+      const step = section.dataset.setupDetailStep;
       const hiddenForLane = !showAdvanced && (step === "ai" || step === "source" || step === "device");
-      section.hidden = setupStage !== "details" || step !== activeStep || hiddenForLane;
+      section.hidden = onboardingSnapshot.draft.stage !== "details" || step !== activeStep || hiddenForLane;
     }
-  };
-
-  const advancedSectionsVisible = (): boolean => {
-    return setupLane === "customize" || setupLane === "advanced";
   };
 
   const applyLanePresentation = (): void => {
     const meta = activeLaneMeta();
-    if (!meta) {
+    const { stage } = onboardingSnapshot.draft;
+
+    if (stage === "welcome") {
       setupHeadingNode.textContent = "Bring this gateway online";
       setupCopyNode.textContent = "Choose how much control you want, then review the exact plan before provisioning.";
-      return;
+      setupLaneKickerNode.textContent = meta.kicker;
+    } else {
+      setupHeadingNode.textContent = meta.label;
+      setupCopyNode.textContent = meta.description;
+      setupLaneKickerNode.textContent = meta.kicker;
     }
 
-    setupHeadingNode.textContent = meta.label;
-    setupCopyNode.textContent = meta.description;
-    setupLaneKickerNode.textContent = meta.kicker;
-    if (setupStage === "details") {
+    if (stage === "details") {
       const detailStep = currentDetailStep();
       if (detailStep === "admin") {
         setupLaneTitleNode.textContent = "Set admin access";
@@ -320,19 +397,19 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     }
 
     for (const button of setupLaneButtons) {
-      button.classList.toggle("is-selected", button.dataset.setupLane === setupLane);
+      button.classList.toggle("is-selected", button.dataset.setupLane === onboardingSnapshot.draft.lane);
     }
   };
 
   const syncOptionalSetupFields = (): void => {
-    const customAdmin = setupAdminCustomNode.checked;
+    const { draft } = onboardingSnapshot;
     const showAdvanced = advancedSectionsVisible();
-    const showAiRows = showAdvanced && setupAiEnabledNode.checked;
-    const showSourceRows = showAdvanced && setupSourceEnabledNode.checked;
-    const showNodeRows = showAdvanced && setupNodeEnabledNode.checked;
+    const showAiRows = showAdvanced && draft.ai.enabled;
+    const showSourceRows = showAdvanced && draft.source.enabled;
+    const showNodeRows = showAdvanced && draft.device.enabled;
 
-    setupRootRowNode.hidden = !customAdmin;
-    setupRootPasswordNode.disabled = !customAdmin;
+    setupRootRowNode.hidden = draft.admin.mode !== "custom";
+    setupRootPasswordNode.disabled = draft.admin.mode !== "custom";
 
     setupAiEnabledNode.disabled = !showAdvanced;
     setupAiProviderRowNode.hidden = !showAiRows;
@@ -357,26 +434,95 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupNodeExpiryNode.disabled = !showNodeRows;
   };
 
+  const renderGuideLog = (): void => {
+    setupGuideLogNode.replaceChildren();
+
+    if (onboardingSnapshot.messages.length === 0 && !onboardingSnapshot.busy) {
+      const empty = document.createElement("p");
+      empty.className = "session-copy";
+      empty.textContent = "Describe the setup you want. The guide will patch only non-secret fields like source, model, and device settings.";
+      setupGuideLogNode.appendChild(empty);
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const entry of onboardingSnapshot.messages) {
+      const message = document.createElement("article");
+      message.className = `onboarding-guide-message onboarding-guide-message-${entry.role}`;
+
+      const role = document.createElement("span");
+      role.className = "session-kicker";
+      role.textContent = entry.role === "user" ? "You" : "Guide";
+
+      const body = document.createElement("p");
+      body.textContent = entry.content;
+
+      message.append(role, body);
+      fragment.appendChild(message);
+    }
+
+    if (onboardingSnapshot.busy) {
+      const pending = document.createElement("article");
+      pending.className = "onboarding-guide-message onboarding-guide-message-assistant";
+
+      const role = document.createElement("span");
+      role.className = "session-kicker";
+      role.textContent = "Guide";
+
+      const body = document.createElement("p");
+      body.textContent = "Thinking...";
+
+      pending.append(role, body);
+      fragment.appendChild(pending);
+    }
+
+    setupGuideLogNode.appendChild(fragment);
+    setupGuideLogNode.scrollTop = setupGuideLogNode.scrollHeight;
+  };
+
+  const renderGuidePanel = (): void => {
+    const showToggle = onboardingSnapshot.draft.stage === "details" && onboardingSnapshot.draft.lane !== "advanced";
+    const showPanel = showToggle && onboardingSnapshot.draft.mode === "guided";
+
+    setupAssistToggleNode.hidden = !showToggle;
+    setupGuidePanelNode.hidden = !showPanel;
+    setVisibleError(setupGuideErrorNode, showPanel ? onboardingSnapshot.error : null);
+    setupGuideInputNode.disabled = !showPanel || onboardingSnapshot.busy || sessionSnapshot.phase === "authenticating";
+    setupGuideSendNode.disabled = !showPanel || onboardingSnapshot.busy || sessionSnapshot.phase === "authenticating";
+
+    if (showPanel) {
+      renderGuideLog();
+    } else {
+      setupGuideLogNode.replaceChildren();
+    }
+  };
+
   const applySetupStage = (): void => {
-    setupWelcomeNode.hidden = setupStage !== "welcome";
-    setupDetailsNode.hidden = setupStage !== "details";
-    setupReviewNode.hidden = setupStage !== "review";
+    const { stage } = onboardingSnapshot.draft;
+    const detailSteps = detailStepsForLane();
+    const lastDetailStep = detailSteps[detailSteps.length - 1];
+
+    setupWelcomeNode.hidden = stage !== "welcome";
+    setupDetailsNode.hidden = stage !== "details";
+    setupReviewNode.hidden = stage !== "review";
     applyDetailSections();
 
     for (const pill of setupStagePills) {
-      const pillStage = pill.dataset.setupStagePill as SetupStage | undefined;
-      pill.classList.toggle("is-active", pillStage === setupStage);
+      const pillStage = pill.dataset.setupStagePill as OnboardingStage | undefined;
+      pill.classList.toggle("is-active", pillStage === stage);
       pill.classList.toggle(
         "is-complete",
-        (setupStage === "details" && pillStage === "welcome") ||
-          (setupStage === "review" && (pillStage === "welcome" || pillStage === "details")),
+        (stage === "details" && pillStage === "welcome") ||
+          (stage === "review" && (pillStage === "welcome" || pillStage === "details")),
       );
     }
 
-    setupBackNode.hidden = setupStage === "welcome";
-    setupNextNode.hidden = setupStage !== "details";
-    setupSubmitNode.hidden = setupStage !== "review";
-    setupNextNode.textContent = setupDetailStepIndex >= detailStepsForLane().length - 1 ? "Review plan" : "Continue";
+    setupBackNode.hidden = stage === "welcome";
+    setupNextNode.hidden = stage !== "details";
+    setupSubmitNode.hidden = stage !== "review";
+    setupNextNode.textContent = guideShortcutReady() || currentDetailStep() === lastDetailStep
+      ? "Review plan"
+      : "Continue";
   };
 
   const focusLoginField = (): void => {
@@ -388,11 +534,12 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   };
 
   const focusSetupField = (): void => {
-    if (setupStage === "welcome") {
+    const { stage } = onboardingSnapshot.draft;
+    if (stage === "welcome") {
       setupLaneButtons[0]?.focus();
       return;
     }
-    if (setupStage === "review") {
+    if (stage === "review") {
       setupSubmitNode.focus();
       return;
     }
@@ -401,72 +548,67 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     firstVisible?.focus();
   };
 
-  const validateSetupDetails = (validateAll = false): string | null => {
-    const username = setupUsernameNode.value.trim();
-    const password = setupPasswordNode.value;
-    const confirm = setupPasswordConfirmNode.value;
-    const detailStep = currentDetailStep();
+  const validateSetupDetails = (validateAll = false): ValidationResult => {
+    const { draft } = onboardingSnapshot;
+    const steps = validateAll ? detailStepsForLane() : [currentDetailStep()];
 
-    if (!setupLane) {
-      return "Choose a setup path first.";
-    }
-    if (validateAll || detailStep === "account") {
-      if (!username) {
-        return "Username is required.";
-      }
-      if (!isValidUsername(username)) {
-        return "Username must match ^[a-z_][a-z0-9_-]{0,31}$.";
-      }
-      if (password.length < 8) {
-        return "Password must be at least 8 characters.";
-      }
-      if (password !== confirm) {
-        return "Passwords do not match.";
-      }
-    }
-
-    if (validateAll || detailStep === "admin") {
-      if (setupAdminCustomNode.checked && setupRootPasswordNode.value.trim().length < 8) {
-        return "Admin password must be at least 8 characters.";
-      }
-    }
-
-    if ((validateAll || detailStep === "ai") && advancedSectionsVisible()) {
-      if (setupAiEnabledNode.checked) {
-        if (!setupAiProviderNode.value.trim()) {
-          return "AI provider is required when customizing AI settings.";
+    for (const step of steps) {
+      if (step === "account") {
+        const username = draft.account.username.trim();
+        if (!username) {
+          return { message: "Username is required.", step };
         }
-        if (!setupAiModelNode.value.trim()) {
-          return "AI model is required when customizing AI settings.";
+        if (!isValidUsername(username)) {
+          return { message: "Username must match ^[a-z_][a-z0-9_-]{0,31}$.", step };
+        }
+        if (draft.account.password.length < 8) {
+          return { message: "Password must be at least 8 characters.", step };
+        }
+        if (draft.account.password !== draft.account.passwordConfirm) {
+          return { message: "Passwords do not match.", step };
         }
       }
-    }
 
-    if ((validateAll || detailStep === "source") && advancedSectionsVisible()) {
-      if (setupSourceEnabledNode.checked && !setupBootstrapSourceNode.value.trim()) {
-        return "Repository or remote URL is required for a custom system source.";
+      if (step === "admin") {
+        if (draft.admin.mode === "custom" && draft.admin.password.trim().length < 8) {
+          return { message: "Admin password must be at least 8 characters.", step };
+        }
+      }
+
+      if (step === "ai" && advancedSectionsVisible() && draft.ai.enabled) {
+        if (!draft.ai.provider.trim()) {
+          return { message: "AI provider is required when customizing AI settings.", step };
+        }
+        if (!draft.ai.model.trim()) {
+          return { message: "AI model is required when customizing AI settings.", step };
+        }
+      }
+
+      if (step === "source" && advancedSectionsVisible() && draft.source.enabled && !draft.source.value.trim()) {
+        return { message: "Repository or remote URL is required for a custom system source.", step };
+      }
+
+      if (step === "device" && advancedSectionsVisible() && draft.device.enabled) {
+        if (!draft.device.deviceId.trim()) {
+          return { message: "Device ID is required when issuing a node token.", step };
+        }
+        const expiry = draft.device.expiryDays.trim();
+        if (expiry && !isPositiveNumber(expiry)) {
+          return { message: "Expiry must be a positive number of days.", step };
+        }
       }
     }
 
-    if ((validateAll || detailStep === "device") && advancedSectionsVisible() && setupNodeEnabledNode.checked) {
-      if (!setupNodeDeviceIdNode.value.trim()) {
-        return "Device ID is required when issuing a node token.";
-      }
-      const expiry = setupNodeExpiryNode.value.trim();
-      if (expiry && !isPositiveNumber(expiry)) {
-        return "Expiry must be a positive number of days.";
-      }
-    }
-
-    return null;
+    return { message: null };
   };
 
   const buildSourceSummary = (): string => {
-    if (!advancedSectionsVisible() || !setupSourceEnabledNode.checked) {
+    const { draft } = onboardingSnapshot;
+    if (!advancedSectionsVisible() || !draft.source.enabled) {
       return DEFAULT_SOURCE_LABEL;
     }
-    const source = setupBootstrapSourceNode.value.trim();
-    const ref = setupBootstrapRefNode.value.trim();
+    const source = draft.source.value.trim();
+    const ref = draft.source.ref.trim();
     if (!source) {
       return DEFAULT_SOURCE_LABEL;
     }
@@ -474,30 +616,32 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   };
 
   const buildAiSummary = (): string => {
-    if (!advancedSectionsVisible() || !setupAiEnabledNode.checked) {
+    const { draft } = onboardingSnapshot;
+    if (!advancedSectionsVisible() || !draft.ai.enabled) {
       return "Use gateway default AI";
     }
-    const provider = setupAiProviderNode.value.trim();
-    const model = setupAiModelNode.value.trim();
+    const provider = draft.ai.provider.trim();
+    const model = draft.ai.model.trim();
     return provider && model ? `${provider} / ${model}` : "Custom AI settings";
   };
 
   const buildDeviceSummary = (): string => {
-    if (!advancedSectionsVisible() || !setupNodeEnabledNode.checked) {
+    const { draft } = onboardingSnapshot;
+    if (!advancedSectionsVisible() || !draft.device.enabled) {
       return "Do not issue a node token during setup";
     }
-    const deviceId = setupNodeDeviceIdNode.value.trim();
+    const deviceId = draft.device.deviceId.trim();
     return deviceId ? `Issue token for ${deviceId}` : "Issue node token";
   };
 
   const renderReviewSummary = (): void => {
     const meta = activeLaneMeta();
-    if (!meta) return;
+    const { draft } = onboardingSnapshot;
 
     setupSummaryLaneNode.textContent = meta.label;
     setupSummaryLaneCopyNode.textContent = meta.reviewCopy;
-    setupSummaryAccountNode.textContent = `${setupUsernameNode.value.trim()} · first desktop user`;
-    setupSummaryAdminNode.textContent = setupAdminCustomNode.checked
+    setupSummaryAccountNode.textContent = `${draft.account.username.trim()} · first desktop user`;
+    setupSummaryAdminNode.textContent = draft.admin.mode === "custom"
       ? "Separate admin password"
       : "Same as account password";
     setupSummaryAiNode.textContent = buildAiSummary();
@@ -506,26 +650,27 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   };
 
   const buildSetupPayload = (): SessionSetupInput => {
+    const { draft } = onboardingSnapshot;
     const payload: SessionSetupInput = {
-      username: setupUsernameNode.value.trim(),
-      password: setupPasswordNode.value,
+      username: draft.account.username.trim(),
+      password: draft.account.password,
     };
 
-    if (setupAdminCustomNode.checked && setupRootPasswordNode.value.trim()) {
-      payload.rootPassword = setupRootPasswordNode.value.trim();
+    if (draft.admin.mode === "custom" && draft.admin.password.trim()) {
+      payload.rootPassword = draft.admin.password.trim();
     }
 
-    if (advancedSectionsVisible() && setupAiEnabledNode.checked) {
+    if (advancedSectionsVisible() && draft.ai.enabled) {
       payload.ai = {
-        provider: setupAiProviderNode.value.trim(),
-        model: setupAiModelNode.value.trim(),
-        ...(setupAiKeyNode.value.trim() ? { apiKey: setupAiKeyNode.value.trim() } : {}),
+        provider: draft.ai.provider.trim(),
+        model: draft.ai.model.trim(),
+        ...(draft.ai.apiKey.trim() ? { apiKey: draft.ai.apiKey.trim() } : {}),
       };
     }
 
-    if (advancedSectionsVisible() && setupSourceEnabledNode.checked) {
-      const source = setupBootstrapSourceNode.value.trim();
-      const ref = setupBootstrapRefNode.value.trim();
+    if (advancedSectionsVisible() && draft.source.enabled) {
+      const source = draft.source.value.trim();
+      const ref = draft.source.ref.trim();
       payload.bootstrap = sourceLooksLikeRemote(source)
         ? { remoteUrl: source }
         : { repo: source };
@@ -534,11 +679,11 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       }
     }
 
-    if (advancedSectionsVisible() && setupNodeEnabledNode.checked) {
-      const expiryDays = setupNodeExpiryNode.value.trim();
+    if (advancedSectionsVisible() && draft.device.enabled) {
+      const expiryDays = draft.device.expiryDays.trim();
       payload.node = {
-        deviceId: setupNodeDeviceIdNode.value.trim(),
-        ...(setupNodeLabelNode.value.trim() ? { label: setupNodeLabelNode.value.trim() } : {}),
+        deviceId: draft.device.deviceId.trim(),
+        ...(draft.device.label.trim() ? { label: draft.device.label.trim() } : {}),
         ...(expiryDays
           ? { expiresAt: Date.now() + Math.floor(Number(expiryDays) * 24 * 60 * 60 * 1000) }
           : {}),
@@ -550,9 +695,10 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
 
   const renderSetupResult = (snapshot: SessionSnapshot): void => {
     const result = snapshot.setupResult;
+    const adminMode = onboardingSnapshot.draft.admin.mode ?? lastAdminMode;
     if (!result) {
       setupResultUsernameNode.textContent = snapshot.username || "Unknown";
-      setupResultRootNode.textContent = lastAdminMode === "custom" ? "Separate admin password" : "Same as account password";
+      setupResultRootNode.textContent = adminMode === "custom" ? "Separate admin password" : "Same as account password";
       setupResultSourceNode.textContent = DEFAULT_SOURCE_LABEL;
       setupResultRefNode.textContent = DEFAULT_SOURCE_REF;
       setupNodeResultNode.hidden = true;
@@ -562,7 +708,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     }
 
     setupResultUsernameNode.textContent = result.user.username;
-    setupResultRootNode.textContent = lastAdminMode === "custom" ? "Separate admin password" : "Same as account password";
+    setupResultRootNode.textContent = adminMode === "custom" ? "Separate admin password" : "Same as account password";
     setupResultSourceNode.textContent = result.bootstrap?.remoteUrl ?? DEFAULT_SOURCE_LABEL;
     setupResultRefNode.textContent = result.bootstrap?.ref ?? DEFAULT_SOURCE_REF;
 
@@ -611,16 +757,16 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     return "login";
   };
 
-  const applySnapshot = (snapshot: SessionSnapshot): void => {
+  const render = (): void => {
     if (statusNode) {
-      statusNode.textContent = statusText(snapshot);
+      statusNode.textContent = statusText(sessionSnapshot);
     }
 
-    if (snapshot.phase === "locked" || snapshot.phase === "setup" || snapshot.phase === "setup-complete" || snapshot.phase === "ready") {
+    if (sessionSnapshot.phase === "locked" || sessionSnapshot.phase === "setup" || sessionSnapshot.phase === "setup-complete" || sessionSnapshot.phase === "ready") {
       pendingAction = null;
     }
 
-    const visibleView = resolveVisibleView(snapshot);
+    const visibleView = resolveVisibleView(sessionSnapshot);
     const ready = visibleView === "desktop";
     screenNode.hidden = ready;
     desktopRootNode.hidden = !ready;
@@ -628,59 +774,64 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupViewNode.hidden = visibleView !== "setup";
     setupCompleteNode.hidden = visibleView !== "complete";
 
-    submitNode.disabled = snapshot.phase === "authenticating";
-    setupBackNode.disabled = snapshot.phase === "authenticating";
-    setupNextNode.disabled = snapshot.phase === "authenticating";
-    setupSubmitNode.disabled = snapshot.phase === "authenticating";
-    setupContinueNode.disabled = snapshot.phase === "authenticating";
-    lockNode.disabled = snapshot.phase !== "ready";
+    submitNode.disabled = sessionSnapshot.phase === "authenticating";
+    setupBackNode.disabled = sessionSnapshot.phase === "authenticating";
+    setupNextNode.disabled = sessionSnapshot.phase === "authenticating";
+    setupSubmitNode.disabled = sessionSnapshot.phase === "authenticating";
+    setupContinueNode.disabled = sessionSnapshot.phase === "authenticating";
+    lockNode.disabled = sessionSnapshot.phase !== "ready";
 
-    dotNode.classList.toggle("is-online", snapshot.phase === "ready");
-    dotNode.classList.toggle("is-pending", snapshot.phase === "authenticating");
-    dotNode.classList.toggle("is-offline", snapshot.phase !== "ready" && snapshot.phase !== "authenticating");
+    dotNode.classList.toggle("is-online", sessionSnapshot.phase === "ready");
+    dotNode.classList.toggle("is-pending", sessionSnapshot.phase === "authenticating");
+    dotNode.classList.toggle("is-offline", sessionSnapshot.phase !== "ready" && sessionSnapshot.phase !== "authenticating");
 
     setVisibleError(
       loginErrorNode,
-      snapshot.phase === "locked" && snapshot.message ? snapshot.message : null,
+      sessionSnapshot.phase === "locked" && sessionSnapshot.message ? sessionSnapshot.message : loginValidationError,
     );
     setVisibleError(
       setupErrorNode,
-      snapshot.phase === "setup" && snapshot.message ? snapshot.message : null,
+      sessionSnapshot.phase === "setup" && sessionSnapshot.message ? sessionSnapshot.message : setupValidationError,
     );
     setVisibleError(
       setupCompleteErrorNode,
-      snapshot.phase === "setup-complete" && snapshot.message ? snapshot.message : null,
+      sessionSnapshot.phase === "setup-complete" && sessionSnapshot.message ? sessionSnapshot.message : null,
     );
 
-    if (snapshot.phase === "ready") {
+    if (sessionSnapshot.phase === "ready") {
       passwordInputNode.value = "";
       tokenInputNode.value = "";
       return;
     }
 
-    if (snapshot.username && !usernameInputNode.value) {
-      usernameInputNode.value = snapshot.username;
-    }
-    if (snapshot.username && !setupUsernameNode.value) {
-      setupUsernameNode.value = snapshot.username;
-    }
-
+    applyDraftToFields();
     applyLanePresentation();
     syncOptionalSetupFields();
     applySetupStage();
+    renderGuidePanel();
+    renderReviewSummary();
 
     if (visibleView === "login") {
       focusLoginField();
       return;
     }
-    if (visibleView === "setup") {
-      focusSetupField();
-      return;
-    }
     if (visibleView === "complete") {
-      renderSetupResult(snapshot);
+      renderSetupResult(sessionSnapshot);
       setupContinueNode.focus();
     }
+  };
+
+  const syncUsernameFromSession = (): void => {
+    if (!sessionSnapshot.username || onboardingSnapshot.draft.account.username.trim()) {
+      return;
+    }
+    onboarding.updateDraft((draft) => ({
+      ...draft,
+      account: {
+        ...draft.account,
+        username: sessionSnapshot.username,
+      },
+    }));
   };
 
   const onLoginSubmit = async (event: SubmitEvent): Promise<void> => {
@@ -691,19 +842,24 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     const token = tokenInputNode.value.trim();
 
     if (!username) {
-      setVisibleError(loginErrorNode, "Username is required.");
+      loginValidationError = "Username is required.";
+      render();
       return;
     }
     if (!password && !token) {
-      setVisibleError(loginErrorNode, "Provide password or token.");
+      loginValidationError = "Provide password or token.";
+      render();
       return;
     }
     if (password && token) {
-      setVisibleError(loginErrorNode, "Use either password or token.");
+      loginValidationError = "Use either password or token.";
+      render();
       return;
     }
 
+    loginValidationError = null;
     pendingAction = "login";
+    render();
 
     try {
       await session.login({
@@ -718,71 +874,78 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const onSetupLaneClick = (event: Event): void => {
     const target = event.currentTarget;
     if (!(target instanceof HTMLButtonElement)) return;
-    const nextLane = target.dataset.setupLane as SetupLane | undefined;
-    if (!nextLane) return;
-    setupLane = nextLane;
-    setupDetailStepIndex = 0;
-    setVisibleError(setupErrorNode, null);
-    applyLanePresentation();
-    syncOptionalSetupFields();
-    setupStage = "details";
-    applySetupStage();
+    const nextLane = target.dataset.setupLane;
+    if (nextLane !== "quick" && nextLane !== "customize" && nextLane !== "advanced") return;
+    setupValidationError = null;
+    onboarding.setLane(nextLane);
     focusSetupField();
   };
 
   const onSetupBackClick = (): void => {
-    setVisibleError(setupErrorNode, null);
-    if (setupStage === "review") {
-      setupStage = "details";
-    } else if (setupDetailStepIndex > 0) {
-      setupDetailStepIndex -= 1;
-    } else {
-      setupStage = "welcome";
+    setupValidationError = null;
+    if (onboardingSnapshot.draft.stage === "review") {
+      onboarding.setStage("details");
+      focusSetupField();
+      return;
     }
-    applyLanePresentation();
-    applySetupStage();
+
+    const steps = detailStepsForLane();
+    const currentIndex = steps.indexOf(currentDetailStep());
+    if (currentIndex > 0) {
+      onboarding.setDetailStep(steps[currentIndex - 1] ?? "account");
+    } else {
+      onboarding.setStage("welcome");
+    }
     focusSetupField();
   };
 
   const onSetupNextClick = (): void => {
-    const error = validateSetupDetails();
-    if (error) {
-      setVisibleError(setupErrorNode, error);
+    const jumpToReview = guideShortcutReady();
+    const validation = validateSetupDetails(jumpToReview);
+    if (validation.message) {
+      setupValidationError = validation.message;
+      if (validation.step && validation.step !== currentDetailStep()) {
+        onboarding.setDetailStep(validation.step);
+      } else {
+        render();
+      }
       return;
     }
-    setVisibleError(setupErrorNode, null);
-    if (setupDetailStepIndex < detailStepsForLane().length - 1) {
-      setupDetailStepIndex += 1;
-      applyLanePresentation();
+
+    setupValidationError = null;
+    const steps = detailStepsForLane();
+    const currentIndex = steps.indexOf(currentDetailStep());
+    const lastIndex = steps.length - 1;
+    if (jumpToReview || currentIndex >= lastIndex) {
+      onboarding.setStage("review");
     } else {
-      renderReviewSummary();
-      setupStage = "review";
+      onboarding.setDetailStep(steps[currentIndex + 1] ?? steps[lastIndex] ?? "account");
     }
-    applySetupStage();
     focusSetupField();
   };
 
   const onSetupSubmit = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault();
 
-    const error = validateSetupDetails(true);
-    if (error) {
-      setVisibleError(setupErrorNode, error);
-      setupStage = "details";
-      applySetupStage();
-      focusSetupField();
+    const validation = validateSetupDetails(true);
+    if (validation.message) {
+      setupValidationError = validation.message;
+      onboarding.setStage("details");
+      if (validation.step) {
+        onboarding.setDetailStep(validation.step);
+      }
       return;
     }
 
-    if (setupStage !== "review") {
-      renderReviewSummary();
-      setupStage = "review";
-      applySetupStage();
+    if (onboardingSnapshot.draft.stage !== "review") {
+      setupValidationError = null;
+      onboarding.setStage("review");
       return;
     }
 
     pendingAction = "setup";
-    lastAdminMode = setupAdminCustomNode.checked ? "custom" : "same";
+    lastAdminMode = onboardingSnapshot.draft.admin.mode;
+    render();
 
     try {
       await session.setup(buildSetupPayload());
@@ -793,6 +956,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
 
   const onSetupContinue = async (): Promise<void> => {
     pendingAction = "continue";
+    render();
 
     try {
       await session.continueFromSetup();
@@ -817,6 +981,30 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     session.lock();
   };
 
+  const onGuideSend = async (): Promise<void> => {
+    const message = setupGuideInputNode.value.trim();
+    if (!message || onboardingSnapshot.busy) {
+      return;
+    }
+    setupGuideInputNode.value = "";
+    await onboarding.assist(message);
+    focusSetupField();
+  };
+
+  const onGuideInputKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void onGuideSend();
+  };
+  const onGuideSendClick = (): void => {
+    void onGuideSend();
+  };
+  const onLoginFieldInput = (): void => {
+    if (!loginValidationError) return;
+    loginValidationError = null;
+    render();
+  };
+
   loginFormNode.addEventListener("submit", onLoginSubmit);
   setupFormNode.addEventListener("submit", onSetupSubmit);
   setupBackNode.addEventListener("click", onSetupBackClick);
@@ -827,19 +1015,194 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   for (const button of setupLaneButtons) {
     button.addEventListener("click", onSetupLaneClick);
   }
-  setupAdminSameNode.addEventListener("change", syncOptionalSetupFields);
-  setupAdminCustomNode.addEventListener("change", syncOptionalSetupFields);
-  setupAiEnabledNode.addEventListener("change", syncOptionalSetupFields);
-  setupSourceEnabledNode.addEventListener("change", syncOptionalSetupFields);
-  setupNodeEnabledNode.addEventListener("change", syncOptionalSetupFields);
+  usernameInputNode.addEventListener("input", onLoginFieldInput);
+  passwordInputNode.addEventListener("input", onLoginFieldInput);
+  tokenInputNode.addEventListener("input", onLoginFieldInput);
 
-  const unsubscribe = session.subscribe((snapshot) => {
-    applySnapshot(snapshot);
+  setupUsernameNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      account: {
+        ...draft.account,
+        username: setupUsernameNode.value,
+      },
+    }));
   });
+  setupPasswordNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      account: {
+        ...draft.account,
+        password: setupPasswordNode.value,
+      },
+    }));
+  });
+  setupPasswordConfirmNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      account: {
+        ...draft.account,
+        passwordConfirm: setupPasswordConfirmNode.value,
+      },
+    }));
+  });
+  setupAdminSameNode.addEventListener("change", () => {
+    if (!setupAdminSameNode.checked) return;
+    updateDraft((draft) => ({
+      ...draft,
+      admin: {
+        ...draft.admin,
+        mode: "same",
+      },
+    }));
+  });
+  setupAdminCustomNode.addEventListener("change", () => {
+    if (!setupAdminCustomNode.checked) return;
+    updateDraft((draft) => ({
+      ...draft,
+      admin: {
+        ...draft.admin,
+        mode: "custom",
+      },
+    }));
+  });
+  setupRootPasswordNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      admin: {
+        ...draft.admin,
+        password: setupRootPasswordNode.value,
+      },
+    }));
+  });
+  setupAiEnabledNode.addEventListener("change", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      ai: {
+        ...draft.ai,
+        enabled: setupAiEnabledNode.checked,
+      },
+    }));
+  });
+  setupAiProviderNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      ai: {
+        ...draft.ai,
+        provider: setupAiProviderNode.value,
+      },
+    }));
+  });
+  setupAiModelNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      ai: {
+        ...draft.ai,
+        model: setupAiModelNode.value,
+      },
+    }));
+  });
+  setupAiKeyNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      ai: {
+        ...draft.ai,
+        apiKey: setupAiKeyNode.value,
+      },
+    }));
+  });
+  setupSourceEnabledNode.addEventListener("change", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      source: {
+        ...draft.source,
+        enabled: setupSourceEnabledNode.checked,
+      },
+    }));
+  });
+  setupBootstrapSourceNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      source: {
+        ...draft.source,
+        value: setupBootstrapSourceNode.value,
+      },
+    }));
+  });
+  setupBootstrapRefNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      source: {
+        ...draft.source,
+        ref: setupBootstrapRefNode.value,
+      },
+    }));
+  });
+  setupNodeEnabledNode.addEventListener("change", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      device: {
+        ...draft.device,
+        enabled: setupNodeEnabledNode.checked,
+      },
+    }));
+  });
+  setupNodeDeviceIdNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      device: {
+        ...draft.device,
+        deviceId: setupNodeDeviceIdNode.value,
+      },
+    }));
+  });
+  setupNodeLabelNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      device: {
+        ...draft.device,
+        label: setupNodeLabelNode.value,
+      },
+    }));
+  });
+  setupNodeExpiryNode.addEventListener("input", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      device: {
+        ...draft.device,
+        expiryDays: setupNodeExpiryNode.value,
+      },
+    }));
+  });
+  setupModeManualNode.addEventListener("change", () => {
+    if (!setupModeManualNode.checked) return;
+    clearSetupError();
+    onboarding.setMode("manual");
+  });
+  setupModeGuidedNode.addEventListener("change", () => {
+    if (!setupModeGuidedNode.checked) return;
+    clearSetupError();
+    onboarding.setMode("guided");
+  });
+  setupGuideSendNode.addEventListener("click", onGuideSendClick);
+  setupGuideInputNode.addEventListener("keydown", onGuideInputKeyDown);
+
+  const unsubscribeSession = session.subscribe((snapshot) => {
+    sessionSnapshot = snapshot;
+    syncUsernameFromSession();
+    render();
+  });
+  const unsubscribeOnboarding = onboarding.subscribe((snapshot) => {
+    onboardingSnapshot = snapshot;
+    render();
+  });
+
+  render();
 
   return {
     destroy: () => {
-      unsubscribe();
+      unsubscribeSession();
+      unsubscribeOnboarding();
       loginFormNode.removeEventListener("submit", onLoginSubmit);
       setupFormNode.removeEventListener("submit", onSetupSubmit);
       setupBackNode.removeEventListener("click", onSetupBackClick);
@@ -850,11 +1213,11 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       for (const button of setupLaneButtons) {
         button.removeEventListener("click", onSetupLaneClick);
       }
-      setupAdminSameNode.removeEventListener("change", syncOptionalSetupFields);
-      setupAdminCustomNode.removeEventListener("change", syncOptionalSetupFields);
-      setupAiEnabledNode.removeEventListener("change", syncOptionalSetupFields);
-      setupSourceEnabledNode.removeEventListener("change", syncOptionalSetupFields);
-      setupNodeEnabledNode.removeEventListener("change", syncOptionalSetupFields);
+      usernameInputNode.removeEventListener("input", onLoginFieldInput);
+      passwordInputNode.removeEventListener("input", onLoginFieldInput);
+      tokenInputNode.removeEventListener("input", onLoginFieldInput);
+      setupGuideSendNode.removeEventListener("click", onGuideSendClick);
+      setupGuideInputNode.removeEventListener("keydown", onGuideInputKeyDown);
     },
   };
 }

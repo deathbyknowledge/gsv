@@ -1,4 +1,6 @@
 import type {
+  SysSetupAssistArgs,
+  SysSetupAssistResult,
   SysBootstrapArgs,
   SysBootstrapResult,
   SysSetupArgs,
@@ -361,6 +363,10 @@ export class GatewayClient implements GatewayClientLike {
 
   async setupSystem(url: string, args: SysSetupArgs): Promise<SysSetupResult> {
     return await this.callWithoutConnect<SysSetupResult>(url, "sys.setup", args);
+  }
+
+  async setupAssist(url: string, args: SysSetupAssistArgs): Promise<SysSetupAssistResult> {
+    return await this.callWithoutConnect<SysSetupAssistResult>(url, "sys.setup.assist", args);
   }
 
   async bootstrapSystem(args: SysBootstrapArgs = {}): Promise<SysBootstrapResult> {

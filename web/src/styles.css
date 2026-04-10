@@ -777,6 +777,105 @@ button:disabled {
   gap: 10px;
 }
 
+.onboarding-assist-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.onboarding-assist-toggle[hidden] {
+  display: none;
+}
+
+.onboarding-assist-option {
+  min-height: 100%;
+}
+
+.onboarding-guide-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.onboarding-guide-panel[hidden] {
+  display: none;
+}
+
+.onboarding-guide-head {
+  display: grid;
+  gap: 6px;
+}
+
+.onboarding-guide-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-guide-log {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.onboarding-guide-message {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.onboarding-guide-message[data-role="assistant"] {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.onboarding-guide-message span {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(24, 49, 79, 0.58);
+}
+
+.onboarding-guide-message p {
+  margin: 0;
+  color: rgba(24, 49, 79, 0.82);
+  line-height: 1.45;
+  font-size: 0.86rem;
+}
+
+.onboarding-guide-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.onboarding-guide-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(24, 49, 79, 0.74);
+}
+
+.onboarding-guide-form input {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(232, 238, 245, 0.72);
+  color: #16314f;
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  padding: 11px 12px;
+}
+
 .session-radio-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

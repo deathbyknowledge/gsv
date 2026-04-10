@@ -69,6 +69,42 @@ export function renderDesktopShell(): string {
                   <p class="session-copy" data-setup-lane-description>Start with the account and admin access. Defaults for AI and system source are already chosen.</p>
                 </div>
 
+                <div class="onboarding-assist-toggle" data-setup-assist-toggle hidden>
+                  <label class="session-radio-option onboarding-assist-option">
+                    <input data-setup-mode-manual type="radio" name="setup-mode" checked />
+                    <span>
+                      <strong>Manual</strong>
+                      <small>Fill the fields yourself.</small>
+                    </span>
+                  </label>
+                  <label class="session-radio-option onboarding-assist-option">
+                    <input data-setup-mode-guided type="radio" name="setup-mode" />
+                    <span>
+                      <strong>Guided</strong>
+                      <small>Have the setup guide collect the non-secret choices and patch the draft for you.</small>
+                    </span>
+                  </label>
+                </div>
+
+                <section class="onboarding-guide-panel" data-setup-guide-panel hidden>
+                  <div class="onboarding-guide-head">
+                    <div>
+                      <p class="session-kicker">Setup guide</p>
+                      <h3>Ask for help shaping the plan</h3>
+                    </div>
+                    <p class="session-copy">Passwords and API keys stay manual. The guide only patches non-secret fields.</p>
+                  </div>
+                  <div class="onboarding-guide-log" data-setup-guide-log></div>
+                  <p class="session-error" data-setup-guide-error hidden></p>
+                  <div class="onboarding-guide-form" data-setup-guide-form>
+                    <label>
+                      Message
+                      <input data-setup-guide-input type="text" autocomplete="off" placeholder="I want to use my own OpenAI model and issue a device token for my laptop." />
+                    </label>
+                    <button type="button" class="runtime-btn" data-setup-guide-send>Ask guide</button>
+                  </div>
+                </section>
+
                 <section class="onboarding-section" data-setup-detail-step="account">
                   <div class="onboarding-section-head">
                     <h3>Account</h3>
