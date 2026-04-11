@@ -131,21 +131,33 @@ function uint8ArrayToBase64(data: Uint8Array): string {
   return btoa(chunks.join(""));
 }
 
-function canonicalizeWhatsAppActorId(jid: string | null | undefined, senderPn?: string): string | null {
-  const senderPnMatch = typeof senderPn === "string" ? senderPn.match(/^(\\d+)@/) : null;
-  if (senderPnMatch) {
-    return `wa:+${senderPnMatch[1]}`;
-  }
-
+function normalizeWhatsAppJid(jid: string | null | undefined): string | null {
   const normalized = (jid ?? "").trim().toLowerCase();
   if (!normalized) return null;
-
-  const digitsMatch = normalized.match(/^(\\d+)@/);
-  if (digitsMatch) {
-    return `wa:+${digitsMatch[1]}`;
+  const phoneJidMatch = normalized.match(/^(\d+)(?::\d+)?@s\.whatsapp\.net$/);
+  if (phoneJidMatch) {
+    return `${phoneJidMatch[1]}@s.whatsapp.net`;
   }
+  return normalized;
+}
 
-  return `wa:jid:${normalized}`;
+function phoneDigitsFromSenderPn(senderPn?: string): string | null {
+  const match = typeof senderPn === "string" ? senderPn.trim().match(/^(\d+)(?::\d+)?@/) : null;
+  return match?.[1] ?? null;
+}
+
+function phoneDigitsFromJid(jid: string | null | undefined): string | null {
+  const normalized = normalizeWhatsAppJid(jid);
+  const match = normalized?.match(/^(\d+)@s\.whatsapp\.net$/);
+  return match?.[1] ?? null;
+}
+
+function phoneActorId(phoneDigits: string): string {
+  return `wa:jid:${phoneDigits}@s.whatsapp.net`;
+}
+
+function jidActorId(jid: string): string {
+  return `wa:jid:${jid}`;
 }
 
 export class WhatsAppAccount extends DurableObject<Env> {
@@ -517,11 +529,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
       const remoteJid = msg.key.remoteJid!;
       const isGroup = remoteJid.endsWith("@g.us");
       const actorId = isGroup
-        ? canonicalizeWhatsAppActorId(
+        ? await this.resolveStableWhatsAppActorId(
             msg.key.participant,
             typeof msg.key.senderPn === "string" ? msg.key.senderPn : undefined,
           )
-        : canonicalizeWhatsAppActorId(
+        : await this.resolveStableWhatsAppActorId(
             remoteJid,
             typeof msg.key.senderPn === "string" ? msg.key.senderPn : undefined,
           );
@@ -558,6 +570,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
         replyToId: msg.message?.extendedTextMessage?.contextInfo?.stanzaId ?? undefined,
         timestamp: msg.messageTimestamp as number,
       };
+      console.log(
+        `[WA:${this.state.accountId}] inbound actorId=${actorId} remoteJid=${remoteJid} senderPn=${typeof msg.key.senderPn === "string" ? msg.key.senderPn : ""}`,
+      );
 
       try {
         const result = await this.callGateway<AdapterInboundResult>(
@@ -586,6 +601,48 @@ export class WhatsAppAccount extends DurableObject<Env> {
         console.error(`[WA:${this.state.accountId}] Gateway RPC inbound failed:`, e);
       }
     }
+  }
+
+  private async resolveStableWhatsAppActorId(
+    jid: string | null | undefined,
+    senderPn?: string,
+  ): Promise<string | null> {
+    const normalizedJid = normalizeWhatsAppJid(jid);
+    if (!normalizedJid) return null;
+
+    const phoneDigits = phoneDigitsFromSenderPn(senderPn) ?? phoneDigitsFromJid(normalizedJid);
+    if (phoneDigits) {
+      const canonical = phoneActorId(phoneDigits);
+      await this.rememberActorAlias(jidActorId(normalizedJid), canonical);
+      await this.rememberLidAliasForPhone(phoneDigits, canonical);
+      return canonical;
+    }
+
+    const rawActorId = jidActorId(normalizedJid);
+    const aliased = await this.lookupActorAlias(rawActorId);
+    return aliased ?? rawActorId;
+  }
+
+  private async rememberLidAliasForPhone(phoneDigits: string, canonicalActorId: string): Promise<void> {
+    if (!this.sock) return;
+    try {
+      const results = await this.sock.onWhatsApp(`+${phoneDigits}`);
+      const lid = typeof results?.[0]?.lid === "string" ? results[0].lid.trim().toLowerCase() : "";
+      if (!lid) return;
+      await this.rememberActorAlias(jidActorId(lid), canonicalActorId);
+    } catch (error) {
+      console.warn(`[WA:${this.state.accountId}] Failed to resolve LID for +${phoneDigits}`, error);
+    }
+  }
+
+  private async rememberActorAlias(aliasActorId: string, canonicalActorId: string): Promise<void> {
+    if (!aliasActorId || !canonicalActorId || aliasActorId === canonicalActorId) return;
+    await this.ctx.storage.put(`actor_alias:${aliasActorId}`, canonicalActorId);
+  }
+
+  private async lookupActorAlias(aliasActorId: string): Promise<string | null> {
+    const alias = await this.ctx.storage.get<string>(`actor_alias:${aliasActorId}`);
+    return typeof alias === "string" && alias.trim().length > 0 ? alias : null;
   }
 
   /**

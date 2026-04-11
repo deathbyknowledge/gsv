@@ -74,6 +74,7 @@ interface Env {
  */
 export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements ChannelWorkerInterface {
   readonly channelId = "whatsapp";
+  readonly adapterId = "whatsapp";
   readonly capabilities: ChannelCapabilities = {
     chatTypes: ["dm", "group"],
     media: true,
@@ -88,7 +89,10 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
-  async connect(accountId: string, config: Record<string, unknown> = {}): Promise<
+  // DONT RENAME TO connect() because Cloudflare service bindings already expose
+  // a built-in socket connect() method, which hijacks the RPC call before it
+  // reaches this worker entrypoint.
+  async adapterConnect(accountId: string, config: Record<string, unknown> = {}): Promise<
     | {
         ok: true;
         connected: boolean;
@@ -136,10 +140,14 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     };
   }
 
+  async connect(accountId: string, config: Record<string, unknown> = {}) {
+    return this.adapterConnect(accountId, config);
+  }
+
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
-  async disconnect(accountId: string): Promise<
+  async adapterDisconnect(accountId: string): Promise<
     | { ok: true; message?: string }
     | { ok: false; error: string }
   > {
@@ -148,6 +156,10 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
       return { ok: false, error: logout.error };
     }
     return { ok: true, message: "Disconnected" };
+  }
+
+  async disconnect(accountId: string) {
+    return this.adapterDisconnect(accountId);
   }
 
   async start(accountId: string, _config: Record<string, unknown>): Promise<StartResult> {
@@ -170,7 +182,7 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     }
   }
 
-  async status(accountId?: string): Promise<ChannelAccountStatus[]> {
+  async adapterStatus(accountId?: string): Promise<ChannelAccountStatus[]> {
     if (!accountId) {
       // TODO: List all accounts
       return [];
@@ -196,13 +208,31 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     }
   }
 
-  async send(accountId: string, message: ChannelOutboundMessage): Promise<SendResult> {
+  async status(accountId?: string) {
+    return this.adapterStatus(accountId);
+  }
+
+  async adapterSend(
+    accountId: string,
+    message: {
+      surface: ChannelPeer;
+      text: string;
+      media?: ChannelOutboundMessage["media"];
+      replyToId?: string;
+    },
+  ): Promise<SendResult> {
     try {
-      console.log(`[WhatsAppEntrypoint] send() called for ${accountId} to ${message.peer.id}`);
+      console.log(`[WhatsAppEntrypoint] send() called for ${accountId} to ${message.surface.id}`);
+      const outbound: ChannelOutboundMessage = {
+        peer: message.surface,
+        text: message.text,
+        media: message.media,
+        replyToId: message.replyToId,
+      };
       const res = await this.doFetch(accountId, "/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(message),
+        body: JSON.stringify(outbound),
       });
       const data = await res.json() as { success?: boolean; messageId?: string; error?: string };
       if (data.success) {
@@ -212,6 +242,32 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     } catch (e) {
       console.error(`[WhatsAppEntrypoint] send() error:`, e);
       return { ok: false, error: String(e) };
+    }
+  }
+
+  async send(accountId: string, message: ChannelOutboundMessage) {
+    return this.adapterSend(accountId, {
+      surface: message.peer,
+      text: message.text,
+      media: message.media,
+      replyToId: message.replyToId,
+    });
+  }
+
+  async adapterSetActivity(
+    accountId: string,
+    surface: ChannelPeer,
+    activity: { kind: "typing" | "recording" | "uploading"; active: boolean },
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (activity.kind !== "typing") {
+      return { ok: true };
+    }
+
+    try {
+      await this.setTyping(accountId, surface, activity.active);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 

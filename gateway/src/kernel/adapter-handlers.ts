@@ -1,4 +1,5 @@
 import type {
+  AdapterActivity,
   AdapterInboundMessage,
   AdapterAccountStatus,
   AdapterOutboundMessage,
@@ -61,23 +62,23 @@ export async function handleAdapterConnect(
     console.error(`[adapter.connect:${traceId}] missing service binding adapter=${adapter}`);
     return { ok: false, error: `Adapter service unavailable: ${adapter}` };
   }
-  if (typeof service.connect !== "function") {
-    console.error(`[adapter.connect:${traceId}] service missing connect() adapter=${adapter}`);
+  if (typeof service.adapterConnect !== "function") {
+    console.error(`[adapter.connect:${traceId}] service missing adapterConnect() adapter=${adapter}`);
     return { ok: false, error: `Adapter service does not implement connect: ${adapter}` };
   }
 
   let connectResult;
   try {
-    connectResult = await service.connect(accountId, args.config);
+    connectResult = await service.adapterConnect(accountId, args.config);
   } catch (error) {
     console.error(
-      `[adapter.connect:${traceId}] service.connect threw adapter=${adapter} accountId=${accountId}`,
+      `[adapter.connect:${traceId}] service.adapterConnect threw adapter=${adapter} accountId=${accountId}`,
       error,
     );
     throw error;
   }
   console.log(
-    `[adapter.connect:${traceId}] service.connect ok=${connectResult.ok === true} challenge=${Boolean(connectResult.challenge)}`,
+    `[adapter.connect:${traceId}] service.adapterConnect ok=${connectResult.ok === true} challenge=${Boolean(connectResult.challenge)}`,
   );
   if (!connectResult.ok) {
     return {
@@ -120,11 +121,11 @@ export async function handleAdapterDisconnect(
   if (!service) {
     return { ok: false, error: `Adapter service unavailable: ${adapter}` };
   }
-  if (typeof service.disconnect !== "function") {
+  if (typeof service.adapterDisconnect !== "function") {
     return { ok: false, error: `Adapter service does not implement disconnect: ${adapter}` };
   }
 
-  const result = await service.disconnect(accountId);
+  const result = await service.adapterDisconnect(accountId);
   if (!result.ok) {
     return { ok: false, error: result.error };
   }
@@ -159,7 +160,7 @@ export async function handleAdapterSend(
   if (!args.surface?.id?.trim()) return { ok: false, error: "surface.id is required" };
 
   const service = resolveAdapterService(ctx.env, adapter);
-  if (!service || typeof service.send !== "function") {
+  if (!service || typeof service.adapterSend !== "function") {
     return { ok: false, error: `Adapter service unavailable: ${adapter}` };
   }
 
@@ -170,7 +171,7 @@ export async function handleAdapterSend(
     replyToId: args.replyToId,
   };
 
-  const result = await service.send(accountId, outbound);
+  const result = await service.adapterSend(accountId, outbound);
   if (!result.ok) {
     return { ok: false, error: result.error };
   }
@@ -192,9 +193,9 @@ export async function handleAdapterStatus(
   if (!adapter) throw new Error("adapter is required");
 
   const service = resolveAdapterService(ctx.env, adapter);
-  if (service && typeof service.status === "function") {
+  if (service && typeof service.adapterStatus === "function") {
     try {
-      const statuses = await service.status(args.accountId);
+      const statuses = await service.adapterStatus(args.accountId);
       for (const status of statuses) {
         ctx.adapters.status.upsert(adapter, status.accountId, status);
       }
@@ -317,6 +318,14 @@ export async function handleAdapterInbound(
     message.surface.threadId,
   );
 
+  await setAdapterActivityForKernel(
+    ctx.env,
+    adapter,
+    accountId,
+    message.surface,
+    { kind: "typing", active: true },
+  );
+
   return {
     ok: true,
     delivered: {
@@ -358,19 +367,46 @@ export function resolveAdapterServiceForKernel(env: Env, adapter: string): Adapt
   return resolveAdapterService(env, adapter);
 }
 
+export async function setAdapterActivityForKernel(
+  env: Env,
+  adapter: string,
+  accountId: string,
+  surface: AdapterSurface,
+  activity: AdapterActivity,
+): Promise<void> {
+  const service = resolveAdapterService(env, adapter);
+  if (!service || typeof service.adapterSetActivity !== "function") {
+    return;
+  }
+
+  try {
+    const result = await service.adapterSetActivity(accountId, surface, activity);
+    if (!result.ok) {
+      console.warn(
+        `[adapter.activity] failed adapter=${adapter} accountId=${accountId} kind=${activity.kind} active=${activity.active} error=${result.error}`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `[adapter.activity] threw adapter=${adapter} accountId=${accountId} kind=${activity.kind} active=${activity.active}`,
+      error,
+    );
+  }
+}
+
 async function refreshAdapterStatus(
   service: AdapterServiceBinding,
   ctx: KernelContext,
   adapter: string,
   accountId: string,
 ): Promise<AdapterAccountStatus | null> {
-  if (typeof service.status !== "function") {
+  if (typeof service.adapterStatus !== "function") {
     return null;
   }
 
   try {
     console.log(`[adapter.status] refreshing adapter=${adapter} accountId=${accountId}`);
-    const statuses = await service.status(accountId);
+    const statuses = await service.adapterStatus(accountId);
     for (const status of statuses) {
       ctx.adapters.status.upsert(adapter, status.accountId, status);
     }

@@ -46,6 +46,11 @@ export type AdapterOutboundMessage = {
   replyToId?: string;
 };
 
+export type AdapterActivity =
+  | { kind: "typing"; active: boolean }
+  | { kind: "recording"; active: boolean }
+  | { kind: "uploading"; active: boolean };
+
 export type AdapterAccountStatus = {
   accountId: string;
   connected: boolean;
@@ -112,8 +117,17 @@ export interface GatewayAdapterInterface {
 export interface AdapterWorkerInterface {
   readonly adapterId: string;
 
-  connect(accountId: string, config?: Record<string, unknown>): Promise<AdapterConnectResult>;
-  disconnect(accountId: string): Promise<AdapterDisconnectResult>;
-  send(accountId: string, message: AdapterOutboundMessage): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }>;
-  status(accountId?: string): Promise<AdapterAccountStatus[]>;
+  // DONT RENAME TO connect() because Cloudflare service bindings already expose
+  // a built-in socket connect() method. If gateway calls service.connect(...),
+  // workerd resolves the socket API instead of our RPC entrypoint and throws
+  // "Specified address is missing port" before the request reaches the channel worker.
+  adapterConnect(accountId: string, config?: Record<string, unknown>): Promise<AdapterConnectResult>;
+  adapterDisconnect(accountId: string): Promise<AdapterDisconnectResult>;
+  adapterSend(accountId: string, message: AdapterOutboundMessage): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }>;
+  adapterSetActivity(
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]>;
 }

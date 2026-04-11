@@ -35,7 +35,10 @@ import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { isInternalOnlySyscall } from "./syscall-exposure";
-import { resolveAdapterServiceForKernel } from "./adapter-handlers";
+import {
+  resolveAdapterServiceForKernel,
+  setAdapterActivityForKernel,
+} from "./adapter-handlers";
 import {
   type InstalledPackageRecord,
   PackageStore,
@@ -532,16 +535,26 @@ export class Kernel extends Host<Env> {
           ? payload.text
           : "";
 
-    if (!text.trim()) return;
+    const surface = {
+      kind: route.surfaceKind,
+      id: route.surfaceId,
+      threadId: route.threadId,
+    } as const;
 
-    await this.sendAdapterMessage(route.adapter, route.accountId, {
-      surface: {
-        kind: route.surfaceKind,
-        id: route.surfaceId,
-        threadId: route.threadId,
-      },
-      text,
-    });
+    if (text.trim()) {
+      await this.sendAdapterMessage(route.adapter, route.accountId, {
+        surface,
+        text,
+      });
+    }
+
+    await setAdapterActivityForKernel(
+      this.env,
+      route.adapter,
+      route.accountId,
+      surface,
+      { kind: "typing", active: false },
+    );
   }
 
   private async sendAdapterMessage(
@@ -550,13 +563,13 @@ export class Kernel extends Host<Env> {
     message: AdapterOutboundMessage,
   ): Promise<void> {
     const service = resolveAdapterServiceForKernel(this.env, adapter);
-    if (!service || typeof service.send !== "function") {
+    if (!service || typeof service.adapterSend !== "function") {
       console.warn(`[Kernel] Adapter service unavailable for ${adapter}`);
       return;
     }
 
     try {
-      const result = await service.send(accountId, message);
+      const result = await service.adapterSend(accountId, message);
       if (!result.ok) {
         console.warn(`[Kernel] Adapter send failed (${adapter}/${accountId}): ${result.error}`);
       }
