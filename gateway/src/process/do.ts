@@ -306,11 +306,12 @@ export class Process extends Host<Env> {
       }
 
       if (r.role === "user" && r.media) {
+        const media = parseStoredProcessMedia(r.media);
         return {
           role: r.role,
           content: {
             text: r.content,
-            media: parseStoredProcessMedia(r.media),
+            media,
           },
           timestamp: r.createdAt,
         };
