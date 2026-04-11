@@ -174,7 +174,7 @@ export class DiscordGateway extends DurableObject<Env> {
     }
     this.state.botToken = botToken;
     await this.saveState();
-    await this.connect();
+    await this.openGatewayConnection();
     
     // Schedule keep-alive to prevent DO hibernation
     this.scheduleKeepAlive();
@@ -231,7 +231,7 @@ export class DiscordGateway extends DurableObject<Env> {
     if (!this.ws) {
       console.log("[DiscordGateway] WebSocket lost, reconnecting...");
       try {
-        await this.connect();
+        await this.openGatewayConnection();
       } catch (e) {
         console.error("[DiscordGateway] Reconnect failed:", e);
         this.state.lastError = e instanceof Error ? e.message : String(e);
@@ -254,7 +254,7 @@ export class DiscordGateway extends DurableObject<Env> {
   // WebSocket Connection
   // ─────────────────────────────────────────────────────────
 
-  private async connect() {
+  private async openGatewayConnection() {
     console.log("[DiscordGateway] Connecting...");
 
     // Get gateway URL
@@ -750,7 +750,7 @@ export class DiscordGateway extends DurableObject<Env> {
     const recoverableCodes = [4000, 4001, 4002, 4003, 4005, 4007, 4008, 4009];
     if (recoverableCodes.includes(event.code) && this.state.botToken) {
       console.log("[DiscordGateway] Attempting to reconnect...");
-      this.ctx.waitUntil(this.connect());
+      this.ctx.waitUntil(this.openGatewayConnection());
     }
   }
 

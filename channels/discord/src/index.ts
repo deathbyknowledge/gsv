@@ -74,10 +74,6 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
     };
   }
 
-  async connect(accountId: string, config: Record<string, unknown> = {}) {
-    return this.adapterConnect(accountId, config);
-  }
-
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
