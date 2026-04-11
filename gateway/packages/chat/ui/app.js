@@ -662,6 +662,7 @@ const elements = {
   chatInput: document.getElementById("chat-input"),
   composeStatus: document.getElementById("compose-status"),
   sendButton: document.getElementById("send-button"),
+  stopRun: document.getElementById("stop-run"),
   openFiles: document.getElementById("open-files"),
   openShell: document.getElementById("open-shell"),
 };
@@ -678,6 +679,8 @@ let messageBusy = false;
 let currentUsername = null;
 let pendingAssistantState = null;
 let pendingAttachments = [];
+let abortBusy = false;
+let suppressNextAbortedComplete = false;
 
 function getActivePid() {
   return activeThreadContext?.pid || null;
@@ -1027,8 +1030,12 @@ function renderStatus() {
   if (elements.composeStatus) {
     if (hostError) {
       elements.composeStatus.textContent = hostError;
+    } else if (abortBusy) {
+      elements.composeStatus.textContent = "Stopping active run...";
     } else if (messageBusy) {
       elements.composeStatus.textContent = "Run in progress. Responses will refresh as signals arrive.";
+    } else if (pendingAssistantState) {
+      elements.composeStatus.textContent = "Run active. Send to queue another message or stop it.";
     } else if (activeThreadContext) {
       elements.composeStatus.textContent = "Attached to active thread.";
     } else {
@@ -1056,6 +1063,10 @@ function renderStatus() {
     const hasText = elements.chatInput && elements.chatInput.value.trim().length > 0;
     const hasAttachments = pendingAttachments.length > 0;
     elements.sendButton.disabled = !interactive || messageBusy || (!hasText && !hasAttachments);
+  }
+  if (elements.stopRun) {
+    const hasActiveRun = Boolean(getActivePid()) && (messageBusy || pendingAssistantState !== null);
+    elements.stopRun.disabled = !interactive || abortBusy || !hasActiveRun;
   }
   if (elements.openFiles) {
     elements.openFiles.disabled = !activeThreadContext;
@@ -1318,6 +1329,42 @@ async function sendMessage() {
   }
 }
 
+async function abortActiveRun() {
+  if (!client || !client.isConnected()) {
+    appendSystemRow("session is locked");
+    return;
+  }
+  const pid = getActivePid();
+  if (!pid || abortBusy) {
+    return;
+  }
+
+  abortBusy = true;
+  renderStatus();
+  try {
+    const result = await client.call("proc.abort", { pid });
+    if (!result || result.ok !== true) {
+      appendSystemRow("stop failed");
+      return;
+    }
+
+    if (result.aborted) {
+      if (result.continuedQueuedRunId) {
+        suppressNextAbortedComplete = true;
+        setPendingAssistantState("thinking");
+      } else {
+        setPendingAssistantState(null);
+        appendSystemRow("run interrupted");
+      }
+    }
+  } catch (error) {
+    appendSystemRow("stop failed: " + (error instanceof Error ? error.message : String(error)));
+  } finally {
+    abortBusy = false;
+    renderStatus();
+  }
+}
+
 function openCompanion(appId) {
   if (!activeThreadContext) {
     return;
@@ -1380,6 +1427,7 @@ function listenForTargetProcess() {
 function bindUi() {
   elements.refreshThreads?.addEventListener("click", () => { void loadThreads(); });
   elements.newThread?.addEventListener("click", () => { resetToNewThread(); });
+  elements.stopRun?.addEventListener("click", () => { void abortActiveRun(); });
   elements.composeForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     void sendMessage();
@@ -1468,8 +1516,15 @@ async function boot() {
           setPendingAssistantState("thinking");
         }
       } else if (signal === "chat.complete") {
-        setPendingAssistantState(null);
+        const payloadRecord = asRecord(payload);
+        if (payloadRecord?.aborted === true && suppressNextAbortedComplete) {
+          suppressNextAbortedComplete = false;
+        } else {
+          suppressNextAbortedComplete = false;
+          setPendingAssistantState(null);
+        }
       } else if (signal === "chat.error" || signal === "process.exit") {
+        suppressNextAbortedComplete = false;
         setPendingAssistantState(null);
         scheduleRefresh({ threads: true });
       }

@@ -162,6 +162,7 @@ async function dispatchNative(
         data = await handleProcSpawn(frame.args, ctx);
         break;
       case "proc.send":
+      case "proc.abort":
       case "proc.kill":
       case "proc.history":
       case "proc.reset":

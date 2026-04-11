@@ -61,6 +61,21 @@ export type ProcMediaInput = {
   transcription?: string;
 };
 
+export type ProcAbortArgs = {
+  pid?: string;
+};
+
+export type ProcAbortResult =
+  | {
+      ok: true;
+      pid: string;
+      aborted: boolean;
+      runId?: string;
+      interruptedToolCalls?: number;
+      continuedQueuedRunId?: string;
+    }
+  | { ok: false; error: string };
+
 export type ProcSendResult =
   | { ok: true; status: "started"; runId: string; queued?: boolean }
   | { ok: false; error: string };

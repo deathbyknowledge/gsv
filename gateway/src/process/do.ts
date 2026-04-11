@@ -29,6 +29,7 @@ import type {
 } from "../syscalls/ai";
 import type {
   ProcSendResult,
+  ProcAbortResult,
   ProcHistoryResult,
   ProcHistoryMessage,
   ProcResetResult,
@@ -81,6 +82,8 @@ type RunState = {
   systemPrompt?: string;
 };
 
+type ActiveRunPhase = "toolResults" | "generation";
+
 const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TEXT_ENCODER = new TextEncoder();
 const PROCESS_MEDIA_CACHE_LIMIT = 32;
@@ -90,6 +93,8 @@ export class Process extends Host<Env> {
   private readonly generation = createGenerationService();
   private readonly ripgit: RipgitClient | null;
   private readonly mediaCache = new Map<string, string>();
+  private activeRunPhase: { runId: string; phase: ActiveRunPhase } | null = null;
+  private deferredAbortContinuationRunId: string | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -199,6 +204,9 @@ export class Process extends Host<Env> {
             frame.args as ProcSendArgs,
           );
           break;
+        case "proc.abort":
+          data = await this.handleProcAbort();
+          break;
         case "proc.history":
           data = this.handleProcHistory(
             frame.args as { pid?: string; limit?: number; offset?: number },
@@ -255,6 +263,50 @@ export class Process extends Host<Env> {
     this.scheduleTick(runId);
 
     return { ok: true, status: "started", runId };
+  }
+
+  private async handleProcAbort(): Promise<ProcAbortResult> {
+    const pid = this.pid;
+    const run = this.currentRun;
+    if (!run) {
+      return { ok: true, pid, aborted: false };
+    }
+
+    const runId = run.runId;
+    const inToolResultPhase =
+      this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "toolResults";
+    let interruptedToolCalls = 0;
+
+    if (!inToolResultPhase) {
+      interruptedToolCalls = await this.ingestToolResults(runId, this.store.getResults(runId), {
+        interruptPending: true,
+      });
+    }
+
+    this.currentRun = null;
+    await this.sendSignal("chat.complete", {
+      text: null,
+      aborted: true,
+      reason: "user",
+      pid,
+      runId,
+    });
+
+    let continuedQueuedRunId: string | undefined;
+    if (inToolResultPhase) {
+      this.deferredAbortContinuationRunId = runId;
+    } else {
+      continuedQueuedRunId = this.promoteNextQueuedRun() ?? undefined;
+    }
+
+    return {
+      ok: true,
+      pid,
+      aborted: true,
+      runId,
+      interruptedToolCalls,
+      continuedQueuedRunId,
+    };
   }
 
   private handleProcHistory(args: {
@@ -433,33 +485,17 @@ export class Process extends Host<Env> {
     const hadPendingToolCalls = toolResults.length > 0;
 
     if (hadPendingToolCalls) {
-      for (const result of toolResults) {
-        const content =
-          result.status === "error"
-            ? `Error: ${result.error}`
-            : typeof result.result === "string"
-              ? result.result
-              : JSON.stringify(result.result ?? null);
-
-        this.store.appendToolResult(
-          result.id,
-          result.call,
-          content,
-          result.status === "error",
-        );
-
-        await this.sendSignal("chat.tool_result", {
-          name: SYSCALL_TOOL_NAMES[result.call] ?? result.call,
-          syscall: result.call,
-          callId: result.id,
-          ok: result.status === "completed",
-          output: result.status === "completed" ? result.result : undefined,
-          error: result.status === "error" ? result.error : undefined,
-          pid: this.pid,
-          runId,
-        });
+      this.activeRunPhase = { runId, phase: "toolResults" };
+      try {
+        await this.ingestToolResults(runId, toolResults);
+      } finally {
+        if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "toolResults") {
+          this.activeRunPhase = null;
+        }
       }
-      this.store.clearRun(runId);
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
     }
 
     // Step 2: Inject queued messages at tool-result boundary
@@ -475,6 +511,9 @@ export class Process extends Host<Env> {
           `[Process] Injected ${queued.length} queued message(s) at tool-result boundary`,
         );
       }
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
     }
 
     // Step 3: Load config + tools (first tick only, cached on run state)
@@ -482,8 +521,14 @@ export class Process extends Host<Env> {
       run.config = await this.kernelRpc("ai.config", {
         profile: this.profile,
       });
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
 
       const toolsResult = await this.kernelRpc("ai.tools");
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
       run.tools = toolsResult.tools;
 
       this.currentRun = run;
@@ -499,6 +544,9 @@ export class Process extends Host<Env> {
         storage: this.env.STORAGE,
         ripgit: this.ripgit,
       });
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
       this.currentRun = run;
     }
 
@@ -519,6 +567,7 @@ export class Process extends Host<Env> {
     // Step 6: Call LLM
     let response: AssistantMessage;
     try {
+      this.activeRunPhase = { runId, phase: "generation" };
       console.log(
         `[Process] Calling generation service for chat.reply: ${run.config!.provider}/${run.config!.model}`,
       );
@@ -528,10 +577,22 @@ export class Process extends Host<Env> {
         context,
         sessionAffinityKey: this.pid,
       });
+      if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "generation") {
+        this.activeRunPhase = null;
+      }
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
       console.log(
         `[Process] LLM response: ${response.content?.length ?? 0} blocks, stop=${response.stopReason}`,
       );
     } catch (e) {
+      if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "generation") {
+        this.activeRunPhase = null;
+      }
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
       const errorMsg = e instanceof Error ? e.message : String(e);
       console.error(`[Process] LLM call failed:`, e);
       await this.sendSignal("chat.complete", {
@@ -540,6 +601,9 @@ export class Process extends Host<Env> {
         pid: this.pid,
         runId,
       });
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
       await this.finishRun("chat.error");
       return;
     }
@@ -553,6 +617,9 @@ export class Process extends Host<Env> {
         pid: this.pid,
         runId,
       });
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
       await this.finishRun("chat.empty");
       return;
     }
@@ -571,6 +638,9 @@ export class Process extends Host<Env> {
 
     if (text.trim()) {
       await this.sendSignal("chat.text", { text, pid: this.pid, runId });
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
     }
 
     this.store.appendMessage("assistant", text, {
@@ -592,6 +662,9 @@ export class Process extends Host<Env> {
           pid: this.pid,
           runId,
         });
+        if (this.handleRunStopped(runId)) {
+          return;
+        }
 
         if (!syscall) {
           this.store.appendToolResult(
@@ -618,6 +691,9 @@ export class Process extends Host<Env> {
           syscall as SyscallName,
           tc.arguments,
         );
+        if (this.handleRunStopped(runId)) {
+          return;
+        }
       }
 
       if (this.store.isRunResolved(runId)) {
@@ -630,6 +706,9 @@ export class Process extends Host<Env> {
         runId,
         usage: response.usage,
       });
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
       await this.finishRun("turn.complete");
     }
   }
@@ -639,14 +718,7 @@ export class Process extends Host<Env> {
     this.currentRun = null;
     console.log(`[Process] Finished run ${runId}`);
 
-    const next = this.store.dequeue();
-    if (next) {
-      this.store.appendMessage("user", next.message, {
-        media: next.media ?? undefined,
-      });
-      this.currentRun = { runId: next.runId, queued: false };
-      this.scheduleTick(next.runId);
-    }
+    this.promoteNextQueuedRun();
   }
 
   /**
@@ -954,6 +1026,90 @@ export class Process extends Host<Env> {
       this.mediaCache.delete(oldest);
     }
     return data;
+  }
+
+  private async ingestToolResults(
+    runId: string,
+    toolResults: ReturnType<ProcessStore["getResults"]>,
+    options?: { interruptPending?: boolean },
+  ): Promise<number> {
+    this.store.clearRun(runId);
+    let interrupted = 0;
+
+    for (const result of toolResults) {
+      let content: string;
+      let ok: boolean;
+      let output: unknown;
+      let error: string | undefined;
+      let isError: boolean;
+
+      if (result.status === "completed") {
+        content =
+          typeof result.result === "string"
+            ? result.result
+            : JSON.stringify(result.result ?? null);
+        ok = true;
+        output = result.result;
+        isError = false;
+      } else if (result.status === "error") {
+        content = `Error: ${result.error}`;
+        ok = false;
+        error = result.error ?? "Tool execution failed";
+        isError = true;
+      } else if (options?.interruptPending) {
+        content = "Error: User interrupted tool execution";
+        ok = false;
+        error = "User interrupted tool execution";
+        isError = true;
+        interrupted += 1;
+      } else {
+        continue;
+      }
+
+      this.store.appendToolResult(
+        result.id,
+        result.call,
+        content,
+        isError,
+      );
+
+      await this.sendSignal("chat.tool_result", {
+        name: SYSCALL_TOOL_NAMES[result.call] ?? result.call,
+        syscall: result.call,
+        callId: result.id,
+        ok,
+        output,
+        error,
+        pid: this.pid,
+        runId,
+      });
+    }
+
+    return interrupted;
+  }
+
+  private handleRunStopped(runId: string): boolean {
+    if (this.currentRun?.runId === runId) {
+      return false;
+    }
+    if (this.deferredAbortContinuationRunId === runId) {
+      this.deferredAbortContinuationRunId = null;
+      this.promoteNextQueuedRun();
+    }
+    return true;
+  }
+
+  private promoteNextQueuedRun(): string | null {
+    const next = this.store.dequeue();
+    if (!next) {
+      return null;
+    }
+    this.store.appendMessage("user", next.message, {
+      media: next.media ?? undefined,
+    });
+    this.currentRun = { runId: next.runId, queued: false };
+    this.scheduleTick(next.runId);
+    return next.runId;
   }
 }
 
