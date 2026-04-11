@@ -1517,11 +1517,16 @@ async function boot() {
         }
       } else if (signal === "chat.complete") {
         const payloadRecord = asRecord(payload);
+        const errorMessage = asString(payloadRecord?.error);
         if (payloadRecord?.aborted === true && suppressNextAbortedComplete) {
           suppressNextAbortedComplete = false;
         } else {
           suppressNextAbortedComplete = false;
           setPendingAssistantState(null);
+        }
+        if (errorMessage) {
+          appendSystemRow(errorMessage);
+          scheduleRefresh({ history: true, threads: true });
         }
       } else if (signal === "chat.error" || signal === "process.exit") {
         suppressNextAbortedComplete = false;
