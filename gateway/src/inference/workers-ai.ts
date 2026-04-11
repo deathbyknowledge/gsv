@@ -101,36 +101,17 @@ export async function completeWithWorkersAi(
 
   const primaryInput = buildWorkersAiInput(request);
   const runOptions = buildWorkersAiRunOptions(request);
-  console.log(
-    `[WorkersAI] request ${JSON.stringify(summarizeRunInput(request.modelName, primaryInput, request.sessionAffinityKey))}`,
-  );
 
   try {
     const response = await ai.run(request.modelName, primaryInput, runOptions);
-    console.log(
-      `[WorkersAI] response ${JSON.stringify(summarizeRunOutput(response))}`,
-    );
     return normalizeWorkersAiResponse(response, request.modelName);
   } catch (error) {
-    console.error(
-      `[WorkersAI] primary request failed ${JSON.stringify(serializeError(error))}`,
-    );
-
     if (primaryInput.tools && primaryInput.tools.length > 0) {
       const fallbackInput = buildWorkersAiInput(request, { disableTools: true });
-      console.warn(
-        `[WorkersAI] retrying without tools ${JSON.stringify(summarizeRunInput(request.modelName, fallbackInput, request.sessionAffinityKey))}`,
-      );
       try {
         const fallbackResponse = await ai.run(request.modelName, fallbackInput, runOptions);
-        console.warn(
-          `[WorkersAI] fallback without tools succeeded ${JSON.stringify(summarizeRunOutput(fallbackResponse))}`,
-        );
         return normalizeWorkersAiResponse(fallbackResponse, request.modelName);
-      } catch (fallbackError) {
-        console.error(
-          `[WorkersAI] fallback without tools failed ${JSON.stringify(serializeError(fallbackError))}`,
-        );
+      } catch {
       }
     }
 
@@ -620,128 +601,6 @@ function sanitizeToolParameters(
     required: Array.isArray(requiredInput)
       ? requiredInput.filter((value): value is string => typeof value === "string")
       : [],
-  };
-}
-
-function summarizeRunInput(
-  modelName: string,
-  input: WorkersAiRunInput,
-  sessionAffinityKey?: string,
-) {
-  const messages = input.messages as unknown as WorkersAiMessage[];
-  return {
-    model: modelName,
-    sessionAffinityKey: sessionAffinityKey ?? null,
-    messageCount: messages.length,
-    messageRoles: messages.map((message) => ({
-      role: message.role,
-      contentLength: typeof message.content === "string" ? message.content.length : 0,
-      toolCalls: message.tool_calls?.length ?? 0,
-      hasToolCallId: !!message.tool_call_id,
-    })),
-    toolCount: input.tools?.length ?? 0,
-    tools: input.tools?.map((tool) => ({
-      name: tool.function.name,
-      required: tool.function.parameters?.required ?? [],
-      propertyCount: Object.keys(tool.function.parameters?.properties ?? {}).length,
-      strict: tool.function.strict,
-    })) ?? [],
-    maxCompletionTokens: input.max_completion_tokens ?? null,
-    reasoningEffort: input.reasoning_effort ?? null,
-    parallelToolCalls: input.parallel_tool_calls ?? null,
-  };
-}
-
-function summarizeRunOutput(response: WorkersAiRunOutput) {
-  const choices = Array.isArray(response.choices) ? response.choices : [];
-
-  return {
-    keys: Object.keys(response).sort(),
-    responseTextLength: typeof response.response === "string" ? response.response.length : 0,
-    outputTextLength: typeof response.output_text === "string" ? response.output_text.length : 0,
-    extractedThinkingLength: extractWorkersAiThinking(response).length,
-    extractedTextLength: extractWorkersAiText(response).length,
-    topLevelToolCallCount: Array.isArray(response.tool_calls) ? response.tool_calls.length : 0,
-    extractedToolCallCount: extractWorkersAiToolCalls(response).length,
-    choiceCount: choices.length,
-    finishReasons: choices.map((choice) =>
-      choice && typeof choice === "object"
-        ? asString((choice as { finish_reason?: unknown }).finish_reason) ?? null
-        : null,
-    ),
-    choiceMessages: choices.map((choice) => summarizeChoiceMessage(
-      choice && typeof choice === "object"
-        ? (choice as { message?: unknown }).message
-        : undefined,
-    )),
-    outputCount: Array.isArray(response.output) ? response.output.length : 0,
-    usage: response.usage ?? null,
-    completionTokensDetails:
-      response.usage && typeof response.usage === "object"
-        ? (response.usage as { completion_tokens_details?: unknown }).completion_tokens_details ?? null
-        : null,
-  };
-}
-
-function summarizeChoiceMessage(message: unknown) {
-  if (!message || typeof message !== "object") {
-    return null;
-  }
-
-  const content = (message as { content?: unknown }).content;
-  const toolCalls = (message as { tool_calls?: unknown }).tool_calls;
-
-  return {
-    keys: Object.keys(message as Record<string, unknown>).sort(),
-    contentType: Array.isArray(content) ? "array" : typeof content,
-    contentPartTypes: Array.isArray(content)
-      ? content.map((entry) =>
-        entry && typeof entry === "object"
-          ? asString((entry as { type?: unknown }).type) ?? "object"
-          : typeof entry,
-      )
-      : [],
-    contentTextLength: extractChoiceMessageText(message).length,
-    reasoningLength: extractChoiceMessageThinking(message).length,
-    refusalLength: typeof (message as { refusal?: unknown }).refusal === "string"
-      ? ((message as { refusal?: string }).refusal?.length ?? 0)
-      : 0,
-    toolCallCount: Array.isArray(toolCalls) ? toolCalls.length : 0,
-  };
-}
-
-function serializeError(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return { message: String(error) };
-  }
-
-  const value = error as {
-    name?: unknown;
-    message?: unknown;
-    cause?: unknown;
-    stack?: unknown;
-    code?: unknown;
-    status?: unknown;
-  };
-
-  const ownProps = Object.fromEntries(
-    Object.getOwnPropertyNames(error).map((key) => {
-      const property = (error as Record<string, unknown>)[key];
-      if (typeof property === "string" || typeof property === "number" || typeof property === "boolean" || property === null) {
-        return [key, property];
-      }
-      return [key, typeof property];
-    }),
-  );
-
-  return {
-    name: typeof value.name === "string" ? value.name : undefined,
-    message: typeof value.message === "string" ? value.message : String(error),
-    code: value.code,
-    status: value.status,
-    cause: value.cause,
-    ownProps,
-    stack: typeof value.stack === "string" ? value.stack.split("\n").slice(0, 4).join("\n") : undefined,
   };
 }
 

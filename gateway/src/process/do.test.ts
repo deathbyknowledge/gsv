@@ -159,9 +159,11 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        expect(store.messageCount()).toBe(1);
+        expect(store.messageCount()).toBe(2);
         expect(store.getMessages()[0].role).toBe("user");
         expect(store.getMessages()[0].content).toBe("Hello agent");
+        expect(store.getMessages()[1].role).toBe("system");
+        expect(store.getMessages()[1].content).toContain("Generation failed:");
         expect(store.getValue("currentRun")).toBeNull();
       });
     });

@@ -568,9 +568,6 @@ export class Process extends Host<Env> {
     let response: AssistantMessage;
     try {
       this.activeRunPhase = { runId, phase: "generation" };
-      console.log(
-        `[Process] Calling generation service for chat.reply: ${run.config!.provider}/${run.config!.model}`,
-      );
       response = await this.generation.generate({
         purpose: "chat.reply",
         config: run.config!,
@@ -583,9 +580,6 @@ export class Process extends Host<Env> {
       if (this.handleRunStopped(runId)) {
         return;
       }
-      console.log(
-        `[Process] LLM response: ${response.content?.length ?? 0} blocks, stop=${response.stopReason}`,
-      );
     } catch (e) {
       if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "generation") {
         this.activeRunPhase = null;
@@ -594,10 +588,12 @@ export class Process extends Host<Env> {
         return;
       }
       const errorMsg = e instanceof Error ? e.message : String(e);
+      const displayError = formatGenerationFailure(errorMsg);
       console.error(`[Process] LLM call failed:`, e);
+      this.store.appendMessage("system", displayError);
       await this.sendSignal("chat.complete", {
         text: null,
-        error: errorMsg,
+        error: displayError,
         pid: this.pid,
         runId,
       });
@@ -610,10 +606,12 @@ export class Process extends Host<Env> {
 
     if (!response.content || response.content.length === 0) {
       const errorMsg = response.errorMessage ?? "LLM returned empty response";
+      const displayError = formatGenerationFailure(errorMsg);
       console.error(`[Process] ${errorMsg}`);
+      this.store.appendMessage("system", displayError);
       await this.sendSignal("chat.complete", {
         text: null,
-        error: errorMsg,
+        error: displayError,
         pid: this.pid,
         runId,
       });
@@ -1134,6 +1132,14 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
     tool_call_id: message.toolCallId ?? undefined,
     ts: message.createdAt,
   };
+}
+
+function formatGenerationFailure(message: string): string {
+  const normalized = message.trim();
+  if (!normalized) {
+    return "Generation failed.";
+  }
+  return `Generation failed: ${normalized}`;
 }
 
 async function gzip(input: string): Promise<ArrayBuffer> {
