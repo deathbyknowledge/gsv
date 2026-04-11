@@ -18,11 +18,12 @@ const IDENTITY: ProcessIdentity = {
 function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackageRecord {
   return {
     packageId: "import:root/pkg-test:.",
+    scope: { kind: "global" },
     manifest: {
       name: "ascii-starfield",
       description: "ASCII starfield",
       version: "0.1.0",
-      runtime: "dynamic-worker",
+      runtime: "web-ui",
       source: {
         repo: "root/pkg-test",
         ref: "main",
@@ -30,12 +31,32 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
         resolvedCommit: "abc123",
       },
       entrypoints: [{ name: "Starfield", kind: "ui" }],
-      bindingNames: ["PACKAGE"],
+      capabilities: {
+        bindings: [
+          {
+            binding: "PACKAGE",
+            kind: "package-state",
+            interfaceName: "gsv.package.v1",
+            required: true,
+          },
+        ],
+        egress: {
+          mode: "none",
+        },
+      },
     },
     artifact: { hash: "hash1", mainModule: "index.js", modules: [] },
     grants: {
-      kernel: ["pkg.repo.refs", "pkg.repo.log"],
-      outbound: [],
+      bindings: [
+        {
+          binding: "PACKAGE",
+          providerKind: "package-do",
+          providerRef: "pkg://ascii-starfield",
+        },
+      ],
+      egress: {
+        mode: "none",
+      },
     },
     enabled: false,
     reviewRequired: true,
@@ -86,6 +107,9 @@ function makeContext(options?: {
     packages: {
       list() {
         return [...records.values()];
+      },
+      resolve(packageId: string) {
+        return records.get(packageId) ?? null;
       },
       get(packageId: string) {
         return records.get(packageId) ?? null;
@@ -147,7 +171,11 @@ describe("pkg shell command", () => {
       makeContext({
         capabilities: ["pkg.install"],
         mounts: [{ mountPath: "/src/package", packageId: "import:root/pkg-test:." }],
-        pkg: makePackage({ reviewedAt: 100, reviewRequired: true }),
+        pkg: makePackage({
+          scope: { kind: "user", uid: 1000 },
+          reviewedAt: 100,
+          reviewRequired: true,
+        }),
       }),
     );
 

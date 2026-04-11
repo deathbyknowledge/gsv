@@ -7,6 +7,16 @@ const { importFromUpstreamMock, buildBuiltinPackageSeedsMock } = vi.hoisted(() =
   buildBuiltinPackageSeedsMock: vi.fn(),
 }));
 
+const {
+  inferDefaultCliChannelMock,
+  mirrorCliChannelMock,
+  storeDefaultCliChannelMock,
+} = vi.hoisted(() => ({
+  inferDefaultCliChannelMock: vi.fn(),
+  mirrorCliChannelMock: vi.fn(),
+  storeDefaultCliChannelMock: vi.fn(),
+}));
+
 vi.mock("../../fs/ripgit/client", () => ({
   RipgitClient: class {
     importFromUpstream = importFromUpstreamMock;
@@ -15,6 +25,14 @@ vi.mock("../../fs/ripgit/client", () => ({
 
 vi.mock("../packages", () => ({
   buildBuiltinPackageSeeds: buildBuiltinPackageSeedsMock,
+}));
+
+vi.mock("../../downloads/cli", () => ({
+  CLI_BINARY_ASSETS: ["gsv-darwin-arm64", "gsv-linux-x64"],
+  CLI_RELEASE_CHANNELS: ["stable", "dev"],
+  inferDefaultCliChannel: inferDefaultCliChannelMock,
+  mirrorCliChannel: mirrorCliChannelMock,
+  storeDefaultCliChannel: storeDefaultCliChannelMock,
 }));
 
 function makeInstalledPackage() {
@@ -56,6 +74,7 @@ function makeContext(): KernelContext {
   return {
     env: {
       RIPGIT: {} as Fetcher,
+      STORAGE: {} as R2Bucket,
     } as Env,
     identity: {
       role: "user",
@@ -86,6 +105,9 @@ describe("handleSysBootstrap", () => {
       changed: true,
     });
     buildBuiltinPackageSeedsMock.mockResolvedValue([{ name: "chat-seed" }]);
+    inferDefaultCliChannelMock.mockReturnValue("dev");
+    mirrorCliChannelMock.mockResolvedValue(undefined);
+    storeDefaultCliChannelMock.mockResolvedValue(undefined);
   });
 
   it("bootstraps system/gsv from the default upstream and reseeds builtins", async () => {
@@ -103,12 +125,20 @@ describe("handleSysBootstrap", () => {
     );
     expect(buildBuiltinPackageSeedsMock).toHaveBeenCalledWith(ctx.env);
     expect(ctx.packages.seedBuiltinPackages).toHaveBeenCalledWith([{ name: "chat-seed" }]);
+    expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("osify");
+    expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);
+    expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "dev");
     expect(result).toEqual({
       repo: "system/gsv",
       remoteUrl: "https://github.com/deathbyknowledge/gsv",
       ref: "osify",
       head: "abc123",
       changed: true,
+      cli: {
+        defaultChannel: "dev",
+        mirroredChannels: ["stable", "dev"],
+        assets: ["gsv-darwin-arm64", "gsv-linux-x64"],
+      },
       packages: [
         {
           packageId: "pkg-chat",
