@@ -6,6 +6,7 @@ import type {
   SysSetupArgs,
   SysSetupResult,
 } from "../../gateway/src/syscalls/system";
+import type { ProcMediaInput } from "../../gateway/src/syscalls/proc";
 
 type GatewayErrorShape = {
   code: number;
@@ -124,7 +125,7 @@ export type GatewayClientLike = {
   onStatus: (listener: (status: GatewayClientStatus) => void) => () => void;
   call: <T = unknown>(call: string, args?: unknown) => Promise<T>;
   spawnProcess: (args: ProcSpawnArgs) => Promise<ProcSpawnResult>;
-  sendMessage: (message: string, pid?: string) => Promise<ProcSendResult>;
+  sendMessage: (message: string, pid?: string, media?: ProcMediaInput[]) => Promise<ProcSendResult>;
   getHistory: (limit?: number, pid?: string, offset?: number) => Promise<ProcHistoryResult>;
   probeSetupMode: (url: string) => Promise<boolean>;
   setupSystem: (url: string, args: SysSetupArgs) => Promise<SysSetupResult>;
@@ -273,10 +274,11 @@ export class GatewayClient implements GatewayClientLike {
     });
   }
 
-  async sendMessage(message: string, pid?: string): Promise<ProcSendResult> {
+  async sendMessage(message: string, pid?: string, media?: ProcMediaInput[]): Promise<ProcSendResult> {
     const result = (await this.call("proc.send", {
       message,
       ...(pid ? { pid } : {}),
+      ...(media && media.length > 0 ? { media } : {}),
     })) as ProcSendResult;
     return result;
   }

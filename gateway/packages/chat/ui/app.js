@@ -35,6 +35,21 @@ function prettyJson(value) {
 }
 
 function formatMessageContent(value) {
+  const record = asRecord(value);
+  if (record) {
+    const text = asString(record.text) || "";
+    const media = Array.isArray(record.media) ? record.media : [];
+    if (media.length > 0) {
+      const lines = [];
+      if (text.trim()) {
+        lines.push(text);
+      }
+      for (const item of media) {
+        lines.push(describeAttachment(item));
+      }
+      return lines.join("\n");
+    }
+  }
   return typeof value === "string" ? value : prettyJson(value);
 }
 
@@ -627,7 +642,7 @@ function createEmbeddedHostClient(port) {
     },
     call: (call, args) => rpc("call", { call, args: args || {} }),
     spawnProcess: (args) => rpc("spawnProcess", args),
-    sendMessage: (message, pid) => rpc("sendMessage", { message, pid }),
+    sendMessage: (message, pid, media) => rpc("sendMessage", { message, pid, media }),
     getHistory: (limit, pid, offset) => rpc("getHistory", { limit: limit || 50, pid, offset }),
   };
 }
@@ -642,6 +657,8 @@ const elements = {
   connectionPill: document.getElementById("connection-pill"),
   chatLog: document.getElementById("chat-log"),
   composeForm: document.getElementById("chat-compose-form"),
+  attachmentInput: document.getElementById("chat-attachments"),
+  attachmentList: document.getElementById("chat-attachments-list"),
   chatInput: document.getElementById("chat-input"),
   composeStatus: document.getElementById("compose-status"),
   sendButton: document.getElementById("send-button"),
@@ -660,6 +677,7 @@ let refreshTimer = null;
 let messageBusy = false;
 let currentUsername = null;
 let pendingAssistantState = null;
+let pendingAttachments = [];
 
 function getActivePid() {
   return activeThreadContext?.pid || null;
@@ -678,6 +696,75 @@ function setLogRows(rows, options = {}) {
 function appendSystemRow(text) {
   logRows = logRows.concat([{ role: "system", text: String(text || ""), timestamp: Date.now() }]);
   renderLog({ autoScroll: true });
+}
+
+function inferAttachmentKind(mimeType, filename) {
+  const normalized = safeText(mimeType).split(";")[0].trim().toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  const lowerName = safeText(filename).toLowerCase();
+  if (lowerName.endsWith(".png") || lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") || lowerName.endsWith(".gif") || lowerName.endsWith(".webp")) return "image";
+  if (lowerName.endsWith(".mp3") || lowerName.endsWith(".wav") || lowerName.endsWith(".ogg") || lowerName.endsWith(".m4a")) return "audio";
+  if (lowerName.endsWith(".mp4") || lowerName.endsWith(".mov") || lowerName.endsWith(".webm")) return "video";
+  return "document";
+}
+
+function formatAttachmentSize(size) {
+  if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) return "";
+  if (size < 1024) return size + " B";
+  if (size < 1024 * 1024) return (size / 1024).toFixed(1) + " KB";
+  return (size / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function describeAttachment(value) {
+  const record = asRecord(value);
+  if (!record) return "Attached media";
+  const type = asString(record.type) || "media";
+  const filename = asString(record.filename);
+  const mimeType = asString(record.mimeType);
+  const size = asNumber(record.size);
+  const parts = ["Attached " + type];
+  if (filename) parts.push('"' + filename + '"');
+  if (mimeType) parts.push("[" + mimeType + "]");
+  const sizeLabel = formatAttachmentSize(size);
+  if (sizeLabel) parts.push(sizeLabel);
+  return parts.join(" ");
+}
+
+function renderAttachmentList() {
+  if (!elements.attachmentList) return;
+  elements.attachmentList.innerHTML = pendingAttachments.map((item, index) => (
+    '<span class="composer-attachment-chip">' +
+      '<span class="composer-attachment-name">' + escapeHtmlClient(item.filename || "attachment") + '</span>' +
+      '<button type="button" class="composer-attachment-remove" data-attachment-remove="' + index + '" aria-label="Remove attachment">×</button>' +
+    '</span>'
+  )).join("");
+}
+
+function clearPendingAttachments() {
+  pendingAttachments = [];
+  if (elements.attachmentInput) {
+    elements.attachmentInput.value = "";
+  }
+  renderAttachmentList();
+}
+
+async function readAttachmentFile(file) {
+  const data = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.readAsDataURL(file);
+  });
+
+  return {
+    type: inferAttachmentKind(file.type, file.name),
+    mimeType: file.type || "application/octet-stream",
+    data,
+    filename: file.name || undefined,
+    size: typeof file.size === "number" ? file.size : undefined,
+  };
 }
 
 function extractThinkingBlocks(value) {
@@ -879,6 +966,11 @@ function renderLog(options = {}) {
     const thinkingHtml = thinking.length > 0
       ? '<details class="message-thinking"><summary>Reasoning</summary><div class="message-thinking-body">' + escapeHtmlClient(thinking.join("\n\n")) + '</div></details>'
       : "";
+    const mediaHtml = Array.isArray(row.media) && row.media.length > 0
+      ? '<div class="message-media">' + row.media.map((item) => (
+        '<span class="message-media-chip">' + escapeHtmlClient(describeAttachment(item)) + '</span>'
+      )).join("") + '</div>'
+      : "";
     const bodyHtml = role === "assistant"
       ? '<div class="message-body message-markdown">' + renderMarkdownHtml(row.text) + '</div>'
       : '<pre class="message-body">' + escapeHtmlClient(row.text) + '</pre>';
@@ -886,6 +978,7 @@ function renderLog(options = {}) {
       '<div class="message-head"><span>' + escapeHtmlClient(labelForRole(role)) + '</span><span>' + escapeHtmlClient(timestamp) + '</span></div>' +
       thinkingHtml +
       bodyHtml +
+      mediaHtml +
     '</article>';
   }).join("");
   const pendingHtml = pendingAssistantState
@@ -956,9 +1049,13 @@ function renderStatus() {
   if (elements.chatInput) {
     elements.chatInput.disabled = !interactive || messageBusy;
   }
+  if (elements.attachmentInput) {
+    elements.attachmentInput.disabled = !interactive || messageBusy;
+  }
   if (elements.sendButton) {
     const hasText = elements.chatInput && elements.chatInput.value.trim().length > 0;
-    elements.sendButton.disabled = !interactive || messageBusy || !hasText;
+    const hasAttachments = pendingAttachments.length > 0;
+    elements.sendButton.disabled = !interactive || messageBusy || (!hasText && !hasAttachments);
   }
   if (elements.openFiles) {
     elements.openFiles.disabled = !activeThreadContext;
@@ -1029,7 +1126,10 @@ function flattenHistory(messages) {
       continue;
     }
     const role = entry?.role === "user" ? "user" : entry?.role === "assistant" ? "assistant" : "system";
-    rows.push({ kind: "message", role, text: formatMessageContent(entry?.content), timestamp });
+    const contentRecord = asRecord(entry?.content);
+    const media = Array.isArray(contentRecord?.media) ? contentRecord.media : [];
+    const text = contentRecord ? (asString(contentRecord.text) || formatMessageContent(entry?.content)) : formatMessageContent(entry?.content);
+    rows.push({ kind: "message", role, text, media, timestamp });
   }
   if (rows.length === 0) {
     rows.push({ kind: "message", role: "system", text: "No messages yet. Send your first prompt.", timestamp: Date.now() });
@@ -1173,7 +1273,8 @@ async function sendMessage() {
     return;
   }
   const message = elements.chatInput ? elements.chatInput.value.trim() : "";
-  if (!message) {
+  const attachments = pendingAttachments.slice();
+  if (!message && attachments.length === 0) {
     return;
   }
   messageBusy = true;
@@ -1195,11 +1296,12 @@ async function sendMessage() {
       void loadThreads();
     }
     const currentRows = logRows.slice();
-    currentRows.push({ role: "user", text: message, timestamp: Date.now() });
+    currentRows.push({ role: "user", text: message, media: attachments, timestamp: Date.now() });
     setLogRows(currentRows, { autoScroll: true });
     elements.chatInput.value = "";
+    clearPendingAttachments();
     renderStatus();
-    const result = await client.sendMessage(message, pid || undefined);
+    const result = await client.sendMessage(message, pid || undefined, attachments);
     if (!result.ok) {
       appendSystemRow("send failed: " + result.error);
       return;
@@ -1281,6 +1383,33 @@ function bindUi() {
   elements.composeForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     void sendMessage();
+  });
+  elements.attachmentList?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const rawIndex = target.getAttribute("data-attachment-remove");
+    if (rawIndex === null) return;
+    const index = Number(rawIndex);
+    if (!Number.isFinite(index)) return;
+    pendingAttachments = pendingAttachments.filter((_, itemIndex) => itemIndex !== index);
+    renderAttachmentList();
+    renderStatus();
+  });
+  elements.attachmentInput?.addEventListener("change", () => {
+    const files = Array.from(elements.attachmentInput?.files || []);
+    if (files.length === 0) {
+      renderStatus();
+      return;
+    }
+    void Promise.all(files.map((file) => readAttachmentFile(file)))
+      .then((attachments) => {
+        pendingAttachments = pendingAttachments.concat(attachments);
+        renderAttachmentList();
+        renderStatus();
+      })
+      .catch((error) => {
+        appendSystemRow("attachment read failed: " + (error instanceof Error ? error.message : String(error)));
+      });
   });
   elements.chatInput?.addEventListener("input", () => renderStatus());
   elements.chatInput?.addEventListener("keydown", (event) => {

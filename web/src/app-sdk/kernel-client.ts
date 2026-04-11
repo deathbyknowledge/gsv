@@ -6,6 +6,7 @@ import type {
   ProcSpawnArgs,
   ProcSpawnResult,
 } from "../gateway-client";
+import type { ProcMediaInput } from "../../../gateway/src/syscalls/proc";
 import type { AppManifest } from "./manifest";
 
 export type AppKernelClient = {
@@ -15,7 +16,7 @@ export type AppKernelClient = {
   onSignal: (listener: (signal: string, payload: unknown) => void) => () => void;
   request: <T = unknown>(syscall: string, args?: unknown) => Promise<T>;
   spawnProcess: (args: ProcSpawnArgs) => Promise<ProcSpawnResult>;
-  sendMessage: (message: string, pid?: string) => Promise<ProcSendResult>;
+  sendMessage: (message: string, pid?: string, media?: ProcMediaInput[]) => Promise<ProcSendResult>;
   getHistory: (limit?: number, pid?: string, offset?: number) => Promise<ProcHistoryResult>;
   allowedSyscalls: readonly string[];
 };
@@ -61,9 +62,9 @@ export function createScopedKernelClient(
       assertAllowed(manifest, "proc.spawn");
       return gatewayClient.spawnProcess(args);
     },
-    sendMessage: async (message: string, pid?: string): Promise<ProcSendResult> => {
+    sendMessage: async (message: string, pid?: string, media?: ProcMediaInput[]): Promise<ProcSendResult> => {
       assertAllowed(manifest, "proc.send");
-      return gatewayClient.sendMessage(message, pid);
+      return gatewayClient.sendMessage(message, pid, media);
     },
     getHistory: async (limit = 50, pid?: string, offset?: number): Promise<ProcHistoryResult> => {
       assertAllowed(manifest, "proc.history");

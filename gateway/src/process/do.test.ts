@@ -202,6 +202,49 @@ describe("Process DO — mechanical", () => {
         expect(store.getValue("currentRun")).toBeNull();
       });
     });
+
+    it("stores process-scoped media and hydrates image context blocks", async () => {
+      const pid = "mech-send-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.send", {
+          message: "Describe this image.",
+          media: [
+            {
+              type: "image",
+              mimeType: "image/png",
+              data: "AQID",
+              filename: "proof.png",
+            },
+          ],
+        }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const store = (instance as any).store;
+        const record = store.getMessages()[0];
+        expect(record.role).toBe("user");
+        expect(record.media).toBeTruthy();
+
+        const media = JSON.parse(record.media!);
+        expect(media).toHaveLength(1);
+        expect(media[0].key).toContain(`/0/${pid}/`);
+
+        const stored = await env.STORAGE.get(media[0].key);
+        expect(stored).not.toBeNull();
+
+        const messages = await (instance as any).buildContextMessages();
+        const user = messages[0] as any;
+        expect(Array.isArray(user.content)).toBe(true);
+        expect(user.content[0]).toEqual({ type: "text", text: "Describe this image." });
+        expect(user.content[1].type).toBe("image");
+        expect(user.content[1].mimeType).toBe("image/png");
+        expect(user.content[1].data).toBe("AQID");
+      });
+    });
   });
 
   describe("proc.history", () => {

@@ -89,7 +89,8 @@ async function handleRpc(
       const payload = asRecord(message.payload);
       const text = asString(payload?.message) ?? "";
       const pid = asString(payload?.pid) ?? undefined;
-      return gatewayClient.sendMessage(text, pid);
+      const media = Array.isArray(payload?.media) ? payload.media : undefined;
+      return gatewayClient.sendMessage(text, pid, media as Parameters<GatewayClientLike["sendMessage"]>[2]);
     }
     case "getHistory": {
       const payload = asRecord(message.payload);

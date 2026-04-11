@@ -41,6 +41,8 @@ import type {
   ToolCall,
   Context,
   Tool,
+  UserMessage,
+  ImageContent,
 } from "@mariozechner/pi-ai";
 import { createGenerationService } from "../inference/service";
 import {
@@ -56,11 +58,20 @@ import {
   stringifyAssistantMessageMeta,
   type MessageRecord,
 } from "./store";
+import {
+  buildFallbackMediaBlocks,
+  buildImageBlock,
+  deleteProcessMedia,
+  describeStoredProcessMedia,
+  parseStoredProcessMedia,
+  storeIncomingProcessMedia,
+} from "./media";
 import { assembleSystemPrompt } from "./context";
 import { sendFrameToKernel } from "../shared/utils";
 import { TOOL_TO_SYSCALL, SYSCALL_TOOL_NAMES } from "../syscalls/constants";
 import { RipgitClient } from "../fs/ripgit/client";
 import { workspaceRepoRef } from "../fs/ripgit/repos";
+import type { ProcSendArgs } from "../syscalls/proc";
 
 type RunState = {
   runId: string;
@@ -72,11 +83,13 @@ type RunState = {
 
 const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TEXT_ENCODER = new TextEncoder();
+const PROCESS_MEDIA_CACHE_LIMIT = 32;
 
 export class Process extends Host<Env> {
   private readonly store: ProcessStore;
   private readonly generation = createGenerationService();
   private readonly ripgit: RipgitClient | null;
+  private readonly mediaCache = new Map<string, string>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -183,7 +196,7 @@ export class Process extends Host<Env> {
         }
         case "proc.send":
           data = await this.handleProcSend(
-            frame.args as { pid?: string; message: string },
+            frame.args as ProcSendArgs,
           );
           break;
         case "proc.history":
@@ -223,18 +236,21 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async handleProcSend(args: {
-    pid?: string;
-    message: string;
-  }): Promise<ProcSendResult> {
+  private async handleProcSend(args: ProcSendArgs): Promise<ProcSendResult> {
     const runId = crypto.randomUUID();
+    const media = await storeIncomingProcessMedia(
+      this.env.STORAGE,
+      this.identity.uid,
+      this.pid,
+      args.media,
+    );
 
     if (this.currentRun) {
-      this.store.enqueue(runId, args.message);
+      this.store.enqueue(runId, args.message, media ?? undefined);
       return { ok: true, status: "started", runId, queued: true };
     }
 
-    this.store.appendMessage("user", args.message);
+    this.store.appendMessage("user", args.message, { media: media ?? undefined });
     this.currentRun = { runId, queued: false };
     this.scheduleTick(runId);
 
@@ -289,6 +305,17 @@ export class Process extends Host<Env> {
         };
       }
 
+      if (r.role === "user" && r.media) {
+        return {
+          role: r.role,
+          content: {
+            text: r.content,
+            media: parseStoredProcessMedia(r.media),
+          },
+          timestamp: r.createdAt,
+        };
+      }
+
       return {
         role: r.role,
         content: r.content,
@@ -316,6 +343,7 @@ export class Process extends Host<Env> {
       const archiveId = crypto.randomUUID();
       await this.archiveMessages(pid, archiveId);
       this.store.clearMessages();
+      await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
 
       return {
         ok: true,
@@ -324,6 +352,8 @@ export class Process extends Host<Env> {
         archivedTo: `/var/sessions/${this.identity.username}/${pid}/${archiveId}.jsonl.gz`,
       };
     }
+
+    await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
 
     return { ok: true, pid, archivedMessages: 0 };
   }
@@ -346,6 +376,7 @@ export class Process extends Host<Env> {
 
     // A killed process should restart with a clean conversation and no queued work.
     this.store.clearMessages();
+    await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
 
     return {
       ok: true,
@@ -358,6 +389,7 @@ export class Process extends Host<Env> {
     this.currentRun = null;
     this.store.clearPendingToolCalls();
     this.store.clearQueue();
+    this.mediaCache.clear();
   }
 
   private async handleSig(frame: SignalFrame): Promise<void> {
@@ -433,7 +465,9 @@ export class Process extends Host<Env> {
     if (hadPendingToolCalls) {
       const queued = this.store.drainQueue();
       for (const qm of queued) {
-        this.store.appendMessage("user", qm.message);
+        this.store.appendMessage("user", qm.message, {
+          media: qm.media ?? undefined,
+        });
       }
       if (queued.length > 0) {
         console.log(
@@ -468,7 +502,7 @@ export class Process extends Host<Env> {
     }
 
     // Step 5: Build pi-ai Context
-    const piMessages = this.store.toMessages();
+    const piMessages = await this.buildContextMessages();
     const tools: Tool[] = (run.tools ?? []).map((t) => ({
       name: t.name,
       description: t.description,
@@ -606,7 +640,9 @@ export class Process extends Host<Env> {
 
     const next = this.store.dequeue();
     if (next) {
-      this.store.appendMessage("user", next.message);
+      this.store.appendMessage("user", next.message, {
+        media: next.media ?? undefined,
+      });
       this.currentRun = { runId: next.runId, queued: false };
       this.scheduleTick(next.runId);
     }
@@ -831,6 +867,93 @@ export class Process extends Host<Env> {
       }
     }
   }
+
+  private async buildContextMessages(): Promise<Context["messages"]> {
+    const records = this.store.getMessages();
+    const messages = this.store.toMessages();
+
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (record.role !== "user" || !record.media) {
+        continue;
+      }
+
+      const content = await this.hydrateUserContent(record.content, record.media);
+      messages[index] = {
+        role: "user",
+        content,
+        timestamp: record.createdAt,
+      } satisfies UserMessage;
+    }
+
+    return messages;
+  }
+
+  private async hydrateUserContent(
+    text: string,
+    rawMedia: string,
+  ): Promise<Array<TextContent | ImageContent>> {
+    const media = parseStoredProcessMedia(rawMedia);
+    const content: Array<TextContent | ImageContent> = [];
+
+    if (text.trim().length > 0) {
+      content.push({ type: "text", text });
+    }
+
+    for (const item of media) {
+      if (item.type === "image" && item.key) {
+        const data = await this.loadProcessMedia(item.key);
+        if (data) {
+          content.push(buildImageBlock(data, item.mimeType));
+          continue;
+        }
+      }
+
+      if (
+        (item.type === "audio" || item.type === "video" || item.type === "document")
+        && item.transcription
+      ) {
+        content.push({
+          type: "text",
+          text: describeStoredProcessMedia(item),
+        });
+        continue;
+      }
+
+      content.push(...buildFallbackMediaBlocks([item]));
+    }
+
+    if (content.length === 0) {
+      content.push({ type: "text", text: "" });
+    }
+
+    return content;
+  }
+
+  private async loadProcessMedia(key: string): Promise<string | null> {
+    const cached = this.mediaCache.get(key);
+    if (cached) {
+      this.mediaCache.delete(key);
+      this.mediaCache.set(key, cached);
+      return cached;
+    }
+
+    const object = await this.env.STORAGE.get(key);
+    if (!object) {
+      return null;
+    }
+
+    const data = uint8ArrayToBase64(new Uint8Array(await object.arrayBuffer()));
+    this.mediaCache.set(key, data);
+    while (this.mediaCache.size > PROCESS_MEDIA_CACHE_LIMIT) {
+      const oldest = this.mediaCache.keys().next().value;
+      if (!oldest) {
+        break;
+      }
+      this.mediaCache.delete(oldest);
+    }
+    return data;
+  }
 }
 
 function serializeArchivedMessage(message: MessageRecord): Record<string, unknown> {
@@ -849,6 +972,7 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
   return {
     role: message.role,
     content: message.content,
+    media: message.media ? parseStoredProcessMedia(message.media) : undefined,
     tool_calls: message.toolCalls ? JSON.parse(message.toolCalls) : undefined,
     tool_call_id: message.toolCallId ?? undefined,
     ts: message.createdAt,
@@ -860,4 +984,14 @@ async function gzip(input: string): Promise<ArrayBuffer> {
     .stream()
     .pipeThrough(new CompressionStream("gzip"));
   return new Response(stream).arrayBuffer();
+}
+
+function uint8ArrayToBase64(data: Uint8Array): string {
+  const chunks: string[] = [];
+  const chunkSize = 0x8000;
+  for (let index = 0; index < data.length; index += chunkSize) {
+    const slice = data.subarray(index, index + chunkSize);
+    chunks.push(String.fromCharCode(...slice));
+  }
+  return btoa(chunks.join(""));
 }
