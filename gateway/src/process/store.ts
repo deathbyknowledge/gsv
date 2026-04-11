@@ -19,6 +19,11 @@ import type {
   ThinkingContent,
   ToolCall,
 } from "@mariozechner/pi-ai";
+import {
+  buildFallbackMediaBlocks,
+  describeStoredProcessMedia,
+  parseStoredProcessMedia,
+} from "./media";
 
 export type ToolCallStatus = "pending" | "completed" | "error";
 
@@ -39,6 +44,7 @@ export type MessageRecord = {
   content: string;
   toolCalls: string | null;
   toolCallId: string | null;
+  media: string | null;
   createdAt: number;
 };
 
@@ -66,6 +72,7 @@ export class ProcessStore {
         content TEXT NOT NULL DEFAULT '',
         tool_calls TEXT,
         tool_call_id TEXT,
+        media_json TEXT,
         created_at INTEGER NOT NULL
       )
     `);
@@ -100,6 +107,22 @@ export class ProcessStore {
         created_at INTEGER NOT NULL
       )
     `);
+
+    this.ensureColumn(
+      "messages",
+      "media_json",
+      "ALTER TABLE messages ADD COLUMN media_json TEXT",
+    );
+    this.ensureColumn(
+      "message_queue",
+      "media_json",
+      "ALTER TABLE message_queue ADD COLUMN media_json TEXT",
+    );
+    this.ensureColumn(
+      "message_queue",
+      "overrides_json",
+      "ALTER TABLE message_queue ADD COLUMN overrides_json TEXT",
+    );
   }
 
   // --- Tool calls ---
@@ -181,15 +204,16 @@ export class ProcessStore {
   appendMessage(
     role: MessageRole,
     content: string,
-    opts?: { toolCalls?: string; toolCallId?: string },
+    opts?: { toolCalls?: string; toolCallId?: string; media?: string },
   ): number {
     this.sql.exec(
-      `INSERT INTO messages (role, content, tool_calls, tool_call_id, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (role, content, tool_calls, tool_call_id, media_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
       role,
       content,
       opts?.toolCalls ?? null,
       opts?.toolCallId ?? null,
+      opts?.media ?? null,
       Date.now(),
     );
 
@@ -204,12 +228,13 @@ export class ProcessStore {
     return [...this.sql.exec<{
       id: number;
       role: string;
-      content: string;
-      tool_calls: string | null;
-      tool_call_id: string | null;
-      created_at: number;
-    }>(
-      "SELECT * FROM messages ORDER BY id ASC LIMIT ? OFFSET ?",
+        content: string;
+        tool_calls: string | null;
+        tool_call_id: string | null;
+        media_json: string | null;
+        created_at: number;
+      }>(
+        "SELECT * FROM messages ORDER BY id ASC LIMIT ? OFFSET ?",
       limit,
       offset,
     )].map((row) => ({
@@ -218,6 +243,7 @@ export class ProcessStore {
       content: row.content,
       toolCalls: row.tool_calls,
       toolCallId: row.tool_call_id,
+      media: row.media_json,
       createdAt: row.created_at,
     }));
   }
@@ -233,18 +259,20 @@ export class ProcessStore {
     return [...this.sql.exec<{
       id: number;
       role: string;
-      content: string;
-      tool_calls: string | null;
-      tool_call_id: string | null;
-      created_at: number;
-    }>(
-      "SELECT * FROM messages ORDER BY id ASC",
+        content: string;
+        tool_calls: string | null;
+        tool_call_id: string | null;
+        media_json: string | null;
+        created_at: number;
+      }>(
+        "SELECT * FROM messages ORDER BY id ASC",
     )].map((row) => ({
       id: row.id,
       role: row.role as MessageRole,
       content: row.content,
       toolCalls: row.tool_calls,
       toolCallId: row.tool_call_id,
+      media: row.media_json,
       createdAt: row.created_at,
     }));
   }
@@ -287,13 +315,25 @@ export class ProcessStore {
 
     for (const r of records) {
       switch (r.role) {
-        case "user":
+        case "user": {
+          const media = parseStoredProcessMedia(r.media);
+          if (media.length === 0) {
+            messages.push({
+              role: "user",
+              content: r.content,
+              timestamp: r.createdAt,
+            } satisfies UserMessage);
+            break;
+          }
+
+          const content = buildFallbackUserContent(r.content, media);
           messages.push({
             role: "user",
-            content: r.content,
+            content,
             timestamp: r.createdAt,
           } satisfies UserMessage);
           break;
+        }
 
         case "assistant": {
           const content: (TextContent | ThinkingContent | ToolCall)[] = [];
@@ -434,6 +474,14 @@ export class ProcessStore {
     ];
     return rows[0]?.cnt ?? 0;
   }
+
+  private ensureColumn(table: string, column: string, sql: string): void {
+    const rows = [...this.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`)];
+    if (rows.some((row) => row.name === column)) {
+      return;
+    }
+    this.sql.exec(sql);
+  }
 }
 
 export function parseAssistantMessageMeta(raw: string | null): AssistantMessageMeta {
@@ -464,6 +512,30 @@ export function parseAssistantMessageMeta(raw: string | null): AssistantMessageM
       ? meta.toolCalls as ToolCall[]
       : undefined,
   };
+}
+
+function buildFallbackUserContent(
+  text: string,
+  media: ReturnType<typeof parseStoredProcessMedia>,
+): TextContent[] {
+  const content: TextContent[] = [];
+  if (text.trim().length > 0) {
+    content.push({ type: "text", text });
+  }
+
+  const fallbackBlocks = buildFallbackMediaBlocks(media);
+  if (fallbackBlocks.length > 0) {
+    content.push(...fallbackBlocks);
+  }
+
+  if (content.length === 0) {
+    content.push({
+      type: "text",
+      text: media.map((item) => describeStoredProcessMedia(item)).join("\n"),
+    });
+  }
+
+  return content;
 }
 
 export function stringifyAssistantMessageMeta(

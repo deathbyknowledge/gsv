@@ -1,5 +1,6 @@
 import type { Context } from "@mariozechner/pi-ai";
 import { parseAssistantMessageMeta, type MessageRecord } from "./store";
+import { describeStoredProcessMedia, parseStoredProcessMedia } from "./media";
 
 const MAX_SUMMARY_WINDOW_CHARS = 16_000;
 const MAX_COMMIT_WINDOW_CHARS = 4_000;
@@ -129,6 +130,12 @@ function formatTranscriptMessage(message: MessageRecord): string {
   if (message.content) {
     lines.push(message.content.trim());
   }
+  if (message.media) {
+    const media = parseStoredProcessMedia(message.media);
+    if (media.length > 0) {
+      lines.push(`media: ${media.map((item) => describeStoredProcessMedia(item)).join(" | ")}`);
+    }
+  }
   if (message.role === "assistant") {
     const meta = parseAssistantMessageMeta(message.toolCalls);
     if (meta.thinking !== undefined) {
@@ -165,6 +172,7 @@ function serializeCheckpointMessage(message: MessageRecord): Record<string, unkn
   return {
     role: message.role,
     content: message.content,
+    media: message.media ? parseStoredProcessMedia(message.media) : undefined,
     tool_calls: parseJsonOrUndefined(message.toolCalls),
     tool_call_id: message.toolCallId ?? undefined,
     ts: message.createdAt,

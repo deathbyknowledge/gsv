@@ -21,6 +21,25 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("appendMessage stores optional media metadata", async () => {
+      const stub = await getProcessByPid("msg-crud-media");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "look at this", {
+          media: JSON.stringify([
+            {
+              type: "image",
+              mimeType: "image/png",
+              key: "var/media/0/pid/123.png",
+            },
+          ]),
+        });
+        const msgs = store.getMessages();
+        expect(msgs).toHaveLength(1);
+        expect(msgs[0].media).toBeTruthy();
+      });
+    });
+
     it("appendMessage stores assistant message with tool calls", async () => {
       const stub = await getProcessByPid("msg-crud-2");
       await runInDurableObject(stub, (instance: Process) => {
@@ -143,6 +162,29 @@ describe("ProcessStore", () => {
         expect(msgs[0].role).toBe("user");
         expect(msgs[0].content).toBe("hello");
         expect(msgs[0].timestamp).toBeGreaterThan(0);
+      });
+    });
+
+    it("converts user messages with media to fallback text blocks", async () => {
+      const stub = await getProcessByPid("to-msg-user-media");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "See attachment", {
+          media: JSON.stringify([
+            {
+              type: "image",
+              mimeType: "image/png",
+              key: "var/media/0/pid/abc.png",
+              filename: "abc.png",
+            },
+          ]),
+        });
+        const msgs = store.toMessages();
+        expect(msgs).toHaveLength(1);
+        expect(msgs[0].role).toBe("user");
+        expect(Array.isArray(msgs[0].content)).toBe(true);
+        expect((msgs[0].content as any)[0]).toEqual({ type: "text", text: "See attachment" });
+        expect((msgs[0].content as any)[1].type).toBe("text");
       });
     });
 

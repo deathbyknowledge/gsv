@@ -356,7 +356,7 @@ function serializeTextBlocks(
 ): string {
   const text = blocks.flatMap((block) => {
     if (block.type === "text") return [block.text];
-    throw new Error("Workers AI text generation does not support image content in this context");
+    return ["[The user tried to attach an image but the current model has no multi-modality capabilities]"];
   }).join("");
 
   return text;

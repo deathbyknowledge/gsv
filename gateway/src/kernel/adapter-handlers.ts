@@ -290,7 +290,7 @@ export async function handleAdapterInbound(
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.send",
-    args: { pid, message: incomingText },
+    args: { pid, message: incomingText, media: message.media },
   } as RequestFrame);
 
   if (!response || response.type !== "res") {

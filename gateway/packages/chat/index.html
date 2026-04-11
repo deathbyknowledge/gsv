@@ -254,6 +254,22 @@
         word-break: break-word;
         font: inherit;
       }
+      .message-media {
+        margin-top: 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .message-media-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: rgba(25, 28, 30, 0.05);
+        color: var(--text-muted);
+        font-size: 12px;
+      }
       .message-body.message-markdown {
         white-space: normal;
       }
@@ -479,6 +495,53 @@
         display: grid;
         gap: 8px;
       }
+      .composer-tools {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .composer-attach {
+        flex: 0 0 auto;
+      }
+      .composer-file-input {
+        display: none;
+      }
+      .composer-attachments {
+        min-height: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .composer-attachment-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 280px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid rgba(25, 28, 30, 0.08);
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .composer-attachment-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .composer-attachment-remove {
+        border: 0;
+        background: transparent;
+        color: inherit;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      .composer-attachment-remove:hover {
+        background: rgba(25, 28, 30, 0.08);
+      }
       .composer-field {
         width: 100%;
         min-height: 88px;
@@ -589,6 +652,13 @@
 
         <div class="composer-wrap">
           <form class="composer" id="chat-compose-form">
+            <div class="composer-tools">
+              <label class="btn btn-quiet icon-btn composer-attach" title="Attach files" aria-label="Attach files">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05 12 20.5a6 6 0 0 1-8.49-8.49l9.19-9.2a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.82-2.83l8.49-8.48" /></svg>
+                <input class="composer-file-input" id="chat-attachments" type="file" multiple />
+              </label>
+              <div class="composer-attachments" id="chat-attachments-list"></div>
+            </div>
             <textarea class="composer-field" id="chat-input" placeholder="Ask something, continue a thread, or describe the task you want help with."></textarea>
             <div class="composer-foot">
               <p class="composer-note" id="compose-status">Waiting for desktop host.</p>
