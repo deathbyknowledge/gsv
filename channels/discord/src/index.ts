@@ -41,6 +41,7 @@ const DISCORD_INVITE_PERMISSIONS = 101376; // View Channels + Send Messages + At
 // Named export for service binding entrypoint
 export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWorkerInterface {
   readonly channelId = "discord";
+  readonly adapterId = "discord";
   
   readonly capabilities: ChannelCapabilities = {
     chatTypes: ["dm", "group", "channel", "thread"],
@@ -55,7 +56,9 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
-  async connect(accountId: string, config: Record<string, unknown> = {}): Promise<
+  // DONT RENAME TO connect() because Cloudflare service bindings already expose
+  // a built-in socket connect() method, which hijacks adapter RPC calls.
+  async adapterConnect(accountId: string, config: Record<string, unknown> = {}): Promise<
     | { ok: true; connected: boolean; authenticated: boolean; message?: string }
     | { ok: false; error: string }
   > {
@@ -71,10 +74,14 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
     };
   }
 
+  async connect(accountId: string, config: Record<string, unknown> = {}) {
+    return this.adapterConnect(accountId, config);
+  }
+
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
-  async disconnect(accountId: string): Promise<
+  async adapterDisconnect(accountId: string): Promise<
     | { ok: true; message?: string }
     | { ok: false; error: string }
   > {
@@ -83,6 +90,10 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
       return { ok: false, error: stopped.error };
     }
     return { ok: true, message: "Disconnected" };
+  }
+
+  async disconnect(accountId: string) {
+    return this.adapterDisconnect(accountId);
   }
 
   /**
@@ -119,7 +130,7 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
   /**
    * Get status of Discord connection(s).
    */
-  async status(accountId?: string): Promise<ChannelAccountStatus[]> {
+  async adapterStatus(accountId?: string): Promise<ChannelAccountStatus[]> {
     if (accountId) {
       const gateway = this.getGatewayDO(accountId);
       const state = await gateway.getStatus();
@@ -129,17 +140,29 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
     return [];
   }
 
+  async status(accountId?: string) {
+    return this.adapterStatus(accountId);
+  }
+
   /**
    * Send a message to a Discord channel.
    */
-  async send(accountId: string, message: ChannelOutboundMessage): Promise<SendResult> {
+  async adapterSend(
+    accountId: string,
+    message: {
+      surface: ChannelPeer;
+      text: string;
+      media?: ChannelMedia[];
+      replyToId?: string;
+    },
+  ): Promise<SendResult> {
     const botToken = this.env.DISCORD_BOT_TOKEN;
     if (!botToken) {
       return { ok: false, error: "No bot token configured" };
     }
 
     try {
-      const channelId = message.peer.id;
+      const channelId = message.surface.id;
       const body: Record<string, unknown> = {};
       const hasText = message.text.trim().length > 0;
       const media = message.media ?? [];
@@ -189,6 +212,32 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
 
       const data = await response.json<{ id: string }>();
       return { ok: true, messageId: data.id };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  async send(accountId: string, message: ChannelOutboundMessage) {
+    return this.adapterSend(accountId, {
+      surface: message.peer,
+      text: message.text,
+      media: message.media,
+      replyToId: message.replyToId,
+    });
+  }
+
+  async adapterSetActivity(
+    accountId: string,
+    surface: ChannelPeer,
+    activity: { kind: "typing" | "recording" | "uploading"; active: boolean },
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (activity.kind !== "typing") {
+      return { ok: true };
+    }
+
+    try {
+      await this.setTyping(accountId, surface, activity.active);
+      return { ok: true };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }

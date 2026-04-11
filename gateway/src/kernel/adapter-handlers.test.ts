@@ -24,7 +24,7 @@ function makeContext(
 describe("adapter lifecycle handlers", () => {
   it("adapter.connect returns connect challenge payload and refreshes status", async () => {
     const service = {
-      connect: vi.fn(async () => ({
+      adapterConnect: vi.fn(async () => ({
         ok: true as const,
         message: "Scan QR code",
         connected: true,
@@ -35,7 +35,7 @@ describe("adapter lifecycle handlers", () => {
           message: "Scan QR code",
         },
       })),
-      status: vi.fn(async () => [
+      adapterStatus: vi.fn(async () => [
         {
           accountId: "default",
           connected: true,
@@ -58,7 +58,7 @@ describe("adapter lifecycle handlers", () => {
       ctx,
     );
 
-    expect(service.connect).toHaveBeenCalledWith("default", undefined);
+    expect(service.adapterConnect).toHaveBeenCalledWith("default", undefined);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.challenge?.type).toBe("qr");
@@ -95,8 +95,8 @@ describe("adapter lifecycle handlers", () => {
 
   it("adapter.disconnect calls disconnect and refreshes status", async () => {
     const service = {
-      disconnect: vi.fn(async () => ({ ok: true as const })),
-      status: vi.fn(async () => [
+      adapterDisconnect: vi.fn(async () => ({ ok: true as const })),
+      adapterStatus: vi.fn(async () => [
         {
           accountId: "default",
           connected: false,
@@ -119,7 +119,7 @@ describe("adapter lifecycle handlers", () => {
       ctx,
     );
 
-    expect(service.disconnect).toHaveBeenCalledWith("default");
+    expect(service.adapterDisconnect).toHaveBeenCalledWith("default");
     expect(result).toMatchObject({
       ok: true,
       adapter: "whatsapp",

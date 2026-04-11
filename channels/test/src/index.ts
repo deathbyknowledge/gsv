@@ -156,6 +156,7 @@ export class TestChannelState extends DurableObject<Env> {
 
 export class TestChannel extends WorkerEntrypoint<Env> {
   readonly channelId = "test";
+  readonly adapterId = "test";
   
   readonly capabilities: ChannelCapabilities = {
     chatTypes: ["dm", "group"],
@@ -199,7 +200,7 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     return { ok: true };
   }
 
-  async status(accountId?: string): Promise<ChannelAccountStatus[]> {
+  async adapterStatus(accountId?: string): Promise<ChannelAccountStatus[]> {
     if (accountId) {
       const state = this.getStateDO(accountId);
       const connected = await state.isConnected();
@@ -214,18 +215,50 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     return [];
   }
 
+  async status(accountId?: string) {
+    return this.adapterStatus(accountId);
+  }
+
   /**
    * Send a message (Gateway → Channel).
    * Records it in the account's Durable Object.
    */
-  async send(accountId: string, message: ChannelOutboundMessage): Promise<SendResult> {
+  async adapterSend(
+    accountId: string,
+    message: {
+      surface: ChannelPeer;
+      text: string;
+      replyToId?: string;
+    },
+  ): Promise<SendResult> {
     const state = this.getStateDO(accountId);
-    await state.recordMessage("out", message);
+    const outbound: ChannelOutboundMessage = {
+      peer: message.surface,
+      text: message.text,
+      replyToId: message.replyToId,
+    };
+    await state.recordMessage("out", outbound);
     
     const messageId = `test-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    console.log(`[TestChannel] Sent to ${accountId}/${message.peer.id}: ${message.text.slice(0, 50)}...`);
+    console.log(`[TestChannel] Sent to ${accountId}/${message.surface.id}: ${message.text.slice(0, 50)}...`);
     
     return { ok: true, messageId };
+  }
+
+  async send(accountId: string, message: ChannelOutboundMessage) {
+    return this.adapterSend(accountId, {
+      surface: message.peer,
+      text: message.text,
+      replyToId: message.replyToId,
+    });
+  }
+
+  async adapterSetActivity(
+    _accountId: string,
+    _surface: ChannelPeer,
+    _activity: { kind: "typing" | "recording" | "uploading"; active: boolean },
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    return { ok: true };
   }
 
   async setTyping(_accountId: string, _peer: ChannelPeer, _typing: boolean): Promise<void> {
