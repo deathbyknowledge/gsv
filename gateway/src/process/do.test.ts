@@ -247,6 +247,68 @@ describe("Process DO — mechanical", () => {
     });
   });
 
+  describe("proc.abort", () => {
+    it("returns aborted=false when no run is active", async () => {
+      const pid = "mech-abort-idle";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.abort", {}),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toMatchObject({
+        ok: true,
+        pid,
+        aborted: false,
+      });
+    });
+
+    it("synthesizes interrupted tool results and continues the next queued run", async () => {
+      const pid = "mech-abort-active";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("assistant", "", {
+          toolCalls: JSON.stringify([
+            { type: "toolCall", id: "call-1", name: "Read", arguments: { path: "/root/test.txt" } },
+          ]),
+        });
+        process.store.register("call-1", "run-1", "fs.read", { path: "/root/test.txt" });
+        process.store.enqueue("run-2", "follow-up after abort");
+        process.currentRun = { runId: "run-1", queued: false };
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.abort", {}),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toMatchObject({
+        ok: true,
+        pid,
+        aborted: true,
+        runId: "run-1",
+        interruptedToolCalls: 1,
+        continuedQueuedRunId: "run-2",
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        const store = process.store;
+        const messages = store.getMessages();
+        const lastTwo = messages.slice(-2);
+        expect(lastTwo[0].role).toBe("toolResult");
+        expect(lastTwo[0].content).toContain("User interrupted tool execution");
+        expect(lastTwo[1].role).toBe("user");
+        expect(lastTwo[1].content).toBe("follow-up after abort");
+        expect(store.queueSize()).toBe(0);
+        expect(process.currentRun).toMatchObject({ runId: "run-2" });
+      });
+    });
+  });
+
   describe("proc.history", () => {
     it("returns stored messages", async () => {
       const pid = "mech-history-1";
