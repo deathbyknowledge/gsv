@@ -64,6 +64,10 @@ type AdapterInboundMessage = {
 
 type AdapterInboundResult = {
   ok: boolean;
+  reply?: {
+    text: string;
+    replyToId?: string;
+  };
   challenge?: {
     code: string;
     prompt: string;
@@ -594,6 +598,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
             await this.sock.sendMessage(remoteJid, { text: result.challenge.prompt });
           } catch (err) {
             console.error(`[WA:${this.state.accountId}] Failed to send challenge prompt:`, err);
+          }
+        }
+        if (result.reply?.text && !isGroup && this.sock) {
+          try {
+            await this.sock.sendMessage(remoteJid, { text: result.reply.text });
+          } catch (err) {
+            console.error(`[WA:${this.state.accountId}] Failed to send gateway reply:`, err);
           }
         }
         this.state.lastMessageAt = Date.now();

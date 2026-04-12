@@ -285,6 +285,66 @@ export async function handleAdapterInbound(
     pid = initPid;
   }
 
+  const pendingHil = await getPendingHil(pid);
+  if (pendingHil) {
+    const decision = message.surface.kind === "dm"
+      ? parseHilDecision(message.text)
+      : null;
+
+    if (!decision) {
+      return {
+        ok: true,
+        reply: {
+          text: renderAdapterHilReminder(pendingHil, message.surface.kind),
+          replyToId: message.messageId,
+        },
+      };
+    }
+
+    const hilResponse = await sendFrameToProcess(pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.hil",
+      args: { pid, requestId: pendingHil.requestId, decision },
+    } as RequestFrame);
+
+    if (!hilResponse || hilResponse.type !== "res") {
+      return { ok: false, error: "No response from process" };
+    }
+    if (!hilResponse.ok) {
+      return { ok: false, error: hilResponse.error.message };
+    }
+
+    const hilData = (hilResponse as { data?: { resumed?: boolean; pendingHil?: unknown } }).data;
+    const nextPendingHil = normalizePendingHil(hilData?.pendingHil);
+    if (!nextPendingHil && hilData?.resumed) {
+      await setAdapterActivityForKernel(
+        ctx.env,
+        adapter,
+        accountId,
+        message.surface,
+        { kind: "typing", active: true },
+      );
+    }
+
+    return {
+      ok: true,
+      ...(nextPendingHil
+        ? {
+            reply: {
+              text: renderAdapterHilReminder(nextPendingHil, message.surface.kind),
+              replyToId: message.messageId,
+            },
+          }
+        : {
+            reply: {
+              text: decision === "approve" ? "Approved. Continuing." : "Denied. Continuing.",
+              replyToId: message.messageId,
+            },
+          }),
+    };
+  }
+
   const incomingText = renderAdapterInboundText(adapter, message, actorId);
   const response = await sendFrameToProcess(pid, {
     type: "req",
@@ -487,4 +547,109 @@ function describeSurface(surface: AdapterSurface): string {
     return `${surface.kind}:${surface.id}:${surface.threadId}`;
   }
   return `${surface.kind}:${surface.id}`;
+}
+
+type PendingHilSummary = {
+  requestId: string;
+  toolName: string;
+  syscall: string;
+  args: Record<string, unknown>;
+};
+
+async function getPendingHil(pid: string): Promise<PendingHilSummary | null> {
+  const response = await sendFrameToProcess(pid, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.history",
+    args: { pid, limit: 1, offset: 0 },
+  } as RequestFrame);
+
+  if (!response || response.type !== "res" || !response.ok) {
+    return null;
+  }
+
+  const data = (response as { data?: { pendingHil?: unknown } }).data;
+  return normalizePendingHil(data?.pendingHil);
+}
+
+function normalizePendingHil(value: unknown): PendingHilSummary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.requestId !== "string"
+    || typeof record.toolName !== "string"
+    || typeof record.syscall !== "string"
+    || !record.args
+    || typeof record.args !== "object"
+  ) {
+    return null;
+  }
+  return {
+    requestId: record.requestId,
+    toolName: record.toolName,
+    syscall: record.syscall,
+    args: record.args as Record<string, unknown>,
+  };
+}
+
+function parseHilDecision(text: string): "approve" | "deny" | null {
+  const normalized = text.trim().toLowerCase().replace(/[.!?]+$/g, "");
+  if (["approve", "allow", "yes"].includes(normalized)) {
+    return "approve";
+  }
+  if (["deny", "reject", "no"].includes(normalized)) {
+    return "deny";
+  }
+  return null;
+}
+
+function renderAdapterHilReminder(
+  pendingHil: PendingHilSummary,
+  surfaceKind: AdapterSurface["kind"],
+): string {
+  const action = summarizePendingHil(pendingHil);
+  const responseLine = surfaceKind === "dm"
+    ? 'Reply "approve" or "deny" to continue.'
+    : "Open Chat to approve or deny this action.";
+  return [
+    "I’m waiting for confirmation before I can continue.",
+    "",
+    action,
+    "",
+    responseLine,
+  ].join("\n");
+}
+
+function summarizePendingHil(pendingHil: PendingHilSummary): string {
+  const path = typeof pendingHil.args.path === "string" ? pendingHil.args.path : "";
+  const command = typeof pendingHil.args.command === "string" ? pendingHil.args.command : "";
+
+  if (pendingHil.syscall === "shell.exec") {
+    return command
+      ? `Requested action: run \`${command}\`.`
+      : "Requested action: run a shell command.";
+  }
+  if (pendingHil.syscall === "fs.read") {
+    return path
+      ? `Requested action: read \`${path}\`.`
+      : "Requested action: read a file.";
+  }
+  if (pendingHil.syscall === "fs.write") {
+    return path
+      ? `Requested action: write \`${path}\`.`
+      : "Requested action: write a file.";
+  }
+  if (pendingHil.syscall === "fs.edit") {
+    return path
+      ? `Requested action: edit \`${path}\`.`
+      : "Requested action: edit a file.";
+  }
+  if (pendingHil.syscall === "fs.delete") {
+    return path
+      ? `Requested action: delete \`${path}\`.`
+      : "Requested action: delete a file.";
+  }
+  return `Requested action: ${pendingHil.toolName}.`;
 }
