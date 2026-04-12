@@ -428,8 +428,12 @@ function renderHilRow(request) {
       '<p class="tool-preview-line">This tool will not run until you decide.</p>' +
     '</div>' +
     '<div class="message-approval-actions">' +
-      '<button type="button" class="btn btn-primary" data-hil-decision="approve" data-hil-request-id="' + escapeHtmlClient(request.requestId) + '"' + (hilBusy ? " disabled" : "") + '>Allow</button>' +
-      '<button type="button" class="btn btn-quiet" data-hil-decision="deny" data-hil-request-id="' + escapeHtmlClient(request.requestId) + '"' + (hilBusy ? " disabled" : "") + '>Deny</button>' +
+      '<button type="button" class="btn icon-btn hil-action hil-action-approve" data-hil-decision="approve" data-hil-request-id="' + escapeHtmlClient(request.requestId) + '" title="Allow tool call" aria-label="Allow tool call"' + (hilBusy ? " disabled" : "") + '>' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"></path></svg>' +
+      '</button>' +
+      '<button type="button" class="btn icon-btn hil-action hil-action-deny" data-hil-decision="deny" data-hil-request-id="' + escapeHtmlClient(request.requestId) + '" title="Deny tool call" aria-label="Deny tool call"' + (hilBusy ? " disabled" : "") + '>' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10"></path><path d="M17 7L7 17"></path></svg>' +
+      '</button>' +
     '</div>' +
     '<details class="tool-details"><summary>Details</summary>' +
       renderToolMetaRows([["call", request.callId], ["syscall", syscall]]) +
