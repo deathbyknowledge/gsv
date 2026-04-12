@@ -1567,11 +1567,11 @@ function bindUi() {
   elements.stopRun?.addEventListener("click", () => { void abortActiveRun(); });
   elements.chatLog?.addEventListener("click", (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLElement)) {
+    if (!(target instanceof Element)) {
       return;
     }
     const button = target.closest("[data-hil-decision]");
-    if (!(button instanceof HTMLElement)) {
+    if (!(button instanceof Element)) {
       return;
     }
     const decision = button.getAttribute("data-hil-decision");
