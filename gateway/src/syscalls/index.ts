@@ -18,6 +18,8 @@ import type {
   ProcSendArgs,
   ProcAbortArgs,
   ProcAbortResult,
+  ProcHilArgs,
+  ProcHilResult,
   ProcSendResult,
   ProcHistoryArgs,
   ProcHistoryResult,
@@ -151,6 +153,7 @@ export type SyscallDomains = {
   "proc.list": { args: ProcListArgs; result: ProcListResult };
   "proc.send": { args: ProcSendArgs; result: ProcSendResult };
   "proc.abort": { args: ProcAbortArgs; result: ProcAbortResult };
+  "proc.hil": { args: ProcHilArgs; result: ProcHilResult };
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };

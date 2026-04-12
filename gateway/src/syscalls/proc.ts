@@ -76,6 +76,35 @@ export type ProcAbortResult =
     }
   | { ok: false; error: string };
 
+export type ProcHilDecision = "approve" | "deny";
+
+export type ProcHilRequest = {
+  requestId: string;
+  runId: string;
+  callId: string;
+  toolName: string;
+  syscall: string;
+  args: Record<string, unknown>;
+  createdAt: number;
+};
+
+export type ProcHilArgs = {
+  pid?: string;
+  requestId: string;
+  decision: ProcHilDecision;
+};
+
+export type ProcHilResult =
+  | {
+      ok: true;
+      pid: string;
+      requestId: string;
+      decision: ProcHilDecision;
+      resumed: boolean;
+      pendingHil?: ProcHilRequest | null;
+    }
+  | { ok: false; error: string };
+
 export type ProcSendResult =
   | { ok: true; status: "started"; runId: string; queued?: boolean }
   | { ok: false; error: string };
@@ -99,6 +128,7 @@ export type ProcHistoryResult =
       messages: ProcHistoryMessage[];
       messageCount: number;
       truncated?: boolean;
+      pendingHil?: ProcHilRequest | null;
     }
   | { ok: false; error: string };
 

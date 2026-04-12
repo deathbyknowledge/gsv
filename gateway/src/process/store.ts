@@ -61,6 +61,17 @@ export type QueuedMessage = {
   overrides: string | null;
 };
 
+export type PendingHilRecord = {
+  requestId: string;
+  runId: string;
+  toolCallId: string;
+  toolName: string;
+  syscall: string;
+  args: Record<string, unknown>;
+  remainingToolCalls: ToolCall[];
+  createdAt: number;
+};
+
 export class ProcessStore {
   constructor(private readonly sql: SqlStorage) {}
 
@@ -108,6 +119,20 @@ export class ProcessStore {
       )
     `);
 
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS pending_hil (
+        request_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        syscall TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        remaining_tool_calls_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
+    // TODO: get a proper migration strat
     this.ensureColumn(
       "messages",
       "media_json",
@@ -199,6 +224,68 @@ export class ProcessStore {
 
   clearPendingToolCalls(): void {
     this.sql.exec("DELETE FROM pending_tool_calls");
+  }
+
+  setPendingHil(record: PendingHilRecord): void {
+    this.clearPendingHil();
+    this.sql.exec(
+      `INSERT INTO pending_hil (
+        request_id, run_id, tool_call_id, tool_name, syscall,
+        args_json, remaining_tool_calls_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      record.requestId,
+      record.runId,
+      record.toolCallId,
+      record.toolName,
+      record.syscall,
+      JSON.stringify(record.args),
+      JSON.stringify(record.remainingToolCalls),
+      record.createdAt,
+    );
+  }
+
+  getPendingHil(requestId?: string): PendingHilRecord | null {
+    const rows = [
+      ...this.sql.exec<{
+        request_id: string;
+        run_id: string;
+        tool_call_id: string;
+        tool_name: string;
+        syscall: string;
+        args_json: string;
+        remaining_tool_calls_json: string;
+        created_at: number;
+      }>(
+        requestId
+          ? `SELECT * FROM pending_hil WHERE request_id = ? ORDER BY created_at ASC LIMIT 1`
+          : `SELECT * FROM pending_hil ORDER BY created_at ASC LIMIT 1`,
+        ...(requestId ? [requestId] : []),
+      ),
+    ];
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    return {
+      requestId: row.request_id,
+      runId: row.run_id,
+      toolCallId: row.tool_call_id,
+      toolName: row.tool_name,
+      syscall: row.syscall,
+      args: JSON.parse(row.args_json) as Record<string, unknown>,
+      remainingToolCalls: JSON.parse(row.remaining_tool_calls_json) as ToolCall[],
+      createdAt: row.created_at,
+    };
+  }
+
+  getPendingHilForRun(runId: string): PendingHilRecord | null {
+    const record = this.getPendingHil();
+    if (!record || record.runId !== runId) {
+      return null;
+    }
+    return record;
+  }
+
+  clearPendingHil(): void {
+    this.sql.exec("DELETE FROM pending_hil");
   }
 
   appendMessage(

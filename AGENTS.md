@@ -1,221 +1,391 @@
 # GSV Agent Guidelines
 
-GSV (General Systems Vehicle) is a distributed AI agent platform built on Cloudflare Workers + Durable Objects, with a Rust CLI for clients/nodes and standalone channel workers.
+GSV is a distributed AI operating environment built from five main pieces:
 
-## Project Structure
+- a gateway worker that owns the kernel, process runtime, auth, package management, adapters, and inference routing
+- a web shell that hosts the desktop and embedded apps
+- standalone channel workers for external platforms such as WhatsApp and Discord
+- a Rust CLI for users, devices, deployment, and administration
+- the `ripgit` worker for git-backed storage and content operations
 
-```
-gsv/
-├── gateway/                    # Main Cloudflare worker (Gateway + Session DOs)
+This document is the working orientation for the current repository. It should help an agent understand where things live, how they deploy, and how to validate the right surface after a change.
+
+## Repository layout
+
+```text
+gsv-app-runtime/
+├── gateway/
 │   ├── src/
-│   │   ├── gateway/do.ts       # Gateway DO (routing, config, tools, channels, cron, heartbeats)
-│   │   ├── session/do.ts       # Session DO (agent loop + message state)
-│   │   ├── agents/             # Workspace loading + prompt assembly + native tools
-│   │   ├── cron/               # Cron scheduler + storage + tool input normalization
-│   │   ├── protocol/           # Shared WS/RPC frame and payload types
-│   │   ├── storage/            # R2 archives/media helpers
-│   │   └── transcription/      # Audio transcription pipeline
-│   ├── ui/                     # Web UI (Vite + TypeScript + Lit)
-│   ├── alchemy/                # Infra and wizard deployment flows
-│   ├── wrangler.jsonc          # Production worker config
-│   └── wrangler.test.jsonc     # Unit-test worker config
-├── channels/                   # Channel workers (each independently deployable)
-│   ├── whatsapp/               # WhatsApp channel (Baileys + DO account state)
-│   ├── discord/                # Discord channel (Gateway WS DO + REST send)
-│   └── test/                   # Test channel for e2e/dev
-├── cli/                        # Rust CLI (client, node daemon, deploy tooling)
-│   ├── src/main.rs             # CLI command surface
-│   ├── src/deploy.rs           # Cloudflare deploy/apply/down/status
-│   ├── src/connection.rs       # WS connection + reconnect/request plumbing
-│   ├── src/protocol.rs         # WS frame + payload types
-│   └── src/tools/              # Node tool implementations (Bash/Read/Write/Edit/Glob/Grep)
-├── templates/                  # Workspace and skill templates uploaded to R2
-├── scripts/                    # Monorepo helper scripts
-├── docs/                       # Design notes and workplans
+│   │   ├── kernel/          # syscall dispatch, auth, config, adapters, packages
+│   │   ├── process/         # Process DO runtime, store, queue, checkpoint, media
+│   │   ├── syscalls/        # shared syscall types
+│   │   ├── inference/       # provider/model integration
+│   │   ├── fs/              # filesystem and ripgit integration
+│   │   ├── downloads/       # self-hosted CLI download/install support
+│   │   ├── auth/            # passwords, tokens, setup auth
+│   │   ├── shared/          # worker/DO bridge utilities
+│   │   └── protocol/        # WS and RPC frame types
+│   ├── packages/            # builtin apps synced from system/gsv
+│   ├── wrangler.jsonc
+│   └── package.json
+├── web/
+│   ├── src/                # desktop shell, host bridge, setup/login UI
+│   ├── public/
+│   └── package.json
+├── channels/
+│   ├── whatsapp/
+│   ├── discord/
+│   └── test/
+├── cli/
+├── ripgit/
+├── scripts/
+├── templates/
+├── docs/
 ├── README.md
 └── CHANNELS.md
 ```
 
-## Build & Development Commands
+## Runtime model
 
-### Monorepo Bootstrap
+### Gateway
 
+The gateway is the control plane.
+
+It is responsible for:
+- websocket connections
+- identity and auth
+- syscall dispatch
+- process lifecycle
+- package sync and package permissions
+- adapter routing
+- system configuration
+- model/provider dispatch
+
+The most important directories are:
+- `gateway/src/kernel/*`
+- `gateway/src/process/*`
+- `gateway/src/syscalls/*`
+- `gateway/src/inference/*`
+
+### Processes
+
+A process is the unit of agent execution.
+
+The process runtime owns:
+- user/assistant/tool message history
+- queued incoming messages
+- pending tool calls
+- checkpointing
+- process-scoped media storage and hydration
+
+Key files:
+- `gateway/src/process/do.ts`
+- `gateway/src/process/store.ts`
+- `gateway/src/process/checkpoint.ts`
+- `gateway/src/process/media.ts`
+
+Important syscalls:
+- `proc.spawn`
+- `proc.send`
+- `proc.history`
+- `proc.abort`
+- `proc.reset`
+- `proc.kill`
+
+### Web shell
+
+The web shell is the desktop UI.
+
+It owns:
+- login and setup flows
+- the desktop frame
+- the iframe host bridge for builtin apps
+- app/window orchestration
+
+Key files:
+- `web/src/session-ui.ts`
+- `web/src/session-service.ts`
+- `web/src/host-bridge.ts`
+- `web/src/gateway-client.ts`
+
+### Builtin apps
+
+Builtin apps live under `gateway/packages/*`.
+
+Examples:
+- `chat`
+- `files`
+- `shell`
+- `devices`
+- `processes`
+- `control`
+- `packages`
+- `adapters`
+
+They are synced from `system/gsv` into the running system. A builtin app change is not applied by redeploying the gateway worker alone.
+
+### Channel workers
+
+Channel workers are separate deployables.
+
+Each one owns its platform-specific behavior:
+- auth and account state
+- inbound event normalization
+- outbound message delivery
+- adapter-specific identity normalization
+
+Gateway calls channels through service bindings. Channels call back into gateway through gateway RPC entrypoints.
+
+### ripgit
+
+`ripgit` provides git-backed storage and content operations used by the gateway filesystem and package/repo flows.
+
+## Update model
+
+This is the most important operational distinction in the repo.
+
+### `gateway/src/*`
+
+You changed gateway worker code.
+
+Use:
 ```bash
-# Installs JS deps (gateway, UI, channels) via bun
-./scripts/setup-deps.sh
-
-# Build deployable Cloudflare bundles into release/local (or custom dir)
-./scripts/build-cloudflare-bundles.sh
-./scripts/build-cloudflare-bundles.sh ./release/custom
+cd gateway
+npm run deploy
 ```
 
-### Gateway (TypeScript Worker)
+Local dev:
+```bash
+cd gateway
+npm run dev
+```
+
+### `web/src/*` or `web/public/*`
+
+You changed the web shell.
+
+Use:
+```bash
+cd web
+npm run build
+```
+
+Then redeploy however the built web bundle is served in that environment.
+
+Local dev:
+```bash
+cd web
+npm run dev
+```
+
+### `gateway/packages/*`
+
+You changed a builtin app.
+
+Use:
+```bash
+git push <remote> HEAD:main
+cargo run -- -u root packages sync
+```
+
+If the package is a new builtin, the running gateway code must already know about that builtin package.
+
+### `channels/*`
+
+You changed a channel worker.
+
+Deploy that specific worker:
+
+```bash
+cd channels/whatsapp
+npm run deploy
+```
+
+```bash
+cd channels/discord
+npm run deploy
+```
+
+### Combined changes
+
+If a change spans multiple layers, update each one explicitly.
+
+Examples:
+- `gateway/src/*` + `gateway/packages/*`
+  - redeploy gateway
+  - sync builtins
+- `gateway/src/*` + `web/src/*`
+  - redeploy gateway
+  - rebuild/redeploy web shell
+- `gateway/packages/*` + `channels/*`
+  - sync builtins
+  - redeploy that channel
+
+## Development commands
+
+### Dependency bootstrap
+
+```bash
+./scripts/setup-deps.sh
+```
+
+### Local multi-worker stack
+
+```bash
+./scripts/dev-stack.sh
+```
+
+### Gateway
 
 ```bash
 cd gateway
-
-# Local dev worker
 npm run dev
-
-# Type check
 npx tsc --noEmit
-
-# Regenerate worker env types
-npm run cf-typegen
-
-# Unit tests
-npm test
 npm run test:run
-
-# e2e tests (bun:test in alchemy/e2e)
-npm run test:e2e
-
-# Alchemy-based deploy flows
-npm run deploy:wizard
-npm run deploy:up
-npm run deploy:status
-npm run deploy:destroy
+npm run cf-typegen
 ```
 
-### Gateway UI (`gateway/ui`)
+### Web shell
 
 ```bash
-cd gateway/ui
+cd web
 npm run dev
 npm run build
 npm run check
-npm run preview
 ```
 
-### Channel Workers
+### Channels
 
+WhatsApp:
 ```bash
-# WhatsApp
 cd channels/whatsapp
 npm run dev
 npm run deploy
 npm run cf-typegen
+npx tsc --noEmit
+```
 
-# Discord
+Discord:
+```bash
 cd channels/discord
 npm run dev
 npm run deploy
 npm run typecheck
+```
 
-# Test channel
+Test channel:
+```bash
 cd channels/test
 npm run dev
 npm run deploy
 npm run typecheck
 ```
 
-### CLI (Rust)
+### CLI
 
 ```bash
 cd cli
-
-# Build / test / format
 cargo build
-cargo build --release
 cargo test
 cargo fmt
+```
 
-# Common runtime commands
-cargo run -- client "Hello"
-cargo run -- node --foreground --id macbook --workspace ~/projects
-cargo run -- node install --id macbook --workspace ~/projects
+Useful commands:
+```bash
+cargo run -- -u root packages sync
+cargo run -- node install --id <device-id> --workspace ~/projects
 cargo run -- deploy up --wizard --all
-cargo run -- session list
-cargo run -- tools list
 ```
 
-## Runtime Architecture Notes
+## Validation guidance
 
-- Gateway is the central control plane; Session DOs handle per-session agent state.
-- Channels are separate workers. Outbound calls are Service Binding RPC (`CHANNEL_WHATSAPP`, `CHANNEL_DISCORD`, optional test channel).
-- Inbound channel events are delivered to the Gateway via Service Binding RPC (`GatewayEntrypoint.channelInbound` / `channelStatusChanged`).
-- Worker serves:
-  - `GET /health` for health checks
-  - `GET /ws` for websocket clients/nodes
-  - `GET /media/...` for R2-backed media fetches
-  - static UI assets (SPA fallback) when UI is deployed
+Validate the surface you changed.
 
-## Code Style Guidelines
+Examples:
+- gateway runtime or syscall changes:
+  - `cd gateway && npx tsc --noEmit && npm run test:run`
+- web shell changes:
+  - `cd web && npm run check && npm run build`
+- builtin app changes:
+  - sync the package and exercise it through the desktop shell
+- WhatsApp changes:
+  - `cd channels/whatsapp && npx tsc --noEmit`
+- Discord/Test channel changes:
+  - `npm run typecheck`
+- CLI changes:
+  - `cd cli && cargo test && cargo fmt --check`
 
-### TypeScript (Gateway + Channels + UI)
+The goal is correct validation, not maximal validation.
 
-- 2-space indentation.
-- Prefer double quotes and semicolons.
-- Use trailing commas in multiline literals.
-- Keep imports grouped: Cloudflare/runtime -> external packages -> local modules.
-- Use `import type` for type-only imports.
-- Keep `strict` typing (`any` only when unavoidable and tightly scoped).
-- Prefer small, explicit payload types in `src/protocol/*` and `channel-interface.ts`.
+## Coding guidelines
 
-### Rust (CLI)
+### TypeScript
 
-- Use `rustfmt` defaults (`cargo fmt` before commit).
-- Prefer `Result` + `?` for propagation.
-- Add context to user-facing errors when crossing IO/network boundaries.
-- Keep async logic on `tokio`; avoid blocking calls in async paths unless isolated.
+- 2-space indentation
+- double quotes and semicolons
+- `import type` for type-only imports
+- keep payload types explicit at syscall/protocol boundaries
+- avoid `any` unless tightly scoped
+- keep platform-specific logic in the relevant channel worker
 
-## Durable Objects & Worker Patterns
+### Rust
 
-- Gateway DO: websocket routing, config, node registry, tool dispatch, session lifecycle.
-- Session DO: message history, model/tool loop, reset/archive flow.
-- Persist DO state with `PersistedObject` (`gateway/src/shared/persisted-object.ts`) where mutable state must survive hibernation.
-- Use alarms for scheduled behavior (heartbeats, retries, cron checks).
-- Keep channel platform specifics isolated inside each channel worker.
+- use `cargo fmt`
+- prefer `Result` with `?`
+- add context at IO and network boundaries
+- keep async code non-blocking
 
-## Protocol Frames
+## Process/runtime invariants
 
-All websocket communication uses JSON frames:
+When working on process features, preserve these properties:
 
-```typescript
-type Frame =
-  | { type: "req"; id: string; method: string; params?: unknown }
-  | { type: "res"; id: string; ok: boolean; payload?: unknown; error?: ErrorShape }
-  | { type: "evt"; event: string; payload?: unknown; seq?: number };
-```
+- provider history must remain structurally valid
+- queued messages must not be lost accidentally
+- pending tool calls and tool results must stay consistent
+- late results from stale runs must not mutate active state
+- checkpoint/archive behavior must remain coherent after resets, kills, and aborts
 
-## R2 Storage Layout
+Pay attention to:
+- `proc.abort` for logical cancellation
+- `proc.reset` for conversation reset with process survival
+- `proc.kill` for process teardown
 
-```text
-gsv-storage/
-├── agents/{agentId}/
-│   ├── AGENTS.md
-│   ├── SOUL.md
-│   ├── IDENTITY.md
-│   ├── USER.md
-│   ├── MEMORY.md
-│   ├── TOOLS.md
-│   ├── HEARTBEAT.md
-│   ├── BOOTSTRAP.md
-│   ├── memory/{YYYY-MM-DD}.md
-│   ├── sessions/{sessionId}.jsonl.gz
-│   └── skills/{skillName}/SKILL.md
-├── skills/{skillName}/SKILL.md         # Global skills
-└── media/{sessionKey}/{uuid}.{ext}
-```
+## Adapter and channel guidelines
 
-## Key Dependencies
+- gateway should see stable adapter actor/surface semantics
+- adapter-specific identity quirks belong in the channel worker
+- generic adapter RPCs should stay generic
+- UI rendering belongs in apps or the web shell, not in backend channel workers
 
-- Gateway: `wrangler`, `@mariozechner/pi-ai`, `alchemy`, `vitest`
-- Gateway UI: `lit`, `vite`, `marked`, `dompurify`
-- CLI: `tokio`, `tokio-tungstenite`, `reqwest`, `clap`, `serde_json`
-- WhatsApp channel: `@whiskeysockets/baileys`, `qrcode`
+## Media guidelines
 
-## Commit Guidelines
+- store process media once in R2
+- persist references in process history
+- hydrate media only when building model context
+- keep media scoped clearly to the owning process unless a broader scope is explicitly needed
 
-- Short, imperative, lowercase commit subjects.
-- Reference issue IDs when relevant.
-- Examples:
-  - `add channel status rpc handler`
-  - `fix session reset archive metadata`
-  - `update deploy service binding wiring`
+## Security
 
-## Security Notes
+- never hardcode secrets, tokens, or credentials
+- use worker secrets or local secret files as appropriate
+- do not log API keys, raw auth material, or QR payloads
+- be careful with adapter/user identifiers in logs
 
-- Store secrets in Cloudflare Worker secrets or local config; never hardcode tokens.
-- Do not log API keys, auth tokens, QR auth payloads, or raw credential blobs.
-- Use `.dev.vars` for local worker secrets (gitignored).
+## Commits
+
+- short, imperative, lowercase subjects
+- keep commits scoped to one logical change
+
+Examples:
+- `add chat media attachments`
+- `add adapter activity typing`
+- `fix gateway test fixtures`
+
+## Working principle
+
+Use the code as the source of truth.
+
+When you change something:
+1. identify which runtime layer you touched
+2. apply the correct deploy/update path for that layer
+3. validate the smallest relevant surface before shipping

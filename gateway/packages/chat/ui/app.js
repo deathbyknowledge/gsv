@@ -681,6 +681,8 @@ let pendingAssistantState = null;
 let pendingAttachments = [];
 let abortBusy = false;
 let suppressNextAbortedComplete = false;
+let pendingHilRequest = null;
+let hilBusy = false;
 
 function getActivePid() {
   return activeThreadContext?.pid || null;
@@ -751,6 +753,27 @@ function clearPendingAttachments() {
     elements.attachmentInput.value = "";
   }
   renderAttachmentList();
+}
+
+function normalizeHilRequest(value) {
+  const record = asRecord(value);
+  const requestId = asString(record?.requestId);
+  const runId = asString(record?.runId);
+  const callId = asString(record?.callId);
+  const toolName = asString(record?.toolName);
+  const syscall = asString(record?.syscall);
+  const args = asRecord(record?.args) || {};
+  const createdAt = asNumber(record?.createdAt) || Date.now();
+  if (!requestId || !runId || !callId || !toolName || !syscall) {
+    return null;
+  }
+  return { requestId, runId, callId, toolName, syscall, args, createdAt };
+}
+
+function setPendingHilRequest(nextRequest) {
+  pendingHilRequest = normalizeHilRequest(nextRequest);
+  renderLog({ autoScroll: true });
+  renderStatus();
 }
 
 async function readAttachmentFile(file) {
@@ -984,10 +1007,23 @@ function renderLog(options = {}) {
       mediaHtml +
     '</article>';
   }).join("");
+  const approvalHtml = pendingHilRequest
+    ? '<article class="message message-system">' +
+        '<div class="message-head"><span>Confirmation</span><span>' + escapeHtmlClient(formatTimestamp(pendingHilRequest.createdAt)) + '</span></div>' +
+        '<div class="message-approval-body">' +
+          '<div class="message-approval-call">' + escapeHtmlClient(pendingHilRequest.toolName) + '</div>' +
+          '<div class="message-approval-meta">' + escapeHtmlClient(pendingHilRequest.syscall + "\n" + truncateBlock(prettyJson(pendingHilRequest.args), 320)) + '</div>' +
+          '<div class="message-approval-actions">' +
+            '<button type="button" class="btn btn-primary" data-hil-decision="approve" data-hil-request-id="' + escapeHtmlClient(pendingHilRequest.requestId) + '"' + (hilBusy ? " disabled" : "") + '>Allow</button>' +
+            '<button type="button" class="btn btn-quiet" data-hil-decision="deny" data-hil-request-id="' + escapeHtmlClient(pendingHilRequest.requestId) + '"' + (hilBusy ? " disabled" : "") + '>Deny</button>' +
+          '</div>' +
+        '</div>' +
+      '</article>'
+    : "";
   const pendingHtml = pendingAssistantState
     ? '<article class="message-pending"><span class="thinking-indicator" aria-hidden="true"></span><span>' + escapeHtmlClient(pendingAssistantState === "tool" ? "Working..." : "Thinking...") + '</span></article>'
     : "";
-  elements.chatLog.innerHTML = rowsHtml + pendingHtml;
+  elements.chatLog.innerHTML = rowsHtml + approvalHtml + pendingHtml;
   if (shouldScroll) {
     elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
   }
@@ -1030,6 +1066,10 @@ function renderStatus() {
   if (elements.composeStatus) {
     if (hostError) {
       elements.composeStatus.textContent = hostError;
+    } else if (hilBusy) {
+      elements.composeStatus.textContent = "Applying confirmation...";
+    } else if (pendingHilRequest) {
+      elements.composeStatus.textContent = "Tool confirmation is required before the run can continue.";
     } else if (abortBusy) {
       elements.composeStatus.textContent = "Stopping active run...";
     } else if (messageBusy) {
@@ -1065,7 +1105,7 @@ function renderStatus() {
     elements.sendButton.disabled = !interactive || messageBusy || (!hasText && !hasAttachments);
   }
   if (elements.stopRun) {
-    const hasActiveRun = Boolean(getActivePid()) && (messageBusy || pendingAssistantState !== null);
+    const hasActiveRun = Boolean(getActivePid()) && (messageBusy || pendingAssistantState !== null || pendingHilRequest !== null);
     elements.stopRun.disabled = !interactive || abortBusy || !hasActiveRun;
   }
   if (elements.openFiles) {
@@ -1162,11 +1202,15 @@ async function loadHistory() {
   let offset = 0;
   let messageCount = 0;
   let truncated = false;
+  let nextPendingHil = null;
   for (let page = 0; page < 20; page += 1) {
     const result = await client.getHistory(200, pid, offset);
     if (!result.ok) {
       setLogRows([{ role: "system", text: "history error: " + result.error, timestamp: Date.now() }], { forceBottom: true });
       return;
+    }
+    if (page === 0) {
+      nextPendingHil = normalizeHilRequest(result.pendingHil);
     }
     merged.push(...result.messages);
     messageCount = result.messageCount;
@@ -1180,6 +1224,7 @@ async function loadHistory() {
   if (truncated && offset < messageCount) {
     rows.push({ role: "system", text: 'history truncated at ' + offset + '/' + messageCount + ' messages', timestamp: Date.now() });
   }
+  pendingHilRequest = nextPendingHil;
   pendingAssistantState = null;
   setLogRows(rows, { forceBottom: true });
   renderStatus();
@@ -1272,6 +1317,7 @@ async function openThread(workspaceId) {
 function resetToNewThread() {
   activeThreadContext = setActiveThreadContext(null);
   pendingAssistantState = null;
+  pendingHilRequest = null;
   setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }], { forceBottom: true });
   renderThreads();
   renderStatus();
@@ -1349,6 +1395,7 @@ async function abortActiveRun() {
     }
 
     if (result.aborted) {
+      setPendingHilRequest(null);
       if (result.continuedQueuedRunId) {
         suppressNextAbortedComplete = true;
         setPendingAssistantState("thinking");
@@ -1361,6 +1408,38 @@ async function abortActiveRun() {
     appendSystemRow("stop failed: " + (error instanceof Error ? error.message : String(error)));
   } finally {
     abortBusy = false;
+    renderStatus();
+  }
+}
+
+async function decidePendingHil(requestId, decision) {
+  if (!client || !client.isConnected()) {
+    appendSystemRow("session is locked");
+    return;
+  }
+  const pid = getActivePid();
+  if (!pid || !pendingHilRequest || pendingHilRequest.requestId !== requestId || hilBusy) {
+    return;
+  }
+
+  hilBusy = true;
+  renderLog({ autoScroll: true });
+  renderStatus();
+  try {
+    const result = await client.call("proc.hil", { pid, requestId, decision });
+    if (!result || result.ok !== true) {
+      appendSystemRow("tool confirmation failed");
+      return;
+    }
+    setPendingHilRequest(result.pendingHil || null);
+    if (!result.pendingHil) {
+      setPendingAssistantState("thinking");
+    }
+  } catch (error) {
+    appendSystemRow("tool confirmation failed: " + (error instanceof Error ? error.message : String(error)));
+  } finally {
+    hilBusy = false;
+    renderLog({ autoScroll: true });
     renderStatus();
   }
 }
@@ -1428,6 +1507,22 @@ function bindUi() {
   elements.refreshThreads?.addEventListener("click", () => { void loadThreads(); });
   elements.newThread?.addEventListener("click", () => { resetToNewThread(); });
   elements.stopRun?.addEventListener("click", () => { void abortActiveRun(); });
+  elements.chatLog?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const button = target.closest("[data-hil-decision]");
+    if (!(button instanceof HTMLElement)) {
+      return;
+    }
+    const decision = button.getAttribute("data-hil-decision");
+    const requestId = button.getAttribute("data-hil-request-id");
+    if ((decision !== "approve" && decision !== "deny") || !requestId) {
+      return;
+    }
+    void decidePendingHil(requestId, decision);
+  });
   elements.composeForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     void sendMessage();
@@ -1505,6 +1600,7 @@ async function boot() {
     });
     client.onSignal((signal, payload) => {
       if (signal === "chat.tool_call") {
+        setPendingHilRequest(null);
         setPendingAssistantState("tool");
         applyToolCallSignal(payload);
       } else if (signal === "chat.tool_result" || signal === "chat.text") {
@@ -1518,6 +1614,7 @@ async function boot() {
       } else if (signal === "chat.complete") {
         const payloadRecord = asRecord(payload);
         const errorMessage = asString(payloadRecord?.error);
+        setPendingHilRequest(null);
         if (payloadRecord?.aborted === true && suppressNextAbortedComplete) {
           suppressNextAbortedComplete = false;
         } else {
@@ -1528,8 +1625,12 @@ async function boot() {
           appendSystemRow(errorMessage);
           scheduleRefresh({ history: true, threads: true });
         }
+      } else if (signal === "chat.hil") {
+        setPendingAssistantState(null);
+        setPendingHilRequest(payload);
       } else if (signal === "chat.error" || signal === "process.exit") {
         suppressNextAbortedComplete = false;
+        setPendingHilRequest(null);
         setPendingAssistantState(null);
         scheduleRefresh({ threads: true });
       }
