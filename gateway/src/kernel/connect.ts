@@ -232,7 +232,7 @@ async function ensureRootHome(bucket: R2Bucket): Promise<void> {
 function buildSignalList(role: string): string[] {
   switch (role) {
     case "user":
-      return ["chat.chunk", "chat.complete", "process.exit", "device.status", "adapter.status", "pkg.changed"];
+      return ["chat.text", "chat.tool_call", "chat.tool_result", "chat.hil", "chat.complete", "process.exit", "device.status", "adapter.status", "pkg.changed"];
     case "driver":
       return ["device.status"];
     case "service":

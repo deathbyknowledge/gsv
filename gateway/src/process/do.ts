@@ -30,6 +30,9 @@ import type {
 import type {
   ProcSendResult,
   ProcAbortResult,
+  ProcHilArgs,
+  ProcHilResult,
+  ProcHilRequest,
   ProcHistoryResult,
   ProcHistoryMessage,
   ProcResetResult,
@@ -58,7 +61,13 @@ import {
   parseAssistantMessageMeta,
   stringifyAssistantMessageMeta,
   type MessageRecord,
+  type PendingHilRecord,
 } from "./store";
+import {
+  parseToolApprovalPolicy,
+  resolveToolApproval,
+  type ToolApprovalPolicy,
+} from "./approval";
 import {
   buildFallbackMediaBlocks,
   buildImageBlock,
@@ -80,6 +89,7 @@ type RunState = {
   config?: AiConfigResult;
   tools?: ToolDefinition[];
   systemPrompt?: string;
+  approvalPolicy?: ToolApprovalPolicy;
 };
 
 type ActiveRunPhase = "toolResults" | "generation";
@@ -173,6 +183,10 @@ export class Process extends Host<Env> {
       this.store.fail(frame.id, frame.error.message);
     }
 
+    if (this.store.getPendingHilForRun(pending.runId)) {
+      return;
+    }
+
     if (this.store.isRunResolved(pending.runId)) {
       await this.continueAgentLoop(pending.runId);
     }
@@ -206,6 +220,11 @@ export class Process extends Host<Env> {
           break;
         case "proc.abort":
           data = await this.handleProcAbort();
+          break;
+        case "proc.hil":
+          data = await this.handleProcHil(
+            frame.args as ProcHilArgs,
+          );
           break;
         case "proc.history":
           data = this.handleProcHistory(
@@ -273,6 +292,7 @@ export class Process extends Host<Env> {
     }
 
     const runId = run.runId;
+    const pendingHil = this.store.getPendingHilForRun(runId);
     const inToolResultPhase =
       this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "toolResults";
     let interruptedToolCalls = 0;
@@ -281,6 +301,17 @@ export class Process extends Host<Env> {
       interruptedToolCalls = await this.ingestToolResults(runId, this.store.getResults(runId), {
         interruptPending: true,
       });
+    }
+
+    if (pendingHil) {
+      this.store.clearPendingHil();
+      await this.appendSyntheticToolResult(
+        runId,
+        pendingHil.toolCallId,
+        pendingHil.syscall,
+        "User interrupted tool execution",
+      );
+      interruptedToolCalls += 1;
     }
 
     this.currentRun = null;
@@ -306,6 +337,98 @@ export class Process extends Host<Env> {
       runId,
       interruptedToolCalls,
       continuedQueuedRunId,
+    };
+  }
+
+  private async handleProcHil(args: ProcHilArgs): Promise<ProcHilResult> {
+    const pid = this.pid;
+    if (args.decision !== "approve" && args.decision !== "deny") {
+      return { ok: false, error: "proc.hil requires decision=approve|deny" };
+    }
+
+    const pendingHil = this.store.getPendingHil(args.requestId);
+    if (!pendingHil) {
+      return { ok: false, error: `Pending tool confirmation not found: ${args.requestId}` };
+    }
+
+    if (this.currentRun?.runId !== pendingHil.runId) {
+      this.store.clearPendingHil();
+      return { ok: false, error: `Run is no longer active for confirmation: ${args.requestId}` };
+    }
+
+    this.store.clearPendingHil();
+
+    if (args.decision === "approve") {
+      await this.sendSignal("chat.tool_call", {
+        name: pendingHil.toolName,
+        syscall: pendingHil.syscall,
+        args: pendingHil.args,
+        callId: pendingHil.toolCallId,
+        pid,
+        runId: pendingHil.runId,
+      });
+      if (this.handleRunStopped(pendingHil.runId)) {
+        return {
+          ok: true,
+          pid,
+          requestId: args.requestId,
+          decision: args.decision,
+          resumed: false,
+          pendingHil: null,
+        };
+      }
+      await this.dispatchSyscall(
+        pendingHil.runId,
+        pendingHil.toolCallId,
+        pendingHil.syscall as SyscallName,
+        pendingHil.args,
+      );
+    } else {
+      await this.appendSyntheticToolResult(
+        pendingHil.runId,
+        pendingHil.toolCallId,
+        pendingHil.syscall,
+        "Tool execution denied by user",
+      );
+    }
+
+    if (this.handleRunStopped(pendingHil.runId)) {
+      return {
+        ok: true,
+        pid,
+        requestId: args.requestId,
+        decision: args.decision,
+        resumed: false,
+        pendingHil: null,
+      };
+    }
+
+    const nextPendingHil = await this.processToolCalls(
+      pendingHil.runId,
+      pendingHil.remainingToolCalls,
+    );
+    if (this.handleRunStopped(pendingHil.runId)) {
+      return {
+        ok: true,
+        pid,
+        requestId: args.requestId,
+        decision: args.decision,
+        resumed: false,
+        pendingHil: nextPendingHil ? this.toProcHilRequest(nextPendingHil) : null,
+      };
+    }
+
+    if (!nextPendingHil && this.store.isRunResolved(pendingHil.runId)) {
+      this.scheduleTick(pendingHil.runId);
+    }
+
+    return {
+      ok: true,
+      pid,
+      requestId: args.requestId,
+      decision: args.decision,
+      resumed: true,
+      pendingHil: nextPendingHil ? this.toProcHilRequest(nextPendingHil) : null,
     };
   }
 
@@ -382,6 +505,7 @@ export class Process extends Host<Env> {
       messages,
       messageCount: total,
       truncated: (args.offset ?? 0) + messages.length < total,
+      pendingHil: this.toProcHilRequest(this.store.getPendingHil()),
     };
   }
 
@@ -441,6 +565,7 @@ export class Process extends Host<Env> {
   private resetExecutionState(): void {
     this.currentRun = null;
     this.store.clearPendingToolCalls();
+    this.store.clearPendingHil();
     this.store.clearQueue();
     this.mediaCache.clear();
   }
@@ -649,52 +774,11 @@ export class Process extends Host<Env> {
     });
 
     if (toolCalls.length > 0) {
-      for (const tc of toolCalls) {
-        const syscall = TOOL_TO_SYSCALL[tc.name];
-
-        await this.sendSignal("chat.tool_call", {
-          name: tc.name,
-          syscall,
-          args: tc.arguments,
-          callId: tc.id,
-          pid: this.pid,
-          runId,
-        });
-        if (this.handleRunStopped(runId)) {
-          return;
-        }
-
-        if (!syscall) {
-          this.store.appendToolResult(
-            tc.id,
-            tc.name,
-            `Error: Unknown tool "${tc.name}"`,
-            true,
-          );
-          await this.sendSignal("chat.tool_result", {
-            name: tc.name,
-            syscall: tc.name,
-            callId: tc.id,
-            ok: false,
-            error: `Unknown tool "${tc.name}"`,
-            pid: this.pid,
-            runId,
-          });
-          continue;
-        }
-
-        await this.dispatchSyscall(
-          runId,
-          tc.id,
-          syscall as SyscallName,
-          tc.arguments,
-        );
-        if (this.handleRunStopped(runId)) {
-          return;
-        }
+      const pendingHil = await this.processToolCalls(runId, toolCalls);
+      if (this.handleRunStopped(runId)) {
+        return;
       }
-
-      if (this.store.isRunResolved(runId)) {
+      if (!pendingHil && this.store.isRunResolved(runId)) {
         this.scheduleTick(runId);
       }
     } else {
@@ -714,6 +798,7 @@ export class Process extends Host<Env> {
   private async finishRun(reason: string): Promise<void> {
     const runId = this.currentRun?.runId;
     this.currentRun = null;
+    this.store.clearPendingHil();
     console.log(`[Process] Finished run ${runId}`);
 
     this.promoteNextQueuedRun();
@@ -1084,6 +1169,154 @@ export class Process extends Host<Env> {
     }
 
     return interrupted;
+  }
+
+  private async processToolCalls(
+    runId: string,
+    toolCalls: ToolCall[],
+  ): Promise<PendingHilRecord | null> {
+    if (toolCalls.length === 0) {
+      return null;
+    }
+
+    const run = this.currentRun;
+    if (!run || run.runId !== runId) {
+      return null;
+    }
+
+    const approvalPolicy = await this.resolveToolApprovalPolicy(run);
+    if (this.handleRunStopped(runId)) {
+      return null;
+    }
+
+    for (let index = 0; index < toolCalls.length; index += 1) {
+      const tc = toolCalls[index];
+      const syscall = TOOL_TO_SYSCALL[tc.name];
+
+      if (!syscall) {
+        await this.appendSyntheticToolResult(
+          runId,
+          tc.id,
+          tc.name,
+          `Unknown tool "${tc.name}"`,
+        );
+        continue;
+      }
+
+      const approval = resolveToolApproval(
+        approvalPolicy,
+        syscall,
+        tc.arguments,
+        this.identity,
+      );
+
+      if (approval.action === "deny") {
+        await this.appendSyntheticToolResult(
+          runId,
+          tc.id,
+          syscall,
+          "Tool execution denied by policy",
+        );
+        continue;
+      }
+
+      if (approval.action === "ask") {
+        const pendingHil: PendingHilRecord = {
+          requestId: crypto.randomUUID(),
+          runId,
+          toolCallId: tc.id,
+          toolName: tc.name,
+          syscall,
+          args: tc.arguments as Record<string, unknown>,
+          remainingToolCalls: toolCalls.slice(index + 1),
+          createdAt: Date.now(),
+        };
+        this.store.setPendingHil(pendingHil);
+        await this.sendSignal("chat.hil", this.toProcHilRequest(pendingHil));
+        return pendingHil;
+      }
+
+      await this.sendSignal("chat.tool_call", {
+        name: tc.name,
+        syscall,
+        args: tc.arguments,
+        callId: tc.id,
+        pid: this.pid,
+        runId,
+      });
+      if (this.handleRunStopped(runId)) {
+        return null;
+      }
+
+      await this.dispatchSyscall(
+        runId,
+        tc.id,
+        syscall as SyscallName,
+        tc.arguments,
+      );
+      if (this.handleRunStopped(runId)) {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  private async resolveToolApprovalPolicy(run: RunState): Promise<ToolApprovalPolicy> {
+    if (run.approvalPolicy) {
+      return run.approvalPolicy;
+    }
+
+    const result = await this.kernelRpc("sys.config.get", {
+      key: "config/tools/approval",
+    }) as { entries?: Array<{ key: string; value: string }> };
+
+    const raw = Array.isArray(result.entries)
+      ? result.entries.find((entry) => entry.key === "config/tools/approval")?.value ?? null
+      : null;
+
+    run.approvalPolicy = parseToolApprovalPolicy(raw);
+    this.currentRun = run;
+    return run.approvalPolicy;
+  }
+
+  private async appendSyntheticToolResult(
+    runId: string,
+    toolCallId: string,
+    syscallName: string,
+    errorMessage: string,
+  ): Promise<void> {
+    this.store.appendToolResult(
+      toolCallId,
+      syscallName,
+      `Error: ${errorMessage}`,
+      true,
+    );
+    await this.sendSignal("chat.tool_result", {
+      name: SYSCALL_TOOL_NAMES[syscallName] ?? syscallName,
+      syscall: syscallName,
+      callId: toolCallId,
+      ok: false,
+      error: errorMessage,
+      pid: this.pid,
+      runId,
+    });
+  }
+
+  private toProcHilRequest(record: PendingHilRecord | null): ProcHilRequest | null {
+    if (!record) {
+      return null;
+    }
+
+    return {
+      requestId: record.requestId,
+      runId: record.runId,
+      callId: record.toolCallId,
+      toolName: record.toolName,
+      syscall: record.syscall,
+      args: record.args,
+      createdAt: record.createdAt,
+    };
   }
 
   private handleRunStopped(runId: string): boolean {

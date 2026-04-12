@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { env, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import type { Process } from "./do";
 import type { Kernel } from "../kernel/do";
@@ -307,6 +307,91 @@ describe("Process DO — mechanical", () => {
         expect(lastTwo[1].content).toBe("follow-up after abort");
         expect(store.queueSize()).toBe(0);
         expect(process.currentRun).toMatchObject({ runId: "run-2" });
+      });
+    });
+  });
+
+  describe("proc.hil", () => {
+    it("pauses a run on ask policy and exposes the pending confirmation in history", async () => {
+      const pid = "mech-hil-pause";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = {
+          runId: "run-hil-1",
+          queued: false,
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "fs.read", action: "ask" }],
+          },
+        };
+        await process.processToolCalls("run-hil-1", [
+          { type: "toolCall", id: "call-hil-1", name: "Read", arguments: { path: "/root/secret.txt" } },
+        ]);
+      });
+
+      const history = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+
+      expect(history.ok).toBe(true);
+      const data = history.data as any;
+      expect(data.pendingHil).toMatchObject({
+        runId: "run-hil-1",
+        callId: "call-hil-1",
+        toolName: "Read",
+        syscall: "fs.read",
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.getPendingHilForRun("run-hil-1")).not.toBeNull();
+        expect(process.store.getPending("call-hil-1")).toBeNull();
+      });
+    });
+
+    it("denies a pending confirmation with a synthetic tool result", async () => {
+      const pid = "mech-hil-deny";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const requestId = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = {
+          runId: "run-hil-2",
+          queued: false,
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "fs.read", action: "ask" }],
+          },
+        };
+        await process.processToolCalls("run-hil-2", [
+          { type: "toolCall", id: "call-hil-2", name: "Read", arguments: { path: "/root/secret.txt" } },
+        ]);
+        return process.store.getPendingHilForRun("run-hil-2").requestId;
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.hil", { requestId, decision: "deny" }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toMatchObject({
+        ok: true,
+        pid,
+        requestId,
+        decision: "deny",
+        resumed: true,
+        pendingHil: null,
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        const messages = process.store.getMessages();
+        const last = messages[messages.length - 1];
+        expect(process.store.getPendingHil()).toBeNull();
+        expect(last.role).toBe("toolResult");
+        expect(last.content).toContain("Tool execution denied by user");
       });
     });
   });
@@ -641,6 +726,15 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     });
   });
 
+  afterEach(async () => {
+    const kernel = await getKernelPtr();
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as any;
+      k.config.delete("config/tools/approval");
+      k.config.delete("users/0/ai/api_key");
+    });
+  });
+
   it("simple text response: send → alarm → text + complete", async () => {
     const pid = "llm-simple-1";
     await registerInKernel(pid, ROOT_IDENTITY);
@@ -753,6 +847,164 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
         m.content.includes("1 + 1"),
       );
       expect(queuedMsg).toBeDefined();
+    });
+  }, 60_000);
+
+  it("tool confirmation approve path: pauses for approval, then reads and completes", async () => {
+    const pid = "llm-hil-approve-1";
+    await registerInKernel(pid, ROOT_IDENTITY);
+    const stub = await initProcess(pid, ROOT_IDENTITY, { register: false });
+
+    await env.STORAGE.put("root/hil-approve.txt", "banana", {
+      customMetadata: { uid: "0", gid: "0", mode: "644" },
+    });
+
+    const kernel = await getKernelPtr();
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as any;
+      k.config.set("config/tools/approval", JSON.stringify({
+        default: "auto",
+        rules: [{ match: "fs.read", action: "ask" }],
+      }));
+    });
+
+    const sendRes = (await stub.recvFrame(
+      makeReq("proc.send", {
+        message: "Read ~/hil-approve.txt and reply with exactly the word banana.",
+      }),
+    )) as ResponseOkFrame;
+    expect(sendRes.ok).toBe(true);
+
+    await runDurableObjectAlarm(stub);
+
+    let pendingHil: any = null;
+    const deadline = Date.now() + 25_000;
+    while (Date.now() < deadline) {
+      const history = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+      pendingHil = (history.data as any).pendingHil;
+      if (pendingHil) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    expect(pendingHil).toMatchObject({
+      toolName: "Read",
+      syscall: "fs.read",
+      args: { path: "~/hil-approve.txt", target: "gsv" },
+    });
+
+    const hilRes = (await stub.recvFrame(
+      makeReq("proc.hil", { requestId: pendingHil.requestId, decision: "approve" }),
+    )) as ResponseOkFrame;
+    expect(hilRes.ok).toBe(true);
+    expect(hilRes.data).toMatchObject({
+      ok: true,
+      pid,
+      requestId: pendingHil.requestId,
+      decision: "approve",
+      resumed: true,
+      pendingHil: null,
+    });
+
+    let maxTicks = 5;
+    while (maxTicks-- > 0) {
+      await runDurableObjectAlarm(stub);
+      const done = await runInDurableObject(stub, (instance: Process) => {
+        return (instance as any).store.getValue("currentRun") === null;
+      });
+      if (done) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    await waitForRunComplete(stub, 50_000);
+
+    await runInDurableObject(stub, (instance: Process) => {
+      const store = (instance as any).store;
+      const toolResultMsg = store.getMessages().find((m: any) => m.role === "toolResult");
+      const lastAssistant = store.getMessages().filter((m: any) => m.role === "assistant").pop();
+      expect(store.getPendingHil()).toBeNull();
+      expect(toolResultMsg).toBeDefined();
+      expect(lastAssistant).toBeDefined();
+      expect(lastAssistant!.content.toLowerCase()).toContain("banana");
+    });
+  }, 60_000);
+
+  it("tool confirmation deny path: pauses for approval, then continues with denial", async () => {
+    const pid = "llm-hil-deny-1";
+    await registerInKernel(pid, ROOT_IDENTITY);
+    const stub = await initProcess(pid, ROOT_IDENTITY, { register: false });
+
+    await env.STORAGE.put("root/hil-deny.txt", "secret-value", {
+      customMetadata: { uid: "0", gid: "0", mode: "644" },
+    });
+
+    const kernel = await getKernelPtr();
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as any;
+      k.config.set("config/tools/approval", JSON.stringify({
+        default: "auto",
+        rules: [{ match: "fs.read", action: "ask" }],
+      }));
+    });
+
+    const sendRes = (await stub.recvFrame(
+      makeReq("proc.send", {
+        message: "Read ~/hil-deny.txt. If the read tool is denied, reply with exactly the single word denied.",
+      }),
+    )) as ResponseOkFrame;
+    expect(sendRes.ok).toBe(true);
+
+    await runDurableObjectAlarm(stub);
+
+    let pendingHil: any = null;
+    const deadline = Date.now() + 25_000;
+    while (Date.now() < deadline) {
+      const history = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+      pendingHil = (history.data as any).pendingHil;
+      if (pendingHil) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    expect(pendingHil).toMatchObject({
+      toolName: "Read",
+      syscall: "fs.read",
+    });
+
+    const hilRes = (await stub.recvFrame(
+      makeReq("proc.hil", { requestId: pendingHil.requestId, decision: "deny" }),
+    )) as ResponseOkFrame;
+    expect(hilRes.ok).toBe(true);
+    expect(hilRes.data).toMatchObject({
+      ok: true,
+      pid,
+      requestId: pendingHil.requestId,
+      decision: "deny",
+      resumed: true,
+      pendingHil: null,
+    });
+
+    let maxTicks = 5;
+    while (maxTicks-- > 0) {
+      await runDurableObjectAlarm(stub);
+      const done = await runInDurableObject(stub, (instance: Process) => {
+        return (instance as any).store.getValue("currentRun") === null;
+      });
+      if (done) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    await waitForRunComplete(stub, 50_000);
+
+    await runInDurableObject(stub, (instance: Process) => {
+      const store = (instance as any).store;
+      const toolResults = store.getMessages().filter((m: any) => m.role === "toolResult");
+      const lastAssistant = store.getMessages().filter((m: any) => m.role === "assistant").pop();
+      expect(store.getPendingHil()).toBeNull();
+      expect(toolResults.length).toBeGreaterThanOrEqual(1);
+      expect(toolResults[toolResults.length - 1].content).toContain("Tool execution denied by user");
+      expect(lastAssistant).toBeDefined();
+      expect(lastAssistant!.content.toLowerCase()).toContain("denied");
     });
   }, 60_000);
 

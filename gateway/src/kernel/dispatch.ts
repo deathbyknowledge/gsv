@@ -163,6 +163,7 @@ async function dispatchNative(
         break;
       case "proc.send":
       case "proc.abort":
+      case "proc.hil":
       case "proc.kill":
       case "proc.history":
       case "proc.reset":

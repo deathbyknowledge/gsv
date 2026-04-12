@@ -74,6 +74,9 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/process/init_label": "init ({username})",
   // Max concurrent processes per user (0 = unlimited).
   "config/process/max_per_user": "0",
+  // Tool approval policy for agent tool execution. JSON object with a default
+  // action and ordered rules matching exact syscalls or domain wildcards.
+  "config/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
 };
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".
