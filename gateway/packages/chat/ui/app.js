@@ -1034,6 +1034,18 @@ function renderLog(options = {}) {
     : (options.autoScroll === true ? isNearBottom(elements.chatLog) : false);
   const rowsHtml = logRows.map((row) => {
     if (row.kind === "toolCall" || row.kind === "toolResult") {
+      if (
+        row.kind === "toolCall"
+        && pendingHilRequest
+        && row.callId === pendingHilRequest.callId
+      ) {
+        return renderHilRow({
+          ...pendingHilRequest,
+          toolName: row.toolName || pendingHilRequest.toolName,
+          syscall: row.syscall || pendingHilRequest.syscall,
+          args: row.args ?? pendingHilRequest.args,
+        });
+      }
       return renderToolRow(row);
     }
     const role = row.role === "user" ? "user" : row.role === "assistant" ? "assistant" : "system";
@@ -1057,7 +1069,9 @@ function renderLog(options = {}) {
       mediaHtml +
     '</article>';
   }).join("");
-  const approvalHtml = pendingHilRequest
+  const approvalHtml = pendingHilRequest && !logRows.some((row) =>
+    row.kind === "toolCall" && row.callId === pendingHilRequest.callId
+  )
     ? renderHilRow(pendingHilRequest)
     : "";
   const pendingHtml = pendingAssistantState
