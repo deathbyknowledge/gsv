@@ -71,6 +71,10 @@ type AdapterInboundMessage = {
 
 type AdapterInboundResult = {
   ok: boolean;
+  reply?: {
+    text: string;
+    replyToId?: string;
+  };
   challenge?: {
     code: string;
     prompt: string;
@@ -455,6 +459,9 @@ export class DiscordGateway extends DurableObject<Env> {
       }
       if (result.challenge?.prompt) {
         await this.sendChannelText(channelId, result.challenge.prompt, messageReference?.message_id);
+      }
+      if (result.reply?.text) {
+        await this.sendChannelText(channelId, result.reply.text, result.reply.replyToId || messageReference?.message_id);
       }
       console.log(
         `[DiscordGateway] Delivered message ${messageId} from ${author?.username}`,

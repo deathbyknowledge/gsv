@@ -412,6 +412,56 @@ function renderToolRow(row) {
   '</article>';
 }
 
+function renderHilRow(request) {
+  const syscall = inferToolSyscall(request.toolName, request.syscall);
+  const card = describeToolCard(request.toolName, request.args, syscall);
+  const summary = describeHilSummary(request, syscall);
+  return '<article class="tool-card is-pending">' +
+    '<div class="tool-card-head">' +
+      '<div><h3 class="tool-card-title">' + escapeHtmlClient(card.title) + '</h3>' +
+      (card.subtitle ? '<p class="tool-card-subtitle">' + escapeHtmlClient(card.subtitle) + '</p>' : '') +
+      '</div>' +
+      '<div class="tool-status is-pending">Awaiting approval<span class="tool-target">' + escapeHtmlClient(card.target) + '</span></div>' +
+    '</div>' +
+    '<div class="tool-preview">' +
+      '<p class="tool-preview-line">' + escapeHtmlClient(summary) + '</p>' +
+      '<p class="tool-preview-line">This tool will not run until you decide.</p>' +
+    '</div>' +
+    '<div class="message-approval-actions">' +
+      '<button type="button" class="btn btn-primary" data-hil-decision="approve" data-hil-request-id="' + escapeHtmlClient(request.requestId) + '"' + (hilBusy ? " disabled" : "") + '>Allow</button>' +
+      '<button type="button" class="btn btn-quiet" data-hil-decision="deny" data-hil-request-id="' + escapeHtmlClient(request.requestId) + '"' + (hilBusy ? " disabled" : "") + '>Deny</button>' +
+    '</div>' +
+    '<details class="tool-details"><summary>Details</summary>' +
+      renderToolMetaRows([["call", request.callId], ["syscall", syscall]]) +
+      '<div class="tool-detail-block"><pre>' + escapeHtmlClient(truncateBlock(prettyJson(request.args), 2400)) + '</pre></div>' +
+    '</details>' +
+  '</article>';
+}
+
+function describeHilSummary(request, syscall) {
+  const args = asRecord(request.args) || {};
+  const path = asString(args.path);
+  const command = asString(args.command);
+  if (request.toolName === "Shell" || syscall === "shell.exec") {
+    return command
+      ? 'Run "' + truncateInline(command, 96) + '".'
+      : "Run a shell command.";
+  }
+  if (request.toolName === "Read" || syscall === "fs.read") {
+    return path ? "Read " + path + "." : "Read a file.";
+  }
+  if (request.toolName === "Write" || syscall === "fs.write") {
+    return path ? "Write " + path + "." : "Write a file.";
+  }
+  if (request.toolName === "Edit" || syscall === "fs.edit") {
+    return path ? "Edit " + path + "." : "Edit a file.";
+  }
+  if (request.toolName === "Delete" || syscall === "fs.delete") {
+    return path ? "Delete " + path + "." : "Delete a file.";
+  }
+  return "Confirm this tool call before it runs.";
+}
+
 function normalizeThreadContext(value) {
   const record = asRecord(value);
   if (!record) {
@@ -1008,17 +1058,7 @@ function renderLog(options = {}) {
     '</article>';
   }).join("");
   const approvalHtml = pendingHilRequest
-    ? '<article class="message message-system">' +
-        '<div class="message-head"><span>Confirmation</span><span>' + escapeHtmlClient(formatTimestamp(pendingHilRequest.createdAt)) + '</span></div>' +
-        '<div class="message-approval-body">' +
-          '<div class="message-approval-call">' + escapeHtmlClient(pendingHilRequest.toolName) + '</div>' +
-          '<div class="message-approval-meta">' + escapeHtmlClient(pendingHilRequest.syscall + "\n" + truncateBlock(prettyJson(pendingHilRequest.args), 320)) + '</div>' +
-          '<div class="message-approval-actions">' +
-            '<button type="button" class="btn btn-primary" data-hil-decision="approve" data-hil-request-id="' + escapeHtmlClient(pendingHilRequest.requestId) + '"' + (hilBusy ? " disabled" : "") + '>Allow</button>' +
-            '<button type="button" class="btn btn-quiet" data-hil-decision="deny" data-hil-request-id="' + escapeHtmlClient(pendingHilRequest.requestId) + '"' + (hilBusy ? " disabled" : "") + '>Deny</button>' +
-          '</div>' +
-        '</div>' +
-      '</article>'
+    ? renderHilRow(pendingHilRequest)
     : "";
   const pendingHtml = pendingAssistantState
     ? '<article class="message-pending"><span class="thinking-indicator" aria-hidden="true"></span><span>' + escapeHtmlClient(pendingAssistantState === "tool" ? "Working..." : "Thinking...") + '</span></article>'

@@ -10,6 +10,7 @@ import type {
   ProcessIdentity,
   SysSetupResult,
 } from "../syscalls/system";
+import type { ProcHilRequest } from "../syscalls/proc";
 import type { PkgPublicListResult } from "../syscalls/packages";
 import type {
   AdapterOutboundMessage,
@@ -519,6 +520,32 @@ export class Kernel extends Host<Env> {
   }
 
   private async deliverSignalToAdapter(route: AdapterRunRoute, frame: SignalFrame): Promise<void> {
+    if (frame.signal === "chat.hil") {
+      const request = this.toProcHilRequest(frame.payload);
+      if (!request) {
+        return;
+      }
+
+      const surface = {
+        kind: route.surfaceKind,
+        id: route.surfaceId,
+        threadId: route.threadId,
+      } as const;
+
+      await this.sendAdapterMessage(route.adapter, route.accountId, {
+        surface,
+        text: this.renderAdapterHilPrompt(request, route.surfaceKind),
+      });
+      await setAdapterActivityForKernel(
+        this.env,
+        route.adapter,
+        route.accountId,
+        surface,
+        { kind: "typing", active: false },
+      );
+      return;
+    }
+
     if (frame.signal !== "chat.complete") {
       return;
     }
@@ -576,6 +603,83 @@ export class Kernel extends Host<Env> {
     } catch (err) {
       console.warn(`[Kernel] Adapter send threw (${adapter}/${accountId}):`, err);
     }
+  }
+
+  private toProcHilRequest(value: unknown): ProcHilRequest | null {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.requestId !== "string"
+      || typeof record.runId !== "string"
+      || typeof record.callId !== "string"
+      || typeof record.toolName !== "string"
+      || typeof record.syscall !== "string"
+      || !record.args
+      || typeof record.args !== "object"
+    ) {
+      return null;
+    }
+    return {
+      requestId: record.requestId,
+      runId: record.runId,
+      callId: record.callId,
+      toolName: record.toolName,
+      syscall: record.syscall,
+      args: record.args as Record<string, unknown>,
+      createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
+    };
+  }
+
+  private renderAdapterHilPrompt(
+    request: ProcHilRequest,
+    surfaceKind: AdapterRunRoute["surfaceKind"],
+  ): string {
+    const summary = this.summarizeHilRequest(request);
+    const actionLine = surfaceKind === "dm"
+      ? 'Reply "approve" to continue or "deny" to stop this action.'
+      : "Open Chat to approve or deny this action.";
+    return [
+      "I need your confirmation before I can continue.",
+      "",
+      summary,
+      "",
+      actionLine,
+    ].join("\n");
+  }
+
+  private summarizeHilRequest(request: ProcHilRequest): string {
+    const args = request.args;
+    const path = typeof args.path === "string" ? args.path : "";
+    const command = typeof args.command === "string" ? args.command : "";
+
+    if (request.syscall === "shell.exec") {
+      return command
+        ? `Requested action: run \`${command}\`.`
+        : "Requested action: run a shell command.";
+    }
+    if (request.syscall === "fs.read") {
+      return path
+        ? `Requested action: read \`${path}\`.`
+        : "Requested action: read a file.";
+    }
+    if (request.syscall === "fs.write") {
+      return path
+        ? `Requested action: write \`${path}\`.`
+        : "Requested action: write a file.";
+    }
+    if (request.syscall === "fs.edit") {
+      return path
+        ? `Requested action: edit \`${path}\`.`
+        : "Requested action: edit a file.";
+    }
+    if (request.syscall === "fs.delete") {
+      return path
+        ? `Requested action: delete \`${path}\`.`
+        : "Requested action: delete a file.";
+    }
+    return `Requested action: ${request.toolName}.`;
   }
 
   private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {

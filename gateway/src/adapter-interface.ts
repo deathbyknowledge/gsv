@@ -69,6 +69,10 @@ export type AdapterInboundResult = {
     runId: string;
     queued: boolean;
   };
+  reply?: {
+    text: string;
+    replyToId?: string;
+  };
   challenge?: {
     code: string;
     prompt: string;
