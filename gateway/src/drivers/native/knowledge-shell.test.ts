@@ -75,8 +75,8 @@ describe("knowledge shell wrappers", () => {
     const result = await runWikiCommand(["help"], makeContext(), makeOps());
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("The wiki CLI is a thin shell wrapper over knowledge.* syscalls.");
-    expect(result.stdout).toContain("History comes from ripgit commits, not a separate log.md file");
+    expect(result.stdout).toContain("Wiki manages durable knowledge databases made of markdown pages and live source references.");
+    expect(result.stdout).toContain("search finds matching notes; query returns a compact brief with references");
     expect(result.stdout).toContain("wiki help section");
   });
 
@@ -130,7 +130,7 @@ describe("knowledge shell wrappers", () => {
     const ops = makeOps();
 
     const result = await runWikiCommand(
-      ["source", "add", "product/pages/auth.md", "--source", "gsv:/workspaces/gsv/specs/auth.md|Auth spec"],
+      ["source", "add", "product/pages/auth.md", "--source", "gsv:/workspaces/gsv/specs/auth.md::Auth spec"],
       makeContext(["knowledge.write"]),
       ops,
     );
@@ -149,6 +149,25 @@ describe("knowledge shell wrappers", () => {
             },
           ],
         },
+      }),
+    );
+  });
+
+  it("mem list accepts -r as a recursive alias", async () => {
+    const ops = makeOps();
+
+    const result = await runMemCommand(
+      ["list", "inbox", "-r"],
+      makeContext(["knowledge.list"]),
+      ops,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(ops.list).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        prefix: "personal/inbox",
+        recursive: true,
       }),
     );
   });

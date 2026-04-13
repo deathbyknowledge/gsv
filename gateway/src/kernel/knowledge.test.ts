@@ -344,7 +344,7 @@ describe("KnowledgeStore", () => {
 
     const promoted = await store.promote({
       source: { kind: "text", text: "Alice prefers async updates and concise replies." },
-      targetPath: "people/alice.md",
+      targetPath: "personal/pages/alice.md",
       mode: "inbox",
     });
 
@@ -352,12 +352,12 @@ describe("KnowledgeStore", () => {
     if (!promoted.ok) {
       throw new Error("expected inbox promotion");
     }
-    expect(promoted.path.startsWith("inbox/")).toBe(true);
+    expect(promoted.path.startsWith("personal/inbox/")).toBe(true);
     expect(promoted.requiresReview).toBe(true);
 
     const candidate = await store.read({ path: promoted.path });
     expect(candidate.exists).toBe(true);
-    expect(candidate.markdown).toContain("Suggested target: people/alice.md");
+    expect(candidate.markdown).toContain("Suggested target: personal/pages/alice.md");
 
     const query = await store.query({
       query: "alpha adapters",
