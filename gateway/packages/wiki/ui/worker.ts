@@ -106,6 +106,15 @@ function extractHeadings(markdown) {
   return headings;
 }
 
+function serializeJsonForScript(value) {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 function prepareArticleMarkdown(markdown, articleTitle) {
   const text = stripFrontmatter(markdown).replace(/\r\n/g, "\n");
   const lines = text.split("\n");
@@ -783,7 +792,7 @@ function renderPage(args) {
         </section>
       </aside>
     </main>
-    ${articleSource ? `<script id="wiki-article-markdown" type="application/json">${escapeHtml(JSON.stringify(articleSource))}</script>` : ""}
+    ${articleSource ? `<script id="wiki-article-markdown" type="application/json">${serializeJsonForScript(articleSource)}</script>` : ""}
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js" integrity="sha512-78KH17QLT5e55GJqP76vutp1D2iAoy06WcYBXB6iBCsmO6wWzx0Qdg8EDpm8mKXv68BcvHOyeeP4wxAL0twJGQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/16.3.0/lib/marked.umd.min.js" integrity="sha512-V6rGY7jjOEUc7q5Ews8mMlretz1Vn2wLdMW/qgABLWunzsLfluM0FwHuGjGQ1lc8jO5vGpGIGFE+rTzB+63HdA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script>
