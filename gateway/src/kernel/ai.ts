@@ -113,15 +113,15 @@ export async function handleAiConfig(
     10,
   );
 
-  const systemPrompt =
-    config.get(`users/${uid}/ai/system_prompt`) ??
-    config.get("config/ai/system_prompt") ??
-    "";
-
-  const profileSystemPrompt =
-    config.get(`users/${uid}/ai/profile/${profile}/system_prompt`) ??
-    config.get(`config/ai/profile/${profile}/system_prompt`) ??
-    "";
+  const profileContextPrefix = `config/ai/profile/${profile}/context.d`;
+  const profileContextFiles = config
+    .list(profileContextPrefix)
+    .map(({ key, value }) => ({
+      name: key.slice(`${profileContextPrefix}/`.length),
+      text: value,
+    }))
+    .filter((file) => file.name.endsWith(".md") && file.text.trim().length > 0)
+    .sort((left, right) => left.name.localeCompare(right.name));
 
   const maxContextBytes = parseInt(
     config.get(`users/${uid}/ai/max_context_bytes`) ??
@@ -137,8 +137,7 @@ export async function handleAiConfig(
     apiKey,
     reasoning,
     maxTokens,
-    systemPrompt,
-    profileSystemPrompt,
+    profileContextFiles,
     maxContextBytes,
   };
 }

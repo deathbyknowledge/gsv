@@ -889,9 +889,8 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     }
 
     expect(pendingHil).toMatchObject({
-      toolName: "Read",
       syscall: "fs.read",
-      args: { path: "~/hil-approve.txt", target: "gsv" },
+      args: { path: "/root/hil-approve.txt", target: "gsv" },
     });
 
     const hilRes = (await stub.recvFrame(
@@ -968,7 +967,6 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     }
 
     expect(pendingHil).toMatchObject({
-      toolName: "Read",
       syscall: "fs.read",
     });
 

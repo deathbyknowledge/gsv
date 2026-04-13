@@ -4,25 +4,14 @@ import type { PromptContextProvider, PromptSection } from "../types";
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
-export function createHomeKnowledgeProvider(): PromptContextProvider {
+export function createHomeContextProvider(): PromptContextProvider {
   return {
-    name: "home.knowledge",
+    name: "home.context",
     async collect(input) {
       const sections: PromptSection[] = [];
       const repo = homeKnowledgeRepoRef(input.identity.uid);
 
       if (input.ripgit) {
-        const constitution = await input.ripgit.readPath(repo, "CONSTITUTION.md");
-        if (constitution.kind === "file") {
-          const text = TEXT_DECODER.decode(constitution.bytes).trim();
-          if (text) {
-            sections.push({
-              name: "home.constitution",
-              text,
-            });
-          }
-        }
-
         const contextTree = await input.ripgit.readPath(repo, "context.d");
         if (contextTree.kind === "tree") {
           const contextFiles = contextTree.entries
@@ -61,18 +50,6 @@ export function createHomeKnowledgeProvider(): PromptContextProvider {
       }
 
       const homeKey = input.identity.home.replace(/^\//, "");
-      const constitutionKey = `${homeKey}/CONSTITUTION.md`;
-      const constitutionObj = await input.storage.get(constitutionKey);
-      if (constitutionObj && !sections.some((section) => section.name === "home.constitution")) {
-        const text = (await constitutionObj.text()).trim();
-        if (text) {
-          sections.push({
-            name: "home.constitution",
-            text,
-          });
-        }
-      }
-
       const contextPrefix = `${homeKey}/context.d/`;
       const listed = await input.storage.list({ prefix: contextPrefix });
       const contextFiles = listed.objects

@@ -1,22 +1,20 @@
 import type { AiContextProfile } from "../../syscalls/ai";
-import { createBaseSystemPromptProvider } from "./providers/base";
-import { createHomeKnowledgeProvider } from "./providers/home";
+import { createHomeContextProvider } from "./providers/home";
 import { createProfileInstructionsProvider } from "./providers/profile";
-import { createWorkspaceSummaryProvider } from "./providers/workspace";
+import { createWorkspaceContextProvider } from "./providers/workspace";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
 
 export type ContextPurpose = PromptAssemblyInput["purpose"];
 
-const BASE_PROVIDER = createBaseSystemPromptProvider();
 const PROFILE_PROVIDER = createProfileInstructionsProvider();
-const HOME_PROVIDER = createHomeKnowledgeProvider();
-const WORKSPACE_PROVIDER = createWorkspaceSummaryProvider();
+const HOME_PROVIDER = createHomeContextProvider();
+const WORKSPACE_PROVIDER = createWorkspaceContextProvider();
 
 export function resolvePromptProviders(
   profile: AiContextProfile,
   purpose: ContextPurpose,
 ): PromptContextProvider[] {
-  const basePlan = [BASE_PROVIDER, PROFILE_PROVIDER];
+  const basePlan = [PROFILE_PROVIDER];
 
   switch (profile) {
     case "app":

@@ -1,4 +1,4 @@
-import type { AiConfigResult, AiContextProfile } from "../../syscalls/ai";
+import type { AiConfigResult, AiContextProfile, AiToolsDevice } from "../../syscalls/ai";
 import type { RipgitClient } from "../../fs/ripgit/client";
 import type { ProcessIdentity } from "../../syscalls/system";
 
@@ -10,6 +10,7 @@ export type PromptAssemblyInput = {
   profile: AiContextProfile;
   purpose: "chat.reply" | "thread.resume";
   identity: ProcessIdentity;
+  devices: AiToolsDevice[];
   storage: PromptStorage;
   ripgit: PromptRipgitClient | null;
 };

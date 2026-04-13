@@ -88,6 +88,7 @@ type RunState = {
   queued: boolean;
   config?: AiConfigResult;
   tools?: ToolDefinition[];
+  devices?: AiToolsDevice[];
   systemPrompt?: string;
   approvalPolicy?: ToolApprovalPolicy;
 };
@@ -649,12 +650,16 @@ export class Process extends Host<Env> {
       if (this.handleRunStopped(runId)) {
         return;
       }
+      this.currentRun = run;
+    }
 
+    if (!run.tools || !run.devices) {
       const toolsResult = await this.kernelRpc("ai.tools");
       if (this.handleRunStopped(runId)) {
         return;
       }
       run.tools = toolsResult.tools;
+      run.devices = toolsResult.devices;
 
       this.currentRun = run;
     }
@@ -666,6 +671,7 @@ export class Process extends Host<Env> {
         profile: this.profile,
         purpose: "chat.reply",
         identity: this.identity,
+        devices: run.devices ?? [],
         storage: this.env.STORAGE,
         ripgit: this.ripgit,
       });
