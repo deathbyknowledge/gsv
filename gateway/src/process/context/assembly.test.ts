@@ -7,6 +7,7 @@ import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
 import type { AiConfigResult } from "../../syscalls/ai";
 import type { ProcessIdentity } from "../../syscalls/system";
+import { homeKnowledgeRepoRef, workspaceRepoRef } from "../../fs";
 
 const CONFIG: AiConfigResult = {
   provider: "anthropic",
@@ -85,31 +86,48 @@ describe("selection", () => {
 describe("createHomeKnowledgeProvider", () => {
   it("loads constitution and sorted context files within budget", async () => {
     const provider = createHomeKnowledgeProvider();
+    const homeRepo = homeKnowledgeRepoRef(IDENTITY.uid);
     const sections = await provider.collect(
       makeInput({
         config: { ...CONFIG, maxContextBytes: 20 },
-        storage: {
-          async get(key: string) {
-            if (key === "root/CONSTITUTION.md") {
-              return textObject("constitution");
+        ripgit: {
+          async readPath(repo, path) {
+            if (repo.owner !== homeRepo.owner || repo.repo !== homeRepo.repo) {
+              return { kind: "missing" };
             }
-            if (key === "root/context.d/a.md") {
-              return textObject("alpha");
+            if (path === "CONSTITUTION.md") {
+              return {
+                kind: "file",
+                bytes: new TextEncoder().encode("constitution"),
+                size: 12,
+              };
             }
-            if (key === "root/context.d/b.md") {
-              return textObject("beta beta beta beta");
+            if (path === "context.d") {
+              return {
+                kind: "tree",
+                entries: [
+                  { name: "b.md", mode: "100644", hash: "b", type: "blob" },
+                  { name: "a.md", mode: "100644", hash: "a", type: "blob" },
+                ],
+              };
             }
-            return null;
+            if (path === "context.d/a.md") {
+              return {
+                kind: "file",
+                bytes: new TextEncoder().encode("alpha"),
+                size: 5,
+              };
+            }
+            if (path === "context.d/b.md") {
+              return {
+                kind: "file",
+                bytes: new TextEncoder().encode("beta beta beta beta"),
+                size: 19,
+              };
+            }
+            return { kind: "missing" };
           },
-          async list() {
-            return {
-              objects: [
-                { key: "root/context.d/b.md" },
-                { key: "root/context.d/a.md" },
-              ],
-            };
-          },
-        } as PromptAssemblyInput["storage"],
+        },
       }),
     );
 
@@ -127,10 +145,14 @@ describe("createHomeKnowledgeProvider", () => {
 describe("createWorkspaceSummaryProvider", () => {
   it("loads workspace summary from ripgit when available", async () => {
     const provider = createWorkspaceSummaryProvider();
+    const workspaceRepo = workspaceRepoRef("ws_test", IDENTITY.uid);
     const sections = await provider.collect(
       makeInput({
         ripgit: {
-          async readPath() {
+          async readPath(repo, path) {
+            if (repo.owner !== workspaceRepo.owner || repo.repo !== workspaceRepo.repo || path !== ".gsv/summary.md") {
+              return { kind: "missing" };
+            }
             return {
               kind: "file",
               bytes: new TextEncoder().encode("Summary text"),
@@ -166,13 +188,5 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     },
     ripgit: null,
     ...overrides,
-  };
-}
-
-function textObject(text: string) {
-  return {
-    async text() {
-      return text;
-    },
   };
 }

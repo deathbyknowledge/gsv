@@ -63,6 +63,19 @@ export const ADAPTER_DISCONNECT = "adapter.disconnect";
 export const ADAPTER_SEND = "adapter.send";
 export const ADAPTER_STATUS = "adapter.status";
 
+// Knowledge substrate (home durable knowledge)
+export const KNOWLEDGE_DB_LIST = "knowledge.db.list";
+export const KNOWLEDGE_DB_INIT = "knowledge.db.init";
+export const KNOWLEDGE_LIST = "knowledge.list";
+export const KNOWLEDGE_READ = "knowledge.read";
+export const KNOWLEDGE_WRITE = "knowledge.write";
+export const KNOWLEDGE_SEARCH = "knowledge.search";
+export const KNOWLEDGE_MERGE = "knowledge.merge";
+export const KNOWLEDGE_PROMOTE = "knowledge.promote";
+export const KNOWLEDGE_QUERY = "knowledge.query";
+export const KNOWLEDGE_INGEST = "knowledge.ingest";
+export const KNOWLEDGE_COMPILE = "knowledge.compile";
+
 // syscall → LLM tool name map (only for syscalls exposed as tools)
 export const SYSCALL_TOOL_NAMES: Record<string, string> = {
   [FS_READ]: "Read",
