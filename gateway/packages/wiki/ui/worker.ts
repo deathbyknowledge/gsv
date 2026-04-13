@@ -999,7 +999,7 @@ function renderPage(args) {
 
         const renderPreviewPayload = (payload) => {
           if (!payload || payload.ok === false) {
-            return `<div class="preview-empty">${sanitizeHtml(payload?.error || "Preview unavailable.")}</div>`;
+            return '<div class="preview-empty">' + sanitizeHtml(payload?.error || "Preview unavailable.") + "</div>";
           }
           if (payload.kind === "page") {
             const markdown = String(payload.markdown || "").trim();
@@ -1011,13 +1011,26 @@ function renderPage(args) {
           }
           if (payload.kind === "source") {
             if (payload.mode === "image" && payload.image && payload.image.data && payload.image.mimeType) {
-              const text = payload.text ? `<p>${sanitizeHtml(payload.text)}</p>` : "";
-              return `${text}<img src="data:${payload.image.mimeType};base64,${payload.image.data}" alt="${sanitizeHtml(payload.title || payload.path || "source preview")}" />`;
+              const text = payload.text ? "<p>" + sanitizeHtml(payload.text) + "</p>" : "";
+              return text
+                + '<img src="data:'
+                + payload.image.mimeType
+                + ";base64,"
+                + payload.image.data
+                + '" alt="'
+                + sanitizeHtml(payload.title || payload.path || "source preview")
+                + '" />';
             }
             if (payload.mode === "directory") {
               const dirs = Array.isArray(payload.directories) ? payload.directories : [];
               const files = Array.isArray(payload.files) ? payload.files : [];
-              return `${dirs.length > 0 ? `<p><strong>Directories</strong></p><ul>${dirs.map((item) => `<li>${sanitizeHtml(item)}</li>`).join("")}</ul>` : ""}${files.length > 0 ? `<p><strong>Files</strong></p><ul>${files.map((item) => `<li>${sanitizeHtml(item)}</li>`).join("")}</ul>` : ""}`;
+              const dirsHtml = dirs.length > 0
+                ? "<p><strong>Directories</strong></p><ul>" + dirs.map((item) => "<li>" + sanitizeHtml(item) + "</li>").join("") + "</ul>"
+                : "";
+              const filesHtml = files.length > 0
+                ? "<p><strong>Files</strong></p><ul>" + files.map((item) => "<li>" + sanitizeHtml(item) + "</li>").join("") + "</ul>"
+                : "";
+              return dirsHtml + filesHtml;
             }
             const text = String(payload.text || "").trim();
             if (!text) {
@@ -1027,7 +1040,7 @@ function renderPage(args) {
               const parsed = markedApi.parse(text, { async: false, breaks: true, gfm: true });
               return purifier.sanitize(typeof parsed === "string" ? parsed : String(parsed));
             }
-            return `<pre><code>${sanitizeHtml(text)}</code></pre>`;
+            return "<pre><code>" + sanitizeHtml(text) + "</code></pre>";
           }
           return '<div class="preview-empty">Preview unavailable.</div>';
         };
@@ -1059,7 +1072,7 @@ function renderPage(args) {
               signal: controller.signal,
               headers: { "accept": "application/json" },
             });
-            const payload = await response.json();
+              const payload = await response.json();
             if (controller.signal.aborted) {
               return;
             }
@@ -1067,13 +1080,21 @@ function renderPage(args) {
             const metaParts = [];
             if (payload.target) metaParts.push(sanitizeHtml(payload.target));
             if (payload.path) metaParts.push(sanitizeHtml(payload.path));
-            previewCard.innerHTML = `<h4>${title}</h4>${metaParts.length > 0 ? `<div class="preview-meta">${metaParts.join(" · ")}</div>` : ""}<div class="preview-body">${renderPreviewPayload(payload)}</div>`;
+            previewCard.innerHTML = "<h4>"
+              + title
+              + "</h4>"
+              + (metaParts.length > 0 ? '<div class="preview-meta">' + metaParts.join(" · ") + "</div>" : "")
+              + '<div class="preview-body">'
+              + renderPreviewPayload(payload)
+              + "</div>";
             setPreviewPosition(anchor);
           } catch (error) {
             if (controller.signal.aborted) {
               return;
             }
-            previewCard.innerHTML = `<div class="preview-empty">${sanitizeHtml(error instanceof Error ? error.message : String(error))}</div>`;
+            previewCard.innerHTML = '<div class="preview-empty">'
+              + sanitizeHtml(error instanceof Error ? error.message : String(error))
+              + "</div>";
           }
         };
 
@@ -1145,7 +1166,19 @@ function renderPage(args) {
                   return;
                 }
                 const label = parsedSource.title || parsedSource.path.split("/").pop() || parsedSource.path;
-                item.innerHTML = `<div class="source-ref"><div class="source-ref-head"><a href="#" class="wiki-source-link" data-preview-kind="source" data-source-target="${sanitizeHtml(parsedSource.target)}" data-source-path="${sanitizeHtml(parsedSource.path)}" data-source-title="${sanitizeHtml(label)}">${sanitizeHtml(label)}</a><span class="source-ref-target">${sanitizeHtml(parsedSource.target)}</span></div><div class="source-ref-path">${sanitizeHtml(parsedSource.path)}</div></div>`;
+                item.innerHTML = '<div class="source-ref"><div class="source-ref-head"><a href="#" class="wiki-source-link" data-preview-kind="source" data-source-target="'
+                  + sanitizeHtml(parsedSource.target)
+                  + '" data-source-path="'
+                  + sanitizeHtml(parsedSource.path)
+                  + '" data-source-title="'
+                  + sanitizeHtml(label)
+                  + '">'
+                  + sanitizeHtml(label)
+                  + '</a><span class="source-ref-target">'
+                  + sanitizeHtml(parsedSource.target)
+                  + '</span></div><div class="source-ref-path">'
+                  + sanitizeHtml(parsedSource.path)
+                  + "</div></div>";
               });
             }
             sibling = sibling.nextElementSibling;
