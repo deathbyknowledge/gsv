@@ -106,6 +106,24 @@ function extractHeadings(markdown) {
   return headings;
 }
 
+function prepareArticleMarkdown(markdown, articleTitle) {
+  const text = stripFrontmatter(markdown).replace(/\r\n/g, "\n");
+  const lines = text.split("\n");
+  let offset = 0;
+  while (offset < lines.length && !lines[offset].trim()) {
+    offset += 1;
+  }
+  const firstLine = lines[offset] ?? "";
+  const headingMatch = firstLine.match(/^#\s+(.+)$/);
+  if (headingMatch && headingMatch[1]?.trim() === articleTitle) {
+    offset += 1;
+    while (offset < lines.length && !lines[offset].trim()) {
+      offset += 1;
+    }
+  }
+  return lines.slice(offset).join("\n").trim();
+}
+
 function formatPlainSegment(segment) {
   let html = escapeHtml(segment);
   html = html.replace(/\*\*([^*]+)\*\*/g, (_, value) => `<strong>${escapeHtml(value)}</strong>`);
@@ -355,7 +373,7 @@ function renderPage(args) {
 
   const articleMarkdown = selectedNote?.markdown ?? draftMarkdown ?? "";
   const articleTitle = selectedNote?.title ?? extractTitle(articleMarkdown, selectedPath ? selectedPath.split("/").pop() ?? selectedPath : (selectedDb || "Wiki"));
-  const articleHtml = articleMarkdown ? renderMarkdown(articleMarkdown, routeBase, selectedDb, articleTitle) : "";
+  const articleSource = articleMarkdown ? prepareArticleMarkdown(articleMarkdown, articleTitle) : "";
   const headings = extractHeadings(articleMarkdown);
   const canCompile = Boolean(selectedDb && selectedPath.startsWith(`${selectedDb}/inbox/`));
   const pathInput = draftPath || (selectedDb ? `${selectedDb}/pages/topic.md` : "product/pages/topic.md");
@@ -543,6 +561,25 @@ function renderPage(args) {
         padding: 1px 4px;
         background: var(--surface-subtle);
       }
+      .article-body table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 0 0 18px;
+      }
+      .article-body th,
+      .article-body td {
+        border: 1px solid var(--line-soft);
+        padding: 8px 10px;
+        vertical-align: top;
+      }
+      .article-body th {
+        background: var(--surface-subtle);
+        text-align: left;
+      }
+      .article-body img {
+        max-width: 100%;
+        height: auto;
+      }
       .tools form,
       .tools details {
         margin: 0 0 14px;
@@ -662,7 +699,7 @@ function renderPage(args) {
           <h1>${escapeHtml(articleTitle || "Wiki")}</h1>
           <div class="page-path">${selectedPath ? escapeHtml(selectedPath) : "No page selected."}</div>
           <div class="article-body">
-            ${articleHtml || '<div class="empty-article">Open a page from the left rail, create a new page, or stage source material into an inbox note.</div>'}
+            ${articleSource ? '<div id="wiki-article-body"></div>' : '<div class="empty-article">Open a page from the left rail, create a new page, or stage source material into an inbox note.</div>'}
           </div>
         </article>
       </section>
@@ -746,6 +783,111 @@ function renderPage(args) {
         </section>
       </aside>
     </main>
+    ${articleSource ? `<script id="wiki-article-markdown" type="application/json">${escapeHtml(JSON.stringify(articleSource))}</script>` : ""}
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js" integrity="sha512-78KH17QLT5e55GJqP76vutp1D2iAoy06WcYBXB6iBCsmO6wWzx0Qdg8EDpm8mKXv68BcvHOyeeP4wxAL0twJGQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/16.3.0/lib/marked.umd.min.js" integrity="sha512-V6rGY7jjOEUc7q5Ews8mMlretz1Vn2wLdMW/qgABLWunzsLfluM0FwHuGjGQ1lc8jO5vGpGIGFE+rTzB+63HdA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      (() => {
+        const body = document.getElementById("wiki-article-body");
+        const sourceNode = document.getElementById("wiki-article-markdown");
+        const markedApi = window.marked;
+        const purifier = window.DOMPurify;
+        if (!body || !sourceNode) {
+          return;
+        }
+
+        const slugifyHeadingClient = (value) =>
+          String(value ?? "")
+            .toLowerCase()
+            .replace(/[^a-z0-9\\s-]/g, "")
+            .trim()
+            .replace(/\\s+/g, "-")
+            .replace(/-+/g, "-") || "section";
+
+        const normalizePathClient = (value) =>
+          String(value ?? "").trim().replace(/^\\/+/, "").replace(/\\/+$/g, "").replace(/\\/+/g, "/");
+
+        const normalizeDbScopedPathClient = (value, db) => {
+          const path = normalizePathClient(value);
+          if (!path) {
+            return "";
+          }
+          if (db && (path === "index.md" || path.startsWith("pages/") || path.startsWith("inbox/"))) {
+            return db + "/" + path;
+          }
+          return path;
+        };
+
+        const buildEntryHrefClient = (routeBase, db, path) => {
+          const href = new URL(routeBase, window.location.origin);
+          const effectiveDb = db || (path && path.includes("/") ? String(path).split("/")[0] : "");
+          if (effectiveDb) {
+            href.searchParams.set("db", effectiveDb);
+          }
+          if (path) {
+            href.searchParams.set("path", path);
+          }
+          return href.pathname + href.search;
+        };
+
+        const resolveInternalPathClient = (rawHref, selectedDb) => {
+          const href = String(rawHref ?? "").trim();
+          if (!href || /^(https?:|mailto:|#)/i.test(href) || /^[a-z0-9._-]+:\\/\\//i.test(href)) {
+            return null;
+          }
+          if (/^[a-z0-9._-]+\\/(pages|inbox)\\//i.test(href) || /^[a-z0-9._-]+\\/index\\.md$/i.test(href)) {
+            return normalizePathClient(href);
+          }
+          if (selectedDb && (href === "index.md" || href.startsWith("pages/") || href.startsWith("inbox/"))) {
+            return normalizeDbScopedPathClient(href, selectedDb);
+          }
+          return null;
+        };
+
+        const routeBase = ${JSON.stringify(routeBase)};
+        const selectedDb = ${JSON.stringify(selectedDb)};
+        const raw = sourceNode.textContent ? JSON.parse(sourceNode.textContent) : "";
+
+        if (!markedApi || typeof markedApi.parse !== "function" || !purifier || typeof purifier.sanitize !== "function") {
+          body.innerHTML = "<pre><code>" + String(raw)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;") + "</code></pre>";
+          return;
+        }
+
+        const parsed = markedApi.parse(raw, {
+          async: false,
+          breaks: true,
+          gfm: true,
+        });
+        const safeHtml = purifier.sanitize(typeof parsed === "string" ? parsed : String(parsed));
+        body.innerHTML = safeHtml;
+
+        const seenHeadingIds = new Map();
+        body.querySelectorAll("h2, h3, h4, h5, h6").forEach((node) => {
+          const base = slugifyHeadingClient(node.textContent || "");
+          const count = seenHeadingIds.get(base) || 0;
+          seenHeadingIds.set(base, count + 1);
+          node.id = count === 0 ? base : base + "-" + String(count + 1);
+        });
+
+        body.querySelectorAll("a[href]").forEach((anchor) => {
+          const href = anchor.getAttribute("href") || "";
+          const internalPath = resolveInternalPathClient(href, selectedDb);
+          if (internalPath) {
+            anchor.setAttribute("href", buildEntryHrefClient(routeBase, selectedDb, internalPath));
+            anchor.removeAttribute("target");
+            anchor.removeAttribute("rel");
+            return;
+          }
+          if (/^(https?:|mailto:)/i.test(href)) {
+            anchor.setAttribute("target", "_blank");
+            anchor.setAttribute("rel", "noreferrer");
+          }
+        });
+      })();
+    </script>
   </body>
 </html>`;
 }
