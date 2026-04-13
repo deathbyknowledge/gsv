@@ -51,8 +51,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/profile/init/context.d/20-tooling.md":
     [
       "GSV command surfaces:",
-      "- `mem`: durable personal memory pages about the user, people, and ongoing projects",
-      "- `wiki`: broader knowledge databases and source-backed pages",
+      "- `wiki`: durable knowledge databases and source-backed pages, including the conventional `personal` database for people, projects, and preferences",
       "- `pkg`: inspect and manage installed packages",
       "- `man`: reference manuals for GSV commands and workflows",
       "",
@@ -79,8 +78,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/profile/task/context.d/20-tooling.md":
     [
       "GSV command surfaces:",
-      "- `mem`: durable personal memory pages about the user, people, and ongoing projects",
-      "- `wiki`: broader knowledge databases and source-backed pages",
+      "- `wiki`: durable knowledge databases and source-backed pages, including the conventional `personal` database for people, projects, and preferences",
       "- `pkg`: inspect and manage installed packages",
       "- `man`: reference manuals for GSV commands and workflows",
       "",
@@ -111,7 +109,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "GSV command surfaces:",
       "- `pkg`: inspect and manage installed packages",
       "- `man`: reference manuals for GSV commands and workflows",
-      "- `wiki` and `mem` are available when you need to inspect durable knowledge that affects review context",
+      "- `wiki` is available when you need to inspect durable knowledge that affects review context, including the `personal` database",
       "",
       "Tooling model:",
       "- Prefer direct inspection, package metadata, and mounted files over guesses",
@@ -133,8 +131,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/profile/cron/context.d/20-tooling.md":
     [
       "GSV command surfaces:",
-      "- `mem`: durable personal memory pages about the user, people, and ongoing projects",
-      "- `wiki`: broader knowledge databases and source-backed pages",
+      "- `wiki`: durable knowledge databases and source-backed pages, including the conventional `personal` database for people, projects, and preferences",
       "- `pkg`: inspect and manage installed packages",
       "- `man`: reference manuals for GSV commands and workflows",
       "",
@@ -161,8 +158,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
     [
       "GSV command surfaces:",
       "- `pkg`: inspect and manage installed packages",
-      "- `mem`: inspect or update durable personal memory when operationally relevant",
-      "- `wiki`: inspect or update broader knowledge databases when operationally relevant",
+      "- `wiki`: inspect or update durable knowledge databases, including the `personal` database, when operationally relevant",
       "- `man`: reference manuals for GSV commands and workflows",
       "",
       "Tooling model:",
@@ -203,7 +199,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "- Stage durable candidates under `~/knowledge/*/inbox/` only when they are likely to matter beyond the current run.",
       "- It is valid to stage nothing if the recent work contains no durable knowledge worth preserving.",
       "- Prefer direct filesystem tools for workspace context files.",
-      "- Use `mem`, `wiki`, and `man` when they materially help you inspect or stage knowledge.",
+      "- Use `wiki` and `man` when they materially help you inspect or stage knowledge.",
       "- Avoid shell unless direct tools are insufficient.",
     ].join("\n"),
   "config/ai/profile/curator/context.d/00-role.md":
@@ -228,7 +224,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "- Promote or merge only when the target page is clear and the candidate is durable.",
       "- Leave uncertain candidates in inbox rather than guessing.",
       "- It is valid to make no changes if the inbox is empty or nothing is clear enough to promote.",
-      "- Prefer `mem`, `wiki`, and direct filesystem inspection over broad shell usage.",
+      "- Prefer `wiki` and direct filesystem inspection over broad shell usage.",
       "- Keep edits minimal and local to the candidate being reviewed.",
     ].join("\n"),
   // Max total bytes for ~/context.d/ files included in the prompt.

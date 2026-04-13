@@ -66,15 +66,7 @@ export function buildKnowledgeCommands(ctx: KernelContext) {
     }
   });
 
-  const mem = defineCommand("mem", async (args): Promise<ExecResult> => {
-    try {
-      return await runMemCommand(args, ctx);
-    } catch (err) {
-      return commandError("mem", err);
-    }
-  });
-
-  return [wiki, mem];
+  return [wiki];
 }
 
 export async function runWikiCommand(
@@ -271,188 +263,6 @@ export async function runWikiCommand(
   }
 }
 
-export async function runMemCommand(
-  args: string[],
-  ctx: KernelContext,
-  ops: KnowledgeShellOps = DEFAULT_OPS,
-): Promise<ExecResult> {
-  const [subcommand = "help", ...rest] = args;
-
-  switch (subcommand) {
-    case "help":
-    case "--help":
-    case "-h":
-      return ok(memHelp(rest[0]));
-
-    case "init": {
-      requireCapability(ctx, "knowledge.db.init");
-      const result = await ops.dbInit(ctx, {
-        id: "personal",
-        title: findFlagValue(rest, "--title") ?? "Personal knowledge",
-        description: findFlagValue(rest, "--description"),
-      });
-      if (!result.ok) {
-        throw new Error(result.error ?? "mem init failed");
-      }
-      return ok(`${result.created ? "initialized" : "already exists"} personal\n`);
-    }
-
-    case "list": {
-      requireCapability(ctx, "knowledge.list");
-      const prefix = resolveMemPrefix(firstPositional(rest));
-      const recursive = hasFlag(rest, "--recursive") || hasFlag(rest, "-r");
-      const limit = parseOptionalInteger(findFlagValue(rest, "--limit"));
-      const result = await ops.list(ctx, { prefix, recursive, limit });
-      return ok(formatKnowledgeList(result.entries));
-    }
-
-    case "read": {
-      requireCapability(ctx, "knowledge.read");
-      const path = resolveMemPath(String(rest[0] ?? "").trim());
-      if (!path) {
-        throw new Error("Usage: mem read <path>");
-      }
-      const result = await ops.read(ctx, { path });
-      if (!result.exists) {
-        throw new Error(`Knowledge note '${path}' does not exist`);
-      }
-      return ok(`${result.markdown ?? ""}${result.markdown?.endsWith("\n") ? "" : "\n"}`);
-    }
-
-    case "write": {
-      requireCapability(ctx, "knowledge.write");
-      const path = resolveMemPath(String(rest[0] ?? "").trim());
-      if (!path) {
-        throw new Error("Usage: mem write <path> --text TEXT");
-      }
-      const text = requireFlagValue(rest.slice(1), "--text", "mem write requires --text");
-      const result = await ops.write(ctx, {
-        path,
-        markdown: text,
-        create: true,
-      });
-      if (!result.ok) {
-        throw new Error(result.error ?? "write failed");
-      }
-      return ok(`${result.created ? "created" : "updated"} ${result.path}\n`);
-    }
-
-    case "section":
-      return runMemSectionCommand(rest, ctx, ops);
-
-    case "source":
-      return runMemSourceCommand(rest, ctx, ops);
-
-    case "search": {
-      requireCapability(ctx, "knowledge.search");
-      const query = String(rest[0] ?? "").trim();
-      if (!query) {
-        throw new Error("Usage: mem search <query> [--prefix PREFIX] [--limit N]");
-      }
-      const prefix = resolveMemPrefix(findFlagValue(rest.slice(1), "--prefix"));
-      const limit = parseOptionalInteger(findFlagValue(rest.slice(1), "--limit"));
-      const result = await ops.search(ctx, { query, prefix, limit });
-      return ok(formatKnowledgeSearch(result.matches));
-    }
-
-    case "query": {
-      requireCapability(ctx, "knowledge.query");
-      const query = String(rest[0] ?? "").trim();
-      if (!query) {
-        throw new Error("Usage: mem query <query> [--prefix PREFIX ...] [--limit N] [--max-bytes N]");
-      }
-      const prefixes = findFlagValues(rest.slice(1), "--prefix").map(resolveMemPrefix);
-      const limit = parseOptionalInteger(findFlagValue(rest.slice(1), "--limit"));
-      const maxBytes = parseOptionalInteger(findFlagValue(rest.slice(1), "--max-bytes"));
-      const result = await ops.query(ctx, {
-        query,
-        prefixes: prefixes.length > 0 ? prefixes : ["personal/pages"],
-        limit,
-        maxBytes,
-      });
-      return ok(formatKnowledgeQuery(result.brief, result.refs));
-    }
-
-    case "ingest": {
-      requireCapability(ctx, "knowledge.ingest");
-      const result = await ops.ingest(ctx, {
-        db: "personal",
-        sources: parseRequiredSources(rest),
-        title: findFlagValue(rest, "--title"),
-        summary: findFlagValue(rest, "--summary"),
-        path: resolveMemPath(findFlagValue(rest, "--path")),
-        mode: parseMode(findFlagValue(rest, "--mode"), ["inbox", "page"]) as "inbox" | "page" | undefined,
-      });
-      if (!result.ok) {
-        throw new Error(result.error ?? "ingest failed");
-      }
-      return ok(`${result.requiresReview ? "staged" : "created"} ${result.path}\n`);
-    }
-
-    case "compile": {
-      requireCapability(ctx, "knowledge.compile");
-      const sourcePath = resolveMemPath(String(rest[0] ?? "").trim());
-      if (!sourcePath) {
-        throw new Error("Usage: mem compile <source-path> [target-path] [--title TITLE] [--keep-source]");
-      }
-      const targetPath = resolveMemPath(positionalAfterFlags(rest.slice(1))[0]);
-      const result = await ops.compile(ctx, {
-        db: "personal",
-        sourcePath,
-        targetPath,
-        title: findFlagValue(rest.slice(1), "--title"),
-        keepSource: hasFlag(rest.slice(1), "--keep-source"),
-      });
-      if (!result.ok) {
-        throw new Error(result.error ?? "compile failed");
-      }
-      return ok(`compiled ${result.sourcePath} -> ${result.path}\n`);
-    }
-
-    case "merge": {
-      requireCapability(ctx, "knowledge.merge");
-      const sourcePath = resolveMemPath(String(rest[0] ?? "").trim());
-      const targetPath = resolveMemPath(String(rest[1] ?? "").trim());
-      if (!sourcePath || !targetPath) {
-        throw new Error("Usage: mem merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]");
-      }
-      const result = await ops.merge(ctx, {
-        sourcePath,
-        targetPath,
-        mode: parseMode(findFlagValue(rest.slice(2), "--mode"), ["union", "prefer-target", "prefer-source"]) as
-          | "union"
-          | "prefer-target"
-          | "prefer-source"
-          | undefined,
-        keepSource: hasFlag(rest.slice(2), "--keep-source"),
-      });
-      if (!result.ok) {
-        throw new Error(result.error ?? "merge failed");
-      }
-      return ok(`merged ${result.sourcePath} -> ${result.targetPath}\n`);
-    }
-
-    case "promote": {
-      requireCapability(ctx, "knowledge.promote");
-      const text = requireFlagValue(rest, "--text", "mem promote requires --text");
-      const targetPath = resolveMemPath(findFlagValue(rest, "--to"));
-      const mode = parseMode(findFlagValue(rest, "--mode"), ["inbox", "direct"]) as "inbox" | "direct" | undefined;
-      const result = await ops.promote(ctx, {
-        source: { kind: "text", text },
-        targetPath,
-        mode,
-      });
-      if (!result.ok) {
-        throw new Error(result.error ?? "promote failed");
-      }
-      return ok(`${result.requiresReview ? "staged" : "promoted"} ${result.path}\n`);
-    }
-
-    default:
-      throw new Error(`Unknown mem subcommand: ${subcommand}`);
-  }
-}
-
 async function runWikiSectionCommand(
   args: string[],
   ctx: KernelContext,
@@ -488,42 +298,6 @@ async function runWikiSectionCommand(
   return ok(`${normalizedMode} ${heading} in ${result.path}\n`);
 }
 
-async function runMemSectionCommand(
-  args: string[],
-  ctx: KernelContext,
-  ops: KnowledgeShellOps,
-): Promise<ExecResult> {
-  requireCapability(ctx, "knowledge.write");
-  const [mode = "help", rawPath, heading, ...rest] = args;
-  if (mode === "help" || mode === "--help" || mode === "-h") {
-    return ok(memHelp("section"));
-  }
-  const path = resolveMemPath(rawPath);
-  if (!path || !heading) {
-    throw new Error("Usage: mem section <set|append|delete> <path> <heading> [--text TEXT]");
-  }
-  const normalizedMode = parseMode(mode, ["set", "append", "delete"]);
-  const sectionMode: "replace" | "append" | "delete" =
-    normalizedMode === "set" ? "replace" : (normalizedMode as "append" | "delete");
-  const result = await ops.write(ctx, {
-    path,
-    patch: {
-      sections: [
-        {
-          heading,
-          mode: sectionMode,
-          content: normalizedMode === "delete" ? undefined : requireFlagValue(rest, "--text", "section writes require --text"),
-        },
-      ],
-    },
-    create: normalizedMode === "set" || normalizedMode === "append",
-  });
-  if (!result.ok) {
-    throw new Error(result.error ?? "section update failed");
-  }
-  return ok(`${normalizedMode} ${heading} in ${result.path}\n`);
-}
-
 async function runWikiSourceCommand(
   args: string[],
   ctx: KernelContext,
@@ -536,33 +310,6 @@ async function runWikiSourceCommand(
   }
   if (sourceSubcommand !== "add" || !path) {
     throw new Error("Usage: wiki source add <path> --source target:/absolute/path[|Title] [--source ...]");
-  }
-  const result = await ops.write(ctx, {
-    path,
-    patch: {
-      addSources: parseRequiredSources(rest),
-    },
-    create: false,
-  });
-  if (!result.ok) {
-    throw new Error(result.error ?? "source add failed");
-  }
-  return ok(`added sources to ${result.path}\n`);
-}
-
-async function runMemSourceCommand(
-  args: string[],
-  ctx: KernelContext,
-  ops: KnowledgeShellOps,
-): Promise<ExecResult> {
-  requireCapability(ctx, "knowledge.write");
-  const [sourceSubcommand = "help", rawPath, ...rest] = args;
-  if (sourceSubcommand === "help" || sourceSubcommand === "--help" || sourceSubcommand === "-h") {
-    return ok(memHelp("source"));
-  }
-  const path = resolveMemPath(rawPath);
-  if (sourceSubcommand !== "add" || !path) {
-    throw new Error("Usage: mem source add <path> --source target:/absolute/path[|Title] [--source ...]");
   }
   const result = await ops.write(ctx, {
     path,
@@ -739,18 +486,6 @@ function parseSourceSpec(spec: string): KnowledgeSourceRef {
   };
 }
 
-function resolveMemPath(path: string | undefined): string | undefined {
-  const trimmed = String(path ?? "").trim().replace(/^\/+/, "");
-  if (!trimmed) {
-    return undefined;
-  }
-  return trimmed.startsWith("personal/") ? trimmed : `personal/${trimmed}`;
-}
-
-function resolveMemPrefix(prefix: string | undefined): string {
-  return resolveMemPath(prefix) ?? "personal";
-}
-
 function wikiHelp(topic?: string): string {
   const normalized = topic?.trim().toLowerCase();
   switch (normalized) {
@@ -812,7 +547,7 @@ function wikiHelp(topic?: string): string {
         "Usage: wiki <subcommand> [args]",
         "",
         "Wiki manages durable knowledge databases made of markdown pages and live source references.",
-        "Use it to collect notes, stage candidate pages, compile reviewed pages, and query what a knowledge base already knows.",
+        "Use it for domain knowledge, research notes, and personal knowledge. The conventional personal database is `personal`.",
         "",
         "Core concepts:",
         "  - Each database has an index page and a set of markdown pages",
@@ -821,6 +556,7 @@ function wikiHelp(topic?: string): string {
         "  - Quote --source values when the title contains spaces",
         "  - Use inbox mode for staged review and page mode for direct canonical pages",
         "  - search finds matching notes; query returns a compact brief with references",
+        "  - Use the `personal` database for people, self, projects, preferences, and other durable user context",
         "",
         "Commands:",
         "  wiki db list [--limit N]",
@@ -837,75 +573,18 @@ function wikiHelp(topic?: string): string {
         "  wiki merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]",
         "  wiki promote --text TEXT [--to PATH] [--mode inbox|direct]",
         "",
+        "Personal examples:",
+        "  wiki read personal/pages/people/alice.md",
+        "  wiki query \"What should I remember about Alice?\" --prefix personal/pages",
+        "  wiki ingest personal --source \"gsv:/workspaces/chat/alice.md::Alice onboarding notes\"",
+        "  wiki compile personal personal/inbox/<candidate>.md personal/pages/people/alice.md",
+        "",
         "Topic help:",
         "  wiki help write",
         "  wiki help section",
         "  wiki help source",
         "  wiki help ingest",
         "  wiki help compile",
-        "",
-      ].join("\n");
-  }
-}
-
-function memHelp(topic?: string): string {
-  const normalized = topic?.trim().toLowerCase();
-  switch (normalized) {
-    case "section":
-      return [
-        "mem section <set|append|delete> <path> <heading> [--text TEXT]",
-        "",
-        "Edit one named section in a personal memory page.",
-        "Example path: pages/people/alice.md",
-        "",
-      ].join("\n");
-    case "source":
-      return [
-        "mem source add <path> --source target:/absolute/path[::Title] [--source ...]",
-        "",
-        "Attach live source references to a personal memory page.",
-        "",
-      ].join("\n");
-    default:
-      return [
-        "Usage: mem <subcommand> [args]",
-        "",
-        "Memories manages durable personal memory pages about you, people around you, and ongoing projects.",
-        "Use it to keep stable notes, stage uncertain facts for review, and query what should be remembered before responding.",
-        "",
-        "Typical paths:",
-        "  pages/self.md",
-        "  pages/people/alice.md",
-        "  pages/projects/gsv-alpha.md",
-        "  inbox/2026-...-candidate.md",
-        "",
-        "Commands:",
-        "  mem init [--title TITLE] [--description TEXT]",
-        "  mem list [prefix] [--recursive|-r] [--limit N]",
-        "  mem read <path>",
-        "  mem write <path> --text TEXT",
-        "  mem section <set|append|delete> <path> <heading> [--text TEXT]",
-        "  mem source add <path> --source target:/absolute/path[::Title] [--source ...]",
-        "  mem search <query> [--prefix PREFIX] [--limit N]",
-        "  mem query <query> [--prefix PREFIX ...] [--limit N] [--max-bytes N]",
-        "  mem ingest --source target:/absolute/path[::Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH] [--mode inbox|page]",
-        "  mem compile <source-path> [target-path] [--title TITLE] [--keep-source]",
-        "  mem merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]",
-        "  mem promote --text TEXT [--to PATH] [--mode inbox|direct]",
-        "",
-        "Retrieval:",
-        "  search finds matching notes by title, path, tags, and content",
-        "  query returns a compact brief and references you can use immediately",
-        "",
-        "Examples:",
-        "  mem read pages/people/alice.md",
-        "  mem section append pages/people/alice.md Preferences --text \"- Prefers concise replies\"",
-        "  mem query \"What should I remember about Alice?\"",
-        "  mem ingest --source \"gsv:/workspaces/chat/alice.md::Alice onboarding notes\"",
-        "",
-        "Topic help:",
-        "  mem help section",
-        "  mem help source",
         "",
       ].join("\n");
   }
