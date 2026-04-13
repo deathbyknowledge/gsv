@@ -13,6 +13,7 @@ export default definePackage({
     },
     capabilities: {
       kernel: [
+        "fs.read",
         "knowledge.db.list",
         "knowledge.db.init",
         "knowledge.list",
