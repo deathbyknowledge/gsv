@@ -58,6 +58,19 @@ function parseSourceLines(input) {
     });
 }
 
+function parseRenderedSourceRef(value) {
+  const text = String(value ?? "").trim();
+  const match = text.match(/^\[([^\]]+)\]\s+(.+?)(?:\s+\|\s+(.+))?$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    target: match[1].trim(),
+    path: match[2].trim(),
+    title: match[3]?.trim() || "",
+  };
+}
+
 function stripFrontmatter(markdown) {
   const text = String(markdown ?? "").replace(/\r\n/g, "\n");
   if (!text.startsWith("---\n")) {
@@ -113,6 +126,28 @@ function serializeJsonForScript(value) {
     .replace(/&/g, "\\u0026")
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
+}
+
+function stripReadLineNumbers(text) {
+  return String(text ?? "")
+    .split("\n")
+    .map((line) => line.replace(/^\s*\d+\t/, ""))
+    .join("\n");
+}
+
+function inferPreviewMode(path, text) {
+  const normalizedPath = String(path ?? "").toLowerCase();
+  if (/\.(md|markdown|mdown|mkd)$/.test(normalizedPath)) {
+    return "markdown";
+  }
+  if (/\.(txt|log|json|yaml|yml|toml|ini|cfg|ts|tsx|js|jsx|rs|py|sh|html|css)$/.test(normalizedPath)) {
+    return "text";
+  }
+  const sample = String(text ?? "").trim();
+  if (/^#{1,6}\s/m.test(sample) || /\[[^\]]+\]\([^)]+\)/.test(sample) || /^[-*]\s/m.test(sample)) {
+    return "markdown";
+  }
+  return "text";
 }
 
 function prepareArticleMarkdown(markdown, articleTitle) {
@@ -570,6 +605,31 @@ function renderPage(args) {
         padding: 1px 4px;
         background: var(--surface-subtle);
       }
+      .source-ref {
+        margin: 0 0 10px;
+        padding: 10px 12px;
+        border: 1px solid var(--line-soft);
+        background: var(--surface-subtle);
+      }
+      .source-ref-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .source-ref-target {
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .source-ref-path {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        word-break: break-all;
+      }
       .article-body table {
         width: 100%;
         border-collapse: collapse;
@@ -647,6 +707,48 @@ function renderPage(args) {
       }
       .toc-list .level-3 { padding-left: 12px; }
       .toc-list .level-4 { padding-left: 24px; }
+      .wiki-preview-card {
+        position: fixed;
+        z-index: 50;
+        width: min(420px, calc(100vw - 24px));
+        max-height: min(70vh, 560px);
+        overflow: auto;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+      }
+      .wiki-preview-card[hidden] {
+        display: none;
+      }
+      .wiki-preview-card h4 {
+        margin: 0 0 6px;
+        font: 600 18px/1.2 Charter, "Iowan Old Style", Georgia, serif;
+      }
+      .wiki-preview-card .preview-meta {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+        word-break: break-all;
+      }
+      .wiki-preview-card .preview-body {
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .wiki-preview-card .preview-body p,
+      .wiki-preview-card .preview-body ul,
+      .wiki-preview-card .preview-body ol,
+      .wiki-preview-card .preview-body pre {
+        margin: 0 0 10px;
+      }
+      .wiki-preview-card .preview-body img {
+        max-width: 100%;
+        height: auto;
+        display: block;
+      }
+      .wiki-preview-card .preview-empty {
+        color: var(--muted);
+      }
       .empty-article {
         padding: 18px 0;
         color: var(--muted);
@@ -853,9 +955,141 @@ function renderPage(args) {
           return null;
         };
 
+        const parseRenderedSourceRefClient = (value) => {
+          const text = String(value ?? "").trim();
+          const match = text.match(/^\\[([^\\]]+)\\]\\s+(.+?)(?:\\s+\\|\\s+(.+))?$/);
+          if (!match) {
+            return null;
+          }
+          return {
+            target: match[1].trim(),
+            path: match[2].trim(),
+            title: match[3] ? match[3].trim() : "",
+          };
+        };
+
         const routeBase = ${JSON.stringify(routeBase)};
         const selectedDb = ${JSON.stringify(selectedDb)};
         const raw = sourceNode.textContent ? JSON.parse(sourceNode.textContent) : "";
+        const previewCard = document.createElement("div");
+        previewCard.className = "wiki-preview-card";
+        previewCard.hidden = true;
+        document.body.appendChild(previewCard);
+        let previewAbort = null;
+        let previewHideTimer = 0;
+        let pinnedPreviewKey = "";
+
+        const sanitizeHtml = (value) => String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+
+        const isMarkdownPath = (path) => /\\.(md|markdown|mdown|mkd)$/i.test(String(path ?? ""));
+
+        const previewUrl = (params) => {
+          const href = new URL(routeBase, window.location.origin);
+          href.searchParams.set("preview", "1");
+          for (const [key, value] of Object.entries(params)) {
+            if (value) {
+              href.searchParams.set(key, value);
+            }
+          }
+          return href.toString();
+        };
+
+        const renderPreviewPayload = (payload) => {
+          if (!payload || payload.ok === false) {
+            return `<div class="preview-empty">${sanitizeHtml(payload?.error || "Preview unavailable.")}</div>`;
+          }
+          if (payload.kind === "page") {
+            const markdown = String(payload.markdown || "").trim();
+            if (!markdown) {
+              return '<div class="preview-empty">This page has no previewable body yet.</div>';
+            }
+            const parsed = markedApi.parse(markdown, { async: false, breaks: true, gfm: true });
+            return purifier.sanitize(typeof parsed === "string" ? parsed : String(parsed));
+          }
+          if (payload.kind === "source") {
+            if (payload.mode === "image" && payload.image && payload.image.data && payload.image.mimeType) {
+              const text = payload.text ? `<p>${sanitizeHtml(payload.text)}</p>` : "";
+              return `${text}<img src="data:${payload.image.mimeType};base64,${payload.image.data}" alt="${sanitizeHtml(payload.title || payload.path || "source preview")}" />`;
+            }
+            if (payload.mode === "directory") {
+              const dirs = Array.isArray(payload.directories) ? payload.directories : [];
+              const files = Array.isArray(payload.files) ? payload.files : [];
+              return `${dirs.length > 0 ? `<p><strong>Directories</strong></p><ul>${dirs.map((item) => `<li>${sanitizeHtml(item)}</li>`).join("")}</ul>` : ""}${files.length > 0 ? `<p><strong>Files</strong></p><ul>${files.map((item) => `<li>${sanitizeHtml(item)}</li>`).join("")}</ul>` : ""}`;
+            }
+            const text = String(payload.text || "").trim();
+            if (!text) {
+              return '<div class="preview-empty">No previewable content.</div>';
+            }
+            if (payload.mode === "markdown" || isMarkdownPath(payload.path)) {
+              const parsed = markedApi.parse(text, { async: false, breaks: true, gfm: true });
+              return purifier.sanitize(typeof parsed === "string" ? parsed : String(parsed));
+            }
+            return `<pre><code>${sanitizeHtml(text)}</code></pre>`;
+          }
+          return '<div class="preview-empty">Preview unavailable.</div>';
+        };
+
+        const setPreviewPosition = (anchor) => {
+          const rect = anchor.getBoundingClientRect();
+          const cardWidth = Math.min(420, window.innerWidth - 24);
+          const left = Math.min(window.innerWidth - cardWidth - 12, Math.max(12, rect.right + 12));
+          const top = Math.min(window.innerHeight - 24, Math.max(12, rect.top));
+          previewCard.style.left = left + "px";
+          previewCard.style.top = top + "px";
+        };
+
+        const openPreview = async (anchor, params, key, pin) => {
+          if (previewAbort) {
+            previewAbort.abort();
+          }
+          clearTimeout(previewHideTimer);
+          if (pin) {
+            pinnedPreviewKey = key;
+          }
+          previewCard.hidden = false;
+          previewCard.innerHTML = '<div class="preview-empty">Loading preview…</div>';
+          setPreviewPosition(anchor);
+          const controller = new AbortController();
+          previewAbort = controller;
+          try {
+            const response = await fetch(previewUrl(params), {
+              signal: controller.signal,
+              headers: { "accept": "application/json" },
+            });
+            const payload = await response.json();
+            if (controller.signal.aborted) {
+              return;
+            }
+            const title = sanitizeHtml(payload.title || payload.path || "Preview");
+            const metaParts = [];
+            if (payload.target) metaParts.push(sanitizeHtml(payload.target));
+            if (payload.path) metaParts.push(sanitizeHtml(payload.path));
+            previewCard.innerHTML = `<h4>${title}</h4>${metaParts.length > 0 ? `<div class="preview-meta">${metaParts.join(" · ")}</div>` : ""}<div class="preview-body">${renderPreviewPayload(payload)}</div>`;
+            setPreviewPosition(anchor);
+          } catch (error) {
+            if (controller.signal.aborted) {
+              return;
+            }
+            previewCard.innerHTML = `<div class="preview-empty">${sanitizeHtml(error instanceof Error ? error.message : String(error))}</div>`;
+          }
+        };
+
+        const scheduleHidePreview = (force) => {
+          clearTimeout(previewHideTimer);
+          previewHideTimer = window.setTimeout(() => {
+            if (!force && pinnedPreviewKey) {
+              return;
+            }
+            previewCard.hidden = true;
+            previewCard.innerHTML = "";
+            if (force) {
+              pinnedPreviewKey = "";
+            }
+          }, 120);
+        };
 
         if (!markedApi || typeof markedApi.parse !== "function" || !purifier || typeof purifier.sanitize !== "function") {
           body.innerHTML = "<pre><code>" + String(raw)
@@ -886,6 +1120,8 @@ function renderPage(args) {
           const internalPath = resolveInternalPathClient(href, selectedDb);
           if (internalPath) {
             anchor.setAttribute("href", buildEntryHrefClient(routeBase, selectedDb, internalPath));
+            anchor.dataset.previewKind = "page";
+            anchor.dataset.previewPath = internalPath;
             anchor.removeAttribute("target");
             anchor.removeAttribute("rel");
             return;
@@ -894,6 +1130,87 @@ function renderPage(args) {
             anchor.setAttribute("target", "_blank");
             anchor.setAttribute("rel", "noreferrer");
           }
+        });
+
+        body.querySelectorAll("h2, h3, h4, h5, h6").forEach((heading) => {
+          if ((heading.textContent || "").trim().toLowerCase() !== "sources") {
+            return;
+          }
+          let sibling = heading.nextElementSibling;
+          while (sibling && !/^H[2-6]$/.test(sibling.tagName)) {
+            if (sibling.tagName === "UL" || sibling.tagName === "OL") {
+              sibling.querySelectorAll("li").forEach((item) => {
+                const parsedSource = parseRenderedSourceRefClient(item.textContent || "");
+                if (!parsedSource) {
+                  return;
+                }
+                const label = parsedSource.title || parsedSource.path.split("/").pop() || parsedSource.path;
+                item.innerHTML = `<div class="source-ref"><div class="source-ref-head"><a href="#" class="wiki-source-link" data-preview-kind="source" data-source-target="${sanitizeHtml(parsedSource.target)}" data-source-path="${sanitizeHtml(parsedSource.path)}" data-source-title="${sanitizeHtml(label)}">${sanitizeHtml(label)}</a><span class="source-ref-target">${sanitizeHtml(parsedSource.target)}</span></div><div class="source-ref-path">${sanitizeHtml(parsedSource.path)}</div></div>`;
+              });
+            }
+            sibling = sibling.nextElementSibling;
+          }
+        });
+
+        const attachPreviewHandlers = (anchor) => {
+          const kind = anchor.dataset.previewKind;
+          if (!kind) {
+            return;
+          }
+          const params = kind === "page"
+            ? { kind: "page", db: selectedDb, path: anchor.dataset.previewPath || "" }
+            : {
+                kind: "source",
+                target: anchor.dataset.sourceTarget || "",
+                path: anchor.dataset.sourcePath || "",
+                title: anchor.dataset.sourceTitle || "",
+              };
+          const key = JSON.stringify(params);
+          anchor.addEventListener("mouseenter", () => {
+            if (pinnedPreviewKey && pinnedPreviewKey !== key) {
+              return;
+            }
+            void openPreview(anchor, params, key, false);
+          });
+          anchor.addEventListener("mouseleave", () => scheduleHidePreview(false));
+          anchor.addEventListener("focus", () => {
+            if (pinnedPreviewKey && pinnedPreviewKey !== key) {
+              return;
+            }
+            void openPreview(anchor, params, key, false);
+          });
+          anchor.addEventListener("blur", () => scheduleHidePreview(false));
+          anchor.addEventListener("click", (event) => {
+            if (kind === "source") {
+              event.preventDefault();
+            }
+            if (pinnedPreviewKey === key) {
+              pinnedPreviewKey = "";
+              previewCard.hidden = true;
+              previewCard.innerHTML = "";
+              return;
+            }
+            void openPreview(anchor, params, key, true);
+          });
+        };
+
+        body.querySelectorAll("[data-preview-kind]").forEach((anchor) => attachPreviewHandlers(anchor));
+        previewCard.addEventListener("mouseenter", () => clearTimeout(previewHideTimer));
+        previewCard.addEventListener("mouseleave", () => scheduleHidePreview(false));
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            scheduleHidePreview(true);
+          }
+        });
+        document.addEventListener("click", (event) => {
+          if (previewCard.hidden) {
+            return;
+          }
+          const target = event.target;
+          if (target instanceof Element && (previewCard.contains(target) || target.closest("[data-preview-kind]"))) {
+            return;
+          }
+          scheduleHidePreview(true);
         });
       })();
     </script>
@@ -914,6 +1231,127 @@ export async function handleFetch(request, context = {}) {
   const url = new URL(request.url);
   if (url.pathname !== routeBase && url.pathname !== `${routeBase}/`) {
     return new Response("Not Found", { status: 404 });
+  }
+
+  if (url.searchParams.get("preview") === "1") {
+    try {
+      const kind = String(url.searchParams.get("kind") ?? "").trim();
+      if (kind === "page") {
+        const db = String(url.searchParams.get("db") ?? "").trim();
+        const path = normalizeDbScopedPath(url.searchParams.get("path") ?? "", db);
+        if (!path) {
+          return Response.json({ ok: false, error: "Preview path is required." }, { status: 400 });
+        }
+        const note = await kernel.request("knowledge.read", { path });
+        if (!note?.exists) {
+          return Response.json({ ok: false, error: `Page '${path}' does not exist.` }, { status: 404 });
+        }
+        const title = note.title || extractTitle(note.markdown ?? "", path.split("/").pop() ?? path);
+        return Response.json({
+          ok: true,
+          kind: "page",
+          title,
+          path: note.path,
+          markdown: prepareArticleMarkdown(note.markdown ?? "", title),
+        }, {
+          headers: {
+            "cache-control": "no-store",
+          },
+        });
+      }
+
+      if (kind === "source") {
+        const target = String(url.searchParams.get("target") ?? "").trim();
+        const path = String(url.searchParams.get("path") ?? "").trim();
+        const title = String(url.searchParams.get("title") ?? "").trim();
+        if (!target || !path) {
+          return Response.json({ ok: false, error: "Source target and path are required." }, { status: 400 });
+        }
+        if (target !== "gsv") {
+          return Response.json({
+            ok: true,
+            kind: "source",
+            target,
+            path,
+            title: title || path.split("/").pop() || path,
+            mode: "unavailable",
+            text: `Preview is not available yet for target '${target}'.`,
+          }, {
+            headers: {
+              "cache-control": "no-store",
+            },
+          });
+        }
+
+        const source = await kernel.request("fs.read", { path });
+        if (!source?.ok) {
+          return Response.json({ ok: false, error: source?.error || `Failed to read ${path}` }, { status: 400 });
+        }
+
+        if ("files" in source) {
+          return Response.json({
+            ok: true,
+            kind: "source",
+            target,
+            path: source.path,
+            title: title || source.path.split("/").pop() || source.path,
+            mode: "directory",
+            files: source.files ?? [],
+            directories: source.directories ?? [],
+          }, {
+            headers: {
+              "cache-control": "no-store",
+            },
+          });
+        }
+
+        if (Array.isArray(source.content)) {
+          const textItem = source.content.find((item) => item.type === "text");
+          const imageItem = source.content.find((item) => item.type === "image");
+          return Response.json({
+            ok: true,
+            kind: "source",
+            target,
+            path: source.path,
+            title: title || source.path.split("/").pop() || source.path,
+            mode: imageItem ? "image" : "text",
+            text: textItem?.type === "text" ? textItem.text : "",
+            image: imageItem?.type === "image" ? imageItem : null,
+          }, {
+            headers: {
+              "cache-control": "no-store",
+            },
+          });
+        }
+
+        const text = stripReadLineNumbers(source.content);
+        return Response.json({
+          ok: true,
+          kind: "source",
+          target,
+          path: source.path,
+          title: title || source.path.split("/").pop() || source.path,
+          mode: inferPreviewMode(source.path, text),
+          text,
+        }, {
+          headers: {
+            "cache-control": "no-store",
+          },
+        });
+      }
+
+      return Response.json({ ok: false, error: "Unknown preview kind." }, { status: 400 });
+    } catch (error) {
+      return Response.json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }, {
+        status: 500,
+        headers: {
+          "cache-control": "no-store",
+        },
+      });
+    }
   }
 
   let statusText = "";
