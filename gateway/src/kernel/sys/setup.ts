@@ -3,6 +3,7 @@ import type { KernelContext } from "../context";
 import type { PasswdEntry } from "../../auth/passwd";
 import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "../../syscalls/system";
 import { handleSysBootstrap } from "./bootstrap";
+import { ensureHomeStorageLayout } from "../home-knowledge";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -87,29 +88,6 @@ function parseNodeConfig(args: SysSetupArgs): {
     label: readOptionalString(node.label),
     expiresAt: parseOptionalFutureTimestamp(node.expiresAt),
   };
-}
-
-async function ensureHomeDir(
-  bucket: R2Bucket,
-  home: string,
-  uid: number,
-  gid: number,
-): Promise<void> {
-  const normalized = home.replace(/^\/+/, "").replace(/\/+$/, "");
-  if (!normalized) return;
-
-  const marker = `${normalized}/.dir`;
-  const existing = await bucket.head(marker);
-  if (existing) return;
-
-  await bucket.put(marker, new ArrayBuffer(0), {
-    customMetadata: {
-      uid: String(uid),
-      gid: String(gid),
-      mode: "750",
-      dirmarker: "1",
-    },
-  });
 }
 
 export async function handleSysSetup(
@@ -220,7 +198,7 @@ export async function handleSysSetup(
     };
   }
 
-  await ensureHomeDir(ctx.env.STORAGE, home, uid, gid);
+  await ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity);
 
   const processIdentity: ProcessIdentity = {
     uid,

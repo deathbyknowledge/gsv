@@ -72,6 +72,19 @@ import {
   handleAdapterStateUpdate,
   handleAdapterStatus,
 } from "./adapter-handlers";
+import {
+  handleKnowledgeCompile,
+  handleKnowledgeDbInit,
+  handleKnowledgeDbList,
+  handleKnowledgeIngest,
+  handleKnowledgeList,
+  handleKnowledgeMerge,
+  handleKnowledgePromote,
+  handleKnowledgeQuery,
+  handleKnowledgeRead,
+  handleKnowledgeSearch,
+  handleKnowledgeWrite,
+} from "./knowledge";
 
 export type DispatchDeps = {
   routingTable: RoutingTable;
@@ -307,6 +320,41 @@ async function dispatchNative(
         break;
       case "adapter.status":
         data = await handleAdapterStatus(frame.args, ctx);
+        break;
+
+      // --- knowledge.* ---
+      case "knowledge.list":
+        data = await handleKnowledgeList(ctx, frame.args);
+        break;
+      case "knowledge.db.list":
+        data = await handleKnowledgeDbList(ctx, frame.args);
+        break;
+      case "knowledge.db.init":
+        data = await handleKnowledgeDbInit(ctx, frame.args);
+        break;
+      case "knowledge.read":
+        data = await handleKnowledgeRead(ctx, frame.args);
+        break;
+      case "knowledge.write":
+        data = await handleKnowledgeWrite(ctx, frame.args);
+        break;
+      case "knowledge.search":
+        data = await handleKnowledgeSearch(ctx, frame.args);
+        break;
+      case "knowledge.merge":
+        data = await handleKnowledgeMerge(ctx, frame.args);
+        break;
+      case "knowledge.promote":
+        data = await handleKnowledgePromote(ctx, frame.args);
+        break;
+      case "knowledge.query":
+        data = await handleKnowledgeQuery(ctx, frame.args);
+        break;
+      case "knowledge.ingest":
+        data = await handleKnowledgeIngest(ctx, frame.args);
+        break;
+      case "knowledge.compile":
+        data = await handleKnowledgeCompile(ctx, frame.args);
         break;
 
       default:

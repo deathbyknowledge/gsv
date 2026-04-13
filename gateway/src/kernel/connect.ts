@@ -19,6 +19,7 @@ import type {
 import type { AuthTokenRole } from "./auth-store";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
+import { ensureHomeStorageLayout } from "./home-knowledge";
 
 export type ConnectOutcome =
   | { ok: true; identity: ConnectionIdentity; result: ConnectResult }
@@ -31,11 +32,17 @@ export function setupRequiredDetails(): { setupMode: true; next: "sys.setup" } {
 }
 
 export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void> {
-  const bootstrapped = await ctx.auth.bootstrap();
+  await ctx.auth.bootstrap();
   ctx.caps.seed();
-  if (bootstrapped) {
-    await ensureRootHome(ctx.env.STORAGE);
-  }
+  await ensureHomeStorageLayout(ctx.env, {
+    uid: 0,
+    gid: 0,
+    gids: [0],
+    username: "root",
+    home: "/root",
+    cwd: "/root",
+    workspaceId: null,
+  });
 }
 
 export async function handleConnect(
@@ -218,15 +225,6 @@ async function resolveIdentity(
   if (!result.ok) return { ok: false, error: result.error };
 
   return { ok: true, identity: withDefaultProcessContext(result.identity) };
-}
-
-async function ensureRootHome(bucket: R2Bucket): Promise<void> {
-  const marker = "root/.dir";
-  const existing = await bucket.head(marker);
-  if (existing) return;
-  await bucket.put(marker, new ArrayBuffer(0), {
-    customMetadata: { uid: "0", gid: "0", mode: "750", dirmarker: "1" },
-  });
 }
 
 function buildSignalList(role: string): string[] {

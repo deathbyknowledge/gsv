@@ -11,6 +11,7 @@ export type {
   FsSearchBackendResult,
 } from "./mount";
 export { KernelMountBackend } from "./backends/kernel";
+export { createHomeKnowledgeBackend } from "./backends/home-knowledge";
 export { createPackageBackend, isPackageMountPath } from "./backends/packages";
 export { createProcessSourceBackend, isProcessSourceMountPath } from "./backends/process-sources";
 export { R2MountBackend } from "./backends/r2";
@@ -26,6 +27,10 @@ export {
   isWorkspaceMountPath,
   workspaceRootPath,
 } from "./backends/workspace";
+export {
+  homeKnowledgeRepoRef,
+  workspaceRepoRef,
+} from "./ripgit/repos";
 export {
   resolveUserPath,
   normalizePath,

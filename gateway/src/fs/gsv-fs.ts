@@ -39,6 +39,7 @@ export class GsvFs implements IFileSystem {
   private readonly r2Backend: MountBackend;
   private readonly kernelBackend: MountBackend;
   private readonly sourceMountBackend: MountBackend | null;
+  private readonly homeKnowledgeBackend: MountBackend | null;
   private readonly workspaceBackend: MountBackend | null;
   private readonly packageBackend: MountBackend | null;
 
@@ -48,6 +49,7 @@ export class GsvFs implements IFileSystem {
     kernel?: KernelRefs,
     selfPid?: string,
     sourceMountBackend?: MountBackend | null,
+    homeKnowledgeBackend?: MountBackend | null,
     workspaceBackend?: MountBackend | null,
     packageBackend?: MountBackend | null,
   ) {
@@ -56,6 +58,7 @@ export class GsvFs implements IFileSystem {
     this.r2Backend = new R2MountBackend(bucket, identity);
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
     this.sourceMountBackend = sourceMountBackend ?? null;
+    this.homeKnowledgeBackend = homeKnowledgeBackend ?? null;
     this.workspaceBackend = workspaceBackend ?? null;
     this.packageBackend = packageBackend ?? null;
   }
@@ -269,6 +272,10 @@ export class GsvFs implements IFileSystem {
       return this.workspaceBackend;
     }
 
+    if (this.homeKnowledgeBackend?.handles(path)) {
+      return this.homeKnowledgeBackend;
+    }
+
     if (isPackageMountPath(path)) {
       if (!this.packageBackend) {
         throw new Error(`ENOSYS: package backend is unavailable for '${path}'`);
@@ -299,6 +306,13 @@ export class GsvFs implements IFileSystem {
 
     if (this.workspaceBackend) {
       entries.add("workspaces");
+    }
+
+    if (this.homeKnowledgeBackend) {
+      const homeRoot = this.identity.home.replace(/^\/+/, "").split("/", 1)[0];
+      if (homeRoot) {
+        entries.add(homeRoot);
+      }
     }
 
     if (this.sourceMountBackend) {

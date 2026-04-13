@@ -128,6 +128,30 @@ import type {
   AdapterStatusArgs,
   AdapterStatusResult,
 } from "./adapter";
+import type {
+  KnowledgeDbInitArgs,
+  KnowledgeDbInitResult,
+  KnowledgeDbListArgs,
+  KnowledgeDbListResult,
+  KnowledgeCompileArgs,
+  KnowledgeCompileResult,
+  KnowledgeIngestArgs,
+  KnowledgeIngestResult,
+  KnowledgeListArgs,
+  KnowledgeListResult,
+  KnowledgeReadArgs,
+  KnowledgeReadResult,
+  KnowledgeWriteArgs,
+  KnowledgeWriteResult,
+  KnowledgeSearchArgs,
+  KnowledgeSearchResult,
+  KnowledgeMergeArgs,
+  KnowledgeMergeResult,
+  KnowledgePromoteArgs,
+  KnowledgePromoteResult,
+  KnowledgeQueryArgs,
+  KnowledgeQueryResult,
+} from "./knowledge";
 export type ToolDefinition = {
   name: string;
   description: string;
@@ -213,6 +237,19 @@ export type SyscallDomains = {
   "adapter.state.update": { args: AdapterStateUpdateArgs; result: AdapterStateUpdateResult };
   "adapter.send": { args: AdapterSendArgs; result: AdapterSendResult };
   "adapter.status": { args: AdapterStatusArgs; result: AdapterStatusResult };
+
+  // Knowledge substrate (home durable knowledge)
+  "knowledge.db.list": { args: KnowledgeDbListArgs; result: KnowledgeDbListResult };
+  "knowledge.db.init": { args: KnowledgeDbInitArgs; result: KnowledgeDbInitResult };
+  "knowledge.list": { args: KnowledgeListArgs; result: KnowledgeListResult };
+  "knowledge.read": { args: KnowledgeReadArgs; result: KnowledgeReadResult };
+  "knowledge.write": { args: KnowledgeWriteArgs; result: KnowledgeWriteResult };
+  "knowledge.search": { args: KnowledgeSearchArgs; result: KnowledgeSearchResult };
+  "knowledge.merge": { args: KnowledgeMergeArgs; result: KnowledgeMergeResult };
+  "knowledge.promote": { args: KnowledgePromoteArgs; result: KnowledgePromoteResult };
+  "knowledge.query": { args: KnowledgeQueryArgs; result: KnowledgeQueryResult };
+  "knowledge.ingest": { args: KnowledgeIngestArgs; result: KnowledgeIngestResult };
+  "knowledge.compile": { args: KnowledgeCompileArgs; result: KnowledgeCompileResult };
 };
 
 export type SyscallName = keyof SyscallDomains;
