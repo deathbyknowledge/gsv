@@ -12,6 +12,7 @@ import type {
   ProcListArgs,
   ProcListResult,
   ProcListEntry,
+  ProcSpawnAssignment,
   ProcSpawnMountSpec,
   ProcSpawnArgs,
   ProcSpawnResult,
@@ -113,6 +114,7 @@ export async function handleProcSpawn(
     cwd: spawnIdentity.cwd,
     workspaceId: materialized.identity.workspaceId,
     mounts: materializedMounts.mounts,
+    contextFiles: args.assignment?.contextFiles ?? [],
   });
 
   if (materialized.workspaceId) {
@@ -123,7 +125,12 @@ export async function handleProcSpawn(
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.setidentity",
-    args: { pid, identity: spawnIdentity, profile },
+    args: {
+      pid,
+      identity: spawnIdentity,
+      profile,
+      assignment: args.assignment as ProcSpawnAssignment | undefined,
+    },
   });
 
   if (args.prompt) {
@@ -375,5 +382,12 @@ function requireWorkspaceBackend(ctx: KernelContext, identity: ProcessIdentity) 
 }
 
 function isProcessProfile(value: unknown): value is AiContextProfile {
-  return value === "init" || value === "task" || value === "review" || value === "cron" || value === "mcp" || value === "app";
+  return value === "init"
+    || value === "task"
+    || value === "review"
+    || value === "cron"
+    || value === "mcp"
+    || value === "app"
+    || value === "archivist"
+    || value === "curator";
 }

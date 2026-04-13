@@ -21,10 +21,21 @@ export type ProcSpawnMountSpec =
   | { kind: "package-source"; packageId: string; mountPath?: string }
   | { kind: "package-repo"; packageId: string; mountPath?: string };
 
+export type ProcContextFile = {
+  name: string;
+  text: string;
+};
+
+export type ProcSpawnAssignment = {
+  contextFiles: ProcContextFile[];
+  autoStart?: boolean;
+};
+
 export type ProcSpawnArgs = {
   profile: AiContextProfile;
   label?: string;
   prompt?: string;
+  assignment?: ProcSpawnAssignment;
   parentPid?: string;
   workspace?: ProcWorkspaceSpec;
   mounts?: ProcSpawnMountSpec[];
@@ -171,6 +182,10 @@ export type ProcSetIdentityArgs = {
   pid: string;
   identity: ProcessIdentity;
   profile: AiContextProfile;
+  assignment?: ProcSpawnAssignment;
 };
 
-export type ProcSetIdentityResult = { ok: true };
+export type ProcSetIdentityResult = {
+  ok: true;
+  startedRunId?: string;
+};

@@ -730,7 +730,7 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     const kernel = await getKernelPtr();
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as any;
-      k.config.delete("config/tools/approval");
+      k.config.delete("config/ai/profile/task/tools/approval");
       k.config.delete("users/0/ai/api_key");
     });
   });
@@ -862,7 +862,7 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     const kernel = await getKernelPtr();
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as any;
-      k.config.set("config/tools/approval", JSON.stringify({
+      k.config.set("config/ai/profile/task/tools/approval", JSON.stringify({
         default: "auto",
         rules: [{ match: "fs.read", action: "ask" }],
       }));
@@ -940,7 +940,7 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
     const kernel = await getKernelPtr();
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as any;
-      k.config.set("config/tools/approval", JSON.stringify({
+      k.config.set("config/ai/profile/task/tools/approval", JSON.stringify({
         default: "auto",
         rules: [{ match: "fs.read", action: "ask" }],
       }));

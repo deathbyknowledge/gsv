@@ -16,6 +16,7 @@ import type { AdapterStore } from "./adapter-store";
 import type { RunRouteStore } from "./run-routes";
 import type { WorkspaceStore } from "./workspaces";
 import type { PackageStore } from "./packages";
+import type { AutomationStore } from "./automation";
 
 export type KernelContext = {
   env: Env;
@@ -28,6 +29,7 @@ export type KernelContext = {
   packages: PackageStore;
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
+  automation: AutomationStore;
   connection: Connection;
   identity?: ConnectionIdentity;
   processId?: string;

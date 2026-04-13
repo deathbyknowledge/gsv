@@ -37,6 +37,7 @@ import type {
   ProcHistoryMessage,
   ProcResetResult,
   ProcKillResult,
+  ProcSpawnAssignment,
 } from "../syscalls/proc";
 import type {
   AssistantMessage,
@@ -99,6 +100,10 @@ const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TEXT_ENCODER = new TextEncoder();
 const PROCESS_MEDIA_CACHE_LIMIT = 32;
 
+function isNonInteractiveProfile(profile: AiContextProfile): boolean {
+  return profile === "cron" || profile === "archivist" || profile === "curator";
+}
+
 export class Process extends Host<Env> {
   private readonly store: ProcessStore;
   private readonly generation = createGenerationService();
@@ -141,7 +146,16 @@ export class Process extends Host<Env> {
 
   get profile(): AiContextProfile {
     const raw = this.store.getValue("profile");
-    if (raw === "init" || raw === "task" || raw === "cron" || raw === "mcp" || raw === "app") {
+    if (
+      raw === "init"
+      || raw === "task"
+      || raw === "review"
+      || raw === "cron"
+      || raw === "mcp"
+      || raw === "app"
+      || raw === "archivist"
+      || raw === "curator"
+    ) {
       return raw;
     }
     return "task";
@@ -207,11 +221,19 @@ export class Process extends Host<Env> {
             pid: string;
             identity: ProcessIdentity;
             profile: AiContextProfile;
+            assignment?: ProcSpawnAssignment;
           };
           this.store.setValue("pid", idArgs.pid);
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
           this.store.setValue("profile", idArgs.profile);
-          data = { ok: true };
+          this.store.setProcessContextFiles(idArgs.assignment?.contextFiles ?? []);
+          let startedRunId: string | undefined;
+          if (idArgs.assignment?.autoStart && !this.currentRun) {
+            startedRunId = crypto.randomUUID();
+            this.currentRun = { runId: startedRunId, queued: false };
+            this.scheduleTick(startedRunId);
+          }
+          data = { ok: true, startedRunId };
           break;
         }
         case "proc.send":
@@ -672,6 +694,7 @@ export class Process extends Host<Env> {
         purpose: "chat.reply",
         identity: this.identity,
         devices: run.devices ?? [],
+        processContextFiles: this.store.getProcessContextFiles(),
         storage: this.env.STORAGE,
         ripgit: this.ripgit,
       });
@@ -1214,6 +1237,7 @@ export class Process extends Host<Env> {
         syscall,
         tc.arguments,
         this.identity,
+        this.profile,
       );
 
       if (approval.action === "deny") {
@@ -1227,6 +1251,15 @@ export class Process extends Host<Env> {
       }
 
       if (approval.action === "ask") {
+        if (isNonInteractiveProfile(this.profile)) {
+          await this.appendSyntheticToolResult(
+            runId,
+            tc.id,
+            syscall,
+            "Tool execution requires interactive approval, which is unavailable for this profile",
+          );
+          continue;
+        }
         const pendingHil: PendingHilRecord = {
           requestId: crypto.randomUUID(),
           runId,
@@ -1273,12 +1306,13 @@ export class Process extends Host<Env> {
       return run.approvalPolicy;
     }
 
-    const result = await this.kernelRpc("sys.config.get", {
-      key: "config/tools/approval",
+    const profileKey = `config/ai/profile/${this.profile}/tools/approval`;
+    const profileResult = await this.kernelRpc("sys.config.get", {
+      key: profileKey,
     }) as { entries?: Array<{ key: string; value: string }> };
 
-    const raw = Array.isArray(result.entries)
-      ? result.entries.find((entry) => entry.key === "config/tools/approval")?.value ?? null
+    const raw = Array.isArray(profileResult.entries)
+      ? profileResult.entries.find((entry) => entry.key === profileKey)?.value ?? null
       : null;
 
     run.approvalPolicy = parseToolApprovalPolicy(raw);
