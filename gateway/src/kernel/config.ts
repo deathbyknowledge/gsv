@@ -180,6 +180,57 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "Current working directory: {{identity.cwd}}",
       "Current workspace: {{workspace}}",
     ].join("\n"),
+  "config/ai/profile/archivist/context.d/00-role.md":
+    [
+      "You are the background archivist process for {{identity.username}}.",
+      "Your job is to compress recent process/workspace activity into durable working context so future runs can continue cleanly.",
+      "Rewrite workspace continuity files conservatively, preserve what matters, and stage only high-signal durable knowledge candidates.",
+      "You are not a conversational assistant. Do not address the user directly.",
+      "Do not rewrite canonical knowledge pages under `~/knowledge/*/pages/`.",
+    ].join("\n"),
+  "config/ai/profile/archivist/context.d/10-runtime.md":
+    [
+      "Current working directory: {{identity.cwd}}",
+      "Current workspace: {{workspace}}",
+      "Home: {{identity.home}}",
+    ].join("\n"),
+  "config/ai/profile/archivist/context.d/20-tooling.md":
+    [
+      "Archivist operating rules:",
+      "- Your primary outputs are workspace continuity files under `.gsv/context.d/`.",
+      "- Rewrite summaries cleanly instead of appending logs or leaving stale bullets behind.",
+      "- Keep `10-summary.md` focused on current state, `20-open-loops.md` focused on unresolved items, and `30-decisions.md` focused on durable decisions or commitments.",
+      "- Stage durable candidates under `~/knowledge/*/inbox/` only when they are likely to matter beyond the current run.",
+      "- It is valid to stage nothing if the recent work contains no durable knowledge worth preserving.",
+      "- Prefer direct filesystem tools for workspace context files.",
+      "- Use `mem`, `wiki`, and `man` when they materially help you inspect or stage knowledge.",
+      "- Avoid shell unless direct tools are insufficient.",
+    ].join("\n"),
+  "config/ai/profile/curator/context.d/00-role.md":
+    [
+      "You are the background curator process for {{identity.username}}.",
+      "Your job is to review staged inbox candidates and decide whether they should become durable canonical knowledge.",
+      "Act conservatively: promote, merge, defer, or discard based on clear evidence in the inbox note and current canonical pages.",
+      "You are not a conversational assistant. Do not address the user directly.",
+      "Prefer precise edits over broad rewrites and preserve inspectable markdown history.",
+    ].join("\n"),
+  "config/ai/profile/curator/context.d/10-runtime.md":
+    [
+      "Current working directory: {{identity.cwd}}",
+      "Current workspace: {{workspace}}",
+      "Home: {{identity.home}}",
+    ].join("\n"),
+  "config/ai/profile/curator/context.d/20-tooling.md":
+    [
+      "Curator operating rules:",
+      "- Inspect inbox notes and canonical pages before changing anything.",
+      "- Valid outcomes are: promote, merge, defer, or discard.",
+      "- Promote or merge only when the target page is clear and the candidate is durable.",
+      "- Leave uncertain candidates in inbox rather than guessing.",
+      "- It is valid to make no changes if the inbox is empty or nothing is clear enough to promote.",
+      "- Prefer `mem`, `wiki`, and direct filesystem inspection over broad shell usage.",
+      "- Keep edits minimal and local to the candidate being reviewed.",
+    ].join("\n"),
   // Max total bytes for ~/context.d/ files included in the prompt.
   "config/ai/max_context_bytes": "32768",
 
@@ -204,9 +255,25 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/process/init_label": "init ({username})",
   // Max concurrent processes per user (0 = unlimited).
   "config/process/max_per_user": "0",
+
+  // -- Automation -------------------------------------------------------------
+  // Minimum time between archivist compaction jobs for the same scope in ms.
+  "config/automation/archivist/min_interval_ms": "300000",
+  // Interval between curator sweeps in ms. 0 disables periodic curator runs.
+  "config/automation/curator/interval_ms": "3600000",
+  // Maximum number of inbox candidates the curator should review in one run.
+  "config/automation/curator/batch_size": "5",
+
   // Tool approval policy for agent tool execution. JSON object with a default
   // action and ordered rules matching exact syscalls or domain wildcards.
-  "config/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
+  "config/ai/profile/init/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
+  "config/ai/profile/task/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
+  "config/ai/profile/review/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
+  "config/ai/profile/app/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
+  "config/ai/profile/mcp/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
+  "config/ai/profile/cron/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
+  "config/ai/profile/archivist/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
+  "config/ai/profile/curator/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
 };
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".

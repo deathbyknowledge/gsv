@@ -10,7 +10,7 @@ import type {
   ProcessIdentity,
   SysSetupResult,
 } from "../syscalls/system";
-import type { ProcHilRequest } from "../syscalls/proc";
+import type { ProcContextFile, ProcHilRequest, ProcHistoryMessage, ProcHistoryResult } from "../syscalls/proc";
 import type { PkgPublicListResult } from "../syscalls/packages";
 import type {
   AdapterOutboundMessage,
@@ -24,6 +24,7 @@ import { ProcessRegistry } from "./processes";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { WorkspaceStore } from "./workspaces";
+import { AutomationStore, type AutomationJobRecord } from "./automation";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -55,6 +56,7 @@ import {
   type AppFrameContext,
 } from "../protocol/app-frame";
 import { listLocalPublicPackages } from "./pkg";
+import { workspaceRootPath } from "../fs";
 
 const SERVER_VERSION = "0.0.1";
 
@@ -119,6 +121,22 @@ type AuthorizeGitHttpResult =
       message: string;
     };
 
+type ProcessHistorySnapshot = {
+  messages: ProcHistoryMessage[];
+  messageCount: number;
+};
+
+const ARCHIVIST_MIN_INPUT_TOKENS = 12_000;
+const ARCHIVIST_MIN_ESTIMATED_TOKENS = 9_000;
+const ARCHIVIST_MIN_MESSAGE_COUNT = 16;
+const ARCHIVIST_MIN_MESSAGE_DELTA = 8;
+const ARCHIVIST_MIN_TOKEN_DELTA = 4_000;
+const ARCHIVIST_MIN_INPUT_TOKEN_DELTA = 4_000;
+const DEFAULT_ARCHIVIST_MIN_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_CURATOR_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_CURATOR_BATCH_SIZE = 5;
+const AUTOMATION_CURATOR_SWEEP_AT_KEY = "curatorSweepAt";
+
 export class Kernel extends Host<Env> {
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
@@ -129,6 +147,7 @@ export class Kernel extends Host<Env> {
   private readonly workspaces: WorkspaceStore;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
+  private readonly automation: AutomationStore;
   private readonly packages: PackageStore;
   private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
@@ -166,6 +185,9 @@ export class Kernel extends Host<Env> {
 
     this.runRoutes = new RunRouteStore(sql);
     this.runRoutes.init();
+
+    this.automation = new AutomationStore(sql);
+    this.automation.init();
 
     this.packages = new PackageStore(sql);
     this.packages.init();
@@ -243,6 +265,7 @@ export class Kernel extends Host<Env> {
    */
   async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
     await this.ready;
+    await this.ensureCuratorSweepScheduled();
     if (frame.type === "req") {
       return this.handleProcessReq(processId, frame);
     }
@@ -475,6 +498,18 @@ export class Kernel extends Host<Env> {
     }
 
     const runId = this.extractRunId(frame.payload);
+    if (runId) {
+      const automationJob = this.automation.getByRunId(runId);
+      if (automationJob) {
+        await this.handleAutomationSignal(automationJob, frame);
+        return;
+      }
+    }
+
+    if (frame.signal === "chat.complete") {
+      await this.maybeScheduleAutomation(processId, frame);
+    }
+
     if (!runId) {
       this.broadcastToUid(identity.uid, frame.signal, frame.payload);
       return;
@@ -582,6 +617,373 @@ export class Kernel extends Host<Env> {
       surface,
       { kind: "typing", active: false },
     );
+  }
+
+  private async handleAutomationSignal(job: AutomationJobRecord, frame: SignalFrame): Promise<void> {
+    if (frame.signal === "chat.hil") {
+      if (job.runId) {
+        this.automation.failForRun(
+          job.runId,
+          "Automation worker requested interactive confirmation",
+        );
+      } else {
+        this.automation.markFailed(
+          job.jobId,
+          "Automation worker requested interactive confirmation",
+        );
+      }
+      if (job.workerPid) {
+        await this.stopAutomationWorker(job.workerPid);
+      }
+      return;
+    }
+
+    if (frame.signal === "chat.complete") {
+      const payload =
+        frame.payload && typeof frame.payload === "object"
+          ? frame.payload as Record<string, unknown>
+          : {};
+      const error =
+        typeof payload.error === "string" && payload.error.trim().length > 0
+          ? payload.error
+          : payload.aborted === true
+            ? "Automation run aborted"
+            : null;
+      if (error) {
+        if (job.runId) {
+          this.automation.failForRun(job.runId, error);
+        } else {
+          this.automation.markFailed(job.jobId, error);
+        }
+      } else if (job.runId) {
+        this.automation.completeForRun(job.runId);
+      }
+
+      if (job.workerPid) {
+        await this.stopAutomationWorker(job.workerPid);
+      }
+    }
+  }
+
+  private async maybeScheduleAutomation(processId: string, frame: SignalFrame): Promise<void> {
+    const proc = this.procs.get(processId);
+    if (!proc) {
+      return;
+    }
+    if (proc.profile === "archivist" || proc.profile === "curator") {
+      return;
+    }
+    if (proc.profile !== "task" && proc.profile !== "init") {
+      return;
+    }
+    if (!proc.workspaceId) {
+      return;
+    }
+
+    const payload =
+      frame.payload && typeof frame.payload === "object"
+        ? frame.payload as Record<string, unknown>
+        : {};
+    if (payload.aborted === true) {
+      return;
+    }
+    if (typeof payload.error === "string" && payload.error.trim().length > 0) {
+      return;
+    }
+
+    const history = await this.fetchProcessHistory(processId, 40);
+    const inputTokens = parseInputTokens(frame.payload);
+    const estimatedTokens = estimateHistoryTokens(history.messages);
+    const dedupeKey = `archivist:compact:${proc.workspaceId}`;
+    const archivistMinIntervalMs = this.resolveAutomationIntervalMs(
+      "config/automation/archivist/min_interval_ms",
+      DEFAULT_ARCHIVIST_MIN_INTERVAL_MS,
+    );
+
+    if (!shouldScheduleArchivistJob(
+      this.automation.getLatestCompletedByDedupe(dedupeKey),
+      history.messageCount,
+      estimatedTokens,
+      inputTokens,
+      archivistMinIntervalMs,
+    )) {
+      return;
+    }
+
+    const assignmentContextFiles = this.buildArchivistAssignment(
+      proc.processId,
+      proc.workspaceId,
+      history.messages,
+    );
+    const { created } = this.automation.enqueue({
+      uid: proc.uid,
+      profile: "archivist",
+      triggerSignal: frame.signal,
+      dedupeKey,
+      sourcePid: proc.processId,
+      workspaceId: proc.workspaceId,
+      label: `archivist (${proc.workspaceId})`,
+      sourceMessageCount: history.messageCount,
+      sourceEstimatedTokens: estimatedTokens,
+      sourceInputTokens: inputTokens,
+      assignmentContextFiles,
+    });
+    if (created) {
+      await this.dispatchQueuedAutomationJobs();
+    }
+  }
+
+  private async fetchProcessHistory(
+    pid: string,
+    limit: number,
+  ): Promise<ProcessHistorySnapshot> {
+    const response = await sendFrameToProcess(pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.history",
+      args: { pid, limit },
+    });
+    if (!response || response.type !== "res" || !response.ok) {
+      return { messages: [], messageCount: 0 };
+    }
+    const data = (response.data ?? null) as ProcHistoryResult | null;
+    if (!data || !("messages" in data) || !Array.isArray(data.messages)) {
+      return { messages: [], messageCount: 0 };
+    }
+    return {
+      messages: data.messages,
+      messageCount: typeof data.messageCount === "number" ? data.messageCount : data.messages.length,
+    };
+  }
+
+  private buildArchivistAssignment(
+    sourcePid: string,
+    workspaceId: string,
+    history: ProcHistoryMessage[],
+  ): ProcContextFile[] {
+    const recentHistory = history
+      .slice(-40)
+      .map((message) => formatHistoryMessage(message))
+      .filter((line) => line.length > 0)
+      .join("\n\n");
+
+    const files: ProcContextFile[] = [
+      {
+        name: "00-assignment.md",
+        text: [
+          "You are running a background archival pass.",
+          `Source process: ${sourcePid}`,
+          `Workspace: ${workspaceRootPath(workspaceId)}`,
+          "",
+          "Goals:",
+          "- Rewrite workspace continuity files under `.gsv/context.d/`.",
+          "- Preserve a concise current summary, unresolved open loops, and durable recent decisions.",
+          "- Stage durable knowledge candidates under `~/knowledge/personal/inbox/` only when they are likely to matter beyond this workspace run.",
+          "",
+          "Preferred outputs:",
+          "- `.gsv/context.d/10-summary.md`",
+          "- `.gsv/context.d/20-open-loops.md`",
+          "- `.gsv/context.d/30-decisions.md`",
+          "",
+          "Restrictions:",
+          "- Do not modify canonical knowledge pages under `~/knowledge/*/pages/`.",
+          "- Do not address the user directly.",
+          "- It is valid to emit no inbox notes if there are no durable candidates worth staging.",
+          "- Prefer filesystem tools over shell commands unless shell is clearly required.",
+          "- Rewrite context files cleanly instead of appending logs or stale bullet lists.",
+        ].join("\n"),
+      },
+    ];
+
+    if (recentHistory.trim().length > 0) {
+      files.push({
+        name: "10-recent-history.md",
+        text: [
+          "Recent source history:",
+          "",
+          recentHistory,
+        ].join("\n"),
+      });
+    }
+
+    return files;
+  }
+
+  private buildCuratorAssignment(
+    db: string,
+    batchSize: number,
+  ): ProcContextFile[] {
+    return [
+      {
+        name: "00-assignment.md",
+        text: [
+          "You are running a background curation pass.",
+          `Knowledge database: ${db}`,
+          `Inbox scope: ~/knowledge/${db}/inbox/`,
+          `Batch size: ${batchSize}`,
+          "",
+          "Goals:",
+          "- Review staged inbox notes conservatively.",
+          "- Promote, merge, defer, or discard candidates based on the inbox note and the current canonical pages.",
+          "- If the inbox is empty or nothing is clear enough to promote, make no changes and exit.",
+          "",
+          "Restrictions:",
+          "- Do not address the user directly.",
+          "- Prefer precise, minimal edits over broad rewrites.",
+          "- Preserve readable markdown history and keep ambiguous notes deferred.",
+          "- Only touch canonical pages that are clearly relevant to the candidate under review.",
+        ].join("\n"),
+      },
+    ];
+  }
+
+  private async ensureCuratorSweepScheduled(): Promise<void> {
+    const intervalMs = this.resolveAutomationIntervalMs(
+      "config/automation/curator/interval_ms",
+      DEFAULT_CURATOR_INTERVAL_MS,
+    );
+    if (intervalMs <= 0) {
+      this.automation.deleteMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY);
+      return;
+    }
+
+    const existing = Number.parseInt(
+      this.automation.getMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY) ?? "",
+      10,
+    );
+    if (Number.isFinite(existing) && existing > Date.now()) {
+      return;
+    }
+
+    const dueAt = Date.now() + intervalMs;
+    await this.schedule(
+      Math.max(1, intervalMs / 1000),
+      "onAutomationSweep",
+      dueAt,
+    );
+    this.automation.setMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY, String(dueAt));
+  }
+
+  async onAutomationSweep(dueAt: number): Promise<void> {
+    await this.ready;
+    const expected = Number.parseInt(
+      this.automation.getMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY) ?? "",
+      10,
+    );
+    if (!Number.isFinite(expected) || expected !== dueAt) {
+      return;
+    }
+
+    this.automation.deleteMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY);
+    await this.maybeScheduleCuratorJobs();
+    await this.dispatchQueuedAutomationJobs();
+    await this.ensureCuratorSweepScheduled();
+  }
+
+  private async maybeScheduleCuratorJobs(): Promise<void> {
+    const batchSize = this.resolveAutomationIntervalMs(
+      "config/automation/curator/batch_size",
+      DEFAULT_CURATOR_BATCH_SIZE,
+      1,
+    );
+
+    const initProcesses = this.procs.listByProfile("init");
+    for (const initProc of initProcesses) {
+      this.automation.enqueue({
+        uid: initProc.uid,
+        profile: "curator",
+        triggerSignal: "automation.sweep",
+        dedupeKey: `curator:${initProc.uid}:personal`,
+        sourcePid: initProc.processId,
+        workspaceId: null,
+        label: `curator (${initProc.username})`,
+        assignmentContextFiles: this.buildCuratorAssignment("personal", batchSize),
+      });
+    }
+  }
+
+  private resolveAutomationIntervalMs(
+    key: string,
+    fallback: number,
+    minValue = 0,
+  ): number {
+    const raw = this.config.get(key);
+    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+    return Math.max(minValue, parsed);
+  }
+
+  private async dispatchQueuedAutomationJobs(): Promise<void> {
+    const jobs = this.automation.listQueued();
+    for (const job of jobs) {
+      const sourceProc = job.sourcePid ? this.procs.get(job.sourcePid) : null;
+      if (!sourceProc) {
+        this.automation.markFailed(job.jobId, "Source process not found");
+        continue;
+      }
+
+      const workerPid = crypto.randomUUID();
+      const identity: ProcessIdentity = {
+        uid: sourceProc.uid,
+        gid: sourceProc.gid,
+        gids: sourceProc.gids,
+        username: sourceProc.username,
+        home: sourceProc.home,
+        cwd: job.workspaceId ? workspaceRootPath(job.workspaceId) : sourceProc.home,
+        workspaceId: job.workspaceId,
+      };
+
+      this.procs.spawn(workerPid, identity, {
+        parentPid: job.sourcePid ?? `init:${job.uid}`,
+        profile: job.profile,
+        label: job.label ?? job.profile,
+        cwd: identity.cwd,
+        workspaceId: identity.workspaceId,
+        contextFiles: job.assignmentContextFiles,
+      });
+
+      const response = await sendFrameToProcess(workerPid, {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.setidentity",
+        args: {
+          pid: workerPid,
+          identity,
+          profile: job.profile,
+          assignment: {
+            contextFiles: job.assignmentContextFiles,
+            autoStart: true,
+          },
+        },
+      });
+
+      if (!response || response.type !== "res" || !response.ok) {
+        this.procs.kill(workerPid);
+        this.automation.markFailed(job.jobId, "Failed to initialize automation worker");
+        continue;
+      }
+
+      const data = response.data as { ok?: boolean; startedRunId?: string } | undefined;
+      if (!data?.startedRunId) {
+        this.procs.kill(workerPid);
+        this.automation.markFailed(job.jobId, "Automation worker did not start a run");
+        continue;
+      }
+
+      this.automation.markRunning(job.jobId, workerPid, data.startedRunId);
+    }
+  }
+
+  private async stopAutomationWorker(pid: string): Promise<void> {
+    await sendFrameToProcess(pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.kill",
+      args: { pid, archive: false },
+    });
+    this.procs.kill(pid);
   }
 
   private async sendAdapterMessage(
@@ -712,6 +1114,7 @@ export class Kernel extends Host<Env> {
       packages: this.packages,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      automation: this.automation,
       connection: null as unknown as Connection,
       identity: connIdentity,
       processId,
@@ -769,6 +1172,7 @@ export class Kernel extends Host<Env> {
       packages: this.packages,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      automation: this.automation,
       connection,
       identity: state.identity as ConnectionIdentity,
       processId: undefined,
@@ -788,6 +1192,7 @@ export class Kernel extends Host<Env> {
       packages: this.packages,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      automation: this.automation,
       connection: null as unknown as Connection,
       identity,
       processId: undefined,
@@ -811,6 +1216,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleReq(connection: Connection<ConnectionState>, frame: RequestFrame): Promise<void> {
+    await this.ensureCuratorSweepScheduled();
     const state = connection.state as ConnectionState | undefined;
 
     if (frame.call === "sys.connect") {
@@ -1456,4 +1862,83 @@ function findUiEntrypoint(
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
+}
+
+function formatHistoryMessage(message: ProcHistoryMessage): string {
+  const timestamp = typeof message.timestamp === "number"
+    ? new Date(message.timestamp).toISOString()
+    : "";
+  const prefix = timestamp ? `[${timestamp}] ${message.role}` : message.role;
+  const content = typeof message.content === "string"
+    ? message.content
+    : JSON.stringify(message.content, null, 2);
+  return `${prefix}\n${content}`.trim();
+}
+
+function parseInputTokens(payload: unknown): number | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const usage = (payload as { usage?: unknown }).usage;
+  if (!usage || typeof usage !== "object") {
+    return null;
+  }
+  const input = (usage as { input?: unknown }).input;
+  return typeof input === "number" && Number.isFinite(input) && input > 0
+    ? Math.floor(input)
+    : null;
+}
+
+function estimateHistoryTokens(messages: ProcHistoryMessage[]): number {
+  let chars = 0;
+  for (const message of messages) {
+    chars += message.role.length + 4;
+    if (typeof message.content === "string") {
+      chars += message.content.length;
+      continue;
+    }
+    try {
+      chars += JSON.stringify(message.content).length;
+    } catch {
+      chars += 64;
+    }
+  }
+  return Math.ceil(chars / 4);
+}
+
+function shouldScheduleArchivistJob(
+  lastCompleted: AutomationJobRecord | null,
+  messageCount: number,
+  estimatedTokens: number,
+  inputTokens: number | null,
+  minIntervalMs: number,
+): boolean {
+  const hasPressure =
+    messageCount >= ARCHIVIST_MIN_MESSAGE_COUNT
+    || estimatedTokens >= ARCHIVIST_MIN_ESTIMATED_TOKENS
+    || (inputTokens !== null && inputTokens >= ARCHIVIST_MIN_INPUT_TOKENS);
+
+  if (!hasPressure) {
+    return false;
+  }
+
+  if (!lastCompleted) {
+    return true;
+  }
+
+  const withinCooldown = Date.now() - lastCompleted.updatedAt < minIntervalMs;
+  if (!withinCooldown) {
+    return true;
+  }
+
+  const messageDelta = messageCount - lastCompleted.sourceMessageCount;
+  const estimatedTokenDelta = estimatedTokens - lastCompleted.sourceEstimatedTokens;
+  const inputTokenDelta =
+    inputTokens !== null && lastCompleted.sourceInputTokens !== null
+      ? inputTokens - lastCompleted.sourceInputTokens
+      : null;
+
+  return messageDelta >= ARCHIVIST_MIN_MESSAGE_DELTA
+    || estimatedTokenDelta >= ARCHIVIST_MIN_TOKEN_DELTA
+    || (inputTokenDelta !== null && inputTokenDelta >= ARCHIVIST_MIN_INPUT_TOKEN_DELTA);
 }

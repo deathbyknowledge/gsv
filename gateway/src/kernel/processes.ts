@@ -11,6 +11,7 @@
 
 import type { ProcessIdentity } from "../syscalls/system";
 import type { AiContextProfile } from "../syscalls/ai";
+import type { ProcContextFile } from "../syscalls/proc";
 
 export type ProcessState = "running" | "paused" | "killed";
 
@@ -39,6 +40,7 @@ export type ProcessRecord = {
   label: string | null;
   createdAt: number;
   mounts: ProcessMount[];
+  contextFiles: ProcContextFile[];
 };
 
 export class ProcessRegistry {
@@ -58,6 +60,7 @@ export class ProcessRegistry {
         cwd TEXT NOT NULL,
         workspace_id TEXT,
         mounts TEXT NOT NULL DEFAULT '[]',
+        context_files_json TEXT NOT NULL DEFAULT '[]',
         state TEXT NOT NULL DEFAULT 'running',
         label TEXT,
         created_at INTEGER NOT NULL
@@ -80,13 +83,21 @@ export class ProcessRegistry {
       this.sql.exec("ALTER TABLE processes ADD COLUMN mounts TEXT");
     } catch {}
 
+    try {
+      this.sql.exec("ALTER TABLE processes ADD COLUMN context_files_json TEXT");
+    } catch {}
+
     this.sql.exec("UPDATE processes SET cwd = home WHERE cwd IS NULL OR cwd = ''");
     this.sql.exec("UPDATE processes SET mounts = '[]' WHERE mounts IS NULL OR mounts = ''");
+    this.sql.exec("UPDATE processes SET context_files_json = '[]' WHERE context_files_json IS NULL OR context_files_json = ''");
     this.sql.exec("UPDATE processes SET profile = 'init' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'init:%'");
     this.sql.exec("UPDATE processes SET profile = 'task' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'task:%'");
+    this.sql.exec("UPDATE processes SET profile = 'review' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'review:%'");
     this.sql.exec("UPDATE processes SET profile = 'cron' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'cron:%'");
     this.sql.exec("UPDATE processes SET profile = 'mcp' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'mcp:%'");
     this.sql.exec("UPDATE processes SET profile = 'app' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'app:%'");
+    this.sql.exec("UPDATE processes SET profile = 'archivist' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'archivist:%'");
+    this.sql.exec("UPDATE processes SET profile = 'curator' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'curator:%'");
     this.sql.exec("UPDATE processes SET profile = 'task' WHERE profile IS NULL OR profile = ''");
   }
 
@@ -100,12 +111,13 @@ export class ProcessRegistry {
       cwd?: string;
       workspaceId?: string | null;
       mounts?: ProcessMount[];
+      contextFiles?: ProcContextFile[];
     },
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, workspace_id, mounts, state, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
+        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, workspace_id, mounts, context_files_json, state, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
@@ -117,6 +129,7 @@ export class ProcessRegistry {
       opts.cwd ?? identity.cwd,
       opts.workspaceId ?? identity.workspaceId,
       JSON.stringify(opts.mounts ?? []),
+      JSON.stringify(opts.contextFiles ?? []),
       opts.label ?? null,
       Date.now(),
     );
@@ -181,12 +194,27 @@ export class ProcessRegistry {
     return toRecord(rows[0]);
   }
 
+  listByProfile(profile: AiContextProfile): ProcessRecord[] {
+    return [...this.sql.exec<RowShape>(
+      "SELECT * FROM processes WHERE profile = ? AND state = 'running' ORDER BY created_at ASC",
+      profile,
+    )].map(toRecord);
+  }
+
   getMounts(processId: string): ProcessMount[] {
     const rows = [...this.sql.exec<{ mounts: string | null }>(
       "SELECT mounts FROM processes WHERE process_id = ?",
       processId,
     )];
     return parseMounts(rows[0]?.mounts ?? null);
+  }
+
+  getContextFiles(processId: string): ProcContextFile[] {
+    const rows = [...this.sql.exec<{ context_files_json: string | null }>(
+      "SELECT context_files_json FROM processes WHERE process_id = ?",
+      processId,
+    )];
+    return parseContextFiles(rows[0]?.context_files_json ?? null);
   }
 
   updateIdentity(processId: string, identity: ProcessIdentity): void {
@@ -271,6 +299,7 @@ type RowShape = {
   cwd: string | null;
   workspace_id: string | null;
   mounts: string | null;
+  context_files_json: string | null;
   state: string;
   label: string | null;
   created_at: number;
@@ -292,6 +321,7 @@ function toRecord(row: RowShape): ProcessRecord {
     label: row.label,
     createdAt: row.created_at,
     mounts: parseMounts(row.mounts),
+    contextFiles: parseContextFiles(row.context_files_json),
   };
 }
 
@@ -302,6 +332,30 @@ function parseMounts(value: string | null): ProcessMount[] {
   try {
     const parsed = JSON.parse(value);
     return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseContextFiles(value: string | null): ProcContextFile[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      const file = entry as { name?: unknown; text?: unknown };
+      if (typeof file.name !== "string" || typeof file.text !== "string") {
+        return [];
+      }
+      return [{ name: file.name, text: file.text }];
+    });
   } catch {
     return [];
   }

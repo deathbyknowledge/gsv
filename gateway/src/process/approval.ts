@@ -1,3 +1,4 @@
+import type { AiContextProfile } from "../syscalls/ai";
 import type { ProcessIdentity } from "../syscalls/system";
 
 export type ToolApprovalAction = "auto" | "ask" | "deny";
@@ -5,6 +6,8 @@ export type ToolApprovalAction = "auto" | "ask" | "deny";
 export type ToolApprovalRule = {
   match: string;
   when?: {
+    profile?: AiContextProfile;
+    anyProfile?: AiContextProfile[];
     anyTag?: string[];
     allTags?: string[];
     argEquals?: Record<string, string | number | boolean>;
@@ -20,6 +23,7 @@ export type ToolApprovalPolicy = {
 };
 
 export type ToolApprovalFacts = {
+  profile: AiContextProfile;
   syscall: string;
   domain: string;
   target: "gsv" | "device";
@@ -79,8 +83,9 @@ export function resolveToolApproval(
   syscall: string,
   args: unknown,
   identity: ProcessIdentity,
+  profile: AiContextProfile,
 ): ToolApprovalResolution {
-  const facts = buildToolApprovalFacts(syscall, args, identity);
+  const facts = buildToolApprovalFacts(syscall, args, identity, profile);
   const rules = [
     ...policy.rules.filter((rule) => rule.match === syscall),
     ...policy.rules.filter((rule) => isWildcardMatch(rule.match, syscall)),
@@ -107,6 +112,7 @@ export function buildToolApprovalFacts(
   syscall: string,
   args: unknown,
   identity: ProcessIdentity,
+  profile: AiContextProfile,
 ): ToolApprovalFacts {
   const record = asRecord(args);
   const domain = syscall.split(".")[0] ?? syscall;
@@ -157,6 +163,7 @@ export function buildToolApprovalFacts(
   }
 
   return {
+    profile,
     syscall,
     domain,
     target,
@@ -197,6 +204,8 @@ function parseWhen(value: unknown): ToolApprovalRule["when"] | undefined {
   }
 
   const record = value as {
+    profile?: unknown;
+    anyProfile?: unknown;
     anyTag?: unknown;
     allTags?: unknown;
     argEquals?: unknown;
@@ -204,6 +213,8 @@ function parseWhen(value: unknown): ToolApprovalRule["when"] | undefined {
     target?: unknown;
   };
 
+  const profile = normalizeProfile(record.profile);
+  const anyProfile = normalizeProfileArray(record.anyProfile);
   const anyTag = normalizeStringArray(record.anyTag);
   const allTags = normalizeStringArray(record.allTags);
   const argEquals = normalizePrimitiveRecord(record.argEquals);
@@ -213,11 +224,13 @@ function parseWhen(value: unknown): ToolApprovalRule["when"] | undefined {
       ? record.target
       : undefined;
 
-  if (!anyTag && !allTags && !argEquals && !argPrefix && !target) {
+  if (!profile && !anyProfile && !anyTag && !allTags && !argEquals && !argPrefix && !target) {
     return undefined;
   }
 
   return {
+    ...(profile ? { profile } : {}),
+    ...(anyProfile ? { anyProfile } : {}),
     ...(anyTag ? { anyTag } : {}),
     ...(allTags ? { allTags } : {}),
     ...(argEquals ? { argEquals } : {}),
@@ -232,6 +245,12 @@ function matchesWhen(
   args: unknown,
 ): boolean {
   const tags = new Set(facts.tags);
+  if (when.profile && when.profile !== facts.profile) {
+    return false;
+  }
+  if (when.anyProfile && !when.anyProfile.includes(facts.profile)) {
+    return false;
+  }
   if (when.target && when.target !== facts.target) {
     return false;
   }
@@ -273,6 +292,30 @@ function normalizeStringArray(value: unknown): string[] | undefined {
   }
   const items = value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
   return items.length > 0 ? items : undefined;
+}
+
+function normalizeProfile(value: unknown): AiContextProfile | undefined {
+  return value === "init"
+    || value === "task"
+    || value === "review"
+    || value === "cron"
+    || value === "mcp"
+    || value === "app"
+    || value === "archivist"
+    || value === "curator"
+    ? value
+    : undefined;
+}
+
+function normalizeProfileArray(value: unknown): AiContextProfile[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const profiles = value.flatMap((entry) => {
+    const profile = normalizeProfile(entry);
+    return profile ? [profile] : [];
+  });
+  return profiles.length > 0 ? profiles : undefined;
 }
 
 function normalizePrimitiveRecord(

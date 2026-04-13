@@ -32,7 +32,7 @@ export class KernelMountBackend implements MountBackend {
 
   async readFile(path: string): Promise<string> {
     const p = normalizePath(path);
-    const virt = this.readVirtual(p);
+    const virt = await this.readVirtual(p);
     if (virt !== undefined) return virt;
     if (this.isVirtualDir(p) || p === "/etc") {
       throw new Error(`EISDIR: illegal operation on a directory, read '${p}'`);
@@ -48,7 +48,7 @@ export class KernelMountBackend implements MountBackend {
       return buf;
     }
 
-    const virt = this.readVirtual(p);
+    const virt = await this.readVirtual(p);
     if (virt !== undefined) return TEXT_ENCODER.encode(virt);
     if (this.isVirtualDir(p) || p === "/etc") {
       throw new Error(`EISDIR: illegal operation on a directory, read '${p}'`);
@@ -96,7 +96,7 @@ export class KernelMountBackend implements MountBackend {
     if (p === "/etc") return true;
     if (this.isVirtualDir(p)) return true;
     if (isEtcAuth(p)) return true;
-    if (this.readVirtual(p) !== undefined) return true;
+    if (await this.readVirtual(p) !== undefined) return true;
     return false;
   }
 
@@ -112,7 +112,7 @@ export class KernelMountBackend implements MountBackend {
       return { isFile: true, isDirectory: false, isSymbolicLink: false, mode, size: 0, mtime: new Date(), uid: 0, gid: 0 };
     }
 
-    if (this.readVirtual(p) !== undefined) {
+    if (await this.readVirtual(p) !== undefined) {
       return { isFile: true, isDirectory: false, isSymbolicLink: false, mode: 0o444, size: 0, mtime: new Date(), uid: 0, gid: 0 };
     }
 
@@ -210,7 +210,17 @@ export class KernelMountBackend implements MountBackend {
           cwd: proc.cwd,
           workspaceId: proc.workspaceId,
         }, null, 2) + "\n";
+      case "context.d":
+        return undefined;
       default:
+        if (attr.startsWith("context.d/")) {
+          const name = attr.slice("context.d/".length);
+          const file = proc.contextFiles.find((entry) => entry.name === name);
+          if (!file) {
+            return undefined;
+          }
+          return file.text.endsWith("\n") ? file.text : `${file.text}\n`;
+        }
         return undefined;
     }
   }
@@ -377,7 +387,7 @@ export class KernelMountBackend implements MountBackend {
     return false;
   }
 
-  private readVirtual(path: string): string | undefined {
+  private async readVirtual(path: string): Promise<string | undefined> {
     if (path.startsWith("/proc/")) return this.readProc(path);
     if (path.startsWith("/dev/")) return this.readDev(path);
     if (path.startsWith("/sys/")) return this.readSys(path);
@@ -398,6 +408,17 @@ export class KernelMountBackend implements MountBackend {
       const pid = path.slice("/proc/".length);
       if (pid === "self") return true;
       return this.kernel.procs.get(pid) !== null;
+    }
+
+    if (path.startsWith("/proc/")) {
+      const parts = path.slice("/proc/".length).split("/");
+      if (parts.length === 2 && parts[1] === "context.d") {
+        let pid = parts[0];
+        if (pid === "self") {
+          pid = this.selfPid ?? `init:${this.identity.uid}`;
+        }
+        return this.kernel.procs.get(pid) !== null;
+      }
     }
 
     if (path.startsWith("/sys/devices/") && !path.slice("/sys/devices/".length).includes("/")) {
@@ -515,7 +536,13 @@ export class KernelMountBackend implements MountBackend {
         let pid = parts[0];
         if (pid === "self") pid = this.selfPid ?? `init:${this.identity.uid}`;
         const proc = this.kernel.procs.get(pid);
-        if (proc) return ["identity", "status"];
+        if (proc) return ["context.d", "identity", "status"];
+      }
+      if (parts.length === 2 && parts[1] === "context.d") {
+        let pid = parts[0];
+        if (pid === "self") pid = this.selfPid ?? `init:${this.identity.uid}`;
+        const proc = this.kernel.procs.get(pid);
+        if (proc) return proc.contextFiles.map((entry) => entry.name).sort();
       }
     }
 

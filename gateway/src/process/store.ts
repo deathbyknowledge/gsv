@@ -10,6 +10,7 @@
 
 import type { SyscallName } from "../syscalls";
 import { SYSCALL_TOOL_NAMES } from "../syscalls/constants";
+import type { ProcContextFile } from "../syscalls/proc";
 import type {
   Message,
   UserMessage,
@@ -392,6 +393,39 @@ export class ProcessStore {
 
   deleteValue(key: string): void {
     this.sql.exec("DELETE FROM process_kv WHERE key = ?", key);
+  }
+
+  getProcessContextFiles(): ProcContextFile[] {
+    const raw = this.getValue("processContextFiles");
+    if (!raw) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return [];
+        }
+        const file = entry as { name?: unknown; text?: unknown };
+        if (typeof file.name !== "string" || typeof file.text !== "string") {
+          return [];
+        }
+        return [{ name: file.name, text: file.text }];
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  setProcessContextFiles(files: ProcContextFile[]): void {
+    if (files.length === 0) {
+      this.deleteValue("processContextFiles");
+      return;
+    }
+    this.setValue("processContextFiles", JSON.stringify(files));
   }
 
   // --- Message conversion to pi-ai format ---

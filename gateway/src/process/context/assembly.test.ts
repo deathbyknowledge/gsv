@@ -95,6 +95,7 @@ describe("selection", () => {
       "profile.context",
       "home.context",
       "workspace.context",
+      "process.context",
     ]);
   });
 });
