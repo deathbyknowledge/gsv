@@ -118,7 +118,7 @@ export async function runWikiCommand(
     case "list": {
       requireCapability(ctx, "knowledge.list");
       const prefix = firstPositional(rest);
-      const recursive = hasFlag(rest, "--recursive");
+      const recursive = hasFlag(rest, "--recursive") || hasFlag(rest, "-r");
       const limit = parseOptionalInteger(findFlagValue(rest, "--limit"));
       const result = await ops.list(ctx, { prefix, recursive, limit });
       return ok(formatKnowledgeList(result.entries));
@@ -190,7 +190,7 @@ export async function runWikiCommand(
       requireCapability(ctx, "knowledge.ingest");
       const db = String(rest[0] ?? "").trim();
       if (!db) {
-        throw new Error("Usage: wiki ingest <db> --source target:/absolute/path[|Title] [--source ...]");
+        throw new Error("Usage: wiki ingest <db> --source target:/absolute/path[::Title] [--source ...]");
       }
       const result = await ops.ingest(ctx, {
         db,
@@ -300,7 +300,7 @@ export async function runMemCommand(
     case "list": {
       requireCapability(ctx, "knowledge.list");
       const prefix = resolveMemPrefix(firstPositional(rest));
-      const recursive = hasFlag(rest, "--recursive");
+      const recursive = hasFlag(rest, "--recursive") || hasFlag(rest, "-r");
       const limit = parseOptionalInteger(findFlagValue(rest, "--limit"));
       const result = await ops.list(ctx, { prefix, recursive, limit });
       return ok(formatKnowledgeList(result.entries));
@@ -714,7 +714,7 @@ function parseMode(value: string | undefined, allowed: string[]): string | undef
 function parseRequiredSources(args: string[]): KnowledgeSourceRef[] {
   const specs = findFlagValues(args, "--source");
   if (specs.length === 0) {
-    throw new Error("At least one --source target:/absolute/path[|Title] is required");
+    throw new Error("At least one --source target:/absolute/path[::Title] is required");
   }
   return specs.map(parseSourceSpec);
 }
@@ -722,11 +722,12 @@ function parseRequiredSources(args: string[]): KnowledgeSourceRef[] {
 function parseSourceSpec(spec: string): KnowledgeSourceRef {
   const separator = spec.indexOf(":");
   if (separator <= 0) {
-    throw new Error(`Invalid source '${spec}'. Expected target:/absolute/path or target:/absolute/path|Title`);
+    throw new Error(`Invalid source '${spec}'. Expected target:/absolute/path or target:/absolute/path::Title`);
   }
   const target = spec.slice(0, separator).trim();
   const remainder = spec.slice(separator + 1);
-  const [pathPart, titlePart] = remainder.split("|", 2);
+  const titleSeparator = remainder.includes("::") ? "::" : remainder.includes("|") ? "|" : null;
+  const [pathPart, titlePart] = titleSeparator ? remainder.split(titleSeparator, 2) : [remainder, undefined];
   const path = pathPart.trim();
   if (!target || !path.startsWith("/")) {
     throw new Error(`Invalid source '${spec}'. Path must be absolute`);
@@ -780,19 +781,19 @@ function wikiHelp(topic?: string): string {
       ].join("\n");
     case "source":
       return [
-        "wiki source add <path> --source target:/absolute/path[|Title] [--source ...]",
+        "wiki source add <path> --source target:/absolute/path[::Title] [--source ...]",
         "",
         "Attach live source refs to an existing note.",
         "Sources are references only. They are not snapshotted into the repo.",
         "",
         "Examples:",
-        "  wiki source add product/pages/auth.md --source gsv:/workspaces/gsv/specs/auth.md|Auth spec",
+        "  wiki source add product/pages/auth.md --source \"gsv:/workspaces/gsv/specs/auth.md::Auth spec\"",
         "  wiki source add product/pages/auth.md --source macbook:/Users/hank/Downloads/auth-notes.txt",
         "",
       ].join("\n");
     case "ingest":
       return [
-        "wiki ingest <db> --source target:/absolute/path[|Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH] [--mode inbox|page]",
+        "wiki ingest <db> --source target:/absolute/path[::Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH] [--mode inbox|page]",
         "",
         "Create a new note from one or more live source refs.",
         "Use mode 'inbox' for staged review and 'page' for direct canonical pages.",
@@ -810,27 +811,28 @@ function wikiHelp(topic?: string): string {
       return [
         "Usage: wiki <subcommand> [args]",
         "",
-        "The wiki CLI is a thin shell wrapper over knowledge.* syscalls.",
-        "It operates on the unified ~/knowledge/ substrate and stays explicit by design.",
+        "Wiki manages durable knowledge databases made of markdown pages and live source references.",
+        "Use it to collect notes, stage candidate pages, compile reviewed pages, and query what a knowledge base already knows.",
         "",
         "Core concepts:",
-        "  - Each DB lives under ~/knowledge/<db>/",
-        "  - index.md is the DB homepage / entrypoint",
-        "  - History comes from ripgit commits, not a separate log.md file",
-        "  - Notes are arbitrary markdown pages",
-        "  - Sources are live refs: target:/absolute/path[|Optional Title]",
+        "  - Each database has an index page and a set of markdown pages",
+        "  - Pages can contain any sections you want",
+        "  - Sources are live references: target:/absolute/path[::Optional Title]",
+        "  - Quote --source values when the title contains spaces",
+        "  - Use inbox mode for staged review and page mode for direct canonical pages",
+        "  - search finds matching notes; query returns a compact brief with references",
         "",
         "Commands:",
         "  wiki db list [--limit N]",
         "  wiki db init <db> [--title TITLE] [--description TEXT]",
-        "  wiki list [prefix] [--recursive] [--limit N]",
+        "  wiki list [prefix] [--recursive|-r] [--limit N]",
         "  wiki read <path>",
         "  wiki write <path> --text TEXT",
         "  wiki section <set|append|delete> <path> <heading> [--text TEXT]",
-        "  wiki source add <path> --source target:/absolute/path[|Title] [--source ...]",
+        "  wiki source add <path> --source target:/absolute/path[::Title] [--source ...]",
         "  wiki search <query> [--prefix PREFIX] [--limit N]",
         "  wiki query <query> [--prefix PREFIX ...] [--limit N] [--max-bytes N]",
-        "  wiki ingest <db> --source target:/absolute/path[|Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH] [--mode inbox|page]",
+        "  wiki ingest <db> --source target:/absolute/path[::Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH] [--mode inbox|page]",
         "  wiki compile <db> <source-path> [target-path] [--title TITLE] [--keep-source]",
         "  wiki merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]",
         "  wiki promote --text TEXT [--to PATH] [--mode inbox|direct]",
@@ -853,24 +855,23 @@ function memHelp(topic?: string): string {
       return [
         "mem section <set|append|delete> <path> <heading> [--text TEXT]",
         "",
-        "Like wiki section, but paths are relative to the personal DB.",
+        "Edit one named section in a personal memory page.",
         "Example path: pages/people/alice.md",
         "",
       ].join("\n");
     case "source":
       return [
-        "mem source add <path> --source target:/absolute/path[|Title] [--source ...]",
+        "mem source add <path> --source target:/absolute/path[::Title] [--source ...]",
         "",
-        "Attach live source refs to a personal-memory page.",
-        "Paths are relative to the personal DB.",
+        "Attach live source references to a personal memory page.",
         "",
       ].join("\n");
     default:
       return [
         "Usage: mem <subcommand> [args]",
         "",
-        "The mem CLI is a thin view over knowledge.* with db=personal by default.",
-        "All note paths are relative to ~/knowledge/personal/ unless you pass an explicit personal/... path.",
+        "Memories manages durable personal memory pages about you, people around you, and ongoing projects.",
+        "Use it to keep stable notes, stage uncertain facts for review, and query what should be remembered before responding.",
         "",
         "Typical paths:",
         "  pages/self.md",
@@ -880,23 +881,27 @@ function memHelp(topic?: string): string {
         "",
         "Commands:",
         "  mem init [--title TITLE] [--description TEXT]",
-        "  mem list [prefix] [--recursive] [--limit N]",
+        "  mem list [prefix] [--recursive|-r] [--limit N]",
         "  mem read <path>",
         "  mem write <path> --text TEXT",
         "  mem section <set|append|delete> <path> <heading> [--text TEXT]",
-        "  mem source add <path> --source target:/absolute/path[|Title] [--source ...]",
+        "  mem source add <path> --source target:/absolute/path[::Title] [--source ...]",
         "  mem search <query> [--prefix PREFIX] [--limit N]",
         "  mem query <query> [--prefix PREFIX ...] [--limit N] [--max-bytes N]",
-        "  mem ingest --source target:/absolute/path[|Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH] [--mode inbox|page]",
+        "  mem ingest --source target:/absolute/path[::Title] [--source ...] [--title TITLE] [--summary TEXT] [--path PATH] [--mode inbox|page]",
         "  mem compile <source-path> [target-path] [--title TITLE] [--keep-source]",
         "  mem merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]",
         "  mem promote --text TEXT [--to PATH] [--mode inbox|direct]",
+        "",
+        "Retrieval:",
+        "  search finds matching notes by title, path, tags, and content",
+        "  query returns a compact brief and references you can use immediately",
         "",
         "Examples:",
         "  mem read pages/people/alice.md",
         "  mem section append pages/people/alice.md Preferences --text \"- Prefers concise replies\"",
         "  mem query \"What should I remember about Alice?\"",
-        "  mem ingest --source gsv:/workspaces/chat/alice.md --title \"Alice onboarding notes\"",
+        "  mem ingest --source \"gsv:/workspaces/chat/alice.md::Alice onboarding notes\"",
         "",
         "Topic help:",
         "  mem help section",

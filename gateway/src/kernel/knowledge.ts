@@ -285,6 +285,15 @@ export class KnowledgeStore {
   async promote(args: KnowledgePromoteArgs): Promise<KnowledgePromoteResult> {
     const mode = args.mode ?? (args.targetPath ? "direct" : "inbox");
     const now = new Date().toISOString();
+    const targetPath = args.targetPath ? normalizeKnowledgePath(args.targetPath) : undefined;
+    const targetPageRef = targetPath ? parseDbPagePath(targetPath) : null;
+
+    if (targetPageRef) {
+      const initResult = await this.initDb({ id: targetPageRef.db });
+      if (!initResult.ok) {
+        return { ok: false, error: initResult.error };
+      }
+    }
 
     if (args.source.kind === "candidate") {
       const sourcePath = normalizeKnowledgePath(args.source.path);
@@ -296,7 +305,7 @@ export class KnowledgeStore {
           requiresReview: true,
         };
       }
-      if (!args.targetPath) {
+      if (!targetPath) {
         return { ok: false, error: "Direct promotion requires a targetPath" };
       }
 
@@ -306,7 +315,7 @@ export class KnowledgeStore {
       }
 
       const directResult = await this.write({
-        path: normalizeKnowledgePath(args.targetPath),
+        path: targetPath,
         mode: "append",
         patch: {
           summary: extractSummaryText(candidate.markdown, sourcePath),
@@ -339,11 +348,11 @@ export class KnowledgeStore {
     }
 
     if (mode === "direct") {
-      if (!args.targetPath) {
+      if (!targetPath) {
         return { ok: false, error: "Direct promotion requires a targetPath" };
       }
       const directResult = await this.write({
-        path: normalizeKnowledgePath(args.targetPath),
+        path: targetPath,
         mode: "append",
         patch: {
           summary: sourceText,
@@ -362,19 +371,19 @@ export class KnowledgeStore {
       };
     }
 
-    const candidatePath = buildInboxPath(args.targetPath, sourceText);
+    const candidatePath = buildInboxPath(targetPath, sourceText);
     const candidateMarkdown = renderKnowledgeDoc({
       frontmatter: {
-        proposed_target: args.targetPath ? normalizeKnowledgePath(args.targetPath) : undefined,
+        proposed_target: targetPath,
         created_at: now,
       },
-      title: buildCandidateTitle(args.targetPath, sourceText),
+      title: buildCandidateTitle(targetPath, sourceText),
       summary: [sourceText],
       facts: [],
       preferences: [],
       evidence: [
         `Promoted from text on ${now}`,
-        ...(args.targetPath ? [`Suggested target: ${normalizeKnowledgePath(args.targetPath)}`] : []),
+        ...(targetPath ? [`Suggested target: ${targetPath}`] : []),
       ],
       aliases: [],
       tags: ["candidate"],
@@ -1509,7 +1518,8 @@ function buildInboxPath(targetPath: string | undefined, sourceText: string): str
   const slugBase = targetPath ? targetPath.split("/").pop() ?? targetPath : sourceText;
   const slug = slugify(slugBase).slice(0, 48) || "candidate";
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return `inbox/${stamp}-${slug}.md`;
+  const pageRef = targetPath ? parseDbPagePath(targetPath) : null;
+  return pageRef ? `${pageRef.db}/inbox/${stamp}-${slug}.md` : `inbox/${stamp}-${slug}.md`;
 }
 
 function buildCandidateTitle(targetPath: string | undefined, sourceText: string): string {
