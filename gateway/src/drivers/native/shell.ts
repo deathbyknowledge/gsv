@@ -51,6 +51,7 @@ import {
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "../../syscalls/system";
 import { buildKnowledgeCommands } from "./knowledge-shell";
+import { renderManualPage } from "./man-pages";
 
 export async function handleShellExec(
   args: ShellExecArgs,
@@ -651,13 +652,30 @@ function buildCustomCommands(
     return { stdout: lines.join("\n") + "\n", stderr: "", exitCode: 0 };
   });
 
+  const man = defineCommand("man", async (args): Promise<ExecResult> => {
+    const page = renderManualPage(args[0]);
+    if (!page) {
+      const topic = String(args[0] ?? "").trim();
+      return {
+        stdout: "",
+        stderr: `man: no manual entry for ${topic || "that topic"}\n`,
+        exitCode: 1,
+      };
+    }
+    return {
+      stdout: `${page.endsWith("\n") ? page : `${page}\n`}`,
+      stderr: "",
+      exitCode: 0,
+    };
+  });
+
   const ls = buildLsCommand(fs, identity, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
   const pkg = buildPkgCommand(ctx);
   const knowledgeCommands = buildKnowledgeCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
 
-  return [whoami, id, hostname, uname, chown, chmod, ps, ls, stat, pkg, ...knowledgeCommands, ...packageCommands];
+  return [whoami, id, hostname, uname, chown, chmod, ps, man, ls, stat, pkg, ...knowledgeCommands, ...packageCommands];
 }
 
 function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
@@ -673,6 +691,7 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
     "chown",
     "chmod",
     "ps",
+    "man",
     "ls",
     "stat",
   ]);

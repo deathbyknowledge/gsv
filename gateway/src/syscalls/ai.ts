@@ -37,7 +37,9 @@ export type AiConfigResult = {
   apiKey: string;
   reasoning?: string;
   maxTokens: number;
-  systemPrompt: string;
-  profileSystemPrompt?: string;
+  profileContextFiles?: Array<{
+    name: string;
+    text: string;
+  }>;
   maxContextBytes: number;
 };

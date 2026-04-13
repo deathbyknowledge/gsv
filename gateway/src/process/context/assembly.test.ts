@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { assembleSystemPrompt } from "./assembly";
-import { createHomeKnowledgeProvider } from "./providers/home";
+import { createHomeContextProvider } from "./providers/home";
 import { createProfileInstructionsProvider } from "./providers/profile";
-import { createWorkspaceSummaryProvider } from "./providers/workspace";
+import { createWorkspaceContextProvider } from "./providers/workspace";
 import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
 import type { AiConfigResult } from "../../syscalls/ai";
@@ -15,8 +15,12 @@ const CONFIG: AiConfigResult = {
   apiKey: "test-key",
   reasoning: "off",
   maxTokens: 4096,
-  systemPrompt: "base prompt",
-  profileSystemPrompt: "task prompt",
+  profileContextFiles: [
+    {
+      name: "00-role.md",
+      text: "Task for {{identity.username}} in {{identity.cwd}}\n\nTargets:\n{{devices}}\n\nPaths:\n{{known_paths}}",
+    },
+  ],
   maxContextBytes: 64,
 };
 
@@ -59,15 +63,28 @@ describe("assembleSystemPrompt", () => {
 });
 
 describe("createProfileInstructionsProvider", () => {
-  it("renders profile-scoped instructions from config", async () => {
+  it("renders profile context files from config and runtime placeholders", async () => {
     const provider = createProfileInstructionsProvider();
-    const sections = await provider.collect(makeInput());
+    const sections = await provider.collect(
+      makeInput({
+        devices: [
+          {
+            id: "macbook",
+            platform: "darwin",
+            implements: ["shell.exec", "fs.read"],
+          },
+        ],
+      }),
+    );
     expect(sections).toEqual([
-      {
-        name: "profile.instructions:task",
-        text: "task prompt",
-      },
+      expect.objectContaining({
+        name: "profile.context:00-role.md",
+      }),
     ]);
+    expect(sections[0]?.text).toContain("Task for root in /workspaces/ws_test");
+    expect(sections[0]?.text).toContain("- gsv: control plane and local execution target");
+    expect(sections[0]?.text).toContain("- macbook — darwin");
+    expect(sections[0]?.text).toContain("- /sys: live kernel configuration and runtime control surfaces");
   });
 });
 
@@ -75,17 +92,16 @@ describe("selection", () => {
   it("includes profile instructions in the default task plan", () => {
     const providers = resolvePromptProviders("task", "chat.reply");
     expect(providers.map((provider) => provider.name)).toEqual([
-      "base.system_prompt",
-      "profile.instructions",
-      "home.knowledge",
-      "workspace.summary",
+      "profile.context",
+      "home.context",
+      "workspace.context",
     ]);
   });
 });
 
-describe("createHomeKnowledgeProvider", () => {
-  it("loads constitution and sorted context files within budget", async () => {
-    const provider = createHomeKnowledgeProvider();
+describe("createHomeContextProvider", () => {
+  it("loads sorted context files within budget", async () => {
+    const provider = createHomeContextProvider();
     const homeRepo = homeKnowledgeRepoRef(IDENTITY.uid);
     const sections = await provider.collect(
       makeInput({
@@ -94,13 +110,6 @@ describe("createHomeKnowledgeProvider", () => {
           async readPath(repo, path) {
             if (repo.owner !== homeRepo.owner || repo.repo !== homeRepo.repo) {
               return { kind: "missing" };
-            }
-            if (path === "CONSTITUTION.md") {
-              return {
-                kind: "file",
-                bytes: new TextEncoder().encode("constitution"),
-                size: 12,
-              };
             }
             if (path === "context.d") {
               return {
@@ -132,32 +141,41 @@ describe("createHomeKnowledgeProvider", () => {
     );
 
     expect(sections.map((section) => section.name)).toEqual([
-      "home.constitution",
       "home.context:a.md",
     ]);
     expect(sections.map((section) => section.text)).toEqual([
-      "constitution",
       "alpha",
     ]);
   });
 });
 
-describe("createWorkspaceSummaryProvider", () => {
-  it("loads workspace summary from ripgit when available", async () => {
-    const provider = createWorkspaceSummaryProvider();
+describe("createWorkspaceContextProvider", () => {
+  it("loads workspace context from ripgit when available", async () => {
+    const provider = createWorkspaceContextProvider();
     const workspaceRepo = workspaceRepoRef("ws_test", IDENTITY.uid);
     const sections = await provider.collect(
       makeInput({
         ripgit: {
           async readPath(repo, path) {
-            if (repo.owner !== workspaceRepo.owner || repo.repo !== workspaceRepo.repo || path !== ".gsv/summary.md") {
+            if (repo.owner !== workspaceRepo.owner || repo.repo !== workspaceRepo.repo) {
               return { kind: "missing" };
             }
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("Summary text"),
-              size: 12,
-            };
+            if (path === ".gsv/context.d") {
+              return {
+                kind: "tree",
+                entries: [
+                  { name: "10-summary.md", mode: "100644", hash: "a", type: "blob" },
+                ],
+              };
+            }
+            if (path === ".gsv/context.d/10-summary.md") {
+              return {
+                kind: "file",
+                bytes: new TextEncoder().encode("Summary text"),
+                size: 12,
+              };
+            }
+            return { kind: "missing" };
           },
         },
       }),
@@ -165,8 +183,8 @@ describe("createWorkspaceSummaryProvider", () => {
 
     expect(sections).toEqual([
       {
-        name: "workspace.summary",
-        text: "Current workspace summary:\n\nSummary text",
+        name: "workspace.context:10-summary.md",
+        text: "Summary text",
       },
     ]);
   });
@@ -178,6 +196,7 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     profile: "task",
     purpose: "chat.reply",
     identity: IDENTITY,
+    devices: [],
     storage: {
       async get() {
         return null;
