@@ -13,6 +13,7 @@ import type { BashExecResult, ExecResult } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
 import type { ExtendedStat } from "../../fs/gsv-fs";
 import {
+  createHomeKnowledgeBackend,
   createPackageBackend,
   createProcessSourceBackend,
   createWorkspaceBackend,
@@ -49,6 +50,7 @@ import {
 } from "../../kernel/packages";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "../../syscalls/system";
+import { buildKnowledgeCommands } from "./knowledge-shell";
 
 export async function handleShellExec(
   args: ShellExecArgs,
@@ -122,6 +124,7 @@ function createBash(ctx: KernelContext, identity: ProcessIdentity, cwd: string):
     },
     undefined,
     sourceBackend,
+    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
     createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
     createPackageBackend(identity, ctx.packages),
   );
@@ -651,15 +654,18 @@ function buildCustomCommands(
   const ls = buildLsCommand(fs, identity, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
   const pkg = buildPkgCommand(ctx);
+  const knowledgeCommands = buildKnowledgeCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
 
-  return [whoami, id, hostname, uname, chown, chmod, ps, ls, stat, pkg, ...packageCommands];
+  return [whoami, id, hostname, uname, chown, chmod, ps, ls, stat, pkg, ...knowledgeCommands, ...packageCommands];
 }
 
 function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
   const commands = [];
   const reserved = new Set([
     "pkg",
+    "wiki",
+    "mem",
     "whoami",
     "id",
     "hostname",
