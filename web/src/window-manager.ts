@@ -744,6 +744,13 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const onWindowAction = (windowId: string, action: string): void => {
+    if (dragState?.windowId === windowId) {
+      stopDragging();
+    }
+    if (resizeState?.windowId === windowId) {
+      stopResizing();
+    }
+
     switch (action) {
       case "close":
         closeWindow(windowId);
@@ -838,6 +845,26 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       }
 
       onRuntimeAction(record.windowId, action);
+    });
+
+    record.node.addEventListener("pointerdown", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const actionNode = target.closest<HTMLElement>("[data-window-action]");
+      if (!actionNode) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (dragState?.windowId === record.windowId) {
+        stopDragging();
+      }
+      if (resizeState?.windowId === record.windowId) {
+        stopResizing();
+      }
+      focusWindow(record.windowId);
     });
 
     record.dragHandleNode.addEventListener("pointerdown", (event) => {
