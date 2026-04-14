@@ -1534,6 +1534,19 @@ export async function handleFetch(request, context = {}) {
           throw new Error(spawn?.error || "Failed to start wiki builder");
         }
 
+        const watchKey = `wiki-build:${spawn.pid}`;
+        await kernel.request("signal.watch", {
+          signal: "chat.complete",
+          processId: spawn.pid,
+          key: watchKey,
+          state: {
+            db: buildDbId,
+            title: buildDbTitle || undefined,
+            sourceTarget: buildTarget,
+            sourcePath: buildSourcePath,
+          },
+        });
+
         const prompt = [
           "Build a knowledge wiki from a directory.",
           `Source target: ${buildTarget}`,
@@ -1561,13 +1574,14 @@ export async function handleFetch(request, context = {}) {
           message: prompt,
         });
         if (!send?.ok) {
+          await kernel.request("signal.unwatch", { key: watchKey }).catch(() => {});
           throw new Error(send?.error || "Failed to deliver builder prompt");
         }
 
         selectedDb = buildDbId;
         selectedPath = `${buildDbId}/index.md`;
         draftPath = selectedPath;
-        statusText = `Started background wiki build for ${buildDbId}. Background completion tracking is intentionally disabled until app storage/notifications are rebuilt on Durable Object Facets.`;
+        statusText = `Started background wiki build for ${buildDbId}. You will get a notification when it finishes.`;
       }
     } catch (error) {
       errorText = error instanceof Error ? error.message : String(error);
@@ -1701,6 +1715,57 @@ export async function handleFetch(request, context = {}) {
       "cache-control": "no-store",
     },
   });
+}
+
+export async function handleAppSignal(ctx) {
+  if (ctx.signal !== "chat.complete") {
+    return;
+  }
+
+  const state = readBuildWatchState(ctx.watch?.state);
+  if (!state) {
+    return;
+  }
+
+  const payload = ctx.payload && typeof ctx.payload === "object" ? ctx.payload : {};
+  const error = typeof payload.error === "string" && payload.error.trim()
+    ? payload.error.trim()
+    : "";
+
+  await ctx.kernel.request("notification.create", {
+    title: error ? `Wiki build failed: ${state.db}` : `Wiki build finished: ${state.db}`,
+    body: error
+      ? `${state.sourceTarget}:${state.sourcePath} failed with: ${error}`
+      : `${state.sourceTarget}:${state.sourcePath} was compiled into the ${state.db} wiki.`,
+    level: error ? "error" : "success",
+    actions: [
+      {
+        kind: "open_app",
+        label: "Open wiki",
+        target: `${ctx.meta.routeBase ?? "/apps/wiki"}?db=${encodeURIComponent(state.db)}&path=${encodeURIComponent(`${state.db}/index.md`)}`,
+      },
+    ],
+  });
+}
+
+function readBuildWatchState(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const state = value;
+  const db = typeof state.db === "string" ? state.db.trim() : "";
+  const sourceTarget = typeof state.sourceTarget === "string" ? state.sourceTarget.trim() : "";
+  const sourcePath = typeof state.sourcePath === "string" ? state.sourcePath.trim() : "";
+  const title = typeof state.title === "string" ? state.title.trim() : "";
+  if (!db || !sourceTarget || !sourcePath) {
+    return null;
+  }
+  return {
+    db,
+    sourceTarget,
+    sourcePath,
+    title,
+  };
 }
 
 export default { fetch: handleFetch };

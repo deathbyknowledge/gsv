@@ -377,6 +377,29 @@ export function renderDesktopShell(): string {
               <ul class="windows-list" data-windows-list hidden></ul>
             </div>
           </div>
+          <div class="topbar-section topbar-notifications">
+            <button
+              type="button"
+              class="notifications-toggle"
+              data-notifications-toggle
+              aria-label="Notifications"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="notifications-panel"
+            >
+              <span class="topbar-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M6 9a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9"></path>
+                  <path d="M10 20a2 2 0 0 0 4 0"></path>
+                </svg>
+              </span>
+              <span class="notification-badge" data-notifications-badge hidden>0</span>
+            </button>
+            <div class="notifications-panel" id="notifications-panel" data-notifications-panel hidden>
+              <p class="windows-empty muted" data-notifications-empty>No notifications</p>
+              <ul class="notifications-list" data-notifications-list hidden></ul>
+            </div>
+          </div>
           <div class="topbar-section topbar-session">
             <span class="status-dot is-offline" data-session-dot aria-hidden="true"></span>
             <button type="button" class="session-lock-btn" data-session-lock aria-label="Lock">
@@ -394,6 +417,7 @@ export function renderDesktopShell(): string {
           <nav class="desktop-icons" data-desktop-icons aria-label="Desktop applications"></nav>
           <section class="windows-layer" data-windows-layer></section>
         </main>
+        <div class="notification-toasts" data-notification-toasts aria-live="polite" aria-atomic="false"></div>
       </div>
     </div>
   `;

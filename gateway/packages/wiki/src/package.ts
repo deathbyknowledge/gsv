@@ -1,5 +1,5 @@
 import { definePackage } from "@gsv/package/worker";
-import { handleFetch } from "../ui/worker";
+import { handleAppSignal, handleFetch } from "../ui/worker";
 
 export default definePackage({
   meta: {
@@ -24,8 +24,11 @@ export default definePackage({
         "knowledge.ingest",
         "knowledge.compile",
         "knowledge.merge",
+        "notification.create",
         "proc.spawn",
         "proc.send",
+        "signal.watch",
+        "signal.unwatch",
       ],
     },
   },
@@ -39,6 +42,9 @@ export default definePackage({
         },
         env: { PACKAGE_ROUTE_BASE: routeBase },
       });
+    },
+    async onSignal(ctx) {
+      await handleAppSignal(ctx);
     },
   },
 });

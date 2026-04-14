@@ -2,6 +2,7 @@ import "./styles.css";
 import { createAppRuntime } from "./apps-runtime";
 import { createGatewayClient } from "./gateway-client";
 import { createLauncher } from "./launcher";
+import { createNotificationsPanel } from "./notifications-panel";
 import { packageToAppManifests } from "./package-apps";
 import { createSessionService } from "./session-service";
 import { createSessionUi } from "./session-ui";
@@ -39,6 +40,11 @@ createWindowsPanel({
   windowManager,
 });
 
+createNotificationsPanel({
+  rootNode: shellEl,
+  gatewayClient,
+});
+
 const launcher = createLauncher({
   rootNode: shellEl,
   windowManager,
@@ -51,7 +57,7 @@ async function refreshDesktopApps(): Promise<void> {
   }
 
   try {
-    const payload = await gatewayClient.request<PkgListResult>("pkg.list", {});
+    const payload = await gatewayClient.call<PkgListResult>("pkg.list", {});
     const packages = Array.isArray(payload.packages) ? payload.packages : [];
     launcher.setApps(packages.flatMap(packageToAppManifests));
   } catch {
