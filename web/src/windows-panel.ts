@@ -31,11 +31,48 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
   }
 
   let isOpen = false;
+  const originalParent = panelNode.parentElement;
+  const originalNextSibling = panelNode.nextSibling;
+
+  document.body.appendChild(panelNode);
+
+  const positionPanel = (): void => {
+    if (!isOpen) {
+      return;
+    }
+    const rect = toggleNode.getBoundingClientRect();
+    const width = panelNode.offsetWidth || 240;
+    const height = panelNode.offsetHeight || 120;
+    const maxLeft = Math.max(8, window.innerWidth - width - 8);
+    const left = Math.min(maxLeft, Math.max(8, rect.left + rect.width / 2 - width / 2));
+    const top = rect.top - height - 10 >= 8 ? rect.top - height - 10 : rect.bottom + 10;
+    panelNode.style.left = `${left}px`;
+    panelNode.style.top = `${top}px`;
+  };
 
   const setOpen = (open: boolean): void => {
     isOpen = open;
     panelNode.hidden = !open;
     toggleNode.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      panelNode.style.position = "fixed";
+      panelNode.style.bottom = "auto";
+      panelNode.style.right = "auto";
+      panelNode.style.transform = "none";
+      panelNode.style.zIndex = "260";
+      panelNode.style.visibility = "hidden";
+      requestAnimationFrame(() => {
+        positionPanel();
+        panelNode.style.visibility = "visible";
+        console.debug("[windows-panel] set open", {
+          hidden: panelNode.hidden,
+          rect: panelNode.getBoundingClientRect().toJSON?.() ?? null,
+        });
+      });
+    } else {
+      panelNode.style.visibility = "";
+      console.debug("[windows-panel] set closed", { hidden: panelNode.hidden });
+    }
   };
 
   const render = (summaries: WindowSummary[]): void => {
@@ -116,6 +153,7 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
   toggleNode.addEventListener("click", onToggleClick);
   document.addEventListener("click", onDocumentClick);
   document.addEventListener("keydown", onDocumentKeyDown);
+  window.addEventListener("resize", positionPanel);
   listNode.addEventListener("click", onListClick);
 
   const unsubscribe = windowManager.subscribe((summaries) => {
@@ -127,10 +165,20 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
   return {
     destroy: () => {
       unsubscribe();
+      window.removeEventListener("resize", positionPanel);
       toggleNode.removeEventListener("click", onToggleClick);
       document.removeEventListener("click", onDocumentClick);
       document.removeEventListener("keydown", onDocumentKeyDown);
       listNode.removeEventListener("click", onListClick);
+      if (originalParent) {
+        if (originalNextSibling) {
+          originalParent.insertBefore(panelNode, originalNextSibling);
+        } else {
+          originalParent.appendChild(panelNode);
+        }
+      } else {
+        panelNode.remove();
+      }
     },
   };
 }

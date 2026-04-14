@@ -66,11 +66,47 @@ export function createNotificationsPanel(
   let isOpen = false;
   let notifications: NotificationRecord[] = [];
   const toasts = new Map<string, ToastRecord>();
+  const originalParent = panelNode.parentElement;
+  const originalNextSibling = panelNode.nextSibling;
+
+  document.body.appendChild(panelNode);
+
+  const positionPanel = (): void => {
+    if (!isOpen) {
+      return;
+    }
+    const rect = toggleNode.getBoundingClientRect();
+    const width = panelNode.offsetWidth || 320;
+    const height = panelNode.offsetHeight || 180;
+    const maxLeft = Math.max(8, window.innerWidth - width - 8);
+    const left = Math.min(maxLeft, Math.max(8, rect.right - width));
+    const top = rect.top - height - 10 >= 8 ? rect.top - height - 10 : rect.bottom + 10;
+    panelNode.style.left = `${left}px`;
+    panelNode.style.top = `${top}px`;
+  };
 
   const setOpen = (open: boolean): void => {
     isOpen = open;
     panelNode.hidden = !open;
     toggleNode.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      panelNode.style.position = "fixed";
+      panelNode.style.bottom = "auto";
+      panelNode.style.right = "auto";
+      panelNode.style.zIndex = "260";
+      panelNode.style.visibility = "hidden";
+      requestAnimationFrame(() => {
+        positionPanel();
+        panelNode.style.visibility = "visible";
+        console.debug("[notifications-panel] set open", {
+          hidden: panelNode.hidden,
+          rect: panelNode.getBoundingClientRect().toJSON?.() ?? null,
+        });
+      });
+    } else {
+      panelNode.style.visibility = "";
+      console.debug("[notifications-panel] set closed", { hidden: panelNode.hidden });
+    }
   };
 
   const removeToast = (notificationId: string): void => {
@@ -289,6 +325,7 @@ export function createNotificationsPanel(
   toggleNode.addEventListener("click", onToggleClick);
   document.addEventListener("click", onDocumentClick);
   document.addEventListener("keydown", onDocumentKeyDown);
+  window.addEventListener("resize", positionPanel);
   listNode.addEventListener("click", (event) => {
     void onListClick(event);
   });
@@ -299,6 +336,7 @@ export function createNotificationsPanel(
     destroy: () => {
       unsubscribeStatus();
       unsubscribeSignal();
+      window.removeEventListener("resize", positionPanel);
       toggleNode.removeEventListener("click", onToggleClick);
       document.removeEventListener("click", onDocumentClick);
       document.removeEventListener("keydown", onDocumentKeyDown);
@@ -306,6 +344,15 @@ export function createNotificationsPanel(
         window.clearTimeout(toast.timeoutId);
       }
       toasts.clear();
+      if (originalParent) {
+        if (originalNextSibling) {
+          originalParent.insertBefore(panelNode, originalNextSibling);
+        } else {
+          originalParent.appendChild(panelNode);
+        }
+      } else {
+        panelNode.remove();
+      }
     },
   };
 }
