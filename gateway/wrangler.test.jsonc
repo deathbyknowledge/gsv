@@ -18,6 +18,10 @@
 		{
 			"new_sqlite_classes": ["Process"],
 			"tag": "v2"
+		},
+		{
+			"new_sqlite_classes": ["PackageState"],
+			"tag": "v3"
 		}
 	],
 	"durable_objects": {
@@ -29,6 +33,10 @@
 			{
 				"class_name": "Process",
 				"name": "PROCESS"
+			},
+			{
+				"class_name": "PackageState",
+				"name": "PACKAGE_DO"
 			}
 		]
 	},

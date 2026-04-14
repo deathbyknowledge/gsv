@@ -19,6 +19,7 @@ import {
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
+export { PackageState } from "./kernel/package-state";
 export { KernelBinding } from "./kernel/packages";
 export { PackageBinding } from "./kernel/packages";
 
