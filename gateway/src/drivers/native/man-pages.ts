@@ -9,10 +9,12 @@ export function renderManualPage(topic?: string): string | null {
         "",
         "Available pages:",
         "  gsv   Platform model, targets, paths, and knowledge systems",
+        "  notify  User notifications and background job alerts",
         "  wiki  Durable knowledge databases, including the personal wiki",
         "",
         "Usage:",
         "  man gsv",
+        "  man notify",
         "  man wiki",
         "",
       ].join("\n");
@@ -99,6 +101,34 @@ export function renderManualPage(topic?: string): string | null {
         "    wiki query \"What should I remember about Alice?\" --prefix personal/pages",
         "    wiki ingest personal --source \"gsv:/workspaces/chat/alice.md::Alice onboarding notes\"",
         "    wiki compile personal personal/inbox/<candidate>.md personal/pages/people/alice.md",
+        "",
+      ].join("\n");
+
+    case "notify":
+      return [
+        "NOTIFY(1)",
+        "",
+        "NAME",
+        "  notify - send and manage user notifications",
+        "",
+        "OVERVIEW",
+        "  `notify` creates durable user notifications and manages their read/dismissed state.",
+        "  Notifications appear in the web shell toast/panel and can be delivered by other surfaces later.",
+        "",
+        "SEND",
+        "  notify send --title \"Wiki build finished\" --body \"product-alpha is ready\" --level success",
+        "",
+        "LIST",
+        "  notify list",
+        "  notify list --unread",
+        "  notify list --dismissed",
+        "",
+        "STATE CHANGES",
+        "  notify read <notification-id>",
+        "  notify dismiss <notification-id>",
+        "",
+        "LEVELS",
+        "  info, success, warning, error",
         "",
       ].join("\n");
 

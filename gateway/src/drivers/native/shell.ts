@@ -51,6 +51,7 @@ import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "../../syscalls/system";
 import { buildKnowledgeCommands } from "./knowledge-shell";
 import { renderManualPage } from "./man-pages";
+import { buildNotifyCommands } from "./notify-shell";
 
 export async function handleShellExec(
   args: ShellExecArgs,
@@ -672,9 +673,25 @@ function buildCustomCommands(
   const stat = buildStatCommand(fs, identity, ctx);
   const pkg = buildPkgCommand(ctx);
   const knowledgeCommands = buildKnowledgeCommands(ctx);
+  const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
 
-  return [whoami, id, hostname, uname, chown, chmod, ps, man, ls, stat, pkg, ...knowledgeCommands, ...packageCommands];
+  return [
+    whoami,
+    id,
+    hostname,
+    uname,
+    chown,
+    chmod,
+    ps,
+    man,
+    ls,
+    stat,
+    pkg,
+    ...knowledgeCommands,
+    ...notifyCommands,
+    ...packageCommands,
+  ];
 }
 
 function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
@@ -683,6 +700,7 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
     "pkg",
     "wiki",
     "mem",
+    "notify",
     "whoami",
     "id",
     "hostname",
