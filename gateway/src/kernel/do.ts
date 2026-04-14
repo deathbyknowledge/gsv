@@ -25,6 +25,7 @@ import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { WorkspaceStore } from "./workspaces";
 import { AutomationStore, type AutomationJobRecord } from "./automation";
+import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -45,15 +46,18 @@ import {
   type InstalledPackageRecord,
   PackageStore,
   type PackageEntrypoint,
+  packageArtifactToWorkerCode,
   packageDoName,
   packageRouteBase,
   type PackageArtifact,
+  packageWorkerKey,
   visiblePackageScopesForActor,
 } from "./packages";
 import {
   DEFAULT_APP_FRAME_TTL_MS,
   isAppFrameContextExpired,
   type AppFrameContext,
+  type PackageAppSignalProps,
 } from "../protocol/app-frame";
 import { listLocalPublicPackages } from "./pkg";
 import { workspaceRootPath } from "../fs";
@@ -148,13 +152,16 @@ export class Kernel extends Host<Env> {
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly automation: AutomationStore;
+  private readonly signalWatches: SignalWatchStore;
   private readonly packages: PackageStore;
   private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
+  private readonly state: DurableObjectState;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.state = ctx;
     const sql = ctx.storage.sql;
 
     this.auth = new AuthStore(sql);
@@ -188,6 +195,9 @@ export class Kernel extends Host<Env> {
 
     this.automation = new AutomationStore(sql);
     this.automation.init();
+
+    this.signalWatches = new SignalWatchStore(sql);
+    this.signalWatches.init();
 
     this.packages = new PackageStore(sql);
     this.packages.init();
@@ -332,7 +342,7 @@ export class Kernel extends Host<Env> {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const ctx = this.buildServiceContext(identity);
+    const ctx = this.buildServiceContext(identity, appFrame);
     const origin: RouteOrigin = { type: "app", id: frame.id };
     const pending = this.createPendingAppResponse(frame.id);
     const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
@@ -489,8 +499,6 @@ export class Kernel extends Host<Env> {
    * Relay process signals using deterministic run route lookups.
    */
   private async handleProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
-    if (!frame.signal.startsWith("chat.")) return;
-
     const identity = this.procs.getIdentity(processId);
     if (!identity) {
       console.warn(`[Kernel] Signal from unknown process ${processId}`);
@@ -498,12 +506,19 @@ export class Kernel extends Host<Env> {
     }
 
     const runId = this.extractRunId(frame.payload);
+    let automationJob: AutomationJobRecord | null = null;
     if (runId) {
-      const automationJob = this.automation.getByRunId(runId);
+      automationJob = this.automation.getByRunId(runId);
       if (automationJob) {
         await this.handleAutomationSignal(automationJob, frame);
-        return;
       }
+    }
+
+    await this.dispatchSignalWatches(identity.uid, processId, frame);
+
+    if (!frame.signal.startsWith("chat.")) return;
+    if (automationJob) {
+      return;
     }
 
     if (frame.signal === "chat.complete") {
@@ -1115,9 +1130,11 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       automation: this.automation,
+      signalWatches: this.signalWatches,
       connection: null as unknown as Connection,
       identity: connIdentity,
       processId,
+      appFrame: undefined,
       serverVersion: SERVER_VERSION,
     };
 
@@ -1173,14 +1190,16 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       automation: this.automation,
+      signalWatches: this.signalWatches,
       connection,
       identity: state.identity as ConnectionIdentity,
       processId: undefined,
+      appFrame: undefined,
       serverVersion: SERVER_VERSION,
     };
   }
 
-  private buildServiceContext(identity: ConnectionIdentity): KernelContext {
+  private buildServiceContext(identity: ConnectionIdentity, appFrame?: AppFrameContext): KernelContext {
     return {
       env: this.env,
       auth: this.auth,
@@ -1193,9 +1212,11 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       automation: this.automation,
+      signalWatches: this.signalWatches,
       connection: null as unknown as Connection,
       identity,
       processId: undefined,
+      appFrame,
       serverVersion: SERVER_VERSION,
     };
   }
@@ -1449,6 +1470,142 @@ export class Kernel extends Host<Env> {
         });
       }
     }
+  }
+
+  private async dispatchSignalWatches(
+    uid: number,
+    processId: string,
+    frame: SignalFrame,
+  ): Promise<void> {
+    const watches = this.signalWatches.match(uid, frame.signal, processId);
+    for (const watch of watches) {
+      try {
+        if (watch.targetKind === "app") {
+          await this.invokePackageAppSignalHandler(watch, processId, frame);
+        } else {
+          await this.invokeProcessSignalWatch(watch, processId, frame);
+        }
+        if (watch.once) {
+          this.signalWatches.deleteHandled(watch.watchId);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.signalWatches.markFailed(watch.watchId, message);
+        console.warn(`[Kernel] signal watch ${watch.watchId} failed: ${message}`);
+      }
+    }
+  }
+
+  private async invokePackageAppSignalHandler(
+    watch: SignalWatchRecord,
+    processId: string,
+    frame: SignalFrame,
+  ): Promise<void> {
+    if (!watch.packageId || !watch.packageName || !watch.entrypointName || !watch.routeBase) {
+      throw new Error(`App signal watch ${watch.watchId} is missing package metadata`);
+    }
+    const record = this.packages.resolve(
+      watch.packageId,
+      visiblePackageScopesForActor({ uid: watch.uid }),
+    );
+    if (!record || !record.enabled || record.manifest.name !== watch.packageName) {
+      throw new Error(`Package app not found for watch ${watch.watchId}`);
+    }
+
+    const entrypoint = findUiEntrypoint(
+      record.manifest.entrypoints,
+      watch.entrypointName,
+      watch.routeBase,
+    );
+    if (!entrypoint) {
+      throw new Error(`UI entrypoint not found for watch ${watch.watchId}`);
+    }
+
+    const user = this.auth.getPasswdByUid(watch.uid);
+    if (!user) {
+      throw new Error(`User not found for watch ${watch.watchId}`);
+    }
+
+    const now = Date.now();
+    const appFrame: AppFrameContext = {
+      uid: user.uid,
+      username: user.username,
+      packageId: record.packageId,
+      packageName: record.manifest.name,
+      entrypointName: entrypoint.name,
+      routeBase: watch.routeBase,
+      issuedAt: now,
+      expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
+    };
+
+    const packageDo = packageDoName(record.manifest.name, record.scope);
+    const packageKey = packageWorkerKey({
+      manifest: { name: record.manifest.name },
+      artifact: record.artifact,
+    });
+
+    const worker = this.env.LOADER.get(
+      packageKey,
+      () => packageArtifactToWorkerCode(record.artifact, {
+        PACKAGE_NAME: record.manifest.name,
+        PACKAGE_ID: record.packageId,
+        PACKAGE_DO_NAME: packageDo,
+        PACKAGE_ROUTE_BASE: watch.routeBase,
+      }),
+    ).getEntrypoint("GsvAppSignalEntrypoint", {
+      props: {
+        appFrame,
+        packageDoName: packageDo,
+        kernel: this.state.exports.KernelBinding({
+          props: {
+            appFrame,
+          },
+        }),
+        package: this.state.exports.PackageBinding({
+          props: {
+            appFrame,
+            packageDoName: packageDo,
+          },
+        }),
+        signal: frame.signal,
+        payload: frame.payload,
+        sourcePid: processId,
+        watch: {
+          id: watch.watchId,
+          ...(watch.key ? { key: watch.key } : {}),
+          ...(watch.state === undefined ? {} : { state: watch.state }),
+          createdAt: watch.createdAt,
+        },
+      } satisfies PackageAppSignalProps,
+    }) as unknown as { run: (signal?: string) => Promise<void> };
+
+    await worker.run(frame.signal);
+  }
+
+  private async invokeProcessSignalWatch(
+    watch: SignalWatchRecord,
+    processId: string,
+    frame: SignalFrame,
+  ): Promise<void> {
+    if (!watch.targetProcessId) {
+      throw new Error(`Process signal watch ${watch.watchId} is missing target process`);
+    }
+
+    await sendFrameToProcess(watch.targetProcessId, {
+      type: "sig",
+      signal: "signal.watch.triggered",
+      payload: {
+        signal: frame.signal,
+        payload: frame.payload,
+        sourcePid: processId,
+        watch: {
+          id: watch.watchId,
+          ...(watch.key ? { key: watch.key } : {}),
+          ...(watch.state === undefined ? {} : { state: watch.state }),
+          createdAt: watch.createdAt,
+        },
+      },
+    });
   }
 
   private async handleSysConnect(

@@ -1974,6 +1974,42 @@ export class GsvTaskEntrypoint extends WorkerEntrypoint {{
     return handler(ctx);
   }}
 }}
+
+export class GsvAppSignalEntrypoint extends WorkerEntrypoint {{
+  async run(signalName) {{
+    const props = this.ctx.props ?? {{}};
+    const app = getAppDefinition();
+    if (!app || typeof app.onSignal !== "function") {{
+      throw new Error("package app has no onSignal handler");
+    }}
+    const resolvedSignalName =
+      typeof signalName === "string" && signalName.length > 0
+        ? signalName
+        : props.signal;
+    if (typeof resolvedSignalName !== "string" || resolvedSignalName.length === 0) {{
+      throw new Error("package signal name is required");
+    }}
+    const ctx = {{
+      ...createBaseContext(this.env, {{
+        packageId: props.appFrame?.packageId ?? props.packageId ?? STATIC_META.packageId,
+        routeBase: props.appFrame?.routeBase ?? props.routeBase ?? STATIC_META.routeBase,
+      }}, props),
+      signal: resolvedSignalName,
+      payload: props.payload,
+      sourcePid: typeof props.sourcePid === "string" ? props.sourcePid : undefined,
+      watch: props.watch && typeof props.watch === "object"
+        ? {{
+            id: typeof props.watch.id === "string" ? props.watch.id : "",
+            key: typeof props.watch.key === "string" ? props.watch.key : undefined,
+            state: props.watch.state,
+            createdAt: typeof props.watch.createdAt === "number" ? props.watch.createdAt : undefined,
+          }}
+        : {{ id: "" }},
+    }};
+    await ensureSetup(ctx);
+    return app.onSignal(ctx);
+  }}
+}}
 "#,
         asset_imports = asset_imports,
         package_name = package_name,

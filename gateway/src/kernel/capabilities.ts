@@ -20,6 +20,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "shell.*",
     "knowledge.*",
     "proc.*",
+    "signal.*",
     "pkg.list",
     "pkg.checkout",
     "pkg.install",

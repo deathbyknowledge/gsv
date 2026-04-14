@@ -154,6 +154,12 @@ import type {
   KnowledgeQueryArgs,
   KnowledgeQueryResult,
 } from "./knowledge";
+import type {
+  SignalWatchArgs,
+  SignalWatchResult,
+  SignalUnwatchArgs,
+  SignalUnwatchResult,
+} from "./signal";
 export type ToolDefinition = {
   name: string;
   description: string;
@@ -253,6 +259,10 @@ export type SyscallDomains = {
   "knowledge.query": { args: KnowledgeQueryArgs; result: KnowledgeQueryResult };
   "knowledge.ingest": { args: KnowledgeIngestArgs; result: KnowledgeIngestResult };
   "knowledge.compile": { args: KnowledgeCompileArgs; result: KnowledgeCompileResult };
+
+  // Durable signal watches
+  "signal.watch": { args: SignalWatchArgs; result: SignalWatchResult };
+  "signal.unwatch": { args: SignalUnwatchArgs; result: SignalUnwatchResult };
 };
 
 export type SyscallName = keyof SyscallDomains;

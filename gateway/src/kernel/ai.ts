@@ -135,7 +135,7 @@ export async function handleAiConfig(
       throw new Error(`Unknown package profile: ${requestedProfile}`);
     }
     profileContextFiles = resolved.packageProfile.contextFiles
-      .filter((file) => file.name.endsWith(".md") && file.text.trim().length > 0)
+      .filter((file) => file.text.trim().length > 0)
       .sort((left, right) => left.name.localeCompare(right.name));
     profileApprovalPolicy = resolved.packageProfile.approvalPolicy ?? null;
   } else {

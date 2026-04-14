@@ -17,6 +17,8 @@ import type { RunRouteStore } from "./run-routes";
 import type { WorkspaceStore } from "./workspaces";
 import type { PackageStore } from "./packages";
 import type { AutomationStore } from "./automation";
+import type { SignalWatchStore } from "./signal-watches";
+import type { AppFrameContext } from "../protocol/app-frame";
 
 export type KernelContext = {
   env: Env;
@@ -30,8 +32,10 @@ export type KernelContext = {
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
   automation: AutomationStore;
+  signalWatches: SignalWatchStore;
   connection: Connection;
   identity?: ConnectionIdentity;
   processId?: string;
+  appFrame?: AppFrameContext;
   serverVersion: string;
 };

@@ -76,6 +76,10 @@ export const KNOWLEDGE_QUERY = "knowledge.query";
 export const KNOWLEDGE_INGEST = "knowledge.ingest";
 export const KNOWLEDGE_COMPILE = "knowledge.compile";
 
+// Durable signal watches
+export const SIGNAL_WATCH = "signal.watch";
+export const SIGNAL_UNWATCH = "signal.unwatch";
+
 // syscall → LLM tool name map (only for syscalls exposed as tools)
 export const SYSCALL_TOOL_NAMES: Record<string, string> = {
   [FS_READ]: "Read",

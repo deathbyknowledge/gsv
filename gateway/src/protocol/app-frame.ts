@@ -22,6 +22,20 @@ export type PackageAppProps = {
   package: PackageStateBinding;
 };
 
+export type PackageAppSignalWatchInfo = {
+  id: string;
+  key?: string;
+  state?: unknown;
+  createdAt?: number;
+};
+
+export type PackageAppSignalProps = PackageAppProps & {
+  signal: string;
+  payload?: unknown;
+  sourcePid?: string | null;
+  watch: PackageAppSignalWatchInfo;
+};
+
 export type KernelBindingProps = {
   appFrame: AppFrameContext;
 };
@@ -34,9 +48,9 @@ export type PackageBindingProps = {
 /**
  * App kernel requests are request/response only.
  *
- * Apps can issue routed syscalls (for example device-targeted fs/shell calls),
- * but they do not receive arbitrary signals. Routed responses are awaited
- * directly through the appRequest RPC path.
+ * Apps can issue routed syscalls (for example device-targeted fs/shell calls).
+ * They can also register durable signal watches; matched signals are handled
+ * by app backend `onSignal(...)` handlers in Worker/DO context.
  */
 export type AppKernelRequestMode = "request-response";
 
