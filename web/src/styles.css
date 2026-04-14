@@ -12,6 +12,10 @@ body,
   height: 100%;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   background: #02050d;
 }

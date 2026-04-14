@@ -278,10 +278,12 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
     if (record.mode === "minimized") {
       record.node.hidden = true;
+      record.node.style.display = "none";
       return;
     }
 
     record.node.hidden = false;
+    record.node.style.display = "flex";
 
     if (record.mode === "maximized") {
       const bounds = workspaceBounds();
