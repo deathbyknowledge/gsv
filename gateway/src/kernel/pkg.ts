@@ -50,7 +50,6 @@ import type {
 import {
   buildBuiltinPackageSeeds,
   defaultPackageInstallScopeForActor,
-  packageDoName,
   packageScopeEquals,
   resolvePackageFromRipgitSource,
   visiblePackageScopesForActor,
@@ -633,13 +632,6 @@ function grantsForManifest(manifest: PackageManifest, scope: PackageInstallScope
   const bindings = manifest.capabilities?.bindings ?? [];
   return {
     bindings: bindings.flatMap<PackageBindingGrant>((binding): PackageBindingGrant[] => {
-      if (binding.binding === "PACKAGE") {
-        return [{
-          binding: "PACKAGE",
-          providerKind: "package-do" as const,
-          providerRef: packageDoName(manifest.name, scope),
-        }];
-      }
       if (binding.binding === "KERNEL") {
         return [{
           binding: "KERNEL",

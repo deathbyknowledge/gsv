@@ -19,9 +19,7 @@ import {
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
-export { PackageState } from "./kernel/package-state";
 export { KernelBinding } from "./kernel/packages";
-export { PackageBinding } from "./kernel/packages";
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
@@ -111,22 +109,14 @@ export default {
         () => packageArtifactToWorkerCode(resolved.artifact, {
           PACKAGE_NAME: resolved.packageName,
           PACKAGE_ID: resolved.packageId,
-          PACKAGE_DO_NAME: resolved.packageDoName,
           PACKAGE_ROUTE_BASE: resolved.routeBase,
         }),
       ).getEntrypoint(undefined, {
         props: {
           appFrame: resolved.appFrame,
-          packageDoName: resolved.packageDoName,
           kernel: ctx.exports.KernelBinding({
             props: {
               appFrame: resolved.appFrame,
-            },
-          }),
-          package: ctx.exports.PackageBinding({
-            props: {
-              appFrame: resolved.appFrame,
-              packageDoName: resolved.packageDoName,
             },
           }),
         } satisfies PackageAppProps,
@@ -186,7 +176,6 @@ type ResolvedPackageRoute = {
   ok: true;
   packageId: string;
   packageName: string;
-  packageDoName: string;
   routeBase: string;
   artifact: PackageArtifact;
   appFrame: AppFrameContext;
@@ -401,7 +390,6 @@ function buildPackageWorkerRequest(request: Request, resolved: ResolvedPackageRo
   headers.set("x-gsv-auth-capabilities", resolved.auth.capabilities.join(","));
   headers.set("x-gsv-package-id", resolved.packageId);
   headers.set("x-gsv-package-name", resolved.packageName);
-  headers.set("x-gsv-package-do", resolved.packageDoName);
 
   return new Request(request, { headers });
 }

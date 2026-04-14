@@ -32,7 +32,6 @@ export default definePackage({
         props: {
           appFrame: { packageId: ctx.meta.packageId, routeBase },
           kernel: ctx.kernel,
-          package: ctx.package,
         },
         env: { PACKAGE_ROUTE_BASE: routeBase },
       });

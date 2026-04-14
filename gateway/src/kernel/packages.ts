@@ -9,7 +9,6 @@ import {
 import type {
   AppFrameContext,
   KernelBindingProps,
-  PackageBindingProps,
 } from "../protocol/app-frame";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
@@ -59,7 +58,6 @@ export type PackageIcon =
 
 export type PackageBindingKind =
   | "kernel"
-  | "package-state"
   | "fs"
   | "service"
   | "custom";
@@ -68,7 +66,6 @@ export type PackageEgressMode = "none" | "inherit" | "allowlist";
 
 export type PackageBindingProviderKind =
   | "kernel-entrypoint"
-  | "package-do"
   | "workspace-fs"
   | "package-fs"
   | "service"
@@ -131,50 +128,9 @@ export interface PackageProfileManifest {
   approvalPolicy?: string;
 }
 
-export type PackageSqlRow = Record<string, unknown>;
-
-export interface PackageSqlExecResult {
-  rowsWritten?: number;
-}
-
-export interface PackageSqlQueryResult {
-  rows: PackageSqlRow[];
-}
-
-type PackageSqlStub = {
-  sqlExec: (statement: string, params?: unknown[]) => Promise<PackageSqlExecResult>;
-  sqlQuery: (statement: string, params?: unknown[]) => Promise<PackageSqlQueryResult>;
-};
-
 type KernelAppStub = {
   appRequest: (context: AppFrameContext, frame: RequestFrame) => Promise<ResponseFrame>;
 };
-
-export class PackageBinding extends WorkerEntrypoint<Env, PackageBindingProps> {
-  private getPackageDoName(): string {
-    const packageDoName = this.ctx.props.packageDoName?.trim();
-    if (!packageDoName) {
-      throw new Error("PackageBinding requires a stable packageDoName");
-    }
-    return packageDoName;
-  }
-
-  private getPackageStub(): PackageSqlStub {
-    const namespace = (this.env as { PACKAGE_DO?: DurableObjectNamespace }).PACKAGE_DO;
-    if (!namespace) {
-      throw new Error("PackageBinding requires env.PACKAGE_DO");
-    }
-    return namespace.getByName(this.getPackageDoName()) as unknown as PackageSqlStub;
-  }
-
-  async sqlExec(statement: string, params: unknown[] = []): Promise<PackageSqlExecResult> {
-    return this.getPackageStub().sqlExec(statement, params);
-  }
-
-  async sqlQuery(statement: string, params: unknown[] = []): Promise<PackageSqlQueryResult> {
-    return this.getPackageStub().sqlQuery(statement, params);
-  }
-}
 
 export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
   private getAppFrame(): AppFrameContext {
@@ -379,11 +335,6 @@ const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
   createBuiltinRipgitPackageSpec("packages", {
     bindings: [
       {
-        binding: "PACKAGE",
-        providerKind: "package-do",
-        providerRef: packageDoName("packages"),
-      },
-      {
         binding: "KERNEL",
         providerKind: "kernel-entrypoint",
         providerRef: "kernel://app/request",
@@ -418,26 +369,6 @@ function createBuiltinRipgitPackageSpec(
     grants,
     enabled: true,
   };
-}
-
-/**
- * Stable Package DO name.
- *
- * This must remain stable across version bumps so package-local SQLite state,
- * alarms, and durable state survive code upgrades.
- */
-export function packageDoName(
-  packageName: string,
-  scope: PackageInstallScope = { kind: "global" },
-): string {
-  switch (scope.kind) {
-    case "global":
-      return `package:${packageName}`;
-    case "user":
-      return `package:${packageName}:user:${scope.uid}`;
-    case "workspace":
-      return `package:${packageName}:workspace:${scope.workspaceId}`;
-  }
 }
 
 type PackageScopeOwner = { uid: number } | null | undefined;
@@ -961,12 +892,6 @@ async function resolvePackageFromRipgitNativeBuild(
       ...(profiles.length > 0 ? { profiles } : {}),
       capabilities: {
         bindings: [
-          {
-            binding: "PACKAGE",
-            kind: "package-state" as const,
-            interfaceName: "gsv.package.v1",
-            required: true,
-          },
           ...(kernelSyscalls.length > 0 ? [{
             binding: "KERNEL",
             kind: "kernel" as const,

@@ -32,14 +32,7 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
       },
       entrypoints: [{ name: "Starfield", kind: "ui" }],
       capabilities: {
-        bindings: [
-          {
-            binding: "PACKAGE",
-            kind: "package-state",
-            interfaceName: "gsv.package.v1",
-            required: true,
-          },
-        ],
+        bindings: [],
         egress: {
           mode: "none",
         },
@@ -47,13 +40,7 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
     },
     artifact: { hash: "hash1", mainModule: "index.js", modules: [] },
     grants: {
-      bindings: [
-        {
-          binding: "PACKAGE",
-          providerKind: "package-do",
-          providerRef: "pkg://ascii-starfield",
-        },
-      ],
+      bindings: [],
       egress: {
         mode: "none",
       },

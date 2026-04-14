@@ -1754,44 +1754,9 @@ function mergeMeta(overrides) {{
   }};
 }}
 
-function createPackageBinding(env, props) {{
-  if (props && props.package) {{
-    return props.package;
-  }}
-  if (!env.PACKAGE_DO || typeof env.PACKAGE_DO.getByName !== "function") {{
-    return undefined;
-  }}
-  const packageDoName =
-    props?.packageDoName ??
-    env.PACKAGE_DO_NAME ??
-    env.GSV_PACKAGE_DO_NAME;
-  if (typeof packageDoName !== "string" || packageDoName.length === 0) {{
-    return undefined;
-  }}
-  const stub = env.PACKAGE_DO.getByName(packageDoName);
-  return {{
-    sqlExec(statement, params = []) {{
-      return stub.sqlExec(statement, params);
-    }},
-    sqlQuery(statement, params = []) {{
-      return stub.sqlQuery(statement, params);
-    }},
-    runTask() {{
-      throw new Error("package task runtime is not wired yet");
-    }},
-    scheduleTask() {{
-      throw new Error("package task scheduler is not wired yet");
-    }},
-    cancelTaskSchedule() {{
-      throw new Error("package task scheduler is not wired yet");
-    }},
-  }};
-}}
-
 function createBaseContext(env, metaOverrides, props) {{
   return {{
     meta: mergeMeta(metaOverrides),
-    package: createPackageBinding(env, props),
     kernel: props?.kernel ?? env.KERNEL,
   }};
 }}

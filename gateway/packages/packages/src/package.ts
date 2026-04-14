@@ -43,9 +43,7 @@ export default definePackage({
             packageId: ctx.meta.packageId,
             routeBase,
           },
-          packageDoName: "package:packages",
           kernel: ctx.kernel,
-          package: ctx.package,
         },
         env: {
           PACKAGE_ROUTE_BASE: routeBase,
