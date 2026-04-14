@@ -133,6 +133,8 @@ import type {
 import type {
   KnowledgeDbInitArgs,
   KnowledgeDbInitResult,
+  KnowledgeDbDeleteArgs,
+  KnowledgeDbDeleteResult,
   KnowledgeDbListArgs,
   KnowledgeDbListResult,
   KnowledgeCompileArgs,
@@ -250,6 +252,7 @@ export type SyscallDomains = {
   // Knowledge substrate (home durable knowledge)
   "knowledge.db.list": { args: KnowledgeDbListArgs; result: KnowledgeDbListResult };
   "knowledge.db.init": { args: KnowledgeDbInitArgs; result: KnowledgeDbInitResult };
+  "knowledge.db.delete": { args: KnowledgeDbDeleteArgs; result: KnowledgeDbDeleteResult };
   "knowledge.list": { args: KnowledgeListArgs; result: KnowledgeListResult };
   "knowledge.read": { args: KnowledgeReadArgs; result: KnowledgeReadResult };
   "knowledge.write": { args: KnowledgeWriteArgs; result: KnowledgeWriteResult };

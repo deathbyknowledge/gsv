@@ -66,6 +66,7 @@ export const ADAPTER_STATUS = "adapter.status";
 // Knowledge substrate (home durable knowledge)
 export const KNOWLEDGE_DB_LIST = "knowledge.db.list";
 export const KNOWLEDGE_DB_INIT = "knowledge.db.init";
+export const KNOWLEDGE_DB_DELETE = "knowledge.db.delete";
 export const KNOWLEDGE_LIST = "knowledge.list";
 export const KNOWLEDGE_READ = "knowledge.read";
 export const KNOWLEDGE_WRITE = "knowledge.write";

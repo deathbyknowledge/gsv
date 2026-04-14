@@ -3,6 +3,7 @@ import type { ExecResult } from "just-bash";
 import { hasCapability } from "../../kernel/capabilities";
 import {
   handleKnowledgeCompile,
+  handleKnowledgeDbDelete,
   handleKnowledgeDbInit,
   handleKnowledgeDbList,
   handleKnowledgeIngest,
@@ -17,6 +18,7 @@ import {
 import type { KernelContext } from "../../kernel/context";
 import type {
   KnowledgeCompileArgs,
+  KnowledgeDbDeleteArgs,
   KnowledgeDbInitArgs,
   KnowledgeIngestArgs,
   KnowledgeListArgs,
@@ -32,6 +34,7 @@ import type {
 type KnowledgeShellOps = {
   dbList: (ctx: KernelContext, args: { limit?: number }) => Promise<{ dbs: Array<{ id: string; title?: string }> }>;
   dbInit: (ctx: KernelContext, args: KnowledgeDbInitArgs) => Promise<{ ok: boolean; id?: string; created?: boolean; error?: string }>;
+  dbDelete: (ctx: KernelContext, args: KnowledgeDbDeleteArgs) => Promise<{ ok: boolean; id?: string; removed?: boolean; error?: string }>;
   list: (ctx: KernelContext, args: KnowledgeListArgs) => Promise<{ entries: Array<{ path: string; kind: "file" | "dir"; title?: string }> }>;
   read: (ctx: KernelContext, args: KnowledgeReadArgs) => Promise<{ exists: boolean; path: string; markdown?: string }>;
   write: (ctx: KernelContext, args: KnowledgeWriteArgs) => Promise<{ ok: boolean; path?: string; created?: boolean; updated?: boolean; error?: string }>;
@@ -46,6 +49,7 @@ type KnowledgeShellOps = {
 const DEFAULT_OPS: KnowledgeShellOps = {
   dbList: handleKnowledgeDbList,
   dbInit: handleKnowledgeDbInit,
+  dbDelete: handleKnowledgeDbDelete,
   list: handleKnowledgeList,
   read: handleKnowledgeRead,
   write: handleKnowledgeWrite,
@@ -103,6 +107,18 @@ export async function runWikiCommand(
           throw new Error(result.error ?? "db init failed");
         }
         return ok(`${result.created ? "initialized" : "already exists"} ${result.id}\n`);
+      }
+      if (dbCommand === "delete" || dbCommand === "rm") {
+        requireCapability(ctx, "knowledge.db.delete");
+        const db = String(dbArgs[0] ?? "").trim();
+        if (!db) {
+          throw new Error("Usage: wiki db delete <db>");
+        }
+        const result = await ops.dbDelete(ctx, { id: db });
+        if (!result.ok) {
+          throw new Error(result.error ?? "db delete failed");
+        }
+        return ok(`${result.removed ? "deleted" : "not found"} ${result.id}\n`);
       }
       throw new Error(`Unknown wiki db subcommand: ${dbCommand}`);
     }
@@ -561,6 +577,7 @@ function wikiHelp(topic?: string): string {
         "Commands:",
         "  wiki db list [--limit N]",
         "  wiki db init <db> [--title TITLE] [--description TEXT]",
+        "  wiki db delete <db>",
         "  wiki list [prefix] [--recursive|-r] [--limit N]",
         "  wiki read <path>",
         "  wiki write <path> --text TEXT",

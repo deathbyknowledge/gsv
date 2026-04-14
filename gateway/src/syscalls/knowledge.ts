@@ -29,6 +29,18 @@ export type KnowledgeDbInitResult =
     }
   | { ok: false; error: string };
 
+export type KnowledgeDbDeleteArgs = {
+  id: string;
+};
+
+export type KnowledgeDbDeleteResult =
+  | {
+      ok: true;
+      id: string;
+      removed: boolean;
+    }
+  | { ok: false; error: string };
+
 export type KnowledgeListArgs = {
   prefix?: string;
   recursive?: boolean;

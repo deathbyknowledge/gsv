@@ -8,6 +8,8 @@ import { homeKnowledgeRepoRef } from "../fs/ripgit/repos";
 import type {
   KnowledgeCompileArgs,
   KnowledgeCompileResult,
+  KnowledgeDbDeleteArgs,
+  KnowledgeDbDeleteResult,
   KnowledgeDbInitArgs,
   KnowledgeDbInitResult,
   KnowledgeDbListArgs,
@@ -566,6 +568,33 @@ export class KnowledgeStore {
     };
   }
 
+  async deleteDb(args: KnowledgeDbDeleteArgs): Promise<KnowledgeDbDeleteResult> {
+    const id = normalizeDbId(args.id);
+    const repoPath = toRepoPath(id);
+    const existing = await this.client.readPath(this.repo, repoPath);
+    if (existing.kind === "missing") {
+      return {
+        ok: true,
+        id,
+        removed: false,
+      };
+    }
+
+    await this.apply(`gsv: delete knowledge db ${id}`, [
+      {
+        type: "delete",
+        path: repoPath,
+        recursive: true,
+      },
+    ]);
+
+    return {
+      ok: true,
+      id,
+      removed: true,
+    };
+  }
+
   private async collectListEntries(
     prefix: string,
     recursive: boolean,
@@ -712,6 +741,13 @@ export async function handleKnowledgeDbInit(
   args: KnowledgeDbInitArgs,
 ): Promise<KnowledgeDbInitResult> {
   return createKnowledgeStore(ctx).initDb(args);
+}
+
+export async function handleKnowledgeDbDelete(
+  ctx: KernelContext,
+  args: KnowledgeDbDeleteArgs,
+): Promise<KnowledgeDbDeleteResult> {
+  return createKnowledgeStore(ctx).deleteDb(args);
 }
 
 export async function handleKnowledgeRead(
