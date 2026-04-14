@@ -1217,11 +1217,13 @@ export class Kernel extends Host<Env> {
       runRoutes: this.runRoutes,
       automation: this.automation,
       signalWatches: this.signalWatches,
+      notifications: this.notifications,
       connection: null as unknown as Connection,
       identity,
       processId: undefined,
       appFrame,
       serverVersion: SERVER_VERSION,
+      broadcastToUid: this.broadcastToUid.bind(this),
     };
   }
 
