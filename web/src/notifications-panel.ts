@@ -19,6 +19,8 @@ type ToastRecord = {
   timeoutId: number;
 };
 
+const DEFAULT_NOTIFICATION_SOUND = "/notification-sounds/27568__suonho__memorymoon_space-blaster-plays.wav";
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -68,6 +70,11 @@ export function createNotificationsPanel(
   const toasts = new Map<string, ToastRecord>();
   const originalParent = panelNode.parentElement;
   const originalNextSibling = panelNode.nextSibling;
+  const resizeObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(() => {
+        positionPanel();
+      })
+    : null;
 
   document.body.appendChild(panelNode);
 
@@ -151,6 +158,12 @@ export function createNotificationsPanel(
         </li>
       `;
     }).join("");
+
+    if (isOpen) {
+      requestAnimationFrame(() => {
+        positionPanel();
+      });
+    }
   };
 
   const upsertNotification = (notification: NotificationRecord): void => {
@@ -172,25 +185,12 @@ export function createNotificationsPanel(
     render();
   };
 
-  const playNotificationSound = (): void => {
+  const playNotificationSound = async (): Promise<void> => {
     try {
-      const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextCtor) {
-        return;
-      }
-      const audio = new AudioContextCtor();
-      const oscillator = audio.createOscillator();
-      const gain = audio.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.value = 880;
-      gain.gain.value = 0.02;
-      oscillator.connect(gain);
-      gain.connect(audio.destination);
-      oscillator.start();
-      oscillator.stop(audio.currentTime + 0.08);
-      oscillator.onended = () => {
-        void audio.close().catch(() => {});
-      };
+      const audio = new Audio(DEFAULT_NOTIFICATION_SOUND);
+      audio.volume = 0.72;
+      audio.preload = "auto";
+      await audio.play();
     } catch {
       // best effort
     }
@@ -329,6 +329,7 @@ export function createNotificationsPanel(
   listNode.addEventListener("click", (event) => {
     void onListClick(event);
   });
+  resizeObserver?.observe(panelNode);
 
   render();
 
@@ -336,6 +337,7 @@ export function createNotificationsPanel(
     destroy: () => {
       unsubscribeStatus();
       unsubscribeSignal();
+      resizeObserver?.disconnect();
       window.removeEventListener("resize", positionPanel);
       toggleNode.removeEventListener("click", onToggleClick);
       document.removeEventListener("click", onDocumentClick);

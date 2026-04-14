@@ -33,6 +33,11 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
   let isOpen = false;
   const originalParent = panelNode.parentElement;
   const originalNextSibling = panelNode.nextSibling;
+  const resizeObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(() => {
+        positionPanel();
+      })
+    : null;
 
   document.body.appendChild(panelNode);
 
@@ -94,6 +99,12 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
     listNode.innerHTML = markup;
     listNode.hidden = false;
     emptyNode.hidden = true;
+
+    if (isOpen) {
+      requestAnimationFrame(() => {
+        positionPanel();
+      });
+    }
   };
 
   const onToggleClick = (): void => {
@@ -155,6 +166,7 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
   document.addEventListener("keydown", onDocumentKeyDown);
   window.addEventListener("resize", positionPanel);
   listNode.addEventListener("click", onListClick);
+  resizeObserver?.observe(panelNode);
 
   const unsubscribe = windowManager.subscribe((summaries) => {
     render(summaries);
@@ -165,6 +177,7 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
   return {
     destroy: () => {
       unsubscribe();
+      resizeObserver?.disconnect();
       window.removeEventListener("resize", positionPanel);
       toggleNode.removeEventListener("click", onToggleClick);
       document.removeEventListener("click", onDocumentClick);
