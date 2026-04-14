@@ -194,6 +194,11 @@ export function createNotificationsPanel(
   };
 
   const onToggleClick = (): void => {
+    console.debug("[notifications-panel] toggle click", {
+      isOpen,
+      hidden: panelNode.hidden,
+      count: notifications.length,
+    });
     setOpen(!isOpen);
   };
 
@@ -218,6 +223,9 @@ export function createNotificationsPanel(
   };
 
   const onListClick = async (event: MouseEvent): Promise<void> => {
+    console.debug("[notifications-panel] list click", {
+      target: event.target instanceof HTMLElement ? event.target.outerHTML.slice(0, 120) : String(event.target),
+    });
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
       return;
@@ -229,6 +237,7 @@ export function createNotificationsPanel(
       const result = await gatewayClient.call<NotificationDismissResult>("notification.dismiss", {
         notificationId,
       });
+      console.debug("[notifications-panel] dismiss", { notificationId, found: Boolean(result.notification) });
       if (result.notification) {
         upsertNotification(result.notification);
       }
@@ -241,6 +250,7 @@ export function createNotificationsPanel(
       const result = await gatewayClient.call<NotificationMarkReadResult>("notification.mark_read", {
         notificationId,
       });
+      console.debug("[notifications-panel] mark read", { notificationId, found: Boolean(result.notification) });
       if (result.notification) {
         upsertNotification(result.notification);
       }
@@ -257,6 +267,9 @@ export function createNotificationsPanel(
   });
 
   const unsubscribeSignal = gatewayClient.onSignal((signal, payload) => {
+    if (signal.startsWith("notification.")) {
+      console.debug("[notifications-panel] signal", { signal, payload });
+    }
     if (signal === "notification.created") {
       const notification = extractNotification(payload);
       if (notification) {

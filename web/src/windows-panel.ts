@@ -60,6 +60,7 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
   };
 
   const onToggleClick = (): void => {
+    console.debug("[windows-panel] toggle click", { isOpen, hidden: panelNode.hidden });
     setOpen(!isOpen);
   };
 
@@ -89,6 +90,9 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
   };
 
   const onListClick = (event: MouseEvent): void => {
+    console.debug("[windows-panel] list click", {
+      target: event.target instanceof HTMLElement ? event.target.outerHTML.slice(0, 120) : String(event.target),
+    });
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
       return;
@@ -105,6 +109,7 @@ export function createWindowsPanel(options: WindowsPanelOptions): WindowsPanelCo
     }
 
     windowManager.restoreWindow(windowId);
+    console.debug("[windows-panel] restore window", { windowId });
     setOpen(false);
   };
 
