@@ -69,6 +69,7 @@ pub struct ExtractedTaskDefinition {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtractedAppDefinition {
     pub handler: Option<ExtractedHandlerReference>,
+    pub signal_handler: Option<ExtractedHandlerReference>,
     pub browser_entry: Option<String>,
     pub assets: Vec<String>,
 }
@@ -782,6 +783,7 @@ fn extract_app_definition(
     };
 
     let mut handler = None;
+    let mut signal_handler = None;
     let mut browser_entry = None;
     let mut assets = Vec::new();
     for property in object.properties.iter() {
@@ -797,6 +799,10 @@ fn extract_app_definition(
         match key.as_str() {
             "fetch" => {
                 handler = extract_handler_reference(&prop.value, local_identifiers, source_text, diagnostics)
+            }
+            "onSignal" => {
+                signal_handler =
+                    extract_handler_reference(&prop.value, local_identifiers, source_text, diagnostics)
             }
             "browser" => {
                 browser_entry = extract_browser_entry(&prop.value, source_text, diagnostics);
@@ -827,11 +833,11 @@ fn extract_app_definition(
         }
     }
 
-    if handler.is_none() && browser_entry.is_none() {
+    if handler.is_none() && browser_entry.is_none() && signal_handler.is_none() {
         diagnostics.push(simple_diagnostic(
             PackageDiagnosticSeverity::Error,
             "empty-app-definition",
-            "app must declare fetch and/or browser.entry".to_string(),
+            "app must declare fetch, onSignal, and/or browser.entry".to_string(),
             "src/package.ts",
             Some(expr.span()),
             source_text,
@@ -841,6 +847,7 @@ fn extract_app_definition(
 
     Some(ExtractedAppDefinition {
         handler,
+        signal_handler,
         browser_entry,
         assets,
     })
