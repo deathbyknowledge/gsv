@@ -26,6 +26,7 @@ import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes
 import { WorkspaceStore } from "./workspaces";
 import { AutomationStore, type AutomationJobRecord } from "./automation";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
+import { NotificationStore } from "./notifications";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -151,15 +152,14 @@ export class Kernel extends Host<Env> {
   private readonly runRoutes: RunRouteStore;
   private readonly automation: AutomationStore;
   private readonly signalWatches: SignalWatchStore;
+  private readonly notifications: NotificationStore;
   private readonly packages: PackageStore;
   private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
-  private readonly state: DurableObjectState;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.state = ctx;
     const sql = ctx.storage.sql;
 
     this.auth = new AuthStore(sql);
@@ -196,6 +196,9 @@ export class Kernel extends Host<Env> {
 
     this.signalWatches = new SignalWatchStore(sql);
     this.signalWatches.init();
+
+    this.notifications = new NotificationStore(sql);
+    this.notifications.init();
 
     this.packages = new PackageStore(sql);
     this.packages.init();
@@ -1128,11 +1131,13 @@ export class Kernel extends Host<Env> {
       runRoutes: this.runRoutes,
       automation: this.automation,
       signalWatches: this.signalWatches,
+      notifications: this.notifications,
       connection: null as unknown as Connection,
       identity: connIdentity,
       processId,
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
+      broadcastToUid: this.broadcastToUid.bind(this),
     };
 
     const origin: RouteOrigin = { type: "process", id: processId };
@@ -1188,11 +1193,13 @@ export class Kernel extends Host<Env> {
       runRoutes: this.runRoutes,
       automation: this.automation,
       signalWatches: this.signalWatches,
+      notifications: this.notifications,
       connection,
       identity: state.identity as ConnectionIdentity,
       processId: undefined,
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
+      broadcastToUid: this.broadcastToUid.bind(this),
     };
   }
 
@@ -1550,7 +1557,7 @@ export class Kernel extends Host<Env> {
     ).getEntrypoint("GsvAppSignalEntrypoint", {
       props: {
         appFrame,
-        kernel: this.state.exports.KernelBinding({
+        kernel: this.ctx.exports.KernelBinding({
           props: {
             appFrame,
           },

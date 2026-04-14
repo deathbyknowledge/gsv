@@ -183,6 +183,7 @@ describe("CapabilityStore", () => {
       "adapter.status",
       "fs.*",
       "knowledge.*",
+      "notification.*",
       "pkg.checkout",
       "pkg.install",
       "pkg.list",

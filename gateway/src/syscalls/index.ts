@@ -162,6 +162,16 @@ import type {
   SignalUnwatchArgs,
   SignalUnwatchResult,
 } from "./signal";
+import type {
+  NotificationCreateArgs,
+  NotificationCreateResult,
+  NotificationDismissArgs,
+  NotificationDismissResult,
+  NotificationListArgs,
+  NotificationListResult,
+  NotificationMarkReadArgs,
+  NotificationMarkReadResult,
+} from "./notification";
 export type ToolDefinition = {
   name: string;
   description: string;
@@ -263,6 +273,12 @@ export type SyscallDomains = {
   "knowledge.ingest": { args: KnowledgeIngestArgs; result: KnowledgeIngestResult };
   "knowledge.compile": { args: KnowledgeCompileArgs; result: KnowledgeCompileResult };
 
+  // Notifications
+  "notification.create": { args: NotificationCreateArgs; result: NotificationCreateResult };
+  "notification.list": { args: NotificationListArgs; result: NotificationListResult };
+  "notification.mark_read": { args: NotificationMarkReadArgs; result: NotificationMarkReadResult };
+  "notification.dismiss": { args: NotificationDismissArgs; result: NotificationDismissResult };
+
   // Durable signal watches
   "signal.watch": { args: SignalWatchArgs; result: SignalWatchResult };
   "signal.unwatch": { args: SignalUnwatchArgs; result: SignalUnwatchResult };
@@ -280,6 +296,7 @@ export type SyscallDomain =
   | "sys"
   | "ai"
   | "sched"
+  | "notification"
   | "adapter";
 
 export function domainOf(syscall: SyscallName): SyscallDomain {
