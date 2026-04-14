@@ -47,7 +47,6 @@ import {
   PackageStore,
   type PackageEntrypoint,
   packageArtifactToWorkerCode,
-  packageDoName,
   packageRouteBase,
   type PackageArtifact,
   packageWorkerKey,
@@ -88,7 +87,6 @@ type ResolvePackageHttpResult =
       ok: true;
       packageId: string;
       packageName: string;
-      packageDoName: string;
       routeBase: string;
       artifact: PackageArtifact;
       appFrame: AppFrameContext;
@@ -403,7 +401,6 @@ export class Kernel extends Host<Env> {
       ok: true,
       packageId: record.packageId,
       packageName: record.manifest.name,
-      packageDoName: packageDoName(record.manifest.name, record.scope),
       routeBase,
       artifact: record.artifact,
       appFrame: {
@@ -1538,7 +1535,6 @@ export class Kernel extends Host<Env> {
       expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
     };
 
-    const packageDo = packageDoName(record.manifest.name, record.scope);
     const packageKey = packageWorkerKey({
       manifest: { name: record.manifest.name },
       artifact: record.artifact,
@@ -1549,22 +1545,14 @@ export class Kernel extends Host<Env> {
       () => packageArtifactToWorkerCode(record.artifact, {
         PACKAGE_NAME: record.manifest.name,
         PACKAGE_ID: record.packageId,
-        PACKAGE_DO_NAME: packageDo,
         PACKAGE_ROUTE_BASE: watch.routeBase,
       }),
     ).getEntrypoint("GsvAppSignalEntrypoint", {
       props: {
         appFrame,
-        packageDoName: packageDo,
         kernel: this.state.exports.KernelBinding({
           props: {
             appFrame,
-          },
-        }),
-        package: this.state.exports.PackageBinding({
-          props: {
-            appFrame,
-            packageDoName: packageDo,
           },
         }),
         signal: frame.signal,

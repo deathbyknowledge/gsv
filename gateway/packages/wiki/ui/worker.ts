@@ -390,37 +390,6 @@ function renderToc(headings) {
   return `<ol class="toc-list">${headings.map((heading) => `<li class="level-${heading.level}"><a href="#${escapeHtml(heading.id)}">${escapeHtml(heading.text)}</a></li>`).join("")}</ol>`;
 }
 
-function renderRecentBuilds(builds, routeBase) {
-  if (!Array.isArray(builds) || builds.length === 0) {
-    return '<p class="muted">No background wiki builds yet.</p>';
-  }
-  return `<ul class="result-list">${builds.map((build) => {
-    const title = build.dbTitle || build.dbId;
-    const href = build.dbId ? buildEntryHref(routeBase, build.dbId, `${build.dbId}/index.md`) : "#";
-    const status = build.status === "completed"
-      ? "Completed"
-      : build.status === "failed"
-        ? "Failed"
-        : "Running";
-    const counts = [];
-    if (typeof build.pagesCount === "number") {
-      counts.push(`${build.pagesCount} page${build.pagesCount === 1 ? "" : "s"}`);
-    }
-    if (typeof build.inboxCount === "number") {
-      counts.push(`${build.inboxCount} inbox`);
-    }
-    const source = `${build.sourceTarget}:${build.sourcePath}`;
-    const when = build.completedAt || build.startedAt;
-    return `<li>
-      <div><a href="${escapeHtml(href)}">${escapeHtml(title)}</a></div>
-      <div class="nav-meta">${escapeHtml(status)}${when ? ` · ${escapeHtml(new Date(when).toLocaleString())}` : ""}</div>
-      <div class="nav-meta">${escapeHtml(source)}</div>
-      ${counts.length > 0 ? `<div>${escapeHtml(counts.join(" · "))}</div>` : ""}
-      ${build.error ? `<div>${escapeHtml(build.error)}</div>` : ""}
-    </li>`;
-  }).join("")}</ul>`;
-}
-
 function renderPage(args) {
   const {
     routeBase,
@@ -448,7 +417,6 @@ function renderPage(args) {
     buildSourcePath,
     buildDbId,
     buildDbTitle,
-    recentBuilds,
   } = args;
 
   const articleMarkdown = selectedNote?.markdown ?? draftMarkdown ?? "";
@@ -834,10 +802,6 @@ function renderPage(args) {
         <section class="panel">
           <h3>Inbox</h3>
           ${selectedDb ? renderEntryList(inbox, selectedPath, routeBase, selectedDb, "No staged inbox notes.") : '<p class="muted">Select a database to browse inbox notes.</p>'}
-        </section>
-        <section class="panel">
-          <h3>Recent builds</h3>
-          ${renderRecentBuilds(recentBuilds, routeBase)}
         </section>
       </aside>
       <section class="article-wrap">
@@ -1321,8 +1285,7 @@ export async function handleFetch(request, context = {}) {
   const env = context.env ?? {};
   const appFrame = props.appFrame;
   const kernel = props.kernel;
-  const packageState = props.package;
-  if (!appFrame || !kernel || !packageState) {
+  if (!appFrame || !kernel) {
     return new Response("App frame missing", { status: 500 });
   }
 
@@ -1571,48 +1534,6 @@ export async function handleFetch(request, context = {}) {
           throw new Error(spawn?.error || "Failed to start wiki builder");
         }
 
-        const watchKey = `wiki-build:${spawn.pid}`;
-        const watch = await kernel.request("signal.watch", {
-          signal: "chat.complete",
-          processId: spawn.pid,
-          key: watchKey,
-          state: {
-            db: buildDbId,
-            dbTitle: buildDbTitle,
-            sourceTarget: buildTarget,
-            sourcePath: buildSourcePath,
-          },
-          once: true,
-          ttlMs: 7 * 24 * 60 * 60 * 1000,
-        });
-
-        await packageState.sqlExec(
-          `insert into wiki_builds (
-            pid, db_id, db_title, source_target, source_path, status, watch_id, started_at
-          ) values (?, ?, ?, ?, ?, 'running', ?, ?)
-          on conflict(pid) do update set
-            db_id = excluded.db_id,
-            db_title = excluded.db_title,
-            source_target = excluded.source_target,
-            source_path = excluded.source_path,
-            status = 'running',
-            watch_id = excluded.watch_id,
-            error = null,
-            pages_count = null,
-            inbox_count = null,
-            started_at = excluded.started_at,
-            completed_at = null`,
-          [
-            spawn.pid,
-            buildDbId,
-            buildDbTitle || null,
-            buildTarget,
-            buildSourcePath,
-            watch.watchId,
-            Date.now(),
-          ],
-        );
-
         const prompt = [
           "Build a knowledge wiki from a directory.",
           `Source target: ${buildTarget}`,
@@ -1637,17 +1558,13 @@ export async function handleFetch(request, context = {}) {
           message: prompt,
         });
         if (!send?.ok) {
-          await packageState.sqlExec(
-            "update wiki_builds set status = 'failed', error = ?, completed_at = ? where pid = ?",
-            [send?.error || "Failed to deliver builder prompt", Date.now(), spawn.pid],
-          );
           throw new Error(send?.error || "Failed to deliver builder prompt");
         }
 
         selectedDb = buildDbId;
         selectedPath = `${buildDbId}/index.md`;
         draftPath = selectedPath;
-        statusText = `Started background wiki build for ${buildDbId}`;
+        statusText = `Started background wiki build for ${buildDbId}. Background completion tracking is intentionally disabled until app storage/notifications are rebuilt on Durable Object Facets.`;
       }
     } catch (error) {
       errorText = error instanceof Error ? error.message : String(error);
@@ -1660,42 +1577,6 @@ export async function handleFetch(request, context = {}) {
   let selectedNote = null;
   let searchMatches = null;
   let queryResult = null;
-  let recentBuilds = [];
-
-  try {
-    const rows = await packageState.sqlQuery(`
-      select
-        pid,
-        db_id as dbId,
-        db_title as dbTitle,
-        source_target as sourceTarget,
-        source_path as sourcePath,
-        status,
-        pages_count as pagesCount,
-        inbox_count as inboxCount,
-        error,
-        started_at as startedAt,
-        completed_at as completedAt
-      from wiki_builds
-      order by started_at desc
-      limit 12
-    `);
-    recentBuilds = Array.isArray(rows) ? rows.map((row) => ({
-      pid: String(row.pid ?? ""),
-      dbId: String(row.dbId ?? ""),
-      dbTitle: typeof row.dbTitle === "string" ? row.dbTitle : "",
-      sourceTarget: String(row.sourceTarget ?? ""),
-      sourcePath: String(row.sourcePath ?? ""),
-      status: String(row.status ?? "running"),
-      pagesCount: typeof row.pagesCount === "number" ? row.pagesCount : null,
-      inboxCount: typeof row.inboxCount === "number" ? row.inboxCount : null,
-      error: typeof row.error === "string" ? row.error : "",
-      startedAt: typeof row.startedAt === "number" ? row.startedAt : 0,
-      completedAt: typeof row.completedAt === "number" ? row.completedAt : null,
-    })) : [];
-  } catch (error) {
-    errorText = errorText || (error instanceof Error ? error.message : String(error));
-  }
 
   try {
     const listResult = await kernel.request("knowledge.db.list", { limit: 200 });
@@ -1811,7 +1692,6 @@ export async function handleFetch(request, context = {}) {
     buildSourcePath,
     buildDbId,
     buildDbTitle,
-    recentBuilds,
   }), {
     headers: {
       "content-type": "text/html; charset=utf-8",

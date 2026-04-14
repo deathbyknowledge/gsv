@@ -17,9 +17,7 @@ export type AppFrameContext = {
 
 export type PackageAppProps = {
   appFrame: AppFrameContext;
-  packageDoName: string;
   kernel: AppKernelBinding;
-  package: PackageStateBinding;
 };
 
 export type PackageAppSignalWatchInfo = {
@@ -40,11 +38,6 @@ export type KernelBindingProps = {
   appFrame: AppFrameContext;
 };
 
-export type PackageBindingProps = {
-  appFrame: AppFrameContext;
-  packageDoName: string;
-};
-
 /**
  * App kernel requests are request/response only.
  *
@@ -56,11 +49,6 @@ export type AppKernelRequestMode = "request-response";
 
 export type AppKernelBinding = {
   request: <S extends SyscallName>(call: S, args: ArgsOf<S>) => Promise<ResultOf<S>>;
-};
-
-export type PackageStateBinding = {
-  sqlExec: (statement: string, params?: unknown[]) => Promise<{ rowsWritten?: number }>;
-  sqlQuery: (statement: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
 };
 
 export const DEFAULT_APP_FRAME_TTL_MS = 5 * 60 * 1000;

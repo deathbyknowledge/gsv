@@ -28,23 +28,64 @@ export type TaskScheduleOptions = {
   key?: string;
 };
 
+/**
+ * TODO(app-storage): We are intentionally not exposing package/app-private
+ * durable storage through the package SDK yet.
+ *
+ * The short-lived `PACKAGE_DO` stopgap was removed because it papered over the
+ * real design problem instead of solving it. The correct long-term model is a
+ * stateful app runtime built on Cloudflare Dynamic Workers + Durable Object
+ * Facets, scoped by `user/package`.
+ *
+ * Expected future shape:
+ *
+ * ```ts
+ * // One supervisor Durable Object per { uid, packageId } app instance.
+ * // The supervisor owns routing, auth, watches, notifications, and lifecycle.
+ * // It dynamically loads the package worker and instantiates an app facet.
+ *
+ * export class AppRunner extends DurableObject {
+ *   async fetch(request: Request) {
+ *     const facet = this.ctx.facets.get("app", async () => {
+ *       const worker = this.env.LOADER.get(this.#codeHash(), () => this.#artifact());
+ *       return { class: worker.getDurableObjectClass("App") };
+ *     });
+ *     return facet.fetch(request);
+ *   }
+ * }
+ *
+ * // The app facet gets its own isolated SQLite-backed storage while sharing
+ * // lifecycle supervision with the parent AppRunner.
+ * export class App extends DurableObject {
+ *   async fetch(request: Request) {
+ *     // app-local durable state here
+ *   }
+ * }
+ * ```
+ *
+ * In GSV terms that means:
+ * - scope: one durable app state container per `user/package`
+ * - supervisor DO responsibilities:
+ *   - auth and routing
+ *   - package artifact loading/versioning
+ *   - durable signal watches and process lifecycle integration
+ *   - notifications and background completion hooks
+ *   - observability / limits / future billing
+ * - facet responsibilities:
+ *   - app-private durable state
+ *   - app fetch/RPC logic
+ * - package code should remain ignorant of platform wiring details
+ *
+ * Until that exists, app code should treat itself as stateless and rely only on:
+ * - `ctx.kernel.request(...)` for kernel-facing operations
+ * - live browser state
+ * - explicit files/knowledge/workspace state where appropriate
+ */
 export type PackageBaseContext = {
   meta: {
     packageName: string;
     packageId: string;
     routeBase: string | null;
-  };
-  package: {
-    sqlExec(statement: string, params?: unknown[]): Promise<void>;
-    sqlQuery<T = Record<string, unknown>>(statement: string, params?: unknown[]): Promise<T[]>;
-    runTask(name: string, payload?: unknown): Promise<void>;
-    scheduleTask(
-      name: string,
-      spec: TaskScheduleSpec,
-      payload?: unknown,
-      options?: TaskScheduleOptions,
-    ): Promise<void>;
-    cancelTaskSchedule(name: string, options?: TaskScheduleOptions): Promise<void>;
   };
   kernel: {
     request<T = unknown>(call: string, args?: unknown): Promise<T>;
