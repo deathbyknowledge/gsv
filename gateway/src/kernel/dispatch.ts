@@ -75,6 +75,7 @@ import {
 } from "./adapter-handlers";
 import {
   handleKnowledgeCompile,
+  handleKnowledgeDbDelete,
   handleKnowledgeDbInit,
   handleKnowledgeDbList,
   handleKnowledgeIngest,
@@ -336,6 +337,9 @@ async function dispatchNative(
         break;
       case "knowledge.db.init":
         data = await handleKnowledgeDbInit(ctx, frame.args);
+        break;
+      case "knowledge.db.delete":
+        data = await handleKnowledgeDbDelete(ctx, frame.args);
         break;
       case "knowledge.read":
         data = await handleKnowledgeRead(ctx, frame.args);
