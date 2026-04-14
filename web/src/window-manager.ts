@@ -408,6 +408,11 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       return;
     }
 
+    console.debug("[window-manager] stop resize", {
+      windowId: resizeState.windowId,
+      pointerId: resizeState.pointerId,
+    });
+
     const record = windows.get(resizeState.windowId);
     if (record && resizeState.handleNode.hasPointerCapture(resizeState.pointerId)) {
       resizeState.handleNode.releasePointerCapture(resizeState.pointerId);
@@ -424,6 +429,12 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     if (!dragState) {
       return;
     }
+
+    console.debug("[window-manager] stop drag", {
+      windowId: dragState.windowId,
+      pointerId: dragState.pointerId,
+      snapTarget: dragState.snapTarget,
+    });
 
     const record = windows.get(dragState.windowId);
     if (record && record.dragHandleNode.hasPointerCapture(dragState.pointerId)) {
@@ -620,6 +631,12 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       return;
     }
 
+    console.debug("[window-manager] focus", {
+      windowId,
+      appId: record.app.id,
+      mode: record.mode,
+    });
+
     activeWindowId = windowId;
     record.zIndex = ++zCounter;
     repaintAll();
@@ -631,6 +648,12 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     if (!record) {
       return;
     }
+
+    console.debug("[window-manager] close", {
+      windowId,
+      appId: record.app.id,
+      mode: record.mode,
+    });
 
     if (dragState?.windowId === windowId) {
       stopDragging();
@@ -664,6 +687,12 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       return;
     }
 
+    console.debug("[window-manager] maximize toggle", {
+      windowId,
+      appId: record.app.id,
+      mode: record.mode,
+    });
+
     if (record.mode === "maximized") {
       record.mode = "normal";
       record.x = record.restoreX;
@@ -689,6 +718,14 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       return;
     }
 
+    console.debug("[window-manager] minimize", {
+      windowId,
+      appId: record.app.id,
+      activeWindowId,
+      dragStateWindowId: dragState?.windowId ?? null,
+      resizeStateWindowId: resizeState?.windowId ?? null,
+    });
+
     record.lastVisibleMode = record.mode === "maximized" ? "maximized" : "normal";
     record.mode = "minimized";
     suspendRuntime(record);
@@ -708,6 +745,12 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     if (!record || record.mode !== "minimized") {
       return;
     }
+
+    console.debug("[window-manager] restore", {
+      windowId,
+      appId: record.app.id,
+      lastVisibleMode: record.lastVisibleMode,
+    });
 
     record.mode = record.lastVisibleMode;
     resumeRuntime(record);
@@ -744,6 +787,12 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const onWindowAction = (windowId: string, action: string): void => {
+    console.debug("[window-manager] action", {
+      windowId,
+      action,
+      dragStateWindowId: dragState?.windowId ?? null,
+      resizeStateWindowId: resizeState?.windowId ?? null,
+    });
     if (dragState?.windowId === windowId) {
       stopDragging();
     }
@@ -825,6 +874,10 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
       const actionNode = target.closest<HTMLElement>("[data-window-action]");
       if (actionNode) {
+        console.debug("[window-manager] action click", {
+          windowId: record.windowId,
+          action: actionNode.dataset.windowAction ?? null,
+        });
         event.stopPropagation();
         const action = actionNode.dataset.windowAction;
         if (action) {
@@ -856,6 +909,12 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       if (!actionNode) {
         return;
       }
+      console.debug("[window-manager] action pointerdown", {
+        windowId: record.windowId,
+        action: actionNode.dataset.windowAction ?? null,
+        button: event.button,
+        pointerId: event.pointerId,
+      });
       event.preventDefault();
       event.stopPropagation();
       if (dragState?.windowId === record.windowId) {
@@ -878,9 +937,19 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
       const target = event.target;
       if (target instanceof HTMLElement && target.closest(".window-controls")) {
+        console.debug("[window-manager] drag prevented on controls", {
+          windowId: record.windowId,
+          pointerId: event.pointerId,
+        });
         return;
       }
 
+      console.debug("[window-manager] drag start", {
+        windowId: record.windowId,
+        pointerId: event.pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
       event.preventDefault();
       focusWindow(record.windowId);
 
@@ -1121,6 +1190,11 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const onPointerUp = (event: PointerEvent): void => {
+    console.debug("[window-manager] pointerup", {
+      pointerId: event.pointerId,
+      dragStateWindowId: dragState?.windowId ?? null,
+      resizeStateWindowId: resizeState?.windowId ?? null,
+    });
     if (resizeState && resizeState.pointerId === event.pointerId) {
       stopResizing();
       emit();
