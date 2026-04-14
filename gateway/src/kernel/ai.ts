@@ -18,8 +18,16 @@ import type {
   AiConfigArgs,
   AiConfigResult,
 } from "../syscalls/ai";
+import {
+  isPackageAiContextProfile,
+  isSystemAiContextProfile,
+} from "../syscalls/ai";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
+import {
+  resolvePackageProfileReference,
+  visiblePackageScopesForActor,
+} from "./packages";
 
 import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
@@ -84,7 +92,7 @@ export async function handleAiConfig(
 ): Promise<AiConfigResult> {
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
-  const profile = args.profile ?? "task";
+  const requestedProfile = args.profile ?? "task";
 
   const provider =
     config.get(`users/${uid}/ai/provider`) ??
@@ -113,15 +121,38 @@ export async function handleAiConfig(
     10,
   );
 
-  const profileContextPrefix = `config/ai/profile/${profile}/context.d`;
-  const profileContextFiles = config
-    .list(profileContextPrefix)
-    .map(({ key, value }) => ({
-      name: key.slice(`${profileContextPrefix}/`.length),
-      text: value,
-    }))
-    .filter((file) => file.name.endsWith(".md") && file.text.trim().length > 0)
-    .sort((left, right) => left.name.localeCompare(right.name));
+  let profile = requestedProfile;
+  let profileContextFiles: Array<{ name: string; text: string }> = [];
+  let profileApprovalPolicy: string | null = null;
+
+  if (isPackageAiContextProfile(requestedProfile)) {
+    const resolved = resolvePackageProfileReference(
+      requestedProfile,
+      ctx.packages,
+      visiblePackageScopesForActor(ctx.identity?.process),
+    );
+    if (!resolved) {
+      throw new Error(`Unknown package profile: ${requestedProfile}`);
+    }
+    profileContextFiles = resolved.packageProfile.contextFiles
+      .filter((file) => file.name.endsWith(".md") && file.text.trim().length > 0)
+      .sort((left, right) => left.name.localeCompare(right.name));
+    profileApprovalPolicy = resolved.packageProfile.approvalPolicy ?? null;
+  } else {
+    profile = isSystemAiContextProfile(requestedProfile) ? requestedProfile : "task";
+    const profileContextPrefix = `config/ai/profile/${profile}/context.d`;
+    profileContextFiles = config
+      .list(profileContextPrefix)
+      .map(({ key, value }) => ({
+        name: key.slice(`${profileContextPrefix}/`.length),
+        text: value,
+      }))
+      .filter((file) => file.name.endsWith(".md") && file.text.trim().length > 0)
+      .sort((left, right) => left.name.localeCompare(right.name));
+    profileApprovalPolicy =
+      config.get(`config/ai/profile/${profile}/tools/approval`) ??
+      null;
+  }
 
   const maxContextBytes = parseInt(
     config.get(`users/${uid}/ai/max_context_bytes`) ??
@@ -138,6 +169,7 @@ export async function handleAiConfig(
     reasoning,
     maxTokens,
     profileContextFiles,
+    profileApprovalPolicy,
     maxContextBytes,
   };
 }

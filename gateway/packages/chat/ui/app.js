@@ -704,7 +704,9 @@ function createEmbeddedHostClient(port) {
 const elements = {
   threadList: document.getElementById("thread-list"),
   threadStatus: document.getElementById("thread-status"),
+  openHome: document.getElementById("open-home"),
   newThread: document.getElementById("new-thread"),
+  newThreadProfile: document.getElementById("new-thread-profile"),
   refreshThreads: document.getElementById("refresh-threads"),
   activeThreadTitle: document.getElementById("active-thread-title"),
   activeThreadMeta: document.getElementById("active-thread-meta"),
@@ -724,6 +726,8 @@ const elements = {
 let client = null;
 let activeThreadContext = getActiveThreadContext();
 let recentThreads = [];
+let availableProfiles = fallbackProfiles();
+let draftProfileId = "task";
 let logRows = [];
 let threadsLoading = false;
 let threadsError = "";
@@ -737,6 +741,64 @@ let abortBusy = false;
 let suppressNextAbortedComplete = false;
 let pendingHilRequest = null;
 let hilBusy = false;
+
+function fallbackProfiles() {
+  return [
+    { id: "init", displayName: "Home", description: "The persistent home conversation for the user.", kind: "system", interactive: true, startable: true, background: false, spawnMode: "singleton" },
+    { id: "task", displayName: "Task", description: "A focused conversation for new work.", kind: "system", interactive: true, startable: true, background: false, spawnMode: "new" },
+    { id: "review", displayName: "Review", description: "A skeptical review conversation.", kind: "system", interactive: true, startable: true, background: false, spawnMode: "new" },
+    { id: "mcp", displayName: "Master Control", description: "Operational diagnostics and control-plane work.", kind: "system", interactive: true, startable: true, background: false, spawnMode: "new" },
+  ];
+}
+
+function listConversationProfiles() {
+  return availableProfiles.filter((profile) => profile && profile.interactive === true && profile.startable === true);
+}
+
+function listNewConversationProfiles() {
+  return listConversationProfiles().filter((profile) => profile.spawnMode === "new");
+}
+
+function profileById(profileId) {
+  return listConversationProfiles().find((profile) => profile.id === profileId || profile.alias === profileId) || null;
+}
+
+function draftProfile() {
+  return profileById(draftProfileId) || listNewConversationProfiles()[0] || profileById("task") || fallbackProfiles()[1];
+}
+
+function ensureDraftProfile() {
+  const current = draftProfile();
+  draftProfileId = current?.id || "task";
+}
+
+function draftConversationTitle() {
+  const profile = draftProfile();
+  if (!profile || profile.id === "task") {
+    return "New conversation";
+  }
+  return "New " + profile.displayName;
+}
+
+function draftConversationMeta() {
+  const profile = draftProfile();
+  if (!profile || profile.id === "task") {
+    return "Send a message to start a task conversation, or open Home.";
+  }
+  return "Send a message to start " + profile.displayName.toLowerCase() + ".";
+}
+
+function renderProfilePicker() {
+  if (!elements.newThreadProfile) {
+    return;
+  }
+  const profiles = listNewConversationProfiles();
+  ensureDraftProfile();
+  elements.newThreadProfile.innerHTML = profiles.map((profile) =>
+    '<option value="' + escapeHtmlClient(profile.id) + '"' + (profile.id === draftProfileId ? " selected" : "") + ">" + escapeHtmlClient(profile.displayName) + "</option>"
+  ).join("");
+  elements.newThreadProfile.disabled = profiles.length === 0;
+}
 
 function getActivePid() {
   return activeThreadContext?.pid || null;
@@ -1024,6 +1086,9 @@ function activeThreadEntry() {
 }
 
 function activeThreadTitle() {
+  if (activeThreadContext?.pid && activeThreadContext.pid.startsWith("init:")) {
+    return "Home";
+  }
   const entry = activeThreadEntry();
   const label = typeof entry?.label === "string" ? entry.label.trim() : "";
   return label || "Conversation";
@@ -1101,7 +1166,12 @@ function renderThreads() {
     elements.threadStatus.textContent = "";
   }
   const activeWorkspaceId = activeThreadContext?.workspaceId || null;
-  elements.threadList.innerHTML = recentThreads.map((entry) => {
+  const activePid = getActivePid();
+  const homeButton = '<button type="button" class="thread-card' + (activePid && activePid.startsWith("init:") ? ' is-active' : '') + '" data-profile-id="init">' +
+    '<span class="thread-title">Home</span>' +
+    '<span class="thread-meta">' + escapeHtmlClient(currentUsername ? ("Persistent conversation for " + currentUsername) : "Persistent home conversation") + '</span>' +
+  '</button>';
+  elements.threadList.innerHTML = homeButton + recentThreads.map((entry) => {
     const isActive = activeWorkspaceId && entry.workspaceId === activeWorkspaceId;
     const state = entry.activeProcess ? "Live" : "Stored";
     const helpers = entry.processCount > 1 ? " · " + entry.processCount + " agents" : "";
@@ -1135,20 +1205,24 @@ function renderStatus() {
     } else if (pendingAssistantState) {
       elements.composeStatus.textContent = "Run active. Send to queue another message or stop it.";
     } else if (activeThreadContext) {
-      elements.composeStatus.textContent = "Attached to active thread.";
+      elements.composeStatus.textContent = activeThreadContext.pid && activeThreadContext.pid.startsWith("init:")
+        ? "Attached to Home."
+        : "Attached to active thread.";
     } else {
-      elements.composeStatus.textContent = status.state === "connected" ? "Send a message to start a new thread." : (status.message || "Waiting for desktop host.");
+      elements.composeStatus.textContent = status.state === "connected" ? draftConversationMeta() : (status.message || "Waiting for desktop host.");
     }
   }
   if (elements.activeThreadTitle) {
     elements.activeThreadTitle.textContent = activeThreadContext
       ? activeThreadTitle()
-      : "New conversation";
+      : draftConversationTitle();
   }
   if (elements.activeThreadMeta) {
     elements.activeThreadMeta.textContent = activeThreadContext
-      ? activeThreadContext.cwd
-      : "Send a message to start a thread or reopen one from the left.";
+      ? (activeThreadContext.pid && activeThreadContext.pid.startsWith("init:")
+          ? "Persistent home conversation"
+          : activeThreadContext.cwd)
+      : draftConversationMeta();
   }
   const interactive = client && client.isConnected() && !hostError;
   if (elements.chatInput) {
@@ -1171,6 +1245,48 @@ function renderStatus() {
   }
   if (elements.openShell) {
     elements.openShell.disabled = !activeThreadContext;
+  }
+  if (elements.newThreadProfile) {
+    elements.newThreadProfile.disabled = !interactive || listNewConversationProfiles().length === 0;
+  }
+}
+
+async function loadProfiles() {
+  if (!client || !client.isConnected()) {
+    availableProfiles = fallbackProfiles();
+  } else {
+    try {
+      const payload = await client.call("proc.profile.list", {});
+      const profiles = Array.isArray(payload?.profiles) ? payload.profiles : [];
+      availableProfiles = profiles.length > 0 ? profiles : fallbackProfiles();
+    } catch {
+      availableProfiles = fallbackProfiles();
+    }
+  }
+  ensureDraftProfile();
+  renderProfilePicker();
+  renderThreads();
+  renderStatus();
+}
+
+async function openHome() {
+  if (!client || !client.isConnected()) {
+    appendSystemRow("session is locked");
+    return;
+  }
+  try {
+    const spawnResult = await client.spawnProcess({
+      profile: "init",
+      label: "Home",
+      workspace: { mode: "none" },
+    });
+    if (!spawnResult.ok) {
+      appendSystemRow("home open failed: " + spawnResult.error);
+      return;
+    }
+    activateThreadContext({ pid: spawnResult.pid, workspaceId: spawnResult.workspaceId, cwd: spawnResult.cwd });
+  } catch (error) {
+    appendSystemRow("home open failed: " + (error instanceof Error ? error.message : String(error)));
   }
 }
 
@@ -1376,7 +1492,7 @@ function resetToNewThread() {
   activeThreadContext = setActiveThreadContext(null);
   pendingAssistantState = null;
   pendingHilRequest = null;
-  setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }], { forceBottom: true });
+  setLogRows([{ role: "system", text: draftConversationMeta(), timestamp: Date.now() }], { forceBottom: true });
   renderThreads();
   renderStatus();
   elements.chatInput?.focus();
@@ -1397,10 +1513,13 @@ async function sendMessage() {
   try {
     let pid = getActivePid();
     if (!pid) {
+      const profile = draftProfile();
       const spawnResult = await client.spawnProcess({
-        profile: "task",
-        label: deriveThreadLabel(message),
-        workspace: { mode: "new", kind: "thread" },
+        profile: profile?.id || "task",
+        label: deriveThreadLabel(message) || profile?.displayName,
+        workspace: profile?.spawnMode === "new"
+          ? { mode: "new", kind: "thread" }
+          : { mode: "none" },
       });
       if (!spawnResult.ok) {
         appendSystemRow("thread start failed: " + spawnResult.error);
@@ -1563,7 +1682,20 @@ function listenForTargetProcess() {
 
 function bindUi() {
   elements.refreshThreads?.addEventListener("click", () => { void loadThreads(); });
+  elements.openHome?.addEventListener("click", () => { void openHome(); });
   elements.newThread?.addEventListener("click", () => { resetToNewThread(); });
+  elements.newThreadProfile?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    draftProfileId = target.value || "task";
+    renderProfilePicker();
+    renderStatus();
+    if (!activeThreadContext) {
+      setLogRows([{ role: "system", text: draftConversationMeta(), timestamp: Date.now() }], { forceBottom: true });
+    }
+  });
   elements.stopRun?.addEventListener("click", () => { void abortActiveRun(); });
   elements.chatLog?.addEventListener("click", (event) => {
     const target = event.target;
@@ -1624,6 +1756,11 @@ function bindUi() {
     if (!(target instanceof HTMLElement)) {
       return;
     }
+    const profileButton = target.closest("[data-profile-id]");
+    if (profileButton instanceof HTMLElement && profileButton.dataset.profileId === "init") {
+      void openHome();
+      return;
+    }
     const button = target.closest("[data-workspace-id]");
     if (!(button instanceof HTMLElement)) {
       return;
@@ -1650,6 +1787,7 @@ async function boot() {
     client.onStatus(() => {
       renderStatus();
       if (client && client.isConnected()) {
+        void loadProfiles();
         void loadThreads();
         if (activeThreadContext) {
           void loadHistory();
@@ -1694,11 +1832,13 @@ async function boot() {
       }
     });
     renderStatus();
+    renderProfilePicker();
     if (activeThreadContext) {
       await loadHistory();
     } else {
-      setLogRows([{ role: "system", text: "No thread selected. Send a message to start a new thread.", timestamp: Date.now() }], { forceBottom: true });
+      setLogRows([{ role: "system", text: draftConversationMeta(), timestamp: Date.now() }], { forceBottom: true });
     }
+    await loadProfiles();
     await loadThreads();
   } catch (error) {
     hostError = error instanceof Error ? error.message : String(error);

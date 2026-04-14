@@ -11,7 +11,7 @@ export default definePackage({
       minHeight: 520,
     },
     capabilities: {
-      kernel: ["proc.spawn", "proc.send", "proc.abort", "proc.hil", "proc.history", "sys.workspace.list"],
+      kernel: ["proc.spawn", "proc.send", "proc.abort", "proc.hil", "proc.history", "proc.profile.list", "sys.workspace.list"],
     },
   },
   app: {

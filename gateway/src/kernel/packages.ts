@@ -4,6 +4,7 @@ import {
   RipgitClient,
   type RipgitPackageAnalyzeResponse,
   type RipgitPackageBuildResponse,
+  type RipgitRepoRef,
 } from "../fs/ripgit/client";
 import type {
   AppFrameContext,
@@ -116,6 +117,20 @@ export interface PackageEntrypoint {
   };
 }
 
+export interface PackageProfileContextFile {
+  name: string;
+  text: string;
+}
+
+export interface PackageProfileManifest {
+  name: string;
+  displayName: string;
+  description?: string;
+  icon?: string;
+  contextFiles: PackageProfileContextFile[];
+  approvalPolicy?: string;
+}
+
 export type PackageSqlRow = Record<string, unknown>;
 
 export interface PackageSqlExecResult {
@@ -220,6 +235,7 @@ export interface PackageManifest {
   runtime: PackageRuntime;
   source: PackageSource;
   entrypoints: PackageEntrypoint[];
+  profiles?: PackageProfileManifest[];
   capabilities?: PackageCapabilityDeclaration;
 }
 
@@ -379,6 +395,8 @@ const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
   }),
 ] as const;
 
+const TEXT_DECODER = new TextDecoder();
+
 export function packageRouteBase(packageName: string): string {
   return `/apps/${packageName}`;
 }
@@ -472,6 +490,46 @@ export function packageWorkerKey(record: {
   artifact: { hash: string };
 }): string {
   return `pkg:${record.manifest.name}@${record.artifact.hash}`;
+}
+
+export function resolvePackageProfileReference(
+  reference: string,
+  packages: PackageStore,
+  scopes: PackageInstallScope[],
+): { record: InstalledPackageRecord; packageProfile: PackageProfileManifest } | null {
+  const trimmed = typeof reference === "string" ? reference.trim() : "";
+  const separator = trimmed.lastIndexOf("#");
+  if (separator <= 0 || separator >= trimmed.length - 1) {
+    return null;
+  }
+
+  const packageRef = trimmed.slice(0, separator).trim();
+  const profileName = trimmed.slice(separator + 1).trim();
+  if (!packageRef || !profileName) {
+    return null;
+  }
+
+  const exact = packages.resolve(packageRef, scopes);
+  if (exact) {
+    const packageProfile = exact.manifest.profiles?.find((entry) => entry.name === profileName);
+    return packageProfile ? { record: exact, packageProfile } : null;
+  }
+
+  const candidates = packages.list({ scopes }).filter((candidate) =>
+    matchesPackageReference(candidate, packageRef) &&
+    (candidate.manifest.profiles ?? []).some((entry) => entry.name === profileName)
+  );
+
+  if (candidates.length === 0) {
+    return null;
+  }
+  if (candidates.length > 1) {
+    throw new Error(`Ambiguous package profile reference: ${reference}`);
+  }
+
+  const record = candidates[0];
+  const packageProfile = record.manifest.profiles?.find((entry) => entry.name === profileName);
+  return packageProfile ? { record, packageProfile } : null;
 }
 
 export function packageArtifactToWorkerCode(
@@ -851,6 +909,7 @@ async function resolvePackageFromRipgitNativeBuild(
   const routeBase = packageRouteBase(packageName);
   const artifact = convertRipgitBuildArtifact(build);
   const icon = toNativePackageIcon(analysis.definition.meta.icon);
+  const profiles = await readPackageProfiles(ripgit, repo, subdir);
 
   const entrypoints: PackageEntrypoint[] = [
     ...analysis.definition.commands.map((command) => ({
@@ -899,6 +958,7 @@ async function resolvePackageFromRipgitNativeBuild(
         resolvedCommit: build.source.resolved_commit,
       },
       entrypoints,
+      ...(profiles.length > 0 ? { profiles } : {}),
       capabilities: {
         bindings: [
           {
@@ -991,6 +1051,120 @@ function packageNameFromPackageJsonName(packageJsonName: string): string {
   return normalized;
 }
 
+async function readPackageProfiles(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  subdir: string,
+): Promise<PackageProfileManifest[]> {
+  const profilesRoot = joinRipgitPath(subdir, "profiles");
+  const profilesTree = await ripgit.readPath(repo, profilesRoot);
+  if (profilesTree.kind !== "tree") {
+    return [];
+  }
+
+  const entries = profilesTree.entries
+    .filter((entry) => entry.type === "tree")
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+
+  const profiles: PackageProfileManifest[] = [];
+  for (const name of entries) {
+    const profileRoot = joinRipgitPath(profilesRoot, name);
+    const contextRoot = joinRipgitPath(profileRoot, "context.d");
+    const contextTree = await ripgit.readPath(repo, contextRoot);
+    if (contextTree.kind !== "tree") {
+      continue;
+    }
+
+    const contextFiles: PackageProfileContextFile[] = [];
+    for (const entry of contextTree.entries
+      .filter((item) => item.type === "blob")
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      const file = await ripgit.readPath(repo, joinRipgitPath(contextRoot, entry.name));
+      if (file.kind !== "file") {
+        continue;
+      }
+      const text = decodeProfileTextFile(file.bytes);
+      if (!text) {
+        continue;
+      }
+      contextFiles.push({
+        name: entry.name,
+        text,
+      });
+    }
+
+    if (contextFiles.length === 0) {
+      continue;
+    }
+
+    const description = await readPackageProfileDescription(ripgit, repo, profileRoot);
+    const approvalPolicy = await readPackageProfileApprovalPolicy(ripgit, repo, profileRoot);
+    const icon = await readPackageProfileIconPath(ripgit, repo, profileRoot);
+    profiles.push({
+      name,
+      displayName: humanizeProfileName(name),
+      ...(description ? { description } : {}),
+      ...(icon ? { icon } : {}),
+      contextFiles,
+      ...(approvalPolicy ? { approvalPolicy } : {}),
+    });
+  }
+
+  return profiles;
+}
+
+async function readPackageProfileDescription(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  profileRoot: string,
+): Promise<string | null> {
+  const descriptionFile = await ripgit.readPath(repo, joinRipgitPath(profileRoot, "description.md"));
+  if (descriptionFile.kind !== "file") {
+    return null;
+  }
+  return decodeProfileTextFile(descriptionFile.bytes);
+}
+
+async function readPackageProfileApprovalPolicy(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  profileRoot: string,
+): Promise<string | null> {
+  const approvalFile = await ripgit.readPath(repo, joinRipgitPath(profileRoot, "approval.json"));
+  if (approvalFile.kind !== "file") {
+    return null;
+  }
+  try {
+    const decoded = TEXT_DECODER.decode(approvalFile.bytes);
+    const parsed = JSON.parse(decoded) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return JSON.stringify(parsed);
+  } catch {
+    return null;
+  }
+}
+
+async function readPackageProfileIconPath(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  profileRoot: string,
+): Promise<string | null> {
+  const profileTree = await ripgit.readPath(repo, profileRoot);
+  if (profileTree.kind !== "tree") {
+    return null;
+  }
+
+  const iconEntry = profileTree.entries
+    .filter((entry) => entry.type === "blob" && /^icon\.[^.]+$/i.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .at(0);
+
+  return iconEntry ? joinRipgitPath(profileRoot, iconEntry.name) : null;
+}
+
 function toNativePackageIcon(iconPath?: string | null): PackageIcon | undefined {
   if (!iconPath) {
     return undefined;
@@ -1025,6 +1199,39 @@ function trimLeadingSlash(path: string): string {
 
 function trimSlashes(path: string): string {
   return path.replace(/^\/+|\/+$/g, "");
+}
+
+function humanizeProfileName(name: string): string {
+  return name
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function matchesPackageReference(
+  record: InstalledPackageRecord,
+  reference: string,
+): boolean {
+  const sourceRepo = record.manifest.source.repo;
+  const normalizedSubdir = normalizePackageSourceSubdir(record.manifest.source.subdir) || ".";
+  const importRepoAlias = `import:${sourceRepo}`;
+  const importPathAlias = `import:${sourceRepo}:${normalizedSubdir}`;
+  return record.packageId === reference
+    || record.manifest.name === reference
+    || sourceRepo === reference
+    || importRepoAlias === reference
+    || importPathAlias === reference;
+}
+
+function decodeProfileTextFile(bytes: Uint8Array): string | null {
+  for (const byte of bytes) {
+    if (byte === 0) {
+      return null;
+    }
+  }
+  const text = TEXT_DECODER.decode(bytes).trim();
+  return text.length > 0 ? text : null;
 }
 
 function normalizePackageSourceRoot(path: string): string {
@@ -1062,8 +1269,8 @@ function assertValidPackageRecord(record: InstalledPackageRecord): void {
   if (record.manifest.version.trim().length === 0) {
     throw new Error("manifest.version is required");
   }
-  if (record.manifest.entrypoints.length === 0) {
-    throw new Error("manifest.entrypoints must contain at least one entrypoint");
+  if (record.manifest.entrypoints.length === 0 && (record.manifest.profiles?.length ?? 0) === 0) {
+    throw new Error("manifest must contain at least one entrypoint or profile");
   }
   if (record.artifact.hash.trim().length === 0) {
     throw new Error("artifact.hash is required");
@@ -1092,6 +1299,15 @@ function assertValidPackageRecord(record: InstalledPackageRecord): void {
       if (!entrypoint.route || !entrypoint.route.startsWith(expectedPrefix)) {
         throw new Error(`ui entrypoint route must live under ${expectedPrefix}`);
       }
+    }
+  }
+
+  for (const profile of record.manifest.profiles ?? []) {
+    if (profile.name.trim().length === 0) {
+      throw new Error("manifest.profiles[].name is required");
+    }
+    if (profile.contextFiles.length === 0) {
+      throw new Error(`manifest profile ${profile.name} must contain at least one context file`);
     }
   }
 

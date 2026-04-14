@@ -27,6 +27,8 @@ import type {
   ProcResetResult,
   ProcListArgs,
   ProcListResult,
+  ProcProfileListArgs,
+  ProcProfileListResult,
   ProcSetIdentityArgs,
   ProcSetIdentityResult,
 } from "./proc";
@@ -175,6 +177,7 @@ export type SyscallDomains = {
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
   "proc.kill": { args: ProcKillArgs; result: ProcKillResult };
   "proc.list": { args: ProcListArgs; result: ProcListResult };
+  "proc.profile.list": { args: ProcProfileListArgs; result: ProcProfileListResult };
   "proc.send": { args: ProcSendArgs; result: ProcSendResult };
   "proc.abort": { args: ProcAbortArgs; result: ProcAbortResult };
   "proc.hil": { args: ProcHilArgs; result: ProcHilResult };

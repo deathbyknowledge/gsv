@@ -27,6 +27,7 @@ import type {
   AiToolsDevice,
   AiToolsResult,
 } from "../syscalls/ai";
+import { isAiContextProfile } from "../syscalls/ai";
 import type {
   ProcSendResult,
   ProcAbortResult,
@@ -146,16 +147,7 @@ export class Process extends Host<Env> {
 
   get profile(): AiContextProfile {
     const raw = this.store.getValue("profile");
-    if (
-      raw === "init"
-      || raw === "task"
-      || raw === "review"
-      || raw === "cron"
-      || raw === "mcp"
-      || raw === "app"
-      || raw === "archivist"
-      || raw === "curator"
-    ) {
+    if (isAiContextProfile(raw)) {
       return raw;
     }
     return "task";
@@ -1306,16 +1298,7 @@ export class Process extends Host<Env> {
       return run.approvalPolicy;
     }
 
-    const profileKey = `config/ai/profile/${this.profile}/tools/approval`;
-    const profileResult = await this.kernelRpc("sys.config.get", {
-      key: profileKey,
-    }) as { entries?: Array<{ key: string; value: string }> };
-
-    const raw = Array.isArray(profileResult.entries)
-      ? profileResult.entries.find((entry) => entry.key === profileKey)?.value ?? null
-      : null;
-
-    run.approvalPolicy = parseToolApprovalPolicy(raw);
+    run.approvalPolicy = parseToolApprovalPolicy(run.config?.profileApprovalPolicy ?? null);
     this.currentRun = run;
     return run.approvalPolicy;
   }

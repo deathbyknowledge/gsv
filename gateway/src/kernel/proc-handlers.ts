@@ -12,6 +12,9 @@ import type {
   ProcListArgs,
   ProcListResult,
   ProcListEntry,
+  ProcProfileListArgs,
+  ProcProfileListEntry,
+  ProcProfileListResult,
   ProcSpawnAssignment,
   ProcSpawnMountSpec,
   ProcSpawnArgs,
@@ -19,7 +22,11 @@ import type {
   ProcWorkspaceKind,
   ProcWorkspaceSpec,
 } from "../syscalls/proc";
-import type { AiContextProfile } from "../syscalls/ai";
+import {
+  isAiContextProfile,
+  isSystemAiContextProfile,
+  type AiContextProfile,
+} from "../syscalls/ai";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ProcessIdentity } from "../syscalls/system";
 import type { ProcessMount } from "./processes";
@@ -29,6 +36,93 @@ import {
   workspaceRootPath,
 } from "../fs";
 import { resolveInstalledPackage } from "./pkg";
+import {
+  resolvePackageProfileReference,
+  visiblePackageScopesForActor,
+} from "./packages";
+
+const SYSTEM_PROFILE_ENTRIES: ProcProfileListEntry[] = [
+  {
+    id: "init",
+    kind: "system",
+    displayName: "Home",
+    description: "The persistent home conversation for the user.",
+    interactive: true,
+    startable: true,
+    background: false,
+    spawnMode: "singleton",
+  },
+  {
+    id: "task",
+    kind: "system",
+    displayName: "Task",
+    description: "A focused conversation for new work.",
+    interactive: true,
+    startable: true,
+    background: false,
+    spawnMode: "new",
+  },
+  {
+    id: "review",
+    kind: "system",
+    displayName: "Review",
+    description: "A skeptical review conversation for packages and changes.",
+    interactive: true,
+    startable: true,
+    background: false,
+    spawnMode: "new",
+  },
+  {
+    id: "mcp",
+    kind: "system",
+    displayName: "Master Control",
+    description: "Operational control-plane and diagnostics conversation.",
+    interactive: true,
+    startable: true,
+    background: false,
+    spawnMode: "new",
+  },
+  {
+    id: "app",
+    kind: "system",
+    displayName: "App Runtime",
+    description: "App-owned runtime profile.",
+    interactive: false,
+    startable: false,
+    background: false,
+    spawnMode: "new",
+  },
+  {
+    id: "cron",
+    kind: "system",
+    displayName: "Cron",
+    description: "Scheduled background worker.",
+    interactive: false,
+    startable: false,
+    background: true,
+    spawnMode: "new",
+  },
+  {
+    id: "archivist",
+    kind: "system",
+    displayName: "Archivist",
+    description: "Background compaction and continuity worker.",
+    interactive: false,
+    startable: false,
+    background: true,
+    spawnMode: "new",
+  },
+  {
+    id: "curator",
+    kind: "system",
+    displayName: "Curator",
+    description: "Background inbox review and promotion worker.",
+    interactive: false,
+    startable: false,
+    background: true,
+    spawnMode: "new",
+  },
+];
 
 export function handleProcList(
   args: ProcListArgs,
@@ -55,6 +149,41 @@ export function handleProcList(
   return { processes };
 }
 
+export function handleProcProfileList(
+  _args: ProcProfileListArgs,
+  ctx: KernelContext,
+): ProcProfileListResult {
+  const scopes = visiblePackageScopesForActor(ctx.identity?.process);
+  const packageProfiles = ctx.packages
+    .list({ scopes })
+    .filter((record) => record.enabled)
+    .flatMap((record) => (record.manifest.profiles ?? []).map((profile): ProcProfileListEntry => ({
+      id: `${record.packageId}#${profile.name}`,
+      alias: `${record.manifest.name}#${profile.name}`,
+      kind: "package",
+      displayName: profile.displayName,
+      ...(profile.description ? { description: profile.description } : {}),
+      ...(profile.icon ? { icon: profile.icon } : {}),
+      interactive: true,
+      startable: true,
+      background: false,
+      spawnMode: "new",
+      packageId: record.packageId,
+      packageName: record.manifest.name,
+    })))
+    .sort((left, right) => {
+      const packageNameCompare = (left.packageName ?? "").localeCompare(right.packageName ?? "");
+      if (packageNameCompare !== 0) {
+        return packageNameCompare;
+      }
+      return left.displayName.localeCompare(right.displayName);
+    });
+
+  return {
+    profiles: [...SYSTEM_PROFILE_ENTRIES, ...packageProfiles],
+  };
+}
+
 export async function handleProcSpawn(
   args: ProcSpawnArgs,
   ctx: KernelContext,
@@ -63,8 +192,64 @@ export async function handleProcSpawn(
   const pid = crypto.randomUUID();
   const profile = args.profile;
 
-  if (!isProcessProfile(profile)) {
+  if (!isAiContextProfile(profile)) {
     return { ok: false, error: `Invalid process profile: ${String(profile)}` };
+  }
+  if (profile === "init") {
+    const ensured = ctx.procs.ensureInit(identity.process);
+    const initRecord = ctx.procs.get(ensured.pid);
+    if (!initRecord) {
+      return { ok: false, error: "Failed to resolve init process" };
+    }
+
+    if (ensured.created) {
+      await sendFrameToProcess(ensured.pid, {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.setidentity",
+        args: {
+          pid: ensured.pid,
+          identity: identity.process,
+          profile: "init",
+          assignment: args.assignment as ProcSpawnAssignment | undefined,
+        },
+      });
+    }
+
+    if (args.prompt) {
+      await sendFrameToProcess(ensured.pid, {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.send",
+        args: { pid: ensured.pid, message: args.prompt },
+      });
+    }
+
+    return {
+      ok: true,
+      pid: initRecord.processId,
+      label: initRecord.label ?? undefined,
+      profile: "init",
+      workspaceId: initRecord.workspaceId,
+      cwd: initRecord.cwd,
+    };
+  }
+  if (!isSystemAiContextProfile(profile)) {
+    try {
+      const resolved = resolvePackageProfileReference(
+        profile,
+        ctx.packages,
+        visiblePackageScopesForActor(identity.process),
+      );
+      if (!resolved) {
+        return { ok: false, error: `Unknown package profile: ${profile}` };
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   const parentPid = args.parentPid ?? `init:${identity.process.uid}`;
@@ -379,15 +564,4 @@ function requireWorkspaceBackend(ctx: KernelContext, identity: ProcessIdentity) 
     throw new Error("Workspace backend is not configured");
   }
   return backend;
-}
-
-function isProcessProfile(value: unknown): value is AiContextProfile {
-  return value === "init"
-    || value === "task"
-    || value === "review"
-    || value === "cron"
-    || value === "mcp"
-    || value === "app"
-    || value === "archivist"
-    || value === "curator";
 }

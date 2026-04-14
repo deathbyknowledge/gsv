@@ -176,6 +176,27 @@ export type ProcListResult = {
   processes: ProcListEntry[];
 };
 
+export type ProcProfileListArgs = Record<string, never>;
+
+export type ProcProfileListEntry = {
+  id: AiContextProfile;
+  alias?: string;
+  kind: "system" | "package";
+  displayName: string;
+  description?: string;
+  icon?: string;
+  interactive: boolean;
+  startable: boolean;
+  background: boolean;
+  spawnMode: "singleton" | "new";
+  packageId?: string;
+  packageName?: string;
+};
+
+export type ProcProfileListResult = {
+  profiles: ProcProfileListEntry[];
+};
+
 // Kernel-only: sets process identity. Sent by the kernel to Process DOs
 // at spawn time and never routed from user/device connections.
 export type ProcSetIdentityArgs = {
