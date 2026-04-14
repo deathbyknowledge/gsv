@@ -26,6 +26,7 @@ import { handleShellExec } from "../drivers/native/shell";
 import { handleAiTools, handleAiConfig } from "./ai";
 import {
   handleProcList,
+  handleProcProfileList,
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
@@ -170,6 +171,9 @@ async function dispatchNative(
 
       case "proc.list":
         data = handleProcList(frame.args, ctx);
+        break;
+      case "proc.profile.list":
+        data = handleProcProfileList(frame.args, ctx);
         break;
       case "proc.spawn":
         data = await handleProcSpawn(frame.args, ctx);

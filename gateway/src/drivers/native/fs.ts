@@ -9,6 +9,7 @@
 
 import { GsvFs } from "../../fs/gsv-fs";
 import {
+  createHomeKnowledgeBackend,
   createPackageBackend,
   createProcessSourceBackend,
   createWorkspaceBackend,
@@ -48,6 +49,7 @@ function makeFs(ctx: KernelContext): GsvFs {
     },
     undefined,
     sourceBackend,
+    createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
     createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
     createPackageBackend(identity, ctx.packages),
   );

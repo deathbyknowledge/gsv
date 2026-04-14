@@ -648,10 +648,23 @@
         .stage-actions {
           justify-content: flex-start;
         }
+        .profile-picker {
+          width: 100%;
+        }
         .rail {
           border-right: 0;
           border-bottom: 1px solid var(--line);
         }
+      }
+      .profile-picker {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--ink);
+        border-radius: 10px;
+        padding: 7px 10px;
+        font: inherit;
+        min-width: 10rem;
       }
     </style>
   </head>
@@ -662,9 +675,13 @@
           <div class="rail-top">
             <h1 class="rail-title">Chats</h1>
             <div class="rail-actions">
+              <button type="button" class="btn btn-quiet icon-btn" id="open-home" title="Home" aria-label="Home">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5" /><path d="M6.5 9.5V20H17.5V9.5" /><path d="M10 20v-5h4v5" /></svg>
+              </button>
               <button type="button" class="btn btn-quiet icon-btn" id="new-thread" title="New thread" aria-label="New thread">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
               </button>
+              <select id="new-thread-profile" class="profile-picker" aria-label="New conversation profile"></select>
               <button type="button" class="btn btn-quiet icon-btn" id="refresh-threads" title="Refresh threads" aria-label="Refresh threads">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0 2 5.5" /><path d="M20 4v7h-7" /></svg>
               </button>

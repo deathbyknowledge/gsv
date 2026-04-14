@@ -1,0 +1,13 @@
+{
+  "default": "auto",
+  "rules": [
+    {
+      "match": "fs.delete",
+      "action": "deny"
+    },
+    {
+      "match": "shell.exec",
+      "action": "auto"
+    }
+  ]
+}

@@ -890,8 +890,9 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
 
     expect(pendingHil).toMatchObject({
       syscall: "fs.read",
-      args: { path: "/root/hil-approve.txt", target: "gsv" },
+      args: { target: "gsv" },
     });
+    expect(["~/hil-approve.txt", "/root/hil-approve.txt"]).toContain(pendingHil.args.path);
 
     const hilRes = (await stub.recvFrame(
       makeReq("proc.hil", { requestId: pendingHil.requestId, decision: "approve" }),

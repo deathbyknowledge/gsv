@@ -1,0 +1,6 @@
+Current working directory: {{identity.cwd}}
+Current workspace: {{workspace}}
+Home: {{identity.home}}
+
+Available targets:
+{{devices}}

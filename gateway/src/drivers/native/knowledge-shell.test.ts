@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runMemCommand, runWikiCommand } from "./knowledge-shell";
+import { runWikiCommand } from "./knowledge-shell";
 import type { KernelContext } from "../../kernel/context";
 import type {
   KnowledgeCompileArgs,
@@ -80,11 +80,11 @@ describe("knowledge shell wrappers", () => {
     expect(result.stdout).toContain("wiki help section");
   });
 
-  it("mem write resolves paths relative to the personal db", async () => {
+  it("wiki write works directly against the personal db", async () => {
     const ops = makeOps();
 
-    const result = await runMemCommand(
-      ["write", "pages/people/alice.md", "--text", "# Alice"],
+    const result = await runWikiCommand(
+      ["write", "personal/pages/people/alice.md", "--text", "# Alice"],
       makeContext(["knowledge.write"]),
       ops,
     );
@@ -99,11 +99,11 @@ describe("knowledge shell wrappers", () => {
     );
   });
 
-  it("mem section append preserves explicit section editing", async () => {
+  it("wiki section append preserves explicit section editing", async () => {
     const ops = makeOps();
 
-    const result = await runMemCommand(
-      ["section", "append", "pages/people/alice.md", "Working style", "--text", "- Async first"],
+    const result = await runWikiCommand(
+      ["section", "append", "personal/pages/people/alice.md", "Working style", "--text", "- Async first"],
       makeContext(["knowledge.write"]),
       ops,
     );
@@ -153,11 +153,11 @@ describe("knowledge shell wrappers", () => {
     );
   });
 
-  it("mem list accepts -r as a recursive alias", async () => {
+  it("wiki list accepts -r as a recursive alias", async () => {
     const ops = makeOps();
 
-    const result = await runMemCommand(
-      ["list", "inbox", "-r"],
+    const result = await runWikiCommand(
+      ["list", "personal/inbox", "-r"],
       makeContext(["knowledge.list"]),
       ops,
     );

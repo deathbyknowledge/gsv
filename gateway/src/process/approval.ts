@@ -1,4 +1,4 @@
-import type { AiContextProfile } from "../syscalls/ai";
+import { isAiContextProfile, type AiContextProfile } from "../syscalls/ai";
 import type { ProcessIdentity } from "../syscalls/system";
 
 export type ToolApprovalAction = "auto" | "ask" | "deny";
@@ -295,16 +295,7 @@ function normalizeStringArray(value: unknown): string[] | undefined {
 }
 
 function normalizeProfile(value: unknown): AiContextProfile | undefined {
-  return value === "init"
-    || value === "task"
-    || value === "review"
-    || value === "cron"
-    || value === "mcp"
-    || value === "app"
-    || value === "archivist"
-    || value === "curator"
-    ? value
-    : undefined;
+  return isAiContextProfile(value) ? value : undefined;
 }
 
 function normalizeProfileArray(value: unknown): AiContextProfile[] | undefined {

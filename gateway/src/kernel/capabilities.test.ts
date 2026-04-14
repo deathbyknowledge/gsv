@@ -182,6 +182,7 @@ describe("CapabilityStore", () => {
       "adapter.disconnect",
       "adapter.status",
       "fs.*",
+      "knowledge.*",
       "pkg.checkout",
       "pkg.install",
       "pkg.list",
