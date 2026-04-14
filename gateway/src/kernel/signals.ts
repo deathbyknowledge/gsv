@@ -67,9 +67,16 @@ export function handleSignalUnwatch(
   const uid = ctx.identity!.process.uid;
 
   if ("watchId" in args) {
+    if (typeof args.watchId !== "string") {
+      throw new Error("signal.unwatch watchId must be a string");
+    }
     return {
       removed: ctx.signalWatches.removeById(uid, target, args.watchId),
     };
+  }
+
+  if (!("key" in args) || typeof args.key !== "string") {
+    throw new Error("signal.unwatch requires either watchId or key");
   }
 
   return {

@@ -3,6 +3,7 @@ import { runWikiCommand } from "./knowledge-shell";
 import type { KernelContext } from "../../kernel/context";
 import type {
   KnowledgeCompileArgs,
+  KnowledgeDbDeleteArgs,
   KnowledgeDbInitArgs,
   KnowledgeIngestArgs,
   KnowledgeListArgs,
@@ -36,6 +37,7 @@ function makeOps() {
   return {
     dbList: vi.fn(async () => ({ dbs: [] })),
     dbInit: vi.fn(async (_ctx: KernelContext, args: KnowledgeDbInitArgs) => ({ ok: true, id: args.id, created: true })),
+    dbDelete: vi.fn(async (_ctx: KernelContext, args: KnowledgeDbDeleteArgs) => ({ ok: true, id: args.id, removed: true })),
     list: vi.fn(async (_ctx: KernelContext, _args: KnowledgeListArgs) => ({ entries: [] })),
     read: vi.fn(async (_ctx: KernelContext, args: KnowledgeReadArgs) => ({ exists: true, path: args.path, markdown: "# test\n" })),
     write: vi.fn(async (_ctx: KernelContext, args: KnowledgeWriteArgs) => ({ ok: true, path: args.path, created: true, updated: false })),
@@ -169,6 +171,23 @@ describe("knowledge shell wrappers", () => {
         prefix: "personal/inbox",
         recursive: true,
       }),
+    );
+  });
+
+  it("wiki db delete delegates to the db delete operation", async () => {
+    const ops = makeOps();
+
+    const result = await runWikiCommand(
+      ["db", "delete", "product-alpha"],
+      makeContext(["knowledge.db.delete"]),
+      ops,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("deleted product-alpha");
+    expect(ops.dbDelete).toHaveBeenCalledWith(
+      expect.anything(),
+      { id: "product-alpha" },
     );
   });
 });
