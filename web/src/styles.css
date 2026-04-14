@@ -373,15 +373,13 @@ button:disabled {
   max-width: 290px;
   padding: 10px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(12px) saturate(1.06);
-  -webkit-backdrop-filter: blur(12px) saturate(1.06);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  background: rgba(246, 249, 252, 0.88);
+  backdrop-filter: blur(14px) saturate(1.04);
+  -webkit-backdrop-filter: blur(14px) saturate(1.04);
   box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 0 6px 2px rgba(255, 255, 255, 0.14);
+    0 18px 40px rgba(7, 15, 34, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
   transform: translateX(-50%);
   overflow: hidden;
   z-index: 210;
@@ -416,15 +414,13 @@ button:disabled {
   max-height: min(60vh, 420px);
   padding: 10px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(12px) saturate(1.06);
-  -webkit-backdrop-filter: blur(12px) saturate(1.06);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  background: rgba(246, 249, 252, 0.9);
+  backdrop-filter: blur(14px) saturate(1.04);
+  -webkit-backdrop-filter: blur(14px) saturate(1.04);
   box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 0 6px 2px rgba(255, 255, 255, 0.14);
+    0 18px 40px rgba(7, 15, 34, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
   overflow: hidden;
   z-index: 210;
 }
@@ -440,24 +436,26 @@ button:disabled {
   overflow: auto;
 }
 
+
 .notification-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   padding: 8px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38);
 }
 
 .notification-item.is-unread {
-  background: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .notification-main,
 .notification-dismiss {
   border: 0;
   background: transparent;
-  color: #14304d;
+  color: #10253d;
   padding: 0;
 }
 
@@ -480,7 +478,7 @@ button:disabled {
 
 .notification-item-head span {
   font-size: 0.68rem;
-  color: rgba(20, 48, 77, 0.7);
+  color: rgba(16, 37, 61, 0.72);
   white-space: nowrap;
 }
 
@@ -488,7 +486,7 @@ button:disabled {
   margin: 0;
   font-size: 0.75rem;
   line-height: 1.35;
-  color: rgba(20, 48, 77, 0.82);
+  color: rgba(16, 37, 61, 0.88);
 }
 
 .notification-dismiss {
@@ -567,9 +565,9 @@ button:disabled {
   width: 100%;
   border: 0;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.52);
+  background: rgba(255, 255, 255, 0.8);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
-  color: #14304d;
+  color: #10253d;
   font-family: var(--font-ui);
   font-size: 0.76rem;
   text-align: left;
@@ -578,7 +576,7 @@ button:disabled {
 }
 
 .windows-list button:hover {
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.94);
   transform: translateY(-1px);
 }
 
