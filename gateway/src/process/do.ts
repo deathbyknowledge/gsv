@@ -105,6 +105,52 @@ function isNonInteractiveProfile(profile: AiContextProfile): boolean {
   return profile === "cron" || profile === "archivist" || profile === "curator";
 }
 
+function formatWatchedSignalMessage(payload: unknown): string {
+  const value = payload && typeof payload === "object"
+    ? payload as Record<string, unknown>
+    : {};
+  const signal = typeof value.signal === "string" && value.signal.trim().length > 0
+    ? value.signal.trim()
+    : "unknown";
+  const sourcePid = typeof value.sourcePid === "string" && value.sourcePid.trim().length > 0
+    ? value.sourcePid.trim()
+    : null;
+  const watch = value.watch && typeof value.watch === "object"
+    ? value.watch as Record<string, unknown>
+    : null;
+  const key = watch && typeof watch.key === "string" && watch.key.trim().length > 0
+    ? watch.key.trim()
+    : null;
+  const watchState = watch && "state" in watch ? watch.state : undefined;
+  const renderedState = renderJsonBlock(watchState);
+  const renderedPayload = renderJsonBlock(value.payload);
+
+  const lines = [
+    `Observed watched signal \`${signal}\`${sourcePid ? ` from process \`${sourcePid}\`` : ""}.`,
+  ];
+  if (key) {
+    lines.push(`Watch key: \`${key}\`.`);
+  }
+  if (renderedState) {
+    lines.push("", "Watch state:", "```json", renderedState, "```");
+  }
+  if (renderedPayload) {
+    lines.push("", "Signal payload:", "```json", renderedPayload, "```");
+  }
+  return lines.join("\n");
+}
+
+function renderJsonBlock(value: unknown): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return JSON.stringify(String(value));
+  }
+}
+
 export class Process extends Host<Env> {
   private readonly store: ProcessStore;
   private readonly generation = createGenerationService();
@@ -595,6 +641,9 @@ export class Process extends Host<Env> {
         }
         break;
       }
+      case "signal.watch.triggered":
+        await this.handleWatchedSignalTriggered(frame.payload);
+        break;
       default:
         console.log(`[Process] Unknown signal: ${frame.signal}`);
         break;
@@ -607,6 +656,15 @@ export class Process extends Host<Env> {
   private scheduleTick(runId: string): void {
     const next = new Date(Date.now() + 10);
     this.schedule(next, "tick", runId);
+  }
+
+  private async handleWatchedSignalTriggered(payload: unknown): Promise<void> {
+    this.store.appendMessage("system", formatWatchedSignalMessage(payload));
+    if (!this.currentRun) {
+      const runId = crypto.randomUUID();
+      this.currentRun = { runId, queued: false };
+      this.scheduleTick(runId);
+    }
   }
 
   async tick(runId: string): Promise<void> {

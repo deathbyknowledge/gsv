@@ -390,6 +390,37 @@ function renderToc(headings) {
   return `<ol class="toc-list">${headings.map((heading) => `<li class="level-${heading.level}"><a href="#${escapeHtml(heading.id)}">${escapeHtml(heading.text)}</a></li>`).join("")}</ol>`;
 }
 
+function renderRecentBuilds(builds, routeBase) {
+  if (!Array.isArray(builds) || builds.length === 0) {
+    return '<p class="muted">No background wiki builds yet.</p>';
+  }
+  return `<ul class="result-list">${builds.map((build) => {
+    const title = build.dbTitle || build.dbId;
+    const href = build.dbId ? buildEntryHref(routeBase, build.dbId, `${build.dbId}/index.md`) : "#";
+    const status = build.status === "completed"
+      ? "Completed"
+      : build.status === "failed"
+        ? "Failed"
+        : "Running";
+    const counts = [];
+    if (typeof build.pagesCount === "number") {
+      counts.push(`${build.pagesCount} page${build.pagesCount === 1 ? "" : "s"}`);
+    }
+    if (typeof build.inboxCount === "number") {
+      counts.push(`${build.inboxCount} inbox`);
+    }
+    const source = `${build.sourceTarget}:${build.sourcePath}`;
+    const when = build.completedAt || build.startedAt;
+    return `<li>
+      <div><a href="${escapeHtml(href)}">${escapeHtml(title)}</a></div>
+      <div class="nav-meta">${escapeHtml(status)}${when ? ` · ${escapeHtml(new Date(when).toLocaleString())}` : ""}</div>
+      <div class="nav-meta">${escapeHtml(source)}</div>
+      ${counts.length > 0 ? `<div>${escapeHtml(counts.join(" · "))}</div>` : ""}
+      ${build.error ? `<div>${escapeHtml(build.error)}</div>` : ""}
+    </li>`;
+  }).join("")}</ul>`;
+}
+
 function renderPage(args) {
   const {
     routeBase,
@@ -413,6 +444,11 @@ function renderPage(args) {
     ingestTitle,
     ingestSummary,
     compileTarget,
+    buildTarget,
+    buildSourcePath,
+    buildDbId,
+    buildDbTitle,
+    recentBuilds,
   } = args;
 
   const articleMarkdown = selectedNote?.markdown ?? draftMarkdown ?? "";
@@ -799,6 +835,10 @@ function renderPage(args) {
           <h3>Inbox</h3>
           ${selectedDb ? renderEntryList(inbox, selectedPath, routeBase, selectedDb, "No staged inbox notes.") : '<p class="muted">Select a database to browse inbox notes.</p>'}
         </section>
+        <section class="panel">
+          <h3>Recent builds</h3>
+          ${renderRecentBuilds(recentBuilds, routeBase)}
+        </section>
       </aside>
       <section class="article-wrap">
         <div class="notice-stack">
@@ -849,6 +889,31 @@ function renderPage(args) {
                 <button type="submit" class="primary" name="action" value="write">Save page</button>
                 ${canCompile ? `<button type="submit" style="margin-left:8px;" name="action" value="compile">Compile inbox note</button>` : ""}
                 ${canCompile ? `<div class="field" style="margin-top:12px;"><label for="compile-target">Compile target</label><input id="compile-target" type="text" name="targetPath" value="${escapeHtml(compileTarget)}" placeholder="pages/compiled-page.md" /></div>` : ""}
+              </form>
+            </div>
+          </details>
+          <details>
+            <summary>Create from directory</summary>
+            <div class="detail-body">
+              <form method="post" action="${escapeHtml(routeBase)}">
+                <input type="hidden" name="action" value="build-from-directory" />
+                <div class="field">
+                  <label for="build-target">Source target</label>
+                  <input id="build-target" type="text" name="buildTarget" value="${escapeHtml(buildTarget)}" placeholder="gsv" />
+                </div>
+                <div class="field">
+                  <label for="build-source-path">Source directory</label>
+                  <input id="build-source-path" type="text" name="buildSourcePath" value="${escapeHtml(buildSourcePath)}" placeholder="/workspaces/project/docs" />
+                </div>
+                <div class="field">
+                  <label for="build-db-id">Target database</label>
+                  <input id="build-db-id" type="text" name="buildDbId" value="${escapeHtml(buildDbId || selectedDb)}" placeholder="product-alpha" />
+                </div>
+                <div class="field">
+                  <label for="build-db-title">Database title</label>
+                  <input id="build-db-title" type="text" name="buildDbTitle" value="${escapeHtml(buildDbTitle)}" placeholder="Product Alpha" />
+                </div>
+                <button type="submit">Start background build</button>
               </form>
             </div>
           </details>
@@ -1256,7 +1321,8 @@ export async function handleFetch(request, context = {}) {
   const env = context.env ?? {};
   const appFrame = props.appFrame;
   const kernel = props.kernel;
-  if (!appFrame || !kernel) {
+  const packageState = props.package;
+  if (!appFrame || !kernel || !packageState) {
     return new Response("App frame missing", { status: 500 });
   }
 
@@ -1399,6 +1465,10 @@ export async function handleFetch(request, context = {}) {
   let ingestTitle = "";
   let ingestSummary = "";
   let compileTarget = "";
+  let buildTarget = "gsv";
+  let buildSourcePath = "";
+  let buildDbId = selectedDb;
+  let buildDbTitle = "";
   const searchQuery = String(url.searchParams.get("q") ?? "").trim();
   const queryText = String(url.searchParams.get("ask") ?? "").trim();
 
@@ -1416,6 +1486,10 @@ export async function handleFetch(request, context = {}) {
       ingestTitle = String(form.get("title") ?? "").trim();
       ingestSummary = String(form.get("summary") ?? "").trim();
       compileTarget = normalizeDbScopedPath(form.get("targetPath") ?? "", selectedDb);
+      buildTarget = String(form.get("buildTarget") ?? "gsv").trim() || "gsv";
+      buildSourcePath = String(form.get("buildSourcePath") ?? "").trim();
+      buildDbId = String(form.get("buildDbId") ?? selectedDb).trim();
+      buildDbTitle = String(form.get("buildDbTitle") ?? "").trim();
 
       if (action === "db-init") {
         if (!newDbId) {
@@ -1480,6 +1554,100 @@ export async function handleFetch(request, context = {}) {
         }
         selectedPath = result.path;
         statusText = `Compiled ${result.sourcePath} into ${result.path}`;
+      } else if (action === "build-from-directory") {
+        if (!buildDbId) {
+          throw new Error("A target database id is required.");
+        }
+        if (!buildSourcePath) {
+          throw new Error("A source directory is required.");
+        }
+
+        const spawn = await kernel.request("proc.spawn", {
+          profile: "wiki#builder",
+          label: `wiki build (${buildDbId})`,
+          workspace: { mode: "none" },
+        });
+        if (!spawn?.ok) {
+          throw new Error(spawn?.error || "Failed to start wiki builder");
+        }
+
+        const watchKey = `wiki-build:${spawn.pid}`;
+        const watch = await kernel.request("signal.watch", {
+          signal: "chat.complete",
+          processId: spawn.pid,
+          key: watchKey,
+          state: {
+            db: buildDbId,
+            dbTitle: buildDbTitle,
+            sourceTarget: buildTarget,
+            sourcePath: buildSourcePath,
+          },
+          once: true,
+          ttlMs: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        await packageState.sqlExec(
+          `insert into wiki_builds (
+            pid, db_id, db_title, source_target, source_path, status, watch_id, started_at
+          ) values (?, ?, ?, ?, ?, 'running', ?, ?)
+          on conflict(pid) do update set
+            db_id = excluded.db_id,
+            db_title = excluded.db_title,
+            source_target = excluded.source_target,
+            source_path = excluded.source_path,
+            status = 'running',
+            watch_id = excluded.watch_id,
+            error = null,
+            pages_count = null,
+            inbox_count = null,
+            started_at = excluded.started_at,
+            completed_at = null`,
+          [
+            spawn.pid,
+            buildDbId,
+            buildDbTitle || null,
+            buildTarget,
+            buildSourcePath,
+            watch.watchId,
+            Date.now(),
+          ],
+        );
+
+        const prompt = [
+          "Build a knowledge wiki from a directory.",
+          `Source target: ${buildTarget}`,
+          `Source directory: ${buildSourcePath}`,
+          `Target database: ${buildDbId}`,
+          ...(buildDbTitle ? [`Database title: ${buildDbTitle}`] : []),
+          "",
+          "Requirements:",
+          "- Use the `wiki` CLI and normal filesystem/shell tools.",
+          "- Initialize the target database if it does not exist.",
+          "- Inspect the source directory conservatively and ignore obvious junk such as build output, vendor directories, and caches unless they are clearly relevant.",
+          "- Create a readable `index.md` homepage for the database.",
+          "- Create canonical pages under `<db>/pages/` with meaningful boundaries instead of one giant dump.",
+          "- Add links between related pages.",
+          "- Keep live source references back to the original files and directories.",
+          "- Do not copy the source corpus into the knowledge repo.",
+          "- Prefer a small useful first draft over exhaustive coverage.",
+        ].join("\n");
+
+        const send = await kernel.request("proc.send", {
+          pid: spawn.pid,
+          message: prompt,
+        });
+        if (!send?.ok) {
+          await packageState.sqlExec(
+            "update wiki_builds set status = 'failed', error = ?, completed_at = ? where pid = ?",
+            [send?.error || "Failed to deliver builder prompt", Date.now(), spawn.pid],
+          );
+          throw new Error(send?.error || "Failed to deliver builder prompt");
+        }
+
+        selectedDb = buildDbId;
+        selectedPath = `${buildDbId}/index.md`;
+        draftPath = selectedPath;
+        statusText = `Started background wiki build for ${buildDbId}`;
       }
     } catch (error) {
       errorText = error instanceof Error ? error.message : String(error);
@@ -1492,6 +1660,42 @@ export async function handleFetch(request, context = {}) {
   let selectedNote = null;
   let searchMatches = null;
   let queryResult = null;
+  let recentBuilds = [];
+
+  try {
+    const rows = await packageState.sqlQuery(`
+      select
+        pid,
+        db_id as dbId,
+        db_title as dbTitle,
+        source_target as sourceTarget,
+        source_path as sourcePath,
+        status,
+        pages_count as pagesCount,
+        inbox_count as inboxCount,
+        error,
+        started_at as startedAt,
+        completed_at as completedAt
+      from wiki_builds
+      order by started_at desc
+      limit 12
+    `);
+    recentBuilds = Array.isArray(rows) ? rows.map((row) => ({
+      pid: String(row.pid ?? ""),
+      dbId: String(row.dbId ?? ""),
+      dbTitle: typeof row.dbTitle === "string" ? row.dbTitle : "",
+      sourceTarget: String(row.sourceTarget ?? ""),
+      sourcePath: String(row.sourcePath ?? ""),
+      status: String(row.status ?? "running"),
+      pagesCount: typeof row.pagesCount === "number" ? row.pagesCount : null,
+      inboxCount: typeof row.inboxCount === "number" ? row.inboxCount : null,
+      error: typeof row.error === "string" ? row.error : "",
+      startedAt: typeof row.startedAt === "number" ? row.startedAt : 0,
+      completedAt: typeof row.completedAt === "number" ? row.completedAt : null,
+    })) : [];
+  } catch (error) {
+    errorText = errorText || (error instanceof Error ? error.message : String(error));
+  }
 
   try {
     const listResult = await kernel.request("knowledge.db.list", { limit: 200 });
@@ -1603,6 +1807,11 @@ export async function handleFetch(request, context = {}) {
     ingestTitle,
     ingestSummary,
     compileTarget,
+    buildTarget,
+    buildSourcePath,
+    buildDbId,
+    buildDbTitle,
+    recentBuilds,
   }), {
     headers: {
       "content-type": "text/html; charset=utf-8",

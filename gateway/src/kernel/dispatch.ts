@@ -86,6 +86,7 @@ import {
   handleKnowledgeSearch,
   handleKnowledgeWrite,
 } from "./knowledge";
+import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 
 export type DispatchDeps = {
   routingTable: RoutingTable;
@@ -359,6 +360,13 @@ async function dispatchNative(
         break;
       case "knowledge.compile":
         data = await handleKnowledgeCompile(ctx, frame.args);
+        break;
+
+      case "signal.watch":
+        data = handleSignalWatch(frame.args, ctx);
+        break;
+      case "signal.unwatch":
+        data = handleSignalUnwatch(frame.args, ctx);
         break;
 
       default:

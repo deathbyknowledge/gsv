@@ -79,6 +79,18 @@ export type PackageTaskContext = PackageBaseContext & {
 
 export type PackageAppContext = PackageBaseContext;
 
+export type PackageAppSignalContext = PackageAppContext & {
+  signal: string;
+  payload: unknown;
+  sourcePid?: string | null;
+  watch: {
+    id: string;
+    key?: string;
+    state?: unknown;
+    createdAt?: number;
+  };
+};
+
 export type PackageBrowserAppDefinition = {
   entry: string;
 };
@@ -99,6 +111,7 @@ export type PackageAppDefinition = {
   browser?: PackageBrowserAppDefinition;
   assets?: string[];
   fetch?(request: Request, ctx: PackageAppContext): Promise<Response> | Response;
+  onSignal?(ctx: PackageAppSignalContext): Promise<void> | void;
 };
 
 export type PackageDefinition = {
