@@ -87,6 +87,12 @@ import {
   handleKnowledgeSearch,
   handleKnowledgeWrite,
 } from "./knowledge";
+import {
+  handleNotificationCreate,
+  handleNotificationDismiss,
+  handleNotificationList,
+  handleNotificationMarkRead,
+} from "./notifications";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 
 export type DispatchDeps = {
@@ -364,6 +370,19 @@ async function dispatchNative(
         break;
       case "knowledge.compile":
         data = await handleKnowledgeCompile(ctx, frame.args);
+        break;
+
+      case "notification.create":
+        data = handleNotificationCreate(frame.args, ctx);
+        break;
+      case "notification.list":
+        data = handleNotificationList(frame.args, ctx);
+        break;
+      case "notification.mark_read":
+        data = handleNotificationMarkRead(frame.args, ctx);
+        break;
+      case "notification.dismiss":
+        data = handleNotificationDismiss(frame.args, ctx);
         break;
 
       case "signal.watch":

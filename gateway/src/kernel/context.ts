@@ -18,6 +18,7 @@ import type { WorkspaceStore } from "./workspaces";
 import type { PackageStore } from "./packages";
 import type { AutomationStore } from "./automation";
 import type { SignalWatchStore } from "./signal-watches";
+import type { NotificationStore } from "./notifications";
 import type { AppFrameContext } from "../protocol/app-frame";
 
 export type KernelContext = {
@@ -33,9 +34,11 @@ export type KernelContext = {
   runRoutes: RunRouteStore;
   automation: AutomationStore;
   signalWatches: SignalWatchStore;
+  notifications?: NotificationStore;
   connection: Connection;
   identity?: ConnectionIdentity;
   processId?: string;
   appFrame?: AppFrameContext;
   serverVersion: string;
+  broadcastToUid?: (uid: number, signal: string, payload?: unknown) => void;
 };

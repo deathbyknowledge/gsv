@@ -77,6 +77,12 @@ export const KNOWLEDGE_QUERY = "knowledge.query";
 export const KNOWLEDGE_INGEST = "knowledge.ingest";
 export const KNOWLEDGE_COMPILE = "knowledge.compile";
 
+// Notifications
+export const NOTIFICATION_CREATE = "notification.create";
+export const NOTIFICATION_LIST = "notification.list";
+export const NOTIFICATION_MARK_READ = "notification.mark_read";
+export const NOTIFICATION_DISMISS = "notification.dismiss";
+
 // Durable signal watches
 export const SIGNAL_WATCH = "signal.watch";
 export const SIGNAL_UNWATCH = "signal.unwatch";
