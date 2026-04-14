@@ -323,7 +323,7 @@ export class Kernel extends Host<Env> {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const identity = this.buildAppBindingIdentity(appFrame);
+    const identity = this.buildAppBindingIdentity(appFrame, entrypoint.syscalls ?? []);
     if (!identity) {
       return errFrame(frame.id, 401, "Authentication failed");
     }
@@ -1329,13 +1329,22 @@ export class Kernel extends Host<Env> {
     };
   }
 
-  private buildAppBindingIdentity(appFrame: AppFrameContext): ConnectionIdentity | null {
+  private buildAppBindingIdentity(
+    appFrame: AppFrameContext,
+    appSyscalls: string[] = [],
+  ): ConnectionIdentity | null {
     const user = this.auth.getPasswdByUid(appFrame.uid);
     if (!user || user.username !== appFrame.username) {
       return null;
     }
 
     const gids = this.auth.resolveGids(user.username, user.gid);
+    const capabilities = Array.from(
+      new Set([
+        ...this.caps.resolve(gids),
+        ...appSyscalls,
+      ]),
+    );
     return {
       role: "user",
       process: {
@@ -1347,7 +1356,7 @@ export class Kernel extends Host<Env> {
         cwd: user.home,
         workspaceId: null,
       },
-      capabilities: this.caps.resolve(gids),
+      capabilities,
     };
   }
 
