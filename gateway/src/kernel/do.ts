@@ -1593,10 +1593,9 @@ export class Kernel extends Host<Env> {
 
     await sendFrameToProcess(watch.targetProcessId, {
       type: "sig",
-      signal: "signal.watch.triggered",
+      signal: frame.signal,
       payload: {
-        signal: frame.signal,
-        payload: frame.payload,
+        watched: true,
         sourcePid: processId,
         watch: {
           id: watch.watchId,
@@ -1604,6 +1603,7 @@ export class Kernel extends Host<Env> {
           ...(watch.state === undefined ? {} : { state: watch.state }),
           createdAt: watch.createdAt,
         },
+        payload: frame.payload,
       },
     });
   }

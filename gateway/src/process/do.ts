@@ -105,13 +105,21 @@ function isNonInteractiveProfile(profile: AiContextProfile): boolean {
   return profile === "cron" || profile === "archivist" || profile === "curator";
 }
 
-function formatWatchedSignalMessage(payload: unknown): string {
+function isWatchedSignalPayload(
+  value: unknown,
+): value is {
+  watched: true;
+  sourcePid?: unknown;
+  watch?: unknown;
+  payload?: unknown;
+} {
+  return !!value && typeof value === "object" && (value as { watched?: unknown }).watched === true;
+}
+
+function formatWatchedSignalMessage(signal: string, payload: unknown): string {
   const value = payload && typeof payload === "object"
     ? payload as Record<string, unknown>
     : {};
-  const signal = typeof value.signal === "string" && value.signal.trim().length > 0
-    ? value.signal.trim()
-    : "unknown";
   const sourcePid = typeof value.sourcePid === "string" && value.sourcePid.trim().length > 0
     ? value.sourcePid.trim()
     : null;
@@ -632,6 +640,11 @@ export class Process extends Host<Env> {
   }
 
   private async handleSig(frame: SignalFrame): Promise<void> {
+    if (isWatchedSignalPayload(frame.payload)) {
+      await this.handleWatchedSignalTriggered(frame.signal, frame.payload);
+      return;
+    }
+
     switch (frame.signal) {
       case "identity.changed": {
         const identity = (frame.payload as { identity: ProcessIdentity })
@@ -641,9 +654,6 @@ export class Process extends Host<Env> {
         }
         break;
       }
-      case "signal.watch.triggered":
-        await this.handleWatchedSignalTriggered(frame.payload);
-        break;
       default:
         console.log(`[Process] Unknown signal: ${frame.signal}`);
         break;
@@ -658,8 +668,8 @@ export class Process extends Host<Env> {
     this.schedule(next, "tick", runId);
   }
 
-  private async handleWatchedSignalTriggered(payload: unknown): Promise<void> {
-    this.store.appendMessage("system", formatWatchedSignalMessage(payload));
+  private async handleWatchedSignalTriggered(signal: string, payload: unknown): Promise<void> {
+    this.store.appendMessage("system", formatWatchedSignalMessage(signal, payload));
     if (!this.currentRun) {
       const runId = crypto.randomUUID();
       this.currentRun = { runId, queued: false };
