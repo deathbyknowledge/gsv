@@ -7,6 +7,7 @@ export type PackageAppBoot = {
   sessionSecret: string;
   clientId: string;
   expiresAt: number;
+  hasBackend: boolean;
 };
 
 type CapnwebGlobal = {
@@ -54,6 +55,9 @@ export async function connectAppBackend<T = unknown>(): Promise<T> {
     return existing as Promise<T>;
   }
   const boot = getAppBoot();
+  if (!boot.hasBackend) {
+    throw new Error("package app has no backend rpc");
+  }
   const capnweb = getCapnweb();
   const ready = (async () => {
     const session = capnweb.newWebSocketRpcSession<{

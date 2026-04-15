@@ -209,6 +209,7 @@ type ResolvedPackageRoute = {
     createdAt: number;
     expiresAt: number;
   };
+  hasRpc: boolean;
   auth: {
     uid: number;
     username: string;
@@ -226,14 +227,15 @@ type ResolvedPackageAppRpcSession =
       appFrame: AppFrameContext;
       clientSession: {
         sessionId: string;
-        clientId: string;
-        packageId: string;
-        packageName: string;
+      clientId: string;
+      packageId: string;
+      packageName: string;
         routeBase: string;
         rpcBase: string;
         createdAt: number;
         expiresAt: number;
       };
+      hasRpc: boolean;
       auth: {
         uid: number;
         username: string;
@@ -515,22 +517,28 @@ function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): s
     sessionSecret: resolved.clientSession.secret,
     clientId: resolved.clientSession.clientId,
     expiresAt: resolved.clientSession.expiresAt,
+    hasBackend: resolved.hasRpc,
   }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
-  const script = [
+  const scriptLines = [
     `<script>window.__GSV_APP_BOOT__=${boot};</script>`,
-    `<script type="module">`,
-    `import { newWebSocketRpcSession } from "https://cdn.jsdelivr.net/npm/capnweb@0.6.1/+esm";`,
-    `window.capnweb={ newWebSocketRpcSession };`,
-    `window.__GSV_BACKEND_READY__=(async()=>{`,
-    `  const rpcUrl=new URL(window.__GSV_APP_BOOT__.rpcBase, window.location.href);`,
-    `  rpcUrl.protocol=rpcUrl.protocol===\"https:\"?\"wss:\":\"ws:\";`,
-    `  const session=newWebSocketRpcSession(rpcUrl.toString());`,
-    `  const backend=await session.authenticate(window.__GSV_APP_BOOT__.sessionSecret);`,
-    `  window.backend=backend;`,
-    `  return backend;`,
-    `})().catch((error)=>{console.error(\"[app-rpc]\", error);throw error;});`,
-    "</script>",
-  ].join("");
+  ];
+  if (resolved.hasRpc) {
+    scriptLines.push(
+      `<script type="module">`,
+      `import { newWebSocketRpcSession } from "https://cdn.jsdelivr.net/npm/capnweb@0.6.1/+esm";`,
+      `window.capnweb={ newWebSocketRpcSession };`,
+      `window.__GSV_BACKEND_READY__=(async()=>{`,
+      `  const rpcUrl=new URL(window.__GSV_APP_BOOT__.rpcBase, window.location.href);`,
+      `  rpcUrl.protocol=rpcUrl.protocol===\"https:\"?\"wss:\":\"ws:\";`,
+      `  const session=newWebSocketRpcSession(rpcUrl.toString());`,
+      `  const backend=await session.authenticate(window.__GSV_APP_BOOT__.sessionSecret);`,
+      `  window.backend=backend;`,
+      `  return backend;`,
+      `})().catch((error)=>{console.error(\"[app-rpc]\", error);throw error;});`,
+      "</script>",
+    );
+  }
+  const script = scriptLines.join("");
 
   if (html.includes("</head>")) {
     return html.replace("</head>", `${script}</head>`);

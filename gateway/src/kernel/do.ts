@@ -100,6 +100,7 @@ type ResolvePackageHttpResult =
         username: string;
         capabilities: string[];
       };
+      hasRpc: boolean;
     }
   | {
       ok: false;
@@ -127,6 +128,7 @@ type ResolvePackageAppRpcResult =
         username: string;
         capabilities: string[];
       };
+      hasRpc: boolean;
     }
   | {
       ok: false;
@@ -468,6 +470,7 @@ export class Kernel extends Host<Env> {
         username: auth.identity.username,
         capabilities: this.caps.resolve(auth.identity.gids),
       },
+      hasRpc: record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc"),
     };
   }
 
@@ -525,6 +528,7 @@ export class Kernel extends Host<Env> {
         username: clientSession.username,
         capabilities,
       },
+      hasRpc: record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc"),
     };
   }
 

@@ -142,6 +142,9 @@ export type RipgitPackageAnalyzeResponse = {
       handler: {
         export_name: string;
       };
+      has_rpc: boolean;
+      rpc_methods: string[];
+      browser_entry?: string | null;
     } | null;
     tasks: Array<{
       name: string;
