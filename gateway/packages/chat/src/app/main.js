@@ -1,3 +1,5 @@
+import { getBackend } from "@gsv/package/browser";
+
 const PAGE_PATHNAME = window.location.pathname;
 const ROUTE_BASE = PAGE_PATHNAME.endsWith("/index.html")
   ? PAGE_PATHNAME.slice(0, -"/index.html".length)
@@ -7,7 +9,6 @@ const ACTIVE_THREAD_CONTEXT_KEY = "gsv.activeThreadContext.v1";
 const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
 const OPEN_APP_EVENT = "gsv:open-app";
 const PENDING_TARGETS_KEY = "__gsvPendingChatProcessTargets";
-const BRIDGE_TIMEOUT_MS = 20000;
 
 function asRecord(value) {
   return value && typeof value === "object" ? value : null;
@@ -574,58 +575,28 @@ function extractToolResultHistory(content) {
   };
 }
 
-function makeId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return "host-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+async function connectHostClient() {
+  const backend = await getBackend();
+  return createEmbeddedHostClient(backend);
 }
 
-function connectHostClient(timeoutMs = BRIDGE_TIMEOUT_MS) {
-  return new Promise((resolve, reject) => {
-    const timerId = window.setTimeout(() => {
-      cleanup();
-      reject(new Error("Timed out waiting for HOST bridge"));
-    }, timeoutMs);
-
-    function cleanup() {
-      window.clearTimeout(timerId);
-      window.removeEventListener("message", onMessage);
-    }
-
-    function onMessage(event) {
-      if (event.origin !== window.location.origin) {
-        return;
-      }
-      const record = asRecord(event.data);
-      if (!record || record.type !== "gsv-host-connect") {
-        return;
-      }
-      const port = event.ports[0];
-      if (!(port instanceof MessagePort)) {
-        cleanup();
-        reject(new Error("HOST bridge did not provide a message port"));
-        return;
-      }
-      cleanup();
-      resolve(createEmbeddedHostClient(port));
-    }
-
-    window.addEventListener("message", onMessage);
-  });
-}
-
-function createEmbeddedHostClient(port) {
+function createEmbeddedHostClient(backend) {
   let status = {
-    state: "connecting",
+    state: "connected",
     url: window.location.origin,
     username: null,
     connectionId: null,
-    message: "Waiting for host bridge...",
+    message: null,
   };
   const statusListeners = new Set();
   const signalListeners = new Set();
-  const pending = new Map();
+  let activePid = null;
+  let lastMessageCount = null;
+  let lastPendingHilRequestId = null;
+  let lastProcessState = null;
+  let hadProcess = false;
+  let pollTimerId = 0;
+  let pollInFlight = false;
 
   function emitStatus() {
     for (const listener of statusListeners) {
@@ -633,58 +604,152 @@ function createEmbeddedHostClient(port) {
     }
   }
 
-  port.onmessage = function(event) {
-    const record = asRecord(event.data);
-    if (!record || typeof record.type !== "string") {
-      return;
-    }
-    if (record.type === "status") {
-      status = record.status || status;
-      emitStatus();
-      return;
-    }
-    if (record.type === "signal") {
-      const signal = asString(record.signal);
-      if (!signal) {
-        return;
-      }
-      for (const listener of signalListeners) {
-        listener(signal, record.payload);
-      }
-      return;
-    }
-    if (record.type === "rpc-result") {
-      const id = asString(record.id);
-      if (!id || !pending.has(id)) {
-        return;
-      }
-      const pendingRequest = pending.get(id);
-      pending.delete(id);
-      window.clearTimeout(pendingRequest.timeoutId);
-      if (record.ok === true) {
-        pendingRequest.resolve(record.data);
-      } else {
-        pendingRequest.reject(new Error(asString(record.error) || "HOST request failed"));
-      }
-    }
-  };
-  port.start();
+  function updateStatus(message = null) {
+    status = {
+      ...status,
+      state: "connected",
+      message: message ? String(message) : null,
+    };
+    emitStatus();
+  }
 
-  function rpc(method, payload) {
-    const id = makeId();
-    return new Promise((resolve, reject) => {
-      const timeoutId = window.setTimeout(() => {
-        pending.delete(id);
-        reject(new Error("HOST request timed out: " + method));
-      }, BRIDGE_TIMEOUT_MS);
-      pending.set(id, { resolve, reject, timeoutId });
-      port.postMessage({ type: "rpc", id, method, payload });
-    });
+  function emitSignal(signal, payload) {
+    for (const listener of signalListeners) {
+      listener(signal, payload);
+    }
+  }
+
+  function rememberHistoryState(history) {
+    const record = asRecord(history);
+    lastMessageCount = typeof record?.messageCount === "number" ? record.messageCount : null;
+    const pendingHil = asRecord(record?.pendingHil);
+    lastPendingHilRequestId = asString(pendingHil?.requestId);
+  }
+
+  async function primeProcessState(pid) {
+    try {
+      const payload = await backend.getProcessState({ pid });
+      if (activePid !== pid) {
+        return;
+      }
+      const process = asRecord(payload?.process);
+      lastProcessState = asString(process?.state);
+      hadProcess = Boolean(process);
+    } catch {
+    }
+  }
+
+  function schedulePoll(delayMs = 1000) {
+    window.clearTimeout(pollTimerId);
+    if (!activePid) {
+      return;
+    }
+    pollTimerId = window.setTimeout(() => {
+      void pollActiveThread();
+    }, delayMs);
+  }
+
+  async function pollActiveThread() {
+    const pid = activePid;
+    if (!pid) {
+      return;
+    }
+    if (pollInFlight) {
+      schedulePoll(1000);
+      return;
+    }
+    pollInFlight = true;
+    try {
+      const snapshot = await backend.getThreadSnapshot({ pid, limit: 200 });
+      if (activePid !== pid) {
+        return;
+      }
+
+      const history = asRecord(snapshot?.history);
+      const process = asRecord(snapshot?.process);
+      const pendingHil = asRecord(history?.pendingHil);
+      const nextMessageCount = typeof history?.messageCount === "number" ? history.messageCount : lastMessageCount;
+      const nextPendingHilRequestId = asString(pendingHil?.requestId);
+      const nextProcessState = asString(process?.state);
+      const nextHasProcess = Boolean(process);
+
+      const messageChanged = lastMessageCount !== null && nextMessageCount !== null && nextMessageCount !== lastMessageCount;
+      const hilChanged = nextPendingHilRequestId !== lastPendingHilRequestId;
+      const completed = lastProcessState === "running" && nextProcessState !== "running";
+      const exited = hadProcess && !nextHasProcess;
+
+      if (hilChanged && pendingHil) {
+        emitSignal("chat.hil", pendingHil);
+      } else if (messageChanged) {
+        emitSignal("chat.text", { pid });
+      }
+
+      if (completed) {
+        emitSignal("chat.complete", { pid });
+      } else if (exited) {
+        emitSignal("process.exit", { pid });
+      }
+
+      rememberHistoryState(history);
+      lastProcessState = nextProcessState;
+      hadProcess = nextHasProcess;
+      updateStatus(null);
+    } catch (error) {
+      updateStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      pollInFlight = false;
+      if (activePid === pid) {
+        schedulePoll(1000);
+      }
+    }
+  }
+
+  function watchPid(pid, immediate = false) {
+    const normalizedPid = typeof pid === "string" && pid.trim() ? pid.trim() : null;
+    if (normalizedPid !== activePid) {
+      activePid = normalizedPid;
+      lastMessageCount = null;
+      lastPendingHilRequestId = null;
+      lastProcessState = null;
+      hadProcess = false;
+    }
+    if (!activePid) {
+      window.clearTimeout(pollTimerId);
+      return;
+    }
+    void primeProcessState(activePid);
+    schedulePoll(immediate ? 32 : 1000);
+  }
+
+  async function call(call, args = {}) {
+    if (call === "proc.profile.list") {
+      return backend.listProfiles(args);
+    }
+    if (call === "sys.workspace.list") {
+      return backend.listWorkspaces(args);
+    }
+    if (call === "proc.abort") {
+      const result = await backend.abortRun(args);
+      const pid = typeof args?.pid === "string" ? args.pid.trim() : "";
+      if (pid) {
+        watchPid(pid, true);
+      }
+      return result;
+    }
+    if (call === "proc.hil") {
+      const result = await backend.decideHil(args);
+      const pid = typeof args?.pid === "string" ? args.pid.trim() : "";
+      if (pid) {
+        watchPid(pid, true);
+      }
+      return result;
+    }
+    throw new Error("Unsupported chat client call: " + call);
   }
 
   return {
     getStatus: () => status,
-    isConnected: () => status.state === "connected",
+    isConnected: () => true,
     onSignal: (listener) => {
       signalListeners.add(listener);
       return () => signalListeners.delete(listener);
@@ -694,10 +759,38 @@ function createEmbeddedHostClient(port) {
       listener(status);
       return () => statusListeners.delete(listener);
     },
-    call: (call, args) => rpc("call", { call, args: args || {} }),
-    spawnProcess: (args) => rpc("spawnProcess", args),
-    sendMessage: (message, pid, media) => rpc("sendMessage", { message, pid, media }),
-    getHistory: (limit, pid, offset) => rpc("getHistory", { limit: limit || 50, pid, offset }),
+    call,
+    spawnProcess: async (args) => {
+      const result = await backend.spawnProcess(args);
+      const pid = asString(asRecord(result)?.pid);
+      if (pid) {
+        watchPid(pid, true);
+      }
+      return result;
+    },
+    sendMessage: async (message, pid, media) => {
+      const result = await backend.sendMessage({
+        message,
+        ...(pid ? { pid } : {}),
+        ...(Array.isArray(media) && media.length > 0 ? { media } : {}),
+      });
+      if (pid) {
+        watchPid(pid, true);
+      }
+      return result;
+    },
+    getHistory: async (limit, pid, offset) => {
+      const result = await backend.getHistory({
+        limit: limit || 50,
+        ...(pid ? { pid } : {}),
+        ...(typeof offset === "number" ? { offset } : {}),
+      });
+      if (pid) {
+        watchPid(pid, false);
+        rememberHistoryState(result);
+      }
+      return result;
+    },
   };
 }
 
@@ -1183,7 +1276,7 @@ function renderThreads() {
 }
 
 function renderStatus() {
-  const status = client ? client.getStatus() : { state: "disconnected", message: hostError || "HOST unavailable" };
+  const status = client ? client.getStatus() : { state: "disconnected", message: hostError || "Chat backend unavailable" };
   currentUsername = typeof status.username === "string" && status.username.trim() ? status.username.trim() : null;
   if (elements.connectionPill) {
     elements.connectionPill.textContent = "";
@@ -1209,7 +1302,7 @@ function renderStatus() {
         ? "Attached to Home."
         : "Attached to active thread.";
     } else {
-      elements.composeStatus.textContent = status.state === "connected" ? draftConversationMeta() : (status.message || "Waiting for desktop host.");
+      elements.composeStatus.textContent = status.state === "connected" ? draftConversationMeta() : (status.message || "Connecting chat backend.");
     }
   }
   if (elements.activeThreadTitle) {
@@ -1781,7 +1874,7 @@ async function boot() {
   listenForTargetProcess();
   renderThreads();
   renderStatus();
-  setLogRows([{ role: "system", text: "Waiting for desktop host.", timestamp: Date.now() }], { forceBottom: true });
+  setLogRows([{ role: "system", text: "Connecting chat backend.", timestamp: Date.now() }], { forceBottom: true });
   try {
     client = await connectHostClient();
     client.onStatus(() => {
@@ -1842,7 +1935,7 @@ async function boot() {
     await loadThreads();
   } catch (error) {
     hostError = error instanceof Error ? error.message : String(error);
-    setLogRows([{ role: "system", text: "HOST bridge unavailable. Open Chat from the desktop shell.", timestamp: Date.now() }], { forceBottom: true });
+    setLogRows([{ role: "system", text: "Chat backend unavailable. Reload this window and try again.", timestamp: Date.now() }], { forceBottom: true });
     renderStatus();
   }
 }
