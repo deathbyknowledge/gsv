@@ -87,6 +87,12 @@ export type PackageBaseContext = {
     packageId: string;
     routeBase: string | null;
   };
+  app?: {
+    sessionId: string;
+    clientId: string;
+    rpcBase: string;
+    expiresAt: number;
+  };
   kernel: {
     request<T = unknown>(call: string, args?: unknown): Promise<T>;
   };
@@ -132,6 +138,13 @@ export type PackageAppSignalContext = PackageAppContext & {
   };
 };
 
+export type PackageAppRpcContext = PackageAppContext;
+
+export type PackageAppRpcHandler = (
+  args: unknown,
+  ctx: PackageAppRpcContext,
+) => Promise<unknown> | unknown;
+
 export type PackageBrowserAppDefinition = {
   entry: string;
 };
@@ -153,6 +166,7 @@ export type PackageAppDefinition = {
   assets?: string[];
   fetch?(request: Request, ctx: PackageAppContext): Promise<Response> | Response;
   onSignal?(ctx: PackageAppSignalContext): Promise<void> | void;
+  rpc?: Record<string, PackageAppRpcHandler>;
 };
 
 export type PackageDefinition = {

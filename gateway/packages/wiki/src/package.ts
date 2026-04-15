@@ -1,5 +1,5 @@
 import { definePackage } from "@gsv/package/worker";
-import { handleAppSignal, handleFetch } from "../ui/worker";
+import { handleAppSignal, handleFetch, startBuildFromDirectory } from "../ui/worker";
 
 export default definePackage({
   meta: {
@@ -42,6 +42,9 @@ export default definePackage({
         },
         env: { PACKAGE_ROUTE_BASE: routeBase },
       });
+    },
+    rpc: {
+      startBuildFromDirectory: async (args, ctx) => startBuildFromDirectory(ctx.kernel, args),
     },
     async onSignal(ctx) {
       await handleAppSignal(ctx);

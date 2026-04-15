@@ -31,7 +31,8 @@ const GSV_PACKAGE_SDK_PACKAGE_JSON: &str = r#"{
   "exports": {
     ".": "./src/index.ts",
     "./worker": "./src/worker.ts",
-    "./host": "./src/host.ts"
+    "./host": "./src/host.ts",
+    "./browser": "./src/browser.ts"
   }
 }"#;
 const GSV_PACKAGE_SDK_WORKER_TS: &str = r#"export function definePackage(definition) {
@@ -42,8 +43,86 @@ const GSV_PACKAGE_SDK_HOST_TS: &str = r#"export async function connectHost() {
   throw new Error("HOST runtime is not wired in this build target");
 }
 "#;
+const GSV_PACKAGE_SDK_BROWSER_TS: &str = r#"export type PackageAppBoot = {
+  packageId: string;
+  packageName: string;
+  routeBase: string;
+  rpcBase: string;
+  sessionId: string;
+  sessionSecret: string;
+  clientId: string;
+  expiresAt: number;
+};
+
+type CapnwebGlobal = {
+  newWebSocketRpcSession<T = unknown>(url: string, localMain?: unknown): T;
+};
+
+declare global {
+  interface Window {
+    __GSV_APP_BOOT__?: PackageAppBoot;
+    __GSV_BACKEND_READY__?: Promise<unknown>;
+    backend?: unknown;
+    capnweb?: CapnwebGlobal;
+  }
+}
+
+export function getAppBoot(): PackageAppBoot {
+  const boot = globalThis.window?.__GSV_APP_BOOT__;
+  if (!boot) {
+    throw new Error("GSV app bootstrap is unavailable");
+  }
+  return boot;
+}
+
+export function hasAppBoot(): boolean {
+  return Boolean(globalThis.window?.__GSV_APP_BOOT__);
+}
+
+function getCapnweb(): CapnwebGlobal {
+  const capnweb = globalThis.window?.capnweb;
+  if (!capnweb || typeof capnweb.newWebSocketRpcSession !== "function") {
+    throw new Error("capnweb runtime is unavailable");
+  }
+  return capnweb;
+}
+
+function buildRpcWebSocketUrl(rpcBase: string): string {
+  const url = new URL(rpcBase, globalThis.window?.location?.href ?? "http://localhost");
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
+
+export async function connectAppBackend<T = unknown>(): Promise<T> {
+  const existing = globalThis.window?.__GSV_BACKEND_READY__;
+  if (existing) {
+    return existing as Promise<T>;
+  }
+  const boot = getAppBoot();
+  const capnweb = getCapnweb();
+  const ready = (async () => {
+    const session = capnweb.newWebSocketRpcSession<{
+      authenticate(secret: string): T;
+    }>(buildRpcWebSocketUrl(boot.rpcBase));
+    const backend = await session.authenticate(boot.sessionSecret);
+    if (globalThis.window) {
+      globalThis.window.backend = backend;
+    }
+    return backend;
+  })();
+  if (globalThis.window) {
+    globalThis.window.__GSV_BACKEND_READY__ = ready;
+  }
+  return ready as Promise<T>;
+}
+
+export async function getBackend<T = unknown>(): Promise<T> {
+  return connectAppBackend<T>();
+}
+"#;
 const GSV_PACKAGE_SDK_INDEX_TS: &str = r#"export * from "./worker";
 export * from "./host";
+export * from "./browser";
 "#;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -331,6 +410,9 @@ fn inject_builtin_sdk_files(repo_files: &mut BTreeMap<String, String>) {
     repo_files
         .entry(format!("{}/src/host.ts", GSV_PACKAGE_SDK_ROOT))
         .or_insert_with(|| GSV_PACKAGE_SDK_HOST_TS.to_string());
+    repo_files
+        .entry(format!("{}/src/browser.ts", GSV_PACKAGE_SDK_ROOT))
+        .or_insert_with(|| GSV_PACKAGE_SDK_BROWSER_TS.to_string());
     repo_files
         .entry(format!("{}/src/index.ts", GSV_PACKAGE_SDK_ROOT))
         .or_insert_with(|| GSV_PACKAGE_SDK_INDEX_TS.to_string());
@@ -1730,7 +1812,7 @@ fn generate_dynamic_worker_main_module(
     }
 
     format!(
-        r#"{asset_imports}import {{ WorkerEntrypoint }} from "cloudflare:workers";
+        r#"{asset_imports}import {{ RpcTarget, WorkerEntrypoint }} from "cloudflare:workers";
 import definition from "../src/package.js";
 
 const STATIC_META = Object.freeze({{
@@ -1757,6 +1839,14 @@ function mergeMeta(overrides) {{
 function createBaseContext(env, metaOverrides, props) {{
   return {{
     meta: mergeMeta(metaOverrides),
+    app: props?.appSession && typeof props.appSession === "object"
+      ? {{
+          sessionId: typeof props.appSession.sessionId === "string" ? props.appSession.sessionId : "",
+          clientId: typeof props.appSession.clientId === "string" ? props.appSession.clientId : "",
+          rpcBase: typeof props.appSession.rpcBase === "string" ? props.appSession.rpcBase : "",
+          expiresAt: typeof props.appSession.expiresAt === "number" ? props.appSession.expiresAt : 0,
+        }}
+      : undefined,
     kernel: props?.kernel ?? env.KERNEL,
   }};
 }}
@@ -1795,6 +1885,17 @@ function getAppDefinition() {{
     return null;
   }}
   return app;
+}}
+
+function getAppRpcHandler(app, method) {{
+  if (!app || !app.rpc || typeof app.rpc !== "object") {{
+    return null;
+  }}
+  const handler = app.rpc[method];
+  if (typeof handler !== "function") {{
+    return null;
+  }}
+  return handler;
 }}
 
 function serveStaticAsset(request, routeBase) {{
@@ -1973,6 +2074,47 @@ export class GsvAppSignalEntrypoint extends WorkerEntrypoint {{
     }};
     await ensureSetup(ctx);
     return app.onSignal(ctx);
+  }}
+}}
+
+class GsvPackageAppBackend extends RpcTarget {{
+  constructor(env, props) {{
+    super();
+    const app = getAppDefinition();
+    if (!app || !app.rpc || typeof app.rpc !== "object") {{
+      throw new Error("package app has no rpc handlers");
+    }}
+    const ctx = createBaseContext(env, {{
+      packageId: props.appFrame?.packageId ?? props.packageId ?? env.GSV_PACKAGE_ID ?? STATIC_META.packageId,
+      routeBase: props.appFrame?.routeBase ?? props.routeBase ?? env.GSV_ROUTE_BASE ?? STATIC_META.routeBase,
+    }}, props);
+    this.__gsvCtx = ctx;
+    this.__gsvApp = app;
+    this.__gsvSetupReady = null;
+
+    for (const method of Object.keys(app.rpc)) {{
+      this[method] = async (args) => {{
+        if (!this.__gsvSetupReady) {{
+          this.__gsvSetupReady = ensureSetup(this.__gsvCtx);
+        }}
+        await this.__gsvSetupReady;
+        const handler = getAppRpcHandler(this.__gsvApp, method);
+        if (!handler) {{
+          throw new Error(`Unknown app RPC method: ${{method}}`);
+        }}
+        return handler(args, this.__gsvCtx);
+      }};
+    }}
+  }}
+}}
+
+export class GsvAppRpcEntrypoint extends WorkerEntrypoint {{
+  async getBackend() {{
+    const app = getAppDefinition();
+    if (!app || !app.rpc || typeof app.rpc !== "object") {{
+      throw new Error("package app has no rpc handlers");
+    }}
+    return new GsvPackageAppBackend(this.env, this.ctx.props ?? {{}});
   }}
 }}
 "#,

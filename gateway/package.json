@@ -23,6 +23,7 @@
 	"dependencies": {
 		"@mariozechner/pi-ai": "^0.64.0",
 		"agents": "^0.7.5",
+		"capnweb": "^0.6.1",
 		"just-bash": "^2.12.6"
 	}
 }

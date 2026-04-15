@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 import { isWebSocketRequest } from "./shared//utils";
 import type {
   GatewayAdapterInterface,
@@ -97,6 +98,7 @@ export default {
         packageName: appMatch.packageName,
         username: session.username,
         token: session.token,
+        clientId: url.searchParams.get("windowId")?.trim() || undefined,
       });
 
       if (!resolved.ok) {
@@ -114,6 +116,12 @@ export default {
       ).getEntrypoint(undefined, {
         props: {
           appFrame: resolved.appFrame,
+          appSession: {
+            sessionId: resolved.clientSession.sessionId,
+            clientId: resolved.clientSession.clientId,
+            rpcBase: resolved.clientSession.rpcBase,
+            expiresAt: resolved.clientSession.expiresAt,
+          },
           kernel: ctx.exports.KernelBinding({
             props: {
               appFrame: resolved.appFrame,
@@ -122,7 +130,18 @@ export default {
         } satisfies PackageAppProps,
       });
 
-      return worker.fetch(buildPackageWorkerRequest(request, resolved));
+      const response = await worker.fetch(buildPackageWorkerRequest(request, resolved));
+      return await withPackageAppClientSession(response, resolved);
+    }
+
+    const appRpcMatch = matchPackageAppRpcPath(url.pathname);
+    if (appRpcMatch) {
+      const response = await newWorkersRpcResponse(
+        request,
+        new PackageAppSessionRpcTarget(env, ctx, appRpcMatch.packageName, appRpcMatch.sessionId),
+      );
+      response.headers.set("cache-control", "no-store");
+      return response;
     }
 
     return new Response("Not Found", { status: 404 });
@@ -179,12 +198,53 @@ type ResolvedPackageRoute = {
   routeBase: string;
   artifact: PackageArtifact;
   appFrame: AppFrameContext;
+  clientSession: {
+    sessionId: string;
+    secret: string;
+    clientId: string;
+    packageId: string;
+    packageName: string;
+    routeBase: string;
+    rpcBase: string;
+    createdAt: number;
+    expiresAt: number;
+  };
   auth: {
     uid: number;
     username: string;
     capabilities: string[];
   };
 };
+
+type ResolvedPackageAppRpcSession =
+  | {
+      ok: true;
+      packageId: string;
+      packageName: string;
+      routeBase: string;
+      artifact: PackageArtifact;
+      appFrame: AppFrameContext;
+      clientSession: {
+        sessionId: string;
+        clientId: string;
+        packageId: string;
+        packageName: string;
+        routeBase: string;
+        rpcBase: string;
+        createdAt: number;
+        expiresAt: number;
+      };
+      auth: {
+        uid: number;
+        username: string;
+        capabilities: string[];
+      };
+    }
+  | {
+      ok: false;
+      status: number;
+      message: string;
+    };
 
 function matchPackageAppPath(pathname: string): { packageName: string } | null {
   const parts = pathname.split("/").filter(Boolean);
@@ -198,6 +258,29 @@ function matchPackageAppPath(pathname: string): { packageName: string } | null {
   }
 
   return { packageName: rawName };
+}
+
+function matchPackageAppRpcPath(
+  pathname: string,
+): { packageName: string; sessionId: string } | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length !== 4 || parts[0] !== "app-rpc" || parts[2] !== "sessions") {
+    return null;
+  }
+
+  const packageName = parts[1]?.trim();
+  const sessionId = parts[3]?.trim();
+  if (!packageName || !sessionId) {
+    return null;
+  }
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(packageName)) {
+    return null;
+  }
+  if (!/^[a-f0-9-]+$/i.test(sessionId)) {
+    return null;
+  }
+
+  return { packageName, sessionId };
 }
 
 function matchCliDownloadPath(pathname: string): CliDownloadMatch | null {
@@ -392,6 +475,123 @@ function buildPackageWorkerRequest(request: Request, resolved: ResolvedPackageRo
   headers.set("x-gsv-package-name", resolved.packageName);
 
   return new Request(request, { headers });
+}
+
+async function withPackageAppClientSession(
+  response: Response,
+  resolved: ResolvedPackageRoute,
+): Promise<Response> {
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+
+  if (isHtmlResponse(response)) {
+    const html = await response.text();
+    return new Response(injectAppBootstrapHtml(html, resolved), {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function isHtmlResponse(response: Response): boolean {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  return contentType.startsWith("text/html");
+}
+
+function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): string {
+  const boot = JSON.stringify({
+    packageId: resolved.packageId,
+    packageName: resolved.packageName,
+    routeBase: resolved.routeBase,
+    rpcBase: resolved.clientSession.rpcBase,
+    sessionId: resolved.clientSession.sessionId,
+    sessionSecret: resolved.clientSession.secret,
+    clientId: resolved.clientSession.clientId,
+    expiresAt: resolved.clientSession.expiresAt,
+  }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+  const script = [
+    "<script src=\"https://cdn.jsdelivr.net/npm/capnweb@0.6.1/dist/index.min.js\"></script>",
+    `<script type="module">`,
+    `window.__GSV_APP_BOOT__=${boot};`,
+    `window.__GSV_BACKEND_READY__=(async()=>{`,
+    `  const capnweb=window.capnweb;`,
+    `  if(!capnweb||typeof capnweb.newWebSocketRpcSession!==\"function\"){`,
+    `    throw new Error(\"capnweb runtime is unavailable\");`,
+    "  }",
+    `  const rpcUrl=new URL(window.__GSV_APP_BOOT__.rpcBase, window.location.href);`,
+    `  rpcUrl.protocol=rpcUrl.protocol===\"https:\"?\"wss:\":\"ws:\";`,
+    `  const session=capnweb.newWebSocketRpcSession(rpcUrl.toString());`,
+    `  const backend=await session.authenticate(window.__GSV_APP_BOOT__.sessionSecret);`,
+    `  window.backend=backend;`,
+    `  return backend;`,
+    `})().catch((error)=>{console.error(\"[app-rpc]\", error);throw error;});`,
+    "</script>",
+  ].join("");
+
+  if (html.includes("</head>")) {
+    return html.replace("</head>", `${script}</head>`);
+  }
+  if (html.includes("</body>")) {
+    return html.replace("</body>", `${script}</body>`);
+  }
+  return `${script}${html}`;
+}
+
+class PackageAppSessionRpcTarget extends RpcTarget {
+  constructor(
+    private readonly env: Env,
+    private readonly ctx: ExecutionContext,
+    private readonly packageName: string,
+    private readonly sessionId: string,
+  ) {
+    super();
+  }
+
+  async authenticate(secret: string): Promise<unknown> {
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton");
+    const resolved = await kernel.resolvePackageAppRpcSession({
+      packageName: this.packageName,
+      sessionId: this.sessionId,
+      secret,
+    }) as ResolvedPackageAppRpcSession;
+
+    if (!resolved.ok) {
+      throw new Error(resolved.message);
+    }
+
+    const packageKey = packageWorkerKey({ manifest: { name: resolved.packageName }, artifact: resolved.artifact });
+    const worker = this.env.LOADER.get(packageKey,
+      () => packageArtifactToWorkerCode(resolved.artifact, {
+        PACKAGE_NAME: resolved.packageName,
+        PACKAGE_ID: resolved.packageId,
+        PACKAGE_ROUTE_BASE: resolved.routeBase,
+      }),
+    ).getEntrypoint("GsvAppRpcEntrypoint", {
+      props: {
+        appFrame: resolved.appFrame,
+        appSession: {
+          sessionId: resolved.clientSession.sessionId,
+          clientId: resolved.clientSession.clientId,
+          rpcBase: resolved.clientSession.rpcBase,
+          expiresAt: resolved.clientSession.expiresAt,
+        },
+        kernel: this.ctx.exports.KernelBinding({
+          props: {
+            appFrame: resolved.appFrame,
+          },
+        }),
+      } satisfies PackageAppProps,
+    }) as unknown as { getBackend(): Promise<unknown> };
+
+    return worker.getBackend();
+  }
 }
 
 async function buildGitProxyRequest(
