@@ -859,7 +859,7 @@ function renderPage(args) {
           <details>
             <summary>Create from directory</summary>
             <div class="detail-body">
-              <form method="post" action="${escapeHtml(routeBase)}">
+              <form method="post" action="${escapeHtml(routeBase)}" id="wiki-build-form">
                 <input type="hidden" name="action" value="build-from-directory" />
                 <div class="field">
                   <label for="build-target">Source target</label>
@@ -877,7 +877,8 @@ function renderPage(args) {
                   <label for="build-db-title">Database title</label>
                   <input id="build-db-title" type="text" name="buildDbTitle" value="${escapeHtml(buildDbTitle)}" placeholder="Product Alpha" />
                 </div>
-                <button type="submit">Start background build</button>
+                <button type="submit" id="wiki-build-submit">Start background build</button>
+                <p class="muted" id="wiki-build-feedback" hidden></p>
               </form>
             </div>
           </details>
@@ -1274,10 +1275,115 @@ function renderPage(args) {
           }
           scheduleHidePreview(true);
         });
+
+        const appBoot = window.__GSV_APP_BOOT__ || null;
+        const buildForm = document.getElementById("wiki-build-form");
+        const buildSubmit = document.getElementById("wiki-build-submit");
+        const buildFeedback = document.getElementById("wiki-build-feedback");
+        if (appBoot && buildForm instanceof HTMLFormElement && buildSubmit instanceof HTMLButtonElement && buildFeedback instanceof HTMLElement) {
+          buildForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const form = new FormData(buildForm);
+            buildSubmit.disabled = true;
+            buildFeedback.hidden = false;
+            buildFeedback.textContent = "Starting background build…";
+            try {
+              const backend = await window.__GSV_BACKEND_READY__;
+              if (!backend || typeof backend.startBuildFromDirectory !== "function") {
+                throw new Error("Wiki backend is unavailable");
+              }
+              const payload = await backend.startBuildFromDirectory({
+                buildTarget: String(form.get("buildTarget") || ""),
+                buildSourcePath: String(form.get("buildSourcePath") || ""),
+                buildDbId: String(form.get("buildDbId") || ""),
+                buildDbTitle: String(form.get("buildDbTitle") || ""),
+              });
+              const href = new URL(buildEntryHrefClient(routeBase, payload.db, payload.openPath), window.location.origin);
+              href.searchParams.set("status", payload.statusText || "Started background wiki build.");
+              window.location.href = href.pathname + href.search + href.hash;
+            } catch (error) {
+              buildSubmit.disabled = false;
+              buildFeedback.textContent = error instanceof Error ? error.message : String(error);
+            }
+          });
+        }
       })();
     </script>
   </body>
 </html>`;
+}
+
+export async function startBuildFromDirectory(kernel, args) {
+  const buildTarget = String(args?.buildTarget ?? "gsv").trim() || "gsv";
+  const buildSourcePath = String(args?.buildSourcePath ?? "").trim();
+  const buildDbId = String(args?.buildDbId ?? "").trim();
+  const buildDbTitle = String(args?.buildDbTitle ?? "").trim();
+
+  if (!buildDbId) {
+    throw new Error("A target database id is required.");
+  }
+  if (!buildSourcePath) {
+    throw new Error("A source directory is required.");
+  }
+
+  const spawn = await kernel.request("proc.spawn", {
+    profile: "wiki#builder",
+    label: `wiki build (${buildDbId})`,
+    workspace: { mode: "none" },
+  });
+  if (!spawn?.ok) {
+    throw new Error(spawn?.error || "Failed to start wiki builder");
+  }
+
+  const watchKey = `wiki-build:${spawn.pid}`;
+  await kernel.request("signal.watch", {
+    signal: "chat.complete",
+    processId: spawn.pid,
+    key: watchKey,
+    state: {
+      db: buildDbId,
+      title: buildDbTitle || undefined,
+      sourceTarget: buildTarget,
+      sourcePath: buildSourcePath,
+    },
+  });
+
+  const prompt = [
+    "Build a knowledge wiki from a directory.",
+    `Source target: ${buildTarget}`,
+    `Source directory: ${buildSourcePath}`,
+    `Target database: ${buildDbId}`,
+    ...(buildDbTitle ? [`Database title: ${buildDbTitle}`] : []),
+    "",
+    "Requirements:",
+    "- The source directory may be on a device target, but the wiki itself must be created on gsv under ~/knowledge.",
+    "- Treat the source target as read-only. Do not create wiki files, support files, or scratch files there.",
+    "- Use the `wiki` CLI on gsv for all wiki writes; do not hand-create page files in the source directory or on the source target.",
+    "- Use normal filesystem/shell tools only to inspect the source corpus.",
+    "- Initialize the target database if it does not exist.",
+    "- Inspect the source directory conservatively and ignore obvious junk such as build output, vendor directories, and caches unless they are clearly relevant.",
+    "- Create a readable `index.md` homepage for the database.",
+    "- Create canonical pages under `<db>/pages/` with meaningful boundaries instead of one giant dump.",
+    "- Add links between related pages.",
+    "- Keep live source references back to the original files and directories.",
+    "- Do not copy the source corpus into the knowledge repo.",
+    "- Prefer a small useful first draft over exhaustive coverage.",
+  ].join("\n");
+
+  const send = await kernel.request("proc.send", {
+    pid: spawn.pid,
+    message: prompt,
+  });
+  if (!send?.ok) {
+    await kernel.request("signal.unwatch", { key: watchKey }).catch(() => {});
+    throw new Error(send?.error || "Failed to deliver builder prompt");
+  }
+
+  return {
+    db: buildDbId,
+    openPath: `${buildDbId}/index.md`,
+    statusText: `Started background wiki build for ${buildDbId}. You will get a notification when it finishes.`,
+  };
 }
 
 export async function handleFetch(request, context = {}) {
@@ -1417,6 +1523,10 @@ export async function handleFetch(request, context = {}) {
   }
 
   let statusText = "";
+  const statusFromUrl = String(url.searchParams.get("status") ?? "").trim();
+  if (statusFromUrl) {
+    statusText = statusFromUrl;
+  }
   let errorText = "";
   let selectedDb = String(url.searchParams.get("db") ?? "").trim();
   let selectedPath = normalizeDbScopedPath(url.searchParams.get("path") ?? "", selectedDb);
@@ -1518,70 +1628,16 @@ export async function handleFetch(request, context = {}) {
         selectedPath = result.path;
         statusText = `Compiled ${result.sourcePath} into ${result.path}`;
       } else if (action === "build-from-directory") {
-        if (!buildDbId) {
-          throw new Error("A target database id is required.");
-        }
-        if (!buildSourcePath) {
-          throw new Error("A source directory is required.");
-        }
-
-        const spawn = await kernel.request("proc.spawn", {
-          profile: "wiki#builder",
-          label: `wiki build (${buildDbId})`,
-          workspace: { mode: "none" },
+        const result = await startBuildFromDirectory(kernel, {
+          buildTarget,
+          buildSourcePath,
+          buildDbId,
+          buildDbTitle,
         });
-        if (!spawn?.ok) {
-          throw new Error(spawn?.error || "Failed to start wiki builder");
-        }
-
-        const watchKey = `wiki-build:${spawn.pid}`;
-        await kernel.request("signal.watch", {
-          signal: "chat.complete",
-          processId: spawn.pid,
-          key: watchKey,
-          state: {
-            db: buildDbId,
-            title: buildDbTitle || undefined,
-            sourceTarget: buildTarget,
-            sourcePath: buildSourcePath,
-          },
-        });
-
-        const prompt = [
-          "Build a knowledge wiki from a directory.",
-          `Source target: ${buildTarget}`,
-          `Source directory: ${buildSourcePath}`,
-          `Target database: ${buildDbId}`,
-          ...(buildDbTitle ? [`Database title: ${buildDbTitle}`] : []),
-          "",
-          "Requirements:",
-          "- The source directory may be on a device target, but the wiki itself must be created on gsv under ~/knowledge.",
-          "- Treat the source target as read-only. Do not create wiki files, support files, or scratch files there.",
-          "- Use the `wiki` CLI on gsv for all wiki writes; do not hand-create page files in the source directory or on the source target.",
-          "- Use normal filesystem/shell tools only to inspect the source corpus.",
-          "- Initialize the target database if it does not exist.",
-          "- Inspect the source directory conservatively and ignore obvious junk such as build output, vendor directories, and caches unless they are clearly relevant.",
-          "- Create a readable `index.md` homepage for the database.",
-          "- Create canonical pages under `<db>/pages/` with meaningful boundaries instead of one giant dump.",
-          "- Add links between related pages.",
-          "- Keep live source references back to the original files and directories.",
-          "- Do not copy the source corpus into the knowledge repo.",
-          "- Prefer a small useful first draft over exhaustive coverage.",
-        ].join("\n");
-
-        const send = await kernel.request("proc.send", {
-          pid: spawn.pid,
-          message: prompt,
-        });
-        if (!send?.ok) {
-          await kernel.request("signal.unwatch", { key: watchKey }).catch(() => {});
-          throw new Error(send?.error || "Failed to deliver builder prompt");
-        }
-
-        selectedDb = buildDbId;
-        selectedPath = `${buildDbId}/index.md`;
+        selectedDb = result.db;
+        selectedPath = result.openPath;
         draftPath = selectedPath;
-        statusText = `Started background wiki build for ${buildDbId}. You will get a notification when it finishes.`;
+        statusText = result.statusText;
       }
     } catch (error) {
       errorText = error instanceof Error ? error.message : String(error);

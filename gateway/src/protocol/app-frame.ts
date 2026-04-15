@@ -17,6 +17,12 @@ export type AppFrameContext = {
 
 export type PackageAppProps = {
   appFrame: AppFrameContext;
+  appSession?: {
+    sessionId: string;
+    clientId: string;
+    rpcBase: string;
+    expiresAt: number;
+  };
   kernel: AppKernelBinding;
 };
 

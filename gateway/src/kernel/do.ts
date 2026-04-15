@@ -27,6 +27,7 @@ import { WorkspaceStore } from "./workspaces";
 import { AutomationStore, type AutomationJobRecord } from "./automation";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
 import { NotificationStore } from "./notifications";
+import { AppSessionStore } from "./app-sessions";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -59,6 +60,7 @@ import {
   type AppFrameContext,
   type PackageAppSignalProps,
 } from "../protocol/app-frame";
+import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
 import { workspaceRootPath } from "../fs";
 
@@ -81,6 +83,7 @@ type ResolvePackageHttpInput = {
   packageName: string;
   username: string;
   token: string;
+  clientId?: string;
 };
 
 type ResolvePackageHttpResult =
@@ -91,6 +94,34 @@ type ResolvePackageHttpResult =
       routeBase: string;
       artifact: PackageArtifact;
       appFrame: AppFrameContext;
+      clientSession: AppClientSessionContext & { secret: string };
+      auth: {
+        uid: number;
+        username: string;
+        capabilities: string[];
+      };
+    }
+  | {
+      ok: false;
+      status: number;
+      message: string;
+    };
+
+type ResolvePackageAppRpcInput = {
+  packageName: string;
+  sessionId: string;
+  secret: string;
+};
+
+type ResolvePackageAppRpcResult =
+  | {
+      ok: true;
+      packageId: string;
+      packageName: string;
+      routeBase: string;
+      artifact: PackageArtifact;
+      appFrame: AppFrameContext;
+      clientSession: AppClientSessionContext;
       auth: {
         uid: number;
         username: string;
@@ -153,6 +184,7 @@ export class Kernel extends Host<Env> {
   private readonly automation: AutomationStore;
   private readonly signalWatches: SignalWatchStore;
   private readonly notifications: NotificationStore;
+  private readonly appSessions: AppSessionStore;
   private readonly packages: PackageStore;
   private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
@@ -199,6 +231,9 @@ export class Kernel extends Host<Env> {
 
     this.notifications = new NotificationStore(sql);
     this.notifications.init();
+
+    this.appSessions = new AppSessionStore(sql);
+    this.appSessions.init();
 
     this.packages = new PackageStore(sql);
     this.packages.init();
@@ -400,6 +435,17 @@ export class Kernel extends Host<Env> {
     }
 
     const now = Date.now();
+    const clientSession = await this.appSessions.issue({
+      uid: auth.identity.uid,
+      username: auth.identity.username,
+      packageId: record.packageId,
+      packageName: record.manifest.name,
+      entrypointName: entrypoint.name,
+      routeBase,
+      clientId: input.clientId?.trim() || crypto.randomUUID(),
+      ttlMs: 30 * 60 * 1000,
+    });
+
     return {
       ok: true,
       packageId: record.packageId,
@@ -416,10 +462,68 @@ export class Kernel extends Host<Env> {
         issuedAt: now,
         expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
       },
+      clientSession,
       auth: {
         uid: auth.identity.uid,
         username: auth.identity.username,
         capabilities: this.caps.resolve(auth.identity.gids),
+      },
+    };
+  }
+
+  async resolvePackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
+    await this.ready;
+    const packageName = input.packageName.trim();
+    const sessionId = input.sessionId.trim();
+    const secret = input.secret.trim();
+
+    if (!packageName || !sessionId || !secret) {
+      return { ok: false, status: 401, message: "Authentication required" };
+    }
+
+    const clientSession = await this.appSessions.resolve(sessionId, secret);
+    if (!clientSession) {
+      return { ok: false, status: 401, message: "Authentication failed" };
+    }
+    if (clientSession.packageName !== packageName) {
+      return { ok: false, status: 404, message: "Package app session not found" };
+    }
+
+    const authUser = this.auth.getPasswdByUid(clientSession.uid);
+    if (!authUser || authUser.username !== clientSession.username) {
+      return { ok: false, status: 401, message: "Authentication failed" };
+    }
+
+    const capabilities = this.caps.resolve(this.auth.resolveGids(authUser.username, authUser.gid));
+    const record = this.packages.resolve(
+      clientSession.packageId,
+      visiblePackageScopesForActor({ uid: clientSession.uid }),
+    );
+    if (!record || !record.enabled || record.manifest.name !== clientSession.packageName) {
+      return { ok: false, status: 404, message: "Package app not found" };
+    }
+
+    return {
+      ok: true,
+      packageId: record.packageId,
+      packageName: record.manifest.name,
+      routeBase: clientSession.routeBase,
+      artifact: record.artifact,
+      appFrame: {
+        uid: clientSession.uid,
+        username: clientSession.username,
+        packageId: record.packageId,
+        packageName: record.manifest.name,
+        entrypointName: clientSession.entrypointName,
+        routeBase: clientSession.routeBase,
+        issuedAt: clientSession.createdAt,
+        expiresAt: clientSession.expiresAt,
+      },
+      clientSession,
+      auth: {
+        uid: clientSession.uid,
+        username: clientSession.username,
+        capabilities,
       },
     };
   }
