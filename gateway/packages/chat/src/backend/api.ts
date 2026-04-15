@@ -14,11 +14,6 @@ function normalizeLimit(value: unknown, fallback = 50) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-async function listProcesses(kernel: KernelClient) {
-  const payload = await kernel.request("proc.list", {});
-  return Array.isArray(payload?.processes) ? payload.processes : [];
-}
-
 export async function listProfiles(kernel: KernelClient, input: unknown) {
   return kernel.request("proc.profile.list", normalizeArgs(input));
 }
@@ -70,26 +65,4 @@ export async function decideHil(kernel: KernelClient, input: unknown) {
     requestId: typeof args.requestId === "string" ? args.requestId : "",
     decision: Boolean(args.decision),
   });
-}
-
-export async function getProcessState(kernel: KernelClient, input: unknown) {
-  const pid = normalizePid(normalizeArgs(input).pid);
-  if (!pid) {
-    return { process: null };
-  }
-  const processes = await listProcesses(kernel);
-  const process = processes.find((entry) => normalizePid((entry as Record<string, unknown>)?.pid) === pid) ?? null;
-  return { process };
-}
-
-export async function getThreadSnapshot(kernel: KernelClient, input: unknown) {
-  const args = normalizeArgs(input);
-  const [history, processState] = await Promise.all([
-    getHistory(kernel, args),
-    getProcessState(kernel, args),
-  ]);
-  return {
-    history,
-    process: processState.process,
-  };
 }

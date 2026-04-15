@@ -16,3 +16,7 @@ export type AppClientSessionContext = {
 export type IssuedAppClientSession = AppClientSessionContext & {
   secret: string;
 };
+
+export function buildAppRunnerName(uid: number, packageId: string): string {
+  return `app:${uid}:${packageId}`;
+}

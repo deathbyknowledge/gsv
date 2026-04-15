@@ -1914,7 +1914,7 @@ fn generate_dynamic_worker_main_module(
     }
 
     format!(
-        r#"{asset_imports}import {{ RpcTarget, WorkerEntrypoint }} from "cloudflare:workers";
+        r#"{asset_imports}import {{ DurableObject, RpcTarget, WorkerEntrypoint }} from "cloudflare:workers";
 import definition from "../src/package.js";
 
 const STATIC_META = Object.freeze({{
@@ -1927,6 +1927,7 @@ const STATIC_ASSETS = new Map([
 {asset_entries}]);
 
 let setupPromise = null;
+const LIVE_SIGNAL_WATCH_TTL_MS = 24 * 60 * 60 * 1000;
 
 function mergeMeta(overrides) {{
   if (!overrides) {{
@@ -2178,6 +2179,192 @@ export class GsvAppSignalEntrypoint extends WorkerEntrypoint {{
     return app.onSignal(ctx);
   }}
 }}
+
+export class GsvAppFacet extends DurableObject {{
+  constructor(ctx, env) {{
+    super(ctx, env);
+    const app = getAppDefinition();
+    if (!app) {{
+      throw new Error("package has no app definition");
+    }}
+    this.__gsvApp = app;
+    this.__gsvCtx = createBaseContext(env, {{
+      packageId: env.GSV_PACKAGE_ID ?? STATIC_META.packageId,
+      routeBase: env.GSV_ROUTE_BASE ?? STATIC_META.routeBase,
+    }});
+    this.__gsvSetupReady = null;
+    this.__gsvSignalSubscriptions = new Map();
+    this.__gsvSignalWatchRefs = new Map();
+  }}
+
+  async __ensureSetup() {{
+    if (!this.__gsvSetupReady) {{
+      this.__gsvSetupReady = ensureSetup(this.__gsvCtx);
+    }}
+    await this.__gsvSetupReady;
+  }}
+
+  async __invoke(method, args) {{
+    await this.__ensureSetup();
+    const handler = getAppRpcHandler(this.__gsvApp, method);
+    if (!handler) {{
+      throw new Error(`Unknown app RPC method: ${{method}}`);
+    }}
+    return handler(args, this.__gsvCtx);
+  }}
+
+  __watchKey(signal, processId) {{
+    return `__gsv_live__:${{signal}}:${{processId ?? "*"}}`;
+  }}
+
+  async gsvSubscribeSignal(args) {{
+    await this.__ensureSetup();
+    const signals = Array.isArray(args?.signals)
+      ? Array.from(new Set(args.signals.filter((value) => typeof value === "string" && value.length > 0)))
+      : [];
+    if (signals.length === 0) {{
+      throw new Error("signals are required");
+    }}
+    const processId =
+      typeof args?.processId === "string" && args.processId.length > 0
+        ? args.processId
+        : undefined;
+    const sink = args?.sink;
+    if (!sink || typeof sink.onSignal !== "function") {{
+      throw new Error("signal sink must implement onSignal()");
+    }}
+
+    const subscriptionId = crypto.randomUUID();
+    const watchKeys = [];
+    for (const signal of signals) {{
+      const watchKey = this.__watchKey(signal, processId ?? null);
+      let bucket = this.__gsvSignalWatchRefs.get(watchKey);
+      if (!bucket) {{
+        await this.__gsvCtx.kernel.request("signal.watch", {{
+          signal,
+          ...(processId ? {{ processId }} : {{}}),
+          key: watchKey,
+          once: false,
+          ttlMs: LIVE_SIGNAL_WATCH_TTL_MS,
+          state: {{
+            source: "gsv-live-subscription",
+            signal,
+            processId: processId ?? null,
+          }},
+        }});
+        bucket = {{
+          signal,
+          processId: processId ?? null,
+          subscribers: new Map(),
+        }};
+        this.__gsvSignalWatchRefs.set(watchKey, bucket);
+      }}
+      bucket.subscribers.set(subscriptionId, sink);
+      watchKeys.push(watchKey);
+    }}
+
+    this.__gsvSignalSubscriptions.set(subscriptionId, watchKeys);
+    return {{ subscriptionId }};
+  }}
+
+  async gsvUnsubscribeSignal(args) {{
+    const subscriptionId =
+      typeof args?.subscriptionId === "string" && args.subscriptionId.length > 0
+        ? args.subscriptionId
+        : "";
+    if (!subscriptionId) {{
+      return {{ removed: false }};
+    }}
+    const watchKeys = this.__gsvSignalSubscriptions.get(subscriptionId);
+    if (!watchKeys) {{
+      return {{ removed: false }};
+    }}
+    this.__gsvSignalSubscriptions.delete(subscriptionId);
+    for (const watchKey of watchKeys) {{
+      const bucket = this.__gsvSignalWatchRefs.get(watchKey);
+      if (!bucket) {{
+        continue;
+      }}
+      bucket.subscribers.delete(subscriptionId);
+      if (bucket.subscribers.size > 0) {{
+        continue;
+      }}
+      this.__gsvSignalWatchRefs.delete(watchKey);
+      await this.__gsvCtx.kernel.request("signal.unwatch", {{ key: watchKey }}).catch(() => {{}});
+    }}
+    return {{ removed: true }};
+  }}
+
+  async gsvHandleSignal(signalName, payload, sourcePid, watch) {{
+    await this.__ensureSetup();
+
+    if (typeof this.__gsvApp.onSignal === "function") {{
+      await this.__gsvApp.onSignal({{
+        ...this.__gsvCtx,
+        signal: signalName,
+        payload,
+        sourcePid: typeof sourcePid === "string" ? sourcePid : undefined,
+        watch: watch && typeof watch === "object"
+          ? {{
+              id: typeof watch.id === "string" ? watch.id : "",
+              key: typeof watch.key === "string" ? watch.key : undefined,
+              state: watch.state,
+              createdAt: typeof watch.createdAt === "number" ? watch.createdAt : undefined,
+            }}
+          : {{ id: "" }},
+      }});
+    }}
+
+    const watchKey = watch && typeof watch.key === "string"
+      ? watch.key
+      : this.__watchKey(
+          signalName,
+          watch && watch.state && typeof watch.state.processId === "string"
+            ? watch.state.processId
+            : null,
+        );
+    const bucket = this.__gsvSignalWatchRefs.get(watchKey);
+    if (!bucket || bucket.subscribers.size === 0) {{
+      return;
+    }}
+
+    const stale = [];
+    await Promise.all(Array.from(bucket.subscribers.entries()).map(async ([subscriptionId, sink]) => {{
+      try {{
+        await sink.onSignal(signalName, {{
+          payload,
+          sourcePid: typeof sourcePid === "string" ? sourcePid : null,
+          watch,
+        }});
+      }} catch {{
+        stale.push(subscriptionId);
+      }}
+    }}));
+
+    for (const subscriptionId of stale) {{
+      bucket.subscribers.delete(subscriptionId);
+      this.__gsvSignalSubscriptions.delete(subscriptionId);
+    }}
+  }}
+
+  async fetch(request) {{
+    const app = this.__gsvApp;
+    if (!app) {{
+      return new Response("Not Found", {{ status: 404 }});
+    }}
+    const routeBase = this.__gsvCtx.meta.routeBase ?? "/";
+    const assetResponse = serveStaticAsset(request, routeBase);
+    if (assetResponse) {{
+      return assetResponse;
+    }}
+    if (typeof app.fetch !== "function") {{
+      return new Response("Not Found", {{ status: 404 }});
+    }}
+    await this.__ensureSetup();
+    return app.fetch(request, this.__gsvCtx);
+  }}
+
+{app_rpc_methods}}}
 
 class GsvPackageAppBackend extends RpcTarget {{
   constructor(env, props) {{

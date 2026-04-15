@@ -18,7 +18,7 @@
 		"tsx": "^4.19.0",
 		"typescript": "^5.5.2",
 		"vitest": "^3.1.4",
-		"wrangler": "^4.61.1"
+		"wrangler": "^4.83.0"
 	},
 	"dependencies": {
 		"@mariozechner/pi-ai": "^0.64.0",

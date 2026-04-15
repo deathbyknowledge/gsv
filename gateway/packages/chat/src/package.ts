@@ -3,8 +3,6 @@ import {
   abortRun,
   decideHil,
   getHistory,
-  getProcessState,
-  getThreadSnapshot,
   listProfiles,
   listWorkspaces,
   sendMessage,
@@ -22,7 +20,7 @@ export default definePackage({
       minHeight: 520,
     },
     capabilities: {
-      kernel: ["proc.spawn", "proc.send", "proc.abort", "proc.hil", "proc.history", "proc.profile.list", "sys.workspace.list", "proc.list"],
+      kernel: ["proc.spawn", "proc.send", "proc.abort", "proc.hil", "proc.history", "proc.profile.list", "sys.workspace.list", "signal.watch", "signal.unwatch"],
     },
   },
   app: {
@@ -51,12 +49,6 @@ export default definePackage({
       },
       async decideHil(args, ctx) {
         return decideHil(ctx.kernel, args);
-      },
-      async getProcessState(args, ctx) {
-        return getProcessState(ctx.kernel, args);
-      },
-      async getThreadSnapshot(args, ctx) {
-        return getThreadSnapshot(ctx.kernel, args);
       },
     },
   },
