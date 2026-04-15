@@ -54,6 +54,10 @@ type KernelBridgeStub = Rpc.RpcTargetBranded & {
   request(call: string, args?: unknown): Promise<unknown>;
 };
 
+type SignalSinkStub = Rpc.RpcTargetBranded & {
+  onSignal(signal: string, envelope: unknown): Promise<void>;
+};
+
 type AppFacetStub = Rpc.DurableObjectBranded & {
   gsvFetch(request: AppHttpRequest, runtime?: AppFacetRuntime): Promise<AppHttpResponse>;
   gsvInvoke(method: string, args: unknown, runtime?: AppFacetRuntime, kernel?: KernelBridgeStub): Promise<unknown>;
@@ -71,6 +75,13 @@ type AppFacetStub = Rpc.DurableObjectBranded & {
 
 const PROPS_KEY = "app-runner:props";
 const RUNTIME_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+
+type LiveSignalSubscription = {
+  sink: SignalSinkStub;
+  watchKeys: string[];
+  processId: string | null;
+  signals: string[];
+};
 
 class KernelBridge extends RpcTarget {
   constructor(
@@ -136,6 +147,8 @@ export function deserializeAppHttpResponse(response: AppHttpResponse): Response 
 }
 
 export class AppRunner extends DurableObject<Env> {
+  private readonly liveSignalSubscriptions = new Map<string, LiveSignalSubscription>();
+
   async ensureRuntime(props: AppRunnerProps): Promise<void> {
     const previous = this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY);
     if (
@@ -177,6 +190,7 @@ export class AppRunner extends DurableObject<Env> {
       runtime,
       this.#createKernelBridge(runtime.appFrame),
     );
+    await this.#forwardSignalToLiveSubscriber(input, runtime);
   }
 
   async invokeAppRpc(method: string, args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
@@ -184,11 +198,55 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async subscribeSignal(args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
-    return this.#getFacet().gsvSubscribeSignal(args, runtime, this.#createKernelBridge(runtime.appFrame));
+    const input = this.#normalizeSignalSubscriptionArgs(args);
+    if (!input.sink) {
+      throw new Error("signal sink must implement onSignal()");
+    }
+    if (input.signals.length === 0) {
+      throw new Error("signal subscription requires at least one signal");
+    }
+    const kernel = this.#createKernelBridge(runtime.appFrame);
+    const subscriptionId = crypto.randomUUID();
+    const watchKeys: string[] = [];
+    for (const signal of input.signals) {
+      const key = `live:${subscriptionId}:${signal}`;
+      await kernel.request("signal.watch", {
+        signal,
+        ...(input.processId ? { processId: input.processId } : {}),
+        key,
+        state: { subscriptionId },
+        once: false,
+      });
+      watchKeys.push(key);
+    }
+    this.liveSignalSubscriptions.set(subscriptionId, {
+      sink: input.sink,
+      watchKeys,
+      processId: input.processId,
+      signals: input.signals,
+    });
+    console.debug("[app-runner] subscribe signal", {
+      subscriptionId,
+      processId: input.processId,
+      signals: input.signals,
+    });
+    return { subscriptionId };
   }
 
   async unsubscribeSignal(args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
-    return this.#getFacet().gsvUnsubscribeSignal(args, runtime, this.#createKernelBridge(runtime.appFrame));
+    const subscriptionId =
+      typeof (args as { subscriptionId?: unknown } | null)?.subscriptionId === "string"
+        ? ((args as { subscriptionId: string }).subscriptionId.trim() || null)
+        : null;
+    if (!subscriptionId) {
+      throw new Error("signal unsubscription requires subscriptionId");
+    }
+    const removed = await this.#removeLiveSignalSubscription(subscriptionId, this.#createKernelBridge(runtime.appFrame));
+    console.debug("[app-runner] unsubscribe signal", {
+      subscriptionId,
+      removed,
+    });
+    return { removed };
   }
 
   async #gsvFetch(request: AppHttpRequest, runtime: AppFacetRuntime): Promise<AppHttpResponse> {
@@ -218,6 +276,102 @@ export class AppRunner extends DurableObject<Env> {
 
   #createKernelBridge(appFrame: AppFrameContext): KernelBridge {
     return new KernelBridge(this.#kernelStub(), appFrame);
+  }
+
+  #normalizeSignalSubscriptionArgs(args: unknown): {
+    processId: string | null;
+    signals: string[];
+    sink: SignalSinkStub | null;
+  } {
+    const record = args && typeof args === "object" ? args as Record<string, unknown> : {};
+    const processId = typeof record.processId === "string" && record.processId.trim().length > 0
+      ? record.processId.trim()
+      : null;
+    const signals = Array.isArray(record.signals)
+      ? Array.from(new Set(record.signals
+        .map((value) => typeof value === "string" ? value.trim() : "")
+        .filter((value) => value.length > 0)))
+      : [];
+    const sink = record.sink && typeof record.sink === "object"
+      && typeof (record.sink as { onSignal?: unknown }).onSignal === "function"
+      ? record.sink as SignalSinkStub
+      : null;
+    return {
+      processId,
+      signals,
+      sink,
+    };
+  }
+
+  async #forwardSignalToLiveSubscriber(input: AppRunnerSignalInput, runtime: AppFacetRuntime): Promise<void> {
+    const state = input.watch.state && typeof input.watch.state === "object"
+      ? input.watch.state as Record<string, unknown>
+      : null;
+    const subscriptionId = typeof state?.subscriptionId === "string"
+      ? state.subscriptionId
+      : this.#parseSubscriptionIdFromKey(input.watch.key);
+    if (!subscriptionId) {
+      console.debug("[app-runner] deliver signal without live subscription", {
+        signal: input.signal,
+        watchId: input.watch.id,
+        key: input.watch.key ?? null,
+      });
+      return;
+    }
+    const subscription = this.liveSignalSubscriptions.get(subscriptionId);
+    console.debug("[app-runner] deliver signal", {
+      signal: input.signal,
+      subscriptionId,
+      hasSubscription: Boolean(subscription),
+      watchId: input.watch.id,
+      key: input.watch.key ?? null,
+      sourcePid: input.sourcePid ?? null,
+    });
+    if (!subscription) {
+      return;
+    }
+    try {
+      await subscription.sink.onSignal(input.signal, {
+        payload: input.payload,
+        sourcePid: input.sourcePid ?? null,
+        watch: input.watch,
+      });
+      console.debug("[app-runner] forwarded signal", {
+        signal: input.signal,
+        subscriptionId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[app-runner] signal sink failed for ${subscriptionId}: ${message}`);
+      await this.#removeLiveSignalSubscription(subscriptionId, this.#createKernelBridge(runtime.appFrame));
+    }
+  }
+
+  #parseSubscriptionIdFromKey(key: string | undefined): string | null {
+    if (!key || !key.startsWith("live:")) {
+      return null;
+    }
+    const parts = key.split(":");
+    return parts.length >= 3 && parts[1] ? parts[1] : null;
+  }
+
+  async #removeLiveSignalSubscription(subscriptionId: string, kernel: KernelBridge): Promise<number> {
+    const subscription = this.liveSignalSubscriptions.get(subscriptionId);
+    if (!subscription) {
+      return 0;
+    }
+    this.liveSignalSubscriptions.delete(subscriptionId);
+    let removed = 0;
+    await Promise.all(subscription.watchKeys.map(async (key) => {
+      try {
+        await kernel.request("signal.unwatch", { key });
+        removed += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[app-runner] signal unwatch failed for ${subscriptionId} (${key}): ${message}`);
+      }
+    }));
+    return removed;
   }
 
   #getProps(): AppRunnerProps {
