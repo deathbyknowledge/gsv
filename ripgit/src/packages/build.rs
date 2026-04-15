@@ -1392,6 +1392,9 @@ fn rewrite_compiled_imports(
     let mut replacements = Vec::new();
 
     for (specifier, occurrences) in parser_return.module_record.requested_modules.iter() {
+        if is_relative_specifier(specifier.as_str()) || specifier.as_str().starts_with('/') {
+            continue;
+        }
         let runtime_occurrences = occurrences
             .iter()
             .filter(|occurrence| !occurrence.is_type)
@@ -1419,6 +1422,9 @@ fn rewrite_compiled_imports(
                 source_path
             )));
         };
+        if is_relative_specifier(&specifier) || specifier.starts_with('/') {
+            continue;
+        }
         let resolved = match resolve_import(&specifier)? {
             Some(value) => value,
             None => continue,
