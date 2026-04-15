@@ -52,11 +52,17 @@ const GSV_PACKAGE_SDK_BROWSER_TS: &str = r#"export type PackageAppBoot = {
   sessionSecret: string;
   clientId: string;
   expiresAt: number;
+  hasBackend: boolean;
 };
 
 type CapnwebGlobal = {
   newWebSocketRpcSession<T = unknown>(url: string, localMain?: unknown): T;
 };
+
+type WrappedBackend = {
+  call(method: string, args?: unknown): Promise<unknown>;
+  dup?: () => unknown;
+} & Record<string | symbol, unknown>;
 
 declare global {
   interface Window {
@@ -87,6 +93,31 @@ function getCapnweb(): CapnwebGlobal {
   return capnweb;
 }
 
+function wrapAppBackend<T = unknown>(backend: unknown): T {
+  if (!backend || typeof backend !== "object") {
+    return backend as T;
+  }
+  const target = backend as WrappedBackend;
+  if (typeof target.call !== "function") {
+    return backend as T;
+  }
+  return new Proxy(target, {
+    get(proxyTarget, prop) {
+      if (prop === "then") {
+        return undefined;
+      }
+      if (typeof prop !== "string") {
+        return Reflect.get(proxyTarget, prop);
+      }
+      if (prop === "call" || prop === "dup") {
+        const value = Reflect.get(proxyTarget, prop);
+        return typeof value === "function" ? value.bind(proxyTarget) : value;
+      }
+      return (args?: unknown) => proxyTarget.call(prop, args);
+    },
+  }) as T;
+}
+
 function buildRpcWebSocketUrl(rpcBase: string): string {
   const url = new URL(rpcBase, globalThis.window?.location?.href ?? "http://localhost");
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -99,12 +130,15 @@ export async function connectAppBackend<T = unknown>(): Promise<T> {
     return existing as Promise<T>;
   }
   const boot = getAppBoot();
+  if (!boot.hasBackend) {
+    throw new Error("package app has no backend rpc");
+  }
   const capnweb = getCapnweb();
   const ready = (async () => {
     const session = capnweb.newWebSocketRpcSession<{
-      authenticate(secret: string): T;
+      authenticate(secret: string): unknown;
     }>(buildRpcWebSocketUrl(boot.rpcBase));
-    const backend = await session.authenticate(boot.sessionSecret);
+    const backend = wrapAppBackend<T>(await session.authenticate(boot.sessionSecret));
     if (globalThis.window) {
       globalThis.window.backend = backend;
     }
@@ -113,7 +147,7 @@ export async function connectAppBackend<T = unknown>(): Promise<T> {
   if (globalThis.window) {
     globalThis.window.__GSV_BACKEND_READY__ = ready;
   }
-  return ready as Promise<T>;
+  return ready;
 }
 
 export async function getBackend<T = unknown>(): Promise<T> {

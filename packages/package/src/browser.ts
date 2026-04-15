@@ -15,6 +15,11 @@ type CapnwebGlobal = {
   RpcTarget?: new (...args: unknown[]) => unknown;
 };
 
+type WrappedBackend = {
+  call(method: string, args?: unknown): Promise<unknown>;
+  dup?: () => unknown;
+} & Record<string | symbol, unknown>;
+
 declare global {
   interface Window {
     __GSV_APP_BOOT__?: PackageAppBoot;
@@ -48,13 +53,8 @@ function wrapAppBackend<T = unknown>(backend: unknown): T {
   if (!backend || typeof backend !== "object") {
     return backend as T;
   }
-  const target = backend as {
-    gsvInvoke?: (method: string, args?: unknown) => Promise<unknown>;
-    gsvSubscribeSignal?: (args?: unknown) => Promise<unknown>;
-    gsvUnsubscribeSignal?: (args?: unknown) => Promise<unknown>;
-    dup?: () => unknown;
-  } & Record<string | symbol, unknown>;
-  if (typeof target.gsvInvoke !== "function") {
+  const target = backend as WrappedBackend;
+  if (typeof target.call !== "function") {
     return backend as T;
   }
   return new Proxy(target, {
@@ -65,11 +65,11 @@ function wrapAppBackend<T = unknown>(backend: unknown): T {
       if (typeof prop !== "string") {
         return Reflect.get(proxyTarget, prop);
       }
-      if (prop === "gsvInvoke" || prop === "gsvSubscribeSignal" || prop === "gsvUnsubscribeSignal" || prop === "dup") {
+      if (prop === "call" || prop === "dup") {
         const value = Reflect.get(proxyTarget, prop);
         return typeof value === "function" ? value.bind(proxyTarget) : value;
       }
-      return (args?: unknown) => proxyTarget.gsvInvoke!(prop, args);
+      return (args?: unknown) => proxyTarget.call(prop, args);
     },
   }) as T;
 }
@@ -92,9 +92,9 @@ export async function connectAppBackend<T = unknown>(): Promise<T> {
   const capnweb = getCapnweb();
   const ready = (async () => {
     const session = capnweb.newWebSocketRpcSession<{
-      authenticate(secret: string): T;
+      authenticate(secret: string): unknown;
     }>(buildRpcWebSocketUrl(boot.rpcBase));
-    const backend = wrapAppBackend(await session.authenticate(boot.sessionSecret));
+    const backend = wrapAppBackend<T>(await session.authenticate(boot.sessionSecret));
     if (globalThis.window) {
       globalThis.window.backend = backend;
     }

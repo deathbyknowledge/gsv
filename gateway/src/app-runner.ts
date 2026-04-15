@@ -1,4 +1,5 @@
 import { DurableObject, RpcTarget } from "cloudflare:workers";
+import { getAgentByName } from "agents";
 import { packageArtifactToWorkerCode, type PackageArtifact } from "./kernel/packages";
 import type { AppFrameContext, PackageAppSignalWatchInfo } from "./protocol/app-frame";
 import type { RequestFrame, ResponseFrame } from "./protocol/frames";
@@ -54,10 +55,10 @@ type KernelBridgeStub = Rpc.RpcTargetBranded & {
 };
 
 type AppFacetStub = Rpc.DurableObjectBranded & {
-  gsvFetch(request: AppHttpRequest, runtime: AppFacetRuntime, kernel: KernelBridgeStub): Promise<AppHttpResponse>;
-  gsvInvoke(method: string, args: unknown, runtime: AppFacetRuntime, kernel: KernelBridgeStub): Promise<unknown>;
-  gsvSubscribeSignal(args: unknown, runtime: AppFacetRuntime, kernel: KernelBridgeStub): Promise<unknown>;
-  gsvUnsubscribeSignal(args: unknown, runtime: AppFacetRuntime, kernel: KernelBridgeStub): Promise<unknown>;
+  gsvFetch(request: AppHttpRequest, runtime?: AppFacetRuntime): Promise<AppHttpResponse>;
+  gsvInvoke(method: string, args: unknown, runtime?: AppFacetRuntime, kernel?: KernelBridgeStub): Promise<unknown>;
+  gsvSubscribeSignal(args: unknown, runtime?: AppFacetRuntime, kernel?: KernelBridgeStub): Promise<unknown>;
+  gsvUnsubscribeSignal(args: unknown, runtime?: AppFacetRuntime, kernel?: KernelBridgeStub): Promise<unknown>;
   gsvHandleSignal(
     signalName: string,
     payload?: unknown,
@@ -102,16 +103,14 @@ class AppRunnerBackendTarget extends RpcTarget {
     super();
   }
 
-  async gsvInvoke(method: string, args?: unknown): Promise<unknown> {
+  async call(method: string, args?: unknown): Promise<unknown> {
+    if (method === "gsvSubscribeSignal") {
+      return this.runner.subscribeSignal(args, this.runtime);
+    }
+    if (method === "gsvUnsubscribeSignal") {
+      return this.runner.unsubscribeSignal(args, this.runtime);
+    }
     return this.runner.invokeAppRpc(method, args, this.runtime);
-  }
-
-  async gsvSubscribeSignal(args?: unknown): Promise<unknown> {
-    return this.runner.subscribeSignal(args, this.runtime);
-  }
-
-  async gsvUnsubscribeSignal(args?: unknown): Promise<unknown> {
-    return this.runner.unsubscribeSignal(args, this.runtime);
   }
 }
 
@@ -193,7 +192,7 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async #gsvFetch(request: AppHttpRequest, runtime: AppFacetRuntime): Promise<AppHttpResponse> {
-    return this.#getFacet().gsvFetch(request, runtime, this.#createKernelBridge(runtime.appFrame));
+    return this.#getFacet().gsvFetch(request, runtime);
   }
 
   #defaultRuntime(appSession?: AppSessionInfo): AppFacetRuntime {
@@ -237,6 +236,7 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #loadWorker(props: AppRunnerProps): WorkerStub {
+    const appFrame = this.#runtimeAppFrame(props);
     return this.env.LOADER.get(
       this.#codeKey(props),
       () => packageArtifactToWorkerCode(props.artifact, {
@@ -246,7 +246,7 @@ export class AppRunner extends DurableObject<Env> {
         GSV_PACKAGE_NAME: props.packageName,
         GSV_PACKAGE_ID: props.packageId,
         GSV_ROUTE_BASE: props.routeBase,
-        GSV_APP_FRAME: this.#runtimeAppFrame(props),
+        GSV_APP_FRAME: appFrame,
       }),
     );
   }
