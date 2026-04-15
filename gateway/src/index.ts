@@ -517,9 +517,9 @@ function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): s
     expiresAt: resolved.clientSession.expiresAt,
   }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
   const script = [
+    `<script>window.__GSV_APP_BOOT__=${boot};</script>`,
     `<script type="module">`,
     `import { newWebSocketRpcSession } from "https://cdn.jsdelivr.net/npm/capnweb@0.6.1/+esm";`,
-    `window.__GSV_APP_BOOT__=${boot};`,
     `window.capnweb={ newWebSocketRpcSession };`,
     `window.__GSV_BACKEND_READY__=(async()=>{`,
     `  const rpcUrl=new URL(window.__GSV_APP_BOOT__.rpcBase, window.location.href);`,
