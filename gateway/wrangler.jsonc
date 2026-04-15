@@ -48,7 +48,7 @@
 		"directory": "../web/dist/",
 		"binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/ws", "/apps/*", "/git/*", "/runtime/*", "/downloads/*"]
+    "run_worker_first": ["/ws", "/apps/*", "/app-rpc/*", "/git/*", "/runtime/*", "/downloads/*"]
 	},
 	// Channel service bindings (Gateway → Channel RPC)
 	"services": [
