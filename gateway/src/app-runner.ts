@@ -18,8 +18,22 @@ type AppRunnerSignalInput = {
   watch: PackageAppSignalWatchInfo;
 };
 
+export type AppHttpRequest = {
+  url: string;
+  method: string;
+  headers: Array<[string, string]>;
+  body?: ArrayBuffer | null;
+};
+
+export type AppHttpResponse = {
+  status: number;
+  statusText: string;
+  headers: Array<[string, string]>;
+  body?: ArrayBuffer | null;
+};
+
 type AppFacetStub = Rpc.DurableObjectBranded & {
-  gsvFetch(request: Request): Promise<Response>;
+  gsvFetch(request: AppHttpRequest): Promise<AppHttpResponse>;
   gsvHandleSignal(
     signalName: string,
     payload?: unknown,
@@ -30,8 +44,29 @@ type AppFacetStub = Rpc.DurableObjectBranded & {
 
 const PROPS_KEY = "app-runner:props";
 
+export async function serializeAppHttpRequest(request: Request): Promise<AppHttpRequest> {
+  let body: ArrayBuffer | null = null;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    body = await request.clone().arrayBuffer();
+  }
+  return {
+    url: request.url,
+    method: request.method,
+    headers: Array.from(request.headers.entries()),
+    body,
+  };
+}
+
+export function deserializeAppHttpResponse(response: AppHttpResponse): Response {
+  return new Response(response.body ?? null, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 export class AppRunner extends DurableObject<Env> {
-  async gsvFetch(request: Request): Promise<Response> {
+  async gsvFetch(request: AppHttpRequest): Promise<AppHttpResponse> {
     return this.#getFacet().gsvFetch(request);
   }
 
@@ -54,7 +89,8 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    return this.gsvFetch(request);
+    const response = await this.gsvFetch(await serializeAppHttpRequest(request));
+    return deserializeAppHttpResponse(response);
   }
 
   async getBackend(): Promise<AppFacetStub> {
