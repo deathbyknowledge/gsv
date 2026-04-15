@@ -234,27 +234,16 @@ export function renderArticleInto(container: HTMLElement, options: RenderOptions
     if (internalPath) {
       anchor.href = buildEntryHref(options.routeBase, options.selectedDb, internalPath);
       anchor.dataset.previewKind = "page";
-      const onClick = (event: MouseEvent) => {
-        event.preventDefault();
-        console.debug("[wiki] article link click", {
-          href,
-          internalPath,
-          selectedDb: options.selectedDb,
-          selectedPath: options.selectedPath,
-        });
-        options.onNavigate(internalPath);
-      };
+      anchor.dataset.internalPath = internalPath;
       const onEnter = () => options.onPreviewOpen(anchor, { kind: "page", db: options.selectedDb, path: internalPath }, false);
       const onLeave = () => options.onPreviewHide(false);
       const onFocus = () => options.onPreviewOpen(anchor, { kind: "page", db: options.selectedDb, path: internalPath }, false);
       const onBlur = () => options.onPreviewHide(false);
-      anchor.addEventListener("click", onClick);
       anchor.addEventListener("mouseenter", onEnter);
       anchor.addEventListener("mouseleave", onLeave);
       anchor.addEventListener("focus", onFocus);
       anchor.addEventListener("blur", onBlur);
       cleanups.push(() => {
-        anchor.removeEventListener("click", onClick);
         anchor.removeEventListener("mouseenter", onEnter);
         anchor.removeEventListener("mouseleave", onLeave);
         anchor.removeEventListener("focus", onFocus);
@@ -267,6 +256,32 @@ export function renderArticleInto(container: HTMLElement, options: RenderOptions
       anchor.rel = "noreferrer";
     }
   });
+
+  const onContainerClick = (event: MouseEvent) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    const anchor = target.closest<HTMLAnchorElement>('a[data-preview-kind="page"][data-internal-path]');
+    if (!anchor || !container.contains(anchor)) {
+      return;
+    }
+    const internalPath = anchor.dataset.internalPath || "";
+    if (!internalPath) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    console.debug("[wiki] article link click", {
+      href: anchor.getAttribute("href") || "",
+      internalPath,
+      selectedDb: options.selectedDb,
+      selectedPath: options.selectedPath,
+    });
+    options.onNavigate(internalPath);
+  };
+  container.addEventListener("click", onContainerClick, true);
+  cleanups.push(() => container.removeEventListener("click", onContainerClick, true));
 
   container.querySelectorAll("h2, h3, h4, h5, h6").forEach((heading) => {
     if ((heading.textContent || "").trim().toLowerCase() !== "sources") {
