@@ -138,7 +138,7 @@ export class AppRunner extends DurableObject<Env> {
         GSV_PACKAGE_ID: props.packageId,
         GSV_ROUTE_BASE: props.routeBase,
         GSV_APP_FRAME: runtimeAppFrame,
-        KERNEL_DO: this.env.KERNEL,
+        KERNEL_APP: this.env.KERNEL.getByName("singleton"),
       }),
     );
   }
