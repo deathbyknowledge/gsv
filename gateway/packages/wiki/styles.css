@@ -137,7 +137,8 @@ button[disabled] { cursor: default; opacity: 0.6; }
 .wiki-preview-card .preview-body pre { margin: 0 0 10px; }
 .wiki-preview-card .preview-body img { max-width: 100%; height: auto; display: block; }
 .wiki-preview-card .preview-empty { color: var(--muted); }
-.wiki-preview-card.is-pinned { pointer-events: auto; }
+.wiki-preview-card, .wiki-preview-card * { pointer-events: none; }
+.wiki-preview-card.is-pinned, .wiki-preview-card.is-pinned * { pointer-events: auto; }
 .empty-article { padding: 18px 0; color: var(--muted); }
 @media (max-width: 1180px) {
   .frame { grid-template-columns: 240px minmax(0, 1fr); }
