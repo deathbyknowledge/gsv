@@ -46,7 +46,13 @@
 		{
 			"binding": "LOADER"
 		}
-	]
+	],
+	"assets": {
+		"directory": "../web/dist/",
+		"binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/ws", "/apps/*", "/app-rpc/*", "/git/*", "/runtime/*", "/downloads/*"]
+	}
 	// Note: No AI binding, no service bindings for channels
 	// Tests should mock these dependencies
 }
