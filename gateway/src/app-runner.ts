@@ -103,7 +103,7 @@ class AppRunnerBackendTarget extends RpcTarget {
     super();
   }
 
-  async call(method: string, args?: unknown): Promise<unknown> {
+  async invoke(method: string, args?: unknown): Promise<unknown> {
     if (method === "gsvSubscribeSignal") {
       return this.runner.subscribeSignal(args, this.runtime);
     }
