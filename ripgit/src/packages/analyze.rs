@@ -71,6 +71,7 @@ pub struct ExtractedAppDefinition {
     pub handler: Option<ExtractedHandlerReference>,
     pub signal_handler: Option<ExtractedHandlerReference>,
     pub has_rpc: bool,
+    pub rpc_methods: Vec<String>,
     pub browser_entry: Option<String>,
     pub assets: Vec<String>,
 }
@@ -786,6 +787,7 @@ fn extract_app_definition(
     let mut handler = None;
     let mut signal_handler = None;
     let mut has_rpc = false;
+    let mut rpc_methods = Vec::new();
     let mut browser_entry = None;
     let mut assets = Vec::new();
     for property in object.properties.iter() {
@@ -808,6 +810,29 @@ fn extract_app_definition(
             }
             "rpc" => {
                 has_rpc = true;
+                if let Some(rpc_object) = get_object_expr(&prop.value) {
+                    for rpc_property in rpc_object.properties.iter() {
+                        let ObjectPropertyKind::ObjectProperty(rpc_prop) = rpc_property else {
+                            continue;
+                        };
+                        if rpc_prop.computed {
+                            continue;
+                        }
+                        let Some(rpc_name) = static_property_name(rpc_prop, source_text) else {
+                            continue;
+                        };
+                        rpc_methods.push(rpc_name);
+                    }
+                } else {
+                    diagnostics.push(simple_diagnostic(
+                        PackageDiagnosticSeverity::Error,
+                        "non-literal-app-rpc",
+                        "app.rpc must be an object literal with static method names".to_string(),
+                        "src/package.ts",
+                        Some(prop.span),
+                        source_text,
+                    ));
+                }
             }
             "browser" => {
                 browser_entry = extract_browser_entry(&prop.value, source_text, diagnostics);
@@ -854,6 +879,7 @@ fn extract_app_definition(
         handler,
         signal_handler,
         has_rpc,
+        rpc_methods,
         browser_entry,
         assets,
     })

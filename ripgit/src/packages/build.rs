@@ -1784,6 +1784,23 @@ fn generate_dynamic_worker_main_module(
         .and_then(|app| app.browser_entry.as_deref())
         .map(|value| quote_string(&normalize_posix_path(value.trim_start_matches("./"))))
         .unwrap_or_else(|| "null".to_string());
+    let app_rpc_methods = analysis
+        .definition
+        .as_ref()
+        .and_then(|definition| definition.app.as_ref())
+        .map(|app| {
+            app.rpc_methods
+                .iter()
+                .map(|name| {
+                    let quoted = quote_string(name);
+                    format!(
+                        "  async [{}](args) {{\n    return this.__invoke({}, args);\n  }}\n",
+                        quoted, quoted,
+                    )
+                })
+                .collect::<String>()
+        })
+        .unwrap_or_default();
 
     let mut asset_imports = String::new();
     let mut asset_entries = String::new();
@@ -2091,22 +2108,21 @@ class GsvPackageAppBackend extends RpcTarget {{
     this.__gsvCtx = ctx;
     this.__gsvApp = app;
     this.__gsvSetupReady = null;
-
-    for (const method of Object.keys(app.rpc)) {{
-      this[method] = async (args) => {{
-        if (!this.__gsvSetupReady) {{
-          this.__gsvSetupReady = ensureSetup(this.__gsvCtx);
-        }}
-        await this.__gsvSetupReady;
-        const handler = getAppRpcHandler(this.__gsvApp, method);
-        if (!handler) {{
-          throw new Error(`Unknown app RPC method: ${{method}}`);
-        }}
-        return handler(args, this.__gsvCtx);
-      }};
-    }}
   }}
-}}
+
+  async __invoke(method, args) {{
+    if (!this.__gsvSetupReady) {{
+      this.__gsvSetupReady = ensureSetup(this.__gsvCtx);
+    }}
+    await this.__gsvSetupReady;
+    const handler = getAppRpcHandler(this.__gsvApp, method);
+    if (!handler) {{
+      throw new Error(`Unknown app RPC method: ${{method}}`);
+    }}
+    return handler(args, this.__gsvCtx);
+  }}
+
+{app_rpc_methods}}}
 
 export class GsvAppRpcEntrypoint extends WorkerEntrypoint {{
   async getBackend() {{
@@ -2119,6 +2135,7 @@ export class GsvAppRpcEntrypoint extends WorkerEntrypoint {{
 }}
 "#,
         asset_imports = asset_imports,
+        app_rpc_methods = app_rpc_methods,
         package_name = package_name,
         package_id = package_id,
         browser_entry = browser_entry,
