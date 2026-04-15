@@ -9,7 +9,7 @@ use oxc_codegen::Codegen;
 use oxc_parser::Parser;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::{SourceType, Span};
-use oxc_transformer::{TransformOptions, Transformer};
+use oxc_transformer::{JsxRuntime, TransformOptions, Transformer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256, Sha512};
@@ -1341,7 +1341,9 @@ fn transpile_source_module(path: &str, source_text: &str) -> Result<String> {
     }
 
     let scoping = semantic.semantic.into_scoping();
-    let transform_options = TransformOptions::default();
+    let mut transform_options = TransformOptions::default();
+    transform_options.jsx.runtime = JsxRuntime::Automatic;
+    transform_options.jsx.import_source = Some("preact".to_string());
     let transform_return = Transformer::new(&allocator, Path::new(path), &transform_options)
         .build_with_scoping(scoping, &mut program);
     if !transform_return.errors.is_empty() {
