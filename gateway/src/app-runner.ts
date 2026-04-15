@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { packageArtifactToWorkerCode, type PackageArtifact } from "./kernel/packages";
-import type { AppFrameContext, KernelBindingProps, PackageAppSignalWatchInfo } from "./protocol/app-frame";
+import type { AppFrameContext, PackageAppSignalWatchInfo } from "./protocol/app-frame";
 
 type AppRunnerProps = {
   packageId: string;
@@ -137,11 +137,8 @@ export class AppRunner extends DurableObject<Env> {
         GSV_PACKAGE_NAME: props.packageName,
         GSV_PACKAGE_ID: props.packageId,
         GSV_ROUTE_BASE: props.routeBase,
-        KERNEL: this.ctx.exports.KernelBinding({
-          props: {
-            appFrame: runtimeAppFrame,
-          } satisfies KernelBindingProps,
-        }),
+        GSV_APP_FRAME: runtimeAppFrame,
+        KERNEL_DO: this.env.KERNEL,
       }),
     );
   }
