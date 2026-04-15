@@ -1256,6 +1256,7 @@ impl<'a> BundleBuilder<'a> {
                     module: None,
                     exports: Some(serde_json::json!({
                         ".": "./src/index.ts",
+                        "./browser": "./src/browser.ts",
                         "./worker": "./src/worker.ts",
                         "./host": "./src/host.ts",
                     })),
@@ -2400,7 +2401,7 @@ mod tests {
             ),
             (
                 "packages/package/package.json".to_string(),
-                r#"{ "name": "@gsv/package", "exports": { "./worker": "./src/worker.ts" } }"#.to_string(),
+                r#"{ "name": "@gsv/package", "exports": { "./browser": "./src/browser.ts", "./worker": "./src/worker.ts" } }"#.to_string(),
             ),
             (
                 "packages/package/src/worker.ts".to_string(),
@@ -2449,7 +2450,7 @@ mod tests {
             ),
             (
                 "packages/package/package.json".to_string(),
-                r#"{ "name": "@gsv/package", "exports": { "./worker": "./src/worker.ts" } }"#.to_string(),
+                r#"{ "name": "@gsv/package", "exports": { "./browser": "./src/browser.ts", "./worker": "./src/worker.ts" } }"#.to_string(),
             ),
             (
                 "packages/package/src/worker.ts".to_string(),
