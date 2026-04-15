@@ -104,6 +104,7 @@ export function App({ backend }: Props) {
       ...route,
       ...nextRoute,
     };
+    console.debug("[wiki] navigate", { nextRoute, merged, replace });
     writeRoute(merged, replace);
     setRoute(merged);
   }, [route]);
@@ -121,6 +122,7 @@ export function App({ backend }: Props) {
 
   useEffect(() => {
     const requestId = ++loadRequestId.current;
+    console.debug("[wiki] loadState", { route, requestId });
     setLoading(true);
     void backend.loadState(route)
       .then((nextState) => {
