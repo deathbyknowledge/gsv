@@ -87,20 +87,21 @@ type LiveSignalSubscription = {
 
 class KernelBridge extends RpcTarget {
   constructor(
-    private readonly kernel: KernelAppStub,
+    private readonly kernelNamespace: Env["KERNEL"],
     private readonly appFrame: AppFrameContext,
   ) {
     super();
   }
 
   async request(call: string, args?: unknown): Promise<unknown> {
+    const kernel = await getAgentByName(this.kernelNamespace, "singleton") as unknown as KernelAppStub;
     const frame: RequestFrame = {
       type: "req",
       id: crypto.randomUUID(),
       call,
       args,
     } as RequestFrame;
-    const response = await this.kernel.appRequest(this.appFrame, frame);
+    const response = await kernel.appRequest(this.appFrame, frame);
     if (!response.ok) {
       throw new Error(response.error.message);
     }
@@ -266,12 +267,8 @@ export class AppRunner extends DurableObject<Env> {
     };
   }
 
-  #kernelStub(): KernelAppStub {
-    return this.env.KERNEL.getByName("singleton") as unknown as KernelAppStub;
-  }
-
   #createKernelBridge(appFrame: AppFrameContext): KernelBridge {
-    return new KernelBridge(this.#kernelStub(), appFrame);
+    return new KernelBridge(this.env.KERNEL, appFrame);
   }
 
   #normalizeSignalSubscriptionArgs(args: unknown): {
