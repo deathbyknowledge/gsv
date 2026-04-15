@@ -9,5 +9,10 @@ if (!root) {
   throw new Error("Files app root element not found.");
 }
 
-const backend = getBackend<FilesBackend>();
-render(<App backend={backend} />, root);
+void getBackend<FilesBackend>()
+  .then((backend) => {
+    render(<App backend={backend} />, root);
+  })
+  .catch((error) => {
+    root.innerHTML = `<pre style="padding:16px; color:#b42318; white-space:pre-wrap;">${String(error instanceof Error ? error.message : error)}</pre>`;
+  });
