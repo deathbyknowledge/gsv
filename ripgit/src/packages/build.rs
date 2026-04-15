@@ -2347,7 +2347,7 @@ export class GsvAppFacet extends DurableObject {{
     }}
   }}
 
-  async fetch(request) {{
+  async gsvFetch(request) {{
     const app = this.__gsvApp;
     if (!app) {{
       return new Response("Not Found", {{ status: 404 }});
@@ -2362,6 +2362,10 @@ export class GsvAppFacet extends DurableObject {{
     }}
     await this.__ensureSetup();
     return app.fetch(request, this.__gsvCtx);
+  }}
+
+  async fetch(request) {{
+    return this.gsvFetch(request);
   }}
 
 {app_rpc_methods}}}
