@@ -1914,7 +1914,8 @@ fn generate_dynamic_worker_main_module(
     }
 
     format!(
-        r#"{asset_imports}import {{ DurableObject, RpcTarget, WorkerEntrypoint }} from "cloudflare:workers";
+        r#"{asset_imports}import { getAgentByName } from "agents";
+import {{ DurableObject, RpcTarget, WorkerEntrypoint }} from "cloudflare:workers";
 import definition from "../src/package.js";
 
 const STATIC_META = Object.freeze({{
@@ -1939,6 +1940,53 @@ function mergeMeta(overrides) {{
   }};
 }}
 
+function resolveAppFrame(env, props) {{
+  const frame = props?.appFrame && typeof props.appFrame === "object"
+    ? props.appFrame
+    : (env.GSV_APP_FRAME && typeof env.GSV_APP_FRAME === "object" ? env.GSV_APP_FRAME : null);
+  return frame && typeof frame === "object"
+    ? {{
+        uid: typeof frame.uid === "number" ? frame.uid : 0,
+        username: typeof frame.username === "string" ? frame.username : "",
+        packageId: typeof frame.packageId === "string" ? frame.packageId : (env.GSV_PACKAGE_ID ?? STATIC_META.packageId),
+        packageName: typeof frame.packageName === "string" ? frame.packageName : (env.GSV_PACKAGE_NAME ?? STATIC_META.packageName),
+        entrypointName: typeof frame.entrypointName === "string" ? frame.entrypointName : "",
+        routeBase: typeof frame.routeBase === "string" ? frame.routeBase : (env.GSV_ROUTE_BASE ?? STATIC_META.routeBase),
+        issuedAt: typeof frame.issuedAt === "number" ? frame.issuedAt : Date.now(),
+        expiresAt: typeof frame.expiresAt === "number" ? frame.expiresAt : (Date.now() + 365 * 24 * 60 * 60 * 1000),
+      }}
+    : null;
+}}
+
+function buildKernelClient(env, props) {{
+  if (props?.kernel && typeof props.kernel.request === "function") {{
+    return props.kernel;
+  }}
+  const kernelNamespace = env.KERNEL_DO ?? env.KERNEL;
+  if (!kernelNamespace) {{
+    throw new Error("kernel binding is unavailable");
+  }}
+  return {{
+    async request(call, args) {{
+      const kernel = await getAgentByName(kernelNamespace, "singleton");
+      const frame = resolveAppFrame(env, props);
+      if (!frame) {{
+        throw new Error("app frame is unavailable");
+      }}
+      const response = await kernel.appRequest(frame, {{
+        type: "req",
+        id: crypto.randomUUID(),
+        call,
+        args,
+      }});
+      if (!response.ok) {{
+        throw new Error(response.error?.message ?? "Kernel request failed");
+      }}
+      return response.data;
+    }},
+  }};
+}}
+
 function createBaseContext(env, metaOverrides, props) {{
   return {{
     meta: mergeMeta(metaOverrides),
@@ -1950,7 +1998,7 @@ function createBaseContext(env, metaOverrides, props) {{
           expiresAt: typeof props.appSession.expiresAt === "number" ? props.appSession.expiresAt : 0,
         }}
       : undefined,
-    kernel: props?.kernel ?? env.KERNEL,
+    kernel: buildKernelClient(env, props),
   }};
 }}
 
