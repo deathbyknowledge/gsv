@@ -258,12 +258,13 @@ export function renderArticleInto(container: HTMLElement, options: RenderOptions
   });
 
   const onContainerClick = (event: MouseEvent) => {
-    const target = event.target;
-    if (!(target instanceof Element)) {
-      return;
-    }
-    const anchor = target.closest<HTMLAnchorElement>('a[data-preview-kind="page"][data-internal-path]');
-    if (!anchor || !container.contains(anchor)) {
+    const anchor = event.composedPath().find((value) => (
+      value instanceof HTMLAnchorElement
+      && value.dataset.previewKind === "page"
+      && typeof value.dataset.internalPath === "string"
+      && container.contains(value)
+    )) as HTMLAnchorElement | undefined;
+    if (!anchor) {
       return;
     }
     const internalPath = anchor.dataset.internalPath || "";
