@@ -516,14 +516,6 @@ function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): s
       `<script type="module">`,
       `import { RpcTarget, newWebSocketRpcSession } from "https://cdn.jsdelivr.net/npm/capnweb@0.6.1/+esm";`,
       `window.capnweb={ RpcTarget, newWebSocketRpcSession };`,
-      `window.__GSV_BACKEND_READY__=(async()=>{`,
-      `  const rpcUrl=new URL(window.__GSV_APP_BOOT__.rpcBase, window.location.href);`,
-      `  rpcUrl.protocol=rpcUrl.protocol===\"https:\"?\"wss:\":\"ws:\";`,
-      `  const session=newWebSocketRpcSession(rpcUrl.toString());`,
-      `  const backend=await session.authenticate(window.__GSV_APP_BOOT__.sessionSecret);`,
-      `  window.backend=backend;`,
-      `  return backend;`,
-      `})().catch((error)=>{console.error(\"[app-rpc]\", error);throw error;});`,
       "</script>",
     );
   }
