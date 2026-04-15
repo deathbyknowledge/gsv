@@ -12,6 +12,7 @@ export type PackageAppBoot = {
 
 type CapnwebGlobal = {
   newWebSocketRpcSession<T = unknown>(url: string, localMain?: unknown): T;
+  RpcTarget?: new (...args: unknown[]) => unknown;
 };
 
 declare global {

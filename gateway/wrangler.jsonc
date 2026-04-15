@@ -16,6 +16,10 @@
 		{
 			"new_sqlite_classes": ["Process"],
 			"tag": "v2"
+		},
+		{
+			"new_sqlite_classes": ["AppRunner"],
+			"tag": "v3"
 		}
 	],
 	"durable_objects": {

@@ -33,11 +33,11 @@ export type TaskScheduleOptions = {
  * durable storage through the package SDK yet.
  *
  * The short-lived `PACKAGE_DO` stopgap was removed because it papered over the
- * real design problem instead of solving it. The correct long-term model is a
- * stateful app runtime built on Cloudflare Dynamic Workers + Durable Object
+ * real design problem instead of solving it. GSV now runs package apps through
+ * a stateful app runtime built on Cloudflare Dynamic Workers + Durable Object
  * Facets, scoped by `user/package`.
  *
- * Expected future shape:
+ * The runtime shape is:
  *
  * ```ts
  * // One supervisor Durable Object per { uid, packageId } app instance.
@@ -76,7 +76,11 @@ export type TaskScheduleOptions = {
  *   - app fetch/RPC logic
  * - package code should remain ignorant of platform wiring details
  *
- * Until that exists, app code should treat itself as stateless and rely only on:
+ * The SDK still does not expose app-private storage directly, so package code
+ * should continue to treat itself as stateless unless and until we add an
+ * explicit app-state API.
+ *
+ * Until that happens, app code should rely only on:
  * - `ctx.kernel.request(...)` for kernel-facing operations
  * - live browser state
  * - explicit files/knowledge/workspace state where appropriate

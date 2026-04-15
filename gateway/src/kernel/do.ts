@@ -38,6 +38,7 @@ import { dispatch, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
+import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
@@ -48,17 +49,14 @@ import {
   type InstalledPackageRecord,
   PackageStore,
   type PackageEntrypoint,
-  packageArtifactToWorkerCode,
   packageRouteBase,
   type PackageArtifact,
-  packageWorkerKey,
   visiblePackageScopesForActor,
 } from "./packages";
 import {
   DEFAULT_APP_FRAME_TTL_MS,
   isAppFrameContextExpired,
   type AppFrameContext,
-  type PackageAppSignalProps,
 } from "../protocol/app-frame";
 import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
@@ -1652,39 +1650,28 @@ export class Kernel extends Host<Env> {
       expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
     };
 
-    const packageKey = packageWorkerKey({
-      manifest: { name: record.manifest.name },
-      artifact: record.artifact,
-    });
-
-    const worker = this.env.LOADER.get(
-      packageKey,
-      () => packageArtifactToWorkerCode(record.artifact, {
-        PACKAGE_NAME: record.manifest.name,
-        PACKAGE_ID: record.packageId,
-        PACKAGE_ROUTE_BASE: watch.routeBase,
-      }),
-    ).getEntrypoint("GsvAppSignalEntrypoint", {
+    const runner = this.ctx.exports.AppRunner({
       props: {
+        packageId: record.packageId,
+        packageName: record.manifest.name,
+        routeBase: watch.routeBase,
+        entrypointName: entrypoint.name,
+        artifact: record.artifact,
         appFrame,
-        kernel: this.ctx.exports.KernelBinding({
-          props: {
-            appFrame,
-          },
-        }),
-        signal: frame.signal,
-        payload: frame.payload,
-        sourcePid: processId,
-        watch: {
-          id: watch.watchId,
-          ...(watch.key ? { key: watch.key } : {}),
-          ...(watch.state === undefined ? {} : { state: watch.state }),
-          createdAt: watch.createdAt,
-        },
-      } satisfies PackageAppSignalProps,
-    }) as unknown as { run: (signal?: string) => Promise<void> };
+      },
+    }).getByName(buildAppRunnerName(user.uid, record.packageId));
 
-    await worker.run(frame.signal);
+    await runner.deliverSignal({
+      signal: frame.signal,
+      payload: frame.payload,
+      sourcePid: processId,
+      watch: {
+        id: watch.watchId,
+        ...(watch.key ? { key: watch.key } : {}),
+        ...(watch.state === undefined ? {} : { state: watch.state }),
+        createdAt: watch.createdAt,
+      },
+    });
   }
 
   private async invokeProcessSignalWatch(

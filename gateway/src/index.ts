@@ -6,8 +6,8 @@ import type {
 } from "./adapter-interface";
 import type { Frame } from "./protocol/frames";
 import { getAgentByName } from "agents";
-import type { AppFrameContext, PackageAppProps } from "./protocol/app-frame";
-import { packageArtifactToWorkerCode, packageWorkerKey } from "./kernel/packages";
+import type { AppFrameContext } from "./protocol/app-frame";
+import { buildAppRunnerName } from "./protocol/app-session";
 import type { PackageArtifact } from "./kernel/packages";
 import {
   buildCliInstallPowerShell,
@@ -21,6 +21,7 @@ import {
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
 export { KernelBinding } from "./kernel/packages";
+export { AppRunner } from "./app-runner";
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
@@ -105,32 +106,18 @@ export default {
         return new Response(resolved.message, { status: resolved.status });
       }
 
-      const packageKey = packageWorkerKey({ manifest: { name: resolved.packageName }, artifact: resolved.artifact });
-
-      const worker = env.LOADER.get(packageKey,
-        () => packageArtifactToWorkerCode(resolved.artifact, {
-          PACKAGE_NAME: resolved.packageName,
-          PACKAGE_ID: resolved.packageId,
-          PACKAGE_ROUTE_BASE: resolved.routeBase,
-        }),
-      ).getEntrypoint(undefined, {
+      const runner = ctx.exports.AppRunner({
         props: {
+          packageId: resolved.packageId,
+          packageName: resolved.packageName,
+          routeBase: resolved.routeBase,
+          entrypointName: resolved.appFrame.entrypointName,
+          artifact: resolved.artifact,
           appFrame: resolved.appFrame,
-          appSession: {
-            sessionId: resolved.clientSession.sessionId,
-            clientId: resolved.clientSession.clientId,
-            rpcBase: resolved.clientSession.rpcBase,
-            expiresAt: resolved.clientSession.expiresAt,
-          },
-          kernel: ctx.exports.KernelBinding({
-            props: {
-              appFrame: resolved.appFrame,
-            },
-          }),
-        } satisfies PackageAppProps,
-      });
+        },
+      }).getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
 
-      const response = await worker.fetch(buildPackageWorkerRequest(request, resolved));
+      const response = await runner.fetch(buildPackageWorkerRequest(request, resolved));
       return await withPackageAppClientSession(response, resolved);
     }
 
@@ -525,8 +512,8 @@ function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): s
   if (resolved.hasRpc) {
     scriptLines.push(
       `<script type="module">`,
-      `import { newWebSocketRpcSession } from "https://cdn.jsdelivr.net/npm/capnweb@0.6.1/+esm";`,
-      `window.capnweb={ newWebSocketRpcSession };`,
+      `import { RpcTarget, newWebSocketRpcSession } from "https://cdn.jsdelivr.net/npm/capnweb@0.6.1/+esm";`,
+      `window.capnweb={ RpcTarget, newWebSocketRpcSession };`,
       `window.__GSV_BACKEND_READY__=(async()=>{`,
       `  const rpcUrl=new URL(window.__GSV_APP_BOOT__.rpcBase, window.location.href);`,
       `  rpcUrl.protocol=rpcUrl.protocol===\"https:\"?\"wss:\":\"ws:\";`,
@@ -571,31 +558,18 @@ class PackageAppSessionRpcTarget extends RpcTarget {
       throw new Error(resolved.message);
     }
 
-    const packageKey = packageWorkerKey({ manifest: { name: resolved.packageName }, artifact: resolved.artifact });
-    const worker = this.env.LOADER.get(packageKey,
-      () => packageArtifactToWorkerCode(resolved.artifact, {
-        PACKAGE_NAME: resolved.packageName,
-        PACKAGE_ID: resolved.packageId,
-        PACKAGE_ROUTE_BASE: resolved.routeBase,
-      }),
-    ).getEntrypoint("GsvAppRpcEntrypoint", {
+    const runner = this.ctx.exports.AppRunner({
       props: {
+        packageId: resolved.packageId,
+        packageName: resolved.packageName,
+        routeBase: resolved.routeBase,
+        entrypointName: resolved.appFrame.entrypointName,
+        artifact: resolved.artifact,
         appFrame: resolved.appFrame,
-        appSession: {
-          sessionId: resolved.clientSession.sessionId,
-          clientId: resolved.clientSession.clientId,
-          rpcBase: resolved.clientSession.rpcBase,
-          expiresAt: resolved.clientSession.expiresAt,
-        },
-        kernel: this.ctx.exports.KernelBinding({
-          props: {
-            appFrame: resolved.appFrame,
-          },
-        }),
-      } satisfies PackageAppProps,
-    }) as unknown as { getBackend(): Promise<unknown> };
+      },
+    }).getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
 
-    return worker.getBackend();
+    return runner.getBackend();
   }
 }
 

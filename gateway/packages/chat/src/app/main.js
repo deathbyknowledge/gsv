@@ -591,12 +591,18 @@ function createEmbeddedHostClient(backend) {
   const statusListeners = new Set();
   const signalListeners = new Set();
   let activePid = null;
-  let lastMessageCount = null;
-  let lastPendingHilRequestId = null;
-  let lastProcessState = null;
-  let hadProcess = false;
-  let pollTimerId = 0;
-  let pollInFlight = false;
+  let activeSubscriptionId = null;
+  let signalWatchVersion = 0;
+
+  const signalNames = [
+    "chat.tool_call",
+    "chat.tool_result",
+    "chat.text",
+    "chat.complete",
+    "chat.hil",
+    "chat.error",
+    "process.exit",
+  ];
 
   function emitStatus() {
     for (const listener of statusListeners) {
@@ -629,106 +635,58 @@ function createEmbeddedHostClient(backend) {
     }
   }
 
-  function rememberHistoryState(history) {
-    const record = asRecord(history);
-    lastMessageCount = typeof record?.messageCount === "number" ? record.messageCount : null;
-    const pendingHil = asRecord(record?.pendingHil);
-    lastPendingHilRequestId = asString(pendingHil?.requestId);
-  }
-
-  async function primeProcessState(pid) {
+  async function clearSignalSubscription() {
+    const subscriptionId = activeSubscriptionId;
+    activeSubscriptionId = null;
+    if (!subscriptionId) {
+      return;
+    }
     try {
-      const payload = await backend.getProcessState({ pid });
-      if (activePid !== pid) {
-        return;
-      }
-      const process = asRecord(payload?.process);
-      lastProcessState = asString(process?.state);
-      hadProcess = Boolean(process);
+      await backend.gsvUnsubscribeSignal({ subscriptionId });
     } catch {
     }
   }
 
-  function schedulePoll(delayMs = 1000) {
-    window.clearTimeout(pollTimerId);
-    if (!activePid) {
-      return;
-    }
-    pollTimerId = window.setTimeout(() => {
-      void pollActiveThread();
-    }, delayMs);
-  }
-
-  async function pollActiveThread() {
-    const pid = activePid;
-    if (!pid) {
-      return;
-    }
-    if (pollInFlight) {
-      schedulePoll(1000);
-      return;
-    }
-    pollInFlight = true;
-    try {
-      const snapshot = await backend.getThreadSnapshot({ pid, limit: 200 });
-      if (activePid !== pid) {
-        return;
-      }
-
-      const history = asRecord(snapshot?.history);
-      const process = asRecord(snapshot?.process);
-      const pendingHil = asRecord(history?.pendingHil);
-      const nextMessageCount = typeof history?.messageCount === "number" ? history.messageCount : lastMessageCount;
-      const nextPendingHilRequestId = asString(pendingHil?.requestId);
-      const nextProcessState = asString(process?.state);
-      const nextHasProcess = Boolean(process);
-
-      const messageChanged = lastMessageCount !== null && nextMessageCount !== null && nextMessageCount !== lastMessageCount;
-      const hilChanged = nextPendingHilRequestId !== lastPendingHilRequestId;
-      const completed = lastProcessState === "running" && nextProcessState !== "running";
-      const exited = hadProcess && !nextHasProcess;
-
-      if (hilChanged && pendingHil) {
-        emitSignal("chat.hil", pendingHil);
-      } else if (messageChanged) {
-        emitSignal("chat.text", { pid });
-      }
-
-      if (completed) {
-        emitSignal("chat.complete", { pid });
-      } else if (exited) {
-        emitSignal("process.exit", { pid });
-      }
-
-      rememberHistoryState(history);
-      lastProcessState = nextProcessState;
-      hadProcess = nextHasProcess;
-      updateStatus(null);
-    } catch (error) {
-      updateStatus(error instanceof Error ? error.message : String(error));
-    } finally {
-      pollInFlight = false;
-      if (activePid === pid) {
-        schedulePoll(1000);
-      }
-    }
-  }
-
-  function watchPid(pid, immediate = false) {
+  async function watchPid(pid) {
+    const nextVersion = ++signalWatchVersion;
     const normalizedPid = typeof pid === "string" && pid.trim() ? pid.trim() : null;
+    if (normalizedPid === activePid && activeSubscriptionId) {
+      return;
+    }
     if (normalizedPid !== activePid) {
       activePid = normalizedPid;
-      lastMessageCount = null;
-      lastPendingHilRequestId = null;
-      lastProcessState = null;
-      hadProcess = false;
     }
-    if (!activePid) {
-      window.clearTimeout(pollTimerId);
+    await clearSignalSubscription();
+    if (!normalizedPid) {
       return;
     }
-    void primeProcessState(activePid);
-    schedulePoll(immediate ? 32 : 1000);
+
+    const RpcTargetCtor = window.capnweb?.RpcTarget;
+    if (typeof RpcTargetCtor !== "function") {
+      throw new Error("capnweb RpcTarget is unavailable");
+    }
+
+    const sink = new class extends RpcTargetCtor {
+      async onSignal(signal, envelope) {
+        const record = asRecord(envelope);
+        emitSignal(signal, record && "payload" in record ? record.payload : envelope);
+      }
+    }();
+
+    const result = await backend.gsvSubscribeSignal({
+      processId: normalizedPid,
+      signals: signalNames,
+      sink,
+    });
+    if (nextVersion !== signalWatchVersion) {
+      const staleId = asString(asRecord(result)?.subscriptionId);
+      if (staleId) {
+        await backend.gsvUnsubscribeSignal({ subscriptionId: staleId }).catch(() => {});
+      }
+      return;
+    }
+    activeSubscriptionId = asString(asRecord(result)?.subscriptionId);
+    updateStatus(null);
   }
 
   async function call(call, args = {}) {
@@ -740,18 +698,10 @@ function createEmbeddedHostClient(backend) {
     }
     if (call === "proc.abort") {
       const result = await backend.abortRun(args);
-      const pid = typeof args?.pid === "string" ? args.pid.trim() : "";
-      if (pid) {
-        watchPid(pid, true);
-      }
       return result;
     }
     if (call === "proc.hil") {
       const result = await backend.decideHil(args);
-      const pid = typeof args?.pid === "string" ? args.pid.trim() : "";
-      if (pid) {
-        watchPid(pid, true);
-      }
       return result;
     }
     throw new Error("Unsupported chat client call: " + call);
@@ -769,36 +719,38 @@ function createEmbeddedHostClient(backend) {
       listener(status);
       return () => statusListeners.delete(listener);
     },
+    setActivePid: (pid) => watchPid(pid),
     call,
     spawnProcess: async (args) => {
       const result = await backend.spawnProcess(args);
       const pid = asString(asRecord(result)?.pid);
       if (pid) {
-        watchPid(pid, true);
+        await watchPid(pid);
       }
       return result;
     },
     sendMessage: async (message, pid, media) => {
+      if (pid) {
+        await watchPid(pid);
+      }
       const result = await backend.sendMessage({
         message,
         ...(pid ? { pid } : {}),
         ...(Array.isArray(media) && media.length > 0 ? { media } : {}),
       });
-      if (pid) {
-        watchPid(pid, true);
-      }
       return result;
     },
     getHistory: async (limit, pid, offset) => {
+      if (pid) {
+        await watchPid(pid);
+      } else {
+        await watchPid(null);
+      }
       const result = await backend.getHistory({
         limit: limit || 50,
         ...(pid ? { pid } : {}),
         ...(typeof offset === "number" ? { offset } : {}),
       });
-      if (pid) {
-        watchPid(pid, false);
-        rememberHistoryState(result);
-      }
       return result;
     },
   };
@@ -1593,6 +1545,9 @@ async function openThread(workspaceId) {
 
 function resetToNewThread() {
   activeThreadContext = setActiveThreadContext(null);
+  if (client && client.isConnected() && typeof client.setActivePid === "function") {
+    void client.setActivePid(null);
+  }
   pendingAssistantState = null;
   pendingHilRequest = null;
   setLogRows([{ role: "system", text: draftConversationMeta(), timestamp: Date.now() }], { forceBottom: true });
@@ -1936,13 +1891,9 @@ async function boot() {
     });
     renderStatus();
     renderProfilePicker();
-    if (activeThreadContext) {
-      await loadHistory();
-    } else {
+    if (!activeThreadContext) {
       setLogRows([{ role: "system", text: draftConversationMeta(), timestamp: Date.now() }], { forceBottom: true });
     }
-    await loadProfiles();
-    await loadThreads();
   } catch (error) {
     hostError = error instanceof Error ? error.message : String(error);
     setLogRows([{ role: "system", text: "Chat backend unavailable. Reload this window and try again.", timestamp: Date.now() }], { forceBottom: true });
