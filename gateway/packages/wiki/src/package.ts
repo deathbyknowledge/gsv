@@ -2,12 +2,13 @@ import { definePackage } from "@gsv/package/worker";
 import {
   compileInboxNote,
   createDatabase,
+  getPreview,
   handleAppSignal,
-  handleFetch,
   ingestSourcesToInbox,
+  loadState,
   startBuildFromDirectory,
   writePage,
-} from "../ui/worker";
+} from "../ui/backend";
 
 export default definePackage({
   meta: {
@@ -41,17 +42,13 @@ export default definePackage({
     },
   },
   app: {
-    async fetch(request, ctx) {
-      const routeBase = ctx.meta.routeBase ?? "/apps/wiki";
-      return handleFetch(request, {
-        props: {
-          appFrame: { packageId: ctx.meta.packageId, routeBase },
-          kernel: ctx.kernel,
-        },
-        env: { PACKAGE_ROUTE_BASE: routeBase },
-      });
+    browser: {
+      entry: "./index.html",
     },
+    assets: ["./styles.css"],
     rpc: {
+      loadState: async (args, ctx) => loadState(ctx.kernel, args),
+      preview: async (args, ctx) => getPreview(ctx.kernel, args),
       createDatabase: async (args, ctx) => createDatabase(ctx.kernel, args),
       writePage: async (args, ctx) => writePage(ctx.kernel, args),
       ingestSourcesToInbox: async (args, ctx) => ingestSourcesToInbox(ctx.kernel, args),
