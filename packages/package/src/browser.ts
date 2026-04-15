@@ -50,21 +50,24 @@ function wrapAppBackend<T = unknown>(backend: unknown): T {
   }
   const target = backend as {
     gsvInvoke?: (method: string, args?: unknown) => Promise<unknown>;
+    gsvSubscribeSignal?: (args?: unknown) => Promise<unknown>;
+    gsvUnsubscribeSignal?: (args?: unknown) => Promise<unknown>;
+    dup?: () => unknown;
   } & Record<string | symbol, unknown>;
   if (typeof target.gsvInvoke !== "function") {
     return backend as T;
   }
   return new Proxy(target, {
-    get(proxyTarget, prop, receiver) {
+    get(proxyTarget, prop) {
       if (prop === "then") {
         return undefined;
       }
-      const value = Reflect.get(proxyTarget, prop, receiver);
-      if (typeof value === "function") {
-        return value.bind(proxyTarget);
-      }
       if (typeof prop !== "string") {
-        return value;
+        return Reflect.get(proxyTarget, prop);
+      }
+      if (prop === "gsvInvoke" || prop === "gsvSubscribeSignal" || prop === "gsvUnsubscribeSignal" || prop === "dup") {
+        const value = Reflect.get(proxyTarget, prop);
+        return typeof value === "function" ? value.bind(proxyTarget) : value;
       }
       return (args?: unknown) => proxyTarget.gsvInvoke!(prop, args);
     },
