@@ -1,5 +1,13 @@
 import { definePackage } from "@gsv/package/worker";
-import { handleAppSignal, handleFetch, startBuildFromDirectory } from "../ui/worker";
+import {
+  compileInboxNote,
+  createDatabase,
+  handleAppSignal,
+  handleFetch,
+  ingestSourcesToInbox,
+  startBuildFromDirectory,
+  writePage,
+} from "../ui/worker";
 
 export default definePackage({
   meta: {
@@ -44,6 +52,10 @@ export default definePackage({
       });
     },
     rpc: {
+      createDatabase: async (args, ctx) => createDatabase(ctx.kernel, args),
+      writePage: async (args, ctx) => writePage(ctx.kernel, args),
+      ingestSourcesToInbox: async (args, ctx) => ingestSourcesToInbox(ctx.kernel, args),
+      compileInboxNote: async (args, ctx) => compileInboxNote(ctx.kernel, args),
       startBuildFromDirectory: async (args, ctx) => startBuildFromDirectory(ctx.kernel, args),
     },
     async onSignal(ctx) {
