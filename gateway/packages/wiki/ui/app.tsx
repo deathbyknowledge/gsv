@@ -194,16 +194,27 @@ export function App({ backend }: Props) {
   const openPreview = useCallback((anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean) => {
     clearPreviewHide();
     const key = previewKey(request);
+    const anchorRect = anchor.getBoundingClientRect();
+    let shouldFetch = true;
     setPreview((current) => {
       if (pin && current?.pinned && current.key === key) {
+        shouldFetch = false;
         return null;
       }
       if (!pin && current?.pinned && current.key !== key) {
+        shouldFetch = false;
         return current;
+      }
+      if (!pin && current?.key === key) {
+        shouldFetch = false;
+        return {
+          ...current,
+          anchorRect,
+        };
       }
       return {
         key,
-        anchorRect: anchor.getBoundingClientRect(),
+        anchorRect,
         request,
         pinned: pin ? true : current?.key === key ? current.pinned : false,
         loading: true,
@@ -211,6 +222,9 @@ export function App({ backend }: Props) {
         error: "",
       };
     });
+    if (!shouldFetch) {
+      return;
+    }
     const requestId = ++previewRequestId.current;
     void backend.preview(request)
       .then((payload) => {
@@ -223,7 +237,6 @@ export function App({ backend }: Props) {
           }
           return {
             ...current,
-            anchorRect: anchor.getBoundingClientRect(),
             loading: false,
             payload,
             error: payload.ok ? "" : payload.error,
