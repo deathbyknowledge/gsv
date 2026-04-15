@@ -868,6 +868,13 @@ async function resolvePackageFromRipgitNativeBuild(
           }
         : undefined,
     }] : []),
+    ...(analysis.definition.app?.has_rpc ? [{
+      name: `${analysis.definition.meta.display_name} RPC`,
+      kind: "rpc" as const,
+      module: artifact.mainModule,
+      exportName: "GsvAppRpcEntrypoint",
+      description: analysis.definition?.meta.description ?? undefined,
+    }] : []),
     ...analysis.definition.tasks.map((task) => ({
       name: task.name,
       kind: "task" as const,

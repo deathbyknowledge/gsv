@@ -1082,6 +1082,27 @@ impl<'a> BundleBuilder<'a> {
                 return Ok(());
             }
         };
+        let compiled = match rewrite_compiled_imports(&job.repo_path, &compiled, &mut |specifier| {
+            let resolved = self.resolve_import(job, specifier)?;
+            if let Some(value) = resolved {
+                self.enqueue(value.job);
+                Ok(Some(value.rewritten_specifier))
+            } else {
+                Ok(None)
+            }
+        }) {
+            Ok(code) => code,
+            Err(err) => {
+                self.push_error(
+                    "transform-import-rewrite",
+                    &job.output_path,
+                    1,
+                    1,
+                    err.to_string(),
+                );
+                return Ok(());
+            }
+        };
 
         self.emitted.insert(
             job.output_path.clone(),
@@ -1351,6 +1372,61 @@ fn transpile_source_module(path: &str, source_text: &str) -> Result<String> {
     }
 
     Ok(Codegen::new().build(&program).code)
+}
+
+fn rewrite_compiled_imports(
+    source_path: &str,
+    source_text: &str,
+    resolve_import: &mut dyn FnMut(&str) -> Result<Option<String>>,
+) -> Result<String> {
+    let allocator = Allocator::default();
+    let source_type = SourceType::from_path(Path::new(source_path)).unwrap_or(SourceType::ts());
+    let parser_return = Parser::new(&allocator, source_text, source_type).parse();
+    if !parser_return.errors.is_empty() {
+        return Err(Error::RustError(format!(
+            "post-transform parse failed for {}",
+            source_path
+        )));
+    }
+
+    let mut replacements = Vec::new();
+
+    for (specifier, occurrences) in parser_return.module_record.requested_modules.iter() {
+        let runtime_occurrences = occurrences
+            .iter()
+            .filter(|occurrence| !occurrence.is_type)
+            .copied()
+            .collect::<Vec<_>>();
+        if runtime_occurrences.is_empty() {
+            continue;
+        }
+
+        let resolved = match resolve_import(specifier.as_str())? {
+            Some(value) => value,
+            None => continue,
+        };
+
+        for occurrence in runtime_occurrences {
+            replacements.push((occurrence.span, quote_string(&resolved)));
+        }
+    }
+
+    for dynamic_import in parser_return.module_record.dynamic_imports.iter() {
+        let raw = slice_span(source_text, dynamic_import.module_request);
+        let Ok(specifier) = serde_json::from_str::<String>(raw) else {
+            return Err(Error::RustError(format!(
+                "dynamic import specifier must be a string literal in {}",
+                source_path
+            )));
+        };
+        let resolved = match resolve_import(&specifier)? {
+            Some(value) => value,
+            None => continue,
+        };
+        replacements.push((dynamic_import.module_request, quote_string(&resolved)));
+    }
+
+    Ok(apply_replacements(source_text, replacements))
 }
 
 fn index_repo_packages(
