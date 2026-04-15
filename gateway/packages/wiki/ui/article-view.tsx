@@ -7,6 +7,7 @@ type Props = {
   articleTitle: string;
   routeBase: string;
   selectedDb: string;
+  selectedPath: string;
   onNavigate(path: string): void;
   onPreviewOpen(anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean): void;
   onPreviewHide(force: boolean): void;

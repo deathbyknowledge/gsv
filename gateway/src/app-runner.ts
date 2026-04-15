@@ -109,6 +109,31 @@ class KernelBridge extends RpcTarget {
   }
 }
 
+/**
+ * Browser-facing RPC shim for app facets.
+ *
+ * Why this exists:
+ * - The intended architecture is for the browser to talk directly to the
+ *   package facet stub and call real app methods on it.
+ * - Today that fails in workerd when the facet stub crosses the RPC boundary.
+ *   The underlying runtime returns the facet as a Fetcher-backed stub, and the
+ *   transfer path hits `getSubrequestChannel()` on a factory that does not yet
+ *   implement it.
+ * - We therefore return a plain RpcTarget here and forward app methods to the
+ *   facet behind the scenes.
+ *
+ * Constraints:
+ * - Keep the public browser-facing surface to a single generic method
+ *   (`invoke(...)`) plus the reserved live-signal helpers.
+ * - Do not grow this into a second app protocol.
+ * - App-specific method names still belong to the facet/backend surface.
+ *
+ * What needs to change upstream:
+ * - workerd needs to support transferring facet stubs directly over RPC
+ *   without tripping the current Fetcher/subrequest-channel limitation.
+ * - Once that works reliably, AppRunner can return the facet stub directly and
+ *   this wrapper can be removed.
+ */
 class AppRunnerBackendTarget extends RpcTarget {
   constructor(
     private readonly runner: AppRunner,

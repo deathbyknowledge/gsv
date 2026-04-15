@@ -13,6 +13,7 @@ type RenderOptions = {
   articleTitle: string;
   routeBase: string;
   selectedDb: string;
+  selectedPath: string;
   onNavigate(path: string): void;
   onPreviewOpen(anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean): void;
   onPreviewHide(force: boolean): void;
@@ -125,16 +126,38 @@ function parseRenderedSourceRef(value: string): { target: string; path: string; 
   };
 }
 
-function resolveInternalPath(rawHref: string, selectedDb: string): string | null {
+function resolveRelativeWikiPath(rawHref: string, selectedPath: string): string | null {
+  const href = String(rawHref ?? "").trim();
+  if (!href || !selectedPath) {
+    return null;
+  }
+  const cleanHref = href.split("#")[0]?.split("?")[0]?.trim() || "";
+  if (!cleanHref || cleanHref.startsWith("/")) {
+    return null;
+  }
+  const basePath = normalizePath(selectedPath);
+  if (!basePath) {
+    return null;
+  }
+  const baseDir = basePath.includes("/") ? basePath.slice(0, basePath.lastIndexOf("/") + 1) : "";
+  const resolved = new URL(cleanHref, `https://wiki.local/${baseDir}`).pathname.replace(/^\/+/, "");
+  return resolved ? normalizePath(resolved) : null;
+}
+
+function resolveInternalPath(rawHref: string, selectedDb: string, selectedPath: string): string | null {
   const href = String(rawHref ?? "").trim();
   if (!href || /^(https?:|mailto:|#)/i.test(href) || /^[a-z0-9._-]+:\/\//i.test(href)) {
     return null;
   }
-  if (/^[a-z0-9._-]+\/(pages|inbox)\//i.test(href) || /^[a-z0-9._-]+\/index\.md$/i.test(href)) {
-    return normalizePath(href);
+  const trimmedHref = href.replace(/^\.\//, "");
+  if (/^[a-z0-9._-]+\/(pages|inbox)\//i.test(trimmedHref) || /^[a-z0-9._-]+\/index\.md$/i.test(trimmedHref)) {
+    return normalizePath(trimmedHref);
   }
-  if (selectedDb && (href === "index.md" || href.startsWith("pages/") || href.startsWith("inbox/"))) {
-    return normalizeDbScopedPath(href, selectedDb);
+  if (selectedDb && (trimmedHref === "index.md" || trimmedHref.startsWith("pages/") || trimmedHref.startsWith("inbox/"))) {
+    return normalizeDbScopedPath(trimmedHref, selectedDb);
+  }
+  if (/^(\.\.\/|\.\/|[^/]+\.md(?:[#?].*)?$)/i.test(href)) {
+    return resolveRelativeWikiPath(href, selectedPath);
   }
   return null;
 }
@@ -207,7 +230,7 @@ export function renderArticleInto(container: HTMLElement, options: RenderOptions
 
   container.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((anchor) => {
     const href = anchor.getAttribute("href") || "";
-    const internalPath = resolveInternalPath(href, options.selectedDb);
+    const internalPath = resolveInternalPath(href, options.selectedDb, options.selectedPath);
     if (internalPath) {
       anchor.href = buildEntryHref(options.routeBase, options.selectedDb, internalPath);
       anchor.dataset.previewKind = "page";

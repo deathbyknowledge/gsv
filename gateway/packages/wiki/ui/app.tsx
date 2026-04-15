@@ -384,6 +384,7 @@ export function App({ backend }: Props) {
               articleTitle={articleTitle}
               routeBase={routeBase}
               selectedDb={state?.selectedDb || ""}
+              selectedPath={state?.selectedPath || ""}
               onNavigate={(path) => navigate({ db: path.split("/")[0] || state?.selectedDb || "", path, q: "", ask: "" })}
               onPreviewOpen={openPreview}
               onPreviewHide={scheduleHidePreview}
