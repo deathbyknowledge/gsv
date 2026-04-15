@@ -94,6 +94,9 @@ export class AppRunner extends DurableObject<Env> {
         PACKAGE_NAME: props.packageName,
         PACKAGE_ID: props.packageId,
         PACKAGE_ROUTE_BASE: props.routeBase,
+        GSV_PACKAGE_NAME: props.packageName,
+        GSV_PACKAGE_ID: props.packageId,
+        GSV_ROUTE_BASE: props.routeBase,
         KERNEL: this.ctx.exports.KernelBinding({
           props: {
             appFrame: runtimeAppFrame,
