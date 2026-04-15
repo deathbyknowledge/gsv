@@ -1914,8 +1914,7 @@ fn generate_dynamic_worker_main_module(
     }
 
     format!(
-        r#"{asset_imports}import { getAgentByName } from "agents";
-import {{ DurableObject, RpcTarget, WorkerEntrypoint }} from "cloudflare:workers";
+        r#"{asset_imports}import {{ DurableObject, RpcTarget, WorkerEntrypoint }} from "cloudflare:workers";
 import definition from "../src/package.js";
 
 const STATIC_META = Object.freeze({{
@@ -1962,13 +1961,12 @@ function buildKernelClient(env, props) {{
   if (props?.kernel && typeof props.kernel.request === "function") {{
     return props.kernel;
   }}
-  const kernelNamespace = env.KERNEL_DO ?? env.KERNEL;
-  if (!kernelNamespace) {{
+  const kernel = env.KERNEL_APP ?? env.KERNEL;
+  if (!kernel || typeof kernel.appRequest !== "function") {{
     throw new Error("kernel binding is unavailable");
   }}
   return {{
     async request(call, args) {{
-      const kernel = await getAgentByName(kernelNamespace, "singleton");
       const frame = resolveAppFrame(env, props);
       if (!frame) {{
         throw new Error("app frame is unavailable");
