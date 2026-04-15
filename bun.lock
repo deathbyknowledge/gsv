@@ -82,6 +82,14 @@
         "@gsv/package": "workspace:*",
       },
     },
+    "gateway/packages/preact-lab": {
+      "name": "@gsv/preact-lab",
+      "version": "0.1.0",
+      "dependencies": {
+        "@gsv/package": "workspace:*",
+        "preact": "^10.27.2",
+      },
+    },
     "gateway/packages/processes": {
       "name": "@gsv/processes",
       "version": "0.1.0",
@@ -317,6 +325,8 @@
     "@gsv/package": ["@gsv/package@workspace:packages/package"],
 
     "@gsv/packages": ["@gsv/packages@workspace:gateway/packages/packages"],
+
+    "@gsv/preact-lab": ["@gsv/preact-lab@workspace:gateway/packages/preact-lab"],
 
     "@gsv/processes": ["@gsv/processes@workspace:gateway/packages/processes"],
 
@@ -1221,6 +1231,8 @@
     "pkce-challenge": ["pkce-challenge@5.0.1", "", {}, "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ=="],
 
     "postcss": ["postcss@8.5.9", "", { "dependencies": { "nanoid": "^3.3.11", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-7a70Nsot+EMX9fFU3064K/kdHWZqGVY+BADLyXc8Dfv+mTLLVl6JzJpPaCZ2kQL9gIJvKXSLMHhqdRRjwQeFtw=="],
+
+    "preact": ["preact@10.29.1", "", {}, "sha512-gQCLc/vWroE8lIpleXtdJhTFDogTdZG9AjMUpVkDf2iTCNwYNWA+u16dL41TqUDJO4gm2IgrcMv3uTpjd4Pwmg=="],
 
     "prebuild-install": ["prebuild-install@7.1.3", "", { "dependencies": { "detect-libc": "^2.0.0", "expand-template": "^2.0.3", "github-from-package": "0.0.0", "minimist": "^1.2.3", "mkdirp-classic": "^0.5.3", "napi-build-utils": "^2.0.0", "node-abi": "^3.3.0", "pump": "^3.0.0", "rc": "^1.2.7", "simple-get": "^4.0.0", "tar-fs": "^2.0.0", "tunnel-agent": "^0.6.0" }, "bin": { "prebuild-install": "bin.js" } }, "sha512-8Mf2cbV7x1cXPUILADGI3wuhfqWvtiLA1iclTDbFRZkgRQS0NqsPZphna9V+HyTEadheuPmjaJMsbzKQFOzLug=="],
 

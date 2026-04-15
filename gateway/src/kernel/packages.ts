@@ -331,6 +331,7 @@ const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
     },
   }),
   createBuiltinRipgitPackageSpec("ascii-starfield"),
+  createBuiltinRipgitPackageSpec("preact-lab"),
   createBuiltinRipgitPackageSpec("doctor"),
   createBuiltinRipgitPackageSpec("packages", {
     bindings: [
