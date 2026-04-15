@@ -126,7 +126,6 @@ button[disabled] { cursor: default; opacity: 0.6; }
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
-  pointer-events: none;
 }
 .wiki-preview-card h4 { margin: 0 0 6px; font: 600 18px/1.2 Charter, "Iowan Old Style", Georgia, serif; }
 .wiki-preview-card .preview-meta { margin: 0 0 10px; color: var(--muted); font-size: 12px; word-break: break-all; }
@@ -137,8 +136,6 @@ button[disabled] { cursor: default; opacity: 0.6; }
 .wiki-preview-card .preview-body pre { margin: 0 0 10px; }
 .wiki-preview-card .preview-body img { max-width: 100%; height: auto; display: block; }
 .wiki-preview-card .preview-empty { color: var(--muted); }
-.wiki-preview-card, .wiki-preview-card * { pointer-events: none; }
-.wiki-preview-card.is-pinned, .wiki-preview-card.is-pinned * { pointer-events: auto; }
 .empty-article { padding: 18px 0; color: var(--muted); }
 @media (max-width: 1180px) {
   .frame { grid-template-columns: 240px minmax(0, 1fr); }
