@@ -516,7 +516,6 @@ function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): s
       `<script type="module">`,
       `import { RpcTarget, newWebSocketRpcSession } from "https://cdn.jsdelivr.net/npm/capnweb@0.6.1/+esm";`,
       `window.capnweb={ RpcTarget, newWebSocketRpcSession };`,
-      `console.debug("[app-bootstrap] capnweb loaded", { packageId: window.__GSV_APP_BOOT__?.packageId, rpcBase: window.__GSV_APP_BOOT__?.rpcBase });`,
       "</script>",
     );
   }
