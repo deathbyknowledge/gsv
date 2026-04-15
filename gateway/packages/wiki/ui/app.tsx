@@ -586,6 +586,7 @@ export function App({ backend }: Props) {
           loading={preview.loading}
           payload={preview.payload}
           error={preview.error}
+          pinned={preview.pinned}
           onMouseEnter={clearPreviewHide}
           onMouseLeave={() => scheduleHidePreview(false)}
         />

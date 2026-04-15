@@ -6,6 +6,7 @@ type Props = {
   loading: boolean;
   payload: WikiPreviewPayload | null;
   error: string;
+  pinned: boolean;
   onMouseEnter(): void;
   onMouseLeave(): void;
 };
@@ -42,7 +43,7 @@ export function PreviewCard(props: Props) {
 
   return (
     <div
-      class="wiki-preview-card"
+      class={`wiki-preview-card${props.pinned ? " is-pinned" : ""}`}
       style={{ left: `${position.left}px`, top: `${position.top}px` }}
       onMouseEnter={props.onMouseEnter}
       onMouseLeave={props.onMouseLeave}
