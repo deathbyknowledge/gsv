@@ -265,6 +265,10 @@ export function App({ backend }: Props) {
       });
   }, [backend, clearPreviewHide]);
 
+  const articleNavigate = useCallback((path: string) => {
+    navigate({ db: path.split("/")[0] || state?.selectedDb || "", path, q: "", ask: "" });
+  }, [navigate, state?.selectedDb]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -387,7 +391,7 @@ export function App({ backend }: Props) {
               routeBase={routeBase}
               selectedDb={state?.selectedDb || ""}
               selectedPath={state?.selectedPath || ""}
-              onNavigate={(path) => navigate({ db: path.split("/")[0] || state?.selectedDb || "", path, q: "", ask: "" })}
+              onNavigate={articleNavigate}
               onPreviewOpen={openPreview}
               onPreviewHide={scheduleHidePreview}
             />
