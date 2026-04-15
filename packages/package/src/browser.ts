@@ -54,7 +54,6 @@ function wrapAppBackend<T = unknown>(backend: unknown): T {
     return backend as T;
   }
   const target = backend as WrappedBackend;
-  console.debug("[gsv-sdk] wrap backend", { hasInvoke: typeof target.invoke === "function", backendType: typeof backend });
   if (typeof target.invoke !== "function") {
     return backend as T;
   }
@@ -71,7 +70,6 @@ function wrapAppBackend<T = unknown>(backend: unknown): T {
         return typeof value === "function" ? value.bind(proxyTarget) : value;
       }
       return (args?: unknown) => {
-        console.debug("[gsv-sdk] proxy method", { method: prop });
         return proxyTarget.invoke(prop, args);
       };
     },
@@ -87,7 +85,6 @@ function buildRpcWebSocketUrl(rpcBase: string): string {
 export async function connectAppBackend<T = unknown>(): Promise<T> {
   const existing = globalThis.window?.__GSV_BACKEND_READY__;
   if (existing) {
-    console.debug("[gsv-sdk] reusing existing backend promise");
     return existing as Promise<T>;
   }
   const boot = getAppBoot();
@@ -95,14 +92,11 @@ export async function connectAppBackend<T = unknown>(): Promise<T> {
     throw new Error("package app has no backend rpc");
   }
   const capnweb = getCapnweb();
-  console.debug("[gsv-sdk] connecting backend", { rpcBase: boot.rpcBase });
   const ready = (async () => {
     const session = capnweb.newWebSocketRpcSession<{
       authenticate(secret: string): unknown;
     }>(buildRpcWebSocketUrl(boot.rpcBase));
-    console.debug("[gsv-sdk] authenticating backend session");
     const backend = wrapAppBackend<T>(await session.authenticate(boot.sessionSecret));
-    console.debug("[gsv-sdk] backend authenticated");
     if (globalThis.window) {
       globalThis.window.backend = backend;
     }
