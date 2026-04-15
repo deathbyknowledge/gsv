@@ -56,6 +56,8 @@ type KernelBridgeStub = Rpc.RpcTargetBranded & {
 
 type SignalSinkStub = Rpc.RpcTargetBranded & {
   onSignal(signal: string, envelope: unknown): Promise<void>;
+  dup?: () => SignalSinkStub;
+  [Symbol.dispose]?: () => void;
 };
 
 type AppFacetStub = Rpc.DurableObjectBranded & {
@@ -219,8 +221,11 @@ export class AppRunner extends DurableObject<Env> {
       });
       watchKeys.push(key);
     }
+    const retainedSink = typeof input.sink.dup === "function"
+      ? input.sink.dup()
+      : input.sink;
     this.liveSignalSubscriptions.set(subscriptionId, {
-      sink: input.sink,
+      sink: retainedSink,
       watchKeys,
       processId: input.processId,
       signals: input.signals,
@@ -360,6 +365,10 @@ export class AppRunner extends DurableObject<Env> {
       return 0;
     }
     this.liveSignalSubscriptions.delete(subscriptionId);
+    try {
+      subscription.sink[Symbol.dispose]?.();
+    } catch {
+    }
     let removed = 0;
     await Promise.all(subscription.watchKeys.map(async (key) => {
       try {
