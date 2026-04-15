@@ -2445,11 +2445,11 @@ export class GsvAppFacet extends DurableObject {{
     }});
   }}
 
-{app_rpc_methods}}}
-
   async gsvInvoke(method, args, runtime, kernel) {{
     return this.__invoke(method, args, runtime, kernel);
   }}
+
+{app_rpc_methods}}}
 
 class GsvPackageAppBackend extends RpcTarget {{
   constructor(env, props) {{
