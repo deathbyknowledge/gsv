@@ -840,7 +840,7 @@ function renderPage(args) {
           <details>
             <summary>Write page</summary>
             <div class="detail-body">
-              <form method="post" action="${escapeHtml(routeBase)}">
+              <form method="post" action="${escapeHtml(routeBase)}" id="wiki-editor-form">
                 <input type="hidden" name="db" value="${escapeHtml(selectedDb)}" />
                 <div class="field">
                   <label for="wiki-path">Path</label>
@@ -853,6 +853,7 @@ function renderPage(args) {
                 <button type="submit" class="primary" name="action" value="write">Save page</button>
                 ${canCompile ? `<button type="submit" style="margin-left:8px;" name="action" value="compile">Compile inbox note</button>` : ""}
                 ${canCompile ? `<div class="field" style="margin-top:12px;"><label for="compile-target">Compile target</label><input id="compile-target" type="text" name="targetPath" value="${escapeHtml(compileTarget)}" placeholder="pages/compiled-page.md" /></div>` : ""}
+                <p class="muted" id="wiki-editor-feedback" hidden></p>
               </form>
             </div>
           </details>
@@ -885,7 +886,7 @@ function renderPage(args) {
           <details>
             <summary>Stage source refs</summary>
             <div class="detail-body">
-              <form method="post" action="${escapeHtml(routeBase)}">
+              <form method="post" action="${escapeHtml(routeBase)}" id="wiki-ingest-form">
                 <input type="hidden" name="action" value="ingest" />
                 <input type="hidden" name="db" value="${escapeHtml(selectedDb)}" />
                 <div class="field">
@@ -901,13 +902,14 @@ function renderPage(args) {
                   <textarea id="ingest-sources" name="sources" placeholder="gsv:/workspaces/gsv/docs/alpha-plan.md::Alpha plan&#10;macbook:/Users/hank/Downloads/adapter-notes.txt::Adapter notes">${escapeHtml(ingestSources)}</textarea>
                 </div>
                 <button type="submit">Stage sources</button>
+                <p class="muted" id="wiki-ingest-feedback" hidden></p>
               </form>
             </div>
           </details>
           <details>
             <summary>Create database</summary>
             <div class="detail-body">
-              <form method="post" action="${escapeHtml(routeBase)}">
+              <form method="post" action="${escapeHtml(routeBase)}" id="wiki-db-init-form">
                 <input type="hidden" name="action" value="db-init" />
                 <div class="field">
                   <label for="db-id">Id</label>
@@ -918,6 +920,7 @@ function renderPage(args) {
                   <input id="db-title" type="text" name="dbTitle" value="${escapeHtml(newDbTitle)}" placeholder="Product Alpha" />
                 </div>
                 <button type="submit">Create database</button>
+                <p class="muted" id="wiki-db-init-feedback" hidden></p>
               </form>
             </div>
           </details>
@@ -1277,6 +1280,57 @@ function renderPage(args) {
         });
 
         const appBoot = window.__GSV_APP_BOOT__ || null;
+        const requireBackend = async () => {
+          const backend = await window.__GSV_BACKEND_READY__;
+          if (!backend) {
+            throw new Error("Wiki backend is unavailable");
+          }
+          return backend;
+        };
+        const setPending = (form, pending) => {
+          form.querySelectorAll("button[type=\"submit\"]").forEach((button) => {
+            button.disabled = pending;
+          });
+        };
+        const setFeedback = (element, text) => {
+          element.hidden = false;
+          element.textContent = text;
+        };
+        const redirectToResult = (payload) => {
+          const href = new URL(buildEntryHrefClient(routeBase, payload.db, payload.openPath), window.location.origin);
+          href.searchParams.set("status", payload.statusText || "Completed wiki action.");
+          window.location.href = href.pathname + href.search + href.hash;
+        };
+        const editorForm = document.getElementById("wiki-editor-form");
+        const editorFeedback = document.getElementById("wiki-editor-feedback");
+        if (appBoot && editorForm instanceof HTMLFormElement && editorFeedback instanceof HTMLElement) {
+          editorForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const form = new FormData(editorForm);
+            const submitter = event.submitter;
+            const action = submitter instanceof HTMLButtonElement ? String(submitter.value || "write") : "write";
+            setPending(editorForm, true);
+            setFeedback(editorFeedback, action === "compile" ? "Compiling inbox note…" : "Saving page…");
+            try {
+              const backend = await requireBackend();
+              const payload = action === "compile"
+                ? await backend.compileInboxNote({
+                  db: String(form.get("db") || ""),
+                  sourcePath: String(form.get("path") || ""),
+                  targetPath: String(form.get("targetPath") || ""),
+                })
+                : await backend.writePage({
+                  db: String(form.get("db") || ""),
+                  path: String(form.get("path") || ""),
+                  markdown: String(form.get("markdown") || ""),
+                });
+              redirectToResult(payload);
+            } catch (error) {
+              setPending(editorForm, false);
+              setFeedback(editorFeedback, error instanceof Error ? error.message : String(error));
+            }
+          });
+        }
         const buildForm = document.getElementById("wiki-build-form");
         const buildSubmit = document.getElementById("wiki-build-submit");
         const buildFeedback = document.getElementById("wiki-build-feedback");
@@ -1285,25 +1339,63 @@ function renderPage(args) {
             event.preventDefault();
             const form = new FormData(buildForm);
             buildSubmit.disabled = true;
-            buildFeedback.hidden = false;
-            buildFeedback.textContent = "Starting background build…";
+            setFeedback(buildFeedback, "Starting background build…");
             try {
-              const backend = await window.__GSV_BACKEND_READY__;
-              if (!backend || typeof backend.startBuildFromDirectory !== "function") {
-                throw new Error("Wiki backend is unavailable");
-              }
+              const backend = await requireBackend();
               const payload = await backend.startBuildFromDirectory({
                 buildTarget: String(form.get("buildTarget") || ""),
                 buildSourcePath: String(form.get("buildSourcePath") || ""),
                 buildDbId: String(form.get("buildDbId") || ""),
                 buildDbTitle: String(form.get("buildDbTitle") || ""),
               });
-              const href = new URL(buildEntryHrefClient(routeBase, payload.db, payload.openPath), window.location.origin);
-              href.searchParams.set("status", payload.statusText || "Started background wiki build.");
-              window.location.href = href.pathname + href.search + href.hash;
+              redirectToResult(payload);
             } catch (error) {
               buildSubmit.disabled = false;
-              buildFeedback.textContent = error instanceof Error ? error.message : String(error);
+              setFeedback(buildFeedback, error instanceof Error ? error.message : String(error));
+            }
+          });
+        }
+        const ingestForm = document.getElementById("wiki-ingest-form");
+        const ingestFeedback = document.getElementById("wiki-ingest-feedback");
+        if (appBoot && ingestForm instanceof HTMLFormElement && ingestFeedback instanceof HTMLElement) {
+          ingestForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const form = new FormData(ingestForm);
+            setPending(ingestForm, true);
+            setFeedback(ingestFeedback, "Staging sources…");
+            try {
+              const backend = await requireBackend();
+              const payload = await backend.ingestSourcesToInbox({
+                db: String(form.get("db") || ""),
+                title: String(form.get("title") || ""),
+                summary: String(form.get("summary") || ""),
+                sources: String(form.get("sources") || ""),
+              });
+              redirectToResult(payload);
+            } catch (error) {
+              setPending(ingestForm, false);
+              setFeedback(ingestFeedback, error instanceof Error ? error.message : String(error));
+            }
+          });
+        }
+        const dbInitForm = document.getElementById("wiki-db-init-form");
+        const dbInitFeedback = document.getElementById("wiki-db-init-feedback");
+        if (appBoot && dbInitForm instanceof HTMLFormElement && dbInitFeedback instanceof HTMLElement) {
+          dbInitForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const form = new FormData(dbInitForm);
+            setPending(dbInitForm, true);
+            setFeedback(dbInitFeedback, "Creating database…");
+            try {
+              const backend = await requireBackend();
+              const payload = await backend.createDatabase({
+                dbId: String(form.get("dbId") || ""),
+                dbTitle: String(form.get("dbTitle") || ""),
+              });
+              redirectToResult(payload);
+            } catch (error) {
+              setPending(dbInitForm, false);
+              setFeedback(dbInitFeedback, error instanceof Error ? error.message : String(error));
             }
           });
         }
@@ -1311,6 +1403,99 @@ function renderPage(args) {
     </script>
   </body>
 </html>`;
+}
+
+export async function createDatabase(kernel, args) {
+  const dbId = String(args?.dbId ?? "").trim();
+  const dbTitle = String(args?.dbTitle ?? "").trim();
+  if (!dbId) {
+    throw new Error("A database id is required.");
+  }
+  const result = await kernel.request("knowledge.db.init", {
+    id: dbId,
+    title: dbTitle || undefined,
+  });
+  if (!result?.ok) {
+    throw new Error(result?.error || "Failed to create database");
+  }
+  return {
+    db: result.id,
+    openPath: `${result.id}/index.md`,
+    statusText: result.created ? `Created ${result.id}` : `${result.id} already existed`,
+  };
+}
+
+export async function writePage(kernel, args) {
+  const selectedDb = String(args?.db ?? "").trim();
+  const path = normalizeDbScopedPath(args?.path ?? "", selectedDb);
+  const markdown = String(args?.markdown ?? "");
+  if (!path) {
+    throw new Error("A knowledge path is required.");
+  }
+  const result = await kernel.request("knowledge.write", {
+    path,
+    markdown,
+    mode: "replace",
+    create: true,
+  });
+  if (!result?.ok) {
+    throw new Error(result?.error || "Failed to save note");
+  }
+  return {
+    db: result.path.includes("/") ? String(result.path).split("/")[0] : selectedDb,
+    openPath: result.path,
+    statusText: result.created ? `Created ${result.path}` : `Saved ${result.path}`,
+  };
+}
+
+export async function ingestSourcesToInbox(kernel, args) {
+  const selectedDb = String(args?.db ?? "").trim();
+  const title = String(args?.title ?? "").trim();
+  const summary = String(args?.summary ?? "").trim();
+  const sources = parseSourceLines(args?.sources ?? "");
+  if (!selectedDb) {
+    throw new Error("Select a database before ingesting sources.");
+  }
+  const result = await kernel.request("knowledge.ingest", {
+    db: selectedDb,
+    sources,
+    title: title || undefined,
+    summary: summary || undefined,
+    mode: "inbox",
+  });
+  if (!result?.ok) {
+    throw new Error(result?.error || "Failed to ingest sources");
+  }
+  return {
+    db: selectedDb,
+    openPath: result.path,
+    statusText: `Staged ${result.path}`,
+  };
+}
+
+export async function compileInboxNote(kernel, args) {
+  const selectedDb = String(args?.db ?? "").trim();
+  const sourcePath = normalizeDbScopedPath(args?.sourcePath ?? "", selectedDb);
+  const targetPath = normalizeDbScopedPath(args?.targetPath ?? "", selectedDb);
+  if (!selectedDb) {
+    throw new Error("Select a database before compiling inbox notes.");
+  }
+  if (!sourcePath.startsWith(`${selectedDb}/inbox/`)) {
+    throw new Error("Only inbox notes can be compiled.");
+  }
+  const result = await kernel.request("knowledge.compile", {
+    db: selectedDb,
+    sourcePath,
+    targetPath: targetPath || undefined,
+  });
+  if (!result?.ok) {
+    throw new Error(result?.error || "Failed to compile inbox note");
+  }
+  return {
+    db: selectedDb,
+    openPath: result.path,
+    statusText: `Compiled ${result.sourcePath} into ${result.path}`,
+  };
 }
 
 export async function startBuildFromDirectory(kernel, args) {
@@ -1546,102 +1731,12 @@ export async function handleFetch(request, context = {}) {
   const queryText = String(url.searchParams.get("ask") ?? "").trim();
 
   if (request.method === "POST") {
-    try {
-      const form = await request.formData();
-      const action = String(form.get("action") ?? "").trim();
-      selectedDb = String(form.get("db") ?? selectedDb).trim();
-      selectedPath = normalizeDbScopedPath(form.get("path") ?? selectedPath, selectedDb);
-      draftPath = selectedPath;
-      draftMarkdown = String(form.get("markdown") ?? "");
-      newDbId = String(form.get("dbId") ?? "").trim();
-      newDbTitle = String(form.get("dbTitle") ?? "").trim();
-      ingestSources = String(form.get("sources") ?? "");
-      ingestTitle = String(form.get("title") ?? "").trim();
-      ingestSummary = String(form.get("summary") ?? "").trim();
-      compileTarget = normalizeDbScopedPath(form.get("targetPath") ?? "", selectedDb);
-      buildTarget = String(form.get("buildTarget") ?? "gsv").trim() || "gsv";
-      buildSourcePath = String(form.get("buildSourcePath") ?? "").trim();
-      buildDbId = String(form.get("buildDbId") ?? selectedDb).trim();
-      buildDbTitle = String(form.get("buildDbTitle") ?? "").trim();
-
-      if (action === "db-init") {
-        if (!newDbId) {
-          throw new Error("A database id is required.");
-        }
-        const result = await kernel.request("knowledge.db.init", {
-          id: newDbId,
-          title: newDbTitle || undefined,
-        });
-        if (!result?.ok) {
-          throw new Error(result?.error || "Failed to create database");
-        }
-        selectedDb = result.id;
-        selectedPath = `${result.id}/index.md`;
-        statusText = result.created ? `Created ${result.id}` : `${result.id} already existed`;
-      } else if (action === "write") {
-        if (!draftPath) {
-          throw new Error("A knowledge path is required.");
-        }
-        const result = await kernel.request("knowledge.write", {
-          path: draftPath,
-          markdown: draftMarkdown,
-          mode: "replace",
-          create: true,
-        });
-        if (!result?.ok) {
-          throw new Error(result?.error || "Failed to save note");
-        }
-        selectedPath = result.path;
-        statusText = result.created ? `Created ${result.path}` : `Saved ${result.path}`;
-      } else if (action === "ingest") {
-        if (!selectedDb) {
-          throw new Error("Select a database before ingesting sources.");
-        }
-        const sources = parseSourceLines(ingestSources);
-        const result = await kernel.request("knowledge.ingest", {
-          db: selectedDb,
-          sources,
-          title: ingestTitle || undefined,
-          summary: ingestSummary || undefined,
-          mode: "inbox",
-        });
-        if (!result?.ok) {
-          throw new Error(result?.error || "Failed to ingest sources");
-        }
-        selectedPath = result.path;
-        statusText = `Staged ${result.path}`;
-      } else if (action === "compile") {
-        if (!selectedDb) {
-          throw new Error("Select a database before compiling inbox notes.");
-        }
-        if (!selectedPath.startsWith(`${selectedDb}/inbox/`)) {
-          throw new Error("Only inbox notes can be compiled.");
-        }
-        const result = await kernel.request("knowledge.compile", {
-          db: selectedDb,
-          sourcePath: selectedPath,
-          targetPath: compileTarget || undefined,
-        });
-        if (!result?.ok) {
-          throw new Error(result?.error || "Failed to compile inbox note");
-        }
-        selectedPath = result.path;
-        statusText = `Compiled ${result.sourcePath} into ${result.path}`;
-      } else if (action === "build-from-directory") {
-        const result = await startBuildFromDirectory(kernel, {
-          buildTarget,
-          buildSourcePath,
-          buildDbId,
-          buildDbTitle,
-        });
-        selectedDb = result.db;
-        selectedPath = result.openPath;
-        draftPath = selectedPath;
-        statusText = result.statusText;
-      }
-    } catch (error) {
-      errorText = error instanceof Error ? error.message : String(error);
-    }
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: {
+        allow: "GET, HEAD",
+      },
+    });
   }
 
   let dbs = [];
