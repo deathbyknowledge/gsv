@@ -237,6 +237,7 @@ export function renderArticleInto(container: HTMLElement, options: RenderOptions
       anchor.dataset.previewKind = "page";
       const onClick = (event: MouseEvent) => {
         event.preventDefault();
+        options.onPreviewHide(true);
         options.onNavigate(internalPath);
       };
       const onEnter = () => options.onPreviewOpen(anchor, { kind: "page", db: options.selectedDb, path: internalPath }, false);
