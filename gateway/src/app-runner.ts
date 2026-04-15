@@ -292,8 +292,7 @@ export class AppRunner extends DurableObject<Env> {
         .map((value) => typeof value === "string" ? value.trim() : "")
         .filter((value) => value.length > 0)))
       : [];
-    const sink = record.sink && typeof record.sink === "object"
-      && typeof (record.sink as { onSignal?: unknown }).onSignal === "function"
+    const sink = record.sink && (typeof record.sink === "object" || typeof record.sink === "function")
       ? record.sink as SignalSinkStub
       : null;
     return {
