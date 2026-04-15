@@ -230,11 +230,6 @@ export class AppRunner extends DurableObject<Env> {
       processId: input.processId,
       signals: input.signals,
     });
-    console.debug("[app-runner] subscribe signal", {
-      subscriptionId,
-      processId: input.processId,
-      signals: input.signals,
-    });
     return { subscriptionId };
   }
 
@@ -247,10 +242,6 @@ export class AppRunner extends DurableObject<Env> {
       throw new Error("signal unsubscription requires subscriptionId");
     }
     const removed = await this.#removeLiveSignalSubscription(subscriptionId, this.#createKernelBridge(runtime.appFrame));
-    console.debug("[app-runner] unsubscribe signal", {
-      subscriptionId,
-      removed,
-    });
     return { removed };
   }
 
@@ -315,22 +306,12 @@ export class AppRunner extends DurableObject<Env> {
       ? state.subscriptionId
       : this.#parseSubscriptionIdFromKey(input.watch.key);
     if (!subscriptionId) {
-      console.debug("[app-runner] deliver signal without live subscription", {
-        signal: input.signal,
-        watchId: input.watch.id,
-        key: input.watch.key ?? null,
-      });
+      if (this.#isLegacyLiveSignalWatchKey(input.watch.key)) {
+        await this.#cleanupLegacyLiveSignalWatch(input, runtime);
+      }
       return;
     }
     const subscription = this.liveSignalSubscriptions.get(subscriptionId);
-    console.debug("[app-runner] deliver signal", {
-      signal: input.signal,
-      subscriptionId,
-      hasSubscription: Boolean(subscription),
-      watchId: input.watch.id,
-      key: input.watch.key ?? null,
-      sourcePid: input.sourcePid ?? null,
-    });
     if (!subscription) {
       return;
     }
@@ -339,10 +320,6 @@ export class AppRunner extends DurableObject<Env> {
         payload: input.payload,
         sourcePid: input.sourcePid ?? null,
         watch: input.watch,
-      });
-      console.debug("[app-runner] forwarded signal", {
-        signal: input.signal,
-        subscriptionId,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -357,6 +334,23 @@ export class AppRunner extends DurableObject<Env> {
     }
     const parts = key.split(":");
     return parts.length >= 3 && parts[1] ? parts[1] : null;
+  }
+
+  #isLegacyLiveSignalWatchKey(key: string | undefined): boolean {
+    return typeof key === "string" && key.startsWith("__gsv_live__:");
+  }
+
+  async #cleanupLegacyLiveSignalWatch(input: AppRunnerSignalInput, runtime: AppFacetRuntime): Promise<void> {
+    const key = input.watch.key;
+    if (!this.#isLegacyLiveSignalWatchKey(key)) {
+      return;
+    }
+    try {
+      await this.#createKernelBridge(runtime.appFrame).request("signal.unwatch", { key });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[app-runner] legacy signal unwatch failed for ${key}: ${message}`);
+    }
   }
 
   async #removeLiveSignalSubscription(subscriptionId: string, kernel: KernelBridge): Promise<number> {
