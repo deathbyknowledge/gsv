@@ -605,11 +605,21 @@ function createEmbeddedHostClient(backend) {
   }
 
   function updateStatus(message = null) {
-    status = {
+    const nextStatus = {
       ...status,
       state: "connected",
       message: message ? String(message) : null,
     };
+    if (
+      nextStatus.state === status.state
+      && nextStatus.url === status.url
+      && nextStatus.username === status.username
+      && nextStatus.connectionId === status.connectionId
+      && nextStatus.message === status.message
+    ) {
+      return;
+    }
+    status = nextStatus;
     emitStatus();
   }
 
