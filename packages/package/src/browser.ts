@@ -16,7 +16,7 @@ type CapnwebGlobal = {
 };
 
 type WrappedBackend = {
-  call(method: string, args?: unknown): Promise<unknown>;
+  invoke(method: string, args?: unknown): Promise<unknown>;
   dup?: () => unknown;
 } & Record<string | symbol, unknown>;
 
@@ -50,12 +50,12 @@ function getCapnweb(): CapnwebGlobal {
 }
 
 function wrapAppBackend<T = unknown>(backend: unknown): T {
-  if (!backend || typeof backend !== "object") {
+  if (!backend || (typeof backend !== "object" && typeof backend !== "function")) {
     return backend as T;
   }
   const target = backend as WrappedBackend;
-  console.debug("[gsv-sdk] wrap backend", { hasCall: typeof target.call === "function" });
-  if (typeof target.call !== "function") {
+  console.debug("[gsv-sdk] wrap backend", { hasInvoke: typeof target.invoke === "function", backendType: typeof backend });
+  if (typeof target.invoke !== "function") {
     return backend as T;
   }
   return new Proxy(target, {
@@ -66,13 +66,13 @@ function wrapAppBackend<T = unknown>(backend: unknown): T {
       if (typeof prop !== "string") {
         return Reflect.get(proxyTarget, prop);
       }
-      if (prop === "call" || prop === "dup") {
+      if (prop === "invoke" || prop === "dup") {
         const value = Reflect.get(proxyTarget, prop);
         return typeof value === "function" ? value.bind(proxyTarget) : value;
       }
       return (args?: unknown) => {
         console.debug("[gsv-sdk] proxy method", { method: prop });
-        return proxyTarget.call(prop, args);
+        return proxyTarget.invoke(prop, args);
       };
     },
   }) as T;
