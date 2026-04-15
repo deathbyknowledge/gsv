@@ -1288,7 +1288,7 @@ function renderPage(args) {
           return backend;
         };
         const setPending = (form, pending) => {
-          form.querySelectorAll("button[type=\"submit\"]").forEach((button) => {
+          form.querySelectorAll('button[type="submit"]').forEach((button) => {
             button.disabled = pending;
           });
         };
