@@ -8,6 +8,7 @@ import type { Frame } from "./protocol/frames";
 import { getAgentByName } from "agents";
 import type { AppFrameContext } from "./protocol/app-frame";
 import { buildAppRunnerName } from "./protocol/app-session";
+import { deserializeAppHttpResponse, serializeAppHttpRequest } from "./app-runner";
 import type { PackageArtifact } from "./kernel/packages";
 import {
   buildCliInstallPowerShell,
@@ -116,7 +117,9 @@ export default {
         appFrame: resolved.appFrame,
       });
 
-      const response = await runner.gsvFetch(buildPackageWorkerRequest(request, resolved));
+      const response = deserializeAppHttpResponse(
+        await runner.gsvFetch(await serializeAppHttpRequest(buildPackageWorkerRequest(request, resolved))),
+      );
       return await withPackageAppClientSession(response, resolved);
     }
 

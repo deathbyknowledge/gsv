@@ -2001,6 +2001,29 @@ function getAppRpcHandler(app, method) {{
   return handler;
 }}
 
+function deserializeHttpRequest(input) {{
+  const headers = new Headers(Array.isArray(input?.headers) ? input.headers : []);
+  const init = {{
+    method: typeof input?.method === "string" ? input.method : "GET",
+    headers,
+  }};
+  if (input?.body instanceof ArrayBuffer) {{
+    init.body = input.body;
+  }}
+  return new Request(typeof input?.url === "string" ? input.url : "http://localhost/", init);
+}}
+
+async function serializeHttpResponse(response) {{
+  const headers = Array.from(response.headers.entries());
+  const body = response.body ? await response.arrayBuffer() : null;
+  return {{
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+    body,
+  }};
+}}
+
 function serveStaticAsset(request, routeBase) {{
   if (!BROWSER_ENTRY) {{
     return null;
@@ -2347,25 +2370,36 @@ export class GsvAppFacet extends DurableObject {{
     }}
   }}
 
-  async gsvFetch(request) {{
+  async gsvFetch(input) {{
+    const request = deserializeHttpRequest(input);
     const app = this.__gsvApp;
     if (!app) {{
-      return new Response("Not Found", {{ status: 404 }});
+      return serializeHttpResponse(new Response("Not Found", {{ status: 404 }}));
     }}
     const routeBase = this.__gsvCtx.meta.routeBase ?? "/";
     const assetResponse = serveStaticAsset(request, routeBase);
     if (assetResponse) {{
-      return assetResponse;
+      return serializeHttpResponse(assetResponse);
     }}
     if (typeof app.fetch !== "function") {{
-      return new Response("Not Found", {{ status: 404 }});
+      return serializeHttpResponse(new Response("Not Found", {{ status: 404 }}));
     }}
     await this.__ensureSetup();
-    return app.fetch(request, this.__gsvCtx);
+    return serializeHttpResponse(await app.fetch(request, this.__gsvCtx));
   }}
 
   async fetch(request) {{
-    return this.gsvFetch(request);
+    const result = await this.gsvFetch({{
+      url: request.url,
+      method: request.method,
+      headers: Array.from(request.headers.entries()),
+      body: request.body ? await request.arrayBuffer() : null,
+    }});
+    return new Response(result.body ?? null, {{
+      status: result.status,
+      statusText: result.statusText,
+      headers: result.headers,
+    }});
   }}
 
 {app_rpc_methods}}}
