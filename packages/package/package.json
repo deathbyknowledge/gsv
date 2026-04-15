@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./browser": "./src/browser.ts",
     "./worker": "./src/worker.ts",
     "./host": "./src/host.ts"
   }
