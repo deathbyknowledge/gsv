@@ -1,6 +1,7 @@
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject, RpcTarget } from "cloudflare:workers";
 import { packageArtifactToWorkerCode, type PackageArtifact } from "./kernel/packages";
 import type { AppFrameContext, PackageAppSignalWatchInfo } from "./protocol/app-frame";
+import type { RequestFrame, ResponseFrame } from "./protocol/frames";
 
 type AppRunnerProps = {
   packageId: string;
@@ -18,6 +19,18 @@ type AppRunnerSignalInput = {
   watch: PackageAppSignalWatchInfo;
 };
 
+type AppSessionInfo = {
+  sessionId: string;
+  clientId: string;
+  rpcBase: string;
+  expiresAt: number;
+};
+
+type AppFacetRuntime = {
+  appFrame: AppFrameContext;
+  appSession?: AppSessionInfo;
+};
+
 export type AppHttpRequest = {
   url: string;
   method: string;
@@ -32,17 +45,75 @@ export type AppHttpResponse = {
   body?: ArrayBuffer | null;
 };
 
+type KernelAppStub = {
+  appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame>;
+};
+
+type KernelBridgeStub = Rpc.RpcTargetBranded & {
+  request(call: string, args?: unknown): Promise<unknown>;
+};
+
 type AppFacetStub = Rpc.DurableObjectBranded & {
-  gsvFetch(request: AppHttpRequest): Promise<AppHttpResponse>;
+  gsvFetch(request: AppHttpRequest, runtime: AppFacetRuntime, kernel: KernelBridgeStub): Promise<AppHttpResponse>;
+  gsvInvoke(method: string, args: unknown, runtime: AppFacetRuntime, kernel: KernelBridgeStub): Promise<unknown>;
+  gsvSubscribeSignal(args: unknown, runtime: AppFacetRuntime, kernel: KernelBridgeStub): Promise<unknown>;
+  gsvUnsubscribeSignal(args: unknown, runtime: AppFacetRuntime, kernel: KernelBridgeStub): Promise<unknown>;
   gsvHandleSignal(
     signalName: string,
     payload?: unknown,
     sourcePid?: string | null,
     watch?: PackageAppSignalWatchInfo,
+    runtime?: AppFacetRuntime,
+    kernel?: KernelBridgeStub,
   ): Promise<void>;
 };
 
 const PROPS_KEY = "app-runner:props";
+const RUNTIME_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+
+class KernelBridge extends RpcTarget {
+  constructor(
+    private readonly kernel: KernelAppStub,
+    private readonly appFrame: AppFrameContext,
+  ) {
+    super();
+  }
+
+  async request(call: string, args?: unknown): Promise<unknown> {
+    const frame: RequestFrame = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call,
+      args,
+    } as RequestFrame;
+    const response = await this.kernel.appRequest(this.appFrame, frame);
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+    return response.data;
+  }
+}
+
+class AppRunnerBackendTarget extends RpcTarget {
+  constructor(
+    private readonly runner: AppRunner,
+    private readonly runtime: AppFacetRuntime,
+  ) {
+    super();
+  }
+
+  async gsvInvoke(method: string, args?: unknown): Promise<unknown> {
+    return this.runner.invokeAppRpc(method, args, this.runtime);
+  }
+
+  async gsvSubscribeSignal(args?: unknown): Promise<unknown> {
+    return this.runner.subscribeSignal(args, this.runtime);
+  }
+
+  async gsvUnsubscribeSignal(args?: unknown): Promise<unknown> {
+    return this.runner.unsubscribeSignal(args, this.runtime);
+  }
+}
 
 export async function serializeAppHttpRequest(request: Request): Promise<AppHttpRequest> {
   let body: ArrayBuffer | null = null;
@@ -66,10 +137,6 @@ export function deserializeAppHttpResponse(response: AppHttpResponse): Response 
 }
 
 export class AppRunner extends DurableObject<Env> {
-  async gsvFetch(request: AppHttpRequest): Promise<AppHttpResponse> {
-    return this.#getFacet().gsvFetch(request);
-  }
-
   async ensureRuntime(props: AppRunnerProps): Promise<void> {
     const previous = this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY);
     if (
@@ -88,22 +155,70 @@ export class AppRunner extends DurableObject<Env> {
     this.ctx.storage.kv.put(PROPS_KEY, props);
   }
 
+  async gsvFetch(request: AppHttpRequest): Promise<AppHttpResponse> {
+    return this.#gsvFetch(request, this.#defaultRuntime());
+  }
+
   async fetch(request: Request): Promise<Response> {
     const response = await this.gsvFetch(await serializeAppHttpRequest(request));
     return deserializeAppHttpResponse(response);
   }
 
-  async getBackend(): Promise<AppFacetStub> {
-    return this.#getFacet();
+  async getBackend(appSession: AppSessionInfo): Promise<AppRunnerBackendTarget> {
+    return new AppRunnerBackendTarget(this, this.#defaultRuntime(appSession));
   }
 
   async deliverSignal(input: AppRunnerSignalInput): Promise<void> {
+    const runtime = this.#defaultRuntime();
     await this.#getFacet().gsvHandleSignal(
       input.signal,
       input.payload,
       input.sourcePid ?? null,
       input.watch,
+      runtime,
+      this.#createKernelBridge(runtime.appFrame),
     );
+  }
+
+  async invokeAppRpc(method: string, args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
+    return this.#getFacet().gsvInvoke(method, args, runtime, this.#createKernelBridge(runtime.appFrame));
+  }
+
+  async subscribeSignal(args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
+    return this.#getFacet().gsvSubscribeSignal(args, runtime, this.#createKernelBridge(runtime.appFrame));
+  }
+
+  async unsubscribeSignal(args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
+    return this.#getFacet().gsvUnsubscribeSignal(args, runtime, this.#createKernelBridge(runtime.appFrame));
+  }
+
+  async #gsvFetch(request: AppHttpRequest, runtime: AppFacetRuntime): Promise<AppHttpResponse> {
+    return this.#getFacet().gsvFetch(request, runtime, this.#createKernelBridge(runtime.appFrame));
+  }
+
+  #defaultRuntime(appSession?: AppSessionInfo): AppFacetRuntime {
+    const props = this.#getProps();
+    return {
+      appFrame: this.#runtimeAppFrame(props),
+      ...(appSession ? { appSession } : {}),
+    };
+  }
+
+  #runtimeAppFrame(props: AppRunnerProps): AppFrameContext {
+    const now = Date.now();
+    return {
+      ...props.appFrame,
+      issuedAt: now,
+      expiresAt: now + RUNTIME_TTL_MS,
+    };
+  }
+
+  #kernelStub(): KernelAppStub {
+    return this.env.KERNEL.getByName("singleton") as unknown as KernelAppStub;
+  }
+
+  #createKernelBridge(appFrame: AppFrameContext): KernelBridge {
+    return new KernelBridge(this.#kernelStub(), appFrame);
   }
 
   #getProps(): AppRunnerProps {
@@ -122,12 +237,6 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #loadWorker(props: AppRunnerProps): WorkerStub {
-    const now = Date.now();
-    const runtimeAppFrame: AppFrameContext = {
-      ...props.appFrame,
-      issuedAt: now,
-      expiresAt: now + (365 * 24 * 60 * 60 * 1000),
-    };
     return this.env.LOADER.get(
       this.#codeKey(props),
       () => packageArtifactToWorkerCode(props.artifact, {
@@ -137,8 +246,7 @@ export class AppRunner extends DurableObject<Env> {
         GSV_PACKAGE_NAME: props.packageName,
         GSV_PACKAGE_ID: props.packageId,
         GSV_ROUTE_BASE: props.routeBase,
-        GSV_APP_FRAME: runtimeAppFrame,
-        KERNEL_APP: this.env.KERNEL.getByName("singleton"),
+        GSV_APP_FRAME: this.#runtimeAppFrame(props),
       }),
     );
   }

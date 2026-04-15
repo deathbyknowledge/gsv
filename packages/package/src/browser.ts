@@ -44,6 +44,33 @@ function getCapnweb(): CapnwebGlobal {
   return capnweb;
 }
 
+function wrapAppBackend<T = unknown>(backend: unknown): T {
+  if (!backend || typeof backend !== "object") {
+    return backend as T;
+  }
+  const target = backend as {
+    gsvInvoke?: (method: string, args?: unknown) => Promise<unknown>;
+  } & Record<string | symbol, unknown>;
+  if (typeof target.gsvInvoke !== "function") {
+    return backend as T;
+  }
+  return new Proxy(target, {
+    get(proxyTarget, prop, receiver) {
+      if (prop === "then") {
+        return undefined;
+      }
+      const value = Reflect.get(proxyTarget, prop, receiver);
+      if (typeof value === "function") {
+        return value.bind(proxyTarget);
+      }
+      if (typeof prop !== "string") {
+        return value;
+      }
+      return (args?: unknown) => proxyTarget.gsvInvoke!(prop, args);
+    },
+  }) as T;
+}
+
 function buildRpcWebSocketUrl(rpcBase: string): string {
   const url = new URL(rpcBase, globalThis.window?.location?.href ?? "http://localhost");
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -64,7 +91,7 @@ export async function connectAppBackend<T = unknown>(): Promise<T> {
     const session = capnweb.newWebSocketRpcSession<{
       authenticate(secret: string): T;
     }>(buildRpcWebSocketUrl(boot.rpcBase));
-    const backend = await session.authenticate(boot.sessionSecret);
+    const backend = wrapAppBackend(await session.authenticate(boot.sessionSecret));
     if (globalThis.window) {
       globalThis.window.backend = backend;
     }

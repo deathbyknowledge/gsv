@@ -570,7 +570,12 @@ class PackageAppSessionRpcTarget extends RpcTarget {
       appFrame: resolved.appFrame,
     });
 
-    return runner.getBackend();
+    return runner.getBackend({
+      sessionId: resolved.clientSession.sessionId,
+      clientId: resolved.clientSession.clientId,
+      rpcBase: resolved.clientSession.rpcBase,
+      expiresAt: resolved.clientSession.expiresAt,
+    });
   }
 }
 

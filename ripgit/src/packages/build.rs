@@ -1957,35 +1957,24 @@ function resolveAppFrame(env, props) {{
     : null;
 }}
 
-function buildKernelClient(env, props) {{
+function buildKernelClient(env, props, kernelOverride) {{
+  if (kernelOverride && typeof kernelOverride.request === "function") {{
+    return kernelOverride;
+  }}
   if (props?.kernel && typeof props.kernel.request === "function") {{
     return props.kernel;
   }}
-  const kernel = env.KERNEL_APP ?? env.KERNEL;
-  if (!kernel || typeof kernel.appRequest !== "function") {{
-    throw new Error("kernel binding is unavailable");
+  if (env.KERNEL && typeof env.KERNEL.request === "function") {{
+    return env.KERNEL;
   }}
   return {{
-    async request(call, args) {{
-      const frame = resolveAppFrame(env, props);
-      if (!frame) {{
-        throw new Error("app frame is unavailable");
-      }}
-      const response = await kernel.appRequest(frame, {{
-        type: "req",
-        id: crypto.randomUUID(),
-        call,
-        args,
-      }});
-      if (!response.ok) {{
-        throw new Error(response.error?.message ?? "Kernel request failed");
-      }}
-      return response.data;
+    async request() {{
+      throw new Error("kernel binding is unavailable");
     }},
   }};
 }}
 
-function createBaseContext(env, metaOverrides, props) {{
+function createBaseContext(env, metaOverrides, props, kernelOverride) {{
   return {{
     meta: mergeMeta(metaOverrides),
     app: props?.appSession && typeof props.appSession === "object"
@@ -1996,7 +1985,7 @@ function createBaseContext(env, metaOverrides, props) {{
           expiresAt: typeof props.appSession.expiresAt === "number" ? props.appSession.expiresAt : 0,
         }}
       : undefined,
-    kernel: buildKernelClient(env, props),
+    kernel: buildKernelClient(env, props, kernelOverride),
   }};
 }}
 
@@ -2257,37 +2246,42 @@ export class GsvAppFacet extends DurableObject {{
       throw new Error("package has no app definition");
     }}
     this.__gsvApp = app;
-    this.__gsvCtx = createBaseContext(env, {{
+    this.__gsvMeta = {{
       packageId: env.GSV_PACKAGE_ID ?? STATIC_META.packageId,
       routeBase: env.GSV_ROUTE_BASE ?? STATIC_META.routeBase,
-    }});
-    this.__gsvSetupReady = null;
+    }};
     this.__gsvSignalSubscriptions = new Map();
     this.__gsvSignalWatchRefs = new Map();
   }}
 
-  async __ensureSetup() {{
-    if (!this.__gsvSetupReady) {{
-      this.__gsvSetupReady = ensureSetup(this.__gsvCtx);
-    }}
-    await this.__gsvSetupReady;
+  __context(runtime, kernel) {{
+    const appFrame = runtime?.appFrame ?? resolveAppFrame(this.env, {{}});
+    return createBaseContext(this.env, {{
+      packageId: appFrame?.packageId ?? this.__gsvMeta.packageId,
+      routeBase: appFrame?.routeBase ?? this.__gsvMeta.routeBase,
+    }}, {{
+      ...(appFrame ? {{ appFrame }} : {{}}),
+      ...(runtime?.appSession ? {{ appSession: runtime.appSession }} : {{}}),
+    }}, kernel);
   }}
 
-  async __invoke(method, args) {{
-    await this.__ensureSetup();
+  async __invoke(method, args, runtime, kernel) {{
+    const ctx = this.__context(runtime, kernel);
+    await ensureSetup(ctx);
     const handler = getAppRpcHandler(this.__gsvApp, method);
     if (!handler) {{
       throw new Error(`Unknown app RPC method: ${{method}}`);
     }}
-    return handler(args, this.__gsvCtx);
+    return handler(args, ctx);
   }}
 
   __watchKey(signal, processId) {{
     return `__gsv_live__:${{signal}}:${{processId ?? "*"}}`;
   }}
 
-  async gsvSubscribeSignal(args) {{
-    await this.__ensureSetup();
+  async gsvSubscribeSignal(args, runtime, kernel) {{
+    const ctx = this.__context(runtime, kernel);
+    await ensureSetup(ctx);
     const signals = Array.isArray(args?.signals)
       ? Array.from(new Set(args.signals.filter((value) => typeof value === "string" && value.length > 0)))
       : [];
@@ -2309,7 +2303,7 @@ export class GsvAppFacet extends DurableObject {{
       const watchKey = this.__watchKey(signal, processId ?? null);
       let bucket = this.__gsvSignalWatchRefs.get(watchKey);
       if (!bucket) {{
-        await this.__gsvCtx.kernel.request("signal.watch", {{
+        await ctx.kernel.request("signal.watch", {{
           signal,
           ...(processId ? {{ processId }} : {{}}),
           key: watchKey,
@@ -2336,7 +2330,8 @@ export class GsvAppFacet extends DurableObject {{
     return {{ subscriptionId }};
   }}
 
-  async gsvUnsubscribeSignal(args) {{
+  async gsvUnsubscribeSignal(args, runtime, kernel) {{
+    const ctx = this.__context(runtime, kernel);
     const subscriptionId =
       typeof args?.subscriptionId === "string" && args.subscriptionId.length > 0
         ? args.subscriptionId
@@ -2359,17 +2354,18 @@ export class GsvAppFacet extends DurableObject {{
         continue;
       }}
       this.__gsvSignalWatchRefs.delete(watchKey);
-      await this.__gsvCtx.kernel.request("signal.unwatch", {{ key: watchKey }}).catch(() => {{}});
+      await ctx.kernel.request("signal.unwatch", {{ key: watchKey }}).catch(() => {{}});
     }}
     return {{ removed: true }};
   }}
 
-  async gsvHandleSignal(signalName, payload, sourcePid, watch) {{
-    await this.__ensureSetup();
+  async gsvHandleSignal(signalName, payload, sourcePid, watch, runtime, kernel) {{
+    const ctx = this.__context(runtime, kernel);
+    await ensureSetup(ctx);
 
     if (typeof this.__gsvApp.onSignal === "function") {{
       await this.__gsvApp.onSignal({{
-        ...this.__gsvCtx,
+        ...ctx,
         signal: signalName,
         payload,
         sourcePid: typeof sourcePid === "string" ? sourcePid : undefined,
@@ -2416,13 +2412,14 @@ export class GsvAppFacet extends DurableObject {{
     }}
   }}
 
-  async gsvFetch(input) {{
+  async gsvFetch(input, runtime, kernel) {{
     const request = deserializeHttpRequest(input);
+    const ctx = this.__context(runtime, kernel);
     const app = this.__gsvApp;
     if (!app) {{
       return serializeHttpResponse(new Response("Not Found", {{ status: 404 }}));
     }}
-    const routeBase = this.__gsvCtx.meta.routeBase ?? "/";
+    const routeBase = ctx.meta.routeBase ?? "/";
     const assetResponse = serveStaticAsset(request, routeBase);
     if (assetResponse) {{
       return serializeHttpResponse(assetResponse);
@@ -2430,8 +2427,8 @@ export class GsvAppFacet extends DurableObject {{
     if (typeof app.fetch !== "function") {{
       return serializeHttpResponse(new Response("Not Found", {{ status: 404 }}));
     }}
-    await this.__ensureSetup();
-    return serializeHttpResponse(await app.fetch(request, this.__gsvCtx));
+    await ensureSetup(ctx);
+    return serializeHttpResponse(await app.fetch(request, ctx));
   }}
 
   async fetch(request) {{
@@ -2440,7 +2437,7 @@ export class GsvAppFacet extends DurableObject {{
       method: request.method,
       headers: Array.from(request.headers.entries()),
       body: request.body ? await request.arrayBuffer() : null,
-    }});
+    }}, undefined, undefined);
     return new Response(result.body ?? null, {{
       status: result.status,
       statusText: result.statusText,
@@ -2449,6 +2446,10 @@ export class GsvAppFacet extends DurableObject {{
   }}
 
 {app_rpc_methods}}}
+
+  async gsvInvoke(method, args, runtime, kernel) {{
+    return this.__invoke(method, args, runtime, kernel);
+  }}
 
 class GsvPackageAppBackend extends RpcTarget {{
   constructor(env, props) {{
