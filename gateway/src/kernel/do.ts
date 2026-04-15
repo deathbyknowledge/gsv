@@ -1650,16 +1650,15 @@ export class Kernel extends Host<Env> {
       expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
     };
 
-    const runner = this.ctx.exports.AppRunner({
-      props: {
-        packageId: record.packageId,
-        packageName: record.manifest.name,
-        routeBase: watch.routeBase,
-        entrypointName: entrypoint.name,
-        artifact: record.artifact,
-        appFrame,
-      },
-    }).getByName(buildAppRunnerName(user.uid, record.packageId));
+    const runner = this.ctx.exports.AppRunner.getByName(buildAppRunnerName(user.uid, record.packageId));
+    await runner.ensureRuntime({
+      packageId: record.packageId,
+      packageName: record.manifest.name,
+      routeBase: watch.routeBase,
+      entrypointName: entrypoint.name,
+      artifact: record.artifact,
+      appFrame,
+    });
 
     await runner.deliverSignal({
       signal: frame.signal,

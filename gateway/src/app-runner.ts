@@ -28,7 +28,27 @@ type AppFacetStub = Rpc.DurableObjectBranded & {
   ): Promise<void>;
 };
 
-export class AppRunner extends DurableObject<Env, AppRunnerProps> {
+const PROPS_KEY = "app-runner:props";
+
+export class AppRunner extends DurableObject<Env> {
+  async ensureRuntime(props: AppRunnerProps): Promise<void> {
+    const previous = this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY);
+    if (
+      previous
+      && previous.packageId === props.packageId
+      && previous.packageName === props.packageName
+      && previous.routeBase === props.routeBase
+      && previous.entrypointName === props.entrypointName
+      && previous.artifact.hash === props.artifact.hash
+      && previous.appFrame.uid === props.appFrame.uid
+      && previous.appFrame.routeBase === props.appFrame.routeBase
+      && previous.appFrame.entrypointName === props.appFrame.entrypointName
+    ) {
+      return;
+    }
+    this.ctx.storage.kv.put(PROPS_KEY, props);
+  }
+
   async fetch(request: Request): Promise<Response> {
     return this.#getFacet().fetch(request);
   }
@@ -47,9 +67,9 @@ export class AppRunner extends DurableObject<Env, AppRunnerProps> {
   }
 
   #getProps(): AppRunnerProps {
-    const props = this.ctx.props;
-    if (!props || typeof props !== "object") {
-      throw new Error("AppRunner requires props");
+    const props = this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY);
+    if (!props) {
+      throw new Error("AppRunner is not initialized");
     }
     if (!props.packageId || !props.packageName || !props.routeBase || !props.entrypointName || !props.artifact || !props.appFrame) {
       throw new Error("AppRunner props are incomplete");

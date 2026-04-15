@@ -106,16 +106,15 @@ export default {
         return new Response(resolved.message, { status: resolved.status });
       }
 
-      const runner = ctx.exports.AppRunner({
-        props: {
-          packageId: resolved.packageId,
-          packageName: resolved.packageName,
-          routeBase: resolved.routeBase,
-          entrypointName: resolved.appFrame.entrypointName,
-          artifact: resolved.artifact,
-          appFrame: resolved.appFrame,
-        },
-      }).getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+      const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+      await runner.ensureRuntime({
+        packageId: resolved.packageId,
+        packageName: resolved.packageName,
+        routeBase: resolved.routeBase,
+        entrypointName: resolved.appFrame.entrypointName,
+        artifact: resolved.artifact,
+        appFrame: resolved.appFrame,
+      });
 
       const response = await runner.fetch(buildPackageWorkerRequest(request, resolved));
       return await withPackageAppClientSession(response, resolved);
@@ -558,16 +557,15 @@ class PackageAppSessionRpcTarget extends RpcTarget {
       throw new Error(resolved.message);
     }
 
-    const runner = this.ctx.exports.AppRunner({
-      props: {
-        packageId: resolved.packageId,
-        packageName: resolved.packageName,
-        routeBase: resolved.routeBase,
-        entrypointName: resolved.appFrame.entrypointName,
-        artifact: resolved.artifact,
-        appFrame: resolved.appFrame,
-      },
-    }).getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+    const runner = this.ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+    await runner.ensureRuntime({
+      packageId: resolved.packageId,
+      packageName: resolved.packageName,
+      routeBase: resolved.routeBase,
+      entrypointName: resolved.appFrame.entrypointName,
+      artifact: resolved.artifact,
+      appFrame: resolved.appFrame,
+    });
 
     return runner.getBackend();
   }
