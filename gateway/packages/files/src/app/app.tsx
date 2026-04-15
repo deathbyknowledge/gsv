@@ -182,6 +182,20 @@ export function App({ backend }: Props) {
     navigate(nextRoute, replace);
   }, [confirmDiscard, navigate]);
 
+  const changeTarget = useCallback((nextTarget: string) => {
+    const normalizedTarget = nextTarget.trim() || "gsv";
+    const nextPath = defaultPathForTarget(normalizedTarget);
+    setTargetDraft(normalizedTarget);
+    setPathDraft(nextPath);
+    setSearchDraft("");
+    navigateSafely({
+      target: normalizedTarget,
+      path: nextPath,
+      q: "",
+      open: "",
+    });
+  }, [navigateSafely]);
+
   const runMutation = useCallback(async (operation: Promise<FilesMutationResult>) => {
     const result = await operation;
     setStatusText(result.statusText);
@@ -253,7 +267,7 @@ export function App({ backend }: Props) {
         currentPath={state.currentPath}
         pathStyle={state.pathStyle}
         canGoUp={canGoUp}
-        onTargetDraftChange={setTargetDraft}
+        onTargetDraftChange={changeTarget}
         onPathDraftChange={setPathDraft}
         onSearchDraftChange={setSearchDraft}
         onSubmitNav={() => navigateSafely({ target: targetDraft, path: pathDraft || defaultPathForTarget(targetDraft), q: searchDraft.trim(), open: "" })}

@@ -65,10 +65,11 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
     let current = "";
     for (const [index, segment] of normalized.split("/").filter(Boolean).entries()) {
       current += `/${segment}`;
-      const isLast = current === normalized;
+      const nextPath = current;
+      const isLast = nextPath === normalized;
       nodes.push(<span class="files-crumb-sep">›</span>);
       nodes.push(
-        <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} onClick={() => onNavigate(current)}>
+        <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} onClick={() => onNavigate(nextPath)}>
           {segment}
         </button>,
       );
@@ -86,10 +87,11 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
   let current = "";
   for (const segment of normalized.split("/").filter(Boolean)) {
     current = current ? `${current}/${segment}` : segment;
-    const isLast = current === normalized;
+    const nextPath = current;
+    const isLast = nextPath === normalized;
     nodes.push(<span class="files-crumb-sep">›</span>);
     nodes.push(
-      <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} onClick={() => onNavigate(current)}>
+      <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} onClick={() => onNavigate(nextPath)}>
         {segment}
       </button>,
     );
