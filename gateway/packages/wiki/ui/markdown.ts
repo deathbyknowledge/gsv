@@ -182,6 +182,21 @@ function renderMarkdownHtml(markdown: string): string {
   return purifier.sanitize(typeof parsed === "string" ? parsed : String(parsed));
 }
 
+function describeEventNode(value: unknown): string {
+  if (value instanceof HTMLAnchorElement) {
+    return `a[href=${value.getAttribute("href") || ""}][data-preview-kind=${value.dataset.previewKind || ""}][data-internal-path=${value.dataset.internalPath || ""}]`;
+  }
+  if (value instanceof Element) {
+    const id = value.id ? `#${value.id}` : "";
+    const classes = value.classList.length > 0 ? `.${Array.from(value.classList).slice(0, 3).join(".")}` : "";
+    return `${value.tagName.toLowerCase()}${id}${classes}`;
+  }
+  if (value instanceof Node) {
+    return value.nodeName;
+  }
+  return typeof value;
+}
+
 export function renderPreviewBodyHtml(payload: WikiPreviewPayload): string {
   if (!payload || payload.ok === false) {
     return `<div class="preview-empty">${escapeHtml(payload?.error || "Preview unavailable.")}</div>`;
@@ -256,6 +271,31 @@ export function renderArticleInto(container: HTMLElement, options: RenderOptions
       anchor.rel = "noreferrer";
     }
   });
+
+  const logDocumentEvent = (kind: string, event: MouseEvent | PointerEvent) => {
+    const path = event.composedPath();
+    const anchor = path.find((value) => value instanceof HTMLAnchorElement) as HTMLAnchorElement | undefined;
+    const top = document.elementFromPoint(event.clientX, event.clientY);
+    console.debug(`[wiki] ${kind}`, {
+      target: describeEventNode(event.target),
+      inArticle: path.includes(container),
+      anchor: anchor
+        ? {
+            href: anchor.getAttribute("href") || "",
+            previewKind: anchor.dataset.previewKind || "",
+            internalPath: anchor.dataset.internalPath || "",
+          }
+        : null,
+      top: describeEventNode(top),
+      path: path.slice(0, 8).map(describeEventNode),
+    });
+  };
+  const onDocumentPointerDownCapture = (event: PointerEvent) => logDocumentEvent("document pointerdown", event);
+  const onDocumentClickCapture = (event: MouseEvent) => logDocumentEvent("document click", event);
+  document.addEventListener("pointerdown", onDocumentPointerDownCapture, true);
+  document.addEventListener("click", onDocumentClickCapture, true);
+  cleanups.push(() => document.removeEventListener("pointerdown", onDocumentPointerDownCapture, true));
+  cleanups.push(() => document.removeEventListener("click", onDocumentClickCapture, true));
 
   const onContainerClick = (event: MouseEvent) => {
     const anchor = event.composedPath().find((value) => (
