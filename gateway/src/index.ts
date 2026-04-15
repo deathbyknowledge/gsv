@@ -116,7 +116,7 @@ export default {
         appFrame: resolved.appFrame,
       });
 
-      const response = await runner.fetch(buildPackageWorkerRequest(request, resolved));
+      const response = await runner.gsvFetch(buildPackageWorkerRequest(request, resolved));
       return await withPackageAppClientSession(response, resolved);
     }
 

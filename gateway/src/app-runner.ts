@@ -31,6 +31,10 @@ type AppFacetStub = Rpc.DurableObjectBranded & {
 const PROPS_KEY = "app-runner:props";
 
 export class AppRunner extends DurableObject<Env> {
+  async gsvFetch(request: Request): Promise<Response> {
+    return this.#getFacet().gsvFetch(request);
+  }
+
   async ensureRuntime(props: AppRunnerProps): Promise<void> {
     const previous = this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY);
     if (
@@ -50,7 +54,7 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    return this.#getFacet().gsvFetch(request);
+    return this.gsvFetch(request);
   }
 
   async getBackend(): Promise<AppFacetStub> {
