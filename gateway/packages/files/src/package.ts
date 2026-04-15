@@ -1,5 +1,5 @@
 import { definePackage } from "@gsv/package/worker";
-import { handleFetch } from "../ui/worker";
+import { createFile, deletePath, loadState, saveFile } from "./backend/api";
 
 export default definePackage({
   meta: {
@@ -16,15 +16,23 @@ export default definePackage({
     },
   },
   app: {
-    async fetch(request, ctx) {
-      const routeBase = ctx.meta.routeBase ?? "/apps/files";
-      return handleFetch(request, {
-        props: {
-          appFrame: { packageId: ctx.meta.packageId, routeBase },
-          kernel: ctx.kernel,
-        },
-        env: { PACKAGE_ROUTE_BASE: routeBase },
-      });
+    browser: {
+      entry: "./src/index.html",
+    },
+    assets: ["./src/styles.css"],
+    rpc: {
+      async loadState(args, ctx) {
+        return loadState(ctx.kernel, args);
+      },
+      async saveFile(args, ctx) {
+        return saveFile(ctx.kernel, args);
+      },
+      async deletePath(args, ctx) {
+        return deletePath(ctx.kernel, args);
+      },
+      async createFile(args, ctx) {
+        return createFile(ctx.kernel, args);
+      },
     },
   },
 });
