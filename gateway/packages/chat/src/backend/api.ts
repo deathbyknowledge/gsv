@@ -60,9 +60,16 @@ export async function abortRun(kernel: KernelClient, input: unknown) {
 
 export async function decideHil(kernel: KernelClient, input: unknown) {
   const args = normalizeArgs(input);
+  const decision = args.decision === true
+    ? "approve"
+    : args.decision === false
+      ? "deny"
+      : typeof args.decision === "string"
+        ? args.decision.trim()
+        : "";
   return kernel.request("proc.hil", {
     pid: normalizePid(args.pid),
     requestId: typeof args.requestId === "string" ? args.requestId : "",
-    decision: Boolean(args.decision),
+    decision,
   });
 }
