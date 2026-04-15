@@ -19,7 +19,7 @@ type AppRunnerSignalInput = {
 };
 
 type AppFacetStub = Rpc.DurableObjectBranded & {
-  fetch(request: Request): Promise<Response>;
+  gsvFetch(request: Request): Promise<Response>;
   gsvHandleSignal(
     signalName: string,
     payload?: unknown,
@@ -50,7 +50,7 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    return this.#getFacet().fetch(request);
+    return this.#getFacet().gsvFetch(request);
   }
 
   async getBackend(): Promise<AppFacetStub> {
