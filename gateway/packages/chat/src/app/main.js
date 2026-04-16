@@ -1,4 +1,5 @@
 import { getBackend } from "@gsv/package/browser";
+import { openApp } from "@gsv/package/host";
 
 const PAGE_PATHNAME = window.location.pathname;
 const ROUTE_BASE = PAGE_PATHNAME.endsWith("/index.html")
@@ -7,7 +8,6 @@ const ROUTE_BASE = PAGE_PATHNAME.endsWith("/index.html")
 const WINDOW_ID = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
 const ACTIVE_THREAD_CONTEXT_KEY = "gsv.activeThreadContext.v1";
 const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
-const OPEN_APP_EVENT = "gsv:open-app";
 const PENDING_TARGETS_KEY = "__gsvPendingChatProcessTargets";
 
 function asRecord(value) {
@@ -1683,17 +1683,27 @@ function openCompanion(appId) {
   if (!activeThreadContext) {
     return;
   }
-  try {
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({
-        type: OPEN_APP_EVENT,
-        detail: { appId, threadContext: activeThreadContext },
-      }, window.location.origin);
-      window.parent.dispatchEvent(new CustomEvent(OPEN_APP_EVENT, {
-        detail: { appId, threadContext: activeThreadContext },
-      }));
-    }
-  } catch {}
+  if (appId === "files") {
+    openApp({
+      target: "files",
+      payload: {
+        path: activeThreadContext.cwd,
+        context: activeThreadContext,
+      },
+    });
+    return;
+  }
+  if (appId === "shell") {
+    openApp({
+      target: "shell",
+      payload: {
+        workdir: activeThreadContext.cwd,
+        context: activeThreadContext,
+      },
+    });
+    return;
+  }
+  openApp({ target: appId, payload: {} });
 }
 
 function adoptPendingTarget() {

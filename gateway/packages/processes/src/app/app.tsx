@@ -1,3 +1,4 @@
+import { openApp } from "@gsv/package/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ProcessEntry, ProcessesBackend, ProcessesRoute, ProcessesState } from "./types";
 
@@ -48,20 +49,10 @@ function openChatProcess(entry: ProcessEntry) {
     return;
   }
   const workspaceId = entry.workspaceId == null ? null : String(entry.workspaceId);
-  try {
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({
-        type: "gsv:open-chat-process",
-        detail: { pid, workspaceId, cwd },
-      }, window.location.origin);
-      window.parent.dispatchEvent(new CustomEvent("gsv:open-chat-process", {
-        detail: { pid, workspaceId, cwd },
-      }));
-      return;
-    }
-  } catch {
-  }
-  window.location.href = "/apps/chat";
+  openApp({
+    target: "chat",
+    payload: { pid, workspaceId, cwd },
+  });
 }
 
 function filterProcesses(processes: ProcessEntry[], query: string) {

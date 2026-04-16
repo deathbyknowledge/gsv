@@ -355,6 +355,22 @@ textarea.devices-output,
   cursor: not-allowed;
 }
 
+.devices-icon-btn {
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+}
+
+.devices-icon-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .devices-input,
 .devices-output {
   width: 100%;
