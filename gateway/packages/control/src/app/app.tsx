@@ -90,12 +90,12 @@ export function App({ backend }: AppProps) {
         <ConfigPanel
           entries={state.configEntries}
           values={state.configValues}
-          pendingKey={pendingAction?.startsWith("save:") ? pendingAction.slice(5) : null}
+          pendingSection={pendingAction?.startsWith("save-section:") ? pendingAction.slice("save-section:".length) : null}
           activeSection={activeConfigSection}
           onSelectSection={updateConfigSection}
-          onSaveEntry={async (key, value) => {
+          onSaveEntries={async (saveId, entries) => {
             setIssuedToken(null);
-            await runStateAction(`save:${key}`, () => backend.saveEntry({ key, value }));
+            await runStateAction(`save-section:${saveId}`, () => backend.applyRawConfig({ entries }));
           }}
         />
       );
