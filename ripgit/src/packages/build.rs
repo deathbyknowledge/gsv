@@ -54,6 +54,8 @@ export type ThreadContext = {
 
 export type FilesOpenPayload = {
   device?: string;
+  deviceId?: string;
+  target?: string;
   path?: string;
   open?: string;
   q?: string;
@@ -62,6 +64,8 @@ export type FilesOpenPayload = {
 
 export type ShellOpenPayload = {
   device?: string;
+  deviceId?: string;
+  target?: string;
   workdir?: string;
   context?: ThreadContext | null;
 };
@@ -114,6 +118,12 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function readRequestedTarget(payload: Record<string, unknown> | null): string | null {
+  const target = asString(payload?.device) ?? asString(payload?.deviceId) ?? asString(payload?.target);
+  const normalized = target?.trim() || "";
+  return normalized || null;
+}
+
 function normalizeThreadContext(value: unknown): ThreadContext | null {
   const record = asRecord(value);
   if (!record) {
@@ -143,7 +153,7 @@ function buildFallbackRoute(request: OpenAppRequest): string {
   if (target === "files") {
     const context = normalizeThreadContext(payload.context);
     const url = new URL("/apps/files", window.location.href);
-    writeParam(url, "target", asString(payload.device) ?? undefined);
+    writeParam(url, "target", readRequestedTarget(payload) ?? undefined);
     writeParam(url, "path", asString(payload.path) ?? context?.cwd ?? undefined);
     writeParam(url, "open", asString(payload.open) ?? undefined);
     writeParam(url, "q", asString(payload.q) ?? undefined);
@@ -152,7 +162,7 @@ function buildFallbackRoute(request: OpenAppRequest): string {
   if (target === "shell") {
     const context = normalizeThreadContext(payload.context);
     const url = new URL("/apps/shell", window.location.href);
-    writeParam(url, "target", asString(payload.device) ?? undefined);
+    writeParam(url, "target", readRequestedTarget(payload) ?? undefined);
     writeParam(url, "workdir", asString(payload.workdir) ?? context?.cwd ?? undefined);
     return `${url.pathname}${url.search}`;
   }

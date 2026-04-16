@@ -14,6 +14,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
+function readTrimmedString(value: unknown): string | null {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalized || null;
+}
+
+function readRequestedTarget(payload: Record<string, unknown> | null): string | null {
+  return readTrimmedString(payload?.device) ?? readTrimmedString(payload?.deviceId) ?? readTrimmedString(payload?.target);
+}
+
 function routeKey(route: FilesRoute) {
   return JSON.stringify(route);
 }
@@ -42,27 +51,7 @@ function readActiveThreadContext() {
   }
 }
 
-function readRoute(): FilesRoute {
-  const pending = consumePendingAppOpen(WINDOW_ID);
-  if (pending?.target === "files") {
-    const payload = asRecord(pending.payload);
-    const target = typeof payload?.device === "string" && payload.device.trim() ? payload.device.trim() : "gsv";
-    const context = asRecord(payload?.context);
-    const contextPath = typeof context?.cwd === "string" && context.cwd.trim() ? context.cwd.trim() : "";
-    const nextRoute = {
-      target,
-      path: typeof payload?.path === "string" && payload.path.trim() ? payload.path.trim() : (contextPath || defaultPathForTarget(target)),
-      q: typeof payload?.q === "string" ? payload.q.trim() : "",
-      open: typeof payload?.open === "string" ? payload.open.trim() : "",
-    };
-    console.debug("[files] consumed pending app open", {
-      windowId: WINDOW_ID,
-      pending,
-      route: nextRoute,
-    });
-    return nextRoute;
-  }
-
+function readRouteFromUrl(): FilesRoute {
   const url = new URL(window.location.href);
   const hasExplicitState = url.searchParams.has("path") || url.searchParams.has("open") || url.searchParams.has("q") || url.searchParams.has("target");
   if (!hasExplicitState) {
@@ -87,6 +76,30 @@ function readRoute(): FilesRoute {
     windowId: WINDOW_ID,
     route: nextRoute,
     href: window.location.href,
+  });
+  return nextRoute;
+}
+
+function readRoute(): FilesRoute {
+  const nextFromUrl = readRouteFromUrl();
+  const pending = consumePendingAppOpen(WINDOW_ID);
+  if (pending?.target !== "files") {
+    return nextFromUrl;
+  }
+
+  const payload = asRecord(pending.payload);
+  const context = asRecord(payload?.context);
+  const target = readRequestedTarget(payload) ?? nextFromUrl.target;
+  const nextRoute = {
+    target,
+    path: readTrimmedString(payload?.path) ?? readTrimmedString(context?.cwd) ?? nextFromUrl.path,
+    q: readTrimmedString(payload?.q) ?? nextFromUrl.q,
+    open: readTrimmedString(payload?.open) ?? nextFromUrl.open,
+  };
+  console.debug("[files] consumed pending app open", {
+    windowId: WINDOW_ID,
+    pending,
+    route: nextRoute,
   });
   return nextRoute;
 }

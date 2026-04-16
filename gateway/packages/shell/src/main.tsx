@@ -99,14 +99,25 @@ function readActiveThreadContext(): { cwd: string; workspaceId: string } | null 
 }
 
 function readRouteParams(): { target: string | null; workdir: string | null } {
+  const url = new URL(window.location.href);
+  const routeFromUrl = {
+    target: url.searchParams.get("target")?.trim() || null,
+    workdir: url.searchParams.get("path")?.trim() || url.searchParams.get("workdir")?.trim() || null,
+  };
+
   const pending = consumePendingAppOpen(WINDOW_ID);
   if (pending?.target === "shell") {
     const payload = pending.payload && typeof pending.payload === "object" ? pending.payload as Record<string, unknown> : null;
     const context = payload?.context && typeof payload.context === "object" ? payload.context as Record<string, unknown> : null;
-    const target = typeof payload?.device === "string" && payload.device.trim() ? payload.device.trim() : null;
+    const target = (
+      (typeof payload?.device === "string" && payload.device.trim() ? payload.device.trim() : null)
+      ?? (typeof payload?.deviceId === "string" && payload.deviceId.trim() ? payload.deviceId.trim() : null)
+      ?? (typeof payload?.target === "string" && payload.target.trim() ? payload.target.trim() : null)
+      ?? routeFromUrl.target
+    );
     const workdir = typeof payload?.workdir === "string" && payload.workdir.trim()
       ? payload.workdir.trim()
-      : (typeof context?.cwd === "string" && context.cwd.trim() ? context.cwd.trim() : null);
+      : (typeof context?.cwd === "string" && context.cwd.trim() ? context.cwd.trim() : routeFromUrl.workdir);
     const nextRoute = { target, workdir };
     console.debug("[shell] consumed pending app open", {
       windowId: WINDOW_ID,
@@ -116,12 +127,9 @@ function readRouteParams(): { target: string | null; workdir: string | null } {
     return nextRoute;
   }
 
-  const url = new URL(window.location.href);
-  const target = url.searchParams.get("target");
-  const workdir = url.searchParams.get("path") || url.searchParams.get("workdir");
   const nextRoute = {
-    target: target && target.trim() ? target.trim() : null,
-    workdir: workdir && workdir.trim() ? workdir.trim() : null,
+    target: routeFromUrl.target,
+    workdir: routeFromUrl.workdir,
   };
   console.debug("[shell] using url route", {
     windowId: WINDOW_ID,
@@ -196,12 +204,16 @@ function clearTerminal(): void {
   writePrompt();
 }
 
-function renderTargetOptions(devices: ShellDevice[]): void {
+function renderTargetOptions(devices: ShellDevice[], requestedTarget?: string | null): void {
   if (!targetSelect) {
     return;
   }
-  const options = [
-    { value: "gsv", label: "Kernel (gsv)" },
+  const options = [{ value: "gsv", label: "Kernel (gsv)" }];
+  const normalizedRequestedTarget = requestedTarget?.trim() || "";
+  if (normalizedRequestedTarget && normalizedRequestedTarget !== "gsv" && !devices.some((device) => device.deviceId === normalizedRequestedTarget)) {
+    options.push({ value: normalizedRequestedTarget, label: `${normalizedRequestedTarget} · requested target` });
+  }
+  options.push(
     ...devices.map((device) => {
       const labelBase = device.label && device.label !== device.deviceId
         ? `${device.label} · ${device.deviceId}`
@@ -211,7 +223,7 @@ function renderTargetOptions(devices: ShellDevice[]): void {
         label: `${labelBase} · ${device.online ? "online" : "offline"}`,
       };
     }),
-  ];
+  );
   targetSelect.innerHTML = options
     .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
     .join("");
@@ -282,11 +294,10 @@ async function boot(): Promise<void> {
     throw new Error("Terminal runtime failed to load.");
   }
 
+  const route = readRouteParams();
   const backend = await getBackend<ShellBackend>();
   const state = await backend.loadState({});
-  renderTargetOptions(state.devices);
-
-  const route = readRouteParams();
+  renderTargetOptions(state.devices, route.target);
   console.debug("[shell] boot state", {
     windowId: WINDOW_ID,
     route,
@@ -302,11 +313,9 @@ async function boot(): Promise<void> {
   }
 
   if (route.target) {
-    const knownTarget = ["gsv", ...state.devices.map((device) => device.deviceId)].includes(route.target);
-    targetSelect.value = knownTarget ? route.target : "gsv";
+    targetSelect.value = route.target;
     console.debug("[shell] applied target route", {
       requestedTarget: route.target,
-      knownTarget,
       selectedTarget: targetSelect.value,
     });
   }
