@@ -97,7 +97,7 @@ function resolveViewer(runtime: PackageAppRpcContext): DevicesViewer {
   return {
     uid,
     username,
-    canManageTokens: uid === 0,
+    canManageTokens: true,
   };
 }
 
