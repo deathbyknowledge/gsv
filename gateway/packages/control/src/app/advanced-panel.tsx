@@ -1,17 +1,22 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import type { ControlConfigEntry } from "./types";
+import type { ControlConfigEntry, ControlViewer } from "./types";
 
 type AdvancedPanelProps = {
   entries: ControlConfigEntry[];
+  viewer: ControlViewer;
   pendingAction: string | null;
   onApply: (entries: Array<{ key: string; value: string }>) => Promise<void>;
   onClientError: (message: string | null) => void;
 };
 
-export function AdvancedPanel({ entries, pendingAction, onApply, onClientError }: AdvancedPanelProps) {
+export function AdvancedPanel({ entries, viewer, pendingAction, onApply, onClientError }: AdvancedPanelProps) {
+  const editableEntries = useMemo(
+    () => viewer.canEditSystemConfig ? entries : entries.filter((entry) => entry.key.startsWith(viewer.userAiPrefix)),
+    [entries, viewer],
+  );
   const initialDraft = useMemo(
-    () => JSON.stringify(Object.fromEntries(entries.map((entry) => [entry.key, entry.value])), null, 2),
-    [entries],
+    () => JSON.stringify(Object.fromEntries(editableEntries.map((entry) => [entry.key, entry.value])), null, 2),
+    [editableEntries],
   );
   const [draft, setDraft] = useState(initialDraft);
 
@@ -26,6 +31,12 @@ export function AdvancedPanel({ entries, pendingAction, onApply, onClientError }
         key,
         value: typeof value === "string" ? value : JSON.stringify(value),
       }));
+      if (!viewer.canEditSystemConfig) {
+        const invalidKey = nextEntries.find((entry) => !entry.key.startsWith(viewer.userAiPrefix));
+        if (invalidKey) {
+          throw new Error(`Only ${viewer.userAiPrefix}* keys are editable for ${viewer.username}`);
+        }
+      }
       onClientError(null);
       void onApply(nextEntries);
     } catch (error) {
@@ -38,10 +49,17 @@ export function AdvancedPanel({ entries, pendingAction, onApply, onClientError }
       <section class="control-pane">
         <header class="control-detail-head">
           <div>
-            <h2>Advanced config</h2>
-            <p>Escape hatch for raw config editing. Use this for unmodeled keys, package flags, and per-user overrides.</p>
+            <h2>{viewer.canEditSystemConfig ? "Advanced config" : "Advanced personal overrides"}</h2>
+            <p>
+              {viewer.canEditSystemConfig
+                ? "Escape hatch for raw config editing. Use this for unmodeled keys, package flags, and per-user overrides."
+                : `Escape hatch for your personal AI overrides under ${viewer.userAiPrefix}*.`}
+            </p>
           </div>
         </header>
+        {!viewer.canEditSystemConfig ? (
+          <p class="control-section-lock-note">System config is visible below but read-only. Only your personal AI override keys are editable here.</p>
+        ) : null}
         <textarea
           class="control-field control-field--textarea control-field--raw"
           value={draft}

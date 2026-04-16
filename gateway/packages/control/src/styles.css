@@ -577,3 +577,88 @@ pre {
     justify-content: stretch;
   }
 }
+
+.control-button:disabled {
+  cursor: not-allowed;
+}
+
+.control-field:disabled {
+  background: rgba(243, 246, 249, 0.9);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.control-permission-note {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 10px 20px 0;
+  color: var(--muted);
+}
+
+.control-checkbox-row.is-disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.control-toolbar-note,
+.control-section-lock-note,
+.control-field-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.control-field-note {
+  font-size: 12px;
+}
+
+.control-settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.control-setting-block {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.control-setting-block.is-wide {
+  grid-column: 1 / -1;
+}
+
+.control-setting-block > label {
+  font-weight: 700;
+}
+
+.control-setting-block > p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.control-section-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.control-section-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 840px) {
+  .control-settings-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .control-section-actions {
+    display: grid;
+  }
+}

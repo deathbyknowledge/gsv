@@ -90,6 +90,7 @@ export function App({ backend }: AppProps) {
         <ConfigPanel
           entries={state.configEntries}
           values={state.configValues}
+          viewer={state.viewer}
           pendingSection={pendingAction?.startsWith("save-section:") ? pendingAction.slice("save-section:".length) : null}
           activeSection={activeConfigSection}
           onSelectSection={updateConfigSection}
@@ -151,6 +152,7 @@ export function App({ backend }: AppProps) {
     return (
       <AdvancedPanel
         entries={state.configEntries}
+        viewer={state.viewer}
         pendingAction={pendingAction}
         onApply={async (entries) => {
           setIssuedToken(null);
@@ -167,6 +169,11 @@ export function App({ backend }: AppProps) {
         <div>
           <h1>Control</h1>
           <p>System settings, runtime profiles, access tokens, and identity links.</p>
+          {state && !state.viewer.canEditSystemConfig ? (
+            <p class="control-toolbar-note">
+              Signed in as <strong>{state.viewer.username}</strong>. AI defaults and profiles save as personal overrides; system sections are read-only.
+            </p>
+          ) : null}
         </div>
         <div class="control-toolbar-actions">
           <button class="control-button" disabled={pendingAction === "load-state"} onClick={() => void refresh()}>

@@ -41,28 +41,28 @@ export default definePackage({
     assets: ["./src/styles.css"],
     rpc: {
       async loadState(_args, ctx) {
-        return loadState(ctx.kernel);
+        return loadState(ctx.kernel, ctx);
       },
       async saveEntry(args, ctx) {
-        return saveEntry(ctx.kernel, args);
+        return saveEntry(ctx.kernel, ctx, args);
       },
       async createToken(args, ctx) {
-        return createToken(ctx.kernel, args);
+        return createToken(ctx.kernel, ctx, args);
       },
       async revokeToken(args, ctx) {
-        return revokeToken(ctx.kernel, args);
+        return revokeToken(ctx.kernel, ctx, args);
       },
       async consumeLinkCode(args, ctx) {
-        return consumeLinkCode(ctx.kernel, args);
+        return consumeLinkCode(ctx.kernel, ctx, args);
       },
       async createLink(args, ctx) {
-        return createLink(ctx.kernel, args);
+        return createLink(ctx.kernel, ctx, args);
       },
       async unlink(args, ctx) {
-        return unlink(ctx.kernel, args);
+        return unlink(ctx.kernel, ctx, args);
       },
       async applyRawConfig(args, ctx) {
-        return applyRawConfig(ctx.kernel, args);
+        return applyRawConfig(ctx.kernel, ctx, args);
       },
     },
   },

@@ -226,3 +226,10 @@ export function buildProfileContextKey(profile: ControlProfileId, file: string):
 export function buildProfileApprovalKey(profile: ControlProfileId): string {
   return `config/ai/profile/${profile}/tools/approval`;
 }
+
+export function buildUserAiOverrideKey(uid: number, systemKey: string): string {
+  if (!systemKey.startsWith("config/ai/")) {
+    throw new Error(`Cannot build user AI override for non-AI key: ${systemKey}`);
+  }
+  return `users/${uid}/${systemKey.slice("config/".length)}`;
+}

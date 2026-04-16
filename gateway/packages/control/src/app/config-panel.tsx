@@ -1,9 +1,11 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   AI_FIELDS,
   AUTOMATION_FIELDS,
   buildProfileApprovalKey,
   buildProfileContextKey,
+  buildUserAiOverrideKey,
   CONFIG_SECTIONS,
   PROCESS_FIELDS,
   PROFILE_CONTEXT_FIELDS,
@@ -13,7 +15,7 @@ import {
   type ControlProfileId,
   type ControlSettingField,
 } from "./config-schema";
-import type { ControlConfigEntry, ControlConfigSectionId } from "./types";
+import type { ControlConfigEntry, ControlConfigSectionId, ControlViewer } from "./types";
 
 type SaveEntry = {
   key: string;
@@ -23,10 +25,21 @@ type SaveEntry = {
 type ConfigPanelProps = {
   entries: ControlConfigEntry[];
   values: Record<string, string>;
+  viewer: ControlViewer;
   pendingSection: string | null;
   activeSection: ControlConfigSectionId;
   onSelectSection: (section: ControlConfigSectionId) => void;
   onSaveEntries: (saveId: string, entries: SaveEntry[]) => Promise<void>;
+};
+
+type ResolvedField = {
+  field: ControlSettingField;
+  editableKey: string;
+  value: string;
+  baseline: string;
+  dirty: boolean;
+  disabled: boolean;
+  note: string | null;
 };
 
 const SECTION_FIELDS: Record<Exclude<ControlConfigSectionId, "profiles">, ControlSettingField[]> = {
@@ -40,6 +53,7 @@ const SECTION_FIELDS: Record<Exclude<ControlConfigSectionId, "profiles">, Contro
 export function ConfigPanel({
   entries,
   values,
+  viewer,
   pendingSection,
   activeSection,
   onSelectSection,
@@ -71,43 +85,92 @@ export function ConfigPanel({
     return entries.filter((entry) => !modeledKeys.has(entry.key));
   }, [entries]);
 
-  const profileKeys = useMemo(() => {
-    const keys = PROFILE_CONTEXT_FIELDS.map((field) => buildProfileContextKey(selectedProfile, field.file));
-    keys.push(buildProfileApprovalKey(selectedProfile));
-    return keys;
+  const profileRows = useMemo(() => {
+    const rows = PROFILE_CONTEXT_FIELDS.map((field) => ({
+      label: field.label,
+      description: field.description,
+      rows: field.rows,
+      systemKey: buildProfileContextKey(selectedProfile, field.file),
+    }));
+    rows.push({
+      label: "Tool approval policy",
+      description: "Ordered approval rules for the selected profile. Stored as JSON with a default action and a rules array.",
+      rows: 10,
+      systemKey: buildProfileApprovalKey(selectedProfile),
+    });
+    return rows;
   }, [selectedProfile]);
 
-  function currentValue(key: string): string {
-    return drafts[key] ?? initialDrafts[key] ?? "";
+  function editableKeyFor(systemKey: string): string {
+    if (viewer.canEditSystemConfig) {
+      return systemKey;
+    }
+    return buildUserAiOverrideKey(viewer.uid, systemKey);
   }
 
-  function isDirty(keys: string[]): boolean {
-    return keys.some((key) => currentValue(key) !== (initialDrafts[key] ?? ""));
+  function systemValueFor(systemKey: string): string {
+    return initialDrafts[systemKey] ?? "";
   }
 
-  function resetKeys(keys: string[]): void {
-    setDrafts((current) => {
-      const next = { ...current };
-      for (const key of keys) {
-        next[key] = initialDrafts[key] ?? "";
-      }
-      return next;
-    });
+  function currentValueFor(editableKey: string, fallback: string): string {
+    if (drafts[editableKey] !== undefined) {
+      return drafts[editableKey];
+    }
+    if (initialDrafts[editableKey] !== undefined) {
+      return initialDrafts[editableKey];
+    }
+    return fallback;
   }
 
-  async function saveKeys(saveId: string, keys: string[]): Promise<void> {
-    const payload = keys.map((key) => ({
-      key,
-      value: serializeValue(key, currentValue(key)),
-    }));
-    await onSaveEntries(saveId, payload);
+  function baselineValueFor(editableKey: string, fallback: string): string {
+    if (initialDrafts[editableKey] !== undefined) {
+      return initialDrafts[editableKey];
+    }
+    return fallback;
   }
 
   function updateDraft(key: string, value: string): void {
     setDrafts((current) => ({ ...current, [key]: value }));
   }
 
-  const profileDirty = isDirty(profileKeys);
+  function resetKeys(keys: string[]): void {
+    setDrafts((current) => {
+      const next = { ...current };
+      for (const key of keys) {
+        if (initialDrafts[key] !== undefined) {
+          next[key] = initialDrafts[key];
+        } else {
+          delete next[key];
+        }
+      }
+      return next;
+    });
+  }
+
+  async function saveKeys(saveId: string, payload: SaveEntry[]): Promise<void> {
+    await onSaveEntries(saveId, payload.map((entry) => ({
+      key: entry.key,
+      value: serializeValue(entry.key, entry.value),
+    })));
+  }
+
+  const profileResolvedRows = profileRows.map((row) => {
+    const editableKey = editableKeyFor(row.systemKey);
+    const systemValue = systemValueFor(row.systemKey);
+    const value = currentValueFor(editableKey, systemValue);
+    const baseline = baselineValueFor(editableKey, systemValue);
+    const hasOverride = !viewer.canEditSystemConfig && values[editableKey] !== undefined;
+    return {
+      ...row,
+      editableKey,
+      value,
+      baseline,
+      dirty: value !== baseline,
+      disabled: false,
+      note: viewer.canEditSystemConfig ? null : buildOverrideNote(systemValue, hasOverride),
+    };
+  });
+  const profileDirty = profileResolvedRows.some((row) => row.dirty);
   const profileSaveId = `profiles:${selectedProfile}`;
 
   return (
@@ -132,6 +195,13 @@ export function ConfigPanel({
       </aside>
 
       <section class="control-config-detail">
+        {!viewer.canEditSystemConfig ? (
+          <div class="control-permission-note">
+            <strong>Signed in as {viewer.username}.</strong>
+            <span> AI defaults and profiles save as personal overrides. System settings remain read-only unless you are root.</span>
+          </div>
+        ) : null}
+
         {activeSection === "profiles" ? (
           <div class="control-detail-pane">
             <header class="control-detail-head">
@@ -155,27 +225,18 @@ export function ConfigPanel({
             </div>
 
             <div class="control-editor-stack">
-              {PROFILE_CONTEXT_FIELDS.map((field) => {
-                const key = buildProfileContextKey(selectedProfile, field.file);
-                return (
-                  <EditorRow
-                    key={key}
-                    label={field.label}
-                    description={field.description}
-                    rows={field.rows}
-                    value={currentValue(key)}
-                    onChange={(nextValue) => updateDraft(key, nextValue)}
-                  />
-                );
-              })}
-
-              <EditorRow
-                label="Tool approval policy"
-                description="Ordered approval rules for the selected profile. Stored as JSON with a default action and a rules array."
-                rows={10}
-                value={currentValue(buildProfileApprovalKey(selectedProfile))}
-                onChange={(nextValue) => updateDraft(buildProfileApprovalKey(selectedProfile), nextValue)}
-              />
+              {profileResolvedRows.map((row) => (
+                <EditorRow
+                  key={row.systemKey}
+                  label={row.label}
+                  description={row.description}
+                  rows={row.rows}
+                  value={row.value}
+                  disabled={row.disabled}
+                  note={row.note}
+                  onChange={(nextValue) => updateDraft(row.editableKey, nextValue)}
+                />
+              ))}
             </div>
 
             <div class="control-section-actions">
@@ -184,14 +245,17 @@ export function ConfigPanel({
                 <button
                   class="control-button"
                   disabled={!profileDirty || pendingSection === profileSaveId}
-                  onClick={() => resetKeys(profileKeys)}
+                  onClick={() => resetKeys(profileResolvedRows.map((row) => row.editableKey))}
                 >
                   Reset
                 </button>
                 <button
                   class="control-button control-button--primary"
                   disabled={!profileDirty || pendingSection === profileSaveId}
-                  onClick={() => void saveKeys(profileSaveId, profileKeys)}
+                  onClick={() => void saveKeys(profileSaveId, profileResolvedRows.map((row) => ({
+                    key: row.editableKey,
+                    value: row.value,
+                  })))}
                 >
                   {pendingSection === profileSaveId ? "Saving…" : "Save changes"}
                 </button>
@@ -204,8 +268,10 @@ export function ConfigPanel({
           <SectionForm
             sectionId={activeSection}
             fields={SECTION_FIELDS[activeSection]}
-            values={initialDrafts}
-            currentValue={currentValue}
+            values={values}
+            viewer={viewer}
+            drafts={drafts}
+            initialDrafts={initialDrafts}
             pendingSection={pendingSection}
             onChange={updateDraft}
             onReset={resetKeys}
@@ -238,19 +304,23 @@ type SectionFormProps = {
   sectionId: Exclude<ControlConfigSectionId, "profiles">;
   fields: ControlSettingField[];
   values: Record<string, string>;
-  currentValue: (key: string) => string;
+  viewer: ControlViewer;
+  drafts: Record<string, string>;
+  initialDrafts: Record<string, string>;
   pendingSection: string | null;
   onChange: (key: string, value: string) => void;
   onReset: (keys: string[]) => void;
-  onSave: (saveId: string, keys: string[]) => Promise<void>;
-  extraNote?: import("preact").ComponentChildren;
+  onSave: (saveId: string, entries: SaveEntry[]) => Promise<void>;
+  extraNote?: ComponentChildren;
 };
 
 function SectionForm({
   sectionId,
   fields,
   values,
-  currentValue,
+  viewer,
+  drafts,
+  initialDrafts,
   pendingSection,
   onChange,
   onReset,
@@ -258,8 +328,33 @@ function SectionForm({
   extraNote,
 }: SectionFormProps) {
   const section = CONFIG_SECTIONS.find((candidate) => candidate.id === sectionId)!;
-  const editableKeys = fields.filter((field) => field.kind !== "readonly").map((field) => field.key);
-  const dirty = editableKeys.some((key) => currentValue(key) !== (values[key] ?? ""));
+  const canEditSection = viewer.canEditSystemConfig || sectionId === "ai";
+  const isOverrideSection = !viewer.canEditSystemConfig && sectionId === "ai";
+
+  const resolvedFields: ResolvedField[] = fields.map((field) => {
+    const systemValue = initialDrafts[field.key] ?? "";
+    const editableKey = isOverrideSection ? buildUserAiOverrideKey(viewer.uid, field.key) : field.key;
+    const fallback = isOverrideSection ? systemValue : (initialDrafts[editableKey] ?? systemValue);
+    const value = drafts[editableKey] ?? initialDrafts[editableKey] ?? fallback;
+    const baseline = initialDrafts[editableKey] ?? fallback;
+    const hasOverride = isOverrideSection && values[editableKey] !== undefined;
+    return {
+      field,
+      editableKey,
+      value,
+      baseline,
+      dirty: value !== baseline,
+      disabled: !canEditSection || field.kind === "readonly",
+      note: isOverrideSection
+        ? buildOverrideNote(systemValue, hasOverride)
+        : !viewer.canEditSystemConfig && field.kind !== "readonly"
+          ? "System setting. Only root can edit this field."
+          : null,
+    };
+  });
+
+  const editableFields = resolvedFields.filter((row) => !row.disabled && row.field.kind !== "readonly");
+  const dirty = editableFields.some((row) => row.dirty);
   const saveId = `section:${sectionId}`;
 
   return (
@@ -271,39 +366,53 @@ function SectionForm({
         </div>
       </header>
 
+      {!viewer.canEditSystemConfig && !isOverrideSection ? (
+        <p class="control-section-lock-note">Visible for reference. Only root can edit this system section.</p>
+      ) : null}
+      {!viewer.canEditSystemConfig && isOverrideSection ? (
+        <p class="control-section-lock-note">Edits here save to your personal AI override namespace and do not change the system defaults.</p>
+      ) : null}
+
       <div class="control-settings-form-grid">
-        {fields.map((field) => (
-          <div class={`control-setting-block${isWideField(field) ? " is-wide" : ""}`} key={field.key}>
-            <label>{field.label}</label>
-            <p>{field.description}</p>
+        {resolvedFields.map((row) => (
+          <div class={`control-setting-block${isWideField(row.field) ? " is-wide" : ""}`} key={row.editableKey}>
+            <label>{row.field.label}</label>
+            <p>{row.field.description}</p>
             <FieldInput
-              field={field}
-              value={currentValue(field.key)}
-              onChange={(nextValue) => onChange(field.key, nextValue)}
+              field={row.field}
+              value={row.value}
+              disabled={row.disabled}
+              onChange={(nextValue) => onChange(row.editableKey, nextValue)}
             />
+            {row.note ? <div class="control-field-note">{row.note}</div> : null}
           </div>
         ))}
       </div>
 
-      <div class="control-section-actions">
-        <span class="control-inline-note">{dirty ? "Unsaved changes" : "No changes"}</span>
-        <div class="control-section-actions-group">
-          <button
-            class="control-button"
-            disabled={!dirty || pendingSection === saveId}
-            onClick={() => onReset(editableKeys)}
-          >
-            Reset
-          </button>
-          <button
-            class="control-button control-button--primary"
-            disabled={!dirty || pendingSection === saveId}
-            onClick={() => void onSave(saveId, editableKeys)}
-          >
-            {pendingSection === saveId ? "Saving…" : "Save changes"}
-          </button>
+      {canEditSection ? (
+        <div class="control-section-actions">
+          <span class="control-inline-note">{dirty ? "Unsaved changes" : "No changes"}</span>
+          <div class="control-section-actions-group">
+            <button
+              class="control-button"
+              disabled={!dirty || pendingSection === saveId}
+              onClick={() => onReset(editableFields.map((row) => row.editableKey))}
+            >
+              Reset
+            </button>
+            <button
+              class="control-button control-button--primary"
+              disabled={!dirty || pendingSection === saveId}
+              onClick={() => void onSave(saveId, editableFields.map((row) => ({
+                key: row.editableKey,
+                value: row.value,
+              })))}
+            >
+              {pendingSection === saveId ? "Saving…" : "Save changes"}
+            </button>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {extraNote}
     </div>
@@ -313,16 +422,18 @@ function SectionForm({
 type FieldInputProps = {
   field: ControlSettingField;
   value: string;
+  disabled: boolean;
   onChange: (value: string) => void;
 };
 
-function FieldInput({ field, value, onChange }: FieldInputProps) {
+function FieldInput({ field, value, disabled, onChange }: FieldInputProps) {
   if (field.kind === "textarea" || field.kind === "json") {
     return (
       <textarea
         class="control-field control-field--textarea"
         rows={field.rows ?? 6}
         value={value}
+        disabled={disabled}
         placeholder={field.placeholder}
         onInput={(event) => {
           const target = event.currentTarget as HTMLTextAreaElement;
@@ -337,6 +448,7 @@ function FieldInput({ field, value, onChange }: FieldInputProps) {
       <select
         class="control-field"
         value={value}
+        disabled={disabled}
         onChange={(event) => {
           const target = event.currentTarget as HTMLSelectElement;
           onChange(target.value);
@@ -351,10 +463,11 @@ function FieldInput({ field, value, onChange }: FieldInputProps) {
 
   if (field.kind === "checkbox") {
     return (
-      <label class="control-checkbox-row">
+      <label class={`control-checkbox-row${disabled ? " is-disabled" : ""}`}>
         <input
           type="checkbox"
           checked={value === "true"}
+          disabled={disabled}
           onInput={(event) => {
             const target = event.currentTarget as HTMLInputElement;
             onChange(target.checked ? "true" : "false");
@@ -374,6 +487,7 @@ function FieldInput({ field, value, onChange }: FieldInputProps) {
       class="control-field"
       type={field.kind === "number" ? "number" : field.kind === "password" ? "password" : "text"}
       value={value}
+      disabled={disabled}
       placeholder={field.placeholder}
       onInput={(event) => {
         const target = event.currentTarget as HTMLInputElement;
@@ -388,10 +502,12 @@ type EditorRowProps = {
   description: string;
   rows: number;
   value: string;
+  disabled: boolean;
+  note: string | null;
   onChange: (value: string) => void;
 };
 
-function EditorRow({ label, description, rows, value, onChange }: EditorRowProps) {
+function EditorRow({ label, description, rows, value, disabled, note, onChange }: EditorRowProps) {
   return (
     <div class="control-editor-row">
       <div class="control-setting-meta">
@@ -403,11 +519,13 @@ function EditorRow({ label, description, rows, value, onChange }: EditorRowProps
           class="control-field control-field--textarea"
           rows={rows}
           value={value}
+          disabled={disabled}
           onInput={(event) => {
             const target = event.currentTarget as HTMLTextAreaElement;
             onChange(target.value);
           }}
         />
+        {note ? <div class="control-field-note">{note}</div> : null}
       </div>
     </div>
   );
@@ -440,6 +558,23 @@ function serializeValue(key: string, value: string): string {
     }
   }
   return value;
+}
+
+function buildOverrideNote(systemValue: string, hasOverride: boolean): string {
+  const formatted = summarizeValue(systemValue);
+  if (hasOverride) {
+    return `Personal override active. System default: ${formatted}`;
+  }
+  return `Using system default until you save an override. System default: ${formatted}`;
+}
+
+function summarizeValue(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "none";
+  }
+  const singleLine = trimmed.replace(/\s+/g, " ");
+  return singleLine.length > 84 ? `${singleLine.slice(0, 81)}…` : singleLine;
 }
 
 function isWideField(field: ControlSettingField): boolean {
