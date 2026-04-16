@@ -33,13 +33,21 @@ function createUnsupportedAppInstance(manifest: AppManifest): AppInstance {
   };
 }
 
+function canonicalizeAppRoute(route: string): string {
+  const url = new URL(route, window.location.origin);
+  if (/^\/apps\/[^/]+$/.test(url.pathname)) {
+    url.pathname = `${url.pathname}/`;
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClientLike): AppInstance {
   let bridge: ReturnType<typeof attachHostBridge> | null = null;
 
   return {
     mount: (container, context) => {
       const iframe = document.createElement("iframe");
-      const iframeUrl = new URL(context.route, window.location.origin);
+      const iframeUrl = new URL(canonicalizeAppRoute(context.route), window.location.origin);
       iframeUrl.searchParams.set("windowId", context.windowId);
       iframe.src = iframeUrl.pathname + iframeUrl.search + iframeUrl.hash;
       iframe.title = manifest.name;

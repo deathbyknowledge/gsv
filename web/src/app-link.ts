@@ -125,7 +125,7 @@ function writeParam(url: URL, key: string, value: string | undefined): void {
 
 function buildFilesRoute(payload: Record<string, unknown> | null): string {
   const context = normalizeThreadContext(payload?.context);
-  const url = new URL("/apps/files", window.location.href);
+  const url = new URL("/apps/files/", window.location.href);
   writeParam(url, "target", readRequestedTarget(payload) ?? undefined);
   writeParam(url, "path", asString(payload?.path) ?? context?.cwd ?? undefined);
   writeParam(url, "open", asString(payload?.open) ?? undefined);
@@ -135,14 +135,14 @@ function buildFilesRoute(payload: Record<string, unknown> | null): string {
 
 function buildShellRoute(payload: Record<string, unknown> | null): string {
   const context = normalizeThreadContext(payload?.context);
-  const url = new URL("/apps/shell", window.location.href);
+  const url = new URL("/apps/shell/", window.location.href);
   writeParam(url, "target", readRequestedTarget(payload) ?? undefined);
   writeParam(url, "workdir", asString(payload?.workdir) ?? context?.cwd ?? undefined);
   return `${url.pathname}${url.search}`;
 }
 
 function buildWikiRoute(payload: Record<string, unknown> | null): string {
-  const url = new URL("/apps/wiki", window.location.href);
+  const url = new URL("/apps/wiki/", window.location.href);
   writeParam(url, "db", asString(payload?.db) ?? undefined);
   writeParam(url, "path", asString(payload?.path) ?? undefined);
   writeParam(url, "mode", asString(payload?.mode) ?? undefined);

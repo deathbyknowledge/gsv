@@ -59,7 +59,45 @@ declare global {
 const streamNode = document.querySelector<HTMLElement>("[data-shell-terminal]");
 const statusNode = document.querySelector<HTMLElement>("[data-shell-status]");
 const targetSelect = document.querySelector<HTMLSelectElement>("[data-shell-target]");
-const WINDOW_ID = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
+function readFrameLaunchUrl(): URL | null {
+  try {
+    const frame = window.frameElement;
+    if (!(frame instanceof HTMLIFrameElement)) {
+      return null;
+    }
+    const raw = frame.getAttribute("src")?.trim() || frame.src?.trim() || "";
+    if (!raw) {
+      return null;
+    }
+    return new URL(raw, window.location.origin);
+  } catch {
+    return null;
+  }
+}
+
+function readLaunchUrl(): URL {
+  const current = new URL(window.location.href);
+  const frame = readFrameLaunchUrl();
+  if (!frame) {
+    return current;
+  }
+
+  const currentHasWindowId = current.searchParams.has("windowId");
+  const currentHasExplicitState = current.searchParams.has("target") || current.searchParams.has("path") || current.searchParams.has("workdir");
+  if (currentHasWindowId && currentHasExplicitState) {
+    return current;
+  }
+
+  const frameHasWindowId = frame.searchParams.has("windowId");
+  const frameHasExplicitState = frame.searchParams.has("target") || frame.searchParams.has("path") || frame.searchParams.has("workdir");
+  if (!frameHasWindowId && !frameHasExplicitState) {
+    return current;
+  }
+
+  return frame;
+}
+
+const WINDOW_ID = readLaunchUrl().searchParams.get("windowId")?.trim() || "";
 const workdirInput = document.querySelector<HTMLInputElement>("[data-shell-workdir]");
 const timeoutInput = document.querySelector<HTMLInputElement>("[data-shell-timeout]");
 const yieldInput = document.querySelector<HTMLInputElement>("[data-shell-yield]");
@@ -99,7 +137,7 @@ function readActiveThreadContext(): { cwd: string; workspaceId: string } | null 
 }
 
 function readRouteParams(): { target: string | null; workdir: string | null } {
-  const url = new URL(window.location.href);
+  const url = readLaunchUrl();
   const routeFromUrl = {
     target: url.searchParams.get("target")?.trim() || null,
     workdir: url.searchParams.get("path")?.trim() || url.searchParams.get("workdir")?.trim() || null,
@@ -135,6 +173,7 @@ function readRouteParams(): { target: string | null; workdir: string | null } {
     windowId: WINDOW_ID,
     route: nextRoute,
     href: window.location.href,
+    launchHref: url.toString(),
   });
   return nextRoute;
 }
