@@ -21,9 +21,9 @@ export default definePackage({
   },
   app: {
     browser: {
-      entry: "./index.html",
+      entry: "./src/index.html",
     },
-    assets: ["./styles.css"],
+    assets: ["./src/styles.css"],
     rpc: {
       loadState: async (_args, ctx) => loadState(ctx.kernel),
       connectAccount: async (args, ctx) => connectAccount(ctx.kernel, args),
