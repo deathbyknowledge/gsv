@@ -1,18 +1,27 @@
 import { render } from "preact";
 import { getBackend } from "@gsv/package/browser";
-import { App } from "./ui/app";
-import type { WikiBackend } from "./ui/types";
+import { App } from "./src/app/app";
+import type { WikiBackend } from "./src/app/types";
 
-const root = document.getElementById("app");
+const root = document.getElementById("root");
 
-if (!root) {
-  throw new Error("Wiki app root is missing");
+async function boot(): Promise<void> {
+  if (!root) {
+    throw new Error("wiki root missing");
+  }
+  const backend = await getBackend<WikiBackend>();
+  render(<App backend={backend} />, root);
 }
 
-void getBackend<WikiBackend>()
-  .then((backend) => {
-    render(<App backend={backend} />, root);
-  })
-  .catch((error) => {
-    root.innerHTML = `<pre style="padding:16px; color:#b42318; white-space:pre-wrap;">${String(error instanceof Error ? error.message : error)}</pre>`;
-  });
+void boot().catch((error) => {
+  if (!root) {
+    throw error;
+  }
+  render(
+    <div class="wiki-boot-error">
+      <h1>Wiki unavailable</h1>
+      <p>{error instanceof Error ? error.message : String(error)}</p>
+    </div>,
+    root,
+  );
+});
