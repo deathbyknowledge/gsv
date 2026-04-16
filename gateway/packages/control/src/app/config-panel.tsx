@@ -195,13 +195,6 @@ export function ConfigPanel({
       </aside>
 
       <section class="control-config-detail">
-        {!viewer.canEditSystemConfig ? (
-          <div class="control-permission-note">
-            <strong>Signed in as {viewer.username}.</strong>
-            <span> AI defaults and profiles save as personal overrides. System settings remain read-only unless you are root.</span>
-          </div>
-        ) : null}
-
         {activeSection === "profiles" ? (
           <div class="control-detail-pane">
             <header class="control-detail-head">
@@ -366,13 +359,6 @@ function SectionForm({
         </div>
       </header>
 
-      {!viewer.canEditSystemConfig && !isOverrideSection ? (
-        <p class="control-section-lock-note">Visible for reference. Only root can edit this system section.</p>
-      ) : null}
-      {!viewer.canEditSystemConfig && isOverrideSection ? (
-        <p class="control-section-lock-note">Edits here save to your personal AI override namespace and do not change the system defaults.</p>
-      ) : null}
-
       <div class="control-settings-form-grid">
         {resolvedFields.map((row) => (
           <div class={`control-setting-block${isWideField(row.field) ? " is-wide" : ""}`} key={row.editableKey}>
@@ -382,9 +368,10 @@ function SectionForm({
               field={row.field}
               value={row.value}
               disabled={row.disabled}
+              title={row.disabled ? row.note : null}
               onChange={(nextValue) => onChange(row.editableKey, nextValue)}
             />
-            {row.note ? <div class="control-field-note">{row.note}</div> : null}
+            {row.note && !row.disabled ? <div class="control-field-note">{row.note}</div> : null}
           </div>
         ))}
       </div>
@@ -423,13 +410,15 @@ type FieldInputProps = {
   field: ControlSettingField;
   value: string;
   disabled: boolean;
+  title: string | null;
   onChange: (value: string) => void;
 };
 
-function FieldInput({ field, value, disabled, onChange }: FieldInputProps) {
+function FieldInput({ field, value, disabled, title, onChange }: FieldInputProps) {
   if (field.kind === "textarea" || field.kind === "json") {
     return (
       <textarea
+        title={title ?? undefined}
         class="control-field control-field--textarea"
         rows={field.rows ?? 6}
         value={value}
@@ -446,6 +435,7 @@ function FieldInput({ field, value, disabled, onChange }: FieldInputProps) {
   if (field.kind === "select") {
     return (
       <select
+        title={title ?? undefined}
         class="control-field"
         value={value}
         disabled={disabled}
@@ -463,7 +453,7 @@ function FieldInput({ field, value, disabled, onChange }: FieldInputProps) {
 
   if (field.kind === "checkbox") {
     return (
-      <label class={`control-checkbox-row${disabled ? " is-disabled" : ""}`}>
+      <label class={`control-checkbox-row${disabled ? " is-disabled" : ""}`} title={title ?? undefined}>
         <input
           type="checkbox"
           checked={value === "true"}
@@ -484,6 +474,7 @@ function FieldInput({ field, value, disabled, onChange }: FieldInputProps) {
 
   return (
     <input
+      title={title ?? undefined}
       class="control-field"
       type={field.kind === "number" ? "number" : field.kind === "password" ? "password" : "text"}
       value={value}

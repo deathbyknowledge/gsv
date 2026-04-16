@@ -57,10 +57,8 @@ export function AdvancedPanel({ entries, viewer, pendingAction, onApply, onClien
             </p>
           </div>
         </header>
-        {!viewer.canEditSystemConfig ? (
-          <p class="control-section-lock-note">System config is visible below but read-only. Only your personal AI override keys are editable here.</p>
-        ) : null}
         <textarea
+          title={!viewer.canEditSystemConfig ? ("Only " + viewer.userAiPrefix + "* keys are editable for " + viewer.username) : undefined}
           class="control-field control-field--textarea control-field--raw"
           value={draft}
           onInput={(event) => {
