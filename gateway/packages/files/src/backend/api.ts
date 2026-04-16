@@ -136,7 +136,7 @@ function normalizeFileResult(fileResult: FilesFileResult | null) {
 
 async function listDevices(kernel: KernelClient) {
   try {
-    const payload = await kernel.request("sys.device.list", {});
+    const payload = await kernel.request("sys.device.list", { includeOffline: true });
     const devices = Array.isArray(payload?.devices) ? payload.devices as FilesDevice[] : [];
     devices.sort((left, right) => String(left?.deviceId ?? "").localeCompare(String(right?.deviceId ?? "")));
     return devices;
