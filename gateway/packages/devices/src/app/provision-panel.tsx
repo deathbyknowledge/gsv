@@ -8,6 +8,7 @@ type ProvisionFormState = {
 
 type ProvisionPanelProps = {
   initialDeviceId: string;
+  viewerUsername: string;
   pendingAction: string | null;
   issuedToken: IssuedNodeToken | null;
   onBack: () => void;
@@ -16,6 +17,7 @@ type ProvisionPanelProps = {
 
 export function ProvisionPanel({
   initialDeviceId,
+  viewerUsername,
   pendingAction,
   issuedToken,
   onBack,
@@ -25,11 +27,10 @@ export function ProvisionPanel({
   const gatewayWs = buildGatewayWsUrl(window.location.origin);
   const bootstrap = issuedToken
     ? [
-        install,
-        `gsv local-config set gateway.url "${gatewayWs}"`,
-        `gsv local-config set node.id "${issuedToken.allowedDeviceId ?? initialDeviceId}"`,
-        `gsv local-config set node.token "${issuedToken.token}"`,
-        `gsv node install --id "${issuedToken.allowedDeviceId ?? initialDeviceId}" --workspace ~/projects`,
+        `gsv config --local set gateway.url "${gatewayWs}"`,
+        `gsv config --local set gateway.username "${viewerUsername}"`,
+        `gsv config --local set node.token "${issuedToken.token}"`,
+        `gsv device install --id "${issuedToken.allowedDeviceId ?? initialDeviceId}" --workspace ~/projects`,
       ].join("\n")
     : "";
 
@@ -38,7 +39,7 @@ export function ProvisionPanel({
       <header class="devices-detail-head">
         <div>
           <h2>Add device</h2>
-          <p>Issue a node token and show the exact bootstrap sequence for the next machine.</p>
+          <p>Issue a node token and show the current bootstrap sequence for the next machine.</p>
         </div>
         <button class="devices-button devices-button--quiet" onClick={onBack}>Back to fleet</button>
       </header>
@@ -60,7 +61,7 @@ export function ProvisionPanel({
           </section>
           <section class="devices-command-block">
             <header>
-              <h3>Bootstrap node</h3>
+              <h3>Bootstrap device</h3>
               <p>{issuedToken.allowedDeviceId ?? initialDeviceId} · {issuedToken.expiresAt ? new Date(issuedToken.expiresAt).toLocaleString() : "no expiry"}</p>
             </header>
             <textarea class="devices-output" readOnly value={bootstrap} />
