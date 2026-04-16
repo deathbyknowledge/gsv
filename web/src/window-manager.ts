@@ -1,4 +1,5 @@
 import type { AppManifest } from "./apps";
+import { queuePendingAppOpen, type OpenAppRequest } from "./app-link";
 import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "./app-runtime";
 
 type WindowMode = "normal" | "minimized" | "maximized";
@@ -84,7 +85,7 @@ export type WindowSummary = {
 };
 
 export type WindowManager = {
-  openApp: (app: AppManifest, route?: string) => string;
+  openApp: (app: AppManifest, route?: string, options?: { pendingAppOpenRequest?: OpenAppRequest | null; forceRestart?: boolean }) => string;
   focusWindow: (windowId: string) => void;
   restoreWindow: (windowId: string) => void;
   closeWindow: (windowId: string) => void;
@@ -1085,17 +1086,34 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     repaintAll();
   };
 
-  const openApp = (app: AppManifest, route?: string): string => {
+  const openApp = (app: AppManifest, route?: string, options?: { pendingAppOpenRequest?: OpenAppRequest | null; forceRestart?: boolean }): string => {
     const existingWindowId = windowByAppId.get(app.id);
     if (existingWindowId) {
       const existing = windows.get(existingWindowId);
       if (existing) {
-        if (route && route !== existing.route) {
-          existing.route = route;
+        const requestedRoute = route ?? existing.route;
+        const routeChanged = requestedRoute !== existing.route;
+        const shouldRestart = !!options?.forceRestart || routeChanged;
+        console.debug("[window-manager] open existing app", {
+          windowId: existingWindowId,
+          appId: app.id,
+          existingRoute: existing.route,
+          requestedRoute,
+          routeChanged,
+          hasPendingAppOpenRequest: !!options?.pendingAppOpenRequest,
+          shouldRestart,
+        });
+        if (options?.pendingAppOpenRequest) {
+          queuePendingAppOpen(existingWindowId, options.pendingAppOpenRequest);
+        }
+        if (routeChanged) {
+          existing.route = requestedRoute;
           const metaNode = existing.node.querySelector<HTMLElement>(".window-meta");
           if (metaNode) {
-            metaNode.textContent = route;
+            metaNode.textContent = requestedRoute;
           }
+        }
+        if (shouldRestart) {
           restartRuntime(existing);
         }
         if (existing.mode === "minimized") {
@@ -1115,6 +1133,15 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     windowByAppId.set(app.id, record.windowId);
     layerNode.appendChild(record.node);
 
+    if (options?.pendingAppOpenRequest) {
+      queuePendingAppOpen(record.windowId, options.pendingAppOpenRequest);
+    }
+    console.debug("[window-manager] open new app", {
+      windowId: record.windowId,
+      appId: app.id,
+      route: record.route,
+      hasPendingAppOpenRequest: !!options?.pendingAppOpenRequest,
+    });
     attachRuntime(record);
     activeWindowId = record.windowId;
     repaintAll();
