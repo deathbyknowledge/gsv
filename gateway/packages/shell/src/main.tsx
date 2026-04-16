@@ -1,9 +1,10 @@
 import { getBackend } from "@gsv/package/browser";
-import {
-  FitAddon,
-  init,
-  Terminal,
-} from "https://cdn.jsdelivr.net/npm/ghostty-web@0.4.0/+esm";
+
+type GhosttyModule = {
+  init: () => Promise<void>;
+  Terminal: new (options: Record<string, unknown>) => TerminalLike;
+  FitAddon: new () => FitAddonLike;
+};
 
 type FitAddonLike = {
   fit: () => void;
@@ -48,6 +49,11 @@ type ShellBackend = {
   }): Promise<{ entry: TranscriptEntry }>;
 };
 
+declare global {
+  interface Window {
+    __GSV_GHOSTTY__?: Promise<GhosttyModule>;
+  }
+}
 
 const streamNode = document.querySelector<HTMLElement>("[data-shell-terminal]");
 const statusNode = document.querySelector<HTMLElement>("[data-shell-status]");
@@ -245,6 +251,12 @@ async function boot(): Promise<void> {
   if (!streamNode || !statusNode || !targetSelect || !workdirInput || !timeoutInput || !yieldInput || !backgroundInput) {
     throw new Error("Shell UI is incomplete.");
   }
+
+  const ghostty = await window.__GSV_GHOSTTY__;
+  if (!ghostty) {
+    throw new Error("Terminal runtime failed to load.");
+  }
+
   const backend = await getBackend<ShellBackend>();
   const state = await backend.loadState({});
   renderTargetOptions(state.devices);
@@ -264,8 +276,8 @@ async function boot(): Promise<void> {
     targetSelect.value = knownTarget ? route.target : "gsv";
   }
 
-  await init();
-  terminal = new Terminal({
+  await ghostty.init();
+  terminal = new ghostty.Terminal({
     fontFamily: "JetBrains Mono, SFMono-Regular, Consolas, monospace",
     fontSize: 13,
     theme: {
@@ -293,7 +305,7 @@ async function boot(): Promise<void> {
     cursorStyle: "bar",
     convertEol: true,
   });
-  fitAddon = new FitAddon();
+  fitAddon = new ghostty.FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.open(streamNode);
   fitAddon.fit();
