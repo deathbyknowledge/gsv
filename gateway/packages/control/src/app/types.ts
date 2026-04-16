@@ -1,21 +1,12 @@
 export type ControlTabId = "config" | "access" | "advanced";
-export type ControlSectionId = "ai" | "shell" | "server" | "auth";
+export type ControlConfigSectionId = "ai" | "profiles" | "shell" | "server" | "processes" | "automation";
 export type ControlTokenKind = "node" | "service" | "user";
 
 export type ControlConfigEntry = {
   key: string;
   value: string;
   scopeLabel: string;
-  sectionId: ControlSectionId | null;
-  fieldLabel: string;
-};
-
-export type ControlSection = {
-  id: ControlSectionId;
-  title: string;
-  description: string;
-  entries: ControlConfigEntry[];
-  addPrefix: string;
+  pathLabel: string;
 };
 
 export type ControlToken = {
@@ -56,8 +47,8 @@ export type ControlLink = {
 };
 
 export type ControlState = {
-  sections: ControlSection[];
-  rawEntries: ControlConfigEntry[];
+  configEntries: ControlConfigEntry[];
+  configValues: Record<string, string>;
   tokens: ControlToken[];
   links: ControlLink[];
 };

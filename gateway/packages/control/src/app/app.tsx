@@ -5,6 +5,7 @@ import { ConfigPanel } from "./config-panel";
 import { Tabs } from "./tabs";
 import type {
   ControlBackend,
+  ControlConfigSectionId,
   ControlCreatedToken,
   ControlState,
   ControlTabId,
@@ -19,19 +20,29 @@ type AppProps = {
 export function App({ backend }: AppProps) {
   const [state, setState] = useState<ControlState | null>(null);
   const [activeTab, setActiveTab] = useState<ControlTabId>(readTabFromLocation());
+  const [activeConfigSection, setActiveConfigSection] = useState<ControlConfigSectionId>(readSectionFromLocation());
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [issuedToken, setIssuedToken] = useState<ControlCreatedToken | null>(null);
 
-  const updateUrl = useCallback((tab: ControlTabId) => {
+  const updateRoute = useCallback((nextTab: ControlTabId, nextSection: ControlConfigSectionId = activeConfigSection) => {
     const url = new URL(window.location.href);
-    url.searchParams.set("tab", tab);
+    url.searchParams.set("tab", nextTab);
+    url.searchParams.set("section", nextSection);
     window.history.pushState({}, "", url);
-    setActiveTab(tab);
-  }, []);
+    setActiveTab(nextTab);
+    setActiveConfigSection(nextSection);
+  }, [activeConfigSection]);
+
+  const updateConfigSection = useCallback((nextSection: ControlConfigSectionId) => {
+    updateRoute("config", nextSection);
+  }, [updateRoute]);
 
   useEffect(() => {
-    const onPopState = () => setActiveTab(readTabFromLocation());
+    const onPopState = () => {
+      setActiveTab(readTabFromLocation());
+      setActiveConfigSection(readSectionFromLocation());
+    };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -71,14 +82,17 @@ export function App({ backend }: AppProps) {
 
   const content = useMemo(() => {
     if (!state) {
-      return <section class="control-card"><p>Loading control state…</p></section>;
+      return <section class="control-pane"><p>Loading control state…</p></section>;
     }
 
     if (activeTab === "config") {
       return (
         <ConfigPanel
-          sections={state.sections}
+          entries={state.configEntries}
+          values={state.configValues}
           pendingKey={pendingAction?.startsWith("save:") ? pendingAction.slice(5) : null}
+          activeSection={activeConfigSection}
+          onSelectSection={updateConfigSection}
           onSaveEntry={async (key, value) => {
             setIssuedToken(null);
             await runStateAction(`save:${key}`, () => backend.saveEntry({ key, value }));
@@ -136,30 +150,33 @@ export function App({ backend }: AppProps) {
 
     return (
       <AdvancedPanel
-        entries={state.rawEntries}
+        entries={state.configEntries}
         pendingAction={pendingAction}
         onApply={async (entries) => {
           setIssuedToken(null);
           await runStateAction("raw-save", () => backend.applyRawConfig({ entries }));
         }}
+        onClientError={setError}
       />
     );
-  }, [activeTab, backend, issuedToken, pendingAction, runStateAction, state]);
+  }, [activeConfigSection, activeTab, backend, issuedToken, pendingAction, runStateAction, state, updateConfigSection]);
 
   return (
-    <div class="control-shell">
-      <header class="control-header">
+    <div class="control-app">
+      <header class="control-toolbar">
         <div>
           <h1>Control</h1>
-          <p>Manage configuration, access tokens, and linked identities without leaving the app runtime.</p>
+          <p>System settings, runtime profiles, access tokens, and identity links.</p>
         </div>
-        <button class="control-button" disabled={pendingAction === "load-state"} onClick={() => void refresh()}>
-          {pendingAction === "load-state" ? "Refreshing…" : "Refresh"}
-        </button>
+        <div class="control-toolbar-actions">
+          <button class="control-button" disabled={pendingAction === "load-state"} onClick={() => void refresh()}>
+            {pendingAction === "load-state" ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </header>
-      <Tabs activeTab={activeTab} onChange={updateUrl} />
-      {error ? <div class="control-flash control-flash--error">{error}</div> : null}
-      {content}
+      <Tabs activeTab={activeTab} onChange={(tab) => updateRoute(tab)} />
+      {error ? <p class="control-error-text">{error}</p> : null}
+      <main class="control-main">{content}</main>
     </div>
   );
 }
@@ -167,6 +184,13 @@ export function App({ backend }: AppProps) {
 function readTabFromLocation(): ControlTabId {
   const value = new URL(window.location.href).searchParams.get("tab");
   return value === "access" || value === "advanced" ? value : "config";
+}
+
+function readSectionFromLocation(): ControlConfigSectionId {
+  const value = new URL(window.location.href).searchParams.get("section");
+  return value === "profiles" || value === "shell" || value === "server" || value === "processes" || value === "automation"
+    ? value
+    : "ai";
 }
 
 function formatError(cause: unknown): string {
