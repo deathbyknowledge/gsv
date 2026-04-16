@@ -15,31 +15,44 @@ import {
 } from "./config-schema";
 import type { ControlConfigEntry, ControlConfigSectionId } from "./types";
 
+type SaveEntry = {
+  key: string;
+  value: string;
+};
+
 type ConfigPanelProps = {
   entries: ControlConfigEntry[];
   values: Record<string, string>;
-  pendingKey: string | null;
+  pendingSection: string | null;
   activeSection: ControlConfigSectionId;
   onSelectSection: (section: ControlConfigSectionId) => void;
-  onSaveEntry: (key: string, value: string) => Promise<void>;
+  onSaveEntries: (saveId: string, entries: SaveEntry[]) => Promise<void>;
+};
+
+const SECTION_FIELDS: Record<Exclude<ControlConfigSectionId, "profiles">, ControlSettingField[]> = {
+  ai: AI_FIELDS,
+  shell: SHELL_FIELDS,
+  server: SERVER_FIELDS,
+  processes: PROCESS_FIELDS,
+  automation: AUTOMATION_FIELDS,
 };
 
 export function ConfigPanel({
   entries,
   values,
-  pendingKey,
+  pendingSection,
   activeSection,
   onSelectSection,
-  onSaveEntry,
+  onSaveEntries,
 }: ConfigPanelProps) {
   const [selectedProfile, setSelectedProfile] = useState<ControlProfileId>("task");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
-  const nextDrafts = useMemo(() => buildDrafts(values), [values]);
+  const initialDrafts = useMemo(() => buildDrafts(values), [values]);
 
   useEffect(() => {
-    setDrafts(nextDrafts);
-  }, [nextDrafts]);
+    setDrafts(initialDrafts);
+  }, [initialDrafts]);
 
   const uncategorizedEntries = useMemo(() => {
     const modeledKeys = new Set<string>([
@@ -58,13 +71,44 @@ export function ConfigPanel({
     return entries.filter((entry) => !modeledKeys.has(entry.key));
   }, [entries]);
 
-  async function saveField(field: ControlSettingField): Promise<void> {
-    await onSaveEntry(field.key, drafts[field.key] ?? values[field.key] ?? "");
+  const profileKeys = useMemo(() => {
+    const keys = PROFILE_CONTEXT_FIELDS.map((field) => buildProfileContextKey(selectedProfile, field.file));
+    keys.push(buildProfileApprovalKey(selectedProfile));
+    return keys;
+  }, [selectedProfile]);
+
+  function currentValue(key: string): string {
+    return drafts[key] ?? initialDrafts[key] ?? "";
   }
 
-  async function saveProfileField(key: string): Promise<void> {
-    await onSaveEntry(key, drafts[key] ?? values[key] ?? "");
+  function isDirty(keys: string[]): boolean {
+    return keys.some((key) => currentValue(key) !== (initialDrafts[key] ?? ""));
   }
+
+  function resetKeys(keys: string[]): void {
+    setDrafts((current) => {
+      const next = { ...current };
+      for (const key of keys) {
+        next[key] = initialDrafts[key] ?? "";
+      }
+      return next;
+    });
+  }
+
+  async function saveKeys(saveId: string, keys: string[]): Promise<void> {
+    const payload = keys.map((key) => ({
+      key,
+      value: serializeValue(key, currentValue(key)),
+    }));
+    await onSaveEntries(saveId, payload);
+  }
+
+  function updateDraft(key: string, value: string): void {
+    setDrafts((current) => ({ ...current, [key]: value }));
+  }
+
+  const profileDirty = isDirty(profileKeys);
+  const profileSaveId = `profiles:${selectedProfile}`;
 
   return (
     <div class="control-config-stage">
@@ -88,19 +132,6 @@ export function ConfigPanel({
       </aside>
 
       <section class="control-config-detail">
-        {activeSection === "ai" ? (
-          <ConfigFieldGroup
-            title="AI defaults"
-            description="System-wide model selection and inference defaults used across built-in profiles unless explicitly overridden elsewhere."
-            fields={AI_FIELDS}
-            values={values}
-            drafts={drafts}
-            pendingKey={pendingKey}
-            onDraftChange={(update) => setDrafts(update)}
-            onSave={saveField}
-          />
-        ) : null}
-
         {activeSection === "profiles" ? (
           <div class="control-detail-pane">
             <header class="control-detail-head">
@@ -131,181 +162,150 @@ export function ConfigPanel({
                     key={key}
                     label={field.label}
                     description={field.description}
-                    keyPath={key}
                     rows={field.rows}
-                    value={drafts[key] ?? values[key] ?? ""}
-                    isSaving={pendingKey === key}
-                    onChange={(nextValue) => {
-                      setDrafts((current) => ({ ...current, [key]: nextValue }));
-                    }}
-                    onSave={() => void saveProfileField(key)}
+                    value={currentValue(key)}
+                    onChange={(nextValue) => updateDraft(key, nextValue)}
                   />
                 );
               })}
 
-              {(() => {
-                const approvalKey = buildProfileApprovalKey(selectedProfile);
-                return (
-                  <EditorRow
-                    key={approvalKey}
-                    label="Tool approval policy"
-                    description="Ordered approval rules for the selected profile. Stored as JSON with a default action and a rules array."
-                    keyPath={approvalKey}
-                    rows={10}
-                    value={drafts[approvalKey] ?? values[approvalKey] ?? ""}
-                    isSaving={pendingKey === approvalKey}
-                    onChange={(nextValue) => {
-                      setDrafts((current) => ({ ...current, [approvalKey]: nextValue }));
-                    }}
-                    onSave={() => void saveProfileField(approvalKey)}
-                  />
-                );
-              })()}
+              <EditorRow
+                label="Tool approval policy"
+                description="Ordered approval rules for the selected profile. Stored as JSON with a default action and a rules array."
+                rows={10}
+                value={currentValue(buildProfileApprovalKey(selectedProfile))}
+                onChange={(nextValue) => updateDraft(buildProfileApprovalKey(selectedProfile), nextValue)}
+              />
+            </div>
+
+            <div class="control-section-actions">
+              <span class="control-inline-note">{profileDirty ? "Unsaved changes" : "No changes"}</span>
+              <div class="control-section-actions-group">
+                <button
+                  class="control-button"
+                  disabled={!profileDirty || pendingSection === profileSaveId}
+                  onClick={() => resetKeys(profileKeys)}
+                >
+                  Reset
+                </button>
+                <button
+                  class="control-button control-button--primary"
+                  disabled={!profileDirty || pendingSection === profileSaveId}
+                  onClick={() => void saveKeys(profileSaveId, profileKeys)}
+                >
+                  {pendingSection === profileSaveId ? "Saving…" : "Save changes"}
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
 
-        {activeSection === "shell" ? (
-          <ConfigFieldGroup
-            title="Shell"
-            description="Execution behavior for native shell usage across the system."
-            fields={SHELL_FIELDS}
-            values={values}
-            drafts={drafts}
-            pendingKey={pendingKey}
-            onDraftChange={(update) => setDrafts(update)}
-            onSave={saveField}
+        {activeSection !== "profiles" ? (
+          <SectionForm
+            sectionId={activeSection}
+            fields={SECTION_FIELDS[activeSection]}
+            values={initialDrafts}
+            currentValue={currentValue}
+            pendingSection={pendingSection}
+            onChange={updateDraft}
+            onReset={resetKeys}
+            onSave={saveKeys}
+            extraNote={activeSection === "automation" ? (
+              <div class="control-advanced-note">
+                <h3>Not shown here</h3>
+                <p>
+                  Additional keys remain in <strong>Advanced</strong>, including package repo flags,
+                  per-user overrides, and any config namespaces we have not explicitly designed yet.
+                </p>
+                {uncategorizedEntries.length > 0 ? (
+                  <ul>
+                    {uncategorizedEntries.slice(0, 8).map((entry) => (
+                      <li key={entry.key}><code>{entry.key}</code></li>
+                    ))}
+                    {uncategorizedEntries.length > 8 ? <li>…and {uncategorizedEntries.length - 8} more</li> : null}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
           />
-        ) : null}
-
-        {activeSection === "server" ? (
-          <ConfigFieldGroup
-            title="Server"
-            description="Instance identity and metadata visible throughout the runtime."
-            fields={SERVER_FIELDS}
-            values={values}
-            drafts={drafts}
-            pendingKey={pendingKey}
-            onDraftChange={(update) => setDrafts(update)}
-            onSave={saveField}
-          />
-        ) : null}
-
-        {activeSection === "processes" ? (
-          <ConfigFieldGroup
-            title="Processes"
-            description="Controls for init process naming and per-user process limits."
-            fields={PROCESS_FIELDS}
-            values={values}
-            drafts={drafts}
-            pendingKey={pendingKey}
-            onDraftChange={(update) => setDrafts(update)}
-            onSave={saveField}
-          />
-        ) : null}
-
-        {activeSection === "automation" ? (
-          <div class="control-detail-pane">
-            <ConfigFieldGroup
-              title="Automation"
-              description="Scheduling controls for background archivist and curator runs."
-              fields={AUTOMATION_FIELDS}
-              values={values}
-              drafts={drafts}
-              pendingKey={pendingKey}
-              onDraftChange={(update) => setDrafts(update)}
-              onSave={saveField}
-            />
-
-            <div class="control-advanced-note">
-              <h3>Not shown here</h3>
-              <p>
-                Additional keys remain in <strong>Advanced</strong>, including package repo flags,
-                per-user overrides, and any config namespaces we have not explicitly designed yet.
-              </p>
-              {uncategorizedEntries.length > 0 ? (
-                <ul>
-                  {uncategorizedEntries.slice(0, 8).map((entry) => (
-                    <li key={entry.key}><code>{entry.key}</code></li>
-                  ))}
-                  {uncategorizedEntries.length > 8 ? (
-                    <li>…and {uncategorizedEntries.length - 8} more</li>
-                  ) : null}
-                </ul>
-              ) : null}
-            </div>
-          </div>
         ) : null}
       </section>
     </div>
   );
 }
 
-type ConfigFieldGroupProps = {
-  title: string;
-  description: string;
+type SectionFormProps = {
+  sectionId: Exclude<ControlConfigSectionId, "profiles">;
   fields: ControlSettingField[];
   values: Record<string, string>;
-  drafts: Record<string, string>;
-  pendingKey: string | null;
-  onDraftChange: (update: (current: Record<string, string>) => Record<string, string>) => void;
-  onSave: (field: ControlSettingField) => Promise<void>;
+  currentValue: (key: string) => string;
+  pendingSection: string | null;
+  onChange: (key: string, value: string) => void;
+  onReset: (keys: string[]) => void;
+  onSave: (saveId: string, keys: string[]) => Promise<void>;
+  extraNote?: import("preact").ComponentChildren;
 };
 
-function ConfigFieldGroup({
-  title,
-  description,
+function SectionForm({
+  sectionId,
   fields,
   values,
-  drafts,
-  pendingKey,
-  onDraftChange,
+  currentValue,
+  pendingSection,
+  onChange,
+  onReset,
   onSave,
-}: ConfigFieldGroupProps) {
+  extraNote,
+}: SectionFormProps) {
+  const section = CONFIG_SECTIONS.find((candidate) => candidate.id === sectionId)!;
+  const editableKeys = fields.filter((field) => field.kind !== "readonly").map((field) => field.key);
+  const dirty = editableKeys.some((key) => currentValue(key) !== (values[key] ?? ""));
+  const saveId = `section:${sectionId}`;
+
   return (
     <div class="control-detail-pane">
       <header class="control-detail-head">
         <div>
-          <h2>{title}</h2>
-          <p>{description}</p>
+          <h2>{section.label}</h2>
+          <p>{section.description}</p>
         </div>
       </header>
-      <div class="control-setting-list">
-        {fields.map((field) => {
-          const value = drafts[field.key] ?? values[field.key] ?? "";
-          const isSaving = pendingKey === field.key;
-          const isReadOnly = field.kind === "readonly";
-          return (
-            <div class="control-setting-row" key={field.key}>
-              <div class="control-setting-meta">
-                <label>{field.label}</label>
-                <p>{field.description}</p>
-                <code>{field.key}</code>
-              </div>
-              <div class="control-setting-inputs">
-                <FieldInput
-                  field={field}
-                  value={value}
-                  onChange={(nextValue) => {
-                    onDraftChange((current) => ({ ...current, [field.key]: nextValue }));
-                  }}
-                />
-                {isReadOnly ? (
-                  <span class="control-inline-note">Read-only runtime field.</span>
-                ) : (
-                  <button
-                    class="control-button control-button--primary"
-                    disabled={isSaving}
-                    onClick={() => void onSave(field)}
-                  >
-                    {isSaving ? "Saving…" : "Save"}
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
+
+      <div class="control-settings-form-grid">
+        {fields.map((field) => (
+          <div class={`control-setting-block${isWideField(field) ? " is-wide" : ""}`} key={field.key}>
+            <label>{field.label}</label>
+            <p>{field.description}</p>
+            <FieldInput
+              field={field}
+              value={currentValue(field.key)}
+              onChange={(nextValue) => onChange(field.key, nextValue)}
+            />
+          </div>
+        ))}
       </div>
+
+      <div class="control-section-actions">
+        <span class="control-inline-note">{dirty ? "Unsaved changes" : "No changes"}</span>
+        <div class="control-section-actions-group">
+          <button
+            class="control-button"
+            disabled={!dirty || pendingSection === saveId}
+            onClick={() => onReset(editableKeys)}
+          >
+            Reset
+          </button>
+          <button
+            class="control-button control-button--primary"
+            disabled={!dirty || pendingSection === saveId}
+            onClick={() => void onSave(saveId, editableKeys)}
+          >
+            {pendingSection === saveId ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+
+      {extraNote}
     </div>
   );
 }
@@ -386,30 +386,17 @@ function FieldInput({ field, value, onChange }: FieldInputProps) {
 type EditorRowProps = {
   label: string;
   description: string;
-  keyPath: string;
   rows: number;
   value: string;
-  isSaving: boolean;
   onChange: (value: string) => void;
-  onSave: () => void;
 };
 
-function EditorRow({
-  label,
-  description,
-  keyPath,
-  rows,
-  value,
-  isSaving,
-  onChange,
-  onSave,
-}: EditorRowProps) {
+function EditorRow({ label, description, rows, value, onChange }: EditorRowProps) {
   return (
     <div class="control-editor-row">
       <div class="control-setting-meta">
         <label>{label}</label>
         <p>{description}</p>
-        <code>{keyPath}</code>
       </div>
       <div class="control-setting-inputs">
         <textarea
@@ -421,17 +408,15 @@ function EditorRow({
             onChange(target.value);
           }}
         />
-        <button class="control-button control-button--primary" disabled={isSaving} onClick={onSave}>
-          {isSaving ? "Saving…" : "Save"}
-        </button>
       </div>
     </div>
   );
 }
 
 function buildDrafts(values: Record<string, string>): Record<string, string> {
-  const entries = Object.entries(values).map(([key, value]) => [key, shouldPrettyPrintJson(key, value) ? prettyJson(value) : value]);
-  return Object.fromEntries(entries);
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, shouldPrettyPrintJson(key, value) ? prettyJson(value) : value]),
+  );
 }
 
 function shouldPrettyPrintJson(key: string, value: string): boolean {
@@ -444,4 +429,19 @@ function prettyJson(value: string): string {
   } catch {
     return value;
   }
+}
+
+function serializeValue(key: string, value: string): string {
+  if (key.endsWith("/tools/approval")) {
+    try {
+      return JSON.stringify(JSON.parse(value));
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function isWideField(field: ControlSettingField): boolean {
+  return field.kind === "textarea" || field.kind === "json";
 }
