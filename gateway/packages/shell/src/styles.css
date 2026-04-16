@@ -178,7 +178,7 @@ body {
 
 .shell-stage {
   min-height: 0;
-  padding: 12px;
+  padding: 0;
 }
 
 .shell-terminal-wrap {
