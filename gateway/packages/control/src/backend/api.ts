@@ -1,4 +1,4 @@
-import type { KernelClientLike } from "@gsv/package/worker";
+import type { KernelClientLike, PackageAppRpcContext } from "@gsv/package/worker";
 import type {
   SysConfigEntry,
   SysConfigGetResult,
@@ -21,14 +21,7 @@ import type {
   UnlinkArgs,
 } from "../app/types";
 
-type RuntimeContextLike = {
-  appFrame?: {
-    uid?: number;
-    username?: string;
-  };
-};
-
-export async function loadState(kernel: KernelClientLike, runtime: unknown): Promise<ControlState> {
+export async function loadState(kernel: KernelClientLike, runtime: PackageAppRpcContext): Promise<ControlState> {
   const viewer = resolveViewer(runtime);
   const [configResult, tokenResult, linkResult] = await Promise.all([
     kernel.request("sys.config.get", {} as Record<string, never>) as Promise<SysConfigGetResult>,
@@ -49,7 +42,7 @@ export async function loadState(kernel: KernelClientLike, runtime: unknown): Pro
 
 export async function saveEntry(
   kernel: KernelClientLike,
-  runtime: unknown,
+  runtime: PackageAppRpcContext,
   args: SaveEntryArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.config.set", {
@@ -61,7 +54,7 @@ export async function saveEntry(
 
 export async function createToken(
   kernel: KernelClientLike,
-  runtime: unknown,
+  runtime: PackageAppRpcContext,
   args: CreateTokenArgs,
 ): Promise<CreateTokenResult> {
   const result = await kernel.request("sys.token.create", {
@@ -79,7 +72,7 @@ export async function createToken(
 
 export async function revokeToken(
   kernel: KernelClientLike,
-  runtime: unknown,
+  runtime: PackageAppRpcContext,
   args: RevokeTokenArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.token.revoke", {
@@ -91,7 +84,7 @@ export async function revokeToken(
 
 export async function consumeLinkCode(
   kernel: KernelClientLike,
-  runtime: unknown,
+  runtime: PackageAppRpcContext,
   args: ConsumeLinkCodeArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.link.consume", {
@@ -102,7 +95,7 @@ export async function consumeLinkCode(
 
 export async function createLink(
   kernel: KernelClientLike,
-  runtime: unknown,
+  runtime: PackageAppRpcContext,
   args: CreateLinkArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.link", {
@@ -115,7 +108,7 @@ export async function createLink(
 
 export async function unlink(
   kernel: KernelClientLike,
-  runtime: unknown,
+  runtime: PackageAppRpcContext,
   args: UnlinkArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.unlink", {
@@ -128,7 +121,7 @@ export async function unlink(
 
 export async function applyRawConfig(
   kernel: KernelClientLike,
-  runtime: unknown,
+  runtime: PackageAppRpcContext,
   args: ApplyRawConfigArgs,
 ): Promise<ControlState> {
   for (const entry of args.entries) {
@@ -151,10 +144,11 @@ function normalizeConfigEntries(entries: SysConfigEntry[]): ControlConfigEntry[]
     .sort((left, right) => left.key.localeCompare(right.key));
 }
 
-function resolveViewer(runtime: unknown): ControlViewer {
-  const appFrame = (runtime as RuntimeContextLike | null)?.appFrame;
-  const uid = typeof appFrame?.uid === "number" ? appFrame.uid : 0;
-  const username = typeof appFrame?.username === "string" ? appFrame.username : uid === 0 ? "root" : "user";
+function resolveViewer(runtime: PackageAppRpcContext): ControlViewer {
+  const uid = typeof runtime.viewer.uid === "number" ? runtime.viewer.uid : 0;
+  const username = typeof runtime.viewer.username === "string" && runtime.viewer.username.trim().length > 0
+    ? runtime.viewer.username
+    : uid === 0 ? "root" : "user";
   return {
     uid,
     username,

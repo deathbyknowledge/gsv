@@ -91,6 +91,10 @@ export type PackageBaseContext = {
     packageId: string;
     routeBase: string | null;
   };
+  viewer: {
+    uid: number;
+    username: string;
+  };
   app?: {
     sessionId: string;
     clientId: string;
