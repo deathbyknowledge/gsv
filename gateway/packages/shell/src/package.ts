@@ -1,5 +1,5 @@
 import { definePackage } from "@gsv/package/worker";
-import { handleFetch } from "../ui/worker";
+import { execCommand, loadState } from "./backend/api";
 
 export default definePackage({
   meta: {
@@ -16,15 +16,17 @@ export default definePackage({
     },
   },
   app: {
-    async fetch(request, ctx) {
-      const routeBase = ctx.meta.routeBase ?? "/apps/shell";
-      return handleFetch(request, {
-        props: {
-          appFrame: { packageId: ctx.meta.packageId, routeBase },
-          kernel: ctx.kernel,
-        },
-        env: { PACKAGE_ROUTE_BASE: routeBase },
-      });
+    browser: {
+      entry: "./src/index.html",
+    },
+    assets: ["./src/styles.css"],
+    rpc: {
+      async loadState(_args, ctx) {
+        return loadState(ctx.kernel);
+      },
+      async execCommand(args, ctx) {
+        return execCommand(ctx.kernel, args);
+      },
     },
   },
 });
