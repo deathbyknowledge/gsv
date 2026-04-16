@@ -1461,6 +1461,17 @@ impl<'a> BundleBuilder<'a> {
             }
         }
 
+        if let Some(entry) = self.package_index.get(package_name) {
+            return Ok((
+                entry.root.clone(),
+                entry.manifest.clone(),
+                ModuleOrigin::Dependency {
+                    root: entry.root.clone(),
+                    package_name: package_name.to_string(),
+                },
+            ));
+        }
+
         if package_name == GSV_PACKAGE_SDK_NAME {
             return Ok((
                 GSV_PACKAGE_SDK_ROOT.to_string(),
@@ -1477,17 +1488,6 @@ impl<'a> BundleBuilder<'a> {
                 },
                 ModuleOrigin::Dependency {
                     root: GSV_PACKAGE_SDK_ROOT.to_string(),
-                    package_name: package_name.to_string(),
-                },
-            ));
-        }
-
-        if let Some(entry) = self.package_index.get(package_name) {
-            return Ok((
-                entry.root.clone(),
-                entry.manifest.clone(),
-                ModuleOrigin::Dependency {
-                    root: entry.root.clone(),
                     package_name: package_name.to_string(),
                 },
             ));
