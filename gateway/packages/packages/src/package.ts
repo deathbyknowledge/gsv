@@ -3,13 +3,16 @@ import {
   addRemote,
   approveReview,
   checkoutPackage,
+  diffRepo,
   disablePackage,
   enablePackage,
   importPackage,
   loadState,
+  readRepo,
   refreshPackage,
   refreshSource,
   removeRemote,
+  searchRepo,
   setPublic,
   startReview,
   syncSources,
@@ -18,7 +21,7 @@ import {
 export default definePackage({
   meta: {
     displayName: "Packages",
-    description: "Trust, review, updates, and source management for GSV packages.",
+    description: "Trust, review, updates, source browsing, and lifecycle management for GSV packages.",
     icon: "ui/packages-icon.svg",
     window: {
       width: 1180,
@@ -36,7 +39,10 @@ export default definePackage({
         "pkg.review.approve",
         "pkg.remove",
         "pkg.repo.refs",
+        "pkg.repo.read",
+        "pkg.repo.search",
         "pkg.repo.log",
+        "pkg.repo.diff",
         "pkg.remote.list",
         "pkg.remote.add",
         "pkg.remote.remove",
@@ -90,6 +96,15 @@ export default definePackage({
       },
       async startReview(args, ctx) {
         return startReview(ctx.kernel, args);
+      },
+      async readRepo(args, ctx) {
+        return readRepo(ctx.kernel, args);
+      },
+      async searchRepo(args, ctx) {
+        return searchRepo(ctx.kernel, args);
+      },
+      async diffRepo(args, ctx) {
+        return diffRepo(ctx.kernel, args);
       },
     },
   },
