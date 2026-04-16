@@ -2013,6 +2013,12 @@ function buildKernelClient(env, props, kernelOverride) {{
 function createBaseContext(env, metaOverrides, props, kernelOverride) {{
   return {{
     meta: mergeMeta(metaOverrides),
+    viewer: props?.appFrame && typeof props.appFrame === "object"
+      ? {{
+          uid: typeof props.appFrame.uid === "number" ? props.appFrame.uid : 0,
+          username: typeof props.appFrame.username === "string" ? props.appFrame.username : "",
+        }}
+      : {{ uid: 0, username: "" }},
     app: props?.appSession && typeof props.appSession === "object"
       ? {{
           sessionId: typeof props.appSession.sessionId === "string" ? props.appSession.sessionId : "",
