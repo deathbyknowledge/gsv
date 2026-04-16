@@ -101,6 +101,7 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
 
 export function Toolbar(props: Props) {
   const normalizedTarget = normalizeTarget(props.targetDraft);
+  const hasSelectedTarget = normalizedTarget === "gsv" || props.devices.some((device) => device.deviceId === normalizedTarget);
 
   return (
     <section class="files-toolbar">
@@ -116,6 +117,9 @@ export function Toolbar(props: Props) {
             <span>Target</span>
             <select value={normalizedTarget} onInput={(event) => props.onTargetDraftChange((event.currentTarget as HTMLSelectElement).value)}>
               <option value="gsv">Kernel (gsv)</option>
+              {!hasSelectedTarget ? (
+                <option value={normalizedTarget}>{`${normalizedTarget} · requested target`}</option>
+              ) : null}
               {props.devices.map((device) => (
                 <option value={device.deviceId}>{renderTargetLabel(device)}</option>
               ))}

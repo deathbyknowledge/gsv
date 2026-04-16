@@ -139,9 +139,9 @@ async function listDevices(kernel: KernelClient) {
     const payload = await kernel.request("sys.device.list", { includeOffline: true });
     const devices = Array.isArray(payload?.devices) ? payload.devices as FilesDevice[] : [];
     devices.sort((left, right) => String(left?.deviceId ?? "").localeCompare(String(right?.deviceId ?? "")));
-    return devices;
+    return { ok: true, devices } as const;
   } catch {
-    return [];
+    return { ok: false, devices: [] as FilesDevice[] } as const;
   }
 }
 
@@ -152,7 +152,8 @@ export async function loadState(kernel: KernelClient, input: FilesRoute): Promis
   const searchQuery = String(input.q ?? "").trim();
   let filePath = String(input.open ?? "").trim() ? normalizePath(input.open, detectPathStyle(input.open)) : "";
   let errorText = "";
-  const devices = await listDevices(kernel);
+  const deviceListing = await listDevices(kernel);
+  const devices = deviceListing.devices;
   console.debug("[files] backend loadState input", {
     input,
     resolvedTarget: target,
@@ -160,15 +161,11 @@ export async function loadState(kernel: KernelClient, input: FilesRoute): Promis
     devices: devices.map((device) => device.deviceId),
   });
 
-  if (target !== "gsv" && !devices.some((device) => String(device?.deviceId ?? "") === target)) {
-    console.warn("[files] requested target unavailable; falling back to gsv", {
+  if (target !== "gsv" && deviceListing.ok && !devices.some((device) => String(device?.deviceId ?? "") === target)) {
+    console.warn("[files] requested target missing from current device list; attempting route anyway", {
       requestedTarget: target,
       devices: devices.map((device) => device.deviceId),
     });
-    target = "gsv";
-    currentPath = normalizePath(defaultPathForTarget(target), detectPathStyle(defaultPathForTarget(target)));
-    pathStyle = detectPathStyle(currentPath);
-    filePath = "";
   }
 
   let directoryResult: FilesDirectoryResult | null = null;
