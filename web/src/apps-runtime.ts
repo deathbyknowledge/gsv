@@ -39,7 +39,7 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
   return {
     mount: (container, context) => {
       const iframe = document.createElement("iframe");
-      const iframeUrl = new URL(manifest.entrypoint.route, window.location.origin);
+      const iframeUrl = new URL(context.route, window.location.origin);
       iframeUrl.searchParams.set("windowId", context.windowId);
       iframe.src = iframeUrl.pathname + iframeUrl.search + iframeUrl.hash;
       iframe.title = manifest.name;

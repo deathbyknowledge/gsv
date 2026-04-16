@@ -36,6 +36,7 @@ type AppRuntimeState = {
 type WindowRecord = {
   windowId: string;
   app: AppManifest;
+  route: string;
   mode: WindowMode;
   lastVisibleMode: Exclude<WindowMode, "minimized">;
   x: number;
@@ -83,7 +84,7 @@ export type WindowSummary = {
 };
 
 export type WindowManager = {
-  openApp: (app: AppManifest) => string;
+  openApp: (app: AppManifest, route?: string) => string;
   focusWindow: (windowId: string) => void;
   restoreWindow: (windowId: string) => void;
   closeWindow: (windowId: string) => void;
@@ -145,7 +146,7 @@ function formatRuntimeError(error: unknown): string {
   }
 }
 
-function createWindowNode(app: AppManifest): HTMLElement {
+function createWindowNode(app: AppManifest, route: string): HTMLElement {
   const container = document.createElement("section");
   container.className = "mock-window managed-window";
   container.setAttribute("role", "dialog");
@@ -159,7 +160,7 @@ function createWindowNode(app: AppManifest): HTMLElement {
         <button type="button" class="dot green" data-window-action="maximize" aria-label="Maximize or restore window"></button>
       </div>
       <span class="window-title">${escapeHtml(app.name)}</span>
-      <span class="window-meta">${escapeHtml(app.entrypoint.route)}</span>
+      <span class="window-meta">${escapeHtml(route)}</span>
     </div>
 
     <div class="window-content" data-window-content></div>
@@ -558,6 +559,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     const context: AppRuntimeContext = {
       windowId: record.windowId,
       manifest: record.app,
+      route: record.route,
     };
 
     invokeLifecycle(
@@ -987,8 +989,9 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     }
   };
 
-  const createRecord = (app: AppManifest, persisted?: PersistedWindow): WindowRecord => {
-    const node = createWindowNode(app);
+  const createRecord = (app: AppManifest, persisted?: PersistedWindow, route?: string): WindowRecord => {
+    const resolvedRoute = route ?? app.entrypoint.route;
+    const node = createWindowNode(app, resolvedRoute);
     const dragHandleNode = node.querySelector<HTMLElement>("[data-window-drag-handle]");
     const contentNode = node.querySelector<HTMLElement>("[data-window-content]");
 
@@ -1009,6 +1012,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     const record: WindowRecord = {
       windowId: `win-${++sequence}`,
       app,
+      route: resolvedRoute,
       mode: persisted?.mode ?? "normal",
       lastVisibleMode: persisted?.lastVisibleMode ?? "normal",
       x: persisted?.x ?? WINDOW_START_X + stagger * WINDOW_OFFSET_X,
@@ -1081,11 +1085,19 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     repaintAll();
   };
 
-  const openApp = (app: AppManifest): string => {
+  const openApp = (app: AppManifest, route?: string): string => {
     const existingWindowId = windowByAppId.get(app.id);
     if (existingWindowId) {
       const existing = windows.get(existingWindowId);
       if (existing) {
+        if (route && route !== existing.route) {
+          existing.route = route;
+          const metaNode = existing.node.querySelector<HTMLElement>(".window-meta");
+          if (metaNode) {
+            metaNode.textContent = route;
+          }
+          restartRuntime(existing);
+        }
         if (existing.mode === "minimized") {
           restoreWindow(existingWindowId);
         } else {
@@ -1097,7 +1109,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       windowByAppId.delete(app.id);
     }
 
-    const record = createRecord(app);
+    const record = createRecord(app, undefined, route);
     attachWindowListeners(record);
     windows.set(record.windowId, record);
     windowByAppId.set(app.id, record.windowId);

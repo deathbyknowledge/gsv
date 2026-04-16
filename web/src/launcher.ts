@@ -18,7 +18,7 @@ type LauncherOptions = {
 };
 
 type LauncherController = {
-  openApp: (appId: string) => void;
+  openApp: (appId: string, route?: string) => void;
   setApps: (apps: readonly AppManifest[]) => void;
   destroy: () => void;
 };
@@ -82,18 +82,18 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     syncIconState();
   };
 
-  const openWindowForApp = (appId: string): string | null => {
+  const openWindowForApp = (appId: string, route?: string): string | null => {
     const app = appById.get(appId);
     if (!app) {
       return null;
     }
 
     selectedAppId = app.id;
-    return windowManager.openApp(app);
+    return windowManager.openApp(app, route);
   };
 
-  const openApp = (appId: string): void => {
-    void openWindowForApp(appId);
+  const openApp = (appId: string, route?: string): void => {
+    void openWindowForApp(appId, route);
   };
 
   const getAppIdFromEvent = (event: Event): string | null => {
@@ -180,12 +180,14 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return;
     }
 
+    const route = typeof detail?.route === "string" && detail.route.trim().length > 0 ? detail.route.trim() : undefined;
+
     const normalizedThread = normalizeThreadContext(detail?.threadContext);
     if (normalizedThread) {
       setActiveThreadContext(normalizedThread);
     }
 
-    openApp(appId);
+    openApp(appId, route);
   };
 
   const onWindowMessage = (event: MessageEvent): void => {
