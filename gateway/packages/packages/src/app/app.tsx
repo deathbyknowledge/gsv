@@ -4,10 +4,16 @@ import type {
   CatalogRecord,
   PackageDetailTab,
   PackageRecord,
+  PackageRepoDiffFile,
+  PackageRepoDiffResult,
+  PackageRepoReadResult,
+  PackageRepoRoot,
+  PackageRepoSearchResult,
   PackagesBackend,
   PackagesState,
   PackagesView,
   PackageScopeFilter,
+  RepoTreeEntry,
   SourceRecord,
 } from "./types";
 
@@ -33,6 +39,20 @@ export function App({ backend }: AppProps) {
   const [remoteName, setRemoteName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [checkoutRef, setCheckoutRef] = useState("");
+
+  const [codeRoot, setCodeRoot] = useState<PackageRepoRoot>("package");
+  const [codeRef, setCodeRef] = useState("");
+  const [codePath, setCodePath] = useState("");
+  const [codeRead, setCodeRead] = useState<PackageRepoReadResult | null>(null);
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [codeSearch, setCodeSearch] = useState("");
+  const [codeSearchResult, setCodeSearchResult] = useState<PackageRepoSearchResult | null>(null);
+  const [codeSearchBusy, setCodeSearchBusy] = useState(false);
+  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+  const [diffResult, setDiffResult] = useState<PackageRepoDiffResult | null>(null);
+  const [diffBusy, setDiffBusy] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
 
   const updateRoute = useCallback((next: {
     view?: PackagesView;
@@ -158,15 +178,6 @@ export function App({ backend }: AppProps) {
     return visiblePackages.find((pkg) => pkg.packageId === selectedPackageId) ?? visiblePackages[0] ?? null;
   }, [selectedPackageId, state, view, visiblePackages]);
 
-  useEffect(() => {
-    if (selectedPackage) {
-      setCheckoutRef(selectedPackage.source.ref);
-      if (!selectedSourceRepo) {
-        setSelectedSourceRepo(selectedPackage.source.repo);
-      }
-    }
-  }, [selectedPackage, selectedSourceRepo]);
-
   const selectedSource = useMemo(() => {
     const sources = state?.sources ?? [];
     if (sources.length === 0) return null;
@@ -199,9 +210,104 @@ export function App({ backend }: AppProps) {
     }
   }, [selectedCatalog, selectedCatalogName, updateRoute, view]);
 
+  useEffect(() => {
+    if (!selectedPackage) {
+      return;
+    }
+    setCheckoutRef(selectedPackage.source.ref);
+    setCodeRoot("package");
+    setCodeRef(selectedPackage.source.ref);
+    setCodePath("");
+    setCodeRead(null);
+    setCodeError(null);
+    setCodeSearch("");
+    setCodeSearchResult(null);
+    setSelectedCommit(null);
+    setDiffResult(null);
+    setDiffError(null);
+  }, [selectedPackage?.packageId]);
+
+  useEffect(() => {
+    if (!selectedPackage || !state?.packageDetail) {
+      return;
+    }
+    const commits = state.packageDetail.commits;
+    if (commits.length === 0) {
+      setSelectedCommit(null);
+      return;
+    }
+    const next = selectedCommit && commits.some((commit) => commit.hash === selectedCommit)
+      ? selectedCommit
+      : commits[0].hash;
+    if (next !== selectedCommit) {
+      setSelectedCommit(next);
+    }
+  }, [selectedCommit, selectedPackage?.packageId, state?.packageDetail]);
+
+  useEffect(() => {
+    if (!selectedPackage || detailTab !== "code") {
+      return;
+    }
+    let cancelled = false;
+    setCodeBusy(true);
+    setCodeError(null);
+    void backend.readRepo({
+      packageId: selectedPackage.packageId,
+      ref: codeRef || undefined,
+      path: codePath || undefined,
+      root: codeRoot,
+    }).then((result) => {
+      if (cancelled) return;
+      setCodeRead(result);
+    }).catch((cause) => {
+      if (cancelled) return;
+      setCodeError(formatError(cause));
+      setCodeRead(null);
+    }).finally(() => {
+      if (!cancelled) {
+        setCodeBusy(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [backend, codePath, codeRef, codeRoot, detailTab, selectedPackage?.packageId]);
+
+  useEffect(() => {
+    if (!selectedPackage || detailTab !== "changes" || !selectedCommit) {
+      return;
+    }
+    let cancelled = false;
+    setDiffBusy(true);
+    setDiffError(null);
+    void backend.diffRepo({ packageId: selectedPackage.packageId, commit: selectedCommit, context: 3 }).then((result) => {
+      if (cancelled) return;
+      setDiffResult(result);
+    }).catch((cause) => {
+      if (cancelled) return;
+      setDiffError(formatError(cause));
+      setDiffResult(null);
+    }).finally(() => {
+      if (!cancelled) {
+        setDiffBusy(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [backend, detailTab, selectedCommit, selectedPackage?.packageId]);
+
   const packagePermissionSummary = useMemo(() => {
     return selectedPackage ? buildPermissionSummary(selectedPackage) : [];
   }, [selectedPackage]);
+
+  const browseRefs = useMemo(() => {
+    return buildRefOptions(state?.packageDetail, selectedPackage?.source.ref);
+  }, [selectedPackage?.source.ref, state?.packageDetail]);
+
+  const selectedCommitRecord = useMemo(() => {
+    return state?.packageDetail?.commits.find((commit) => commit.hash === selectedCommit) ?? null;
+  }, [selectedCommit, state?.packageDetail]);
 
   const packageMutationBlockedReason = selectedPackage && !selectedPackage.canMutate
     ? "This package is outside your mutable package scope."
@@ -312,6 +418,7 @@ export function App({ backend }: AppProps) {
     void runAction(`checkout:${packageId}`, async () => {
       await backend.checkoutPackage({ packageId, ref: checkoutRef });
       await refresh(packageId);
+      setCodeRef(checkoutRef);
       setNotice(`Checked out ${checkoutRef}.`);
     });
   }, [backend, checkoutRef, refresh]);
@@ -332,6 +439,29 @@ export function App({ backend }: AppProps) {
     });
   }, [backend]);
 
+  const handleSearchRepo = useCallback(() => {
+    if (!selectedPackage || !codeSearch.trim()) {
+      setCodeSearchResult(null);
+      return;
+    }
+    setCodeSearchBusy(true);
+    setCodeError(null);
+    void backend.searchRepo({
+      packageId: selectedPackage.packageId,
+      ref: codeRef || undefined,
+      query: codeSearch,
+      root: codeRoot,
+      prefix: codeRead?.kind === "tree" ? codeRead.path || undefined : undefined,
+    }).then((result) => {
+      setCodeSearchResult(result);
+    }).catch((cause) => {
+      setCodeError(formatError(cause));
+      setCodeSearchResult(null);
+    }).finally(() => {
+      setCodeSearchBusy(false);
+    });
+  }, [backend, codeRead?.kind, codeRead?.path, codeRef, codeRoot, codeSearch, selectedPackage]);
+
   const selectedPackageActions = selectedPackage ? renderEntryActions(selectedPackage) : [];
 
   return (
@@ -340,7 +470,7 @@ export function App({ backend }: AppProps) {
         <div class="packages-topbar-copy">
           <p class="packages-eyebrow">Trust console</p>
           <h1>Packages</h1>
-          <p>Review, update, import, and manage the code that enters GSV.</p>
+          <p>Review, update, browse source, and manage the code that enters GSV.</p>
         </div>
         <div class="packages-topbar-tools">
           <label class="packages-search-field">
@@ -716,8 +846,10 @@ export function App({ backend }: AppProps) {
                   {([
                     ["overview", "Overview"],
                     ["permissions", "Permissions"],
+                    ["code", "Code"],
+                    ["commits", "Commits"],
+                    ["changes", "Changes"],
                     ["review", "Review"],
-                    ["versions", "Versions"],
                   ] as Array<[PackageDetailTab, string]>).map(([tabId, label]) => (
                     <button key={tabId} class={`packages-detail-tab${detailTab === tabId ? " is-active" : ""}`} onClick={() => updateRoute({ tab: tabId })}>{label}</button>
                   ))}
@@ -794,29 +926,100 @@ export function App({ backend }: AppProps) {
                     </>
                   ) : null}
 
-                  {detailTab === "review" ? (
+                  {detailTab === "code" ? (
                     <>
-                      <div class="packages-info-grid">
-                        <article><span>Review required</span><strong>{selectedPackage.review.required ? "Yes" : "No"}</strong></article>
-                        <article><span>Approved</span><strong>{selectedPackage.review.approvedAt ? formatDate(selectedPackage.review.approvedAt) : "Not yet"}</strong></article>
-                        <article><span>Update status</span><strong>{selectedPackage.updateAvailable ? "Behind source head" : "Current"}</strong></article>
-                        <article><span>Head commit</span><strong class="packages-mono">{shortHash(selectedPackage.currentHead)}</strong></article>
-                      </div>
                       <section class="packages-subsection">
                         <header>
-                          <h3>Review workflow</h3>
-                          <p>Use the dedicated review process to inspect the mounted package source and repository before enabling or approving it.</p>
+                          <h3>Source browser</h3>
+                          <p>Read-only repository inspection for trust review and update checks.</p>
                         </header>
-                        <ul class="packages-bullet-list">
-                          <li>Open a review session when the package is new, changes capabilities, or comes from an unfamiliar source.</li>
-                          <li>Approve only after checking entrypoints, bindings, and any shell, process, or host-bridge behavior.</li>
-                          <li>If the package is behind source head, pull upstream first and review the new state before enabling it.</li>
-                        </ul>
+                        <div class="packages-code-toolbar">
+                          <div class="packages-chip-row">
+                            <button class={`packages-mini-tab${codeRoot === "package" ? " is-active" : ""}`} type="button" onClick={() => { setCodeRoot("package"); setCodePath(""); setCodeSearchResult(null); }}>Package root</button>
+                            <button class={`packages-mini-tab${codeRoot === "repo" ? " is-active" : ""}`} type="button" onClick={() => { setCodeRoot("repo"); setCodePath(""); setCodeSearchResult(null); }}>Full repo</button>
+                          </div>
+                          <div class="packages-inline-grid packages-inline-grid--checkout">
+                            <select value={codeRef} onChange={(event) => { setCodeRef((event.currentTarget as HTMLSelectElement).value); setCodePath(""); setCodeSearchResult(null); }}>
+                              {browseRefs.map((ref) => <option key={ref} value={ref}>{ref}</option>)}
+                            </select>
+                            <button class="packages-button" type="button" disabled={!codePath} onClick={() => setCodePath(parentPath(codePath))}>Up one level</button>
+                          </div>
+                        </div>
+                        <div class="packages-inline-grid packages-inline-grid--code-search">
+                          <input value={codeSearch} onInput={(event) => setCodeSearch((event.currentTarget as HTMLInputElement).value)} placeholder="Search in source" />
+                          <button class="packages-button" type="button" disabled={codeSearchBusy} onClick={handleSearchRepo}>Search</button>
+                        </div>
+                        <div class="packages-code-layout">
+                          <aside class="packages-code-sidebar">
+                            <div class="packages-breadcrumbs">
+                              <button class="packages-breadcrumb" type="button" onClick={() => setCodePath("")}>{codeRoot}</button>
+                              {buildBreadcrumbs(codePath).map((crumb) => (
+                                <button key={crumb.path} class="packages-breadcrumb" type="button" onClick={() => setCodePath(crumb.path)}>{crumb.label}</button>
+                              ))}
+                            </div>
+                            {codeSearchResult ? (
+                              <div class="packages-search-panel">
+                                <div class="packages-search-panel-head">
+                                  <strong>Search results</strong>
+                                  <span>{codeSearchResult.matches.length} match{codeSearchResult.matches.length === 1 ? "" : "es"}</span>
+                                </div>
+                                {codeSearchResult.truncated ? <div class="packages-empty-inline">Search results truncated.</div> : null}
+                                <div class="packages-search-results">
+                                  {codeSearchResult.matches.map((match) => (
+                                    <button key={`${match.path}:${match.line}:${match.content}`} class="packages-search-result" type="button" onClick={() => setCodePath(match.path)}>
+                                      <strong>{match.path}</strong>
+                                      <span>Line {match.line}</span>
+                                      <code>{match.content}</code>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {codeRead?.kind === "tree" ? (
+                              <div class="packages-tree-list">
+                                {sortTreeEntries(codeRead.entries).map((entry) => (
+                                  <button key={entry.path} class={`packages-tree-row${entry.type === "tree" ? " is-tree" : ""}`} type="button" onClick={() => setCodePath(entry.path)}>
+                                    <span class="packages-tree-name">{entry.type === "tree" ? "▸" : "•"} {entry.name}</span>
+                                    <span class="packages-mono">{entry.type}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                            {codeRead?.kind === "file" ? (
+                              <div class="packages-tree-list">
+                                <button class="packages-tree-row is-tree" type="button" onClick={() => setCodePath(parentPath(codeRead.path))}>
+                                  <span class="packages-tree-name">▸ ..</span>
+                                  <span class="packages-mono">tree</span>
+                                </button>
+                              </div>
+                            ) : null}
+                          </aside>
+                          <section class="packages-code-main">
+                            {codeBusy ? <div class="packages-empty-state">Loading source…</div> : null}
+                            {codeError ? <div class="packages-empty-state">{codeError}</div> : null}
+                            {!codeBusy && !codeError && codeRead?.kind === "tree" ? (
+                              <div class="packages-empty-state">Select a file from the tree or search results.</div>
+                            ) : null}
+                            {!codeBusy && !codeError && codeRead?.kind === "file" ? (
+                              <div class="packages-file-viewer">
+                                <div class="packages-file-meta">
+                                  <strong>{codeRead.path || "/"}</strong>
+                                  <span>{formatBytes(codeRead.size)} · {codeRead.isBinary ? "binary" : "text"}</span>
+                                </div>
+                                {codeRead.isBinary ? (
+                                  <div class="packages-empty-state">This file is binary and cannot be previewed inline.</div>
+                                ) : (
+                                  <pre class="packages-code-block">{codeRead.content ?? ""}</pre>
+                                )}
+                              </div>
+                            ) : null}
+                          </section>
+                        </div>
                       </section>
                     </>
                   ) : null}
 
-                  {detailTab === "versions" ? (
+                  {detailTab === "commits" ? (
                     <>
                       <section class="packages-subsection">
                         <header>
@@ -825,7 +1028,7 @@ export function App({ backend }: AppProps) {
                         </header>
                         <div class="packages-inline-grid packages-inline-grid--checkout">
                           <select value={checkoutRef} onChange={(event) => setCheckoutRef((event.currentTarget as HTMLSelectElement).value)}>
-                            {buildRefOptions(state?.packageDetail).map((ref) => (
+                            {browseRefs.map((ref) => (
                               <option key={ref} value={ref}>{ref}</option>
                             ))}
                           </select>
@@ -850,23 +1053,80 @@ export function App({ backend }: AppProps) {
                           <h3>Recent commits</h3>
                           <p>Latest source commits for the selected package repository.</p>
                         </header>
-                        <div class="packages-table">
-                          <div class="packages-table-head packages-table-head--commits">
-                            <span>Commit</span>
-                            <span>Message</span>
-                            <span>When</span>
-                          </div>
+                        <div class="packages-commit-list">
                           {(state?.packageDetail?.commits ?? []).map((commit) => (
-                            <div key={commit.hash} class="packages-table-row packages-table-row--catalog">
-                              <span class="packages-mono">{shortHash(commit.hash)}</span>
-                              <div>
+                            <div key={commit.hash} class={`packages-commit-row${selectedCommit === commit.hash ? " is-active" : ""}`}>
+                              <button class="packages-commit-main" type="button" onClick={() => setSelectedCommit(commit.hash)}>
                                 <strong>{firstLine(commit.message)}</strong>
-                                <span>{commit.author}</span>
-                              </div>
-                              <span>{formatCommitTime(commit.commitTime)}</span>
+                                <span class="packages-mono">{shortHash(commit.hash)}</span>
+                                <span>{commit.author} · {formatCommitTime(commit.commitTime)}</span>
+                              </button>
+                              <button class="packages-button" type="button" onClick={() => { setSelectedCommit(commit.hash); updateRoute({ tab: "changes" }); }}>View diff</button>
                             </div>
                           ))}
                         </div>
+                      </section>
+                    </>
+                  ) : null}
+
+                  {detailTab === "changes" ? (
+                    <>
+                      <section class="packages-subsection">
+                        <header>
+                          <h3>Commit diff</h3>
+                          <p>Inspect what changed in the selected source commit.</p>
+                        </header>
+                        <div class="packages-chip-row">
+                          {(state?.packageDetail?.commits ?? []).slice(0, 10).map((commit) => (
+                            <button key={commit.hash} class={`packages-mini-tab${selectedCommit === commit.hash ? " is-active" : ""}`} type="button" onClick={() => setSelectedCommit(commit.hash)}>
+                              {shortHash(commit.hash)}
+                            </button>
+                          ))}
+                        </div>
+                        {selectedCommitRecord ? (
+                          <div class="packages-ref-summary">
+                            <span><strong>{firstLine(selectedCommitRecord.message)}</strong></span>
+                            <span>{selectedCommitRecord.author} · {formatCommitTime(selectedCommitRecord.commitTime)}</span>
+                          </div>
+                        ) : null}
+                        {diffBusy ? <div class="packages-empty-state">Loading diff…</div> : null}
+                        {diffError ? <div class="packages-empty-state">{diffError}</div> : null}
+                        {!diffBusy && !diffError && diffResult ? (
+                          <>
+                            <div class="packages-info-grid packages-info-grid--compact">
+                              <article><span>Files changed</span><strong>{diffResult.stats.filesChanged}</strong></article>
+                              <article><span>Additions</span><strong>{diffResult.stats.additions}</strong></article>
+                              <article><span>Deletions</span><strong>{diffResult.stats.deletions}</strong></article>
+                            </div>
+                            <div class="packages-diff-list">
+                              {diffResult.files.map((file) => (
+                                <DiffFileView key={`${diffResult.commitHash}:${file.path}`} file={file} />
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                      </section>
+                    </>
+                  ) : null}
+
+                  {detailTab === "review" ? (
+                    <>
+                      <div class="packages-info-grid">
+                        <article><span>Review required</span><strong>{selectedPackage.review.required ? "Yes" : "No"}</strong></article>
+                        <article><span>Approved</span><strong>{selectedPackage.review.approvedAt ? formatDate(selectedPackage.review.approvedAt) : "Not yet"}</strong></article>
+                        <article><span>Update status</span><strong>{selectedPackage.updateAvailable ? "Behind source head" : "Current"}</strong></article>
+                        <article><span>Head commit</span><strong class="packages-mono">{shortHash(selectedPackage.currentHead)}</strong></article>
+                      </div>
+                      <section class="packages-subsection">
+                        <header>
+                          <h3>Review workflow</h3>
+                          <p>Use the dedicated review process plus the built-in code and diff tabs before enabling or approving a package.</p>
+                        </header>
+                        <ul class="packages-bullet-list">
+                          <li>Open a review session when the package is new, changes capabilities, or comes from an unfamiliar source.</li>
+                          <li>Use Code to inspect entrypoints and sensitive files, and Changes to inspect update diffs before approving.</li>
+                          <li>Approve only after checking shell, process, filesystem, host-bridge, and package-management behavior.</li>
+                        </ul>
                       </section>
                     </>
                   ) : null}
@@ -882,6 +1142,25 @@ export function App({ backend }: AppProps) {
   );
 }
 
+function DiffFileView({ file }: { file: PackageRepoDiffFile }) {
+  return (
+    <article class="packages-diff-file">
+      <header class="packages-diff-file-head">
+        <strong>{file.path}</strong>
+        <span class={`packages-badge ${diffStatusClass(file.status)}`}>{file.status}</span>
+      </header>
+      {file.hunks && file.hunks.length > 0 ? file.hunks.map((hunk) => (
+        <section key={`${file.path}:${hunk.oldStart}:${hunk.newStart}`} class="packages-diff-hunk">
+          <div class="packages-diff-hunk-head">@@ -{hunk.oldStart},{hunk.oldCount} +{hunk.newStart},{hunk.newCount} @@</div>
+          <pre class="packages-diff-block">{hunk.lines.map((line, index) => (
+            <div key={index} class={`packages-diff-line is-${line.tag}`}>{prefixForDiffLine(line.tag)}{line.content}</div>
+          ))}</pre>
+        </section>
+      )) : <div class="packages-empty-state">No text hunks available for this file.</div>}
+    </article>
+  );
+}
+
 function readViewFromLocation(): PackagesView {
   const value = new URL(window.location.href).searchParams.get("view");
   return value === "updates" || value === "review" || value === "sources" ? value : "installed";
@@ -894,7 +1173,9 @@ function readScopeFromLocation(): PackageScopeFilter {
 
 function readTabFromLocation(): PackageDetailTab {
   const value = new URL(window.location.href).searchParams.get("tab");
-  return value === "permissions" || value === "review" || value === "versions" ? value : "overview";
+  return value === "permissions" || value === "code" || value === "commits" || value === "changes" || value === "review"
+    ? value
+    : "overview";
 }
 
 function readPackageIdFromLocation(): string | null {
@@ -928,6 +1209,13 @@ function formatDate(timestamp: number | null | undefined): string {
 function formatCommitTime(unixSeconds: number): string {
   if (!unixSeconds || !Number.isFinite(unixSeconds)) return "unknown";
   return new Date(unixSeconds * 1000).toLocaleString();
+}
+
+function formatBytes(size: number): string {
+  if (!Number.isFinite(size) || size <= 0) return "0 B";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function firstLine(text: string): string {
@@ -985,9 +1273,15 @@ function renderEntryActions(pkg: PackageRecord) {
   });
 }
 
-function buildRefOptions(state: PackagesState["packageDetail"]): string[] {
-  if (!state) return [];
-  const refs = [...Object.keys(state.refs.heads), ...Object.keys(state.refs.tags)];
+function unique<T>(items: T[]): T[] {
+  return [...new Set(items)];
+}
+
+function buildRefOptions(state: PackagesState["packageDetail"] | null | undefined, fallback?: string): string[] {
+  const refs = state ? [...Object.keys(state.refs.heads), ...Object.keys(state.refs.tags)] : [];
+  if (fallback) {
+    refs.push(fallback);
+  }
   return unique(refs).sort((left, right) => left.localeCompare(right));
 }
 
@@ -1011,6 +1305,45 @@ function catalogImportSource(catalog: CatalogRecord, entry: CatalogEntry): strin
 function appIdFromRoute(route: string): string {
   const match = route.match(/\/apps\/([^/?#]+)/);
   return match?.[1] ?? "";
+}
+
+function parentPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+function buildBreadcrumbs(path: string): Array<{ label: string; path: string }> {
+  const parts = path.split("/").filter(Boolean);
+  const crumbs: Array<{ label: string; path: string }> = [];
+  let current = "";
+  for (const part of parts) {
+    current = current ? `${current}/${part}` : part;
+    crumbs.push({ label: part, path: current });
+  }
+  return crumbs;
+}
+
+function sortTreeEntries(entries: RepoTreeEntry[]): RepoTreeEntry[] {
+  return [...entries].sort((left, right) => {
+    if (left.type !== right.type) {
+      return left.type === "tree" ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function diffStatusClass(status: PackageRepoDiffFile["status"]): string {
+  if (status === "added") return "is-enabled";
+  if (status === "deleted") return "is-disabled";
+  return "is-update";
+}
+
+function prefixForDiffLine(tag: string): string {
+  if (tag === "add") return "+";
+  if (tag === "delete") return "-";
+  if (tag === "binary") return "#";
+  return " ";
 }
 
 function openCompanion(appId: string, route: string) {

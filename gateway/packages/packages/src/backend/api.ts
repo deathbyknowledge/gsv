@@ -1,3 +1,14 @@
+import type {
+  KernelClientLike,
+  PackageAppRpcContext,
+} from "@gsv/package/worker";
+import type {
+  PkgRepoDiffResult,
+  PkgRepoLogResult,
+  PkgRepoReadResult,
+  PkgRepoSearchResult,
+} from "../../../../src/syscalls/packages";
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -19,10 +30,6 @@ function asNumber(value: unknown): number {
 function asBoolean(value: unknown): boolean {
   return value === true;
 }
-
-type KernelClient = {
-  request(call: string, args: unknown): Promise<unknown>;
-};
 
 type PackageLike = Record<string, unknown> & {
   packageId: string;
@@ -120,13 +127,13 @@ function buildReviewPrompt(pkg: PackageLike): string {
   ].join("\n");
 }
 
-async function listPackages(kernel: KernelClient): Promise<PackageLike[]> {
+async function listPackages(kernel: KernelClientLike): Promise<PackageLike[]> {
   const result = asRecord(await kernel.request("pkg.list", {}));
   return asArray<PackageLike>(result?.packages);
 }
 
 async function loadRefsForPackages(
-  kernel: KernelClient,
+  kernel: KernelClientLike,
   packages: PackageLike[],
 ): Promise<Map<string, Record<string, string>>> {
   const byRepo = new Map<string, PackageLike>();
@@ -236,7 +243,7 @@ function aggregateSources(packages: ReturnType<typeof derivePackageView>[]) {
     }));
 }
 
-async function loadCatalogs(kernel: KernelClient): Promise<Array<{
+async function loadCatalogs(kernel: KernelClientLike): Promise<Array<{
   name: string;
   kind: "local" | "remote";
   baseUrl?: string;
@@ -290,14 +297,17 @@ async function loadCatalogs(kernel: KernelClient): Promise<Array<{
   return catalogs;
 }
 
-async function loadPackageDetail(kernel: KernelClient, packageId: string) {
-  const refs = asRecord(await kernel.request("pkg.repo.refs", { packageId }));
-  const log = asRecord(await kernel.request("pkg.repo.log", { packageId, limit: 10, offset: 0 }));
+async function loadPackageDetail(kernel: KernelClientLike, packageId: string) {
+  const [refs, log] = await Promise.all([
+    kernel.request("pkg.repo.refs", { packageId }),
+    kernel.request("pkg.repo.log", { packageId, limit: 20, offset: 0 }) as Promise<PkgRepoLogResult>,
+  ]);
+  const refsRecord = asRecord(refs);
   return {
     refs: {
-      activeRef: asString(refs?.activeRef),
-      heads: asRecord(refs?.heads) ?? {},
-      tags: asRecord(refs?.tags) ?? {},
+      activeRef: asString(refsRecord?.activeRef),
+      heads: asRecord(refsRecord?.heads) ?? {},
+      tags: asRecord(refsRecord?.tags) ?? {},
     },
     commits: asArray<Record<string, unknown>>(log?.entries).map((entry) => ({
       hash: asString(entry.hash),
@@ -310,8 +320,8 @@ async function loadPackageDetail(kernel: KernelClient, packageId: string) {
 
 export async function loadState(
   args: { packageId?: string } | undefined,
-  kernel: KernelClient,
-  ctx: { viewer: { uid: number; username: string } },
+  kernel: KernelClientLike,
+  ctx: PackageAppRpcContext,
 ) {
   const viewer = normalizeViewer(ctx.viewer);
   const packagesRaw = await listPackages(kernel);
@@ -347,7 +357,7 @@ export async function loadState(
   };
 }
 
-export async function syncSources(kernel: KernelClient) {
+export async function syncSources(kernel: KernelClientLike) {
   const packages = await listPackages(kernel);
   await kernel.request("pkg.sync", {});
   const uniqueImports = unique(packages
@@ -363,7 +373,7 @@ export async function syncSources(kernel: KernelClient) {
 }
 
 export async function importPackage(
-  kernel: KernelClient,
+  kernel: KernelClientLike,
   args: { source: string; ref?: string; subdir?: string },
 ) {
   const source = parseImportSource(asString(args.source));
@@ -375,7 +385,7 @@ export async function importPackage(
 }
 
 export async function addRemote(
-  kernel: KernelClient,
+  kernel: KernelClientLike,
   args: { name: string; baseUrl: string },
 ) {
   return kernel.request("pkg.remote.add", {
@@ -385,26 +395,26 @@ export async function addRemote(
 }
 
 export async function removeRemote(
-  kernel: KernelClient,
+  kernel: KernelClientLike,
   args: { name: string },
 ) {
   return kernel.request("pkg.remote.remove", { name: asString(args.name) });
 }
 
-export async function enablePackage(kernel: KernelClient, args: { packageId: string }) {
+export async function enablePackage(kernel: KernelClientLike, args: { packageId: string }) {
   return kernel.request("pkg.install", { packageId: asString(args.packageId) });
 }
 
-export async function disablePackage(kernel: KernelClient, args: { packageId: string }) {
+export async function disablePackage(kernel: KernelClientLike, args: { packageId: string }) {
   return kernel.request("pkg.remove", { packageId: asString(args.packageId) });
 }
 
-export async function approveReview(kernel: KernelClient, args: { packageId: string }) {
+export async function approveReview(kernel: KernelClientLike, args: { packageId: string }) {
   return kernel.request("pkg.review.approve", { packageId: asString(args.packageId) });
 }
 
 export async function checkoutPackage(
-  kernel: KernelClient,
+  kernel: KernelClientLike,
   args: { packageId: string; ref: string },
 ) {
   return kernel.request("pkg.checkout", {
@@ -413,7 +423,7 @@ export async function checkoutPackage(
   });
 }
 
-export async function refreshPackage(kernel: KernelClient, args: { packageId: string }) {
+export async function refreshPackage(kernel: KernelClientLike, args: { packageId: string }) {
   const packages = await listPackages(kernel);
   const target = packages.find((pkg) => pkg.packageId === asString(args.packageId));
   if (!target) {
@@ -429,7 +439,7 @@ export async function refreshPackage(kernel: KernelClient, args: { packageId: st
   });
 }
 
-export async function refreshSource(kernel: KernelClient, args: { repo: string }) {
+export async function refreshSource(kernel: KernelClientLike, args: { repo: string }) {
   const repo = asString(args.repo);
   if (!repo) {
     throw new Error("repo is required");
@@ -451,7 +461,7 @@ export async function refreshSource(kernel: KernelClient, args: { repo: string }
 }
 
 export async function setPublic(
-  kernel: KernelClient,
+  kernel: KernelClientLike,
   args: { packageId?: string; repo?: string; public: boolean },
 ) {
   return kernel.request("pkg.public.set", {
@@ -461,7 +471,7 @@ export async function setPublic(
   });
 }
 
-export async function startReview(kernel: KernelClient, args: { packageId: string }) {
+export async function startReview(kernel: KernelClientLike, args: { packageId: string }) {
   const packages = await listPackages(kernel);
   const target = packages.find((pkg) => pkg.packageId === asString(args.packageId));
   if (!target) {
@@ -488,4 +498,40 @@ export async function startReview(kernel: KernelClient, args: { packageId: strin
     workspaceId: asString(spawned?.workspaceId) || null,
     cwd: asString(spawned?.cwd) || null,
   };
+}
+
+export async function readRepo(
+  kernel: KernelClientLike,
+  args: { packageId: string; ref?: string; path?: string; root?: "package" | "repo" },
+): Promise<PkgRepoReadResult> {
+  return kernel.request("pkg.repo.read", {
+    packageId: asString(args.packageId),
+    ref: asString(args.ref) || undefined,
+    path: asString(args.path) || undefined,
+    root: args.root === "repo" ? "repo" : "package",
+  }) as Promise<PkgRepoReadResult>;
+}
+
+export async function searchRepo(
+  kernel: KernelClientLike,
+  args: { packageId: string; ref?: string; query: string; prefix?: string; root?: "package" | "repo" },
+): Promise<PkgRepoSearchResult> {
+  return kernel.request("pkg.repo.search", {
+    packageId: asString(args.packageId),
+    ref: asString(args.ref) || undefined,
+    query: asString(args.query),
+    prefix: asString(args.prefix) || undefined,
+    root: args.root === "repo" ? "repo" : "package",
+  }) as Promise<PkgRepoSearchResult>;
+}
+
+export async function diffRepo(
+  kernel: KernelClientLike,
+  args: { packageId: string; commit: string; context?: number },
+): Promise<PkgRepoDiffResult> {
+  return kernel.request("pkg.repo.diff", {
+    packageId: asString(args.packageId),
+    commit: asString(args.commit),
+    context: typeof args.context === "number" ? args.context : 3,
+  }) as Promise<PkgRepoDiffResult>;
 }

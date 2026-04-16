@@ -1,6 +1,7 @@
 export type PackagesView = "installed" | "updates" | "review" | "sources";
 export type PackageScopeFilter = "all" | "mine" | "system";
-export type PackageDetailTab = "overview" | "permissions" | "review" | "versions";
+export type PackageDetailTab = "overview" | "permissions" | "code" | "commits" | "changes" | "review";
+export type PackageRepoRoot = "package" | "repo";
 
 export type PackageEntrypoint = {
   name: string;
@@ -85,18 +86,100 @@ export type CatalogRecord = {
   error?: string;
 };
 
+export type PackageCommit = {
+  hash: string;
+  message: string;
+  author: string;
+  commitTime: number;
+};
+
 export type PackageDetail = {
   refs: {
     activeRef: string;
     heads: Record<string, string>;
     tags: Record<string, string>;
   };
-  commits: Array<{
-    hash: string;
-    message: string;
-    author: string;
-    commitTime: number;
-  }>;
+  commits: PackageCommit[];
+};
+
+export type RepoTreeEntry = {
+  name: string;
+  path: string;
+  mode: string;
+  hash: string;
+  type: string;
+};
+
+export type PackageRepoReadResult =
+  | {
+      packageId: string;
+      repo: string;
+      ref: string;
+      path: string;
+      kind: "tree";
+      entries: RepoTreeEntry[];
+    }
+  | {
+      packageId: string;
+      repo: string;
+      ref: string;
+      path: string;
+      kind: "file";
+      size: number;
+      isBinary: boolean;
+      content: string | null;
+    };
+
+export type PackageRepoSearchMatch = {
+  path: string;
+  line: number;
+  content: string;
+};
+
+export type PackageRepoSearchResult = {
+  packageId: string;
+  repo: string;
+  ref: string;
+  query: string;
+  prefix?: string;
+  root: PackageRepoRoot;
+  truncated?: boolean;
+  matches: PackageRepoSearchMatch[];
+};
+
+export type PackageRepoDiffLine = {
+  tag: "context" | "add" | "delete" | "binary";
+  content: string;
+};
+
+export type PackageRepoDiffHunk = {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: PackageRepoDiffLine[];
+};
+
+export type PackageRepoDiffFile = {
+  path: string;
+  status: "added" | "deleted" | "modified";
+  oldHash?: string;
+  newHash?: string;
+  hunks?: PackageRepoDiffHunk[];
+};
+
+export type PackageRepoDiffResult = {
+  packageId: string;
+  repo: string;
+  ref: string;
+  commitHash: string;
+  parentHash?: string | null;
+  stats: {
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+  };
+  files: PackageRepoDiffFile[];
 };
 
 export type PackagesState = {
@@ -130,4 +213,7 @@ export type PackagesBackend = {
   checkoutPackage(args: { packageId: string; ref: string }): Promise<unknown>;
   setPublic(args: { packageId?: string; repo?: string; public: boolean }): Promise<unknown>;
   startReview(args: { packageId: string }): Promise<{ pid: string; workspaceId: string | null; cwd: string | null }>;
+  readRepo(args: { packageId: string; ref?: string; path?: string; root?: PackageRepoRoot }): Promise<PackageRepoReadResult>;
+  searchRepo(args: { packageId: string; ref?: string; query: string; prefix?: string; root?: PackageRepoRoot }): Promise<PackageRepoSearchResult>;
+  diffRepo(args: { packageId: string; commit: string; context?: number }): Promise<PackageRepoDiffResult>;
 };
