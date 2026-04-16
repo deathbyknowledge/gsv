@@ -2,6 +2,16 @@ import { normalizeThreadContext, type ThreadContext } from "./thread-context";
 
 export const OPEN_APP_EVENT = "gsv:open-app";
 
+const PENDING_APP_OPEN_KEY = "__gsvPendingAppOpenRequests";
+
+type PendingAppOpenStore = Map<string, OpenAppRequest>;
+
+declare global {
+  interface Window {
+    [PENDING_APP_OPEN_KEY]?: PendingAppOpenStore;
+  }
+}
+
 export type FilesOpenPayload = {
   device?: string;
   path?: string;
@@ -53,6 +63,38 @@ export type ResolvedOpenAppDetail =
       type: "chat-process";
       threadContext: ThreadContext;
     };
+
+function getPendingStore(): PendingAppOpenStore {
+  const existing = window[PENDING_APP_OPEN_KEY];
+  if (existing instanceof Map) {
+    return existing;
+  }
+
+  const created = new Map<string, OpenAppRequest>();
+  window[PENDING_APP_OPEN_KEY] = created;
+  return created;
+}
+
+export function queuePendingAppOpen(windowId: string, request: OpenAppRequest): void {
+  const normalizedWindowId = windowId.trim();
+  if (!normalizedWindowId) {
+    return;
+  }
+  getPendingStore().set(normalizedWindowId, request);
+}
+
+export function consumePendingAppOpen(windowId: string): OpenAppRequest | null {
+  const normalizedWindowId = windowId.trim();
+  if (!normalizedWindowId) {
+    return null;
+  }
+  const store = getPendingStore();
+  const request = store.get(normalizedWindowId) ?? null;
+  if (request) {
+    store.delete(normalizedWindowId);
+  }
+  return request;
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;

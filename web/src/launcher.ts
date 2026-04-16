@@ -1,6 +1,6 @@
 import type { AppManifest } from "./apps";
 import { renderDesktopIcon } from "./icons";
-import { OPEN_APP_EVENT, resolveOpenAppDetail, type OpenAppEventDetail } from "./app-link";
+import { OPEN_APP_EVENT, queuePendingAppOpen, resolveOpenAppDetail, type OpenAppEventDetail } from "./app-link";
 import {
   OPEN_CHAT_PROCESS_EVENT,
   TARGET_CHAT_PROCESS_EVENT,
@@ -193,7 +193,14 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       setActiveThreadContext(resolved.threadContext);
     }
 
-    openApp(resolved.appId, resolved.route);
+    const windowId = openWindowForApp(resolved.appId, resolved.route);
+    if (!windowId) {
+      return;
+    }
+
+    if (detail?.request) {
+      queuePendingAppOpen(windowId, detail.request);
+    }
   };
 
   const onWindowMessage = (event: MessageEvent): void => {

@@ -1,4 +1,5 @@
 import { getBackend } from "@gsv/package/browser";
+import { consumePendingAppOpen } from "@gsv/package/host";
 
 type GhosttyModule = {
   init: () => Promise<void>;
@@ -58,6 +59,7 @@ declare global {
 const streamNode = document.querySelector<HTMLElement>("[data-shell-terminal]");
 const statusNode = document.querySelector<HTMLElement>("[data-shell-status]");
 const targetSelect = document.querySelector<HTMLSelectElement>("[data-shell-target]");
+const WINDOW_ID = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
 const workdirInput = document.querySelector<HTMLInputElement>("[data-shell-workdir]");
 const timeoutInput = document.querySelector<HTMLInputElement>("[data-shell-timeout]");
 const yieldInput = document.querySelector<HTMLInputElement>("[data-shell-yield]");
@@ -97,6 +99,17 @@ function readActiveThreadContext(): { cwd: string; workspaceId: string } | null 
 }
 
 function readRouteParams(): { target: string | null; workdir: string | null } {
+  const pending = consumePendingAppOpen(WINDOW_ID);
+  if (pending?.target === "shell") {
+    const payload = pending.payload && typeof pending.payload === "object" ? pending.payload as Record<string, unknown> : null;
+    const context = payload?.context && typeof payload.context === "object" ? payload.context as Record<string, unknown> : null;
+    const target = typeof payload?.device === "string" && payload.device.trim() ? payload.device.trim() : null;
+    const workdir = typeof payload?.workdir === "string" && payload.workdir.trim()
+      ? payload.workdir.trim()
+      : (typeof context?.cwd === "string" && context.cwd.trim() ? context.cwd.trim() : null);
+    return { target, workdir };
+  }
+
   const url = new URL(window.location.href);
   const target = url.searchParams.get("target");
   const workdir = url.searchParams.get("path") || url.searchParams.get("workdir");

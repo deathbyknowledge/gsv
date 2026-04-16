@@ -96,6 +96,15 @@ export type HostClient = {
 };
 
 const OPEN_APP_EVENT = "gsv:open-app";
+const PENDING_APP_OPEN_KEY = "__gsvPendingAppOpenRequests";
+
+type PendingAppOpenStore = Map<string, OpenAppRequest>;
+
+declare global {
+  interface Window {
+    [PENDING_APP_OPEN_KEY]?: PendingAppOpenStore;
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -159,6 +168,29 @@ function buildFallbackRoute(request: OpenAppRequest): string {
     return explicitRoute;
   }
   return `/apps/${encodeURIComponent(target)}`;
+}
+
+export function consumePendingAppOpen(windowId?: string): OpenAppRequest | null {
+  const fallbackWindowId = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
+  const normalizedWindowId = windowId?.trim() || fallbackWindowId;
+  if (!normalizedWindowId) {
+    return null;
+  }
+
+  try {
+    const store = window.parent?.[PENDING_APP_OPEN_KEY];
+    if (store instanceof Map) {
+      const request = store.get(normalizedWindowId) ?? null;
+      if (request) {
+        store.delete(normalizedWindowId);
+      }
+      return request as OpenAppRequest | null;
+    }
+  } catch {
+    // Ignore cross-window access failures outside the shell host.
+  }
+
+  return null;
 }
 
 export function openApp(request: OpenAppRequest): void {
