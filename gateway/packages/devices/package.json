@@ -4,6 +4,6 @@
   "type": "module",
   "dependencies": {
     "@gsv/package": "workspace:*",
-    "preact": "^10.26.4"
+    "preact": "^10.27.2"
   }
 }

@@ -59,6 +59,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@gsv/package": "workspace:*",
+        "preact": "^10.27.2",
       },
     },
     "gateway/packages/doctor": {
