@@ -152,7 +152,7 @@ function buildFallbackRoute(request: OpenAppRequest): string {
   const payload = asRecord(request.payload) ?? {};
   if (target === "files") {
     const context = normalizeThreadContext(payload.context);
-    const url = new URL("/apps/files", window.location.href);
+    const url = new URL("/apps/files/", window.location.href);
     writeParam(url, "target", readRequestedTarget(payload) ?? undefined);
     writeParam(url, "path", asString(payload.path) ?? context?.cwd ?? undefined);
     writeParam(url, "open", asString(payload.open) ?? undefined);
@@ -161,13 +161,13 @@ function buildFallbackRoute(request: OpenAppRequest): string {
   }
   if (target === "shell") {
     const context = normalizeThreadContext(payload.context);
-    const url = new URL("/apps/shell", window.location.href);
+    const url = new URL("/apps/shell/", window.location.href);
     writeParam(url, "target", readRequestedTarget(payload) ?? undefined);
     writeParam(url, "workdir", asString(payload.workdir) ?? context?.cwd ?? undefined);
     return `${url.pathname}${url.search}`;
   }
   if (target === "wiki") {
-    const url = new URL("/apps/wiki", window.location.href);
+    const url = new URL("/apps/wiki/", window.location.href);
     writeParam(url, "db", asString(payload.db) ?? undefined);
     writeParam(url, "path", asString(payload.path) ?? undefined);
     writeParam(url, "mode", asString(payload.mode) ?? undefined);
@@ -2285,7 +2285,9 @@ function serveStaticAsset(request, routeBase) {{
   }}
   const url = new URL(request.url);
   if (url.pathname === routeBase) {{
-    return Response.redirect(`${{url.origin}}${{routeBase}}/`, 302);
+    const canonicalUrl = new URL(`${{routeBase}}/`, url.origin);
+    canonicalUrl.search = url.search;
+    return Response.redirect(canonicalUrl.toString(), 302);
   }}
   if (request.method !== "GET" && request.method !== "HEAD") {{
     return null;

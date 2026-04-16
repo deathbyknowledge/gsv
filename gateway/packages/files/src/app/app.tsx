@@ -8,7 +8,53 @@ type Props = {
   backend: FilesBackend;
 };
 
-const WINDOW_ID = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
+function readFrameLaunchUrl(): URL | null {
+  try {
+    const frame = window.frameElement;
+    if (!(frame instanceof HTMLIFrameElement)) {
+      return null;
+    }
+    const raw = frame.getAttribute("src")?.trim() || frame.src?.trim() || "";
+    if (!raw) {
+      return null;
+    }
+    return new URL(raw, window.location.origin);
+  } catch {
+    return null;
+  }
+}
+
+function readLaunchUrl(): URL {
+  const current = new URL(window.location.href);
+  const frame = readFrameLaunchUrl();
+  if (!frame) {
+    return current;
+  }
+
+  const currentHasWindowId = current.searchParams.has("windowId");
+  const currentHasExplicitState =
+    current.searchParams.has("path")
+    || current.searchParams.has("open")
+    || current.searchParams.has("q")
+    || current.searchParams.has("target");
+  if (currentHasWindowId && currentHasExplicitState) {
+    return current;
+  }
+
+  const frameHasWindowId = frame.searchParams.has("windowId");
+  const frameHasExplicitState =
+    frame.searchParams.has("path")
+    || frame.searchParams.has("open")
+    || frame.searchParams.has("q")
+    || frame.searchParams.has("target");
+  if (!frameHasWindowId && !frameHasExplicitState) {
+    return current;
+  }
+
+  return frame;
+}
+
+const WINDOW_ID = readLaunchUrl().searchParams.get("windowId")?.trim() || "";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -52,7 +98,7 @@ function readActiveThreadContext() {
 }
 
 function readRouteFromUrl(): FilesRoute {
-  const url = new URL(window.location.href);
+  const url = readLaunchUrl();
   const hasExplicitState = url.searchParams.has("path") || url.searchParams.has("open") || url.searchParams.has("q") || url.searchParams.has("target");
   if (!hasExplicitState) {
     const thread = readActiveThreadContext();
@@ -76,6 +122,7 @@ function readRouteFromUrl(): FilesRoute {
     windowId: WINDOW_ID,
     route: nextRoute,
     href: window.location.href,
+    launchHref: url.toString(),
   });
   return nextRoute;
 }
