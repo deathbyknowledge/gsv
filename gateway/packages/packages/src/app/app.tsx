@@ -14,7 +14,6 @@ import type {
   PackagesView,
   PackageScopeFilter,
   RepoTreeEntry,
-  SourceRecord,
 } from "./types";
 
 type AppProps = {
@@ -161,22 +160,18 @@ export function App({ backend }: AppProps) {
       });
   }, [query, scopeFilter, state?.packages, view]);
 
-  useEffect(() => {
-    if (!state || view === "sources") {
-      return;
-    }
-    const hasSelected = selectedPackageId && visiblePackages.some((pkg) => pkg.packageId === selectedPackageId);
-    if (!hasSelected) {
-      updateRoute({ packageId: visiblePackages[0]?.packageId ?? null, sourceRepo: visiblePackages[0]?.source.repo ?? selectedSourceRepo });
-    }
-  }, [selectedPackageId, selectedSourceRepo, state, updateRoute, view, visiblePackages]);
-
   const selectedPackage = useMemo(() => {
-    if (!state || view === "sources") {
+    if (!selectedPackageId || !state || view === "sources") {
       return null;
     }
-    return visiblePackages.find((pkg) => pkg.packageId === selectedPackageId) ?? visiblePackages[0] ?? null;
-  }, [selectedPackageId, state, view, visiblePackages]);
+    return state.packages.find((pkg) => pkg.packageId === selectedPackageId) ?? null;
+  }, [selectedPackageId, state, view]);
+
+  useEffect(() => {
+    if (selectedPackageId && !selectedPackage && state && view !== "sources") {
+      updateRoute({ packageId: null });
+    }
+  }, [selectedPackage, selectedPackageId, state, updateRoute, view]);
 
   const selectedSource = useMemo(() => {
     const sources = state?.sources ?? [];
@@ -301,9 +296,7 @@ export function App({ backend }: AppProps) {
     return selectedPackage ? buildPermissionSummary(selectedPackage) : [];
   }, [selectedPackage]);
 
-  const browseRefs = useMemo(() => {
-    return buildRefOptions(state?.packageDetail, selectedPackage?.source.ref);
-  }, [selectedPackage?.source.ref, state?.packageDetail]);
+  const browseRefs = useMemo(() => buildRefOptions(state?.packageDetail, selectedPackage?.source.ref), [selectedPackage?.source.ref, state?.packageDetail]);
 
   const selectedCommitRecord = useMemo(() => {
     return state?.packageDetail?.commits.find((commit) => commit.hash === selectedCommit) ?? null;
@@ -491,7 +484,7 @@ export function App({ backend }: AppProps) {
           <button
             key={tabView}
             class={`packages-main-tab${view === tabView ? " is-active" : ""}`}
-            onClick={() => updateRoute({ view: tabView })}
+            onClick={() => updateRoute({ view: tabView, packageId: null })}
           >
             {label}
           </button>
@@ -502,643 +495,898 @@ export function App({ backend }: AppProps) {
       {notice ? <div class="packages-banner">{notice}</div> : null}
 
       {view === "sources" ? (
-        <div class="packages-layout packages-layout--sources">
-          <aside class="packages-sidebar">
-            <header class="packages-sidebar-head">
-              <strong>Installed sources</strong>
-              <span>{state?.sources.length ?? 0} repos</span>
-            </header>
-            <div class="packages-sidebar-list">
-              {(state?.sources ?? [])
-                .filter((source) => {
-                  const normalized = query.trim().toLowerCase();
-                  if (!normalized) return true;
-                  return [source.repo, ...source.packageNames].some((value) => value.toLowerCase().includes(normalized));
-                })
-                .map((source) => (
-                  <button
-                    key={source.repo}
-                    class={`packages-list-row${selectedSource?.repo === source.repo ? " is-active" : ""}`}
-                    onClick={() => updateRoute({ sourceRepo: source.repo })}
-                  >
-                    <div>
-                      <strong>{source.repo}</strong>
-                      <span>{source.packageCount} package{source.packageCount === 1 ? "" : "s"}</span>
-                    </div>
-                    <div class="packages-list-meta">
-                      {source.updateCount > 0 ? <span class="packages-badge is-update">{source.updateCount} update{source.updateCount === 1 ? "" : "s"}</span> : null}
-                      {source.reviewPendingCount > 0 ? <span class="packages-badge is-review">{source.reviewPendingCount} review</span> : null}
-                    </div>
-                  </button>
-                ))}
-            </div>
-          </aside>
-
-          <main class="packages-main-pane">
-            <section class="packages-section packages-section--toolbar">
-              <div class="packages-toolbar-grid">
-                <div>
-                  <h2>Import package</h2>
-                  <p>Bring in a repo or remote URL. Third-party imports stay disabled until reviewed.</p>
-                </div>
-                <div class="packages-inline-grid">
-                  <input value={importSource} onInput={(event) => setImportSource((event.currentTarget as HTMLInputElement).value)} placeholder="owner/repo or https://..." />
-                  <input value={importRef} onInput={(event) => setImportRef((event.currentTarget as HTMLInputElement).value)} placeholder="main" />
-                  <input value={importSubdir} onInput={(event) => setImportSubdir((event.currentTarget as HTMLInputElement).value)} placeholder="." />
-                  <button class="packages-button packages-button--primary" type="button" disabled={pendingAction === "import-package"} onClick={handleImportPackage}>Import</button>
-                </div>
+        <SourcesView
+          state={state}
+          query={query}
+          pendingAction={pendingAction}
+          importSource={importSource}
+          importRef={importRef}
+          importSubdir={importSubdir}
+          remoteName={remoteName}
+          remoteUrl={remoteUrl}
+          selectedSource={selectedSource}
+          selectedCatalog={selectedCatalog}
+          selectedPackageId={selectedPackageId}
+          sourceRefreshBlockedReason={sourceRefreshBlockedReason}
+          sourceVisibilityBlockedReason={sourceVisibilityBlockedReason}
+          setImportSource={setImportSource}
+          setImportRef={setImportRef}
+          setImportSubdir={setImportSubdir}
+          setRemoteName={setRemoteName}
+          setRemoteUrl={setRemoteUrl}
+          updateRoute={updateRoute}
+          handleRefreshSource={handleRefreshSource}
+          handleSetPublic={handleSetPublic}
+          handleImportPackage={handleImportPackage}
+          handleAddRemote={handleAddRemote}
+          handleRemoveRemote={handleRemoveRemote}
+          backend={backend}
+          refresh={refresh}
+          runAction={runAction}
+          setNotice={setNotice}
+        />
+      ) : selectedPackage ? (
+        <div class="packages-detail-page">
+          <div class="packages-detail-nav">
+            <button class="packages-button" type="button" onClick={() => updateRoute({ packageId: null })}>← Back to packages</button>
+            <span class="packages-detail-nav-copy">{iconForPackage(selectedPackage)} {selectedPackage.source.repo}</span>
+          </div>
+          <header class="packages-detail-head">
+            <div>
+              <div class="packages-title-line">
+                <span class="packages-entity-icon" aria-hidden="true">{iconForPackage(selectedPackage)}</span>
+                <h2>{selectedPackage.name}</h2>
+                <span class={`packages-badge ${selectedPackage.scope.kind === "user" ? "is-user" : selectedPackage.scope.kind === "workspace" ? "is-workspace" : "is-system"}`}>{formatScope(selectedPackage)}</span>
+                {selectedPackage.reviewPending ? <span class="packages-badge is-review">Review required</span> : null}
+                {selectedPackage.updateAvailable ? <span class="packages-badge is-update">Update available</span> : null}
+                {!selectedPackage.reviewPending && selectedPackage.enabled ? <span class="packages-badge is-enabled">Enabled</span> : null}
+                {!selectedPackage.enabled ? <span class="packages-badge is-disabled">Disabled</span> : null}
               </div>
-            </section>
+              <p>{selectedPackage.description || "No description provided."}</p>
+            </div>
+            <div class="packages-inline-actions packages-inline-actions--wrap">
+              {selectedPackageActions}
+              <button class="packages-button" type="button" disabled={pendingAction === `review:${selectedPackage.packageId}`} onClick={() => handleStartReview(selectedPackage.packageId)}>Review</button>
+              {selectedPackage.reviewPending ? (
+                <button
+                  class="packages-button packages-button--primary"
+                  type="button"
+                  title={packageMutationBlockedReason || undefined}
+                  disabled={!selectedPackage.canMutate || pendingAction === `approve:${selectedPackage.packageId}`}
+                  onClick={() => handleApproveReview(selectedPackage.packageId)}
+                >
+                  Approve
+                </button>
+              ) : null}
+              {selectedPackage.enabled ? (
+                <button
+                  class="packages-button"
+                  type="button"
+                  title={packageMutationBlockedReason || undefined}
+                  disabled={!selectedPackage.canMutate || pendingAction === `disable:${selectedPackage.packageId}`}
+                  onClick={() => handleDisablePackage(selectedPackage.packageId)}
+                >
+                  Disable
+                </button>
+              ) : !selectedPackage.reviewPending ? (
+                <button
+                  class="packages-button packages-button--primary"
+                  type="button"
+                  title={packageMutationBlockedReason || undefined}
+                  disabled={!selectedPackage.canMutate || pendingAction === `enable:${selectedPackage.packageId}`}
+                  onClick={() => handleEnablePackage(selectedPackage.packageId)}
+                >
+                  Enable
+                </button>
+              ) : null}
+              <button
+                class="packages-button"
+                type="button"
+                title={selectedPackage.isBuiltin ? "Builtin packages are refreshed through Sync sources. Upstream pull support will be wired separately." : packageMutationBlockedReason || undefined}
+                disabled={selectedPackage.isBuiltin || !selectedPackage.canMutate || pendingAction === `refresh:${selectedPackage.packageId}`}
+                onClick={() => handleRefreshPackage(selectedPackage.packageId)}
+              >
+                Pull upstream
+              </button>
+              {!selectedPackage.isBuiltin ? (
+                <button
+                  class="packages-button"
+                  type="button"
+                  title={packageVisibilityBlockedReason || undefined}
+                  disabled={!selectedPackage.canChangeVisibility || pendingAction === `public:${selectedPackage.packageId}`}
+                  onClick={() => handleSetPublic({ packageId: selectedPackage.packageId, public: !selectedPackage.source.public })}
+                >
+                  {selectedPackage.source.public ? "Hide" : "Publish"}
+                </button>
+              ) : null}
+            </div>
+          </header>
 
-            <section class="packages-section">
-              <header class="packages-section-head">
-                <div>
-                  <h2>{selectedSource ? selectedSource.repo : "No source selected"}</h2>
-                  <p>{selectedSource ? `${selectedSource.packageCount} installed package${selectedSource.packageCount === 1 ? "" : "s"} from this source.` : "Select an installed source to inspect it."}</p>
-                </div>
-                {selectedSource ? (
-                  <div class="packages-inline-actions">
-                    <button
-                      class="packages-button"
-                      type="button"
-                      title={selectedSource.isBuiltin ? "Builtin packages are refreshed through Sync sources." : sourceRefreshBlockedReason || undefined}
-                      disabled={!selectedSource.refreshable || pendingAction === `refresh-source:${selectedSource.repo}`}
-                      onClick={() => handleRefreshSource(selectedSource.repo)}
-                    >
-                      Pull upstream
-                    </button>
-                    {!selectedSource.isBuiltin ? (
-                      <button
-                        class="packages-button"
-                        type="button"
-                        title={sourceVisibilityBlockedReason || undefined}
-                        disabled={!selectedSource.canChangeVisibility || pendingAction === `public:${selectedSource.repo}`}
-                        onClick={() => handleSetPublic({ repo: selectedSource.repo, public: !selectedSource.public })}
-                      >
-                        {selectedSource.public ? "Hide source" : "Publish source"}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-              </header>
-              {selectedSource ? (
-                <>
-                  <div class="packages-info-grid">
-                    <article><span>Kind</span><strong>{selectedSource.isBuiltin ? "Builtin" : "Imported"}</strong></article>
-                    <article><span>Visibility</span><strong>{selectedSource.public ? "Public" : "Private"}</strong></article>
-                    <article><span>Pending review</span><strong>{selectedSource.reviewPendingCount}</strong></article>
-                    <article><span>Updates</span><strong>{selectedSource.updateCount}</strong></article>
-                  </div>
-                  <div class="packages-table">
-                    <div class="packages-table-head">
-                      <span>Package</span>
-                      <span>Status</span>
-                      <span>Ref</span>
-                    </div>
-                    {state?.packages.filter((pkg) => pkg.source.repo === selectedSource.repo).map((pkg) => (
-                      <button
-                        key={pkg.packageId}
-                        class="packages-table-row packages-table-row--button"
-                        onClick={() => updateRoute({ view: pkg.reviewPending ? "review" : pkg.updateAvailable ? "updates" : "installed", packageId: pkg.packageId, sourceRepo: pkg.source.repo })}
-                      >
-                        <div>
-                          <strong>{pkg.name}</strong>
-                          <span>{pkg.description || pkg.source.subdir}</span>
-                        </div>
-                        <div class="packages-row-status">
-                          {pkg.reviewPending ? <span class="packages-badge is-review">Review required</span> : null}
-                          {pkg.updateAvailable ? <span class="packages-badge is-update">Update available</span> : pkg.enabled ? <span class="packages-badge is-enabled">Enabled</span> : <span class="packages-badge is-disabled">Disabled</span>}
-                        </div>
-                        <span class="packages-mono">{pkg.source.ref}</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : <div class="packages-empty-state">No source matches the current selection.</div>}
-            </section>
+          <nav class="packages-detail-tabs">
+            {([
+              ["overview", "Overview"],
+              ["permissions", "Permissions"],
+              ["code", "Code"],
+              ["commits", "Commits"],
+              ["changes", "Changes"],
+              ["review", "Review"],
+            ] as Array<[PackageDetailTab, string]>).map(([tabId, label]) => (
+              <button key={tabId} class={`packages-detail-tab${detailTab === tabId ? " is-active" : ""}`} onClick={() => updateRoute({ tab: tabId })}>{label}</button>
+            ))}
+          </nav>
 
-            <section class="packages-sources-grid">
-              <section class="packages-section">
-                <header class="packages-section-head">
-                  <div>
-                    <h2>Catalogs</h2>
-                    <p>Browse local and remote public package catalogs.</p>
-                  </div>
-                  <div class="packages-catalog-tabs">
-                    {(state?.catalogs ?? []).map((catalog) => (
-                      <button
-                        key={catalog.name}
-                        class={`packages-mini-tab${selectedCatalog?.name === catalog.name ? " is-active" : ""}`}
-                        onClick={() => updateRoute({ catalog: catalog.name })}
-                      >
-                        {catalog.kind === "local" ? "Local" : catalog.name}
-                      </button>
-                    ))}
-                  </div>
-                </header>
-                {selectedCatalog ? (
-                  <>
-                    <div class="packages-catalog-meta">
-                      <span>{selectedCatalog.kind === "local" ? "Local catalog" : selectedCatalog.baseUrl}</span>
-                      {selectedCatalog.error ? <span class="packages-badge is-disabled">Unavailable</span> : <span class="packages-badge is-catalog">{selectedCatalog.packages.length} package{selectedCatalog.packages.length === 1 ? "" : "s"}</span>}
-                    </div>
-                    {selectedCatalog.error ? <div class="packages-empty-state">{selectedCatalog.error}</div> : (
-                      <div class="packages-table">
-                        <div class="packages-table-head packages-table-head--catalog">
-                          <span>Package</span>
-                          <span>Source</span>
-                          <span></span>
-                        </div>
-                        {selectedCatalog.packages.map((entry) => {
-                          const installed = matchInstalledPackage(entry, state?.packages ?? []);
-                          return (
-                            <div key={`${entry.source.repo}:${entry.source.subdir}:${entry.name}`} class="packages-table-row packages-table-row--catalog">
-                              <div>
-                                <strong>{entry.name}</strong>
-                                <span>{entry.description || entry.source.repo}</span>
-                              </div>
-                              <span class="packages-mono">{entry.source.repo}</span>
-                              <div class="packages-inline-actions">
-                                {installed ? (
-                                  <button class="packages-button" type="button" onClick={() => updateRoute({ view: installed.reviewPending ? "review" : installed.updateAvailable ? "updates" : "installed", packageId: installed.packageId, sourceRepo: installed.source.repo })}>
-                                    Inspect
-                                  </button>
-                                ) : null}
-                                <button
-                                  class="packages-button packages-button--primary"
-                                  type="button"
-                                  disabled={pendingAction === `catalog-import:${entry.source.repo}:${entry.source.subdir}`}
-                                  onClick={() => {
-                                    setImportSource(catalogImportSource(selectedCatalog, entry));
-                                    setImportRef(entry.source.ref || "main");
-                                    setImportSubdir(entry.source.subdir || ".");
-                                    void runAction(`catalog-import:${entry.source.repo}:${entry.source.subdir}`, async () => {
-                                      const result = await backend.importPackage({
-                                        source: catalogImportSource(selectedCatalog, entry),
-                                        ref: entry.source.ref || "main",
-                                        subdir: entry.source.subdir || ".",
-                                      });
-                                      updateRoute({ view: "installed", packageId: result.package.packageId, sourceRepo: result.package.source.repo });
-                                      await refresh(result.package.packageId);
-                                      setNotice(`Imported ${result.package.name}.`);
-                                    });
-                                  }}
-                                >
-                                  {installed ? "Re-import" : "Import"}
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </>
-                ) : <div class="packages-empty-state">No catalogs configured.</div>}
-              </section>
+          <section class="packages-detail-body">
+            {detailTab === "overview" ? (
+              <OverviewTab pkg={selectedPackage} />
+            ) : null}
 
-              <section class="packages-section">
-                <header class="packages-section-head">
-                  <div>
-                    <h2>Remotes</h2>
-                    <p>Public catalogs from other GSV instances.</p>
-                  </div>
-                </header>
-                <div class="packages-inline-grid packages-inline-grid--remote">
-                  <input value={remoteName} onInput={(event) => setRemoteName((event.currentTarget as HTMLInputElement).value)} placeholder="name" />
-                  <input value={remoteUrl} onInput={(event) => setRemoteUrl((event.currentTarget as HTMLInputElement).value)} placeholder="https://gsv.example.com" />
-                  <button class="packages-button" type="button" disabled={pendingAction === "add-remote"} onClick={handleAddRemote}>Add remote</button>
-                </div>
-                <div class="packages-table">
-                  <div class="packages-table-head packages-table-head--remotes">
-                    <span>Remote</span>
-                    <span>Base URL</span>
-                    <span></span>
-                  </div>
-                  {(state?.catalogs ?? []).filter((catalog) => catalog.kind === "remote").map((catalog) => (
-                    <div key={catalog.name} class="packages-table-row packages-table-row--catalog">
-                      <div>
-                        <strong>{catalog.name}</strong>
-                        <span>{catalog.packages.length} package{catalog.packages.length === 1 ? "" : "s"}</span>
-                      </div>
-                      <span class="packages-mono">{catalog.baseUrl}</span>
-                      <div class="packages-inline-actions">
-                        <button class="packages-button" type="button" onClick={() => updateRoute({ catalog: catalog.name })}>Open catalog</button>
-                        <button class="packages-button" type="button" disabled={pendingAction === `remove-remote:${catalog.name}`} onClick={() => handleRemoveRemote(catalog.name)}>Remove</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </section>
-          </main>
+            {detailTab === "permissions" ? (
+              <PermissionsTab pkg={selectedPackage} summary={packagePermissionSummary} />
+            ) : null}
+
+            {detailTab === "code" ? (
+              <CodeTab
+                pkg={selectedPackage}
+                codeRoot={codeRoot}
+                codeRef={codeRef}
+                codePath={codePath}
+                codeRead={codeRead}
+                codeBusy={codeBusy}
+                codeError={codeError}
+                codeSearch={codeSearch}
+                codeSearchBusy={codeSearchBusy}
+                codeSearchResult={codeSearchResult}
+                browseRefs={browseRefs}
+                setCodeRoot={setCodeRoot}
+                setCodeRef={setCodeRef}
+                setCodePath={setCodePath}
+                setCodeSearch={setCodeSearch}
+                setCodeSearchResult={setCodeSearchResult}
+                handleSearchRepo={handleSearchRepo}
+              />
+            ) : null}
+
+            {detailTab === "commits" ? (
+              <CommitsTab
+                pkg={selectedPackage}
+                detail={state?.packageDetail ?? null}
+                browseRefs={browseRefs}
+                checkoutRef={checkoutRef}
+                setCheckoutRef={setCheckoutRef}
+                selectedCommit={selectedCommit}
+                packageMutationBlockedReason={packageMutationBlockedReason}
+                pendingAction={pendingAction}
+                onCheckout={handleCheckout}
+                onSelectCommit={setSelectedCommit}
+                onOpenDiff={() => updateRoute({ tab: "changes" })}
+              />
+            ) : null}
+
+            {detailTab === "changes" ? (
+              <ChangesTab
+                commits={state?.packageDetail?.commits ?? []}
+                selectedCommit={selectedCommit}
+                selectedCommitRecord={selectedCommitRecord}
+                diffBusy={diffBusy}
+                diffError={diffError}
+                diffResult={diffResult}
+                onSelectCommit={setSelectedCommit}
+              />
+            ) : null}
+
+            {detailTab === "review" ? (
+              <ReviewTab pkg={selectedPackage} />
+            ) : null}
+          </section>
         </div>
       ) : (
-        <div class="packages-layout">
-          <aside class="packages-sidebar">
-            <header class="packages-sidebar-head">
-              <strong>{view === "installed" ? "Installed" : view === "updates" ? "Updates" : "Review queue"}</strong>
-              <div class="packages-sidebar-filters">
-                {(["all", "mine", "system"] as PackageScopeFilter[]).map((filter) => (
+        <PackageGridPage
+          packages={visiblePackages}
+          view={view}
+          scopeFilter={scopeFilter}
+          query={query}
+          onOpenPackage={(pkg) => updateRoute({ packageId: pkg.packageId, sourceRepo: pkg.source.repo, tab: "overview" })}
+          onScopeFilter={(filter) => updateRoute({ scope: filter, packageId: null })}
+        />
+      )}
+    </div>
+  );
+}
+
+type SourcesViewProps = {
+  state: PackagesState | null;
+  query: string;
+  pendingAction: string | null;
+  importSource: string;
+  importRef: string;
+  importSubdir: string;
+  remoteName: string;
+  remoteUrl: string;
+  selectedSource: ReturnType<typeof useMemo<unknown>> | any;
+  selectedCatalog: CatalogRecord | null;
+  selectedPackageId: string | null;
+  sourceRefreshBlockedReason: string;
+  sourceVisibilityBlockedReason: string;
+  setImportSource: (value: string) => void;
+  setImportRef: (value: string) => void;
+  setImportSubdir: (value: string) => void;
+  setRemoteName: (value: string) => void;
+  setRemoteUrl: (value: string) => void;
+  updateRoute: (next: { view?: PackagesView; scope?: PackageScopeFilter; tab?: PackageDetailTab; packageId?: string | null; sourceRepo?: string | null; catalog?: string }) => void;
+  handleRefreshSource: (repo: string) => void;
+  handleSetPublic: (payload: { packageId?: string; repo?: string; public: boolean }) => void;
+  handleImportPackage: () => void;
+  handleAddRemote: () => void;
+  handleRemoveRemote: (name: string) => void;
+  backend: PackagesBackend;
+  refresh: (packageId: string | null) => Promise<void>;
+  runAction: (name: string, work: () => Promise<void>) => Promise<void>;
+  setNotice: (value: string | null) => void;
+};
+
+function SourcesView(props: SourcesViewProps) {
+  const {
+    state,
+    query,
+    pendingAction,
+    importSource,
+    importRef,
+    importSubdir,
+    remoteName,
+    remoteUrl,
+    selectedSource,
+    selectedCatalog,
+    selectedPackageId,
+    sourceRefreshBlockedReason,
+    sourceVisibilityBlockedReason,
+    setImportSource,
+    setImportRef,
+    setImportSubdir,
+    setRemoteName,
+    setRemoteUrl,
+    updateRoute,
+    handleRefreshSource,
+    handleSetPublic,
+    handleImportPackage,
+    handleAddRemote,
+    handleRemoveRemote,
+    backend,
+    refresh,
+    runAction,
+    setNotice,
+  } = props;
+
+  return (
+    <div class="packages-layout packages-layout--sources">
+      <aside class="packages-sidebar">
+        <header class="packages-sidebar-head">
+          <strong>Installed sources</strong>
+          <span>{state?.sources.length ?? 0} repos</span>
+        </header>
+        <div class="packages-sidebar-list">
+          {(state?.sources ?? [])
+            .filter((source) => {
+              const normalized = query.trim().toLowerCase();
+              if (!normalized) return true;
+              return [source.repo, ...source.packageNames].some((value) => value.toLowerCase().includes(normalized));
+            })
+            .map((source) => (
+              <button
+                key={source.repo}
+                class={`packages-list-row${selectedSource?.repo === source.repo ? " is-active" : ""}`}
+                onClick={() => updateRoute({ sourceRepo: source.repo })}
+              >
+                <div>
+                  <strong>{source.repo}</strong>
+                  <span>{source.packageCount} package{source.packageCount === 1 ? "" : "s"}</span>
+                </div>
+                <div class="packages-list-meta">
+                  {source.updateCount > 0 ? <span class="packages-badge is-update">{source.updateCount} update{source.updateCount === 1 ? "" : "s"}</span> : null}
+                  {source.reviewPendingCount > 0 ? <span class="packages-badge is-review">{source.reviewPendingCount} review</span> : null}
+                </div>
+              </button>
+            ))}
+        </div>
+      </aside>
+
+      <main class="packages-main-pane">
+        <section class="packages-section packages-section--toolbar">
+          <div class="packages-toolbar-grid">
+            <div>
+              <h2>Import package</h2>
+              <p>Bring in a repo or remote URL. Third-party imports stay disabled until reviewed.</p>
+            </div>
+            <div class="packages-inline-grid">
+              <input value={importSource} onInput={(event) => setImportSource((event.currentTarget as HTMLInputElement).value)} placeholder="owner/repo or https://..." />
+              <input value={importRef} onInput={(event) => setImportRef((event.currentTarget as HTMLInputElement).value)} placeholder="main" />
+              <input value={importSubdir} onInput={(event) => setImportSubdir((event.currentTarget as HTMLInputElement).value)} placeholder="." />
+              <button class="packages-button packages-button--primary" type="button" disabled={pendingAction === "import-package"} onClick={handleImportPackage}>Import</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="packages-section">
+          <header class="packages-section-head">
+            <div>
+              <h2>{selectedSource ? selectedSource.repo : "No source selected"}</h2>
+              <p>{selectedSource ? `${selectedSource.packageCount} installed package${selectedSource.packageCount === 1 ? "" : "s"} from this source.` : "Select an installed source to inspect it."}</p>
+            </div>
+            {selectedSource ? (
+              <div class="packages-inline-actions">
+                <button
+                  class="packages-button"
+                  type="button"
+                  title={selectedSource.isBuiltin ? "Builtin packages are refreshed through Sync sources. Upstream pull support will be wired separately." : sourceRefreshBlockedReason || undefined}
+                  disabled={!selectedSource.refreshable || pendingAction === `refresh-source:${selectedSource.repo}`}
+                  onClick={() => handleRefreshSource(selectedSource.repo)}
+                >
+                  Pull upstream
+                </button>
+                {!selectedSource.isBuiltin ? (
                   <button
-                    key={filter}
-                    class={`packages-filter-chip${scopeFilter === filter ? " is-active" : ""}`}
-                    onClick={() => updateRoute({ scope: filter, packageId: null })}
+                    class="packages-button"
+                    type="button"
+                    title={sourceVisibilityBlockedReason || undefined}
+                    disabled={!selectedSource.canChangeVisibility || pendingAction === `public:${selectedSource.repo}`}
+                    onClick={() => handleSetPublic({ repo: selectedSource.repo, public: !selectedSource.public })}
                   >
-                    {filter === "all" ? "All" : filter === "mine" ? "Mine" : "System"}
+                    {selectedSource.public ? "Hide source" : "Publish source"}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </header>
+          {selectedSource ? (
+            <>
+              <div class="packages-info-grid">
+                <article><span>Kind</span><strong>{selectedSource.isBuiltin ? "Builtin" : "Imported"}</strong></article>
+                <article><span>Visibility</span><strong>{selectedSource.public ? "Public" : "Private"}</strong></article>
+                <article><span>Pending review</span><strong>{selectedSource.reviewPendingCount}</strong></article>
+                <article><span>Updates</span><strong>{selectedSource.updateCount}</strong></article>
+              </div>
+              <div class="packages-table">
+                <div class="packages-table-head">
+                  <span>Package</span>
+                  <span>Status</span>
+                  <span>Ref</span>
+                </div>
+                {state?.packages.filter((pkg) => pkg.source.repo === selectedSource.repo).map((pkg) => (
+                  <button
+                    key={pkg.packageId}
+                    class="packages-table-row packages-table-row--button"
+                    onClick={() => updateRoute({ view: pkg.reviewPending ? "review" : pkg.updateAvailable ? "updates" : "installed", packageId: pkg.packageId, sourceRepo: pkg.source.repo })}
+                  >
+                    <div>
+                      <strong>{pkg.name}</strong>
+                      <span>{pkg.description || pkg.source.subdir}</span>
+                    </div>
+                    <div class="packages-row-status">
+                      {pkg.reviewPending ? <span class="packages-badge is-review">Review required</span> : null}
+                      {pkg.updateAvailable ? <span class="packages-badge is-update">Update available</span> : pkg.enabled ? <span class="packages-badge is-enabled">Enabled</span> : <span class="packages-badge is-disabled">Disabled</span>}
+                    </div>
+                    <span class="packages-mono">{pkg.source.ref}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : <div class="packages-empty-state">No source matches the current selection.</div>}
+        </section>
+
+        <section class="packages-sources-grid">
+          <section class="packages-section">
+            <header class="packages-section-head">
+              <div>
+                <h2>Catalogs</h2>
+                <p>Browse local and remote public package catalogs.</p>
+              </div>
+              <div class="packages-catalog-tabs">
+                {(state?.catalogs ?? []).map((catalog) => (
+                  <button
+                    key={catalog.name}
+                    class={`packages-mini-tab${selectedCatalog?.name === catalog.name ? " is-active" : ""}`}
+                    onClick={() => updateRoute({ catalog: catalog.name })}
+                  >
+                    {catalog.kind === "local" ? "Local" : catalog.name}
                   </button>
                 ))}
               </div>
             </header>
-            <div class="packages-sidebar-list">
-              {visiblePackages.map((pkg) => (
-                <button
-                  key={pkg.packageId}
-                  class={`packages-list-row${selectedPackage?.packageId === pkg.packageId ? " is-active" : ""}`}
-                  onClick={() => updateRoute({ packageId: pkg.packageId, sourceRepo: pkg.source.repo })}
-                >
+            {selectedCatalog ? (
+              <>
+                <div class="packages-catalog-meta">
+                  <span>{selectedCatalog.kind === "local" ? "Local catalog" : selectedCatalog.baseUrl}</span>
+                  {selectedCatalog.error ? <span class="packages-badge is-disabled">Unavailable</span> : <span class="packages-badge is-catalog">{selectedCatalog.packages.length} package{selectedCatalog.packages.length === 1 ? "" : "s"}</span>}
+                </div>
+                {selectedCatalog.error ? <div class="packages-empty-state">{selectedCatalog.error}</div> : (
+                  <div class="packages-table">
+                    <div class="packages-table-head packages-table-head--catalog">
+                      <span>Package</span>
+                      <span>Source</span>
+                      <span></span>
+                    </div>
+                    {selectedCatalog.packages.map((entry) => {
+                      const installed = matchInstalledPackage(entry, state?.packages ?? []);
+                      return (
+                        <div key={`${entry.source.repo}:${entry.source.subdir}:${entry.name}`} class="packages-table-row packages-table-row--catalog">
+                          <div>
+                            <strong>{entry.name}</strong>
+                            <span>{entry.description || entry.source.repo}</span>
+                          </div>
+                          <span class="packages-mono">{entry.source.repo}</span>
+                          <div class="packages-inline-actions">
+                            {installed ? (
+                              <button class="packages-button" type="button" onClick={() => updateRoute({ view: installed.reviewPending ? "review" : installed.updateAvailable ? "updates" : "installed", packageId: installed.packageId, sourceRepo: installed.source.repo })}>
+                                Inspect
+                              </button>
+                            ) : null}
+                            <button
+                              class="packages-button packages-button--primary"
+                              type="button"
+                              disabled={pendingAction === `catalog-import:${entry.source.repo}:${entry.source.subdir}`}
+                              onClick={() => {
+                                setImportSource(catalogImportSource(selectedCatalog, entry));
+                                setImportRef(entry.source.ref || "main");
+                                setImportSubdir(entry.source.subdir || ".");
+                                void runAction(`catalog-import:${entry.source.repo}:${entry.source.subdir}`, async () => {
+                                  const result = await backend.importPackage({
+                                    source: catalogImportSource(selectedCatalog, entry),
+                                    ref: entry.source.ref || "main",
+                                    subdir: entry.source.subdir || ".",
+                                  });
+                                  updateRoute({ view: "installed", packageId: result.package.packageId, sourceRepo: result.package.source.repo });
+                                  await refresh(result.package.packageId);
+                                  setNotice(`Imported ${result.package.name}.`);
+                                });
+                              }}
+                            >
+                              {installed ? "Re-import" : "Import"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            ) : <div class="packages-empty-state">No catalogs configured.</div>}
+          </section>
+
+          <section class="packages-section">
+            <header class="packages-section-head">
+              <div>
+                <h2>Remotes</h2>
+                <p>Public catalogs from other GSV instances.</p>
+              </div>
+            </header>
+            <div class="packages-inline-grid packages-inline-grid--remote">
+              <input value={remoteName} onInput={(event) => setRemoteName((event.currentTarget as HTMLInputElement).value)} placeholder="name" />
+              <input value={remoteUrl} onInput={(event) => setRemoteUrl((event.currentTarget as HTMLInputElement).value)} placeholder="https://gsv.example.com" />
+              <button class="packages-button" type="button" disabled={pendingAction === "add-remote"} onClick={handleAddRemote}>Add remote</button>
+            </div>
+            <div class="packages-table">
+              <div class="packages-table-head packages-table-head--remotes">
+                <span>Remote</span>
+                <span>Base URL</span>
+                <span></span>
+              </div>
+              {(state?.catalogs ?? []).filter((catalog) => catalog.kind === "remote").map((catalog) => (
+                <div key={catalog.name} class="packages-table-row packages-table-row--catalog">
                   <div>
-                    <strong>{pkg.name}</strong>
-                    <span>{pkg.source.repo}</span>
+                    <strong>{catalog.name}</strong>
+                    <span>{catalog.packages.length} package{catalog.packages.length === 1 ? "" : "s"}</span>
                   </div>
-                  <div class="packages-list-meta">
-                    {pkg.reviewPending ? <span class="packages-badge is-review">Review</span> : null}
-                    {pkg.updateAvailable ? <span class="packages-badge is-update">Update</span> : pkg.enabled ? <span class="packages-badge is-enabled">Enabled</span> : <span class="packages-badge is-disabled">Disabled</span>}
+                  <span class="packages-mono">{catalog.baseUrl}</span>
+                  <div class="packages-inline-actions">
+                    <button class="packages-button" type="button" onClick={() => updateRoute({ catalog: catalog.name })}>Open catalog</button>
+                    <button class="packages-button" type="button" disabled={pendingAction === `remove-remote:${catalog.name}`} onClick={() => handleRemoveRemote(catalog.name)}>Remove</button>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
-          </aside>
+          </section>
+        </section>
+      </main>
+    </div>
+  );
+}
 
-          <main class="packages-main-pane">
-            {selectedPackage ? (
-              <>
-                <header class="packages-detail-head">
-                  <div>
-                    <div class="packages-title-line">
-                      <h2>{selectedPackage.name}</h2>
-                      <span class={`packages-badge ${selectedPackage.scope.kind === "user" ? "is-user" : selectedPackage.scope.kind === "workspace" ? "is-workspace" : "is-system"}`}>{formatScope(selectedPackage)}</span>
-                      {selectedPackage.reviewPending ? <span class="packages-badge is-review">Review required</span> : null}
-                      {selectedPackage.updateAvailable ? <span class="packages-badge is-update">Update available</span> : null}
-                      {!selectedPackage.reviewPending && selectedPackage.enabled ? <span class="packages-badge is-enabled">Enabled</span> : null}
-                      {!selectedPackage.enabled ? <span class="packages-badge is-disabled">Disabled</span> : null}
-                    </div>
-                    <p>{selectedPackage.description || "No description provided."}</p>
-                  </div>
-                  <div class="packages-inline-actions packages-inline-actions--wrap">
-                    {selectedPackageActions}
-                    <button class="packages-button" type="button" disabled={pendingAction === `review:${selectedPackage.packageId}`} onClick={() => handleStartReview(selectedPackage.packageId)}>Review</button>
-                    {selectedPackage.reviewPending ? (
-                      <button
-                        class="packages-button packages-button--primary"
-                        type="button"
-                        title={packageMutationBlockedReason || undefined}
-                        disabled={!selectedPackage.canMutate || pendingAction === `approve:${selectedPackage.packageId}`}
-                        onClick={() => handleApproveReview(selectedPackage.packageId)}
-                      >
-                        Approve
-                      </button>
-                    ) : null}
-                    {selectedPackage.enabled ? (
-                      <button
-                        class="packages-button"
-                        type="button"
-                        title={packageMutationBlockedReason || undefined}
-                        disabled={!selectedPackage.canMutate || pendingAction === `disable:${selectedPackage.packageId}`}
-                        onClick={() => handleDisablePackage(selectedPackage.packageId)}
-                      >
-                        Disable
-                      </button>
-                    ) : !selectedPackage.reviewPending ? (
-                      <button
-                        class="packages-button packages-button--primary"
-                        type="button"
-                        title={packageMutationBlockedReason || undefined}
-                        disabled={!selectedPackage.canMutate || pendingAction === `enable:${selectedPackage.packageId}`}
-                        onClick={() => handleEnablePackage(selectedPackage.packageId)}
-                      >
-                        Enable
-                      </button>
-                    ) : null}
-                    <button
-                      class="packages-button"
-                      type="button"
-                      title={selectedPackage.isBuiltin ? "Builtin packages are refreshed through Sync sources." : packageMutationBlockedReason || undefined}
-                      disabled={selectedPackage.isBuiltin || !selectedPackage.canMutate || pendingAction === `refresh:${selectedPackage.packageId}`}
-                      onClick={() => handleRefreshPackage(selectedPackage.packageId)}
-                    >
-                      Pull upstream
-                    </button>
-                    {!selectedPackage.isBuiltin ? (
-                      <button
-                        class="packages-button"
-                        type="button"
-                        title={packageVisibilityBlockedReason || undefined}
-                        disabled={!selectedPackage.canChangeVisibility || pendingAction === `public:${selectedPackage.packageId}`}
-                        onClick={() => handleSetPublic({ packageId: selectedPackage.packageId, public: !selectedPackage.source.public })}
-                      >
-                        {selectedPackage.source.public ? "Hide" : "Publish"}
-                      </button>
-                    ) : null}
-                  </div>
-                </header>
-
-                <nav class="packages-detail-tabs">
-                  {([
-                    ["overview", "Overview"],
-                    ["permissions", "Permissions"],
-                    ["code", "Code"],
-                    ["commits", "Commits"],
-                    ["changes", "Changes"],
-                    ["review", "Review"],
-                  ] as Array<[PackageDetailTab, string]>).map(([tabId, label]) => (
-                    <button key={tabId} class={`packages-detail-tab${detailTab === tabId ? " is-active" : ""}`} onClick={() => updateRoute({ tab: tabId })}>{label}</button>
-                  ))}
-                </nav>
-
-                <section class="packages-detail-body">
-                  {detailTab === "overview" ? (
-                    <>
-                      <div class="packages-info-grid">
-                        <article><span>Runtime</span><strong>{selectedPackage.runtime}</strong></article>
-                        <article><span>Version</span><strong>{selectedPackage.version}</strong></article>
-                        <article><span>Source</span><strong>{selectedPackage.source.repo}</strong></article>
-                        <article><span>Ref</span><strong>{selectedPackage.source.ref}</strong></article>
-                        <article><span>Commit</span><strong class="packages-mono">{shortHash(selectedPackage.source.resolvedCommit)}</strong></article>
-                        <article><span>Updated</span><strong>{formatDate(selectedPackage.updatedAt)}</strong></article>
-                      </div>
-                      <section class="packages-subsection">
-                        <header>
-                          <h3>Entrypoints</h3>
-                          <p>Launch surfaces and commands exposed by this package.</p>
-                        </header>
-                        <div class="packages-table">
-                          <div class="packages-table-head">
-                            <span>Name</span>
-                            <span>Kind</span>
-                            <span>Details</span>
-                          </div>
-                          {selectedPackage.entrypoints.length === 0 ? <div class="packages-empty-state">No entrypoints declared.</div> : selectedPackage.entrypoints.map((entry) => (
-                            <div key={`${entry.name}:${entry.kind}`} class="packages-table-row packages-table-row--catalog">
-                              <div>
-                                <strong>{entry.name}</strong>
-                                <span>{entry.description || "No description"}</span>
-                              </div>
-                              <span>{entry.kind}</span>
-                              <span class="packages-mono">{entry.route || (entry.syscalls?.join(", ") || "—")}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </section>
-                    </>
-                  ) : null}
-
-                  {detailTab === "permissions" ? (
-                    <>
-                      <section class="packages-subsection">
-                        <header>
-                          <h3>Impact summary</h3>
-                          <p>What this package can affect, based on declared bindings and syscall surfaces.</p>
-                        </header>
-                        <ul class="packages-bullet-list">
-                          {packagePermissionSummary.map((item) => <li key={item}>{item}</li>)}
-                        </ul>
-                      </section>
-                      <div class="packages-columns">
-                        <section class="packages-subsection">
-                          <header>
-                            <h3>Bindings</h3>
-                            <p>Declared runtime bindings requested by the package.</p>
-                          </header>
-                          <div class="packages-chip-row">
-                            {selectedPackage.bindingNames.length > 0 ? selectedPackage.bindingNames.map((binding) => <span key={binding} class="packages-chip">{binding}</span>) : <span class="packages-empty-inline">No declared bindings.</span>}
-                          </div>
-                        </section>
-                        <section class="packages-subsection">
-                          <header>
-                            <h3>Syscalls</h3>
-                            <p>Entry-point syscall exposure declared by the package.</p>
-                          </header>
-                          <div class="packages-chip-row">
-                            {selectedPackage.declaredSyscalls.length > 0 ? selectedPackage.declaredSyscalls.map((syscall) => <span key={syscall} class="packages-chip">{syscall}</span>) : <span class="packages-empty-inline">No declared syscalls.</span>}
-                          </div>
-                        </section>
-                      </div>
-                    </>
-                  ) : null}
-
-                  {detailTab === "code" ? (
-                    <>
-                      <section class="packages-subsection">
-                        <header>
-                          <h3>Source browser</h3>
-                          <p>Read-only repository inspection for trust review and update checks.</p>
-                        </header>
-                        <div class="packages-code-toolbar">
-                          <div class="packages-chip-row">
-                            <button class={`packages-mini-tab${codeRoot === "package" ? " is-active" : ""}`} type="button" onClick={() => { setCodeRoot("package"); setCodePath(""); setCodeSearchResult(null); }}>Package root</button>
-                            <button class={`packages-mini-tab${codeRoot === "repo" ? " is-active" : ""}`} type="button" onClick={() => { setCodeRoot("repo"); setCodePath(""); setCodeSearchResult(null); }}>Full repo</button>
-                          </div>
-                          <div class="packages-inline-grid packages-inline-grid--checkout">
-                            <select value={codeRef} onChange={(event) => { setCodeRef((event.currentTarget as HTMLSelectElement).value); setCodePath(""); setCodeSearchResult(null); }}>
-                              {browseRefs.map((ref) => <option key={ref} value={ref}>{ref}</option>)}
-                            </select>
-                            <button class="packages-button" type="button" disabled={!codePath} onClick={() => setCodePath(parentPath(codePath))}>Up one level</button>
-                          </div>
-                        </div>
-                        <div class="packages-inline-grid packages-inline-grid--code-search">
-                          <input value={codeSearch} onInput={(event) => setCodeSearch((event.currentTarget as HTMLInputElement).value)} placeholder="Search in source" />
-                          <button class="packages-button" type="button" disabled={codeSearchBusy} onClick={handleSearchRepo}>Search</button>
-                        </div>
-                        <div class="packages-code-layout">
-                          <aside class="packages-code-sidebar">
-                            <div class="packages-breadcrumbs">
-                              <button class="packages-breadcrumb" type="button" onClick={() => setCodePath("")}>{codeRoot}</button>
-                              {buildBreadcrumbs(codePath).map((crumb) => (
-                                <button key={crumb.path} class="packages-breadcrumb" type="button" onClick={() => setCodePath(crumb.path)}>{crumb.label}</button>
-                              ))}
-                            </div>
-                            {codeSearchResult ? (
-                              <div class="packages-search-panel">
-                                <div class="packages-search-panel-head">
-                                  <strong>Search results</strong>
-                                  <span>{codeSearchResult.matches.length} match{codeSearchResult.matches.length === 1 ? "" : "es"}</span>
-                                </div>
-                                {codeSearchResult.truncated ? <div class="packages-empty-inline">Search results truncated.</div> : null}
-                                <div class="packages-search-results">
-                                  {codeSearchResult.matches.map((match) => (
-                                    <button key={`${match.path}:${match.line}:${match.content}`} class="packages-search-result" type="button" onClick={() => setCodePath(match.path)}>
-                                      <strong>{match.path}</strong>
-                                      <span>Line {match.line}</span>
-                                      <code>{match.content}</code>
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : null}
-                            {codeRead?.kind === "tree" ? (
-                              <div class="packages-tree-list">
-                                {sortTreeEntries(codeRead.entries).map((entry) => (
-                                  <button key={entry.path} class={`packages-tree-row${entry.type === "tree" ? " is-tree" : ""}`} type="button" onClick={() => setCodePath(entry.path)}>
-                                    <span class="packages-tree-name">{entry.type === "tree" ? "▸" : "•"} {entry.name}</span>
-                                    <span class="packages-mono">{entry.type}</span>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : null}
-                            {codeRead?.kind === "file" ? (
-                              <div class="packages-tree-list">
-                                <button class="packages-tree-row is-tree" type="button" onClick={() => setCodePath(parentPath(codeRead.path))}>
-                                  <span class="packages-tree-name">▸ ..</span>
-                                  <span class="packages-mono">tree</span>
-                                </button>
-                              </div>
-                            ) : null}
-                          </aside>
-                          <section class="packages-code-main">
-                            {codeBusy ? <div class="packages-empty-state">Loading source…</div> : null}
-                            {codeError ? <div class="packages-empty-state">{codeError}</div> : null}
-                            {!codeBusy && !codeError && codeRead?.kind === "tree" ? (
-                              <div class="packages-empty-state">Select a file from the tree or search results.</div>
-                            ) : null}
-                            {!codeBusy && !codeError && codeRead?.kind === "file" ? (
-                              <div class="packages-file-viewer">
-                                <div class="packages-file-meta">
-                                  <strong>{codeRead.path || "/"}</strong>
-                                  <span>{formatBytes(codeRead.size)} · {codeRead.isBinary ? "binary" : "text"}</span>
-                                </div>
-                                {codeRead.isBinary ? (
-                                  <div class="packages-empty-state">This file is binary and cannot be previewed inline.</div>
-                                ) : (
-                                  <pre class="packages-code-block">{codeRead.content ?? ""}</pre>
-                                )}
-                              </div>
-                            ) : null}
-                          </section>
-                        </div>
-                      </section>
-                    </>
-                  ) : null}
-
-                  {detailTab === "commits" ? (
-                    <>
-                      <section class="packages-subsection">
-                        <header>
-                          <h3>Ref selection</h3>
-                          <p>Switch the installed package to a different branch or tag from the same source repository.</p>
-                        </header>
-                        <div class="packages-inline-grid packages-inline-grid--checkout">
-                          <select value={checkoutRef} onChange={(event) => setCheckoutRef((event.currentTarget as HTMLSelectElement).value)}>
-                            {browseRefs.map((ref) => (
-                              <option key={ref} value={ref}>{ref}</option>
-                            ))}
-                          </select>
-                          <button
-                            class="packages-button"
-                            type="button"
-                            title={packageMutationBlockedReason || undefined}
-                            disabled={!selectedPackage.canMutate || pendingAction === `checkout:${selectedPackage.packageId}` || !checkoutRef}
-                            onClick={() => handleCheckout(selectedPackage.packageId)}
-                          >
-                            Use ref
-                          </button>
-                        </div>
-                        <div class="packages-ref-summary">
-                          <span>Active ref: <strong>{state?.packageDetail?.refs.activeRef || selectedPackage.source.ref}</strong></span>
-                          <span>Resolved commit: <strong class="packages-mono">{shortHash(selectedPackage.source.resolvedCommit)}</strong></span>
-                          <span>Head commit: <strong class="packages-mono">{shortHash(selectedPackage.currentHead)}</strong></span>
-                        </div>
-                      </section>
-                      <section class="packages-subsection">
-                        <header>
-                          <h3>Recent commits</h3>
-                          <p>Latest source commits for the selected package repository.</p>
-                        </header>
-                        <div class="packages-commit-list">
-                          {(state?.packageDetail?.commits ?? []).map((commit) => (
-                            <div key={commit.hash} class={`packages-commit-row${selectedCommit === commit.hash ? " is-active" : ""}`}>
-                              <button class="packages-commit-main" type="button" onClick={() => setSelectedCommit(commit.hash)}>
-                                <strong>{firstLine(commit.message)}</strong>
-                                <span class="packages-mono">{shortHash(commit.hash)}</span>
-                                <span>{commit.author} · {formatCommitTime(commit.commitTime)}</span>
-                              </button>
-                              <button class="packages-button" type="button" onClick={() => { setSelectedCommit(commit.hash); updateRoute({ tab: "changes" }); }}>View diff</button>
-                            </div>
-                          ))}
-                        </div>
-                      </section>
-                    </>
-                  ) : null}
-
-                  {detailTab === "changes" ? (
-                    <>
-                      <section class="packages-subsection">
-                        <header>
-                          <h3>Commit diff</h3>
-                          <p>Inspect what changed in the selected source commit.</p>
-                        </header>
-                        <div class="packages-chip-row">
-                          {(state?.packageDetail?.commits ?? []).slice(0, 10).map((commit) => (
-                            <button key={commit.hash} class={`packages-mini-tab${selectedCommit === commit.hash ? " is-active" : ""}`} type="button" onClick={() => setSelectedCommit(commit.hash)}>
-                              {shortHash(commit.hash)}
-                            </button>
-                          ))}
-                        </div>
-                        {selectedCommitRecord ? (
-                          <div class="packages-ref-summary">
-                            <span><strong>{firstLine(selectedCommitRecord.message)}</strong></span>
-                            <span>{selectedCommitRecord.author} · {formatCommitTime(selectedCommitRecord.commitTime)}</span>
-                          </div>
-                        ) : null}
-                        {diffBusy ? <div class="packages-empty-state">Loading diff…</div> : null}
-                        {diffError ? <div class="packages-empty-state">{diffError}</div> : null}
-                        {!diffBusy && !diffError && diffResult ? (
-                          <>
-                            <div class="packages-info-grid packages-info-grid--compact">
-                              <article><span>Files changed</span><strong>{diffResult.stats.filesChanged}</strong></article>
-                              <article><span>Additions</span><strong>{diffResult.stats.additions}</strong></article>
-                              <article><span>Deletions</span><strong>{diffResult.stats.deletions}</strong></article>
-                            </div>
-                            <div class="packages-diff-list">
-                              {diffResult.files.map((file) => (
-                                <DiffFileView key={`${diffResult.commitHash}:${file.path}`} file={file} />
-                              ))}
-                            </div>
-                          </>
-                        ) : null}
-                      </section>
-                    </>
-                  ) : null}
-
-                  {detailTab === "review" ? (
-                    <>
-                      <div class="packages-info-grid">
-                        <article><span>Review required</span><strong>{selectedPackage.review.required ? "Yes" : "No"}</strong></article>
-                        <article><span>Approved</span><strong>{selectedPackage.review.approvedAt ? formatDate(selectedPackage.review.approvedAt) : "Not yet"}</strong></article>
-                        <article><span>Update status</span><strong>{selectedPackage.updateAvailable ? "Behind source head" : "Current"}</strong></article>
-                        <article><span>Head commit</span><strong class="packages-mono">{shortHash(selectedPackage.currentHead)}</strong></article>
-                      </div>
-                      <section class="packages-subsection">
-                        <header>
-                          <h3>Review workflow</h3>
-                          <p>Use the dedicated review process plus the built-in code and diff tabs before enabling or approving a package.</p>
-                        </header>
-                        <ul class="packages-bullet-list">
-                          <li>Open a review session when the package is new, changes capabilities, or comes from an unfamiliar source.</li>
-                          <li>Use Code to inspect entrypoints and sensitive files, and Changes to inspect update diffs before approving.</li>
-                          <li>Approve only after checking shell, process, filesystem, host-bridge, and package-management behavior.</li>
-                        </ul>
-                      </section>
-                    </>
-                  ) : null}
-                </section>
-              </>
-            ) : (
-              <section class="packages-empty-state packages-empty-state--full">Select a package to inspect it.</section>
-            )}
-          </main>
+function PackageGridPage(props: {
+  packages: PackageRecord[];
+  view: PackagesView;
+  scopeFilter: PackageScopeFilter;
+  query: string;
+  onOpenPackage: (pkg: PackageRecord) => void;
+  onScopeFilter: (filter: PackageScopeFilter) => void;
+}) {
+  const { packages, view, scopeFilter, query, onOpenPackage, onScopeFilter } = props;
+  return (
+    <section class="packages-grid-page">
+      <header class="packages-grid-head">
+        <div>
+          <p class="packages-eyebrow">Browse</p>
+          <h2>{view === "installed" ? "Installed packages" : view === "updates" ? "Available updates" : "Review queue"}</h2>
+          <p>{view === "installed" ? "Browse the packages currently installed in GSV." : view === "updates" ? "Packages whose source heads moved ahead of the installed commit." : "Packages that still need review before you should trust or enable them."}</p>
+        </div>
+        <div class="packages-sidebar-filters">
+          {(["all", "mine", "system"] as PackageScopeFilter[]).map((filter) => (
+            <button
+              key={filter}
+              class={`packages-filter-chip${scopeFilter === filter ? " is-active" : ""}`}
+              onClick={() => onScopeFilter(filter)}
+            >
+              {filter === "all" ? "All" : filter === "mine" ? "Mine" : "System"}
+            </button>
+          ))}
+        </div>
+      </header>
+      {packages.length === 0 ? (
+        <div class="packages-empty-state packages-empty-state--full">{query ? `No packages match “${query}”.` : "No packages available in this view."}</div>
+      ) : (
+        <div class="packages-grid">
+          {packages.map((pkg) => (
+            <button key={pkg.packageId} class="packages-card" type="button" onClick={() => onOpenPackage(pkg)}>
+              <div class="packages-card-head">
+                <span class="packages-card-icon" aria-hidden="true">{iconForPackage(pkg)}</span>
+                <div class="packages-card-copy">
+                  <strong>{pkg.name}</strong>
+                  <span>{pkg.description || "No description provided."}</span>
+                </div>
+              </div>
+              <div class="packages-chip-row">
+                <span class={`packages-badge ${pkg.scope.kind === "user" ? "is-user" : pkg.scope.kind === "workspace" ? "is-workspace" : "is-system"}`}>{formatScope(pkg)}</span>
+                {pkg.reviewPending ? <span class="packages-badge is-review">Needs review</span> : null}
+                {pkg.updateAvailable ? <span class="packages-badge is-update">Update</span> : null}
+                {pkg.enabled ? <span class="packages-badge is-enabled">Enabled</span> : <span class="packages-badge is-disabled">Disabled</span>}
+              </div>
+              <div class="packages-card-meta">
+                <span><strong>Source</strong>{pkg.source.repo}</span>
+                <span><strong>Ref</strong>{pkg.source.ref}</span>
+                <span><strong>Version</strong>{pkg.version}</span>
+                <span><strong>Entrypoints</strong>{pkg.entrypoints.length}</span>
+              </div>
+            </button>
+          ))}
         </div>
       )}
-    </div>
+    </section>
+  );
+}
+
+function OverviewTab({ pkg }: { pkg: PackageRecord }) {
+  return (
+    <>
+      <div class="packages-info-grid">
+        <article><span>Runtime</span><strong>{pkg.runtime}</strong></article>
+        <article><span>Version</span><strong>{pkg.version}</strong></article>
+        <article><span>Source</span><strong>{pkg.source.repo}</strong></article>
+        <article><span>Ref</span><strong>{pkg.source.ref}</strong></article>
+        <article><span>Commit</span><strong class="packages-mono">{shortHash(pkg.source.resolvedCommit)}</strong></article>
+        <article><span>Updated</span><strong>{formatDate(pkg.updatedAt)}</strong></article>
+      </div>
+      <section class="packages-subsection">
+        <header>
+          <h3>Entrypoints</h3>
+          <p>Launch surfaces and commands exposed by this package.</p>
+        </header>
+        <div class="packages-table">
+          <div class="packages-table-head">
+            <span>Name</span>
+            <span>Kind</span>
+            <span>Details</span>
+          </div>
+          {pkg.entrypoints.length === 0 ? <div class="packages-empty-state">No entrypoints declared.</div> : pkg.entrypoints.map((entry) => (
+            <div key={`${entry.name}:${entry.kind}`} class="packages-table-row packages-table-row--catalog">
+              <div>
+                <strong>{entry.name}</strong>
+                <span>{entry.description || "No description"}</span>
+              </div>
+              <span>{entry.kind}</span>
+              <span class="packages-mono">{entry.route || (entry.syscalls?.join(", ") || "—")}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function PermissionsTab({ pkg, summary }: { pkg: PackageRecord; summary: string[] }) {
+  return (
+    <>
+      <section class="packages-subsection">
+        <header>
+          <h3>Impact summary</h3>
+          <p>What this package can affect, based on declared bindings and syscall surfaces.</p>
+        </header>
+        <ul class="packages-bullet-list">
+          {summary.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      </section>
+      <div class="packages-columns">
+        <section class="packages-subsection">
+          <header>
+            <h3>Bindings</h3>
+            <p>Declared runtime bindings requested by the package.</p>
+          </header>
+          <div class="packages-chip-row">
+            {pkg.bindingNames.length > 0 ? pkg.bindingNames.map((binding) => <span key={binding} class="packages-chip">{binding}</span>) : <span class="packages-empty-inline">No declared bindings.</span>}
+          </div>
+        </section>
+        <section class="packages-subsection">
+          <header>
+            <h3>Syscalls</h3>
+            <p>Entry-point syscall exposure declared by the package.</p>
+          </header>
+          <div class="packages-chip-row">
+            {pkg.declaredSyscalls.length > 0 ? pkg.declaredSyscalls.map((syscall) => <span key={syscall} class="packages-chip">{syscall}</span>) : <span class="packages-empty-inline">No declared syscalls.</span>}
+          </div>
+        </section>
+      </div>
+    </>
+  );
+}
+
+function CodeTab(props: {
+  pkg: PackageRecord;
+  codeRoot: PackageRepoRoot;
+  codeRef: string;
+  codePath: string;
+  codeRead: PackageRepoReadResult | null;
+  codeBusy: boolean;
+  codeError: string | null;
+  codeSearch: string;
+  codeSearchBusy: boolean;
+  codeSearchResult: PackageRepoSearchResult | null;
+  browseRefs: string[];
+  setCodeRoot: (value: PackageRepoRoot) => void;
+  setCodeRef: (value: string) => void;
+  setCodePath: (value: string) => void;
+  setCodeSearch: (value: string) => void;
+  setCodeSearchResult: (value: PackageRepoSearchResult | null) => void;
+  handleSearchRepo: () => void;
+}) {
+  const {
+    codeRoot,
+    codeRef,
+    codePath,
+    codeRead,
+    codeBusy,
+    codeError,
+    codeSearch,
+    codeSearchBusy,
+    codeSearchResult,
+    browseRefs,
+    setCodeRoot,
+    setCodeRef,
+    setCodePath,
+    setCodeSearch,
+    setCodeSearchResult,
+    handleSearchRepo,
+  } = props;
+
+  return (
+    <section class="packages-subsection">
+      <header>
+        <h3>Source browser</h3>
+        <p>Read-only repository inspection for trust review and update checks.</p>
+      </header>
+      <div class="packages-code-toolbar">
+        <div class="packages-chip-row">
+          <button class={`packages-mini-tab${codeRoot === "package" ? " is-active" : ""}`} type="button" onClick={() => { setCodeRoot("package"); setCodePath(""); setCodeSearchResult(null); }}>Package root</button>
+          <button class={`packages-mini-tab${codeRoot === "repo" ? " is-active" : ""}`} type="button" onClick={() => { setCodeRoot("repo"); setCodePath(""); setCodeSearchResult(null); }}>Full repo</button>
+        </div>
+        <div class="packages-inline-grid packages-inline-grid--checkout">
+          <select value={codeRef} onChange={(event) => { setCodeRef((event.currentTarget as HTMLSelectElement).value); setCodePath(""); setCodeSearchResult(null); }}>
+            {browseRefs.map((ref) => <option key={ref} value={ref}>{ref}</option>)}
+          </select>
+          <button class="packages-button" type="button" disabled={!codePath} onClick={() => setCodePath(parentPath(codePath))}>Back</button>
+        </div>
+      </div>
+      <div class="packages-inline-grid packages-inline-grid--code-search">
+        <input value={codeSearch} onInput={(event) => setCodeSearch((event.currentTarget as HTMLInputElement).value)} placeholder="Search in source" />
+        <button class="packages-button" type="button" disabled={codeSearchBusy} onClick={handleSearchRepo}>Search</button>
+      </div>
+      <div class="packages-breadcrumbs packages-breadcrumbs--block">
+        <button class="packages-breadcrumb" type="button" onClick={() => setCodePath("")}>{codeRoot === "package" ? "📦 Package" : "🗂 Repo"}</button>
+        {buildBreadcrumbs(codePath).map((crumb) => (
+          <button key={crumb.path} class="packages-breadcrumb" type="button" onClick={() => setCodePath(crumb.path)}>{crumb.label}</button>
+        ))}
+      </div>
+      {codeSearchResult ? (
+        <section class="packages-search-panel packages-search-panel--inline">
+          <div class="packages-search-panel-head">
+            <strong>Search results</strong>
+            <span>{codeSearchResult.matches.length} match{codeSearchResult.matches.length === 1 ? "" : "es"}</span>
+          </div>
+          {codeSearchResult.truncated ? <div class="packages-empty-inline">Search results truncated.</div> : null}
+          <div class="packages-search-results">
+            {codeSearchResult.matches.map((match) => (
+              <button key={`${match.path}:${match.line}:${match.content}`} class="packages-search-result" type="button" onClick={() => setCodePath(match.path)}>
+                <strong>📄 {match.path}</strong>
+                <span>Line {match.line}</span>
+                <code>{match.content}</code>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      {codeBusy ? <div class="packages-empty-state">Loading source…</div> : null}
+      {codeError ? <div class="packages-empty-state">{codeError}</div> : null}
+      {!codeBusy && !codeError && codeRead?.kind === "tree" ? (
+        <div class="packages-directory-view">
+          {sortTreeEntries(codeRead.entries).map((entry) => (
+            <button key={entry.path} class="packages-directory-row" type="button" onClick={() => setCodePath(entry.path)}>
+              <span class="packages-directory-name">{iconForEntry(entry)} {entry.name}</span>
+              <span class="packages-directory-meta">{entry.hash.slice(0, 7)}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {!codeBusy && !codeError && codeRead?.kind === "file" ? (
+        <article class="packages-file-page">
+          <header class="packages-file-meta">
+            <div>
+              <strong>📄 {codeRead.path || "/"}</strong>
+              <span>{formatBytes(codeRead.size)} · {codeRead.isBinary ? "binary" : "text"}</span>
+            </div>
+            <button class="packages-button" type="button" onClick={() => setCodePath(parentPath(codeRead.path))}>Back to directory</button>
+          </header>
+          {codeRead.isBinary ? (
+            <div class="packages-empty-state">This file is binary and cannot be previewed inline.</div>
+          ) : (
+            <pre class="packages-code-block">{codeRead.content ?? ""}</pre>
+          )}
+        </article>
+      ) : null}
+    </section>
+  );
+}
+
+function CommitsTab(props: {
+  pkg: PackageRecord;
+  detail: PackagesState["packageDetail"] | null;
+  browseRefs: string[];
+  checkoutRef: string;
+  setCheckoutRef: (value: string) => void;
+  selectedCommit: string | null;
+  packageMutationBlockedReason: string;
+  pendingAction: string | null;
+  onCheckout: (packageId: string) => void;
+  onSelectCommit: (value: string) => void;
+  onOpenDiff: () => void;
+}) {
+  const {
+    pkg,
+    detail,
+    browseRefs,
+    checkoutRef,
+    setCheckoutRef,
+    selectedCommit,
+    packageMutationBlockedReason,
+    pendingAction,
+    onCheckout,
+    onSelectCommit,
+    onOpenDiff,
+  } = props;
+  return (
+    <>
+      <section class="packages-subsection">
+        <header>
+          <h3>Ref selection</h3>
+          <p>Switch the installed package to a different branch or tag from the same source repository.</p>
+        </header>
+        <div class="packages-inline-grid packages-inline-grid--checkout">
+          <select value={checkoutRef} onChange={(event) => setCheckoutRef((event.currentTarget as HTMLSelectElement).value)}>
+            {browseRefs.map((ref) => <option key={ref} value={ref}>{ref}</option>)}
+          </select>
+          <button
+            class="packages-button"
+            type="button"
+            title={packageMutationBlockedReason || undefined}
+            disabled={!pkg.canMutate || pendingAction === `checkout:${pkg.packageId}` || !checkoutRef}
+            onClick={() => onCheckout(pkg.packageId)}
+          >
+            Use ref
+          </button>
+        </div>
+        <div class="packages-ref-summary">
+          <span>Active ref: <strong>{detail?.refs.activeRef || pkg.source.ref}</strong></span>
+          <span>Resolved commit: <strong class="packages-mono">{shortHash(pkg.source.resolvedCommit)}</strong></span>
+          <span>Head commit: <strong class="packages-mono">{shortHash(pkg.currentHead)}</strong></span>
+        </div>
+      </section>
+      <section class="packages-subsection">
+        <header>
+          <h3>Recent commits</h3>
+          <p>Latest source commits for the selected package repository.</p>
+        </header>
+        <div class="packages-commit-list">
+          {(detail?.commits ?? []).map((commit) => (
+            <div key={commit.hash} class={`packages-commit-row${selectedCommit === commit.hash ? " is-active" : ""}`}>
+              <button class="packages-commit-main" type="button" onClick={() => onSelectCommit(commit.hash)}>
+                <strong>⎇ {firstLine(commit.message)}</strong>
+                <span class="packages-mono">{shortHash(commit.hash)}</span>
+                <span>{commit.author} · {formatCommitTime(commit.commitTime)}</span>
+              </button>
+              <button class="packages-button" type="button" onClick={() => { onSelectCommit(commit.hash); onOpenDiff(); }}>View diff</button>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function ChangesTab(props: {
+  commits: PackagesState["packageDetail"] extends { commits: infer T } ? T : never;
+  selectedCommit: string | null;
+  selectedCommitRecord: PackagesState["packageDetail"] extends { commits: infer T } ? any : never;
+  diffBusy: boolean;
+  diffError: string | null;
+  diffResult: PackageRepoDiffResult | null;
+  onSelectCommit: (value: string) => void;
+}) {
+  const { commits, selectedCommit, selectedCommitRecord, diffBusy, diffError, diffResult, onSelectCommit } = props;
+  return (
+    <section class="packages-subsection">
+      <header>
+        <h3>Commit diff</h3>
+        <p>Inspect what changed in the selected source commit.</p>
+      </header>
+      <div class="packages-chip-row">
+        {commits.slice(0, 10).map((commit) => (
+          <button key={commit.hash} class={`packages-mini-tab${selectedCommit === commit.hash ? " is-active" : ""}`} type="button" onClick={() => onSelectCommit(commit.hash)}>
+            ⎇ {shortHash(commit.hash)}
+          </button>
+        ))}
+      </div>
+      {selectedCommitRecord ? (
+        <div class="packages-ref-summary">
+          <span><strong>{firstLine(selectedCommitRecord.message)}</strong></span>
+          <span>{selectedCommitRecord.author} · {formatCommitTime(selectedCommitRecord.commitTime)}</span>
+        </div>
+      ) : null}
+      {diffBusy ? <div class="packages-empty-state">Loading diff…</div> : null}
+      {diffError ? <div class="packages-empty-state">{diffError}</div> : null}
+      {!diffBusy && !diffError && diffResult ? (
+        <>
+          <div class="packages-info-grid packages-info-grid--compact">
+            <article><span>Files changed</span><strong>{diffResult.stats.filesChanged}</strong></article>
+            <article><span>Additions</span><strong>{diffResult.stats.additions}</strong></article>
+            <article><span>Deletions</span><strong>{diffResult.stats.deletions}</strong></article>
+          </div>
+          <div class="packages-diff-list">
+            {diffResult.files.map((file) => (
+              <DiffFileView key={`${diffResult.commitHash}:${file.path}`} file={file} />
+            ))}
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function ReviewTab({ pkg }: { pkg: PackageRecord }) {
+  return (
+    <>
+      <div class="packages-info-grid">
+        <article><span>Review required</span><strong>{pkg.review.required ? "Yes" : "No"}</strong></article>
+        <article><span>Approved</span><strong>{pkg.review.approvedAt ? formatDate(pkg.review.approvedAt) : "Not yet"}</strong></article>
+        <article><span>Update status</span><strong>{pkg.updateAvailable ? "Behind source head" : "Current"}</strong></article>
+        <article><span>Head commit</span><strong class="packages-mono">{shortHash(pkg.currentHead)}</strong></article>
+      </div>
+      <section class="packages-subsection">
+        <header>
+          <h3>Review workflow</h3>
+          <p>Use the dedicated review process plus the built-in code and diff tabs before enabling or approving a package.</p>
+        </header>
+        <ul class="packages-bullet-list">
+          <li>Open a review session when the package is new, changes capabilities, or comes from an unfamiliar source.</li>
+          <li>Use Code to inspect entrypoints and sensitive files, and Changes to inspect update diffs before approving.</li>
+          <li>Approve only after checking shell, process, filesystem, host-bridge, and package-management behavior.</li>
+        </ul>
+      </section>
+    </>
   );
 }
 
@@ -1146,8 +1394,8 @@ function DiffFileView({ file }: { file: PackageRepoDiffFile }) {
   return (
     <article class="packages-diff-file">
       <header class="packages-diff-file-head">
-        <strong>{file.path}</strong>
-        <span class={`packages-badge ${diffStatusClass(file.status)}`}>{file.status}</span>
+        <strong>{iconForDiffStatus(file.status)} {file.path}</strong>
+        <span class={`packages-badge ${diffStatusClass(file.status)}`}>{labelForDiffStatus(file.status)}</span>
       </header>
       {file.hunks && file.hunks.length > 0 ? file.hunks.map((hunk) => (
         <section key={`${file.path}:${hunk.oldStart}:${hunk.newStart}`} class="packages-diff-hunk">
@@ -1228,35 +1476,21 @@ function formatScope(pkg: PackageRecord): string {
   return "System";
 }
 
+function unique<T>(items: T[]): T[] {
+  return [...new Set(items)];
+}
+
 function buildPermissionSummary(pkg: PackageRecord): string[] {
   const notes = new Set<string>();
-  if (pkg.bindingNames.includes("KERNEL")) {
-    notes.add("Can call kernel-backed app RPC through the package runtime bridge.");
-  }
-  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("shell."))) {
-    notes.add("Can execute shell commands on the control target or a routed device.");
-  }
-  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("fs."))) {
-    notes.add("Can read or modify files exposed through the filesystem tool surface.");
-  }
-  if (pkg.declaredSyscalls.includes("proc.spawn")) {
-    notes.add("Can spawn new processes and route work into additional runtime contexts.");
-  }
-  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("pkg."))) {
-    notes.add("Can inspect or change package state, including install/enable/update flows.");
-  }
-  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("sys.config."))) {
-    notes.add("Can modify system configuration.");
-  }
-  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("sys.token."))) {
-    notes.add("Can issue or revoke access tokens.");
-  }
-  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("sys.link") || syscall.startsWith("sys.unlink"))) {
-    notes.add("Can modify identity links and trust relationships.");
-  }
-  if (notes.size === 0) {
-    notes.add("No elevated bindings or syscall surfaces were declared in the package summary.");
-  }
+  if (pkg.bindingNames.includes("KERNEL")) notes.add("Can call kernel-backed app RPC through the package runtime bridge.");
+  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("shell."))) notes.add("Can execute shell commands on the control target or a routed device.");
+  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("fs."))) notes.add("Can read or modify files exposed through the filesystem tool surface.");
+  if (pkg.declaredSyscalls.includes("proc.spawn")) notes.add("Can spawn new processes and route work into additional runtime contexts.");
+  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("pkg."))) notes.add("Can inspect or change package state, including install or update flows.");
+  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("sys.config."))) notes.add("Can modify system configuration.");
+  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("sys.token."))) notes.add("Can issue or revoke access tokens.");
+  if (pkg.declaredSyscalls.some((syscall) => syscall.startsWith("sys.link") || syscall.startsWith("sys.unlink"))) notes.add("Can modify identity links and trust relationships.");
+  if (notes.size === 0) notes.add("No elevated bindings or syscall surfaces were declared in the package summary.");
   return [...notes];
 }
 
@@ -1273,23 +1507,14 @@ function renderEntryActions(pkg: PackageRecord) {
   });
 }
 
-function unique<T>(items: T[]): T[] {
-  return [...new Set(items)];
-}
-
 function buildRefOptions(state: PackagesState["packageDetail"] | null | undefined, fallback?: string): string[] {
   const refs = state ? [...Object.keys(state.refs.heads), ...Object.keys(state.refs.tags)] : [];
-  if (fallback) {
-    refs.push(fallback);
-  }
+  if (fallback) refs.push(fallback);
   return unique(refs).sort((left, right) => left.localeCompare(right));
 }
 
 function matchInstalledPackage(entry: CatalogEntry, packages: PackageRecord[]): PackageRecord | null {
-  return packages.find((pkg) =>
-    pkg.source.repo === entry.source.repo &&
-    pkg.source.subdir === entry.source.subdir,
-  ) ?? null;
+  return packages.find((pkg) => pkg.source.repo === entry.source.repo && pkg.source.subdir === entry.source.subdir) ?? null;
 }
 
 function catalogImportSource(catalog: CatalogRecord, entry: CatalogEntry): string {
@@ -1326,17 +1551,37 @@ function buildBreadcrumbs(path: string): Array<{ label: string; path: string }> 
 
 function sortTreeEntries(entries: RepoTreeEntry[]): RepoTreeEntry[] {
   return [...entries].sort((left, right) => {
-    if (left.type !== right.type) {
-      return left.type === "tree" ? -1 : 1;
-    }
+    if (left.type !== right.type) return left.type === "tree" ? -1 : 1;
     return left.name.localeCompare(right.name);
   });
+}
+
+function iconForEntry(entry: RepoTreeEntry): string {
+  return entry.type === "tree" ? "📁" : "📄";
+}
+
+function iconForPackage(pkg: PackageRecord): string {
+  if (pkg.reviewPending) return "🛡";
+  if (pkg.updateAvailable) return "⎇";
+  return "📦";
 }
 
 function diffStatusClass(status: PackageRepoDiffFile["status"]): string {
   if (status === "added") return "is-enabled";
   if (status === "deleted") return "is-disabled";
   return "is-update";
+}
+
+function iconForDiffStatus(status: PackageRepoDiffFile["status"]): string {
+  if (status === "added") return "＋";
+  if (status === "deleted") return "－";
+  return "∼";
+}
+
+function labelForDiffStatus(status: PackageRepoDiffFile["status"]): string {
+  if (status === "added") return "Added";
+  if (status === "deleted") return "Deleted";
+  return "Modified";
 }
 
 function prefixForDiffLine(tag: string): string {
