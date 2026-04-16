@@ -169,11 +169,6 @@ export function App({ backend }: AppProps) {
         <div>
           <h1>Control</h1>
           <p>System settings, runtime profiles, access tokens, and identity links.</p>
-          {state && !state.viewer.canEditSystemConfig ? (
-            <p class="control-toolbar-note">
-              Signed in as <strong>{state.viewer.username}</strong>. AI defaults and profiles save as personal overrides; system sections are read-only.
-            </p>
-          ) : null}
         </div>
         <div class="control-toolbar-actions">
           <button class="control-button" disabled={pendingAction === "load-state"} onClick={() => void refresh()}>
