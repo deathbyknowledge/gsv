@@ -190,6 +190,24 @@ button {
   border-bottom: 1px solid var(--wiki-line);
 }
 
+.wiki-db-row,
+.wiki-entry-row,
+.wiki-outline-row,
+.wiki-ref-row,
+.wiki-source-link,
+.article-body a {
+  cursor: pointer;
+}
+
+.wiki-db-row:hover,
+.wiki-entry-row:hover,
+.wiki-outline-row:hover,
+.wiki-ref-row:hover,
+.wiki-source-link:hover,
+.article-body a:hover {
+  color: #1f5f8a;
+}
+
 .wiki-db-row strong,
 .wiki-entry-row strong,
 .wiki-ref-row strong {

@@ -153,8 +153,18 @@ export async function loadState(kernel: KernelClient, input: FilesRoute): Promis
   let filePath = String(input.open ?? "").trim() ? normalizePath(input.open, detectPathStyle(input.open)) : "";
   let errorText = "";
   const devices = await listDevices(kernel);
+  console.debug("[files] backend loadState input", {
+    input,
+    resolvedTarget: target,
+    currentPath,
+    devices: devices.map((device) => device.deviceId),
+  });
 
   if (target !== "gsv" && !devices.some((device) => String(device?.deviceId ?? "") === target)) {
+    console.warn("[files] requested target unavailable; falling back to gsv", {
+      requestedTarget: target,
+      devices: devices.map((device) => device.deviceId),
+    });
     target = "gsv";
     currentPath = normalizePath(defaultPathForTarget(target), detectPathStyle(defaultPathForTarget(target)));
     pathStyle = detectPathStyle(currentPath);

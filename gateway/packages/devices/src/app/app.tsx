@@ -85,6 +85,11 @@ export function App({ backend }: AppProps) {
   const selectedId = state?.selectedDeviceId ?? selectedDeviceId;
   const canManageTokens = state?.viewer.canManageTokens ?? false;
 
+  const openCompanion = useCallback((target: "files" | "shell", payload: Record<string, unknown>) => {
+    console.debug("[devices] opening companion app", { target, payload });
+    openApp({ target, payload });
+  }, []);
+
   async function handleCreateToken(form: { deviceId: string; label: string; expiresDays: string }): Promise<void> {
     setPendingAction("create-token");
     try {
@@ -175,7 +180,7 @@ export function App({ backend }: AppProps) {
               type="button"
               title="Open in Files"
               aria-label="Open in Files"
-              onClick={() => openApp({ target: "files", payload: { device: selectedDevice.deviceId, path: "." } })}
+              onClick={() => openCompanion("files", { device: selectedDevice.deviceId, path: "." })}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2H21v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
             </button>
@@ -184,7 +189,7 @@ export function App({ backend }: AppProps) {
               type="button"
               title="Open Shell"
               aria-label="Open Shell"
-              onClick={() => openApp({ target: "shell", payload: { device: selectedDevice.deviceId, workdir: "." } })}
+              onClick={() => openCompanion("shell", { device: selectedDevice.deviceId, workdir: "." })}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z" /><path d="m7 10 3 2.5L7 15" /><path d="M12.5 15H17" /></svg>
             </button>
@@ -231,7 +236,7 @@ export function App({ backend }: AppProps) {
         {activeTab === "health" ? <DeviceHealth device={selectedDevice} /> : null}
       </section>
     );
-  }, [activeTab, handleCreateToken, issuedToken, mode, pendingAction, selectedDevice, selectedId, state, updateRoute]);
+  }, [activeTab, handleCreateToken, issuedToken, mode, openCompanion, pendingAction, selectedDevice, selectedId, state, updateRoute]);
 
   return (
     <div class="devices-app">

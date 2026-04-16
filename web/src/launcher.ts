@@ -179,10 +179,13 @@ export function createLauncher(options: LauncherOptions): LauncherController {
 
   const onOpenApp = (event: Event): void => {
     const detail = ((event as Event & { detail?: OpenAppEventDetail | null }).detail) ?? null;
+    console.debug("[gsv-open] launcher received open request", detail);
     const resolved = resolveOpenAppDetail(detail);
     if (!resolved) {
+      console.debug("[gsv-open] launcher dropped unresolved request", detail);
       return;
     }
+    console.debug("[gsv-open] launcher resolved request", resolved);
 
     if (resolved.type === "chat-process") {
       openChatProcessContext(resolved.threadContext);
@@ -194,12 +197,21 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     }
 
     const windowId = openWindowForApp(resolved.appId, resolved.route);
+    console.debug("[gsv-open] launcher opened window", {
+      appId: resolved.appId,
+      route: resolved.route,
+      windowId,
+    });
     if (!windowId) {
       return;
     }
 
     if (detail?.request) {
       queuePendingAppOpen(windowId, detail.request);
+      console.debug("[gsv-open] launcher queued pending request", {
+        windowId,
+        request: detail.request,
+      });
     }
   };
 
