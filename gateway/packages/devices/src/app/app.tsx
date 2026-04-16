@@ -142,6 +142,7 @@ export function App({ backend }: AppProps) {
       return (
         <ProvisionPanel
           initialDeviceId={selectedId ?? ""}
+          viewerUsername={state.viewer.username}
           pendingAction={pendingAction}
           issuedToken={issuedToken}
           onBack={() => updateRoute({ mode: "detail" })}
