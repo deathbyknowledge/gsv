@@ -829,7 +829,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     if (pendingAction === "setup" && snapshot.phase !== "setup-complete") {
       return "provisioning";
     }
-    if (pendingAction === "continue" && snapshot.phase !== "ready") {
+    if (pendingAction === "continue") {
       return "provisioning";
     }
     if (snapshot.phase === "setup-complete") {
@@ -839,12 +839,6 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       return "setup";
     }
     if (snapshot.phase === "authenticating") {
-      if (pendingAction === "setup") {
-        return "setup";
-      }
-      if (pendingAction === "continue") {
-        return "complete";
-      }
       return "login";
     }
     return "login";
