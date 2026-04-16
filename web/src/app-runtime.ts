@@ -3,6 +3,7 @@ import type { AppManifest } from "./apps";
 export type AppRuntimeContext = {
   windowId: string;
   manifest: AppManifest;
+  route: string;
 };
 
 export type AppInstance = {

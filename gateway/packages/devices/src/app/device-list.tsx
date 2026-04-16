@@ -39,9 +39,7 @@ export function DeviceList({
           <h1>Devices</h1>
           <p>Execution targets known to the gateway.</p>
         </div>
-        {canManageTokens ? (
-          <button class="devices-button devices-button--primary" onClick={onStartProvision}>Add device</button>
-        ) : null}
+        <button class="devices-button devices-button--primary" onClick={onStartProvision} disabled={!canManageTokens} title={canManageTokens ? "Issue a node token and bootstrap a new machine." : "Only root can add devices."}>Add device</button>
       </header>
 
       <div class="devices-sidebar-filters">

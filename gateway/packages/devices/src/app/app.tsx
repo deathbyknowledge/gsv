@@ -168,8 +168,20 @@ export function App({ backend }: AppProps) {
             <p>{selectedDevice.online ? "Online and ready for routing." : "Offline. Review health and access before routing work here."}</p>
           </div>
           <div class="devices-inline-actions">
-            <a class="devices-button devices-button--quiet" href={`/apps/files?target=${encodeURIComponent(selectedDevice.deviceId)}&path=.`}>Open in Files</a>
-            <a class="devices-button devices-button--quiet" href={`/apps/shell?target=${encodeURIComponent(selectedDevice.deviceId)}`}>Open Shell</a>
+            <button
+              class="devices-button devices-button--quiet"
+              type="button"
+              onClick={() => openCompanion("files", `/apps/files?target=${encodeURIComponent(selectedDevice.deviceId)}&path=.`)}
+            >
+              Open in Files
+            </button>
+            <button
+              class="devices-button devices-button--quiet"
+              type="button"
+              onClick={() => openCompanion("shell", `/apps/shell?target=${encodeURIComponent(selectedDevice.deviceId)}`)}
+            >
+              Open Shell
+            </button>
             {state.viewer.canManageTokens ? (
               <button class="devices-button devices-button--primary" onClick={() => { setIssuedToken(null); updateRoute({ mode: "provision", deviceId: selectedDevice.deviceId }); }}>
                 Add access
@@ -254,6 +266,19 @@ function readModeFromLocation(): DevicesMode {
 function readDeviceFromLocation(): string | null {
   const value = new URL(window.location.href).searchParams.get("device");
   return value && value.trim().length > 0 ? value.trim() : null;
+}
+
+function openCompanion(appId: string, route: string) {
+  try {
+    if (window.parent && window.parent !== window) {
+      const detail = { appId, route };
+      window.parent.postMessage({ type: "gsv:open-app", detail }, window.location.origin);
+      window.parent.dispatchEvent(new CustomEvent("gsv:open-app", { detail }));
+      return;
+    }
+  } catch {
+  }
+  window.location.href = route;
 }
 
 function formatError(cause: unknown): string {
