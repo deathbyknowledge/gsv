@@ -49,12 +49,18 @@ function readRoute(): FilesRoute {
     const target = typeof payload?.device === "string" && payload.device.trim() ? payload.device.trim() : "gsv";
     const context = asRecord(payload?.context);
     const contextPath = typeof context?.cwd === "string" && context.cwd.trim() ? context.cwd.trim() : "";
-    return {
+    const nextRoute = {
       target,
       path: typeof payload?.path === "string" && payload.path.trim() ? payload.path.trim() : (contextPath || defaultPathForTarget(target)),
       q: typeof payload?.q === "string" ? payload.q.trim() : "",
       open: typeof payload?.open === "string" ? payload.open.trim() : "",
     };
+    console.debug("[files] consumed pending app open", {
+      windowId: WINDOW_ID,
+      pending,
+      route: nextRoute,
+    });
+    return nextRoute;
   }
 
   const url = new URL(window.location.href);
@@ -71,12 +77,18 @@ function readRoute(): FilesRoute {
     }
   }
   const target = url.searchParams.get("target")?.trim() || "gsv";
-  return {
+  const nextRoute = {
     target,
     path: url.searchParams.get("path")?.trim() || defaultPathForTarget(target),
     q: url.searchParams.get("q")?.trim() || "",
     open: url.searchParams.get("open")?.trim() || "",
   };
+  console.debug("[files] using url route", {
+    windowId: WINDOW_ID,
+    route: nextRoute,
+    href: window.location.href,
+  });
+  return nextRoute;
 }
 
 function writeRoute(route: FilesRoute, replace = false) {
@@ -112,18 +124,31 @@ export function App({ backend }: Props) {
 
   const loadRoute = useCallback(async (nextRoute: FilesRoute) => {
     const requestId = ++loadRequestId.current;
+    console.debug("[files] loading route", { requestId, route: nextRoute });
     setLoading(true);
     try {
       const nextState = await backend.loadState(nextRoute);
       if (requestId !== loadRequestId.current) {
         return;
       }
+      console.debug("[files] loaded state", {
+        requestId,
+        requestedRoute: nextRoute,
+        target: nextState.target,
+        currentPath: nextState.currentPath,
+        devices: nextState.devices.map((device) => device.deviceId),
+      });
       setState(nextState);
       setErrorText(nextState.errorText || "");
     } catch (error) {
       if (requestId !== loadRequestId.current) {
         return;
       }
+      console.debug("[files] failed to load route", {
+        requestId,
+        requestedRoute: nextRoute,
+        error: error instanceof Error ? error.message : String(error),
+      });
       setErrorText(error instanceof Error ? error.message : String(error));
     } finally {
       if (requestId === loadRequestId.current) {

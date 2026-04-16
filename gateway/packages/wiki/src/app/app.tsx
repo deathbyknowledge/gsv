@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ArticleView } from "./article-view";
 import { PreviewCard } from "./preview-card";
-import { extractHeadings, extractTitle, normalizePath } from "./markdown";
+import { buildEntryHref, extractHeadings, extractTitle, normalizePath } from "./markdown";
 import type {
   BuildStartArgs,
   WikiBackend,
@@ -59,6 +59,7 @@ export function App({ backend }: { backend: WikiBackend }) {
   const [previewPinned, setPreviewPinned] = useState(false);
   const previewToken = useRef(0);
   const previewHideTimer = useRef<number | null>(null);
+  const previewPinnedRef = useRef(false);
 
   useEffect(() => {
     void refresh(route);
@@ -94,13 +95,17 @@ export function App({ backend }: { backend: WikiBackend }) {
     }
   }, [buildDestinationMode, buildDbTitle]);
 
+  useEffect(() => {
+    previewPinnedRef.current = previewPinned;
+  }, [previewPinned]);
+
   const currentTitle = state.selectedNote ? extractTitle(state.selectedNote.markdown || "", state.selectedPath || "Untitled") : "";
   const pageHeadings = useMemo(() => state.selectedNote ? extractHeadings(state.selectedNote.markdown || "") : [], [state.selectedNote]);
   const visiblePages = state.searchMatches ?? state.pages;
   const selectedDb = state.selectedDb || state.dbs[0]?.id || "";
   const selectedInboxPath = mode === "inbox" ? (route.path || state.inbox[0]?.path || "") : "";
 
-  async function refresh(nextRoute = route): Promise<void> {
+  const refresh = useCallback(async (nextRoute = route): Promise<void> => {
     setLoading(true);
     setError(null);
     try {
@@ -114,7 +119,7 @@ export function App({ backend }: { backend: WikiBackend }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [backend, route]);
 
   async function runMutation(task: () => Promise<WikiMutationResult | void>): Promise<void> {
     setMutating(true);
@@ -136,28 +141,28 @@ export function App({ backend }: { backend: WikiBackend }) {
     }
   }
 
-  function openDb(db: string): void {
+  const openDb = useCallback((db: string): void => {
     const nextRoute = { ...route, db, path: db ? `${db}/index.md` : undefined };
     setRoute(nextRoute);
     void refresh(nextRoute);
-  }
+  }, [refresh, route]);
 
-  function openPage(path: string): void {
+  const openPage = useCallback((path: string): void => {
     const nextRoute = { ...route, db: selectedDb, path };
     setRoute(nextRoute);
     void refresh(nextRoute);
-  }
+  }, [refresh, route, selectedDb]);
 
-  function openInboxNote(path: string): void {
+  const openInboxNote = useCallback((path: string): void => {
     const nextRoute = { ...route, db: selectedDb, path };
     setRoute(nextRoute);
     void refresh(nextRoute);
-  }
+  }, [refresh, route, selectedDb]);
 
-  function openPageAndBrowse(path: string): void {
+  const openPageAndBrowse = useCallback((path: string): void => {
     setMode("browse");
     openPage(path);
-  }
+  }, [openPage]);
 
   function changeMode(next: WikiMode): void {
     setMode(next);
@@ -275,7 +280,7 @@ export function App({ backend }: { backend: WikiBackend }) {
     await runMutation(() => backend.compileInboxNote({ db: selectedDb, sourcePath: selectedInboxPath }));
   }
 
-  async function openPreview(anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean): Promise<void> {
+  const openPreview = useCallback(async (anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean): Promise<void> => {
     if (previewHideTimer.current) {
       window.clearTimeout(previewHideTimer.current);
       previewHideTimer.current = null;
@@ -300,9 +305,13 @@ export function App({ backend }: { backend: WikiBackend }) {
         setPreviewLoading(false);
       }
     }
-  }
+  }, [backend]);
 
-  function hidePreview(force: boolean): void {
+  const hidePreview = useCallback((force: boolean): void => {
+    if (previewHideTimer.current) {
+      window.clearTimeout(previewHideTimer.current);
+      previewHideTimer.current = null;
+    }
     if (force) {
       previewToken.current += 1;
       setPreviewPinned(false);
@@ -312,17 +321,22 @@ export function App({ backend }: { backend: WikiBackend }) {
       setPreviewError("");
       return;
     }
-    if (previewPinned) {
+    if (previewPinnedRef.current) {
       return;
     }
     previewHideTimer.current = window.setTimeout(() => {
       previewToken.current += 1;
+      setPreviewPinned(false);
       setPreviewRect(null);
       setPreviewLoading(false);
       setPreviewPayload(null);
       setPreviewError("");
     }, 120);
-  }
+  }, []);
+
+  const handleArticlePreviewOpen = useCallback((anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean): void => {
+    void openPreview(anchor, request, pin);
+  }, [openPreview]);
 
   return (
     <div class="wiki-shell">
@@ -346,10 +360,18 @@ export function App({ backend }: { backend: WikiBackend }) {
             <h2>Databases</h2>
             <div class="wiki-db-list">
               {state.dbs.map((db) => (
-                <button key={db.id} type="button" class={`wiki-db-row${selectedDb === db.id ? " is-active" : ""}`} onClick={() => openDb(db.id)}>
+                <a
+                  key={db.id}
+                  href={buildWikiHref(mode, { ...route, db: db.id, path: db.id ? `${db.id}/index.md` : undefined })}
+                  class={`wiki-db-row${selectedDb === db.id ? " is-active" : ""}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openDb(db.id);
+                  }}
+                >
                   <strong>{db.title || db.id}</strong>
                   <span>{db.id}</span>
-                </button>
+                </a>
               ))}
             </div>
           </section>
@@ -374,10 +396,18 @@ export function App({ backend }: { backend: WikiBackend }) {
                 </div>
                 <div class="wiki-entry-list">
                   {visiblePages.map((entry) => (
-                    <button key={entry.path} type="button" class={`wiki-entry-row${state.selectedPath === entry.path ? " is-active" : ""}`} onClick={() => openPage(entry.path)}>
+                    <a
+                      key={entry.path}
+                      href={buildEntryHref("/apps/wiki", selectedDb, entry.path)}
+                      class={`wiki-entry-row${state.selectedPath === entry.path ? " is-active" : ""}`}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        openPage(entry.path);
+                      }}
+                    >
                       <strong>{entry.title || displayTitleFromPath(entry.path)}</strong>
                       <span>{entry.path}</span>
-                    </button>
+                    </a>
                   ))}
                 </div>
               </section>
@@ -392,10 +422,18 @@ export function App({ backend }: { backend: WikiBackend }) {
               </div>
               <div class="wiki-entry-list">
                 {state.inbox.map((entry) => (
-                  <button key={entry.path} type="button" class={`wiki-entry-row${selectedInboxPath === entry.path ? " is-active" : ""}`} onClick={() => openInboxNote(entry.path)}>
+                  <a
+                    key={entry.path}
+                    href={buildEntryHref("/apps/wiki", selectedDb, entry.path)}
+                    class={`wiki-entry-row${selectedInboxPath === entry.path ? " is-active" : ""}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      openInboxNote(entry.path);
+                    }}
+                  >
                     <strong>{entry.title || displayTitleFromPath(entry.path)}</strong>
                     <span>{entry.path}</span>
-                  </button>
+                  </a>
                 ))}
               </div>
             </section>
@@ -439,9 +477,9 @@ export function App({ backend }: { backend: WikiBackend }) {
                     routeBase="/apps/wiki"
                     selectedDb={selectedDb}
                     selectedPath={state.selectedPath}
-                    onNavigate={(path) => openPage(path)}
-                    onPreviewOpen={(anchor, request, pin) => void openPreview(anchor, request, pin)}
-                    onPreviewHide={(force) => hidePreview(force)}
+                    onNavigate={openPage}
+                    onPreviewOpen={handleArticlePreviewOpen}
+                    onPreviewHide={hidePreview}
                   />
                 </section>
               ) : null}
@@ -610,9 +648,9 @@ export function App({ backend }: { backend: WikiBackend }) {
                       routeBase="/apps/wiki"
                       selectedDb={selectedDb}
                       selectedPath={state.selectedPath}
-                      onNavigate={(path) => openPageAndBrowse(path)}
-                      onPreviewOpen={(anchor, request, pin) => void openPreview(anchor, request, pin)}
-                      onPreviewHide={(force) => hidePreview(force)}
+                      onNavigate={openPageAndBrowse}
+                      onPreviewOpen={handleArticlePreviewOpen}
+                      onPreviewHide={hidePreview}
                     />
                   ) : <div class="wiki-empty">Select an inbox note from the left rail.</div>}
                 </section>
@@ -622,14 +660,6 @@ export function App({ backend }: { backend: WikiBackend }) {
         </main>
 
         <aside class="wiki-inspector">
-          <section class="wiki-inspector-section">
-            <h2>Current page</h2>
-            <dl>
-              <div><dt>Database</dt><dd>{selectedDb || "—"}</dd></div>
-              <div><dt>Path</dt><dd>{state.selectedPath || "—"}</dd></div>
-              <div><dt>Mode</dt><dd>{labelForMode(mode)}</dd></div>
-            </dl>
-          </section>
           {pageHeadings.length > 0 ? (
             <section class="wiki-inspector-section">
               <h2>Outline</h2>
@@ -698,6 +728,16 @@ function writeLocation(mode: WikiMode, route: { db?: string; path?: string; q?: 
   writeParam(url, "q", route.q);
   writeParam(url, "ask", route.ask);
   window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+}
+
+function buildWikiHref(mode: WikiMode, route: { db?: string; path?: string; q?: string; ask?: string }): string {
+  const url = new URL(window.location.href);
+  url.searchParams.set("mode", mode);
+  writeParam(url, "db", route.db);
+  writeParam(url, "path", route.path);
+  writeParam(url, "q", route.q);
+  writeParam(url, "ask", route.ask);
+  return `${url.pathname}${url.search}`;
 }
 
 function writeParam(url: URL, key: string, value: string | undefined): void {

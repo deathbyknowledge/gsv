@@ -107,16 +107,28 @@ function readRouteParams(): { target: string | null; workdir: string | null } {
     const workdir = typeof payload?.workdir === "string" && payload.workdir.trim()
       ? payload.workdir.trim()
       : (typeof context?.cwd === "string" && context.cwd.trim() ? context.cwd.trim() : null);
-    return { target, workdir };
+    const nextRoute = { target, workdir };
+    console.debug("[shell] consumed pending app open", {
+      windowId: WINDOW_ID,
+      pending,
+      route: nextRoute,
+    });
+    return nextRoute;
   }
 
   const url = new URL(window.location.href);
   const target = url.searchParams.get("target");
   const workdir = url.searchParams.get("path") || url.searchParams.get("workdir");
-  return {
+  const nextRoute = {
     target: target && target.trim() ? target.trim() : null,
     workdir: workdir && workdir.trim() ? workdir.trim() : null,
   };
+  console.debug("[shell] using url route", {
+    windowId: WINDOW_ID,
+    route: nextRoute,
+    href: window.location.href,
+  });
+  return nextRoute;
 }
 
 function currentTarget(): string {
@@ -275,6 +287,11 @@ async function boot(): Promise<void> {
   renderTargetOptions(state.devices);
 
   const route = readRouteParams();
+  console.debug("[shell] boot state", {
+    windowId: WINDOW_ID,
+    route,
+    devices: state.devices.map((device) => device.deviceId),
+  });
   if (route.workdir) {
     workdirInput.value = route.workdir;
   } else {
@@ -287,6 +304,11 @@ async function boot(): Promise<void> {
   if (route.target) {
     const knownTarget = ["gsv", ...state.devices.map((device) => device.deviceId)].includes(route.target);
     targetSelect.value = knownTarget ? route.target : "gsv";
+    console.debug("[shell] applied target route", {
+      requestedTarget: route.target,
+      knownTarget,
+      selectedTarget: targetSelect.value,
+    });
   }
 
   await ghostty.init();
