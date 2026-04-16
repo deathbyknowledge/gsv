@@ -12,6 +12,7 @@ import type {
   ControlConfigEntry,
   ControlCreatedToken,
   ControlState,
+  ControlViewer,
   CreateLinkArgs,
   CreateTokenArgs,
   CreateTokenResult,
@@ -20,7 +21,15 @@ import type {
   UnlinkArgs,
 } from "../app/types";
 
-export async function loadState(kernel: KernelClientLike): Promise<ControlState> {
+type RuntimeContextLike = {
+  appFrame?: {
+    uid?: number;
+    username?: string;
+  };
+};
+
+export async function loadState(kernel: KernelClientLike, runtime: unknown): Promise<ControlState> {
+  const viewer = resolveViewer(runtime);
   const [configResult, tokenResult, linkResult] = await Promise.all([
     kernel.request("sys.config.get", {} as Record<string, never>) as Promise<SysConfigGetResult>,
     kernel.request("sys.token.list", {} as Record<string, never>) as Promise<SysTokenListResult>,
@@ -30,6 +39,7 @@ export async function loadState(kernel: KernelClientLike): Promise<ControlState>
   const configEntries = normalizeConfigEntries(configResult.entries);
 
   return {
+    viewer,
     configEntries,
     configValues: Object.fromEntries(configEntries.map((entry) => [entry.key, entry.value])),
     tokens: [...tokenResult.tokens].sort((left, right) => right.createdAt - left.createdAt),
@@ -39,17 +49,19 @@ export async function loadState(kernel: KernelClientLike): Promise<ControlState>
 
 export async function saveEntry(
   kernel: KernelClientLike,
+  runtime: unknown,
   args: SaveEntryArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.config.set", {
     key: normalizeRequired(args.key, "key"),
     value: args.value ?? "",
   });
-  return loadState(kernel);
+  return loadState(kernel, runtime);
 }
 
 export async function createToken(
   kernel: KernelClientLike,
+  runtime: unknown,
   args: CreateTokenArgs,
 ): Promise<CreateTokenResult> {
   const result = await kernel.request("sys.token.create", {
@@ -60,34 +72,37 @@ export async function createToken(
   }) as SysTokenCreateResult;
 
   return {
-    state: await loadState(kernel),
+    state: await loadState(kernel, runtime),
     token: normalizeCreatedToken(result.token),
   };
 }
 
 export async function revokeToken(
   kernel: KernelClientLike,
+  runtime: unknown,
   args: RevokeTokenArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.token.revoke", {
     tokenId: normalizeRequired(args.tokenId, "tokenId"),
     reason: normalizeOptional(args.reason),
   });
-  return loadState(kernel);
+  return loadState(kernel, runtime);
 }
 
 export async function consumeLinkCode(
   kernel: KernelClientLike,
+  runtime: unknown,
   args: ConsumeLinkCodeArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.link.consume", {
     code: normalizeRequired(args.code, "code"),
   });
-  return loadState(kernel);
+  return loadState(kernel, runtime);
 }
 
 export async function createLink(
   kernel: KernelClientLike,
+  runtime: unknown,
   args: CreateLinkArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.link", {
@@ -95,11 +110,12 @@ export async function createLink(
     accountId: normalizeRequired(args.accountId, "accountId"),
     actorId: normalizeRequired(args.actorId, "actorId"),
   });
-  return loadState(kernel);
+  return loadState(kernel, runtime);
 }
 
 export async function unlink(
   kernel: KernelClientLike,
+  runtime: unknown,
   args: UnlinkArgs,
 ): Promise<ControlState> {
   await kernel.request("sys.unlink", {
@@ -107,11 +123,12 @@ export async function unlink(
     accountId: normalizeRequired(args.accountId, "accountId"),
     actorId: normalizeRequired(args.actorId, "actorId"),
   });
-  return loadState(kernel);
+  return loadState(kernel, runtime);
 }
 
 export async function applyRawConfig(
   kernel: KernelClientLike,
+  runtime: unknown,
   args: ApplyRawConfigArgs,
 ): Promise<ControlState> {
   for (const entry of args.entries) {
@@ -120,7 +137,7 @@ export async function applyRawConfig(
       value: entry.value ?? "",
     });
   }
-  return loadState(kernel);
+  return loadState(kernel, runtime);
 }
 
 function normalizeConfigEntries(entries: SysConfigEntry[]): ControlConfigEntry[] {
@@ -132,6 +149,19 @@ function normalizeConfigEntries(entries: SysConfigEntry[]): ControlConfigEntry[]
       pathLabel: parsePathLabel(entry.key),
     }))
     .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function resolveViewer(runtime: unknown): ControlViewer {
+  const appFrame = (runtime as RuntimeContextLike | null)?.appFrame;
+  const uid = typeof appFrame?.uid === "number" ? appFrame.uid : 0;
+  const username = typeof appFrame?.username === "string" ? appFrame.username : uid === 0 ? "root" : "user";
+  return {
+    uid,
+    username,
+    canEditSystemConfig: uid === 0,
+    canEditUserAiConfig: true,
+    userAiPrefix: `users/${uid}/ai/`,
+  };
 }
 
 function parseScopeLabel(key: string): string {

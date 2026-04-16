@@ -46,7 +46,16 @@ export type ControlLink = {
   linkedByUid: number;
 };
 
+export type ControlViewer = {
+  uid: number;
+  username: string;
+  canEditSystemConfig: boolean;
+  canEditUserAiConfig: boolean;
+  userAiPrefix: string;
+};
+
 export type ControlState = {
+  viewer: ControlViewer;
   configEntries: ControlConfigEntry[];
   configValues: Record<string, string>;
   tokens: ControlToken[];
