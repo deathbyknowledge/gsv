@@ -5,6 +5,7 @@ export default definePackage({
   meta: {
     displayName: "Adapters",
     description: "Manage connected accounts for WhatsApp, Discord, and future message adapters.",
+    icon: "ui/adapters-icon.svg",
     window: {
       width: 1120,
       height: 760,
