@@ -1,3 +1,4 @@
+import { consumePendingAppOpen } from "@gsv/package/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Stage } from "./stage";
 import { Toolbar } from "./toolbar";
@@ -6,6 +7,12 @@ import type { FilesBackend, FilesMutationResult, FilesRoute, FilesState } from "
 type Props = {
   backend: FilesBackend;
 };
+
+const WINDOW_ID = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
 
 function routeKey(route: FilesRoute) {
   return JSON.stringify(route);
@@ -36,6 +43,20 @@ function readActiveThreadContext() {
 }
 
 function readRoute(): FilesRoute {
+  const pending = consumePendingAppOpen(WINDOW_ID);
+  if (pending?.target === "files") {
+    const payload = asRecord(pending.payload);
+    const target = typeof payload?.device === "string" && payload.device.trim() ? payload.device.trim() : "gsv";
+    const context = asRecord(payload?.context);
+    const contextPath = typeof context?.cwd === "string" && context.cwd.trim() ? context.cwd.trim() : "";
+    return {
+      target,
+      path: typeof payload?.path === "string" && payload.path.trim() ? payload.path.trim() : (contextPath || defaultPathForTarget(target)),
+      q: typeof payload?.q === "string" ? payload.q.trim() : "",
+      open: typeof payload?.open === "string" ? payload.open.trim() : "",
+    };
+  }
+
   const url = new URL(window.location.href);
   const hasExplicitState = url.searchParams.has("path") || url.searchParams.has("open") || url.searchParams.has("q") || url.searchParams.has("target");
   if (!hasExplicitState) {
