@@ -1,6 +1,6 @@
 import type { AppManifest } from "./apps";
 import { renderDesktopIcon } from "./icons";
-import { OPEN_APP_EVENT, type OpenAppEventDetail } from "./app-link";
+import { OPEN_APP_EVENT, resolveOpenAppDetail, type OpenAppEventDetail } from "./app-link";
 import {
   OPEN_CHAT_PROCESS_EVENT,
   TARGET_CHAT_PROCESS_EVENT,
@@ -150,6 +150,18 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     setSelectedIcon(appId);
   };
 
+  const openChatProcessContext = (normalized: { pid: string; workspaceId: string | null; cwd: string }): void => {
+    const chatWindowId = openWindowForApp("chat");
+    if (!chatWindowId) {
+      return;
+    }
+
+    setActiveThreadContext(normalized);
+    queuePendingChatProcess(chatWindowId, normalized);
+    const targetDetail: TargetChatProcessEventDetail = { ...normalized, windowId: chatWindowId };
+    window.dispatchEvent(new CustomEvent<TargetChatProcessEventDetail>(TARGET_CHAT_PROCESS_EVENT, { detail: targetDetail }));
+  };
+
   const onOpenChatProcess = (event: Event): void => {
     const rawDetail = (event as Event & { detail?: { pid?: unknown; workspaceId?: unknown; cwd?: unknown } | null }).detail ?? null;
     const pid = normalizeProcessId(rawDetail?.pid);
@@ -162,32 +174,26 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return;
     }
 
-    const chatWindowId = openWindowForApp("chat");
-    if (!chatWindowId) {
-      return;
-    }
-
-    setActiveThreadContext(normalized);
-    queuePendingChatProcess(chatWindowId, normalized);
-    const targetDetail: TargetChatProcessEventDetail = { ...normalized, windowId: chatWindowId };
-    window.dispatchEvent(new CustomEvent<TargetChatProcessEventDetail>(TARGET_CHAT_PROCESS_EVENT, { detail: targetDetail }));
+    openChatProcessContext(normalized);
   };
 
   const onOpenApp = (event: Event): void => {
     const detail = ((event as Event & { detail?: OpenAppEventDetail | null }).detail) ?? null;
-    const appId = typeof detail?.appId === "string" ? detail.appId.trim() : "";
-    if (!appId) {
+    const resolved = resolveOpenAppDetail(detail);
+    if (!resolved) {
       return;
     }
 
-    const route = typeof detail?.route === "string" && detail.route.trim().length > 0 ? detail.route.trim() : undefined;
-
-    const normalizedThread = normalizeThreadContext(detail?.threadContext);
-    if (normalizedThread) {
-      setActiveThreadContext(normalizedThread);
+    if (resolved.type === "chat-process") {
+      openChatProcessContext(resolved.threadContext);
+      return;
     }
 
-    openApp(appId, route);
+    if (resolved.threadContext) {
+      setActiveThreadContext(resolved.threadContext);
+    }
+
+    openApp(resolved.appId, resolved.route);
   };
 
   const onWindowMessage = (event: MessageEvent): void => {

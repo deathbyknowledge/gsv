@@ -540,6 +540,21 @@ If a user has a personal override surface:
 - show that as a first-class path
 - do not force them through a system-admin flow that will fail later
 
+### Raise architecture debt instead of normalizing ad hoc seams
+
+When a bug or awkward workflow points to a shared runtime, host, SDK, routing, or cross-app contract problem, call that out explicitly.
+Do not keep layering app-local patches over the same seam.
+
+Examples:
+- if multiple apps have to know another app's private route schema, the app-launch contract is wrong
+- if one app works only through a special side channel while others hand-build URLs, the runtime boundary is wrong
+- if the same host or RPC workaround keeps appearing, raise it as architecture debt before adding another copy
+
+The standard is:
+- identify whether the issue is local product/UI work or a shared systems seam
+- if it is a shared seam, say so directly
+- prefer one runtime/host/API fix over several ad hoc app patches
+
 ### Preserve behavior unless there is explicit product intent to change it
 
 A migration to SPA, RPC, or a new runtime is not permission to redesign the product.

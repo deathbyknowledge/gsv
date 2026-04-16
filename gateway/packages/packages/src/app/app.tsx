@@ -1,3 +1,4 @@
+import { openApp } from "@gsv/package/host";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import type {
   CatalogEntry,
@@ -1592,25 +1593,18 @@ function prefixForDiffLine(tag: string): string {
 }
 
 function openCompanion(appId: string, route: string) {
-  try {
-    if (window.parent && window.parent !== window) {
-      const detail = { appId, route };
-      window.parent.postMessage({ type: "gsv:open-app", detail }, window.location.origin);
-      window.parent.dispatchEvent(new CustomEvent("gsv:open-app", { detail }));
-      return;
-    }
-  } catch {
-  }
-  window.location.href = route;
+  openApp({ target: appId, payload: route ? { route } : {} });
 }
 
 function openChatProcess(detail: { pid: string; workspaceId: string | null; cwd: string | null }) {
-  try {
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: "gsv:open-chat-process", detail }, window.location.origin);
-      window.parent.dispatchEvent(new CustomEvent("gsv:open-chat-process", { detail }));
-      return;
-    }
-  } catch {
+  const pid = String(detail.pid ?? "").trim();
+  const cwd = String(detail.cwd ?? "").trim();
+  if (!pid || !cwd) {
+    return;
   }
+  const workspaceId = detail.workspaceId == null ? null : String(detail.workspaceId);
+  openApp({
+    target: "chat",
+    payload: { pid, workspaceId, cwd },
+  });
 }

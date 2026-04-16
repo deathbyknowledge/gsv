@@ -1,3 +1,4 @@
+import { openApp } from "@gsv/package/host";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import { DeviceAccess } from "./device-access";
 import { DeviceCapabilities } from "./device-capabilities";
@@ -170,18 +171,22 @@ export function App({ backend }: AppProps) {
           </div>
           <div class="devices-inline-actions">
             <button
-              class="devices-button devices-button--quiet"
+              class="devices-button devices-button--quiet devices-icon-btn"
               type="button"
-              onClick={() => openCompanion("files", `/apps/files?target=${encodeURIComponent(selectedDevice.deviceId)}&path=.`)}
+              title="Open in Files"
+              aria-label="Open in Files"
+              onClick={() => openApp({ target: "files", payload: { device: selectedDevice.deviceId, path: "." } })}
             >
-              Open in Files
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2H21v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
             </button>
             <button
-              class="devices-button devices-button--quiet"
+              class="devices-button devices-button--quiet devices-icon-btn"
               type="button"
-              onClick={() => openCompanion("shell", `/apps/shell?target=${encodeURIComponent(selectedDevice.deviceId)}`)}
+              title="Open Shell"
+              aria-label="Open Shell"
+              onClick={() => openApp({ target: "shell", payload: { device: selectedDevice.deviceId, workdir: "." } })}
             >
-              Open Shell
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z" /><path d="m7 10 3 2.5L7 15" /><path d="M12.5 15H17" /></svg>
             </button>
             {state.viewer.canManageTokens ? (
               <button class="devices-button devices-button--primary" onClick={() => { setIssuedToken(null); updateRoute({ mode: "provision", deviceId: selectedDevice.deviceId }); }}>
@@ -267,19 +272,6 @@ function readModeFromLocation(): DevicesMode {
 function readDeviceFromLocation(): string | null {
   const value = new URL(window.location.href).searchParams.get("device");
   return value && value.trim().length > 0 ? value.trim() : null;
-}
-
-function openCompanion(appId: string, route: string) {
-  try {
-    if (window.parent && window.parent !== window) {
-      const detail = { appId, route };
-      window.parent.postMessage({ type: "gsv:open-app", detail }, window.location.origin);
-      window.parent.dispatchEvent(new CustomEvent("gsv:open-app", { detail }));
-      return;
-    }
-  } catch {
-  }
-  window.location.href = route;
 }
 
 function formatError(cause: unknown): string {
