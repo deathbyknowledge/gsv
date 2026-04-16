@@ -1,30 +1,45 @@
 import { definePackage } from "@gsv/package/worker";
-import { handleFetch } from "../ui/worker";
+import {
+  createNodeToken,
+  loadState,
+  revokeToken,
+} from "./backend/api";
 
 export default definePackage({
   meta: {
     displayName: "Devices",
-    description: "Connected machine inventory and runtime device status.",
+    description: "Execution targets, node health, and fleet enrollment.",
     window: {
-      width: 940,
-      height: 620,
-      minWidth: 720,
-      minHeight: 460,
+      width: 1180,
+      height: 760,
+      minWidth: 920,
+      minHeight: 560,
     },
     capabilities: {
-      kernel: ["sys.device.list", "sys.device.get", "sys.token.create"],
+      kernel: [
+        "sys.device.list",
+        "sys.device.get",
+        "sys.token.create",
+        "sys.token.list",
+        "sys.token.revoke",
+      ],
     },
   },
   app: {
-    async fetch(request, ctx) {
-      const routeBase = ctx.meta.routeBase ?? "/apps/devices";
-      return handleFetch(request, {
-        props: {
-          appFrame: { packageId: ctx.meta.packageId, routeBase },
-          kernel: ctx.kernel,
-        },
-        env: { PACKAGE_ROUTE_BASE: routeBase },
-      });
+    browser: {
+      entry: "./src/index.html",
+    },
+    assets: ["./src/styles.css"],
+    rpc: {
+      async loadState(args, ctx) {
+        return loadState(args, ctx.kernel, ctx);
+      },
+      async createNodeToken(args, ctx) {
+        return createNodeToken(args, ctx.kernel, ctx);
+      },
+      async revokeToken(args, ctx) {
+        return revokeToken(args, ctx.kernel, ctx);
+      },
     },
   },
 });
