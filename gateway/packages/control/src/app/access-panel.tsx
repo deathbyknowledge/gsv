@@ -42,23 +42,25 @@ export function AccessPanel({
   }, [issuedToken]);
 
   return (
-    <div class="control-grid">
-      <section class="control-card">
-        <header class="control-card__header">
+    <div class="control-stage-grid">
+      <section class="control-pane">
+        <header class="control-detail-head">
           <div>
             <h2>Access tokens</h2>
-            <p>Create user, service, or node credentials and revoke them when they are no longer needed.</p>
+            <p>Issue credentials for users, services, and driver nodes. Revocation takes effect immediately.</p>
           </div>
         </header>
+
         {issuedToken ? (
-          <div class="control-flash control-flash--success">
+          <div class="control-banner control-banner--success">
             <strong>New token issued</strong>
             <code>{issuedToken.token}</code>
             <span>Store it now. This secret is only returned once.</span>
           </div>
         ) : null}
-        <div class="control-inline-form control-inline-form--stacked">
-          <label>
+
+        <div class="control-form-grid">
+          <label class="control-form-row">
             <span>Kind</span>
             <select
               class="control-field"
@@ -73,11 +75,12 @@ export function AccessPanel({
               }}
             >
               {TOKEN_KINDS.map((kind) => (
-                <option value={kind} key={kind}>{kind}</option>
+                <option key={kind} value={kind}>{kind}</option>
               ))}
             </select>
           </label>
-          <label>
+
+          <label class="control-form-row">
             <span>Label</span>
             <input
               class="control-field"
@@ -89,7 +92,8 @@ export function AccessPanel({
               }}
             />
           </label>
-          <label>
+
+          <label class="control-form-row">
             <span>Expires at</span>
             <input
               class="control-field"
@@ -101,14 +105,15 @@ export function AccessPanel({
               }}
             />
           </label>
+
           {tokenForm.kind === "node" ? (
-            <label>
+            <label class="control-form-row">
               <span>Allowed device</span>
               <input
                 class="control-field"
                 type="text"
-                placeholder="device id"
                 value={tokenForm.allowedDeviceId}
+                placeholder="device id"
                 onInput={(event) => {
                   const target = event.currentTarget as HTMLInputElement;
                   setTokenForm((current) => ({ ...current, allowedDeviceId: target.value }));
@@ -116,6 +121,9 @@ export function AccessPanel({
               />
             </label>
           ) : null}
+        </div>
+
+        <div class="control-actions-bar">
           <button
             class="control-button control-button--primary"
             disabled={pendingAction === "create-token"}
@@ -129,6 +137,7 @@ export function AccessPanel({
             {pendingAction === "create-token" ? "Issuing…" : "Issue token"}
           </button>
         </div>
+
         <div class="control-table-wrap">
           <table class="control-table">
             <thead>
@@ -152,7 +161,7 @@ export function AccessPanel({
                     <code>{token.tokenPrefix}</code>
                     <div class="control-subtle">{token.label ?? token.tokenId}</div>
                   </td>
-                  <td><span class="control-pill">{token.kind}</span></td>
+                  <td>{token.kind}</td>
                   <td>
                     {token.allowedDeviceId ? <div>device: {token.allowedDeviceId}</div> : null}
                     <div class="control-subtle">role: {token.allowedRole ?? "default"}</div>
@@ -164,9 +173,7 @@ export function AccessPanel({
                       class="control-button control-button--danger"
                       disabled={pendingAction === `revoke:${token.tokenId}` || token.revokedAt !== null}
                       onClick={() => {
-                        if (!window.confirm(`Revoke token ${token.tokenPrefix}?`)) {
-                          return;
-                        }
+                        if (!window.confirm(`Revoke token ${token.tokenPrefix}?`)) return;
                         void onRevokeToken(token.tokenId);
                       }}
                     >
@@ -180,83 +187,92 @@ export function AccessPanel({
         </div>
       </section>
 
-      <section class="control-card">
-        <header class="control-card__header">
+      <section class="control-pane">
+        <header class="control-detail-head">
           <div>
             <h2>Identity links</h2>
-            <p>Redeem link codes or manually connect adapter identities to the current user.</p>
+            <p>Redeem issued link codes or manually bind external adapter identities to the current user.</p>
           </div>
         </header>
-        <div class="control-inline-form control-inline-form--stacked">
-          <label>
-            <span>Link code</span>
+
+        <div class="control-subsection">
+          <h3>Redeem link code</h3>
+          <div class="control-inline-grid">
             <input
               class="control-field"
               type="text"
               value={code}
+              placeholder="ABCD1234"
               onInput={(event) => {
                 const target = event.currentTarget as HTMLInputElement;
                 setCode(target.value);
               }}
             />
-          </label>
-          <button
-            class="control-button control-button--primary"
-            disabled={pendingAction === "consume-link"}
-            onClick={() => void onConsumeLinkCode(code).then(() => setCode(""))}
-          >
-            {pendingAction === "consume-link" ? "Linking…" : "Redeem code"}
-          </button>
+            <button
+              class="control-button control-button--primary"
+              disabled={pendingAction === "consume-link"}
+              onClick={() => void onConsumeLinkCode(code).then(() => setCode(""))}
+            >
+              {pendingAction === "consume-link" ? "Linking…" : "Redeem code"}
+            </button>
+          </div>
         </div>
-        <div class="control-inline-form control-inline-form--stacked control-inline-form--top-gap">
-          <label>
-            <span>Adapter</span>
-            <input
-              class="control-field"
-              type="text"
-              placeholder="discord"
-              value={manualLink.adapter}
-              onInput={(event) => {
-                const target = event.currentTarget as HTMLInputElement;
-                setManualLink((current) => ({ ...current, adapter: target.value }));
-              }}
-            />
-          </label>
-          <label>
-            <span>Account ID</span>
-            <input
-              class="control-field"
-              type="text"
-              value={manualLink.accountId}
-              onInput={(event) => {
-                const target = event.currentTarget as HTMLInputElement;
-                setManualLink((current) => ({ ...current, accountId: target.value }));
-              }}
-            />
-          </label>
-          <label>
-            <span>Actor ID</span>
-            <input
-              class="control-field"
-              type="text"
-              value={manualLink.actorId}
-              onInput={(event) => {
-                const target = event.currentTarget as HTMLInputElement;
-                setManualLink((current) => ({ ...current, actorId: target.value }));
-              }}
-            />
-          </label>
-          <button
-            class="control-button"
-            disabled={pendingAction === "create-link"}
-            onClick={() => void onCreateLink(manualLink).then(() => {
-              setManualLink({ adapter: "", accountId: "", actorId: "" });
-            })}
-          >
-            {pendingAction === "create-link" ? "Linking…" : "Create link"}
-          </button>
+
+        <div class="control-subsection">
+          <h3>Manual link</h3>
+          <div class="control-form-grid">
+            <label class="control-form-row">
+              <span>Adapter</span>
+              <input
+                class="control-field"
+                type="text"
+                placeholder="discord"
+                value={manualLink.adapter}
+                onInput={(event) => {
+                  const target = event.currentTarget as HTMLInputElement;
+                  setManualLink((current) => ({ ...current, adapter: target.value }));
+                }}
+              />
+            </label>
+            <label class="control-form-row">
+              <span>Account ID</span>
+              <input
+                class="control-field"
+                type="text"
+                value={manualLink.accountId}
+                onInput={(event) => {
+                  const target = event.currentTarget as HTMLInputElement;
+                  setManualLink((current) => ({ ...current, accountId: target.value }));
+                }}
+              />
+            </label>
+            <label class="control-form-row">
+              <span>Actor ID</span>
+              <input
+                class="control-field"
+                type="text"
+                value={manualLink.actorId}
+                onInput={(event) => {
+                  const target = event.currentTarget as HTMLInputElement;
+                  setManualLink((current) => ({ ...current, actorId: target.value }));
+                }}
+              />
+            </label>
+          </div>
+          <div class="control-actions-bar">
+            <button
+              class="control-button"
+              disabled={pendingAction === "create-link"}
+              onClick={() => void onCreateLink(manualLink).then(() => {
+                setManualLink({ adapter: "", accountId: "", actorId: "" });
+              })}
+            >
+              {pendingAction === "create-link" ? "Linking…" : "Create link"}
+            </button>
+          </div>
         </div>
-        <div class="control-table-wrap control-table-wrap--top-gap">
+
+        <div class="control-table-wrap">
           <table class="control-table">
             <thead>
               <tr>
@@ -274,7 +290,7 @@ export function AccessPanel({
                 </tr>
               ) : links.map((link) => (
                 <tr key={`${link.adapter}:${link.accountId}:${link.actorId}`}>
-                  <td><span class="control-pill">{link.adapter}</span></td>
+                  <td>{link.adapter}</td>
                   <td><code>{link.accountId}</code></td>
                   <td><code>{link.actorId}</code></td>
                   <td>{formatDate(link.createdAt)}</td>
@@ -283,9 +299,7 @@ export function AccessPanel({
                       class="control-button control-button--danger"
                       disabled={pendingAction === `unlink:${link.adapter}:${link.accountId}:${link.actorId}`}
                       onClick={() => {
-                        if (!window.confirm(`Unlink ${link.adapter}:${link.accountId}?`)) {
-                          return;
-                        }
+                        if (!window.confirm(`Unlink ${link.adapter}:${link.accountId}?`)) return;
                         void onUnlink(link);
                       }}
                     >
