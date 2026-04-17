@@ -1,9 +1,0 @@
-{
-  "name": "@gsv/processes",
-  "version": "0.1.0",
-  "type": "module",
-  "dependencies": {
-    "@gsv/package": "workspace:*",
-    "preact": "^10.27.2"
-  }
-}

@@ -15,7 +15,7 @@ import type {
   ConnectResult,
   ConnectionIdentity,
   ProcessIdentity,
-} from "../syscalls/system";
+} from "@gsv/protocol/syscalls/system";
 import type { AuthTokenRole } from "./auth-store";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";

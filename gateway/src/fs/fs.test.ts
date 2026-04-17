@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:test";
 import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 
 const ROOT: ProcessIdentity = {
   uid: 0,

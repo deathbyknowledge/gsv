@@ -4,7 +4,7 @@ GSV is a distributed AI operating environment built from five main pieces:
 
 - a gateway worker that owns the kernel, process runtime, auth, package management, adapters, and inference routing
 - a web shell that hosts the desktop and embedded apps
-- standalone channel workers for external platforms such as WhatsApp and Discord
+- standalone adapter workers for external platforms such as WhatsApp and Discord
 - a Rust CLI for users, devices, deployment, and administration
 - the `ripgit` worker for git-backed storage and content operations
 
@@ -18,21 +18,22 @@ gsv-app-runtime/
 │   ├── src/
 │   │   ├── kernel/          # syscall dispatch, auth, config, adapters, packages
 │   │   ├── process/         # Process DO runtime, store, queue, checkpoint, media
-│   │   ├── syscalls/        # shared syscall types
+│   │   ├── syscalls/        # gateway syscall surface and process-local types
 │   │   ├── inference/       # provider/model integration
 │   │   ├── fs/              # filesystem and ripgit integration
 │   │   ├── downloads/       # self-hosted CLI download/install support
 │   │   ├── auth/            # passwords, tokens, setup auth
 │   │   ├── shared/          # worker/DO bridge utilities
 │   │   └── protocol/        # WS and RPC frame types
-│   ├── packages/            # builtin apps synced from system/gsv
 │   ├── wrangler.jsonc
 │   └── package.json
+├── builtin-packages/        # builtin apps synced from system/gsv
+├── shared/                  # shared SDKs, contracts, and app-link types
 ├── web/
 │   ├── src/                # desktop shell, host bridge, setup/login UI
 │   ├── public/
 │   └── package.json
-├── channels/
+├── adapters/
 │   ├── whatsapp/
 │   ├── discord/
 │   └── test/
@@ -110,7 +111,7 @@ Key files:
 
 ### Builtin apps
 
-Builtin apps live under `gateway/packages/*`.
+Builtin apps live under `builtin-packages/*`.
 
 Examples:
 - `chat`
@@ -124,9 +125,9 @@ Examples:
 
 They are synced from `system/gsv` into the running system. A builtin app change is not applied by redeploying the gateway worker alone.
 
-### Channel workers
+### Adapter workers
 
-Channel workers are separate deployables.
+Adapter workers are separate deployables.
 
 Each one owns its platform-specific behavior:
 - auth and account state
@@ -134,7 +135,7 @@ Each one owns its platform-specific behavior:
 - outbound message delivery
 - adapter-specific identity normalization
 
-Gateway calls channels through service bindings. Channels call back into gateway through gateway RPC entrypoints.
+Gateway calls adapters through service bindings. Adapter workers call back into gateway through gateway RPC entrypoints.
 
 ### ripgit
 
@@ -178,7 +179,7 @@ cd web
 npm run dev
 ```
 
-### `gateway/packages/*`
+### `builtin-packages/*`
 
 You changed a builtin app.
 
@@ -190,19 +191,19 @@ cargo run -- -u root packages sync
 
 If the package is a new builtin, the running gateway code must already know about that builtin package.
 
-### `channels/*`
+### `adapters/*`
 
-You changed a channel worker.
+You changed an adapter worker.
 
 Deploy that specific worker:
 
 ```bash
-cd channels/whatsapp
+cd adapters/whatsapp
 npm run deploy
 ```
 
 ```bash
-cd channels/discord
+cd adapters/discord
 npm run deploy
 ```
 
@@ -211,15 +212,15 @@ npm run deploy
 If a change spans multiple layers, update each one explicitly.
 
 Examples:
-- `gateway/src/*` + `gateway/packages/*`
+- `gateway/src/*` + `builtin-packages/*`
   - redeploy gateway
   - sync builtins
 - `gateway/src/*` + `web/src/*`
   - redeploy gateway
   - rebuild/redeploy web shell
-- `gateway/packages/*` + `channels/*`
+- `builtin-packages/*` + `adapters/*`
   - sync builtins
-  - redeploy that channel
+  - redeploy that adapter
 
 ## Development commands
 
@@ -254,11 +255,11 @@ npm run build
 npm run check
 ```
 
-### Channels
+### Adapters
 
 WhatsApp:
 ```bash
-cd channels/whatsapp
+cd adapters/whatsapp
 npm run dev
 npm run deploy
 npm run cf-typegen
@@ -267,15 +268,15 @@ npx tsc --noEmit
 
 Discord:
 ```bash
-cd channels/discord
+cd adapters/discord
 npm run dev
 npm run deploy
 npm run typecheck
 ```
 
-Test channel:
+Test adapter:
 ```bash
-cd channels/test
+cd adapters/test
 npm run dev
 npm run deploy
 npm run typecheck
@@ -309,8 +310,8 @@ Examples:
 - builtin app changes:
   - sync the package and exercise it through the desktop shell
 - WhatsApp changes:
-  - `cd channels/whatsapp && npx tsc --noEmit`
-- Discord/Test channel changes:
+  - `cd adapters/whatsapp && npx tsc --noEmit`
+- Discord/Test adapter changes:
   - `npm run typecheck`
 - CLI changes:
   - `cd cli && cargo test && cargo fmt --check`
@@ -326,7 +327,7 @@ The goal is correct validation, not maximal validation.
 - `import type` for type-only imports
 - keep payload types explicit at syscall/protocol boundaries
 - avoid `any` unless tightly scoped
-- keep platform-specific logic in the relevant channel worker
+- keep platform-specific logic in the relevant adapter worker
 
 ### Rust
 

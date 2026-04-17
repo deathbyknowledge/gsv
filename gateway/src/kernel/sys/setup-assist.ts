@@ -7,7 +7,7 @@ import type {
   OnboardingAssistPatch,
   SysSetupAssistArgs,
   SysSetupAssistResult,
-} from "../../syscalls/system";
+} from "@gsv/protocol/syscalls/system";
 
 const ALLOWED_PATCH_PATHS = new Set<OnboardingAssistPatch["path"]>([
   "account.username",

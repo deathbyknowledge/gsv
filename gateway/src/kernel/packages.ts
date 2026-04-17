@@ -364,7 +364,7 @@ function createBuiltinRipgitPackageSpec(
     source: {
       repo: `${BUILTIN_SOURCE_OWNER}/${BUILTIN_SOURCE_REPO}`,
       ref: BUILTIN_SOURCE_REF,
-      subdir: `gateway/packages/${name}`,
+      subdir: `builtin-packages/${name}`,
     },
     grants,
     enabled: true,

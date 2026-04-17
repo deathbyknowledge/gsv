@@ -11,7 +11,7 @@ import type {
   NotificationMarkReadResult,
   NotificationRecord,
   NotificationSource,
-} from "../syscalls/notification";
+} from "@gsv/protocol/syscalls/notification";
 import type { KernelContext } from "./context";
 
 const DEFAULT_UNREAD_TTL_MS = 30 * 24 * 60 * 60 * 1000;

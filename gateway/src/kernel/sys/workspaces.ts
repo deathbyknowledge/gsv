@@ -3,7 +3,7 @@ import type {
   SysWorkspaceListArgs,
   SysWorkspaceListResult,
   SysWorkspaceSummary,
-} from "../../syscalls/system";
+} from "@gsv/protocol/syscalls/system";
 
 export function handleSysWorkspaceList(
   args: SysWorkspaceListArgs | undefined,

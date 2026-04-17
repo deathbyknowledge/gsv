@@ -9,7 +9,7 @@ import { createSessionUi } from "./session-ui";
 import { renderDesktopShell } from "./shell-template";
 import { createWindowManager } from "./window-manager";
 import { createWindowsPanel } from "./windows-panel";
-import type { PkgListResult } from "../../gateway/src/syscalls/packages";
+import type { PkgListResult } from "@gsv/protocol/syscalls/packages";
 
 const app = document.querySelector<HTMLElement>("#app");
 

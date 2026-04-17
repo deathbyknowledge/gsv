@@ -5,8 +5,8 @@ import type {
   SysBootstrapResult,
   SysSetupArgs,
   SysSetupResult,
-} from "../../gateway/src/syscalls/system";
-import type { ProcMediaInput } from "../../gateway/src/syscalls/proc";
+} from "@gsv/protocol/syscalls/system";
+import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
 
 type GatewayErrorShape = {
   code: number;

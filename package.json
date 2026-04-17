@@ -4,9 +4,7 @@
   "workspaces": [
     "gateway",
     "web",
-    "gateway/packages/*",
-    "packages/*",
-    "ripgit"
+    "shared/*"
   ],
   "scripts": {
     "setup": "bash ./scripts/setup-deps.sh",

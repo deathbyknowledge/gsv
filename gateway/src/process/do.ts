@@ -20,7 +20,7 @@ import type {
   SignalFrame,
 } from "../protocol/frames";
 import type { ResultOf, SyscallName, ToolDefinition } from "../syscalls";
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type {
   AiConfigResult,
   AiContextProfile,

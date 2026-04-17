@@ -21,7 +21,7 @@ import type {
   CpOptions,
   BufferEncoding,
 } from "just-bash";
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { KernelRefs } from "./refs";
 import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "./mount";
 import { R2MountBackend } from "./backends/r2";

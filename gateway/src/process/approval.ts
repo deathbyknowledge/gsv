@@ -1,5 +1,5 @@
 import { isAiContextProfile, type AiContextProfile } from "../syscalls/ai";
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 
 export type ToolApprovalAction = "auto" | "ask" | "deny";
 

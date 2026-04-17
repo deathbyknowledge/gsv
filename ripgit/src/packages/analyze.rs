@@ -1107,17 +1107,14 @@ mod tests {
             repo: "system/gsv".to_string(),
             requested_ref: "main".to_string(),
             resolved_commit: "abc123".to_string(),
-            subdir: "gateway/packages/doctor".to_string(),
+            subdir: "builtin-packages/doctor".to_string(),
         }
     }
 
     #[test]
     fn normalize_subdir_rejects_parent_segments() {
         assert!(normalize_subdir("../bad").is_err());
-        assert_eq!(
-            normalize_subdir("./gateway//packages/doctor").unwrap(),
-            "gateway/packages/doctor"
-        );
+        assert_eq!(normalize_subdir("./builtin-packages//doctor").unwrap(), "builtin-packages/doctor");
     }
 
     #[test]

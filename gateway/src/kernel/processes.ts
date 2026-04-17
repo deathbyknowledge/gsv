@@ -9,7 +9,7 @@
  * profile is now explicit metadata stored alongside the process record.
  */
 
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { AiContextProfile } from "../syscalls/ai";
 import type { ProcContextFile } from "../syscalls/proc";
 

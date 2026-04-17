@@ -37,7 +37,7 @@ import type {
   PkgPublicSetResult,
   PkgCatalogEntry,
   PkgSummary,
-} from "../syscalls/packages";
+} from "@gsv/protocol/syscalls/packages";
 import type {
   InstalledPackageRecord,
   PackageArtifact,

@@ -5,7 +5,7 @@ import type {
   OnboardingDraft,
   OnboardingLane,
   OnboardingStage,
-} from "../../gateway/src/syscalls/system";
+} from "@gsv/protocol/syscalls/system";
 
 type SessionUiOptions = {
   rootNode: HTMLElement;

@@ -27,11 +27,11 @@ jobs:
       
       - name: Install dependencies
         working-directory: gateway
-        run: npm ci --workspaces=false
+        run: npm ci
       
       - name: Type check
         working-directory: gateway
-        run: npm exec --workspaces=false -- tsc --noEmit
+        run: npm exec -- tsc --noEmit
       
       - name: Run unit tests
         working-directory: gateway

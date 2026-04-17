@@ -9,9 +9,9 @@ import type {
   ConnectionIdentity,
   ProcessIdentity,
   SysSetupResult,
-} from "../syscalls/system";
+} from "@gsv/protocol/syscalls/system";
 import type { ProcContextFile, ProcHilRequest, ProcHistoryMessage, ProcHistoryResult } from "../syscalls/proc";
-import type { PkgPublicListResult } from "../syscalls/packages";
+import type { PkgPublicListResult } from "@gsv/protocol/syscalls/packages";
 import type {
   AdapterOutboundMessage,
 } from "../adapter-interface";

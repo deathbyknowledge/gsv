@@ -4,7 +4,7 @@ import type {
   RmOptions,
 } from "just-bash";
 import type { WorkspaceStore } from "../../kernel/workspaces";
-import type { ProcessIdentity } from "../../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { ExtendedMountStat, MountBackend, FsSearchBackendResult } from "../mount";
 import {
   RipgitClient,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createProcessSourceBackend } from "./index";
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { ProcessMount } from "../kernel/processes";
 
 const IDENTITY: ProcessIdentity = {

@@ -1,0 +1,15 @@
+{
+  "name": "@gsv/package",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@gsv/app-link": "file:../app-link"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./browser": "./src/browser.ts",
+    "./worker": "./src/worker.ts",
+    "./host": "./src/host.ts"
+  }
+}

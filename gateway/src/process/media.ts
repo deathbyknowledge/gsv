@@ -1,6 +1,6 @@
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
 
-import type { ProcMediaInput } from "../syscalls/proc";
+import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
 
 export type StoredProcessMedia = {
   type: ProcMediaInput["type"];

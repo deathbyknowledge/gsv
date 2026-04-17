@@ -3,7 +3,7 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "../../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { ProcessMount } from "../../kernel/processes";
 import type { ExtendedMountStat, MountBackend } from "../mount";
 import { RipgitClient, type RipgitRepoRef } from "../ripgit/client";

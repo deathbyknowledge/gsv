@@ -1,5 +1,6 @@
 {
   "name": "ripgit-tests",
+  "version": "0.0.0",
   "private": true,
   "scripts": {
     "build:worker": "cargo install -q \"worker-build@^0.7\" && worker-build --release",

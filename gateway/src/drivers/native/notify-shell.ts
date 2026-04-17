@@ -15,7 +15,7 @@ import type {
   NotificationListArgs,
   NotificationMarkReadArgs,
   NotificationRecord,
-} from "../../syscalls/notification";
+} from "@gsv/protocol/syscalls/notification";
 
 type NotifyShellOps = {
   create: (args: NotificationCreateArgs, ctx: KernelContext) => { notification: NotificationRecord };

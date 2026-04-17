@@ -47,7 +47,7 @@ function makeInstalledPackage() {
       source: {
         repo: "system/gsv",
         ref: "main",
-        subdir: "gateway/packages/chat",
+        subdir: "builtin-packages/chat",
         resolvedCommit: "abc123",
       },
       entrypoints: [
@@ -150,7 +150,7 @@ describe("handleSysBootstrap", () => {
           source: {
             repo: "system/gsv",
             ref: "main",
-            subdir: "gateway/packages/chat",
+            subdir: "builtin-packages/chat",
             resolvedCommit: "abc123",
           },
           entrypoints: [

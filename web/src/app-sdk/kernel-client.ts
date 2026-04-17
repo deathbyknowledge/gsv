@@ -6,7 +6,7 @@ import type {
   ProcSpawnArgs,
   ProcSpawnResult,
 } from "../gateway-client";
-import type { ProcMediaInput } from "../../../gateway/src/syscalls/proc";
+import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
 import type { AppManifest } from "./manifest";
 
 export type AppKernelClient = {
