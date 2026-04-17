@@ -26,318 +26,15 @@ const PACKAGE_BUILD_CACHE_VERSION: &str = "dynamic-worker-build-v3";
 const PACKAGE_NPM_CACHE_VERSION: &str = "npm-lockfile-materialization-v2";
 const GSV_PACKAGE_SDK_NAME: &str = "@gsv/package";
 const GSV_PACKAGE_SDK_ROOT: &str = "__gsv_sdk/@gsv/package";
-const GSV_PACKAGE_SDK_PACKAGE_JSON: &str = r#"{
-  "name": "@gsv/package",
-  "exports": {
-    ".": "./src/index.ts",
-    "./worker": "./src/worker.ts",
-    "./host": "./src/host.ts",
-    "./browser": "./src/browser.ts"
-  }
-}"#;
-const GSV_PACKAGE_SDK_WORKER_TS: &str = r#"export function definePackage(definition) {
-  return definition;
-}
-"#;
-const GSV_PACKAGE_SDK_HOST_TS: &str = r#"export type HostStatus = {
-  connected: boolean;
-};
-
-export type HostSignalHandler = (signal: string, payload: unknown) => void;
-export type HostStatusHandler = (status: HostStatus) => void;
-
-export type ThreadContext = {
-  pid: string;
-  workspaceId: string | null;
-  cwd: string;
-};
-
-export type FilesOpenPayload = {
-  device?: string;
-  deviceId?: string;
-  target?: string;
-  path?: string;
-  open?: string;
-  q?: string;
-  context?: ThreadContext | null;
-};
-
-export type ShellOpenPayload = {
-  device?: string;
-  deviceId?: string;
-  target?: string;
-  workdir?: string;
-  context?: ThreadContext | null;
-};
-
-export type ChatOpenPayload = {
-  pid: string;
-  workspaceId?: string | null;
-  cwd: string;
-};
-
-export type WikiOpenPayload = {
-  db?: string;
-  path?: string;
-  mode?: "browse" | "edit" | "build" | "ingest" | "inbox";
-};
-
-export type OpenAppRequest =
-  | { target: "files"; payload?: FilesOpenPayload }
-  | { target: "shell"; payload?: ShellOpenPayload }
-  | { target: "chat"; payload: ChatOpenPayload }
-  | { target: "wiki"; payload?: WikiOpenPayload }
-  | { target: string; payload?: { route?: string } };
-
-export type HostClient = {
-  getStatus(): HostStatus;
-  onSignal(listener: HostSignalHandler): () => void;
-  onStatus(listener: HostStatusHandler): () => void;
-  request<T = unknown>(call: string, args?: unknown): Promise<T>;
-  spawnProcess(args: unknown): Promise<unknown>;
-  sendMessage(message: string, pid?: string): Promise<unknown>;
-  getHistory(limit: number, pid?: string, offset?: number): Promise<unknown>;
-};
-
-const OPEN_APP_EVENT = "gsv:open-app";
-const PENDING_APP_OPEN_KEY = "__gsvPendingAppOpenRequests";
-
-type PendingAppOpenStore = Map<string, OpenAppRequest>;
-
-declare global {
-  interface Window {
-    [PENDING_APP_OPEN_KEY]?: PendingAppOpenStore;
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function readRequestedTarget(payload: Record<string, unknown> | null): string | null {
-  const target = asString(payload?.device) ?? asString(payload?.deviceId) ?? asString(payload?.target);
-  const normalized = target?.trim() || "";
-  return normalized || null;
-}
-
-function normalizeThreadContext(value: unknown): ThreadContext | null {
-  const record = asRecord(value);
-  if (!record) {
-    return null;
-  }
-  const pid = asString(record.pid)?.trim() || "";
-  const cwd = asString(record.cwd)?.trim() || "";
-  const workspaceId = asString(record.workspaceId)?.trim() || null;
-  if (!pid || !cwd) {
-    return null;
-  }
-  return { pid, cwd, workspaceId };
-}
-
-function writeParam(url: URL, key: string, value: string | undefined): void {
-  const normalized = value?.trim();
-  if (normalized) {
-    url.searchParams.set(key, normalized);
-  } else {
-    url.searchParams.delete(key);
-  }
-}
-
-function buildFallbackRoute(request: OpenAppRequest): string {
-  const target = String(request.target ?? "").trim();
-  const payload = asRecord(request.payload) ?? {};
-  if (target === "files") {
-    const context = normalizeThreadContext(payload.context);
-    const url = new URL("/apps/files/", window.location.href);
-    writeParam(url, "target", readRequestedTarget(payload) ?? undefined);
-    writeParam(url, "path", asString(payload.path) ?? context?.cwd ?? undefined);
-    writeParam(url, "open", asString(payload.open) ?? undefined);
-    writeParam(url, "q", asString(payload.q) ?? undefined);
-    return `${url.pathname}${url.search}`;
-  }
-  if (target === "shell") {
-    const context = normalizeThreadContext(payload.context);
-    const url = new URL("/apps/shell/", window.location.href);
-    writeParam(url, "target", readRequestedTarget(payload) ?? undefined);
-    writeParam(url, "workdir", asString(payload.workdir) ?? context?.cwd ?? undefined);
-    return `${url.pathname}${url.search}`;
-  }
-  if (target === "wiki") {
-    const url = new URL("/apps/wiki/", window.location.href);
-    writeParam(url, "db", asString(payload.db) ?? undefined);
-    writeParam(url, "path", asString(payload.path) ?? undefined);
-    writeParam(url, "mode", asString(payload.mode) ?? undefined);
-    return `${url.pathname}${url.search}`;
-  }
-  const explicitRoute = asString(payload.route)?.trim();
-  if (explicitRoute) {
-    return explicitRoute;
-  }
-  return `/apps/${encodeURIComponent(target)}`;
-}
-
-export function consumePendingAppOpen(windowId?: string): OpenAppRequest | null {
-  const fallbackWindowId = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
-  const normalizedWindowId = windowId?.trim() || fallbackWindowId;
-  if (!normalizedWindowId) {
-    return null;
-  }
-
-  try {
-    const store = window.parent?.[PENDING_APP_OPEN_KEY];
-    if (store instanceof Map) {
-      const request = store.get(normalizedWindowId) ?? null;
-      if (request) {
-        store.delete(normalizedWindowId);
-      }
-      return request as OpenAppRequest | null;
-    }
-  } catch {
-    // Ignore cross-window access failures outside the shell host.
-  }
-
-  return null;
-}
-
-export function openApp(request: OpenAppRequest): void {
-  const detail = { request };
-  try {
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: OPEN_APP_EVENT, detail }, window.location.origin);
-      window.parent.dispatchEvent(new CustomEvent(OPEN_APP_EVENT, { detail }));
-      return;
-    }
-  } catch {
-    // Fall back to same-window navigation outside the shell host.
-  }
-  window.location.href = buildFallbackRoute(request);
-}
-
-export async function connectHost(): Promise<HostClient> {
-  throw new Error("HOST runtime is not wired in this build target");
-}
-"#;
-const GSV_PACKAGE_SDK_BROWSER_TS: &str = r#"export type PackageAppBoot = {
-  packageId: string;
-  packageName: string;
-  routeBase: string;
-  rpcBase: string;
-  sessionId: string;
-  sessionSecret: string;
-  clientId: string;
-  expiresAt: number;
-  hasBackend: boolean;
-};
-
-type CapnwebGlobal = {
-  newWebSocketRpcSession<T = unknown>(url: string, localMain?: unknown): T;
-};
-
-type WrappedBackend = {
-  invoke(method: string, args?: unknown): Promise<unknown>;
-  dup?: () => unknown;
-} & Record<string | symbol, unknown>;
-
-declare global {
-  interface Window {
-    __GSV_APP_BOOT__?: PackageAppBoot;
-    __GSV_BACKEND_READY__?: Promise<unknown>;
-    backend?: unknown;
-    capnweb?: CapnwebGlobal;
-  }
-}
-
-export function getAppBoot(): PackageAppBoot {
-  const boot = globalThis.window?.__GSV_APP_BOOT__;
-  if (!boot) {
-    throw new Error("GSV app bootstrap is unavailable");
-  }
-  return boot;
-}
-
-export function hasAppBoot(): boolean {
-  return Boolean(globalThis.window?.__GSV_APP_BOOT__);
-}
-
-function getCapnweb(): CapnwebGlobal {
-  const capnweb = globalThis.window?.capnweb;
-  if (!capnweb || typeof capnweb.newWebSocketRpcSession !== "function") {
-    throw new Error("capnweb runtime is unavailable");
-  }
-  return capnweb;
-}
-
-function wrapAppBackend<T = unknown>(backend: unknown): T {
-  if (!backend || (typeof backend !== "object" && typeof backend !== "function")) {
-    return backend as T;
-  }
-  const target = backend as WrappedBackend;
-  if (typeof target.invoke !== "function") {
-    return backend as T;
-  }
-  return new Proxy(target, {
-    get(proxyTarget, prop) {
-      if (prop === "then") {
-        return undefined;
-      }
-      if (typeof prop !== "string") {
-        return Reflect.get(proxyTarget, prop);
-      }
-      if (prop === "invoke" || prop === "dup") {
-        const value = Reflect.get(proxyTarget, prop);
-        return typeof value === "function" ? value.bind(proxyTarget) : value;
-      }
-      return (args?: unknown) => {
-        return proxyTarget.invoke(prop, args);
-      };
-    },
-  }) as T;
-}
-
-function buildRpcWebSocketUrl(rpcBase: string): string {
-  const url = new URL(rpcBase, globalThis.window?.location?.href ?? "http://localhost");
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return url.toString();
-}
-
-export async function connectAppBackend<T = unknown>(): Promise<T> {
-  const existing = globalThis.window?.__GSV_BACKEND_READY__;
-  if (existing) {
-    return existing as Promise<T>;
-  }
-  const boot = getAppBoot();
-  if (!boot.hasBackend) {
-    throw new Error("package app has no backend rpc");
-  }
-  const capnweb = getCapnweb();
-  const ready = (async () => {
-    const session = capnweb.newWebSocketRpcSession<{
-      authenticate(secret: string): unknown;
-    }>(buildRpcWebSocketUrl(boot.rpcBase));
-    const backend = wrapAppBackend<T>(await session.authenticate(boot.sessionSecret));
-    if (globalThis.window) {
-      globalThis.window.backend = backend;
-    }
-    return backend;
-  })();
-  if (globalThis.window) {
-    globalThis.window.__GSV_BACKEND_READY__ = ready;
-  }
-  return ready;
-}
-
-export async function getBackend<T = unknown>(): Promise<T> {
-  return connectAppBackend<T>();
-}
-"#;
-const GSV_PACKAGE_SDK_INDEX_TS: &str = r#"export * from "./worker";
-export * from "./host";
-export * from "./browser";
-"#;
+const GSV_APP_LINK_NAME: &str = "@gsv/app-link";
+const GSV_APP_LINK_ROOT: &str = "__gsv_sdk/@gsv/app-link";
+const GSV_PACKAGE_SDK_PACKAGE_JSON: &str = include_str!("../../../shared/package/package.json");
+const GSV_PACKAGE_SDK_WORKER_TS: &str = include_str!("../../../shared/package/src/worker.ts");
+const GSV_PACKAGE_SDK_HOST_TS: &str = include_str!("../../../shared/package/src/host.ts");
+const GSV_PACKAGE_SDK_BROWSER_TS: &str = include_str!("../../../shared/package/src/browser.ts");
+const GSV_PACKAGE_SDK_INDEX_TS: &str = include_str!("../../../shared/package/src/index.ts");
+const GSV_APP_LINK_PACKAGE_JSON: &str = include_str!("../../../shared/app-link/package.json");
+const GSV_APP_LINK_INDEX_TS: &str = include_str!("../../../shared/app-link/src/index.ts");
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -490,7 +187,7 @@ pub(crate) async fn build_package(
     } else {
         BTreeMap::new()
     };
-    inject_builtin_sdk_files(&mut repo_files);
+    inject_builtin_sdk_files(&mut repo_files)?;
     if analysis.ok {
         materialize_lockfile_dependencies(sql, &analysis.source, &mut repo_files).await?;
     }
@@ -514,7 +211,7 @@ pub(crate) fn build_package_source(
         })
         .collect::<BTreeMap<_, _>>();
     let mut repo_files = repo_files;
-    inject_builtin_sdk_files(&mut repo_files);
+    inject_builtin_sdk_files(&mut repo_files)?;
     build_package_from_repo_files(analysis, &repo_files, target)
 }
 
@@ -614,22 +311,35 @@ fn load_cached_build(sql: &SqlStorage, cache_key: &str) -> Result<Option<Package
         .map_err(|err| Error::RustError(format!("invalid cached package build: {}", err)))
 }
 
-fn inject_builtin_sdk_files(repo_files: &mut BTreeMap<String, String>) {
-    repo_files
-        .entry(format!("{}/package.json", GSV_PACKAGE_SDK_ROOT))
-        .or_insert_with(|| GSV_PACKAGE_SDK_PACKAGE_JSON.to_string());
-    repo_files
-        .entry(format!("{}/src/worker.ts", GSV_PACKAGE_SDK_ROOT))
-        .or_insert_with(|| GSV_PACKAGE_SDK_WORKER_TS.to_string());
-    repo_files
-        .entry(format!("{}/src/host.ts", GSV_PACKAGE_SDK_ROOT))
-        .or_insert_with(|| GSV_PACKAGE_SDK_HOST_TS.to_string());
-    repo_files
-        .entry(format!("{}/src/browser.ts", GSV_PACKAGE_SDK_ROOT))
-        .or_insert_with(|| GSV_PACKAGE_SDK_BROWSER_TS.to_string());
-    repo_files
-        .entry(format!("{}/src/index.ts", GSV_PACKAGE_SDK_ROOT))
-        .or_insert_with(|| GSV_PACKAGE_SDK_INDEX_TS.to_string());
+fn inject_builtin_sdk_files(repo_files: &mut BTreeMap<String, String>) -> Result<()> {
+    if !repo_declares_package(repo_files, GSV_APP_LINK_NAME)? {
+        repo_files
+            .entry(format!("{}/package.json", GSV_APP_LINK_ROOT))
+            .or_insert_with(|| GSV_APP_LINK_PACKAGE_JSON.to_string());
+        repo_files
+            .entry(format!("{}/src/index.ts", GSV_APP_LINK_ROOT))
+            .or_insert_with(|| GSV_APP_LINK_INDEX_TS.to_string());
+    }
+
+    if !repo_declares_package(repo_files, GSV_PACKAGE_SDK_NAME)? {
+        repo_files
+            .entry(format!("{}/package.json", GSV_PACKAGE_SDK_ROOT))
+            .or_insert_with(|| GSV_PACKAGE_SDK_PACKAGE_JSON.to_string());
+        repo_files
+            .entry(format!("{}/src/worker.ts", GSV_PACKAGE_SDK_ROOT))
+            .or_insert_with(|| GSV_PACKAGE_SDK_WORKER_TS.to_string());
+        repo_files
+            .entry(format!("{}/src/host.ts", GSV_PACKAGE_SDK_ROOT))
+            .or_insert_with(|| GSV_PACKAGE_SDK_HOST_TS.to_string());
+        repo_files
+            .entry(format!("{}/src/browser.ts", GSV_PACKAGE_SDK_ROOT))
+            .or_insert_with(|| GSV_PACKAGE_SDK_BROWSER_TS.to_string());
+        repo_files
+            .entry(format!("{}/src/index.ts", GSV_PACKAGE_SDK_ROOT))
+            .or_insert_with(|| GSV_PACKAGE_SDK_INDEX_TS.to_string());
+    }
+
+    Ok(())
 }
 
 fn store_cached_build(sql: &SqlStorage, cache_key: &str, build: &PackageBuild) -> Result<()> {
@@ -1472,27 +1182,6 @@ impl<'a> BundleBuilder<'a> {
             ));
         }
 
-        if package_name == GSV_PACKAGE_SDK_NAME {
-            return Ok((
-                GSV_PACKAGE_SDK_ROOT.to_string(),
-                PackageManifestInfo {
-                    name: Some(GSV_PACKAGE_SDK_NAME.to_string()),
-                    main: None,
-                    module: None,
-                    exports: Some(serde_json::json!({
-                        ".": "./src/index.ts",
-                        "./browser": "./src/browser.ts",
-                        "./worker": "./src/worker.ts",
-                        "./host": "./src/host.ts",
-                    })),
-                },
-                ModuleOrigin::Dependency {
-                    root: GSV_PACKAGE_SDK_ROOT.to_string(),
-                    package_name: package_name.to_string(),
-                },
-            ));
-        }
-
         Err(Error::RustError(format!(
             "package dependency not found from {}: {}",
             importer_root, package_name
@@ -1675,6 +1364,19 @@ fn index_repo_packages(
 fn parse_package_manifest(source: &str) -> Result<PackageManifestInfo> {
     serde_json::from_str(source)
         .map_err(|err| Error::RustError(format!("invalid dependency package.json: {}", err)))
+}
+
+fn repo_declares_package(repo_files: &BTreeMap<String, String>, package_name: &str) -> Result<bool> {
+    for (path, content) in repo_files {
+        if !path.ends_with("/package.json") && path != "package.json" {
+            continue;
+        }
+        let manifest = parse_package_manifest(content)?;
+        if manifest.name.as_deref() == Some(package_name) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn resolve_dependency_entry(
@@ -2853,7 +2555,16 @@ mod tests {
             repo: "system/gsv".to_string(),
             requested_ref: "main".to_string(),
             resolved_commit: "abc123".to_string(),
-            subdir: "gateway/packages/example".to_string(),
+            subdir: "builtin-packages/example".to_string(),
+        }
+    }
+
+    fn foreign_source() -> ResolvedPackageSource {
+        ResolvedPackageSource {
+            repo: "someone/example".to_string(),
+            requested_ref: "main".to_string(),
+            resolved_commit: "def456".to_string(),
+            subdir: "builtin-packages/example".to_string(),
         }
     }
 
@@ -2874,11 +2585,11 @@ mod tests {
 
         let repo_files = BTreeMap::from([
             (
-                "gateway/packages/example/package.json".to_string(),
+                "builtin-packages/example/package.json".to_string(),
                 r#"{ "name": "@gsv/example", "version": "0.1.0" }"#.to_string(),
             ),
             (
-                "gateway/packages/example/src/package.ts".to_string(),
+                "builtin-packages/example/src/package.ts".to_string(),
                 r#"
                   import { definePackage } from "@gsv/package/worker";
                   import { value } from "./util";
@@ -2890,15 +2601,15 @@ mod tests {
                 .to_string(),
             ),
             (
-                "gateway/packages/example/src/util.ts".to_string(),
+                "builtin-packages/example/src/util.ts".to_string(),
                 "export const value: string = \"Example\";".to_string(),
             ),
             (
-                "packages/package/package.json".to_string(),
+                "shared/package/package.json".to_string(),
                 r#"{ "name": "@gsv/package", "exports": { "./browser": "./src/browser.ts", "./worker": "./src/worker.ts" } }"#.to_string(),
             ),
             (
-                "packages/package/src/worker.ts".to_string(),
+                "shared/package/src/worker.ts".to_string(),
                 "export function definePackage(value: unknown): unknown { return value; }".to_string(),
             ),
         ]);
@@ -2935,19 +2646,19 @@ mod tests {
 
         let repo_files = BTreeMap::from([
             (
-                "gateway/packages/example/package.json".to_string(),
+                "builtin-packages/example/package.json".to_string(),
                 r#"{ "name": "@gsv/example", "version": "0.1.0" }"#.to_string(),
             ),
             (
-                "gateway/packages/example/src/package.ts".to_string(),
+                "builtin-packages/example/src/package.ts".to_string(),
                 "import { definePackage } from \"@gsv/package/worker\"; export default definePackage({ meta: { displayName: \"Example\" } });".to_string(),
             ),
             (
-                "packages/package/package.json".to_string(),
+                "shared/package/package.json".to_string(),
                 r#"{ "name": "@gsv/package", "exports": { "./browser": "./src/browser.ts", "./worker": "./src/worker.ts" } }"#.to_string(),
             ),
             (
-                "packages/package/src/worker.ts".to_string(),
+                "shared/package/src/worker.ts".to_string(),
                 "export function definePackage(value: unknown): unknown { return value; }".to_string(),
             ),
         ]);
@@ -2958,6 +2669,57 @@ mod tests {
         let entry = artifact.modules.iter().find(|module| module.path == "src/package.js").unwrap();
         assert!(entry.content.contains("../__deps/@gsv/package/src/worker.js"));
         assert!(artifact.modules.iter().any(|module| module.path == "__deps/@gsv/package/src/worker.js"));
+    }
+
+    #[test]
+    fn build_package_source_injects_sdk_and_app_link_for_foreign_repos() {
+        let package_json = r#"{
+          "name": "@gsv/example",
+          "version": "0.1.0",
+          "type": "module"
+        }"#;
+        let package_ts = r#"
+          import { definePackage } from "@gsv/package/worker";
+
+          export default definePackage({
+            meta: { displayName: "Example" },
+            app: {
+              browser: { entry: "src/index.html" },
+            },
+          });
+        "#;
+        let analysis = analyze_package_source(
+            foreign_source(),
+            package_json.to_string(),
+            package_ts.to_string(),
+        )
+        .unwrap();
+
+        let files = BTreeMap::from([
+            ("package.json".to_string(), package_json.to_string()),
+            ("src/package.ts".to_string(), package_ts.to_string()),
+            (
+                "src/index.html".to_string(),
+                "<!doctype html><html><body><script type=\"module\" src=\"./main.tsx\"></script></body></html>".to_string(),
+            ),
+            (
+                "src/main.tsx".to_string(),
+                "import { openApp } from \"@gsv/package/host\"; void openApp;".to_string(),
+            ),
+        ]);
+
+        let build = build_package_source(&analysis, files, PackageBuildTarget::DynamicWorker).unwrap();
+        assert!(build.ok, "{:?}", build.diagnostics);
+        let artifact = build.artifact.unwrap();
+        let module_paths = artifact.modules.iter().map(|module| module.path.clone()).collect::<Vec<_>>();
+        assert!(artifact
+            .modules
+            .iter()
+            .any(|module| module.path.contains("@gsv/package/src/host")), "{:?}", module_paths);
+        assert!(artifact
+            .modules
+            .iter()
+            .any(|module| module.path.contains("@gsv/app-link/src/index")), "{:?}", module_paths);
     }
 
     #[test]
@@ -3084,20 +2846,20 @@ mod tests {
 
         install_materialized_dependency(
             &mut repo_files,
-            "gateway/packages/example",
+            "builtin-packages/example",
             "node_modules/left-pad",
             &dep_files,
         );
 
         assert_eq!(
             repo_files
-                .get("gateway/packages/example/node_modules/left-pad/package.json")
+                .get("builtin-packages/example/node_modules/left-pad/package.json")
                 .map(String::as_str),
             Some(r#"{ "name": "left-pad" }"#)
         );
         assert_eq!(
             repo_files
-                .get("gateway/packages/example/node_modules/left-pad/index.js")
+                .get("builtin-packages/example/node_modules/left-pad/index.js")
                 .map(String::as_str),
             Some("export default 1;")
         );

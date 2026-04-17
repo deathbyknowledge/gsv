@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { env, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import type { Process } from "./do";
 import type { Kernel } from "../kernel/do";
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import { getProcessByPid, getKernelPtr } from "../shared/utils";
 

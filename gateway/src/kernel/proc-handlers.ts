@@ -28,7 +28,7 @@ import {
   type AiContextProfile,
 } from "../syscalls/ai";
 import { sendFrameToProcess } from "../shared/utils";
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { ProcessMount } from "./processes";
 import {
   createWorkspaceBackend,

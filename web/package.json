@@ -10,6 +10,8 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@gsv/app-link": "file:../shared/app-link",
+    "@gsv/protocol": "file:../shared/protocol",
     "dompurify": "^3.3.0",
     "marked": "^16.4.0"
   },

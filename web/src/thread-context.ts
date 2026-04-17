@@ -1,39 +1,9 @@
+export { normalizeThreadContext, type ThreadContext } from "@gsv/app-link";
+import { normalizeThreadContext, type ThreadContext } from "@gsv/app-link";
+
 export const ACTIVE_THREAD_CONTEXT_EVENT = "gsv:active-thread-context";
 
 const ACTIVE_THREAD_CONTEXT_KEY = "gsv.activeThreadContext.v1";
-
-export type ThreadContext = {
-  pid: string;
-  workspaceId: string | null;
-  cwd: string;
-};
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-export function normalizeThreadContext(value: unknown): ThreadContext | null {
-  const record = asRecord(value);
-  if (!record) {
-    return null;
-  }
-
-  const pid = typeof record.pid === "string" ? record.pid.trim() : "";
-  const cwd = typeof record.cwd === "string" ? record.cwd.trim() : "";
-  const workspaceId =
-    typeof record.workspaceId === "string" && record.workspaceId.trim().length > 0
-      ? record.workspaceId.trim()
-      : null;
-
-  if (!pid || !cwd) {
-    return null;
-  }
-
-  return { pid, workspaceId, cwd };
-}
 
 export function getActiveThreadContext(): ThreadContext | null {
   try {

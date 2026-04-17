@@ -3,7 +3,7 @@ import type {
   NotificationListResult,
   NotificationMarkReadResult,
   NotificationRecord,
-} from "../../gateway/src/syscalls/notification";
+} from "@gsv/protocol/syscalls/notification";
 import type { GatewayClientLike } from "./gateway-client";
 
 type NotificationsPanelOptions = {

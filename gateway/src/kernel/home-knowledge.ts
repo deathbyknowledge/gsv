@@ -1,6 +1,6 @@
 import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
 import { homeKnowledgeRepoRef } from "../fs/ripgit/repos";
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 
 export async function ensureHomeStorageLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,

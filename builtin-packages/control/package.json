@@ -1,0 +1,10 @@
+{
+  "name": "@gsv/control",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@gsv/package": "file:../../shared/package",
+    "@gsv/protocol": "file:../../shared/protocol",
+    "preact": "^10.27.2"
+  }
+}

@@ -7,7 +7,7 @@ import type {
   SysTokenListResult,
   SysTokenRevokeArgs,
   SysTokenRevokeResult,
-} from "../../syscalls/system";
+} from "@gsv/protocol/syscalls/system";
 
 const TOKEN_KINDS = new Set<AuthTokenKind>(["node", "service", "user"]);
 const TOKEN_ROLES = new Set<AuthTokenRole>(["driver", "service", "user"]);

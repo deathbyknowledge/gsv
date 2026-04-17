@@ -304,7 +304,7 @@ const gateway = new Worker("gsv-gateway", {
 if (config.channels?.discord?.enabled) {
   const discord = new Worker("gsv-channel-discord", {
     name: "gsv-channel-discord",
-    entrypoint: "../channels/discord/src/index.ts",
+    entrypoint: "../adapters/discord/src/index.ts",
     durableObjects: [{ name: "DISCORD_GATEWAY", className: "DiscordGateway" }],
     services: [{ binding: "GATEWAY", service: "gsv-gateway" }],
   });
@@ -313,7 +313,7 @@ if (config.channels?.discord?.enabled) {
 if (config.channels?.whatsapp?.enabled) {
   const whatsapp = new Worker("gsv-channel-whatsapp", {
     name: "gsv-channel-whatsapp",
-    entrypoint: "../channels/whatsapp/src/index.ts",
+    entrypoint: "../adapters/whatsapp/src/index.ts",
     durableObjects: [{ name: "WHATSAPP_ACCOUNT", className: "WhatsAppAccount" }],
     services: [{ binding: "GATEWAY", service: "gsv-gateway" }],
   });
@@ -322,7 +322,7 @@ if (config.channels?.whatsapp?.enabled) {
 if (config.channels?.email?.enabled) {
   const email = new Worker("gsv-channel-email", {
     name: "gsv-channel-email",
-    entrypoint: "../channels/email/src/index.ts",
+    entrypoint: "../adapters/email/src/index.ts",
     durableObjects: [{ name: "EMAIL_ACCOUNT", className: "EmailAccount" }],
     services: [{ binding: "GATEWAY", service: "gsv-gateway" }],
   });

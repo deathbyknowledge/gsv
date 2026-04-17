@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
 import type { KernelContext } from "../../kernel/context";
-import type { ProcessIdentity } from "../../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { InstalledPackageRecord } from "../../kernel/packages";
 
 const IDENTITY: ProcessIdentity = {

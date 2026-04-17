@@ -12,7 +12,7 @@
 		/* Specify what module code is generated. */
 		"module": "es2022",
 		/* Specify how TypeScript looks up a file from a given module specifier. */
-		"moduleResolution": "node",
+		"moduleResolution": "bundler",
 		/* Enable importing .json files */
 		"resolveJsonModule": true,
 
@@ -33,7 +33,7 @@
 
 		/* Enable all strict type-checking options. */
 		"strict": true,
-		"ignoreDeprecations": "6.0",
+		"ignoreDeprecations": "5.0",
 
 		/* Skip type checking all .d.ts files. */
 		"skipLibCheck": true,

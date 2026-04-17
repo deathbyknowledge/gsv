@@ -1,5 +1,5 @@
 import type { KernelContext } from "../context";
-import type { SysBootstrapArgs, SysBootstrapResult } from "../../syscalls/system";
+import type { SysBootstrapArgs, SysBootstrapResult } from "@gsv/protocol/syscalls/system";
 import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
 import {
   CLI_BINARY_ASSETS,

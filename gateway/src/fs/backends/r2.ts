@@ -3,7 +3,7 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "../../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "../mount";
 import { inferContentType, isTextContentType, normalizePath } from "../utils";
 

@@ -3,7 +3,7 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "../../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { canReadConfigKey } from "../../kernel/config-access";
 import type { KernelRefs } from "../refs";
 import type { MountBackend, ExtendedMountStat } from "../mount";

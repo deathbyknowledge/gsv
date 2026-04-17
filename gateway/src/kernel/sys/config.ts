@@ -20,7 +20,7 @@ import type {
   SysConfigSetArgs,
   SysConfigSetResult,
   SysConfigEntry,
-} from "../../syscalls/system";
+} from "@gsv/protocol/syscalls/system";
 import { USER_OVERRIDABLE_PREFIXES } from "../config";
 import { canReadConfigKey } from "../config-access";
 

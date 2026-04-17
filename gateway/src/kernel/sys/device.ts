@@ -6,7 +6,7 @@ import type {
   SysDeviceGetResult,
   SysDeviceDetail,
   SysDeviceSummary,
-} from "../../syscalls/system";
+} from "@gsv/protocol/syscalls/system";
 import type { DeviceRecord } from "../devices";
 
 function toSummary(record: DeviceRecord): SysDeviceSummary {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProcessIdentity } from "../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import {
   DEFAULT_TOOL_APPROVAL_POLICY,
   buildToolApprovalFacts,

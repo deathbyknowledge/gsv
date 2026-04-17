@@ -48,7 +48,7 @@ import {
   type PackageEntrypoint,
 } from "../../kernel/packages";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
-import type { ProcessIdentity } from "../../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { buildKnowledgeCommands } from "./knowledge-shell";
 import { renderManualPage } from "./man-pages";
 import { buildNotifyCommands } from "./notify-shell";

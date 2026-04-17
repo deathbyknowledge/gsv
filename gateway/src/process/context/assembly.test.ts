@@ -6,7 +6,7 @@ import { createWorkspaceContextProvider } from "./providers/workspace";
 import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
 import type { AiConfigResult } from "../../syscalls/ai";
-import type { ProcessIdentity } from "../../syscalls/system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import { homeKnowledgeRepoRef, workspaceRepoRef } from "../../fs";
 
 const CONFIG: AiConfigResult = {

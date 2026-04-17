@@ -1,7 +1,7 @@
 import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
 import type { KernelContext } from "../context";
 import type { PasswdEntry } from "../../auth/passwd";
-import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "../../syscalls/system";
+import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "@gsv/protocol/syscalls/system";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureHomeStorageLayout } from "../home-knowledge";
 

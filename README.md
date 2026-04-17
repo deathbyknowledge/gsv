@@ -205,7 +205,7 @@ Use global `--token` for non-interactive auth (legacy credential flag). Interact
 - [Node.js + npm](https://nodejs.org) (for package installation)
 
 ```bash
-# Install JS deps across gateway + channels
+# Install JS deps across the workspace, adapters, and ripgit
 ./scripts/setup-deps.sh
 
 # Gateway dev

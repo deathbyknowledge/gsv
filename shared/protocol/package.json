@@ -1,0 +1,13 @@
+{
+  "name": "@gsv/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./syscalls/system": "./src/syscalls/system.ts",
+    "./syscalls/packages": "./src/syscalls/packages.ts",
+    "./syscalls/proc": "./src/syscalls/proc.ts",
+    "./syscalls/notification": "./src/syscalls/notification.ts"
+  }
+}

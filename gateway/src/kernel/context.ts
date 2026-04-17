@@ -6,7 +6,7 @@
  */
 
 import type { Connection } from "agents";
-import type { ConnectionIdentity } from "../syscalls/system";
+import type { ConnectionIdentity } from "@gsv/protocol/syscalls/system";
 import type { AuthStore } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";

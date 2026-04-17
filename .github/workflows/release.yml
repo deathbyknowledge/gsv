@@ -135,19 +135,15 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             gateway/package-lock.json
-            web/package.json
-            channels/whatsapp/package-lock.json
-            channels/discord/package.json
+            web/package-lock.json
+            adapters/whatsapp/package-lock.json
+            adapters/discord/package-lock.json
 
       - name: Install dependencies
         run: |
           set -euo pipefail
-          for dir in gateway web channels/whatsapp channels/discord; do
-            if [ -f "$dir/package-lock.json" ]; then
-              npm ci --prefix "$dir" --workspaces=false
-            else
-              npm install --prefix "$dir" --workspaces=false --no-audit --no-fund
-            fi
+          for dir in gateway web adapters/whatsapp adapters/discord; do
+            npm ci --prefix "$dir" --workspaces=false
           done
 
       - name: Build web UI
@@ -167,11 +163,11 @@ jobs:
             npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/gateway/worker"
           )
           (
-            cd channels/whatsapp
+            cd adapters/whatsapp
             npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/worker"
           )
           (
-            cd channels/discord
+            cd adapters/discord
             npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/worker"
           )
 
@@ -201,7 +197,7 @@ jobs:
           EOF
 
           # Channel bundles (kept separate so users only download what they need)
-          cp channels/whatsapp/wrangler.jsonc "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/wrangler.jsonc"
+          cp adapters/whatsapp/wrangler.jsonc "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/wrangler.jsonc"
           cat > "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/manifest.json" <<'EOF'
           {
             "component": "channel-whatsapp",
@@ -213,7 +209,7 @@ jobs:
           }
           EOF
 
-          cp channels/discord/wrangler.jsonc "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/wrangler.jsonc"
+          cp adapters/discord/wrangler.jsonc "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/wrangler.jsonc"
           cat > "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/manifest.json" <<'EOF'
           {
             "component": "channel-discord",

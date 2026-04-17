@@ -67,7 +67,7 @@ import type {
   PkgPublicListResult,
   PkgPublicSetArgs,
   PkgPublicSetResult,
-} from "./packages";
+} from "@gsv/protocol/syscalls/packages";
 import type {
   ConnectArgs,
   ConnectResult,
@@ -101,7 +101,7 @@ import type {
   SysLinkListResult,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
-} from "./system";
+} from "@gsv/protocol/syscalls/system";
 import type {
   SchedulerListArgs,
   SchedulerListResult,
@@ -171,7 +171,7 @@ import type {
   NotificationListResult,
   NotificationMarkReadArgs,
   NotificationMarkReadResult,
-} from "./notification";
+} from "@gsv/protocol/syscalls/notification";
 export type ToolDefinition = {
   name: string;
   description: string;

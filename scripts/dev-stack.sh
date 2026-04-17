@@ -9,10 +9,10 @@ mkdir -p "$STATE_ROOT/do/gsv-os-Kernel"
 mkdir -p "$STATE_ROOT/do/gsv-os-Process"
 mkdir -p "$STATE_ROOT/do/gsv-channel-whatsapp-WhatsAppAccount"
 
-cd "$ROOT_DIR/ripgit"
-exec bun x wrangler dev \
-  -c ../gateway/wrangler.jsonc \
-  -c ../channels/whatsapp/wrangler.jsonc \
-  -c wrangler.toml \
+cd "$ROOT_DIR/gateway"
+exec npm exec -- wrangler dev \
+  -c wrangler.jsonc \
+  -c ../adapters/whatsapp/wrangler.jsonc \
+  -c ../ripgit/wrangler.toml \
   --ip 0.0.0.0 \
   --persist-to ../.wrangler/dev-state

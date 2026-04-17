@@ -35,14 +35,14 @@ type AppFacetRuntime = {
 export type AppHttpRequest = {
   url: string;
   method: string;
-  headers: Array<[string, string]>;
+  headers: string[][];
   body?: ArrayBuffer | null;
 };
 
 export type AppHttpResponse = {
   status: number;
   statusText: string;
-  headers: Array<[string, string]>;
+  headers: string[][];
   body?: ArrayBuffer | null;
 };
 

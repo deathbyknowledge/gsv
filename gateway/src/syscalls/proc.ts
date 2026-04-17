@@ -6,8 +6,9 @@
  * Sub-processes can be spawned for tasks, cron jobs, etc.
  */
 
-import type { ProcessIdentity } from "./system";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { AiContextProfile } from "./ai";
+import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
 
 export type ProcWorkspaceKind = "thread" | "app" | "shared";
 
@@ -59,17 +60,6 @@ export type ProcSendArgs = {
   pid?: string;
   message: string;
   media?: ProcMediaInput[];
-};
-
-export type ProcMediaInput = {
-  type: "image" | "audio" | "video" | "document";
-  mimeType: string;
-  data?: string;
-  url?: string;
-  filename?: string;
-  size?: number;
-  duration?: number;
-  transcription?: string;
 };
 
 export type ProcAbortArgs = {
