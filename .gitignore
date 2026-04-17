@@ -5,7 +5,6 @@ target/
 
 # Build artifacts
 dist/
-package-lock.json
 .vitepress/cache/
 
 # Alchemy state
