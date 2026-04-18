@@ -6,7 +6,7 @@ mod grep;
 mod read;
 mod write;
 
-pub use bash::{subscribe_exec_events, BashTool, ProcessTool};
+pub use bash::{subscribe_exec_events, BashTool};
 pub use delete::DeleteTool;
 pub use edit::EditTool;
 pub use glob::GlobTool;
@@ -29,7 +29,6 @@ pub trait Tool: Send + Sync {
 pub fn all_tools_with_workspace(workspace: PathBuf) -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(BashTool::new(workspace.clone())),
-        Box::new(ProcessTool::new()),
         Box::new(ReadTool::new(workspace.clone())),
         Box::new(WriteTool::new(workspace.clone())),
         Box::new(DeleteTool::new(workspace.clone())),

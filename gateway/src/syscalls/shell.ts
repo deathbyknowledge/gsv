@@ -56,22 +56,3 @@ export type ShellExecResult =
       backgrounded: true;
     }
   | { ok: false; error: string };
-
-export type ShellSignalArgs = {
-  pid: number;
-  signal: string;
-};
-
-export type ShellSignalResult = { ok: true } | { ok: false; error: string };
-
-export type ShellProcessInfo = {
-  pid: number;
-  command: string;
-  running: boolean;
-  startedAt: number;
-  exitCode?: number;
-};
-
-export type ShellListResult = {
-  processes: ShellProcessInfo[];
-};

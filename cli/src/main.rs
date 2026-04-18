@@ -3640,8 +3640,6 @@ fn syscall_to_tool_name(call: &str) -> Option<&'static str> {
         "fs.search" => Some("Grep"),
         "fs.delete" => Some("Delete"),
         "shell.exec" => Some("Bash"),
-        "shell.signal" => None,
-        "shell.list" => None,
         _ => None,
     }
 }
@@ -3655,18 +3653,6 @@ async fn handle_driver_request(
     let args = req.args.clone().unwrap_or(serde_json::Value::Null);
 
     let result: Result<serde_json::Value, String> = match req.call.as_str() {
-        "shell.signal" => {
-            let tool_args = json!({
-                "action": "kill",
-                "pid": args.get("pid"),
-                "signal": args.get("signal"),
-            });
-            execute_tool_by_name(tools, "Process", tool_args).await
-        }
-        "shell.list" => {
-            let tool_args = json!({ "action": "list" });
-            execute_tool_by_name(tools, "Process", tool_args).await
-        }
         call => {
             if let Some(tool_name) = syscall_to_tool_name(call) {
                 execute_tool_by_name(tools, tool_name, args).await
@@ -3884,7 +3870,7 @@ async fn run_node(
             KernelClient::connect_driver(
                 url,
                 node_id.clone(),
-                vec!["fs.*".to_string(), "shell.*".to_string()],
+                vec!["fs.*".to_string(), "shell.exec".to_string()],
                 auth.clone(),
                 |_frame| {},
             ),

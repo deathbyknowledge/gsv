@@ -3,13 +3,12 @@ use crate::tools::Tool;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::process::{ChildStdin, Command};
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::process::Command;
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use uuid::Uuid;
 
@@ -18,24 +17,15 @@ const MIN_YIELD_MS: u64 = 10;
 const MAX_YIELD_MS: u64 = 120_000;
 const MAX_OUTPUT_CHARS: usize = 200_000;
 const TAIL_CHARS: usize = 4_000;
-const FINISHED_TTL_MS: i64 = 30 * 60 * 1000;
 
 #[derive(Clone)]
 struct ProcessHandle {
     state: Arc<AsyncMutex<ProcessState>>,
-    stdin: Arc<AsyncMutex<Option<ChildStdin>>>,
-}
-
-#[derive(Clone)]
-struct FinishedProcess {
-    snapshot: ProcessSnapshot,
-    ended_at: i64,
 }
 
 #[derive(Clone)]
 struct ProcessSnapshot {
     session_id: String,
-    command: String,
     workdir: String,
     pid: Option<u32>,
     started_at: i64,
@@ -44,7 +34,6 @@ struct ProcessSnapshot {
     exit_code: Option<i32>,
     signal: Option<String>,
     timed_out: bool,
-    backgrounded: bool,
     stdout: String,
     stderr: String,
     output: String,
@@ -54,7 +43,6 @@ struct ProcessSnapshot {
 
 struct ProcessState {
     session_id: String,
-    command: String,
     workdir: String,
     pid: Option<u32>,
     started_at: i64,
@@ -72,34 +60,7 @@ struct ProcessState {
     started_notified: bool,
 }
 
-#[derive(Clone)]
-struct ProcessEntry {
-    session_id: String,
-    status: String,
-    pid: Option<u32>,
-    started_at: i64,
-    ended_at: Option<i64>,
-    runtime_ms: i64,
-    workdir: String,
-    command: String,
-    tail: String,
-    truncated: bool,
-    exit_code: Option<i32>,
-    signal: Option<String>,
-    timed_out: bool,
-}
-
-static RUNNING_SESSIONS: OnceLock<Mutex<HashMap<String, ProcessHandle>>> = OnceLock::new();
-static FINISHED_SESSIONS: OnceLock<Mutex<HashMap<String, FinishedProcess>>> = OnceLock::new();
 static EXEC_EVENT_BUS: OnceLock<broadcast::Sender<NodeExecEventParams>> = OnceLock::new();
-
-fn running_sessions() -> &'static Mutex<HashMap<String, ProcessHandle>> {
-    RUNNING_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn finished_sessions() -> &'static Mutex<HashMap<String, FinishedProcess>> {
-    FINISHED_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 fn exec_event_bus() -> &'static broadcast::Sender<NodeExecEventParams> {
     EXEC_EVENT_BUS.get_or_init(|| {
@@ -170,7 +131,6 @@ fn append_output(state: &mut ProcessState, chunk: &str, stream: OutputStream) {
 fn snapshot_from_state(state: &ProcessState) -> ProcessSnapshot {
     ProcessSnapshot {
         session_id: state.session_id.clone(),
-        command: state.command.clone(),
         workdir: state.workdir.clone(),
         pid: state.pid,
         started_at: state.started_at,
@@ -179,44 +139,12 @@ fn snapshot_from_state(state: &ProcessState) -> ProcessSnapshot {
         exit_code: state.exit_code,
         signal: state.signal.clone(),
         timed_out: state.timed_out,
-        backgrounded: state.backgrounded,
         stdout: state.stdout.clone(),
         stderr: state.stderr.clone(),
         output: state.output.clone(),
         tail: state.tail.clone(),
         truncated: state.truncated,
     }
-}
-
-fn prune_finished_locked(finished: &mut HashMap<String, FinishedProcess>) {
-    let cutoff = now_ms() - FINISHED_TTL_MS;
-    finished.retain(|_, session| session.ended_at >= cutoff);
-}
-
-fn get_running_session(session_id: &str) -> Option<ProcessHandle> {
-    running_sessions()
-        .lock()
-        .ok()
-        .and_then(|sessions| sessions.get(session_id).cloned())
-}
-
-fn get_finished_session(session_id: &str) -> Option<FinishedProcess> {
-    let mut sessions = finished_sessions().lock().ok()?;
-    prune_finished_locked(&mut sessions);
-    sessions.get(session_id).cloned()
-}
-
-fn list_finished_background_sessions() -> Vec<FinishedProcess> {
-    let mut sessions = match finished_sessions().lock() {
-        Ok(sessions) => sessions,
-        Err(_) => return Vec::new(),
-    };
-    prune_finished_locked(&mut sessions);
-    sessions
-        .values()
-        .filter(|session| session.snapshot.backgrounded)
-        .cloned()
-        .collect()
 }
 
 fn running_result(snapshot: &ProcessSnapshot) -> Value {
@@ -249,62 +177,6 @@ fn completed_result(snapshot: &ProcessSnapshot) -> Value {
       "truncated": snapshot.truncated,
       "workdir": snapshot.workdir,
     })
-}
-
-fn entry_from_snapshot(snapshot: &ProcessSnapshot, now: i64) -> ProcessEntry {
-    let end = snapshot.ended_at.unwrap_or(now);
-    ProcessEntry {
-        session_id: snapshot.session_id.clone(),
-        status: snapshot.status.clone(),
-        pid: snapshot.pid,
-        started_at: snapshot.started_at,
-        ended_at: snapshot.ended_at,
-        runtime_ms: end.saturating_sub(snapshot.started_at),
-        workdir: snapshot.workdir.clone(),
-        command: snapshot.command.clone(),
-        tail: snapshot.tail.clone(),
-        truncated: snapshot.truncated,
-        exit_code: snapshot.exit_code,
-        signal: snapshot.signal.clone(),
-        timed_out: snapshot.timed_out,
-    }
-}
-
-fn entries_to_json(entries: &[ProcessEntry]) -> Value {
-    let sessions: Vec<Value> = entries
-        .iter()
-        .map(|entry| {
-            json!({
-              "sessionId": entry.session_id,
-              "status": entry.status,
-              "pid": entry.pid,
-              "startedAt": entry.started_at,
-              "endedAt": entry.ended_at,
-              "runtimeMs": entry.runtime_ms,
-              "workdir": entry.workdir,
-              "command": entry.command,
-              "tail": entry.tail,
-              "truncated": entry.truncated,
-              "exitCode": entry.exit_code,
-              "signal": entry.signal,
-              "timedOut": entry.timed_out,
-            })
-        })
-        .collect();
-    json!({ "status": "completed", "sessions": sessions })
-}
-
-fn slice_log_lines(
-    text: &str,
-    offset: Option<usize>,
-    limit: Option<usize>,
-) -> (String, usize, usize) {
-    let lines: Vec<&str> = text.lines().collect();
-    let start = offset.unwrap_or(0).min(lines.len());
-    let cap = limit.unwrap_or(200).max(1);
-    let end = (start + cap).min(lines.len());
-    let slice = lines[start..end].join("\n");
-    (slice, lines.len(), text.chars().count())
 }
 
 fn normalize_signal_name(status: &std::process::ExitStatus) -> Option<String> {
@@ -470,7 +342,7 @@ async fn launch_managed_process(
     let mut cmd = Command::new(&shell.executable);
     cmd.args(&shell.launch_args).arg(&command);
     cmd.current_dir(&workdir);
-    cmd.stdin(Stdio::piped());
+    cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -481,14 +353,11 @@ async fn launch_managed_process(
     let pid = child.id();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let stdin = child.stdin.take();
-
     let session_id = Uuid::new_v4().to_string();
     let started_at = now_ms();
 
     let state = Arc::new(AsyncMutex::new(ProcessState {
         session_id: session_id.clone(),
-        command,
         workdir: workdir.display().to_string(),
         pid,
         started_at,
@@ -505,16 +374,9 @@ async fn launch_managed_process(
         truncated: false,
         started_notified: false,
     }));
-    let stdin = Arc::new(AsyncMutex::new(stdin));
-
     let handle = ProcessHandle {
         state: state.clone(),
-        stdin: stdin.clone(),
     };
-
-    if let Ok(mut sessions) = running_sessions().lock() {
-        sessions.insert(session_id.clone(), handle.clone());
-    }
 
     if let Some(stdout) = stdout {
         tokio::spawn(pump_stream(stdout, state.clone(), OutputStream::Stdout));
@@ -585,27 +447,7 @@ async fn launch_managed_process(
             (snapshot, lock.backgrounded, event_name.to_string())
         };
 
-        if let Ok(mut sessions) = running_sessions().lock() {
-            sessions.remove(&snapshot.session_id);
-        }
-
-        {
-            let mut stdin_guard = stdin.lock().await;
-            *stdin_guard = None;
-        }
-
         if should_emit_event {
-            if let Ok(mut finished) = finished_sessions().lock() {
-                prune_finished_locked(&mut finished);
-                finished.insert(
-                    snapshot.session_id.clone(),
-                    FinishedProcess {
-                        ended_at: snapshot.ended_at.unwrap_or_else(now_ms),
-                        snapshot: snapshot.clone(),
-                    },
-                );
-            }
-
             emit_exec_event(NodeExecEventParams {
                 event_id: Uuid::new_v4().to_string(),
                 session_id: snapshot.session_id,
@@ -665,9 +507,7 @@ impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "Bash".to_string(),
-            description:
-                "Execute shell commands. Supports async background mode with session tracking."
-                    .to_string(),
+            description: "Execute shell commands. Supports async background mode.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -753,301 +593,6 @@ impl Tool for BashTool {
                 return Ok(completed_result(&snapshot));
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    }
-}
-
-pub struct ProcessTool;
-
-impl ProcessTool {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProcessArgs {
-    action: String,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    data: Option<String>,
-    #[serde(default)]
-    offset: Option<usize>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
-#[async_trait]
-impl Tool for ProcessTool {
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "Process".to_string(),
-            description: "Manage background shell sessions: list, poll, log, write, submit, kill."
-                .to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": "One of: list, poll, log, write, submit, kill"
-                    },
-                    "sessionId": {
-                        "type": "string",
-                        "description": "Session id for actions other than list"
-                    },
-                    "data": {
-                        "type": "string",
-                        "description": "Data to send for write/submit"
-                    },
-                    "offset": {
-                        "type": "number",
-                        "description": "Log line offset for log action"
-                    },
-                    "limit": {
-                        "type": "number",
-                        "description": "Max log lines for log action"
-                    }
-                },
-                "required": ["action"]
-            }),
-        }
-    }
-
-    async fn execute(&self, args: Value) -> Result<Value, String> {
-        let args: ProcessArgs =
-            serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-        let action = args.action.trim().to_lowercase();
-
-        if action == "list" {
-            let now = now_ms();
-            let running_handles: Vec<ProcessHandle> = running_sessions()
-                .lock()
-                .ok()
-                .map(|sessions| sessions.values().cloned().collect())
-                .unwrap_or_default();
-
-            let mut entries: Vec<ProcessEntry> = Vec::new();
-            for handle in running_handles {
-                let snapshot = {
-                    let lock = handle.state.lock().await;
-                    snapshot_from_state(&lock)
-                };
-                if snapshot.backgrounded {
-                    entries.push(entry_from_snapshot(&snapshot, now));
-                }
-            }
-
-            for finished in list_finished_background_sessions() {
-                entries.push(entry_from_snapshot(&finished.snapshot, now));
-            }
-
-            entries.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-            let lines: Vec<String> = entries
-                .iter()
-                .map(|entry| {
-                    format!(
-                        "{} {:<9} {}ms :: {}",
-                        entry.session_id, entry.status, entry.runtime_ms, entry.command
-                    )
-                })
-                .collect();
-
-            let mut payload = entries_to_json(&entries);
-            payload["text"] = Value::String(if lines.is_empty() {
-                "No running or recent sessions.".to_string()
-            } else {
-                lines.join("\n")
-            });
-            return Ok(payload);
-        }
-
-        let session_id = args
-            .session_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
-            .ok_or_else(|| "sessionId is required for this action".to_string())?
-            .to_string();
-
-        match action.as_str() {
-            "poll" => {
-                if let Some(handle) = get_running_session(&session_id) {
-                    let snapshot = {
-                        let lock = handle.state.lock().await;
-                        snapshot_from_state(&lock)
-                    };
-                    if !snapshot.backgrounded {
-                        return Ok(json!({
-                          "status": "failed",
-                          "error": format!("Session {} is not backgrounded", session_id),
-                        }));
-                    }
-                    return Ok(json!({
-                      "status": snapshot.status,
-                      "sessionId": snapshot.session_id,
-                      "exitCode": snapshot.exit_code,
-                      "signal": snapshot.signal,
-                      "timedOut": snapshot.timed_out,
-                      "tail": snapshot.tail,
-                      "running": snapshot.ended_at.is_none(),
-                    }));
-                }
-                if let Some(finished) = get_finished_session(&session_id) {
-                    let snapshot = finished.snapshot;
-                    return Ok(json!({
-                      "status": snapshot.status,
-                      "sessionId": snapshot.session_id,
-                      "exitCode": snapshot.exit_code,
-                      "signal": snapshot.signal,
-                      "timedOut": snapshot.timed_out,
-                      "tail": snapshot.tail,
-                      "running": false,
-                    }));
-                }
-                Ok(json!({
-                  "status": "failed",
-                  "error": format!("No session found for {}", session_id),
-                }))
-            }
-            "log" => {
-                if let Some(handle) = get_running_session(&session_id) {
-                    let snapshot = {
-                        let lock = handle.state.lock().await;
-                        snapshot_from_state(&lock)
-                    };
-                    if !snapshot.backgrounded {
-                        return Ok(json!({
-                          "status": "failed",
-                          "error": format!("Session {} is not backgrounded", session_id),
-                        }));
-                    }
-                    let (slice, total_lines, total_chars) =
-                        slice_log_lines(&snapshot.output, args.offset, args.limit);
-                    return Ok(json!({
-                      "status": snapshot.status,
-                      "sessionId": snapshot.session_id,
-                      "log": if slice.is_empty() { "(no output yet)" } else { &slice },
-                      "totalLines": total_lines,
-                      "totalChars": total_chars,
-                      "truncated": snapshot.truncated,
-                    }));
-                }
-                if let Some(finished) = get_finished_session(&session_id) {
-                    let snapshot = finished.snapshot;
-                    let (slice, total_lines, total_chars) =
-                        slice_log_lines(&snapshot.output, args.offset, args.limit);
-                    return Ok(json!({
-                      "status": snapshot.status,
-                      "sessionId": snapshot.session_id,
-                      "log": if slice.is_empty() { "(no output recorded)" } else { &slice },
-                      "totalLines": total_lines,
-                      "totalChars": total_chars,
-                      "truncated": snapshot.truncated,
-                      "exitCode": snapshot.exit_code,
-                      "signal": snapshot.signal,
-                    }));
-                }
-                Ok(json!({
-                  "status": "failed",
-                  "error": format!("No session found for {}", session_id),
-                }))
-            }
-            "write" | "submit" => {
-                let handle = match get_running_session(&session_id) {
-                    Some(handle) => handle,
-                    None => {
-                        return Ok(json!({
-                          "status": "failed",
-                          "error": format!("No active session found for {}", session_id),
-                        }));
-                    }
-                };
-
-                let snapshot = {
-                    let lock = handle.state.lock().await;
-                    snapshot_from_state(&lock)
-                };
-                if !snapshot.backgrounded {
-                    return Ok(json!({
-                      "status": "failed",
-                      "error": format!("Session {} is not backgrounded", session_id),
-                    }));
-                }
-                if snapshot.ended_at.is_some() {
-                    return Ok(json!({
-                      "status": "failed",
-                      "error": format!("Session {} has already exited", session_id),
-                    }));
-                }
-
-                let mut stdin_guard = handle.stdin.lock().await;
-                let stdin = match stdin_guard.as_mut() {
-                    Some(stdin) => stdin,
-                    None => {
-                        return Ok(json!({
-                          "status": "failed",
-                          "error": format!("Session {} stdin is not writable", session_id),
-                        }));
-                    }
-                };
-                let mut payload = args.data.unwrap_or_default();
-                if action == "submit" {
-                    payload.push('\n');
-                }
-                stdin
-                    .write_all(payload.as_bytes())
-                    .await
-                    .map_err(|e| format!("Failed to write to {}: {}", session_id, e))?;
-                stdin
-                    .flush()
-                    .await
-                    .map_err(|e| format!("Failed to flush {}: {}", session_id, e))?;
-
-                Ok(json!({
-                  "status": "running",
-                  "sessionId": session_id,
-                  "bytesWritten": payload.len(),
-                }))
-            }
-            "kill" => {
-                let handle = match get_running_session(&session_id) {
-                    Some(handle) => handle,
-                    None => {
-                        return Ok(json!({
-                          "status": "failed",
-                          "error": format!("No active session found for {}", session_id),
-                        }));
-                    }
-                };
-                let snapshot = {
-                    let lock = handle.state.lock().await;
-                    snapshot_from_state(&lock)
-                };
-                if !snapshot.backgrounded {
-                    return Ok(json!({
-                      "status": "failed",
-                      "error": format!("Session {} is not backgrounded", session_id),
-                    }));
-                }
-                if let Some(pid) = snapshot.pid {
-                    terminate_pid(pid, true).await;
-                    return Ok(json!({
-                      "status": "running",
-                      "sessionId": session_id,
-                      "message": "Kill signal sent",
-                    }));
-                }
-                Ok(json!({
-                  "status": "failed",
-                  "error": format!("Session {} has no PID", session_id),
-                }))
-            }
-            _ => Ok(json!({
-              "status": "failed",
-              "error": format!("Unknown action {}", action),
-            })),
         }
     }
 }
