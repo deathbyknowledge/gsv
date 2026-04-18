@@ -314,13 +314,11 @@ filesystem for live files.
 - [ ] Optional later: read-only history mount for browsing archived knowledge (not write-through FS)
 - [ ] Optional later: pass narrow `KNOWLEDGE` capability bindings into Dynamic Worker sandboxes
 
-## Syscall domain: `shell.*` (device commands)
+## Syscall domain: `shell.exec` (device commands)
 
 Replaces old `proc.*` for device-level shell execution. Always routable (requires `target`).
 
 - [x] `shell.exec` — execute a command on a device
-- [x] `shell.signal` — send signal to running shell command
-- [x] `shell.list` — list running shell commands on a device
 - [x] Types in `syscalls/shell.ts`
 - [x] Constants in `syscalls/constants.ts`
 - [x] Dispatch wired (device routing + native `shell.exec` via `just-bash`)

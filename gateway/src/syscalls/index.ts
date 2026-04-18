@@ -6,9 +6,6 @@ import type { FsSearchArgs, FsSearchResult } from "./search";
 import type {
   ShellExecArgs,
   ShellExecResult,
-  ShellSignalArgs,
-  ShellSignalResult,
-  ShellListResult,
 } from "./shell";
 import type {
   ProcSpawnArgs,
@@ -188,8 +185,6 @@ export type SyscallDomains = {
 
   // Shell (device commands)
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
-  "shell.signal": { args: ShellSignalArgs; result: ShellSignalResult };
-  "shell.list": { args: Record<string, never>; result: ShellListResult };
 
   // Process management (OS-level agent processes)
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };

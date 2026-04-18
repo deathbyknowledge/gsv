@@ -7,8 +7,6 @@ export const FS_SEARCH = "fs.search";
 
 // Shell (device commands)
 export const SHELL_EXEC = "shell.exec";
-export const SHELL_SIGNAL = "shell.signal";
-export const SHELL_LIST = "shell.list";
 
 // Process management (OS-level agent processes)
 export const PROC_SPAWN = "proc.spawn";

@@ -173,9 +173,6 @@ async function dispatchNative(
       case "shell.exec":
         data = await handleShellExec(frame.args, ctx);
         break;
-      case "shell.signal":
-      case "shell.list":
-        return errFrame(frame.id, 501, `${frame.call} requires a device target`);
 
       case "proc.list":
         data = handleProcList(frame.args, ctx);
