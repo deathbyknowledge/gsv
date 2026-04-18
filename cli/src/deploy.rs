@@ -21,18 +21,15 @@ const REPO_NAME: &str = "gsv";
 const COMPONENT_GATEWAY: &str = "gateway";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
-const COMPONENT_CHANNEL_TEST: &str = "channel-test";
 
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
 const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
 const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
-const BUNDLE_CHANNEL_TEST: &str = "gsv-cloudflare-channel-test.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
 const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
-const SCRIPT_CHANNEL_TEST: &str = "gsv-channel-test";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
@@ -402,7 +399,6 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
         COMPONENT_GATEWAY => Some(BUNDLE_GATEWAY),
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(BUNDLE_CHANNEL_DISCORD),
-        COMPONENT_CHANNEL_TEST => Some(BUNDLE_CHANNEL_TEST),
         _ => None,
     }
 }
@@ -412,7 +408,6 @@ fn component_to_script_name(component: &str) -> Option<&'static str> {
         COMPONENT_GATEWAY => Some(SCRIPT_GATEWAY),
         COMPONENT_CHANNEL_WHATSAPP => Some(SCRIPT_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(SCRIPT_CHANNEL_DISCORD),
-        COMPONENT_CHANNEL_TEST => Some(SCRIPT_CHANNEL_TEST),
         _ => None,
     }
 }
@@ -1648,7 +1643,6 @@ fn deploy_order(component: &str) -> usize {
     match component {
         COMPONENT_CHANNEL_WHATSAPP => 1,
         COMPONENT_CHANNEL_DISCORD => 2,
-        COMPONENT_CHANNEL_TEST => 3,
         COMPONENT_GATEWAY => 10,
         _ => 100,
     }
@@ -1753,20 +1747,6 @@ fn service_bindings_for_bundle(
             service: SCRIPT_GATEWAY.to_string(),
             environment: None,
             entrypoint: Some("GatewayEntrypoint".to_string()),
-        });
-    }
-
-    if bundle.component == COMPONENT_GATEWAY
-        && selected_components.contains(COMPONENT_CHANNEL_TEST)
-        && !bindings
-            .iter()
-            .any(|binding| binding.binding == "CHANNEL_TEST")
-    {
-        bindings.push(WranglerServiceBinding {
-            binding: "CHANNEL_TEST".to_string(),
-            service: "gsv-channel-test".to_string(),
-            environment: None,
-            entrypoint: Some("TestChannel".to_string()),
         });
     }
 
@@ -3126,6 +3106,17 @@ mod tests {
         assert_eq!(
             select_latest_prerelease_tag(&releases),
             Some("v0.2.0-dev.42".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_components_rejects_removed_channel_test_component() {
+        let error = normalize_components(&["channel-test".to_string()]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Unknown component 'channel-test'"),
+            "unexpected error: {error}"
         );
     }
 }
