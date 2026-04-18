@@ -1,5 +1,7 @@
 // Integration tests for CLI tools
 
+use std::path::Path;
+
 fn shell_echo_command() -> &'static str {
     #[cfg(windows)]
     {
@@ -61,6 +63,27 @@ fn normalize_shell_path(value: &str) -> String {
     }
 }
 
+fn output_matches_workdir(output: &str, expected: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let actual = std::path::PathBuf::from(output.trim().replace('/', "\\"));
+        let actual = std::fs::canonicalize(actual);
+        let expected = std::fs::canonicalize(expected);
+        if let (Ok(actual), Ok(expected)) = (actual, expected) {
+            return actual == expected;
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = expected;
+    }
+
+    let actual = normalize_shell_path(output);
+    let expected = normalize_shell_path(expected.to_string_lossy().as_ref());
+    actual.contains(&expected)
+}
+
 #[tokio::test]
 async fn test_bash_tool_execution() {
     use gsv::tools::{BashTool, Tool};
@@ -108,11 +131,11 @@ async fn test_bash_tool_workdir() {
 
     assert_eq!(result["status"], "completed");
     assert_eq!(result["exitCode"], 0);
-    let actual = normalize_shell_path(result["output"].as_str().unwrap());
-    let expected = normalize_shell_path(custom_workdir.to_string_lossy().as_ref());
     assert!(
-        actual.contains(&expected),
-        "expected `{actual}` to contain `{expected}`"
+        output_matches_workdir(result["output"].as_str().unwrap(), &custom_workdir),
+        "expected `{}` to resolve to `{}`",
+        result["output"].as_str().unwrap().trim(),
+        custom_workdir.display()
     );
 
     fs::remove_dir_all(&workspace).ok();
