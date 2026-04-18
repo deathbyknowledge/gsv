@@ -14,6 +14,7 @@ export const CLI_BINARY_ASSETS = [
   "gsv-darwin-x64",
   "gsv-linux-arm64",
   "gsv-linux-x64",
+  "gsv-windows-x64.exe",
 ] as const;
 
 export type CliBinaryAsset = typeof CLI_BINARY_ASSETS[number];
@@ -207,8 +208,7 @@ export function buildCliInstallPowerShell(origin: string): string {
     "$ErrorActionPreference = 'Stop'",
     `$BaseUrl = ${psQuote(baseUrl)}`,
     "$Channel = if ($env:GSV_CHANNEL) { $env:GSV_CHANNEL } else { 'latest' }",
-    "$Arch = if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64') { 'arm64' } else { 'x64' }",
-    "$BinaryName = \"gsv-windows-$Arch.exe\"",
+    "$BinaryName = 'gsv-windows-x64.exe'",
     "$DownloadUrl = \"$BaseUrl/$Channel/$BinaryName\"",
     "$ChecksumUrl = \"$DownloadUrl.sha256\"",
     "$InstallDir = if ($env:GSV_INSTALL_DIR) { $env:GSV_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\\gsv\\bin' }",
@@ -216,6 +216,9 @@ export function buildCliInstallPowerShell(origin: string): string {
     "$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString('N'))",
     "New-Item -ItemType Directory -Path $TempDir | Out-Null",
     "try {",
+    "  if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64') {",
+    "    Write-Host 'Using the Windows x64 CLI build on ARM64.'",
+    "  }",
     "  $TempBinary = Join-Path $TempDir 'gsv.exe'",
     "  $TempChecksum = Join-Path $TempDir 'gsv.sha256'",
     "  try {",

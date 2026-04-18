@@ -343,32 +343,35 @@ struct ShellProgram {
 fn resolve_shell_program() -> ShellProgram {
     #[cfg(windows)]
     {
-        return ShellProgram {
+        ShellProgram {
             executable: "pwsh".to_string(),
             launch_args: vec![
                 "-NoLogo".to_string(),
                 "-NoProfile".to_string(),
                 "-Command".to_string(),
             ],
-        };
-    }
-
-    if let Ok(raw) = std::env::var("SHELL") {
-        let candidate = raw.trim();
-        if !candidate.is_empty() {
-            let path = Path::new(candidate);
-            if path.is_absolute() && is_executable_file(path) {
-                return ShellProgram {
-                    executable: candidate.to_string(),
-                    launch_args: vec!["-lc".to_string()],
-                };
-            }
         }
     }
 
-    ShellProgram {
-        executable: "/bin/sh".to_string(),
-        launch_args: vec!["-lc".to_string()],
+    #[cfg(not(windows))]
+    {
+        if let Ok(raw) = std::env::var("SHELL") {
+            let candidate = raw.trim();
+            if !candidate.is_empty() {
+                let path = Path::new(candidate);
+                if path.is_absolute() && is_executable_file(path) {
+                    return ShellProgram {
+                        executable: candidate.to_string(),
+                        launch_args: vec!["-lc".to_string()],
+                    };
+                }
+            }
+        }
+
+        ShellProgram {
+            executable: "/bin/sh".to_string(),
+            launch_args: vec!["-lc".to_string()],
+        }
     }
 }
 

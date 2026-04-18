@@ -1,4 +1,7 @@
+import { useState } from "preact/hooks";
 import type { IssuedNodeToken } from "./types";
+
+type ProvisionInstallPlatform = "unix" | "windows";
 
 type ProvisionFormState = {
   deviceId: string;
@@ -23,15 +26,16 @@ export function ProvisionPanel({
   onBack,
   onSubmit,
 }: ProvisionPanelProps) {
-  const install = `curl -fsSL ${window.location.origin}/downloads/cli/install.sh | bash`;
-  const gatewayWs = buildGatewayWsUrl(window.location.origin);
+  const [platform, setPlatform] = useState<ProvisionInstallPlatform>("unix");
+  const install = buildInstallCommand(window.location.origin, platform);
   const bootstrap = issuedToken
-    ? [
-        `gsv config --local set gateway.url "${gatewayWs}"`,
-        `gsv config --local set gateway.username "${viewerUsername}"`,
-        `gsv config --local set node.token "${issuedToken.token}"`,
-        `gsv device install --id "${issuedToken.allowedDeviceId ?? initialDeviceId}" --workspace ~/projects`,
-      ].join("\n")
+    ? buildBootstrapCommand(
+        window.location.origin,
+        platform,
+        viewerUsername,
+        issuedToken.allowedDeviceId ?? initialDeviceId,
+        issuedToken.token,
+      )
     : "";
 
   return (
@@ -52,6 +56,19 @@ export function ProvisionPanel({
 
       {issuedToken ? (
         <div class="devices-provision-output">
+          <label class="devices-field-block devices-field-block--narrow">
+            <span>Target platform</span>
+            <select
+              class="devices-input"
+              value={platform}
+              onChange={(event) => {
+                setPlatform((event.currentTarget as HTMLSelectElement).value as ProvisionInstallPlatform);
+              }}
+            >
+              <option value="unix">macOS / Linux</option>
+              <option value="windows">Windows</option>
+            </select>
+          </label>
           <section class="devices-command-block">
             <header>
               <h3>Install CLI</h3>
@@ -124,4 +141,35 @@ function buildGatewayWsUrl(origin: string): string {
     return `ws://${origin.slice("http://".length)}/ws`;
   }
   return `${origin.replace(/\/+$/g, "")}/ws`;
+}
+
+function buildInstallCommand(origin: string, platform: ProvisionInstallPlatform): string {
+  return platform === "windows"
+    ? `irm ${origin}/downloads/cli/install.ps1 | iex`
+    : `curl -fsSL ${origin}/downloads/cli/install.sh | bash`;
+}
+
+function buildBootstrapCommand(
+  origin: string,
+  platform: ProvisionInstallPlatform,
+  viewerUsername: string,
+  deviceId: string,
+  token: string,
+): string {
+  const gatewayWs = escapeCliValue(buildGatewayWsUrl(origin));
+  const escapedViewerUsername = escapeCliValue(viewerUsername);
+  const escapedDeviceId = escapeCliValue(deviceId);
+  const escapedToken = escapeCliValue(token);
+  const workspace = platform === "windows" ? "\"$HOME\\projects\"" : "~/projects";
+
+  return [
+    `gsv config --local set gateway.url "${gatewayWs}"`,
+    `gsv config --local set gateway.username "${escapedViewerUsername}"`,
+    `gsv config --local set node.token "${escapedToken}"`,
+    `gsv device install --id "${escapedDeviceId}" --workspace ${workspace}`,
+  ].join("\n");
+}
+
+function escapeCliValue(value: string): string {
+  return value.replaceAll("\"", "\\\"");
 }

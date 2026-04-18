@@ -135,7 +135,7 @@ function cliInstallCommand(origin: string, platform: InstallPlatform): string {
 }
 
 function defaultWorkspacePath(platform: InstallPlatform): string {
-  return platform === "windows" ? "%USERPROFILE%\\projects" : "~/projects";
+  return platform === "windows" ? "\"$HOME\\projects\"" : "~/projects";
 }
 
 function buildNodeBootstrapCommand(
@@ -149,10 +149,10 @@ function buildNodeBootstrapCommand(
   const escapedGatewayUrl = gatewayWsUrl(origin).replaceAll("\"", "\\\"");
   return [
     cliInstallCommand(origin, platform),
-    `gsv local-config set gateway.url "${escapedGatewayUrl}"`,
-    `gsv local-config set node.id "${escapedDeviceId}"`,
-    `gsv local-config set node.token "${escapedToken}"`,
-    `gsv node install --id "${escapedDeviceId}" --workspace ${defaultWorkspacePath(platform)}`,
+    `gsv config --local set gateway.url "${escapedGatewayUrl}"`,
+    `gsv config --local set node.id "${escapedDeviceId}"`,
+    `gsv config --local set node.token "${escapedToken}"`,
+    `gsv device install --id "${escapedDeviceId}" --workspace ${defaultWorkspacePath(platform)}`,
   ].join("\n");
 }
 

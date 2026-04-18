@@ -235,6 +235,7 @@ jobs:
 
           # Include install script
           cp install.sh release/
+          cp install.ps1 release/
 
           # Create checksums
           cd release && sha256sum * > checksums.txt
@@ -245,10 +246,13 @@ jobs:
           if [ "$KIND" = "stable" ]; then
             TITLE="GSV ${RELEASE_TAG}"
             INSTALL_CMD='curl -sSL https://install.gsv.space | bash'
+            INSTALL_CMD_PS='irm https://install.gsv.space/install.ps1 | iex'
           else
             TITLE="GSV ${RELEASE_TAG}"
             INSTALL_CMD='curl -sSL https://install.gsv.space | GSV_CHANNEL=dev bash'
+            INSTALL_CMD_PS='$env:GSV_CHANNEL="dev"; irm https://install.gsv.space/install.ps1 | iex'
           fi
+          INSTALL_TAG_CMD_PS="\$env:GSV_VERSION='${RELEASE_TAG}'; irm https://install.gsv.space/install.ps1 | iex"
 
           cat > body.md <<BODY
           ## ${TITLE}
@@ -261,10 +265,18 @@ jobs:
           ${INSTALL_CMD}
           \`\`\`
 
+          \`\`\`powershell
+          ${INSTALL_CMD_PS}
+          \`\`\`
+
           Pin a specific release tag:
 
           \`\`\`bash
           curl -sSL https://install.gsv.space | GSV_VERSION=${RELEASE_TAG} bash
+          \`\`\`
+
+          \`\`\`powershell
+          ${INSTALL_TAG_CMD_PS}
           \`\`\`
 
           ### Cloudflare Bundles
@@ -281,6 +293,7 @@ jobs:
           - **macOS (Intel)**: \`gsv-darwin-x64\`
           - **Linux (x64)**: \`gsv-linux-x64\`
           - **Linux (ARM64)**: \`gsv-linux-arm64\`
+          - **Windows (x64)**: \`gsv-windows-x64.exe\`
           BODY
 
       - name: Publish release
@@ -298,9 +311,11 @@ jobs:
             release/gsv-linux-arm64
             release/gsv-darwin-x64
             release/gsv-darwin-arm64
+            release/gsv-windows-x64.exe
             release/gsv-cloudflare-gateway.tar.gz
             release/gsv-cloudflare-channel-whatsapp.tar.gz
             release/gsv-cloudflare-channel-discord.tar.gz
             release/cloudflare-checksums.txt
             release/install.sh
+            release/install.ps1
             release/checksums.txt

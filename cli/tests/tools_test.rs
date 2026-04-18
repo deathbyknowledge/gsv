@@ -14,7 +14,7 @@ fn shell_echo_command() -> &'static str {
 fn shell_pwd_command() -> &'static str {
     #[cfg(windows)]
     {
-        "(Get-Location).Path"
+        "[System.IO.Directory]::GetCurrentDirectory()"
     }
     #[cfg(not(windows))]
     {
@@ -41,6 +41,23 @@ fn shell_heartbeat_command() -> &'static str {
     #[cfg(not(windows))]
     {
         "while true; do echo heartbeat; sleep 0.2; done"
+    }
+}
+
+fn normalize_shell_path(value: &str) -> String {
+    #[cfg(windows)]
+    {
+        return value
+            .trim()
+            .replace('/', "\\")
+            .trim_start_matches(r"\\?\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase();
+    }
+
+    #[cfg(not(windows))]
+    {
+        value.trim().trim_end_matches('/').to_string()
     }
 }
 
@@ -91,10 +108,12 @@ async fn test_bash_tool_workdir() {
 
     assert_eq!(result["status"], "completed");
     assert_eq!(result["exitCode"], 0);
-    assert!(result["output"]
-        .as_str()
-        .unwrap()
-        .contains(custom_workdir.to_string_lossy().as_ref()));
+    let actual = normalize_shell_path(result["output"].as_str().unwrap());
+    let expected = normalize_shell_path(custom_workdir.to_string_lossy().as_ref());
+    assert!(
+        actual.contains(&expected),
+        "expected `{actual}` to contain `{expected}`"
+    );
 
     fs::remove_dir_all(&workspace).ok();
 }
