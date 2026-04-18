@@ -682,8 +682,6 @@ enum AdapterAction {
 
 #[derive(Subcommand)]
 enum LocalConfigAction {
-    /// Show current local config
-    Show,
     /// Get a config value
     Get {
         /// Config key (e.g., "gateway.url", "gateway.username", "gateway.token", "node.token", "node.workspace")
@@ -696,8 +694,6 @@ enum LocalConfigAction {
         /// Value to set
         value: String,
     },
-    /// Show config file path
-    Path,
 }
 
 #[derive(Subcommand)]
@@ -798,74 +794,6 @@ enum DeployAction {
         #[arg(long)]
         all: bool,
 
-        /// Cloudflare API token (falls back to config `cloudflare.api_token`)
-        #[arg(long, env = "CF_API_TOKEN")]
-        api_token: Option<String>,
-
-        /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
-        #[arg(long, env = "CF_ACCOUNT_ID")]
-        account_id: Option<String>,
-    },
-
-    /// Manage prebuilt Cloudflare bundles from GitHub releases
-    #[command(hide = true)]
-    Bundle {
-        #[command(subcommand)]
-        action: DeployBundleAction,
-    },
-
-    /// Cloudflare account helpers used by deploy workflows
-    #[command(hide = true)]
-    Account {
-        #[command(subcommand)]
-        action: DeployAccountAction,
-    },
-}
-
-#[derive(Subcommand)]
-enum DeployBundleAction {
-    /// Download and verify prebuilt Cloudflare bundles
-    Fetch {
-        /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
-        #[arg(long, default_value = "latest")]
-        version: String,
-
-        /// Component to fetch (repeat for multiple)
-        #[arg(short = 'c', long = "component")]
-        component: Vec<String>,
-
-        /// Fetch all components
-        #[arg(long)]
-        all: bool,
-
-        /// Overwrite existing extracted bundle directories
-        #[arg(long)]
-        force: bool,
-
-        /// Use local Cloudflare bundle directory instead of downloading from release assets
-        #[arg(long)]
-        from_dir: Option<PathBuf>,
-    },
-
-    /// Show bundle manifest details from local extracted bundles
-    Inspect {
-        /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
-        #[arg(long, default_value = "latest")]
-        version: String,
-
-        /// Component to inspect
-        #[arg(short = 'c', long = "component")]
-        component: String,
-    },
-
-    /// List valid component names
-    ListComponents,
-}
-
-#[derive(Subcommand)]
-enum DeployAccountAction {
-    /// Resolve Cloudflare account ID from API token (auto-picks if exactly one account)
-    Resolve {
         /// Cloudflare API token (falls back to config `cloudflare.api_token`)
         #[arg(long, env = "CF_API_TOKEN")]
         api_token: Option<String>,
@@ -1638,12 +1566,6 @@ mod tests {
 
 fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        LocalConfigAction::Show => {
-            let cfg = CliConfig::load();
-            let toml_str = toml::to_string_pretty(&cfg)?;
-            println!("{}", toml_str);
-        }
-
         LocalConfigAction::Get { key } => {
             let cfg = CliConfig::load();
             let value = match key.as_str() {
@@ -1778,18 +1700,6 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
                 }
             );
         }
-
-        LocalConfigAction::Path => match CliConfig::config_path() {
-            Some(path) => {
-                println!("{}", path.display());
-                if path.exists() {
-                    println!("(exists)");
-                } else {
-                    println!("(not created yet - set any local config key to create it)");
-                }
-            }
-            None => println!("Could not determine config path"),
-        },
     }
 
     Ok(())
@@ -3380,73 +3290,6 @@ async fn run_deploy(
             println!("Checking components: {}", components.join(", "));
             deploy::print_deploy_status(&resolved_account_id, &token, &components).await
         }
-        DeployAction::Bundle { action } => match action {
-            DeployBundleAction::Fetch {
-                version,
-                component,
-                all,
-                force,
-                from_dir,
-            } => {
-                if all && !component.is_empty() {
-                    return Err("Use either --all or one/more --component values, not both".into());
-                }
-
-                let components = if all {
-                    deploy::available_components()
-                        .iter()
-                        .map(|c| (*c).to_string())
-                        .collect::<Vec<_>>()
-                } else {
-                    deploy::normalize_components(&component)?
-                };
-
-                println!("Fetching components: {}", components.join(", "));
-                if let Some(dir) = from_dir {
-                    println!("Installing bundles from local directory: {}", dir.display());
-                    deploy::install_bundles_from_dir(cfg, &dir, &version, &components, force)
-                } else {
-                    deploy::fetch_bundles(cfg, &version, &components, force).await
-                }
-            }
-            DeployBundleAction::Inspect { version, component } => {
-                deploy::inspect_bundle(cfg, &version, &component).await
-            }
-            DeployBundleAction::ListComponents => {
-                println!("Available components:");
-                for component in deploy::available_components() {
-                    println!("  {}", component);
-                }
-                Ok(())
-            }
-        },
-        DeployAction::Account { action } => match action {
-            DeployAccountAction::Resolve {
-                api_token,
-                account_id,
-            } => {
-                let token = api_token
-                    .or_else(|| cfg.cloudflare.api_token.clone())
-                    .ok_or("Cloudflare API token missing. Set --api-token or `gsv config --local set cloudflare.api_token ...`")?;
-                let configured_account_id = account_id
-                    .or_else(|| cfg.cloudflare.account_id.clone())
-                    .filter(|v| !v.trim().is_empty());
-
-                let resolved =
-                    deploy::resolve_cloudflare_account_id(&token, configured_account_id.as_deref())
-                        .await?;
-                if configured_account_id.is_some() {
-                    println!("Using configured Cloudflare account ID: {}", resolved);
-                } else {
-                    println!("Resolved Cloudflare account ID: {}", resolved);
-                    println!(
-                        "Tip: persist it with `gsv config --local set cloudflare.account_id {}`",
-                        resolved
-                    );
-                }
-                Ok(())
-            }
-        },
     }
 }
 
