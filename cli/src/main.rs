@@ -1519,6 +1519,20 @@ mod tests {
         assert!(block.contains("<string>/opt/bin:&amp;&quot;&apos;&lt;&gt;</string>"));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_launchd_plist_contents_uses_device_run_entrypoint() {
+        let plist = launchd_plist_contents(
+            NODE_LAUNCHD_LABEL,
+            &PathBuf::from("/Applications/GSV/gsv"),
+            "",
+        );
+        assert!(plist.contains("<string>device</string>"));
+        assert!(plist.contains("<string>run</string>"));
+        assert!(!plist.contains("<string>node</string>"));
+        assert!(!plist.contains("<string>--foreground</string>"));
+    }
+
     #[test]
     fn test_queue_exec_event_for_retry_drops_oldest_when_full() {
         let logger = test_logger();
@@ -3930,6 +3944,16 @@ fn launchd_path_environment_block(path: Option<&str>) -> String {
 }
 
 #[cfg(target_os = "macos")]
+fn launchd_plist_contents(label: &str, exe_path: &PathBuf, path_env_block: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>{}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n    <string>device</string>\n    <string>run</string>\n  </array>\n{}  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n</dict>\n</plist>\n",
+        label,
+        xml_escape(&exe_path.display().to_string()),
+        path_env_block,
+    )
+}
+
+#[cfg(target_os = "macos")]
 fn install_launchd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let plist_path = launchd_plist_path()?;
     if let Some(parent) = plist_path.parent() {
@@ -3942,12 +3966,7 @@ fn install_launchd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::e
     }
 
     let path_env_block = launchd_path_environment_block(node_service_path().as_deref());
-    let plist = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>{}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n    <string>node</string>\n    <string>--foreground</string>\n  </array>\n{}  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n</dict>\n</plist>\n",
-        NODE_LAUNCHD_LABEL,
-        xml_escape(&exe_path.display().to_string()),
-        path_env_block,
-    );
+    let plist = launchd_plist_contents(NODE_LAUNCHD_LABEL, exe_path, &path_env_block);
     std::fs::write(&plist_path, plist)?;
 
     let domain = launchd_domain()?;
