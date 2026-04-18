@@ -1,5 +1,11 @@
 export type CliReleaseChannel = "stable" | "dev";
 
+type GitHubRelease = {
+  tag_name?: string;
+  prerelease?: boolean;
+  draft?: boolean;
+};
+
 export const CLI_RELEASE_REPO = "deathbyknowledge/gsv";
 export const CLI_DEFAULT_CHANNEL_KEY = "downloads/cli/default-channel.txt";
 export const CLI_RELEASE_CHANNELS: readonly CliReleaseChannel[] = ["stable", "dev"];
@@ -25,12 +31,51 @@ export function inferDefaultCliChannel(ref: string): CliReleaseChannel {
   return "dev";
 }
 
+export function isSemverCliReleaseTag(tag: string): boolean {
+  const trimmed = tag.trim();
+  if (!trimmed.startsWith("v")) {
+    return false;
+  }
+
+  const body = trimmed.slice(1);
+  const hyphenIndex = body.indexOf("-");
+  const core = hyphenIndex === -1 ? body : body.slice(0, hyphenIndex);
+  const prerelease = hyphenIndex === -1 ? null : body.slice(hyphenIndex + 1);
+  const parts = core.split(".");
+
+  if (parts.length !== 3 || parts.some((part) => !/^\d+$/.test(part))) {
+    return false;
+  }
+  if (prerelease === null) {
+    return true;
+  }
+  return prerelease.length > 0 && prerelease.split(".").every((part) => /^[0-9A-Za-z-]+$/.test(part));
+}
+
+export function isSemverCliPrereleaseTag(tag: string): boolean {
+  return isSemverCliReleaseTag(tag) && tag.includes("-");
+}
+
+export function selectLatestCliPrereleaseTag(releases: readonly GitHubRelease[]): string | null {
+  for (const release of releases) {
+    const tag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+    if (release.draft === true || release.prerelease !== true) {
+      continue;
+    }
+    if (isSemverCliPrereleaseTag(tag)) {
+      return tag;
+    }
+  }
+  return null;
+}
+
 export async function mirrorCliChannel(
   bucket: R2Bucket,
   channel: CliReleaseChannel,
 ): Promise<{ channel: CliReleaseChannel; assets: CliBinaryAsset[] }> {
+  const tag = await resolveCliGithubReleaseTag(channel);
   for (const asset of CLI_BINARY_ASSETS) {
-    const response = await fetch(cliGithubReleaseUrl(channel, asset));
+    const response = await fetch(cliGithubReleaseUrl(tag, asset));
     if (!response.ok) {
       throw new Error(`Failed to mirror ${asset} from ${channel}: ${response.status}`);
     }
@@ -197,8 +242,39 @@ export function buildCliInstallPowerShell(origin: string): string {
   ].join("\r\n");
 }
 
-function cliGithubReleaseUrl(channel: CliReleaseChannel, asset: string): string {
-  return `https://github.com/${CLI_RELEASE_REPO}/releases/download/${channel}/${asset}`;
+async function resolveCliGithubReleaseTag(channel: CliReleaseChannel): Promise<string> {
+  if (channel === "stable") {
+    const release = await fetchCliGitHubJson<GitHubRelease>("/releases/latest");
+    const tag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+    if (!tag || !isSemverCliReleaseTag(tag) || isSemverCliPrereleaseTag(tag)) {
+      throw new Error(`Invalid latest stable CLI release tag: ${tag || "<missing>"}`);
+    }
+    return tag;
+  }
+
+  const releases = await fetchCliGitHubJson<GitHubRelease[]>("/releases?per_page=20");
+  const tag = selectLatestCliPrereleaseTag(releases);
+  if (!tag) {
+    throw new Error("No dev prerelease found for CLI downloads");
+  }
+  return tag;
+}
+
+async function fetchCliGitHubJson<T>(path: string): Promise<T> {
+  const response = await fetch(`https://api.github.com/repos/${CLI_RELEASE_REPO}${path}`, {
+    headers: {
+      accept: "application/vnd.github+json",
+      "user-agent": "gsv-gateway",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub release lookup failed: ${response.status}`);
+  }
+  return await response.json() as T;
+}
+
+function cliGithubReleaseUrl(tag: string, asset: string): string {
+  return `https://github.com/${CLI_RELEASE_REPO}/releases/download/${tag}/${asset}`;
 }
 
 async function sha256Hex(input: ArrayBuffer): Promise<string> {

@@ -9,7 +9,7 @@
 # Environment variables:
 #   GSV_INSTALL_DIR  - Where to install CLI (default: /usr/local/bin)
 #   GSV_CHANNEL      - Release channel: stable or dev (default: stable)
-#   GSV_VERSION      - Exact GitHub release tag to install (overrides channel)
+#   GSV_VERSION      - Exact GitHub release tag to install (e.g. v0.1.0)
 
 set -e
 
@@ -107,18 +107,92 @@ validate_channel() {
     esac
 }
 
+github_api_get() {
+    local url="$1"
+
+    if command -v curl > /dev/null 2>&1; then
+        curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: gsv-installer" \
+            "$url"
+        return
+    fi
+
+    if command -v wget > /dev/null 2>&1; then
+        wget -q -O - \
+            --header="Accept: application/vnd.github+json" \
+            --header="User-Agent: gsv-installer" \
+            "$url"
+        return
+    fi
+
+    error "curl or wget required"
+    exit 1
+}
+
+resolve_release_ref() {
+    if [ -n "$VERSION" ]; then
+        printf '%s\n' "$VERSION"
+        return
+    fi
+
+    validate_channel
+
+    if [ "$CHANNEL" = "stable" ]; then
+        local response
+        response=$(github_api_get "https://api.github.com/repos/${REPO}/releases/latest")
+        local tag
+        tag=$(printf '%s' "$response" | tr -d '\n' | sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p')
+        if [ -z "$tag" ]; then
+            error "Could not resolve latest stable release tag"
+            exit 1
+        fi
+        printf '%s\n' "$tag"
+        return
+    fi
+
+    local response
+    response=$(github_api_get "https://api.github.com/repos/${REPO}/releases?per_page=20")
+    local tag
+    tag=$(
+        printf '%s' "$response" \
+          | tr -d '\n' \
+          | grep -Eo '"tag_name":"[^"]*"|"draft":[^,}]*|"prerelease":[^,}]*' \
+          | awk -F: '
+              /"tag_name"/ {
+                  tag=$2
+                  gsub(/"/, "", tag)
+                  draft=""
+                  prerelease=""
+                  next
+              }
+              /"draft"/ {
+                  draft=$2
+                  next
+              }
+              /"prerelease"/ {
+                  prerelease=$2
+                  if (draft == "false" && prerelease == "true" && tag ~ /^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$/) {
+                      print tag
+                      exit
+                  }
+              }
+          '
+    )
+    if [ -z "$tag" ]; then
+        error "Could not resolve latest dev prerelease tag"
+        exit 1
+    fi
+    printf '%s\n' "$tag"
+}
+
 # ============================================================================
 # CLI Installation
 # ============================================================================
 
 download_cli() {
     local release_ref
-    if [ -n "$VERSION" ]; then
-        release_ref="$VERSION"
-    else
-        validate_channel
-        release_ref="$CHANNEL"
-    fi
+    release_ref="$(resolve_release_ref)"
 
     local url="https://github.com/${REPO}/releases/download/${release_ref}/${BINARY_NAME}"
     local tmp_dir=$(mktemp -d)

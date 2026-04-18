@@ -44,21 +44,20 @@ fn main() {
         now.to_string()
     });
 
-    let mut metadata_segments = Vec::new();
-    if let Some(value) = channel.as_ref() {
-        metadata_segments.push(value.clone());
-    }
-    if let Some(value) = run_number.as_ref() {
-        metadata_segments.push(value.clone());
-    }
-    if let Some(value) = commit_sha.as_ref() {
-        metadata_segments.push(value.clone());
-    }
-
-    let build_version = if metadata_segments.is_empty() {
-        pkg_version.clone()
-    } else {
-        format!("{}+{}", pkg_version, metadata_segments.join("."))
+    let build_version = match channel.as_deref() {
+        Some("stable") | None => pkg_version.clone(),
+        Some(value) => {
+            let mut prerelease_segments = vec![value.to_string()];
+            if let Some(run) = run_number.as_ref() {
+                prerelease_segments.push(run.clone());
+            }
+            let mut build = format!("{}-{}", pkg_version, prerelease_segments.join("."));
+            if let Some(sha) = commit_sha.as_ref() {
+                build.push('+');
+                build.push_str(sha);
+            }
+            build
+        }
     };
 
     println!("cargo:rustc-env=GSV_BUILD_VERSION={}", build_version);

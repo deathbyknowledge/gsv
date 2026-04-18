@@ -2,16 +2,10 @@ name: Release
 
 on:
   push:
-    branches: [main, stable]
+    branches: [main]
+    tags:
+      - "v*"
   workflow_dispatch:
-    inputs:
-      channel:
-        description: 'Release channel'
-        required: true
-        type: choice
-        options:
-          - dev
-          - stable
 
 permissions:
   contents: write
@@ -24,35 +18,63 @@ jobs:
   resolve:
     runs-on: ubuntu-latest
     outputs:
-      channel: ${{ steps.channel.outputs.channel }}
+      version: ${{ steps.channel.outputs.version }}
+      kind: ${{ steps.channel.outputs.kind }}
       short_sha: ${{ steps.channel.outputs.short_sha }}
       release_tag: ${{ steps.channel.outputs.release_tag }}
       built_at: ${{ steps.channel.outputs.built_at }}
+      prerelease: ${{ steps.channel.outputs.prerelease }}
     steps:
-      - name: Resolve channel
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify synced versions
+        run: npm run version:check
+
+      - name: Resolve release
         id: channel
         run: |
           SHORT_SHA="${GITHUB_SHA:0:7}"
           BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          VERSION="$(npm run --silent version:show)"
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            CHANNEL="${{ inputs.channel }}"
-          elif [ "${{ github.ref }}" = "refs/heads/stable" ]; then
-            CHANNEL="stable"
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            KIND="stable"
           else
-            CHANNEL="dev"
+            KIND="dev"
           fi
 
-          echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
+          if [ "$KIND" = "stable" ]; then
+            EXPECTED_TAG="$(node ./scripts/release.mjs stable-tag)"
+            if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              RELEASE_TAG="${GITHUB_REF_NAME}"
+            else
+              RELEASE_TAG="$EXPECTED_TAG"
+            fi
+            if [ "$RELEASE_TAG" != "$EXPECTED_TAG" ]; then
+              echo "Stable release tag must match ${EXPECTED_TAG}, got ${RELEASE_TAG}" >&2
+              exit 1
+            fi
+            PRERELEASE="false"
+          else
+            RELEASE_TAG="$(node ./scripts/release.mjs dev-tag "${GITHUB_RUN_NUMBER}")"
+            PRERELEASE="true"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "kind=${KIND}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          echo "release_tag=gsv-${CHANNEL}-${GITHUB_RUN_NUMBER}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "built_at=${BUILT_AT}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
 
   # Build CLI binaries for multiple platforms
   build-cli:
     needs: [resolve]
     env:
-      GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.channel }}
+      GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
       GSV_BUILD_SHA: ${{ github.sha }}
       GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
       GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
@@ -94,7 +116,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} --no-default-features --features rustls
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.channel }}
+          GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
           GSV_BUILD_SHA: ${{ github.sha }}
           GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
           GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
@@ -105,7 +127,7 @@ jobs:
         working-directory: cli
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.channel }}
+          GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
           GSV_BUILD_SHA: ${{ github.sha }}
           GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
           GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
@@ -134,101 +156,16 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: |
+            package-lock.json
             gateway/package-lock.json
             web/package-lock.json
             adapters/whatsapp/package-lock.json
             adapters/discord/package-lock.json
 
-      - name: Install dependencies
+      - name: Build Cloudflare bundles
         run: |
           set -euo pipefail
-          for dir in gateway web adapters/whatsapp adapters/discord; do
-            npm ci --prefix "$dir" --workspaces=false
-          done
-
-      - name: Build web UI
-        working-directory: web
-        run: npm run build
-
-      - name: Build worker bundles
-        run: |
-          set -euo pipefail
-
-          mkdir -p "$GITHUB_WORKSPACE/dist/cloudflare/gateway/worker"
-          mkdir -p "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/worker"
-          mkdir -p "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/worker"
-
-          (
-            cd gateway
-            npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/gateway/worker"
-          )
-          (
-            cd adapters/whatsapp
-            npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/worker"
-          )
-          (
-            cd adapters/discord
-            npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/worker"
-          )
-
-      - name: Assemble deployable bundles
-        run: |
-          set -euo pipefail
-
-          mkdir -p "$GITHUB_WORKSPACE/release"
-
-          # Gateway bundle (worker + static assets + templates)
-          cp gateway/wrangler.jsonc "$GITHUB_WORKSPACE/dist/cloudflare/gateway/wrangler.jsonc"
-          cp -R web/dist "$GITHUB_WORKSPACE/dist/cloudflare/gateway/assets"
-          mkdir -p "$GITHUB_WORKSPACE/dist/cloudflare/gateway/templates"
-          cp -R templates/workspace "$GITHUB_WORKSPACE/dist/cloudflare/gateway/templates/workspace"
-          cp -R templates/skills "$GITHUB_WORKSPACE/dist/cloudflare/gateway/templates/skills"
-          cat > "$GITHUB_WORKSPACE/dist/cloudflare/gateway/manifest.json" <<'EOF'
-          {
-            "component": "gateway",
-            "worker": {
-              "entrypoint": "worker/index.js",
-              "sourceMap": "worker/index.js.map",
-              "wranglerConfig": "wrangler.jsonc"
-            },
-            "assetsDir": "assets",
-            "templatesDir": "templates"
-          }
-          EOF
-
-          # Channel bundles (kept separate so users only download what they need)
-          cp adapters/whatsapp/wrangler.jsonc "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/wrangler.jsonc"
-          cat > "$GITHUB_WORKSPACE/dist/cloudflare/channel-whatsapp/manifest.json" <<'EOF'
-          {
-            "component": "channel-whatsapp",
-            "worker": {
-              "entrypoint": "worker/index.js",
-              "sourceMap": "worker/index.js.map",
-              "wranglerConfig": "wrangler.jsonc"
-            }
-          }
-          EOF
-
-          cp adapters/discord/wrangler.jsonc "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/wrangler.jsonc"
-          cat > "$GITHUB_WORKSPACE/dist/cloudflare/channel-discord/manifest.json" <<'EOF'
-          {
-            "component": "channel-discord",
-            "worker": {
-              "entrypoint": "worker/index.js",
-              "sourceMap": "worker/index.js.map",
-              "wranglerConfig": "wrangler.jsonc"
-            }
-          }
-          EOF
-
-          tar -C "$GITHUB_WORKSPACE/dist/cloudflare" -czf "$GITHUB_WORKSPACE/release/gsv-cloudflare-gateway.tar.gz" gateway
-          tar -C "$GITHUB_WORKSPACE/dist/cloudflare" -czf "$GITHUB_WORKSPACE/release/gsv-cloudflare-channel-whatsapp.tar.gz" channel-whatsapp
-          tar -C "$GITHUB_WORKSPACE/dist/cloudflare" -czf "$GITHUB_WORKSPACE/release/gsv-cloudflare-channel-discord.tar.gz" channel-discord
-
-          (
-            cd "$GITHUB_WORKSPACE/release"
-            sha256sum gsv-cloudflare-*.tar.gz > cloudflare-checksums.txt
-          )
+          npm run release:build:cloudflare -- "$GITHUB_WORKSPACE/release"
 
       - name: Upload Cloudflare bundles
         uses: actions/upload-artifact@v4
@@ -245,7 +182,7 @@ jobs:
     needs: [resolve, build-cli, build-cloudflare-bundles]
     runs-on: ubuntu-latest
     env:
-      CHANNEL: ${{ needs.resolve.outputs.channel }}
+      KIND: ${{ needs.resolve.outputs.kind }}
       RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
       SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
       BUILT_AT: ${{ needs.resolve.outputs.built_at }}
@@ -285,11 +222,11 @@ jobs:
       - name: Build release body
         id: body
         run: |
-          if [ "$CHANNEL" = "stable" ]; then
-            TITLE="GSV (stable)"
+          if [ "$KIND" = "stable" ]; then
+            TITLE="GSV ${RELEASE_TAG}"
             INSTALL_CMD='curl -sSL https://install.gsv.space | bash'
           else
-            TITLE="GSV (dev)"
+            TITLE="GSV ${RELEASE_TAG}"
             INSTALL_CMD='curl -sSL https://install.gsv.space | GSV_CHANNEL=dev bash'
           fi
 
@@ -326,35 +263,15 @@ jobs:
           - **Linux (ARM64)**: \`gsv-linux-arm64\`
           BODY
 
-      - name: Create immutable release
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: GSV (${{ env.CHANNEL }}) ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: GSV ${{ env.RELEASE_TAG }}
           draft: false
-          prerelease: ${{ env.CHANNEL == 'dev' }}
-          make_latest: false
-          body_path: body.md
-          files: |
-            release/gsv-linux-x64
-            release/gsv-linux-arm64
-            release/gsv-darwin-x64
-            release/gsv-darwin-arm64
-            release/gsv-cloudflare-gateway.tar.gz
-            release/gsv-cloudflare-channel-whatsapp.tar.gz
-            release/gsv-cloudflare-channel-discord.tar.gz
-            release/cloudflare-checksums.txt
-            release/install.sh
-            release/checksums.txt
-
-      - name: Create or update channel release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.CHANNEL }}
-          name: GSV (${{ env.CHANNEL }})
-          draft: false
-          prerelease: ${{ env.CHANNEL == 'dev' }}
-          make_latest: ${{ env.CHANNEL == 'stable' }}
+          prerelease: ${{ needs.resolve.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.resolve.outputs.kind == 'stable' }}
           body_path: body.md
           files: |
             release/gsv-linux-x64

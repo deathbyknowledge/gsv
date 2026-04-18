@@ -62,7 +62,7 @@ import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
 import { workspaceRootPath } from "../fs";
 
-const SERVER_VERSION = "0.0.1";
+const SERVER_VERSION = "0.1.0";
 
 type ConnectionState = {
   step: "pending" | "connected";

@@ -116,9 +116,102 @@ macro_rules! println {
     }};
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct GitHubRelease {
     tag_name: String,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+}
+
+fn is_semver_release_tag(tag: &str) -> bool {
+    let Some(body) = tag.trim().strip_prefix('v') else {
+        return false;
+    };
+
+    let (core, prerelease) = match body.split_once('-') {
+        Some((value, suffix)) => (value, Some(suffix)),
+        None => (body, None),
+    };
+
+    let mut parts = core.split('.');
+    if !parts
+        .by_ref()
+        .take(3)
+        .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return false;
+    }
+    if parts.next().is_some() {
+        return false;
+    }
+
+    match prerelease {
+        Some(value) => {
+            !value.is_empty()
+                && value.split('.').all(|part| {
+                    !part.is_empty()
+                        && part
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+                })
+        }
+        None => true,
+    }
+}
+
+fn is_semver_prerelease_tag(tag: &str) -> bool {
+    is_semver_release_tag(tag) && tag.contains('-')
+}
+
+fn select_latest_prerelease_tag(releases: &[GitHubRelease]) -> Option<String> {
+    releases.iter().find_map(|release| {
+        if release.draft || !release.prerelease || !is_semver_prerelease_tag(&release.tag_name) {
+            return None;
+        }
+        Some(release.tag_name.clone())
+    })
+}
+
+async fn fetch_latest_stable_release_tag(
+    client: &reqwest::Client,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases/latest",
+        REPO_OWNER, REPO_NAME
+    );
+    let release: GitHubRelease = client
+        .get(url)
+        .header("User-Agent", "gsv-cli")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    if !is_semver_release_tag(&release.tag_name) || is_semver_prerelease_tag(&release.tag_name) {
+        return Err(format!("Latest stable release tag is invalid: {}", release.tag_name).into());
+    }
+    Ok(release.tag_name)
+}
+
+async fn fetch_latest_dev_release_tag(
+    client: &reqwest::Client,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases?per_page=20",
+        REPO_OWNER, REPO_NAME
+    );
+    let releases: Vec<GitHubRelease> = client
+        .get(url)
+        .header("User-Agent", "gsv-cli")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    select_latest_prerelease_tag(&releases)
+        .ok_or_else(|| "No semver dev prerelease found on GitHub releases".into())
 }
 
 #[derive(Debug, Deserialize)]
@@ -379,24 +472,12 @@ pub fn normalize_components(raw: &[String]) -> Result<Vec<String>, Box<dyn std::
 }
 
 pub async fn resolve_release_tag(version: &str) -> Result<String, Box<dyn std::error::Error>> {
-    if version != "latest" {
-        return Ok(version.to_string());
-    }
-
-    let url = format!(
-        "https://api.github.com/repos/{}/{}/releases/latest",
-        REPO_OWNER, REPO_NAME
-    );
     let client = reqwest::Client::builder().http1_only().build()?;
-    let release: GitHubRelease = client
-        .get(url)
-        .header("User-Agent", "gsv-cli")
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    Ok(release.tag_name)
+    match version.trim().to_ascii_lowercase().as_str() {
+        "latest" | "stable" => fetch_latest_stable_release_tag(&client).await,
+        "dev" => fetch_latest_dev_release_tag(&client).await,
+        _ => Ok(version.to_string()),
+    }
 }
 
 fn read_local_latest_tag(cfg: &CliConfig) -> Option<String> {
@@ -3002,4 +3083,49 @@ pub async fn set_discord_bot_token_secret(
         bot_token,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semver_release_tag_detection_accepts_expected_tags() {
+        assert!(is_semver_release_tag("v0.1.0"));
+        assert!(is_semver_release_tag("v0.1.0-dev.42"));
+        assert!(!is_semver_release_tag("0.1.0"));
+        assert!(!is_semver_release_tag("stable"));
+    }
+
+    #[test]
+    fn prerelease_detection_distinguishes_stable_and_dev_tags() {
+        assert!(!is_semver_prerelease_tag("v0.1.0"));
+        assert!(is_semver_prerelease_tag("v0.1.0-dev.42"));
+    }
+
+    #[test]
+    fn latest_prerelease_selection_skips_drafts_and_non_semver_tags() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "dev".to_string(),
+                prerelease: true,
+                draft: false,
+            },
+            GitHubRelease {
+                tag_name: "v0.2.0-dev.43".to_string(),
+                prerelease: true,
+                draft: true,
+            },
+            GitHubRelease {
+                tag_name: "v0.2.0-dev.42".to_string(),
+                prerelease: true,
+                draft: false,
+            },
+        ];
+
+        assert_eq!(
+            select_latest_prerelease_tag(&releases),
+            Some("v0.2.0-dev.42".to_string())
+        );
+    }
 }

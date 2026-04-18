@@ -23,7 +23,7 @@ gsv setup
 gsv setup --skip-node
 
 # Pin exact CLI release tag (immutable build)
-curl -sSL https://install.gsv.space | GSV_VERSION=gsv-stable-1234-abcdef0 bash
+curl -sSL https://install.gsv.space | GSV_VERSION=v0.1.0 bash
 ```
 
 If you want to configure a different machine after deployment:
