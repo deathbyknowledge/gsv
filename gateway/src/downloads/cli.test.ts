@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCliInstallPowerShell,
   inferDefaultCliChannel,
+  isSupportedCliAsset,
   isSemverCliPrereleaseTag,
   isSemverCliReleaseTag,
   selectLatestCliPrereleaseTag,
@@ -43,5 +45,15 @@ describe("CLI release helpers", () => {
       { tag_name: "v0.2.0-dev.42", prerelease: true, draft: false },
     ]);
     expect(tag).toBe("v0.2.0-dev.42");
+  });
+
+  it("recognizes the mirrored windows asset", () => {
+    expect(isSupportedCliAsset("gsv-windows-x64.exe")).toBe(true);
+  });
+
+  it("builds a windows installer script for the mirrored x64 asset", () => {
+    const script = buildCliInstallPowerShell("https://example.test");
+    expect(script).toContain("$BinaryName = 'gsv-windows-x64.exe'");
+    expect(script).toContain("Using the Windows x64 CLI build on ARM64.");
   });
 });

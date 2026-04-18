@@ -168,7 +168,7 @@ impl CliConfig {
             return Self::default();
         }
 
-        let mut cfg = match std::fs::read_to_string(&path) {
+        let cfg = match std::fs::read_to_string(&path) {
             Ok(content) => toml::from_str(&content).unwrap_or_else(|e| {
                 eprintln!("Warning: Failed to parse config: {}", e);
                 Self::default()
@@ -178,6 +178,9 @@ impl CliConfig {
                 Self::default()
             }
         };
+
+        #[cfg(unix)]
+        let mut cfg = cfg;
 
         #[cfg(unix)]
         {
