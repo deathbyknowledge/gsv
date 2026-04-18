@@ -4,7 +4,9 @@ use cliclack::{confirm, input, intro, log, multiselect, note, outro_cancel, pass
 use gsv::config::{self, CliConfig};
 use gsv::connection::{Connection, GatewayRpcError};
 use gsv::deploy;
+use gsv::device_service;
 use gsv::kernel_client::{GatewayAuth, KernelClient};
+use gsv::logger::{self, NodeLogger};
 use gsv::protocol::{
     ErrorShape, Frame, NodeExecEventParams, RequestFrame, ResponseFrame, SignalFrame,
 };
@@ -12,11 +14,9 @@ use gsv::tools::{all_tools_with_workspace, subscribe_exec_events, Tool};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::VecDeque;
-use std::ffi::OsString;
-use std::fs;
 use std::future::Future;
 use std::io::{self, IsTerminal};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 mod commands;
@@ -1472,68 +1472,6 @@ mod tests {
     }
 
     #[test]
-    fn test_select_service_path_prefers_probed_path() {
-        let selected = select_service_path(
-            Some(OsString::from("/probe/bin:/usr/bin")),
-            Some(OsString::from("/env/bin:/usr/bin")),
-        );
-        assert_eq!(selected.as_deref(), Some("/probe/bin:/usr/bin"));
-    }
-
-    #[test]
-    fn test_select_service_path_falls_back_to_env_path() {
-        let selected = select_service_path(None, Some(OsString::from("/env/bin:/usr/bin")));
-        assert_eq!(selected.as_deref(), Some("/env/bin:/usr/bin"));
-    }
-
-    #[test]
-    fn test_select_service_path_falls_back_when_probed_path_is_blank() {
-        let selected = select_service_path(
-            Some(OsString::from("   ")),
-            Some(OsString::from("/env/bin:/usr/bin")),
-        );
-        assert_eq!(selected.as_deref(), Some("/env/bin:/usr/bin"));
-    }
-
-    #[test]
-    fn test_select_service_path_rejects_empty_path() {
-        let selected = select_service_path(Some(OsString::from("   ")), None);
-        assert!(selected.is_none());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn test_systemd_path_environment_line_escapes_special_chars() {
-        let line = systemd_path_environment_line(Some(r#"/opt/bin:"quoted"\test%path"#));
-        assert_eq!(
-            line,
-            "Environment=\"PATH=/opt/bin:\\\"quoted\\\"\\\\test%%path\"\n"
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn test_launchd_path_environment_block_escapes_xml() {
-        let block = launchd_path_environment_block(Some("/opt/bin:&\"'<>"));
-        assert!(block.contains("<key>EnvironmentVariables</key>"));
-        assert!(block.contains("<string>/opt/bin:&amp;&quot;&apos;&lt;&gt;</string>"));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn test_launchd_plist_contents_uses_device_run_entrypoint() {
-        let plist = launchd_plist_contents(
-            NODE_LAUNCHD_LABEL,
-            &PathBuf::from("/Applications/GSV/gsv"),
-            "",
-        );
-        assert!(plist.contains("<string>device</string>"));
-        assert!(plist.contains("<string>run</string>"));
-        assert!(!plist.contains("<string>node</string>"));
-        assert!(!plist.contains("<string>--foreground</string>"));
-    }
-
-    #[test]
     fn test_queue_exec_event_for_retry_drops_oldest_when_full() {
         let logger = test_logger();
         let outbox: Arc<Mutex<VecDeque<NodeExecEventParams>>> =
@@ -2601,10 +2539,6 @@ fn is_mutable_release_ref(version: &str) -> bool {
     matches!(normalized.as_str(), "latest" | "dev" | "stable")
 }
 
-fn node_service_management_supported() -> bool {
-    cfg!(any(target_os = "linux", target_os = "macos"))
-}
-
 async fn run_setup(
     cfg: &CliConfig,
     version: String,
@@ -2661,7 +2595,7 @@ async fn run_setup(
         return Ok(());
     }
 
-    if !node_service_management_supported() {
+    if !device_service::node_service_management_supported() {
         println!(
             "Device daemon management is unsupported on this OS. Run `gsv device run` to start a device manually."
         );
@@ -2758,7 +2692,7 @@ async fn run_uninstall(
         return Ok(());
     }
 
-    if !node_service_management_supported() {
+    if !device_service::node_service_management_supported() {
         println!(
             "Device daemon management is unsupported on this OS. Local device teardown was skipped."
         );
@@ -3307,29 +3241,6 @@ async fn run_deploy(
     }
 }
 
-#[cfg(target_os = "linux")]
-const NODE_SYSTEMD_UNIT_NAME: &str = "gsv-node.service";
-#[cfg(target_os = "macos")]
-const NODE_LAUNCHD_LABEL: &str = "dev.gsv.node";
-
-use gsv::logger::{self, NodeLogger};
-
-fn node_logs_file(lines: usize, follow: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let log_path = logger::node_log_path()?;
-    if !log_path.exists() {
-        return Err(format!("Log file not found: {}", log_path.display()).into());
-    }
-
-    let mut cmd = std::process::Command::new("tail");
-    cmd.arg("-n").arg(lines.to_string());
-    if follow {
-        cmd.arg("-F");
-    }
-    cmd.arg(&log_path);
-
-    run_command_passthrough(&mut cmd, "Failed to read node log file")
-}
-
 const MAX_NODE_EXEC_EVENT_OUTBOX: usize = 2048;
 
 #[cfg(unix)]
@@ -3456,40 +3367,6 @@ fn persist_cloudflare_account_id(account_id: &str) -> Result<bool, Box<dyn std::
     Ok(true)
 }
 
-fn node_service_is_installed() -> Result<bool, Box<dyn std::error::Error>> {
-    #[cfg(target_os = "linux")]
-    {
-        return Ok(systemd_user_unit_path()?.exists());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        return Ok(launchd_plist_path()?.exists());
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        Err("device daemon management is currently supported on macOS and Linux only".into())
-    }
-}
-
-fn restart_node_service() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(target_os = "linux")]
-    {
-        return systemd_restart_service();
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        return launchd_start_service();
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        Err("device daemon management is currently supported on macOS and Linux only".into())
-    }
-}
-
 fn run_node_default_managed(
     cfg: &CliConfig,
     node_id: Option<String>,
@@ -3498,7 +3375,7 @@ fn run_node_default_managed(
     gateway_username_override: Option<&str>,
     gateway_token_override: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if node_service_is_installed()? {
+    if device_service::node_service_is_installed()? {
         let gateway_overrides_changed = persist_gateway_overrides(
             gateway_url_override,
             gateway_username_override,
@@ -3507,7 +3384,7 @@ fn run_node_default_managed(
         let (node_id, workspace, node_defaults_changed) =
             persist_node_defaults(cfg, node_id, workspace)?;
         if gateway_overrides_changed || node_defaults_changed {
-            restart_node_service()?;
+            device_service::restart_node_service()?;
         } else {
             run_node_service(DeviceServiceAction::Start, cfg, None, None, None)?;
         }
@@ -3552,25 +3429,10 @@ fn run_node_service(
             let (node_id, workspace, node_defaults_changed) =
                 persist_node_defaults(cfg, id, workspace)?;
 
-            let exe_path = std::env::current_exe()?;
-            let exe_path = exe_path.canonicalize().unwrap_or(exe_path);
-
-            #[cfg(target_os = "linux")]
-            install_systemd_user_service(&exe_path)?;
-
-            #[cfg(target_os = "macos")]
-            install_launchd_user_service(&exe_path)?;
-
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            {
-                return Err(
-                    "device daemon management is currently supported on macOS and Linux only"
-                        .into(),
-                );
-            }
+            device_service::install_node_service()?;
 
             if gateway_overrides_changed || node_defaults_changed {
-                restart_node_service()?;
+                device_service::restart_node_service()?;
             }
 
             println!("Device daemon installed and started.");
@@ -3588,19 +3450,7 @@ fn run_node_service(
             println!("  gsv device logs --follow");
         }
         DeviceServiceAction::Uninstall => {
-            #[cfg(target_os = "linux")]
-            uninstall_systemd_user_service()?;
-
-            #[cfg(target_os = "macos")]
-            uninstall_launchd_user_service()?;
-
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            {
-                return Err(
-                    "device daemon management is currently supported on macOS and Linux only"
-                        .into(),
-                );
-            }
+            device_service::uninstall_node_service()?;
 
             println!("Device daemon uninstalled.");
         }
@@ -3612,539 +3462,30 @@ fn run_node_service(
             )?;
 
             if gateway_overrides_changed {
-                restart_node_service()?;
+                device_service::restart_node_service()?;
                 println!("Saved gateway connection overrides to local config.");
                 println!("Device daemon restarted.");
                 return Ok(());
             }
 
-            #[cfg(target_os = "linux")]
-            systemd_start_service()?;
-
-            #[cfg(target_os = "macos")]
-            launchd_start_service()?;
-
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            {
-                return Err(
-                    "device daemon management is currently supported on macOS and Linux only"
-                        .into(),
-                );
-            }
+            device_service::start_node_service()?;
 
             println!("Device daemon started.");
         }
         DeviceServiceAction::Stop => {
-            #[cfg(target_os = "linux")]
-            systemd_stop_service()?;
-
-            #[cfg(target_os = "macos")]
-            launchd_stop_service()?;
-
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            {
-                return Err(
-                    "device daemon management is currently supported on macOS and Linux only"
-                        .into(),
-                );
-            }
+            device_service::stop_node_service()?;
 
             println!("Device daemon stopped.");
         }
         DeviceServiceAction::Status => {
-            #[cfg(target_os = "linux")]
-            systemd_status_service()?;
-
-            #[cfg(target_os = "macos")]
-            launchd_status_service()?;
-
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            {
-                return Err(
-                    "device daemon management is currently supported on macOS and Linux only"
-                        .into(),
-                );
-            }
+            device_service::status_node_service()?;
         }
         DeviceServiceAction::Logs { lines, follow } => {
-            node_logs_file(lines, follow)?;
+            device_service::show_node_service_logs(lines, follow)?;
         }
     }
 
     Ok(())
-}
-
-fn run_command_capture(
-    cmd: &mut std::process::Command,
-    context: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let output = cmd.output()?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let detail = if !stderr.is_empty() { stderr } else { stdout };
-    if detail.is_empty() {
-        return Err(format!("{} (exit status: {})", context, output.status).into());
-    }
-
-    Err(format!("{}: {}", context, detail).into())
-}
-
-fn run_command_passthrough(
-    cmd: &mut std::process::Command,
-    context: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let status = cmd.status()?;
-    if status.success() {
-        return Ok(());
-    }
-
-    Err(format!("{} (exit status: {})", context, status).into())
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_user_unit_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let config_dir = dirs::config_dir().ok_or("Could not determine config directory")?;
-    Ok(config_dir
-        .join("systemd")
-        .join("user")
-        .join(NODE_SYSTEMD_UNIT_NAME))
-}
-
-#[cfg(target_os = "linux")]
-fn linger_is_enabled() -> bool {
-    // Linger is enabled if /var/lib/systemd/linger/$USER exists
-    let username = whoami::username();
-    std::path::Path::new("/var/lib/systemd/linger")
-        .join(username)
-        .exists()
-}
-
-#[cfg(target_os = "linux")]
-fn try_enable_linger() -> Result<(), Box<dyn std::error::Error>> {
-    let username = whoami::username();
-    let output = std::process::Command::new("sudo")
-        .arg("loginctl")
-        .arg("enable-linger")
-        .arg(&username)
-        .output()?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("sudo loginctl enable-linger failed: {}", stderr.trim()).into())
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_escape_environment_value(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('%', "%%")
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_path_environment_line(path: Option<&str>) -> String {
-    path.map(|value| {
-        format!(
-            "Environment=\"PATH={}\"\n",
-            systemd_escape_environment_value(value)
-        )
-    })
-    .unwrap_or_default()
-}
-
-#[cfg(target_os = "linux")]
-fn install_systemd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let unit_path = systemd_user_unit_path()?;
-    if let Some(parent) = unit_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let path_env_line = systemd_path_environment_line(node_service_path().as_deref());
-    let exe_path = exe_path.display().to_string().replace('"', "\\\"");
-    let unit = format!(
-        "[Unit]\nDescription=GSV Device daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart=\"{}\" device run\n{}Restart=always\nRestartSec=3\nKillSignal=SIGTERM\n\n[Install]\nWantedBy=default.target\n",
-        exe_path,
-        path_env_line,
-    );
-    std::fs::write(&unit_path, unit)?;
-
-    run_command_capture(
-        std::process::Command::new("systemctl")
-            .arg("--user")
-            .arg("daemon-reload"),
-        "Failed to reload systemd user daemon",
-    )?;
-    run_command_capture(
-        std::process::Command::new("systemctl")
-            .arg("--user")
-            .arg("enable")
-            .arg("--now")
-            .arg(NODE_SYSTEMD_UNIT_NAME),
-        "Failed to enable/start node service",
-    )?;
-
-    println!("Installed systemd unit: {}", unit_path.display());
-
-    // Ensure linger is enabled so the service persists after logout
-    if linger_is_enabled() {
-        println!("User linger is enabled - service will persist after logout.");
-    } else {
-        println!();
-        println!("User linger is not enabled.");
-        println!("Enabling linger (requires sudo - you may be prompted for password)...");
-        match try_enable_linger() {
-            Ok(()) => {
-                println!(
-                    "✓ Enabled user linger - service will start at boot and persist after logout."
-                );
-            }
-            Err(e) => {
-                println!();
-                println!("⚠️  Could not enable linger: {}", e);
-                println!();
-                println!("Without linger, the device daemon will stop when you log out.");
-                println!("Run this once with sudo:");
-                println!("  sudo loginctl enable-linger {}", whoami::username());
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn uninstall_systemd_user_service() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = run_command_capture(
-        std::process::Command::new("systemctl")
-            .arg("--user")
-            .arg("disable")
-            .arg("--now")
-            .arg(NODE_SYSTEMD_UNIT_NAME),
-        "Failed to disable/stop node service",
-    );
-
-    let unit_path = systemd_user_unit_path()?;
-    if unit_path.exists() {
-        std::fs::remove_file(&unit_path)?;
-    }
-
-    run_command_capture(
-        std::process::Command::new("systemctl")
-            .arg("--user")
-            .arg("daemon-reload"),
-        "Failed to reload systemd user daemon",
-    )?;
-
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_start_service() -> Result<(), Box<dyn std::error::Error>> {
-    run_command_capture(
-        std::process::Command::new("systemctl")
-            .arg("--user")
-            .arg("start")
-            .arg(NODE_SYSTEMD_UNIT_NAME),
-        "Failed to start node service",
-    )
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_restart_service() -> Result<(), Box<dyn std::error::Error>> {
-    run_command_capture(
-        std::process::Command::new("systemctl")
-            .arg("--user")
-            .arg("restart")
-            .arg(NODE_SYSTEMD_UNIT_NAME),
-        "Failed to restart node service",
-    )
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_stop_service() -> Result<(), Box<dyn std::error::Error>> {
-    run_command_capture(
-        std::process::Command::new("systemctl")
-            .arg("--user")
-            .arg("stop")
-            .arg(NODE_SYSTEMD_UNIT_NAME),
-        "Failed to stop node service",
-    )
-}
-
-#[cfg(target_os = "linux")]
-fn systemd_status_service() -> Result<(), Box<dyn std::error::Error>> {
-    run_command_passthrough(
-        std::process::Command::new("systemctl")
-            .arg("--user")
-            .arg("status")
-            .arg("--no-pager")
-            .arg(NODE_SYSTEMD_UNIT_NAME),
-        "Failed to read node service status",
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn launchd_plist_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("Could not determine home directory")?;
-    Ok(home
-        .join("Library")
-        .join("LaunchAgents")
-        .join(format!("{}.plist", NODE_LAUNCHD_LABEL)))
-}
-
-#[cfg(target_os = "macos")]
-fn launchd_log_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    logger::node_log_path()
-}
-
-#[cfg(target_os = "macos")]
-fn launchd_domain() -> Result<String, Box<dyn std::error::Error>> {
-    let output = std::process::Command::new("id").arg("-u").output()?;
-    if !output.status.success() {
-        return Err("Failed to resolve current user id".into());
-    }
-    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if uid.is_empty() {
-        return Err("Failed to resolve current user id".into());
-    }
-    Ok(format!("gui/{}", uid))
-}
-
-#[cfg(target_os = "macos")]
-fn launchd_target() -> Result<String, Box<dyn std::error::Error>> {
-    Ok(format!("{}/{}", launchd_domain()?, NODE_LAUNCHD_LABEL))
-}
-
-#[cfg(target_os = "macos")]
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-#[cfg(target_os = "macos")]
-fn launchd_path_environment_block(path: Option<&str>) -> String {
-    path.map(|value| {
-        format!(
-            "  <key>EnvironmentVariables</key>\n  <dict>\n    <key>PATH</key>\n    <string>{}</string>\n  </dict>\n",
-            xml_escape(value)
-        )
-    })
-    .unwrap_or_default()
-}
-
-#[cfg(target_os = "macos")]
-fn launchd_plist_contents(label: &str, exe_path: &PathBuf, path_env_block: &str) -> String {
-    format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>{}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n    <string>device</string>\n    <string>run</string>\n  </array>\n{}  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n</dict>\n</plist>\n",
-        label,
-        xml_escape(&exe_path.display().to_string()),
-        path_env_block,
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn install_launchd_user_service(exe_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let plist_path = launchd_plist_path()?;
-    if let Some(parent) = plist_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let log_path = launchd_log_path()?;
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let path_env_block = launchd_path_environment_block(node_service_path().as_deref());
-    let plist = launchd_plist_contents(NODE_LAUNCHD_LABEL, exe_path, &path_env_block);
-    std::fs::write(&plist_path, plist)?;
-
-    let domain = launchd_domain()?;
-    let _ = std::process::Command::new("launchctl")
-        .arg("bootout")
-        .arg(&domain)
-        .arg(&plist_path)
-        .status();
-
-    run_command_capture(
-        std::process::Command::new("launchctl")
-            .arg("bootstrap")
-            .arg(&domain)
-            .arg(&plist_path),
-        "Failed to bootstrap launchd service",
-    )?;
-    run_command_capture(
-        std::process::Command::new("launchctl")
-            .arg("kickstart")
-            .arg("-k")
-            .arg(launchd_target()?),
-        "Failed to start launchd service",
-    )?;
-
-    println!("Installed launchd agent: {}", plist_path.display());
-    println!("Logs: {}", log_path.display());
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn uninstall_launchd_user_service() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = run_command_capture(
-        std::process::Command::new("launchctl")
-            .arg("bootout")
-            .arg(launchd_target()?),
-        "Failed to unload launchd service",
-    );
-
-    let plist_path = launchd_plist_path()?;
-    if plist_path.exists() {
-        std::fs::remove_file(&plist_path)?;
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn launchd_start_service() -> Result<(), Box<dyn std::error::Error>> {
-    if run_command_capture(
-        std::process::Command::new("launchctl")
-            .arg("kickstart")
-            .arg("-k")
-            .arg(launchd_target()?),
-        "Failed to kickstart launchd service",
-    )
-    .is_ok()
-    {
-        return Ok(());
-    }
-
-    let plist_path = launchd_plist_path()?;
-    if !plist_path.exists() {
-        return Err(format!(
-            "Service not installed. Run 'gsv device install' first ({})",
-            plist_path.display()
-        )
-        .into());
-    }
-
-    run_command_capture(
-        std::process::Command::new("launchctl")
-            .arg("bootstrap")
-            .arg(launchd_domain()?)
-            .arg(&plist_path),
-        "Failed to bootstrap launchd service",
-    )?;
-    run_command_capture(
-        std::process::Command::new("launchctl")
-            .arg("kickstart")
-            .arg("-k")
-            .arg(launchd_target()?),
-        "Failed to start launchd service",
-    )?;
-
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn launchd_stop_service() -> Result<(), Box<dyn std::error::Error>> {
-    run_command_capture(
-        std::process::Command::new("launchctl")
-            .arg("bootout")
-            .arg(launchd_target()?),
-        "Failed to stop launchd service",
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn launchd_status_service() -> Result<(), Box<dyn std::error::Error>> {
-    run_command_passthrough(
-        std::process::Command::new("launchctl")
-            .arg("print")
-            .arg(launchd_target()?),
-        "Failed to read launchd service status",
-    )
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        return fs::metadata(path)
-            .map(|meta| (meta.permissions().mode() & 0o111) != 0)
-            .unwrap_or(false);
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
-
-fn resolve_login_shell() -> String {
-    if let Ok(raw) = std::env::var("SHELL") {
-        let candidate = raw.trim();
-        if !candidate.is_empty() {
-            let path = Path::new(candidate);
-            if path.is_absolute() && is_executable_file(path) {
-                return candidate.to_string();
-            }
-        }
-    }
-    "/bin/sh".to_string()
-}
-
-fn probe_path_from_login_shell() -> Option<OsString> {
-    let shell = resolve_login_shell();
-    let output = std::process::Command::new(shell)
-        .arg("-lc")
-        .arg("env")
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    for line in output.stdout.split(|byte| *byte == b'\n') {
-        if let Some(path_bytes) = line.strip_prefix(b"PATH=") {
-            let path = String::from_utf8_lossy(path_bytes).to_string();
-            return Some(OsString::from(path));
-        }
-    }
-    None
-}
-
-fn select_service_path(
-    probed_path: Option<OsString>,
-    env_path: Option<OsString>,
-) -> Option<String> {
-    let normalize = |path: OsString| {
-        let trimmed = path.to_string_lossy().trim().to_string();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    };
-
-    probed_path
-        .and_then(normalize)
-        .or_else(|| env_path.and_then(normalize))
-}
-
-fn node_service_path() -> Option<String> {
-    select_service_path(probe_path_from_login_shell(), std::env::var_os("PATH"))
 }
 
 fn exec_event_outbox_len(outbox: &Arc<Mutex<VecDeque<NodeExecEventParams>>>) -> usize {
@@ -4675,10 +4016,9 @@ async fn run_node(
                         let keepalive = tokio::time::timeout(
                             keepalive_timeout,
                             conn.request(
-                                "fs.read",
+                                "shell.exec",
                                 Some(json!({
-                                    "path": "/etc/passwd",
-                                    "limit": 1,
+                                    "command": "echo gsv-keepalive",
                                 })),
                             ),
                         )

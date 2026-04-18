@@ -335,17 +335,52 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-fn resolve_login_shell() -> String {
+struct ShellProgram {
+    executable: String,
+    launch_args: Vec<String>,
+}
+
+fn resolve_shell_program() -> ShellProgram {
+    #[cfg(windows)]
+    {
+        return ShellProgram {
+            executable: "pwsh".to_string(),
+            launch_args: vec![
+                "-NoLogo".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+            ],
+        };
+    }
+
     if let Ok(raw) = std::env::var("SHELL") {
         let candidate = raw.trim();
         if !candidate.is_empty() {
             let path = Path::new(candidate);
             if path.is_absolute() && is_executable_file(path) {
-                return candidate.to_string();
+                return ShellProgram {
+                    executable: candidate.to_string(),
+                    launch_args: vec!["-lc".to_string()],
+                };
             }
         }
     }
-    "/bin/sh".to_string()
+
+    ShellProgram {
+        executable: "/bin/sh".to_string(),
+        launch_args: vec!["-lc".to_string()],
+    }
+}
+
+fn format_shell_spawn_error(_shell: &str, error: &std::io::Error) -> String {
+    #[cfg(windows)]
+    {
+        if _shell.eq_ignore_ascii_case("pwsh") && error.kind() == std::io::ErrorKind::NotFound {
+            return "Failed to execute: pwsh not found. Install PowerShell 7 and ensure `pwsh` is on PATH.".to_string();
+        }
+    }
+
+    format!("Failed to execute: {}", error)
 }
 
 async fn terminate_pid(pid: u32, force: bool) {
@@ -428,9 +463,9 @@ async fn launch_managed_process(
     workdir: PathBuf,
     timeout_ms: u64,
 ) -> Result<ProcessHandle, String> {
-    let shell = resolve_login_shell();
-    let mut cmd = Command::new(&shell);
-    cmd.arg("-lc").arg(&command);
+    let shell = resolve_shell_program();
+    let mut cmd = Command::new(&shell.executable);
+    cmd.args(&shell.launch_args).arg(&command);
     cmd.current_dir(&workdir);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
@@ -438,7 +473,7 @@ async fn launch_managed_process(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("Failed to execute: {}", e))?;
+        .map_err(|e| format_shell_spawn_error(&shell.executable, &e))?;
 
     let pid = child.id();
     let stdout = child.stdout.take();
@@ -746,7 +781,7 @@ impl Tool for ProcessTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "Process".to_string(),
-            description: "Manage background Bash sessions: list, poll, log, write, submit, kill."
+            description: "Manage background shell sessions: list, poll, log, write, submit, kill."
                 .to_string(),
             input_schema: json!({
                 "type": "object",

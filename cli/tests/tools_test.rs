@@ -1,5 +1,49 @@
 // Integration tests for CLI tools
 
+fn shell_echo_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "Write-Output hello"
+    }
+    #[cfg(not(windows))]
+    {
+        "echo hello"
+    }
+}
+
+fn shell_pwd_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "(Get-Location).Path"
+    }
+    #[cfg(not(windows))]
+    {
+        "pwd"
+    }
+}
+
+fn shell_background_finish_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "Start-Sleep -Seconds 1; Write-Output async-finished"
+    }
+    #[cfg(not(windows))]
+    {
+        "sleep 1; echo async-finished"
+    }
+}
+
+fn shell_heartbeat_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "while ($true) { Write-Output heartbeat; Start-Sleep -Milliseconds 200 }"
+    }
+    #[cfg(not(windows))]
+    {
+        "while true; do echo heartbeat; sleep 0.2; done"
+    }
+}
+
 #[tokio::test]
 async fn test_bash_tool_execution() {
     use gsv::tools::{BashTool, Tool};
@@ -15,7 +59,7 @@ async fn test_bash_tool_execution() {
     // Test simple command
     let result = tool
         .execute(json!({
-            "command": "echo hello"
+            "command": shell_echo_command()
         }))
         .await
         .unwrap();
@@ -29,25 +73,30 @@ async fn test_bash_tool_execution() {
 async fn test_bash_tool_workdir() {
     use gsv::tools::{BashTool, Tool};
     use serde_json::json;
+    use std::fs;
 
-    let workspace = std::env::temp_dir();
+    let workspace = std::env::temp_dir().join("gsv_test_bash_tool_workdir_workspace");
+    let custom_workdir = workspace.join("nested");
+    fs::create_dir_all(&custom_workdir).unwrap();
     let tool = BashTool::new(workspace.clone());
 
     // Test with custom workdir
     let result = tool
         .execute(json!({
-            "command": "pwd",
-            "workdir": "/tmp"
+            "command": shell_pwd_command(),
+            "workdir": custom_workdir.to_string_lossy().to_string()
         }))
         .await
         .unwrap();
 
     assert_eq!(result["status"], "completed");
     assert_eq!(result["exitCode"], 0);
-    assert!(
-        result["output"].as_str().unwrap().contains("/tmp")
-            || result["output"].as_str().unwrap().contains("/private/tmp")
-    ); // macOS
+    assert!(result["output"]
+        .as_str()
+        .unwrap()
+        .contains(custom_workdir.to_string_lossy().as_ref()));
+
+    fs::remove_dir_all(&workspace).ok();
 }
 
 #[tokio::test]
@@ -61,7 +110,7 @@ async fn test_bash_background_returns_session_id() {
 
     let start = bash
         .execute(json!({
-            "command": "sleep 1; echo async-finished",
+            "command": shell_background_finish_command(),
             "background": true
         }))
         .await
@@ -89,7 +138,7 @@ async fn test_process_tool_poll_log_and_kill_background_session() {
 
     let start = bash
         .execute(json!({
-            "command": "while true; do echo heartbeat; sleep 0.2; done",
+            "command": shell_heartbeat_command(),
             "background": true
         }))
         .await
