@@ -162,7 +162,7 @@ enum DeviceAction {
 enum InfraAction {
     /// First-time infrastructure deploy (wizard + optional device bootstrap)
     Deploy {
-        /// Release tag/channel (e.g., stable, dev, v0.2.0, or latest)
+        /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
         #[arg(long, default_value = "latest")]
         version: String,
 
@@ -229,7 +229,7 @@ enum InfraAction {
 
     /// Upgrade deployed infrastructure components
     Upgrade {
-        /// Release tag/channel (e.g., stable, dev, v0.2.0, or latest)
+        /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
         #[arg(long, default_value = "latest")]
         version: String,
 
@@ -704,7 +704,7 @@ enum LocalConfigAction {
 enum DeployAction {
     /// Deploy prebuilt Cloudflare bundles (fetch/install + apply)
     Up {
-        /// Release tag/channel (e.g., stable, dev, v0.2.0, or latest)
+        /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
         #[arg(long, default_value = "latest")]
         version: String,
 
@@ -826,7 +826,7 @@ enum DeployAction {
 enum DeployBundleAction {
     /// Download and verify prebuilt Cloudflare bundles
     Fetch {
-        /// Release tag (e.g., v0.2.0) or "latest"
+        /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
         #[arg(long, default_value = "latest")]
         version: String,
 
@@ -849,7 +849,7 @@ enum DeployBundleAction {
 
     /// Show bundle manifest details from local extracted bundles
     Inspect {
-        /// Release tag (e.g., v0.2.0) or "latest"
+        /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
         #[arg(long, default_value = "latest")]
         version: String,
 
