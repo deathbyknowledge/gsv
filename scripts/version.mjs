@@ -180,6 +180,33 @@ function refreshNpmLocks() {
   }
 }
 
+function stripLockfileLibcMetadata(value) {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      stripLockfileLibcMetadata(entry);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  delete value.libc;
+  for (const entry of Object.values(value)) {
+    stripLockfileLibcMetadata(entry);
+  }
+}
+
+function normalizeNpmLocks() {
+  const lockfiles = ["package-lock.json", ...listStandaloneNpmDirs().map((dir) => `${dir}/package-lock.json`)];
+  for (const relativePath of lockfiles) {
+    writeJsonFile(relativePath, (value) => {
+      stripLockfileLibcMetadata(value);
+      return value;
+    });
+  }
+}
+
 function managedFiles() {
   const files = new Set([
     "VERSION",
@@ -212,6 +239,7 @@ function syncAll(version) {
   syncSourceVersions(version);
   syncCargoLocks(version);
   refreshNpmLocks();
+  normalizeNpmLocks();
 }
 
 function checkAll(version) {
