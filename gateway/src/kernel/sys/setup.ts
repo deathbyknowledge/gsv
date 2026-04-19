@@ -7,6 +7,31 @@ import { ensureHomeStorageLayout } from "../home-knowledge";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
+type SetupTiming = {
+  label: string;
+  ms: number;
+};
+
+async function timeSetupStep<T>(
+  timings: SetupTiming[],
+  label: string,
+  run: () => T | Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await run();
+  } finally {
+    timings.push({ label, ms: Date.now() - startedAt });
+  }
+}
+
+function formatSetupTimings(timings: SetupTiming[]): string {
+  if (timings.length === 0) {
+    return "no steps completed";
+  }
+  return timings.map((timing) => `${timing.label}=${timing.ms}ms`).join(", ");
+}
+
 function readRequiredString(value: unknown, name: string): string {
   if (typeof value !== "string") {
     throw new Error(`${name} is required`);
@@ -95,6 +120,12 @@ export async function handleSysSetup(
   ctx: KernelContext,
 ): Promise<SysSetupResult> {
   const { auth, config } = ctx;
+  const rawArgs = args as Record<string, unknown>;
+  const requestedUsername = typeof rawArgs.username === "string" && rawArgs.username.trim().length > 0
+    ? rawArgs.username.trim()
+    : "<unknown>";
+  const startedAt = Date.now();
+  const timings: SetupTiming[] = [];
 
   if (!auth.isSetupMode()) {
     throw new Error("System already initialized");
@@ -132,91 +163,118 @@ export async function handleSysSetup(
     capabilities: ["*"],
   };
   let bootstrap: SysSetupResult["bootstrap"];
-
-  if (ctx.env.RIPGIT && ctx.packages) {
-    bootstrap = await handleSysBootstrap((args as Record<string, unknown>).bootstrap as SysSetupArgs["bootstrap"], {
-      ...ctx,
-      identity: bootstrapIdentity,
-    } as KernelContext);
-  }
-
-  auth.addUser({
-    username,
-    uid,
-    gid,
-    gecos: username,
-    home,
-    shell: "/bin/init",
-  });
-
-  const passwordHash = await hashPassword(password);
-  auth.setShadow(makeShadowEntry(username, passwordHash));
-
-  const usersGroup = auth.getGroupByName("users");
-  if (usersGroup && !usersGroup.members.includes(username)) {
-    auth.updateGroupMembers("users", [...usersGroup.members, username]);
-  }
-
-  if (rootPassword) {
-    const rootHash = await hashPassword(rootPassword);
-    await auth.setPassword("root", rootHash);
-  } else {
-    await auth.setPassword("root", passwordHash);
-  }
-
-  if (ai.provider !== undefined) {
-    config.set("config/ai/provider", ai.provider);
-  }
-  if (ai.model !== undefined) {
-    config.set("config/ai/model", ai.model);
-  }
-  if (ai.apiKey !== undefined) {
-    config.set("config/ai/api_key", ai.apiKey);
-  }
-
   let nodeToken: SysSetupResult["nodeToken"];
-  if (node) {
-    const issued = await auth.issueToken({
-      uid,
-      kind: "node",
-      label: node.label ?? `node:${node.deviceId}`,
-      allowedRole: "driver",
-      allowedDeviceId: node.deviceId,
-      expiresAt: node.expiresAt,
+
+  try {
+    if (ctx.env.RIPGIT && ctx.packages) {
+      bootstrap = await timeSetupStep(
+        timings,
+        "bootstrap-system",
+        () => handleSysBootstrap(rawArgs.bootstrap as SysSetupArgs["bootstrap"], {
+          ...ctx,
+          identity: bootstrapIdentity,
+        } as KernelContext),
+      );
+    }
+
+    await timeSetupStep(timings, "write-auth-state", async () => {
+      auth.addUser({
+        username,
+        uid,
+        gid,
+        gecos: username,
+        home,
+        shell: "/bin/init",
+      });
+
+      const hashedPassword = await hashPassword(password);
+      auth.setShadow(makeShadowEntry(username, hashedPassword));
+
+      const usersGroup = auth.getGroupByName("users");
+      if (usersGroup && !usersGroup.members.includes(username)) {
+        auth.updateGroupMembers("users", [...usersGroup.members, username]);
+      }
+
+      if (rootPassword) {
+        const rootHash = await hashPassword(rootPassword);
+        await auth.setPassword("root", rootHash);
+      } else {
+        await auth.setPassword("root", hashedPassword);
+      }
+
     });
-    nodeToken = {
-      tokenId: issued.tokenId,
-      token: issued.token,
-      tokenPrefix: issued.tokenPrefix,
-      uid: issued.uid,
-      kind: "node",
-      label: issued.label,
-      allowedRole: "driver",
-      allowedDeviceId: issued.allowedDeviceId,
-      createdAt: issued.createdAt,
-      expiresAt: issued.expiresAt,
+
+    await timeSetupStep(timings, "write-ai-config", () => {
+      if (ai.provider !== undefined) {
+        config.set("config/ai/provider", ai.provider);
+      }
+      if (ai.model !== undefined) {
+        config.set("config/ai/model", ai.model);
+      }
+      if (ai.apiKey !== undefined) {
+        config.set("config/ai/api_key", ai.apiKey);
+      }
+    });
+
+    if (node) {
+      nodeToken = await timeSetupStep(timings, "issue-node-token", async () => {
+        const issued = await auth.issueToken({
+          uid,
+          kind: "node",
+          label: node.label ?? `node:${node.deviceId}`,
+          allowedRole: "driver",
+          allowedDeviceId: node.deviceId,
+          expiresAt: node.expiresAt,
+        });
+        return {
+          tokenId: issued.tokenId,
+          token: issued.token,
+          tokenPrefix: issued.tokenPrefix,
+          uid: issued.uid,
+          kind: "node",
+          label: issued.label,
+          allowedRole: "driver",
+          allowedDeviceId: issued.allowedDeviceId,
+          createdAt: issued.createdAt,
+          expiresAt: issued.expiresAt,
+        };
+      });
+    }
+
+    await timeSetupStep(
+      timings,
+      "ensure-home-layout",
+      () => ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity),
+    );
+
+    const processIdentity: ProcessIdentity = {
+      uid,
+      gid,
+      gids: auth.resolveGids(username, gid),
+      username,
+      home,
+      cwd: home,
+      workspaceId: null,
     };
+
+    const rootShadow = auth.getShadowByUsername("root");
+    const rootLocked = rootShadow ? isLocked(rootShadow) : true;
+
+    console.info(
+      `[sys.setup] user=${username} completed in ${Date.now() - startedAt}ms (${formatSetupTimings(timings)})`,
+    );
+
+    return {
+      user: processIdentity,
+      rootLocked,
+      bootstrap,
+      nodeToken,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[sys.setup] user=${requestedUsername} failed after ${Date.now() - startedAt}ms (${formatSetupTimings(timings)}): ${message}`,
+    );
+    throw error;
   }
-
-  await ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity);
-
-  const processIdentity: ProcessIdentity = {
-    uid,
-    gid,
-    gids: auth.resolveGids(username, gid),
-    username,
-    home,
-    cwd: home,
-    workspaceId: null,
-  };
-
-  const rootShadow = auth.getShadowByUsername("root");
-  const rootLocked = rootShadow ? isLocked(rootShadow) : true;
-
-  return {
-    user: processIdentity,
-    rootLocked,
-    bootstrap,
-    nodeToken,
-  };
 }
