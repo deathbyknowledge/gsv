@@ -1,136 +1,625 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 import { isWebSocketRequest } from "./shared//utils";
 import type {
-  ChannelInboundMessage,
-  ChannelAccountStatus,
-  GatewayChannelInterface,
-} from "./channel-interface";
+  GatewayAdapterInterface,
+} from "./adapter-interface";
+import type { Frame } from "./protocol/frames";
+import { getAgentByName } from "agents";
+import type { AppFrameContext } from "./protocol/app-frame";
+import { buildAppRunnerName } from "./protocol/app-session";
+import { deserializeAppHttpResponse, serializeAppHttpRequest } from "./app-runner";
+import type { PackageArtifact } from "./kernel/packages";
+import {
+  buildCliInstallPowerShell,
+  buildCliInstallScript,
+  cliAssetKey,
+  cliChecksumKey,
+  isSupportedCliChannel,
+  loadDefaultCliChannel,
+} from "./downloads/cli";
 
-export { Gateway } from "./gateway/do";
-export { Session } from "./session";
-
-// Re-export channel interface types
-export type * from "./channel-interface";
-
-/**
- * Gateway Entrypoint for Service Binding RPC
- *
- * Channel workers call these methods via Service Bindings.
- * This provides a secure, type-safe interface for channels to deliver
- * inbound messages to the Gateway.
- */
-export class GatewayEntrypoint
-  extends WorkerEntrypoint<Env>
-  implements GatewayChannelInterface
-{
-  /**
-   * Receive an inbound message from a channel.
-   * Routes to the appropriate session based on peer info.
-   */
-  async channelInbound(
-    channelId: string,
-    accountId: string,
-    message: ChannelInboundMessage,
-  ): Promise<{ ok: boolean; sessionKey?: string; error?: string }> {
-    try {
-      const gateway = this.env.GATEWAY.get(
-        this.env.GATEWAY.idFromName("singleton"),
-      );
-
-      // Convert to the format Gateway expects
-      const result = await gateway.handleChannelInboundRpc({
-        channel: channelId,
-        accountId,
-        peer: message.peer,
-        sender: message.sender,
-        message: {
-          id: message.messageId,
-          text: message.text,
-          timestamp: message.timestamp,
-          replyToId: message.replyToId,
-          replyToText: message.replyToText,
-          media: message.media,
-        },
-        wasMentioned: message.wasMentioned,
-      });
-
-      return result;
-    } catch (e) {
-      console.error(`[GatewayEntrypoint] channelInbound failed:`, e);
-      return {
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-      };
-    }
-  }
-
-  /**
-   * Notify Gateway that a channel's status changed.
-   * Used for monitoring and health checks.
-   */
-  async channelStatusChanged(
-    channelId: string,
-    accountId: string,
-    status: ChannelAccountStatus,
-  ): Promise<void> {
-    try {
-      const gateway = this.env.GATEWAY.get(
-        this.env.GATEWAY.idFromName("singleton"),
-      );
-      await gateway.handleChannelStatusChanged(channelId, accountId, status);
-    } catch (e) {
-      console.error(`[GatewayEntrypoint] channelStatusChanged failed:`, e);
-    }
-  }
-}
+export { Kernel } from "./kernel/do";
+export { Process } from "./process/do";
+export { KernelBinding } from "./kernel/packages";
+export { AppRunner } from "./app-runner";
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
       return Response.json({ status: "healthy" });
     }
 
-    if (url.pathname === "/ws" && isWebSocketRequest(request)) {
-      const stub = env.GATEWAY.get(env.GATEWAY.idFromName("singleton"));
-      return stub.fetch(request);
+    if (url.pathname === "/runtime/theme.css") {
+      return new Response(RUNTIME_THEME_CSS, {
+        headers: {
+          "content-type": "text/css; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
     }
 
-    // Serve media files from R2
-    // /media/{uuid}.{ext}
-    // TODO: either remove or auth this
-    const mediaMatch = url.pathname.match(
-      /^\/media\/([a-f0-9-]+\.[a-z0-9]+)$/i,
-    );
-    if (mediaMatch && request.method === "GET") {
-      const key = `media/${mediaMatch[1]}`;
-      const object = await env.STORAGE.get(key);
+    const cliDownload = matchCliDownloadPath(url.pathname);
+    if (cliDownload) {
+      return handleCliDownloadRequest(request, env, url, cliDownload);
+    }
 
-      if (!object) {
-        return new Response("Not Found", { status: 404 });
+    if (url.pathname === "/ws" && isWebSocketRequest(request)) {
+      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      return kernel.fetch(request);
+    }
+
+    if (url.pathname === "/public/packages" && request.method === "GET") {
+      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const payload = await kernel.listPublicPackages();
+      return Response.json(payload, {
+        headers: {
+          "cache-control": "no-store",
+          "access-control-allow-origin": "*",
+        },
+      });
+    }
+
+    const gitMatch = matchGitPath(url);
+    if (gitMatch) {
+      const basicAuth = getBasicAuth(request);
+      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const authorized = await kernel.authorizeGitHttp({
+        owner: gitMatch.owner,
+        repo: gitMatch.repo,
+        write: gitMatch.write,
+        username: basicAuth?.username,
+        credential: basicAuth?.credential,
+      });
+      if (!authorized.ok) {
+        return authorized.status === 401
+          ? basicAuthChallenge(authorized.message)
+          : new Response(authorized.message, { status: authorized.status });
       }
 
-      // Check if expired
-      const expiresAt = object.customMetadata?.expiresAt;
-      if (expiresAt && parseInt(expiresAt, 10) < Date.now()) {
-        // Clean up expired file
-        await env.STORAGE.delete(key);
-        return new Response("Expired", { status: 410 });
-      }
-
-      const headers = new Headers();
-      headers.set(
-        "Content-Type",
-        object.httpMetadata?.contentType || "application/octet-stream",
+      return env.RIPGIT.fetch(
+        await buildGitProxyRequest(
+          request,
+          gitMatch,
+          authorized.username,
+        ),
       );
-      headers.set("Cache-Control", "private, max-age=3600");
-      // Allow cross-origin for LLM APIs
-      headers.set("Access-Control-Allow-Origin", "*");
+    }
 
-      return new Response(object.body, { headers });
+    const appMatch = matchPackageAppPath(url.pathname);
+    if (appMatch) {
+      const session = getPackageAppSession(request);
+      if (!session) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const resolved = await kernel.resolvePackageHttpRoute({
+        packageName: appMatch.packageName,
+        username: session.username,
+        token: session.token,
+        clientId: url.searchParams.get("windowId")?.trim() || undefined,
+      });
+
+      if (!resolved.ok) {
+        return new Response(resolved.message, { status: resolved.status });
+      }
+
+      const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+      await runner.ensureRuntime({
+        packageId: resolved.packageId,
+        packageName: resolved.packageName,
+        routeBase: resolved.routeBase,
+        entrypointName: resolved.appFrame.entrypointName,
+        artifact: resolved.artifact,
+        appFrame: resolved.appFrame,
+      });
+
+      const response = deserializeAppHttpResponse(
+        await runner.gsvFetch(await serializeAppHttpRequest(buildPackageWorkerRequest(request, resolved))),
+      );
+      return await withPackageAppClientSession(response, resolved);
+    }
+
+    const appRpcMatch = matchPackageAppRpcPath(url.pathname);
+    if (appRpcMatch) {
+      const response = await newWorkersRpcResponse(
+        request,
+        new PackageAppSessionRpcTarget(env, ctx, appRpcMatch.packageName, appRpcMatch.sessionId),
+      );
+      response.headers.set("cache-control", "no-store");
+      return response;
     }
 
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+const RUNTIME_THEME_CSS = [
+  ":root {",
+  "  color-scheme: dark;",
+  "  --bg: #07131a;",
+  "  --panel: rgba(14, 30, 38, 0.82);",
+  "  --edge: rgba(125, 211, 252, 0.24);",
+  "  --text: #e6f4f9;",
+  "  --muted: #92a8b3;",
+  "  --accent: #8ae0ff;",
+  "}",
+  "html, body { min-height: 100%; }",
+  "body {",
+  "  margin: 0;",
+  "  font-family: \"Avenir Next\", \"Trebuchet MS\", sans-serif;",
+  "  background: radial-gradient(circle at top, #123040 0%, #07131a 58%, #03070a 100%);",
+  "  color: var(--text);",
+  "}",
+  "* { box-sizing: border-box; }",
+  "a { color: var(--accent); }",
+].join("\n");
+
+type PackageAppSession = {
+  username: string;
+  token: string;
+};
+
+type BasicAuth = {
+  username: string;
+  credential: string;
+};
+
+type GitPathMatch = {
+  owner: string;
+  repo: string;
+  suffix: string;
+  write: boolean;
+};
+
+type CliDownloadMatch =
+  | { kind: "install-sh" }
+  | { kind: "install-ps1" }
+  | { kind: "asset"; channel: "latest" | "stable" | "dev"; asset: string; checksum: boolean };
+
+type ResolvedPackageRoute = {
+  ok: true;
+  packageId: string;
+  packageName: string;
+  routeBase: string;
+  artifact: PackageArtifact;
+  appFrame: AppFrameContext;
+  clientSession: {
+    sessionId: string;
+    secret: string;
+    clientId: string;
+    packageId: string;
+    packageName: string;
+    routeBase: string;
+    rpcBase: string;
+    createdAt: number;
+    expiresAt: number;
+  };
+  hasRpc: boolean;
+  auth: {
+    uid: number;
+    username: string;
+    capabilities: string[];
+  };
+};
+
+type ResolvedPackageAppRpcSession =
+  | {
+      ok: true;
+      packageId: string;
+      packageName: string;
+      routeBase: string;
+      artifact: PackageArtifact;
+      appFrame: AppFrameContext;
+      clientSession: {
+        sessionId: string;
+      clientId: string;
+      packageId: string;
+      packageName: string;
+        routeBase: string;
+        rpcBase: string;
+        createdAt: number;
+        expiresAt: number;
+      };
+      hasRpc: boolean;
+      auth: {
+        uid: number;
+        username: string;
+        capabilities: string[];
+      };
+    }
+  | {
+      ok: false;
+      status: number;
+      message: string;
+    };
+
+function matchPackageAppPath(pathname: string): { packageName: string } | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length < 2 || parts[0] !== "apps") {
+    return null;
+  }
+
+  const rawName = parts[1]?.trim();
+  if (!rawName || !/^[a-z0-9][a-z0-9-]*$/.test(rawName)) {
+    return null;
+  }
+
+  return { packageName: rawName };
+}
+
+function matchPackageAppRpcPath(
+  pathname: string,
+): { packageName: string; sessionId: string } | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length !== 4 || parts[0] !== "app-rpc" || parts[2] !== "sessions") {
+    return null;
+  }
+
+  const packageName = parts[1]?.trim();
+  const sessionId = parts[3]?.trim();
+  if (!packageName || !sessionId) {
+    return null;
+  }
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(packageName)) {
+    return null;
+  }
+  if (!/^[a-f0-9-]+$/i.test(sessionId)) {
+    return null;
+  }
+
+  return { packageName, sessionId };
+}
+
+function matchCliDownloadPath(pathname: string): CliDownloadMatch | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "downloads" || parts[1] !== "cli") {
+    return null;
+  }
+  if (parts.length === 3 && parts[2] === "install.sh") {
+    return { kind: "install-sh" };
+  }
+  if (parts.length === 3 && parts[2] === "install.ps1") {
+    return { kind: "install-ps1" };
+  }
+  if (parts.length !== 4) {
+    return null;
+  }
+  const channel = parts[2];
+  if (channel !== "latest" && !isSupportedCliChannel(channel)) {
+    return null;
+  }
+  const rawAsset = parts[3]?.trim() ?? "";
+  if (!/^[A-Za-z0-9._-]+(?:\.exe)?(?:\.sha256)?$/.test(rawAsset)) {
+    return null;
+  }
+  const checksum = rawAsset.endsWith(".sha256");
+  const asset = checksum ? rawAsset.slice(0, -".sha256".length) : rawAsset;
+  return { kind: "asset", channel, asset, checksum };
+}
+
+function matchGitPath(url: URL): GitPathMatch | null {
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "git") {
+    return null;
+  }
+
+  const owner = parts[1]?.trim();
+  const repoPart = parts[2]?.trim();
+  if (!owner || !repoPart) {
+    return null;
+  }
+
+  const repo = repoPart.endsWith(".git") ? repoPart.slice(0, -4) : repoPart;
+  if (!/^[A-Za-z0-9._-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(repo)) {
+    return null;
+  }
+
+  const suffix = parts.slice(3).join("/");
+  const service = url.searchParams.get("service");
+  return {
+    owner,
+    repo,
+    suffix,
+    write: suffix === "git-receive-pack" || (suffix === "info/refs" && service === "git-receive-pack"),
+  };
+}
+
+async function handleCliDownloadRequest(
+  request: Request,
+  env: Env,
+  url: URL,
+  match: CliDownloadMatch,
+): Promise<Response> {
+  if (request.method !== "GET") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
+
+  if (match.kind === "install-sh") {
+    return new Response(buildCliInstallScript(url.origin), {
+      headers: {
+        "content-type": "application/x-sh; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  if (match.kind === "install-ps1") {
+    return new Response(buildCliInstallPowerShell(url.origin), {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  const channel = match.channel === "latest"
+    ? await loadDefaultCliChannel(env.STORAGE)
+    : match.channel;
+  const key = match.checksum ? cliChecksumKey(channel, match.asset) : cliAssetKey(channel, match.asset);
+  const object = await env.STORAGE.get(key);
+  if (!object) {
+    return new Response("Not Found", { status: 404 });
+  }
+
+  return new Response(object.body, {
+    headers: {
+      "content-type": match.checksum ? "text/plain; charset=utf-8" : "application/octet-stream",
+      "cache-control": match.channel === "latest" ? "no-store" : "public, max-age=300",
+      "content-disposition": match.checksum
+        ? `inline; filename="${match.asset}.sha256"`
+        : `attachment; filename="${match.asset}"`,
+    },
+  });
+}
+
+function getBasicAuth(request: Request): BasicAuth | null {
+  const header = request.headers.get("authorization");
+  if (!header?.startsWith("Basic ")) {
+    return null;
+  }
+
+  try {
+    const decoded = atob(header.slice("Basic ".length).trim());
+    const separator = decoded.indexOf(":");
+    if (separator === -1) {
+      return null;
+    }
+    const username = decoded.slice(0, separator).trim();
+    const credential = decoded.slice(separator + 1);
+    if (!username || !credential) {
+      return null;
+    }
+    return { username, credential };
+  } catch {
+    return null;
+  }
+}
+
+function basicAuthChallenge(message: string): Response {
+  return new Response(message, {
+    status: 401,
+    headers: {
+      "WWW-Authenticate": 'Basic realm="gsv"',
+    },
+  });
+}
+
+function getPackageAppSession(request: Request): PackageAppSession | null {
+  const authHeader = request.headers.get("authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice("Bearer ".length).trim();
+    const username = request.headers.get("x-gsv-username")?.trim() ?? "";
+    if (username && token) {
+      return { username, token };
+    }
+  }
+
+  const cookies = parseCookieHeader(request.headers.get("cookie"));
+  const username = cookies.get("gsv_app_user") ?? "";
+  const token = cookies.get("gsv_app_token") ?? "";
+  if (!username || !token) {
+    return null;
+  }
+
+  return { username, token };
+}
+
+function parseCookieHeader(raw: string | null): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!raw) {
+    return map;
+  }
+
+  for (const chunk of raw.split(";")) {
+    const separator = chunk.indexOf("=");
+    if (separator === -1) {
+      continue;
+    }
+    const key = chunk.slice(0, separator).trim();
+    const value = chunk.slice(separator + 1).trim();
+    if (!key) {
+      continue;
+    }
+    try {
+      map.set(key, decodeURIComponent(value));
+    } catch {
+      map.set(key, value);
+    }
+  }
+
+  return map;
+}
+
+function buildPackageWorkerRequest(request: Request, resolved: ResolvedPackageRoute): Request {
+  const headers = new Headers(request.headers);
+  headers.delete("cookie");
+  headers.delete("authorization");
+  headers.delete("x-gsv-username");
+  headers.set("x-gsv-auth-uid", String(resolved.auth.uid));
+  headers.set("x-gsv-auth-username", resolved.auth.username);
+  headers.set("x-gsv-auth-capabilities", resolved.auth.capabilities.join(","));
+  headers.set("x-gsv-package-id", resolved.packageId);
+  headers.set("x-gsv-package-name", resolved.packageName);
+
+  return new Request(request, { headers });
+}
+
+async function withPackageAppClientSession(
+  response: Response,
+  resolved: ResolvedPackageRoute,
+): Promise<Response> {
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+
+  if (isHtmlResponse(response)) {
+    const html = await response.text();
+    return new Response(injectAppBootstrapHtml(html, resolved), {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function isHtmlResponse(response: Response): boolean {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  return contentType.startsWith("text/html");
+}
+
+function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): string {
+  const boot = JSON.stringify({
+    packageId: resolved.packageId,
+    packageName: resolved.packageName,
+    routeBase: resolved.routeBase,
+    rpcBase: resolved.clientSession.rpcBase,
+    sessionId: resolved.clientSession.sessionId,
+    sessionSecret: resolved.clientSession.secret,
+    clientId: resolved.clientSession.clientId,
+    expiresAt: resolved.clientSession.expiresAt,
+    hasBackend: resolved.hasRpc,
+  }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+  const scriptLines = [
+    `<script>window.__GSV_APP_BOOT__=${boot};</script>`,
+  ];
+  if (resolved.hasRpc) {
+    scriptLines.push(
+      `<script type="module">`,
+      `import { RpcTarget, newWebSocketRpcSession } from "https://cdn.jsdelivr.net/npm/capnweb@0.6.1/+esm";`,
+      `window.capnweb={ RpcTarget, newWebSocketRpcSession };`,
+      "</script>",
+    );
+  }
+  const script = scriptLines.join("");
+
+  if (html.includes("</head>")) {
+    return html.replace("</head>", `${script}</head>`);
+  }
+  if (html.includes("</body>")) {
+    return html.replace("</body>", `${script}</body>`);
+  }
+  return `${script}${html}`;
+}
+
+class PackageAppSessionRpcTarget extends RpcTarget {
+  constructor(
+    private readonly env: Env,
+    private readonly ctx: ExecutionContext,
+    private readonly packageName: string,
+    private readonly sessionId: string,
+  ) {
+    super();
+  }
+
+  async authenticate(secret: string): Promise<unknown> {
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton");
+    const resolved = await kernel.resolvePackageAppRpcSession({
+      packageName: this.packageName,
+      sessionId: this.sessionId,
+      secret,
+    }) as ResolvedPackageAppRpcSession;
+
+    if (!resolved.ok) {
+      throw new Error(resolved.message);
+    }
+
+    const runner = this.ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+    await runner.ensureRuntime({
+      packageId: resolved.packageId,
+      packageName: resolved.packageName,
+      routeBase: resolved.routeBase,
+      entrypointName: resolved.appFrame.entrypointName,
+      artifact: resolved.artifact,
+      appFrame: resolved.appFrame,
+    });
+
+    return runner.getBackend({
+      sessionId: resolved.clientSession.sessionId,
+      clientId: resolved.clientSession.clientId,
+      rpcBase: resolved.clientSession.rpcBase,
+      expiresAt: resolved.clientSession.expiresAt,
+    });
+  }
+}
+
+async function buildGitProxyRequest(
+  request: Request,
+  gitMatch: GitPathMatch,
+  username: string | null,
+): Promise<Request> {
+  const sourceUrl = new URL(request.url);
+  const targetUrl = new URL(`https://ripgit/${encodeURIComponent(gitMatch.owner)}/${encodeURIComponent(gitMatch.repo)}/${gitMatch.suffix}`);
+  targetUrl.search = sourceUrl.search;
+
+  const headers = new Headers(request.headers);
+  headers.delete("authorization");
+  headers.delete("cookie");
+  if (username) {
+    headers.set("x-ripgit-actor-name", username);
+  } else {
+    headers.delete("x-ripgit-actor-name");
+  }
+
+  const init: RequestInit = {
+    method: request.method,
+    headers,
+    redirect: "manual",
+  };
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = request.body;
+  }
+
+  return new Request(targetUrl.toString(), init);
+}
+
+/**
+ * Gateway Entrypoint for Service Binding RPC
+ *
+ * Adapter workers call these methods via Service Bindings.
+ * This provides a secure, type-safe interface for adapters to deliver
+ * inbound messages to the Gateway.
+ */
+export class GatewayEntrypoint
+  extends WorkerEntrypoint<Env>
+  implements GatewayAdapterInterface
+{
+  async serviceFrame(frame: Frame): Promise<Frame | null> {
+    try {
+      const kernel = await getAgentByName(this.env.KERNEL, "singleton");
+      return await kernel.serviceFrame(frame);
+    } catch (e) {
+      console.error("[GatewayEntrypoint] serviceFrame failed:", e);
+      return null;
+    }
+  }
+}

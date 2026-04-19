@@ -11,21 +11,17 @@ export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
 install_dir() {
   local dir="$1"
-  if [[ -f "${dir}/package-lock.json" ]]; then
-    npm ci --prefix "$dir"
-  else
-    npm install --prefix "$dir" --no-audit --no-fund
-  fi
+  npm ci --prefix "$dir" --workspaces=false
 }
 
 echo "==> Installing dependencies"
 install_dir "${ROOT_DIR}/gateway"
-install_dir "${ROOT_DIR}/gateway/ui"
-install_dir "${ROOT_DIR}/channels/whatsapp"
-install_dir "${ROOT_DIR}/channels/discord"
+install_dir "${ROOT_DIR}/web"
+install_dir "${ROOT_DIR}/adapters/whatsapp"
+install_dir "${ROOT_DIR}/adapters/discord"
 
 echo "==> Building web UI"
-npm run build --prefix "${ROOT_DIR}/gateway/ui"
+npm run build --prefix "${ROOT_DIR}/web"
 
 echo "==> Bundling workers with wrangler --dry-run"
 rm -rf "${DIST_DIR}"
@@ -35,20 +31,20 @@ mkdir -p "${DIST_DIR}/channel-discord/worker"
 
 (
   cd "${ROOT_DIR}/gateway"
-  npx wrangler deploy --dry-run --outdir "${DIST_DIR}/gateway/worker"
+  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/gateway/worker"
 )
 (
-  cd "${ROOT_DIR}/channels/whatsapp"
-  npx wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-whatsapp/worker"
+  cd "${ROOT_DIR}/adapters/whatsapp"
+  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-whatsapp/worker"
 )
 (
-  cd "${ROOT_DIR}/channels/discord"
-  npx wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-discord/worker"
+  cd "${ROOT_DIR}/adapters/discord"
+  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-discord/worker"
 )
 
 echo "==> Assembling component metadata"
 cp "${ROOT_DIR}/gateway/wrangler.jsonc" "${DIST_DIR}/gateway/wrangler.jsonc"
-cp -R "${ROOT_DIR}/gateway/ui/dist" "${DIST_DIR}/gateway/assets"
+cp -R "${ROOT_DIR}/web/dist" "${DIST_DIR}/gateway/assets"
 mkdir -p "${DIST_DIR}/gateway/templates"
 cp -R "${ROOT_DIR}/templates/workspace" "${DIST_DIR}/gateway/templates/workspace"
 cp -R "${ROOT_DIR}/templates/skills" "${DIST_DIR}/gateway/templates/skills"
@@ -65,7 +61,7 @@ cat > "${DIST_DIR}/gateway/manifest.json" <<'EOF'
 }
 EOF
 
-cp "${ROOT_DIR}/channels/whatsapp/wrangler.jsonc" "${DIST_DIR}/channel-whatsapp/wrangler.jsonc"
+cp "${ROOT_DIR}/adapters/whatsapp/wrangler.jsonc" "${DIST_DIR}/channel-whatsapp/wrangler.jsonc"
 cat > "${DIST_DIR}/channel-whatsapp/manifest.json" <<'EOF'
 {
   "component": "channel-whatsapp",
@@ -77,7 +73,7 @@ cat > "${DIST_DIR}/channel-whatsapp/manifest.json" <<'EOF'
 }
 EOF
 
-cp "${ROOT_DIR}/channels/discord/wrangler.jsonc" "${DIST_DIR}/channel-discord/wrangler.jsonc"
+cp "${ROOT_DIR}/adapters/discord/wrangler.jsonc" "${DIST_DIR}/channel-discord/wrangler.jsonc"
 cat > "${DIST_DIR}/channel-discord/manifest.json" <<'EOF'
 {
   "component": "channel-discord",

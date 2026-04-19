@@ -1,0 +1,3 @@
+[env]
+CC_wasm32_unknown_unknown = { value = "scripts/wasm-cc", relative = true }
+AR_wasm32_unknown_unknown = { value = "scripts/wasm-ar", relative = true }

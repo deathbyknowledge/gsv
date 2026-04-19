@@ -1,0 +1,10 @@
+{
+  "name": "@gsv/ascii-starfield",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@chenglou/pretext": "0.0.4",
+    "@gsv/package": "file:../../shared/package",
+    "capnweb": "^0.6.1"
+  }
+}

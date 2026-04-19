@@ -1,0 +1,23 @@
+{
+  "name": "gsv-app-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "gateway",
+    "web",
+    "shared/*"
+  ],
+  "scripts": {
+    "setup": "bash ./scripts/setup-deps.sh",
+    "dev": "bash ./scripts/dev-stack.sh",
+    "state:reset:ripgit": "bash ./scripts/reset-ripgit-state.sh",
+    "version:show": "node ./scripts/version.mjs show",
+    "version:check": "node ./scripts/version.mjs check",
+    "version:sync": "node ./scripts/version.mjs sync",
+    "version:set": "node ./scripts/version.mjs set",
+    "version:bump": "node ./scripts/version.mjs bump",
+    "release:build:cloudflare": "bash ./scripts/build-cloudflare-bundles.sh",
+    "release:show:stable-tag": "node ./scripts/release.mjs stable-tag",
+    "release:cut:stable": "node ./scripts/release.mjs cut-stable"
+  }
+}

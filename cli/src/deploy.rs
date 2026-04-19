@@ -21,18 +21,15 @@ const REPO_NAME: &str = "gsv";
 const COMPONENT_GATEWAY: &str = "gateway";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
-const COMPONENT_CHANNEL_TEST: &str = "channel-test";
 
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
 const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
 const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
-const BUNDLE_CHANNEL_TEST: &str = "gsv-cloudflare-channel-test.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
 const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
-const SCRIPT_CHANNEL_TEST: &str = "gsv-channel-test";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
@@ -116,9 +113,102 @@ macro_rules! println {
     }};
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct GitHubRelease {
     tag_name: String,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+}
+
+fn is_semver_release_tag(tag: &str) -> bool {
+    let Some(body) = tag.trim().strip_prefix('v') else {
+        return false;
+    };
+
+    let (core, prerelease) = match body.split_once('-') {
+        Some((value, suffix)) => (value, Some(suffix)),
+        None => (body, None),
+    };
+
+    let mut parts = core.split('.');
+    if !parts
+        .by_ref()
+        .take(3)
+        .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return false;
+    }
+    if parts.next().is_some() {
+        return false;
+    }
+
+    match prerelease {
+        Some(value) => {
+            !value.is_empty()
+                && value.split('.').all(|part| {
+                    !part.is_empty()
+                        && part
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+                })
+        }
+        None => true,
+    }
+}
+
+fn is_semver_prerelease_tag(tag: &str) -> bool {
+    is_semver_release_tag(tag) && tag.contains('-')
+}
+
+fn select_latest_prerelease_tag(releases: &[GitHubRelease]) -> Option<String> {
+    releases.iter().find_map(|release| {
+        if release.draft || !release.prerelease || !is_semver_prerelease_tag(&release.tag_name) {
+            return None;
+        }
+        Some(release.tag_name.clone())
+    })
+}
+
+async fn fetch_latest_stable_release_tag(
+    client: &reqwest::Client,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases/latest",
+        REPO_OWNER, REPO_NAME
+    );
+    let release: GitHubRelease = client
+        .get(url)
+        .header("User-Agent", "gsv-cli")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    if !is_semver_release_tag(&release.tag_name) || is_semver_prerelease_tag(&release.tag_name) {
+        return Err(format!("Latest stable release tag is invalid: {}", release.tag_name).into());
+    }
+    Ok(release.tag_name)
+}
+
+async fn fetch_latest_dev_release_tag(
+    client: &reqwest::Client,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases?per_page=20",
+        REPO_OWNER, REPO_NAME
+    );
+    let releases: Vec<GitHubRelease> = client
+        .get(url)
+        .header("User-Agent", "gsv-cli")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    select_latest_prerelease_tag(&releases)
+        .ok_or_else(|| "No semver dev prerelease found on GitHub releases".into())
 }
 
 #[derive(Debug, Deserialize)]
@@ -309,7 +399,6 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
         COMPONENT_GATEWAY => Some(BUNDLE_GATEWAY),
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(BUNDLE_CHANNEL_DISCORD),
-        COMPONENT_CHANNEL_TEST => Some(BUNDLE_CHANNEL_TEST),
         _ => None,
     }
 }
@@ -319,7 +408,6 @@ fn component_to_script_name(component: &str) -> Option<&'static str> {
         COMPONENT_GATEWAY => Some(SCRIPT_GATEWAY),
         COMPONENT_CHANNEL_WHATSAPP => Some(SCRIPT_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(SCRIPT_CHANNEL_DISCORD),
-        COMPONENT_CHANNEL_TEST => Some(SCRIPT_CHANNEL_TEST),
         _ => None,
     }
 }
@@ -379,24 +467,12 @@ pub fn normalize_components(raw: &[String]) -> Result<Vec<String>, Box<dyn std::
 }
 
 pub async fn resolve_release_tag(version: &str) -> Result<String, Box<dyn std::error::Error>> {
-    if version != "latest" {
-        return Ok(version.to_string());
-    }
-
-    let url = format!(
-        "https://api.github.com/repos/{}/{}/releases/latest",
-        REPO_OWNER, REPO_NAME
-    );
     let client = reqwest::Client::builder().http1_only().build()?;
-    let release: GitHubRelease = client
-        .get(url)
-        .header("User-Agent", "gsv-cli")
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    Ok(release.tag_name)
+    match version.trim().to_ascii_lowercase().as_str() {
+        "latest" | "stable" => fetch_latest_stable_release_tag(&client).await,
+        "dev" => fetch_latest_dev_release_tag(&client).await,
+        _ => Ok(version.to_string()),
+    }
 }
 
 fn read_local_latest_tag(cfg: &CliConfig) -> Option<String> {
@@ -1567,7 +1643,6 @@ fn deploy_order(component: &str) -> usize {
     match component {
         COMPONENT_CHANNEL_WHATSAPP => 1,
         COMPONENT_CHANNEL_DISCORD => 2,
-        COMPONENT_CHANNEL_TEST => 3,
         COMPONENT_GATEWAY => 10,
         _ => 100,
     }
@@ -1672,20 +1747,6 @@ fn service_bindings_for_bundle(
             service: SCRIPT_GATEWAY.to_string(),
             environment: None,
             entrypoint: Some("GatewayEntrypoint".to_string()),
-        });
-    }
-
-    if bundle.component == COMPONENT_GATEWAY
-        && selected_components.contains(COMPONENT_CHANNEL_TEST)
-        && !bindings
-            .iter()
-            .any(|binding| binding.binding == "CHANNEL_TEST")
-    {
-        bindings.push(WranglerServiceBinding {
-            binding: "CHANNEL_TEST".to_string(),
-            service: "gsv-channel-test".to_string(),
-            environment: None,
-            entrypoint: Some("TestChannel".to_string()),
         });
     }
 
@@ -2837,14 +2898,17 @@ async fn connect_gateway_with_retry(
     let mut last_error: Option<Box<dyn std::error::Error>> = None;
 
     for attempt in 1..=max_attempts {
-        match Connection::connect_with_options(
-            ws_url,
-            "client",
-            None,
-            None,
+        match Connection::connect(
+            crate::connection::ConnectOptions {
+                url: ws_url.to_string(),
+                role: "user".to_string(),
+                client_id: Some("deploy-bootstrap".to_string()),
+                implements: None,
+                auth_username: None,
+                auth_password: None,
+                auth_token: auth_token.map(|t| t.to_string()),
+            },
             |_| {},
-            Some("deploy-bootstrap".to_string()),
-            auth_token.map(|token| token.to_string()),
         )
         .await
         {
@@ -2871,15 +2935,19 @@ async fn connect_gateway_with_retry(
 
 async fn gateway_config_set(
     conn: &Connection,
-    path: &str,
+    key: &str,
     value: Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let response = conn
         .request(
-            "config.set",
+            "sys.config.set",
             Some(json!({
-                "path": path,
-                "value": value
+                "key": key,
+                "value": if let Some(text) = value.as_str() {
+                    text.to_string()
+                } else {
+                    value.to_string()
+                }
             })),
         )
         .await?;
@@ -2890,8 +2958,8 @@ async fn gateway_config_set(
         let message = response
             .error
             .map(|err| err.message)
-            .unwrap_or_else(|| "Unknown config.set failure".to_string());
-        Err(format!("config.set {} failed: {}", path, message).into())
+            .unwrap_or_else(|| "Unknown sys.config.set failure".to_string());
+        Err(format!("sys.config.set {} failed: {}", key, message).into())
     }
 }
 
@@ -2995,4 +3063,60 @@ pub async fn set_discord_bot_token_secret(
         bot_token,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semver_release_tag_detection_accepts_expected_tags() {
+        assert!(is_semver_release_tag("v0.1.0"));
+        assert!(is_semver_release_tag("v0.1.0-dev.42"));
+        assert!(!is_semver_release_tag("0.1.0"));
+        assert!(!is_semver_release_tag("stable"));
+    }
+
+    #[test]
+    fn prerelease_detection_distinguishes_stable_and_dev_tags() {
+        assert!(!is_semver_prerelease_tag("v0.1.0"));
+        assert!(is_semver_prerelease_tag("v0.1.0-dev.42"));
+    }
+
+    #[test]
+    fn latest_prerelease_selection_skips_drafts_and_non_semver_tags() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "dev".to_string(),
+                prerelease: true,
+                draft: false,
+            },
+            GitHubRelease {
+                tag_name: "v0.2.0-dev.43".to_string(),
+                prerelease: true,
+                draft: true,
+            },
+            GitHubRelease {
+                tag_name: "v0.2.0-dev.42".to_string(),
+                prerelease: true,
+                draft: false,
+            },
+        ];
+
+        assert_eq!(
+            select_latest_prerelease_tag(&releases),
+            Some("v0.2.0-dev.42".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_components_rejects_removed_channel_test_component() {
+        let error = normalize_components(&["channel-test".to_string()]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Unknown component 'channel-test'"),
+            "unexpected error: {error}"
+        );
+    }
 }

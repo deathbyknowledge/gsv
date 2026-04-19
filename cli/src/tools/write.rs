@@ -70,8 +70,9 @@ impl Tool for WriteTool {
             .map_err(|e| format!("Failed to write '{}': {}", resolved.display(), e))?;
 
         Ok(json!({
+            "ok": true,
             "path": resolved.display().to_string(),
-            "bytes": args.content.len()
+            "size": args.content.len()
         }))
     }
 }

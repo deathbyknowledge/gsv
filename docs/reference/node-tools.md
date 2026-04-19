@@ -1,349 +1,303 @@
-# Node Tools Reference
+# CLI Driver Tools Reference
 
-Node tools are provided by connected CLI node instances (`gsv node`). Each node registers its tools with the Gateway over WebSocket. Node tools execute on the node's local machine, not on the Gateway.
+This page describes the Rust tool implementations used by the connected CLI driver behind `gsv device`.
 
-Tool definitions are in `cli/src/tools/`. The `Tool` trait is defined in `cli/src/tools/mod.rs`.
+In the current runtime, the gateway does not advertise driver-local tools directly to the model as namespaced names such as `laptop__Bash`. Instead:
+
+- the driver connects with `sys.connect` as role `driver`
+- it advertises coarse capability patterns such as `fs.*` and `shell.exec`
+- the gateway routes `fs.*` and `shell.exec` syscalls to that driver
+- the CLI maps each routed syscall to one of the local Rust tools in `cli/src/tools/`
+
+Source of truth:
+
+- `cli/src/tools/`
+- `cli/tests/tools_test.rs`
+- `cli/src/main.rs`
 
 ---
 
-## Tool Namespacing
+## Syscall Mapping
 
-When a node connects to the Gateway, its tools are namespaced with the node's ID:
+| Routed syscall | Local tool implementation |
+|---|---|
+| `fs.read` | `Read` |
+| `fs.write` | `Write` |
+| `fs.edit` | `Edit` |
+| `fs.delete` | `Delete` |
+| `fs.search` | `Grep` |
+| `shell.exec` | `Bash` |
 
-```
-{nodeId}__{toolName}
-```
+`Glob` is still available as a local CLI tool implementation and is tested locally, but the current gateway request mapper does not route a public syscall to it.
 
-Examples:
-- `laptop__Bash` — Bash tool on the node named `laptop`
-- `server__Read` — Read tool on the node named `server`
+### Current Bridge Caveats
 
-When multiple nodes are connected, each node's tools are independently namespaced. The agent calls tools by their full namespaced name.
+The current driver bridge in `cli/src/main.rs` is not a perfect shape adapter:
+
+- `fs.search` is routed to local `Grep`, but the public syscall uses `query` while `Grep` expects `pattern`. No translation is applied.
 
 ---
 
 ## Path Resolution
 
-All file-oriented node tools (Read, Write, Edit, Glob, Grep) resolve relative paths against the node's configured workspace directory. Absolute paths are used as-is.
+All file-oriented driver tools resolve relative paths against the driver's configured workspace directory. Absolute paths are used as-is.
+
+The current CLI driver path is:
+
+- driver workspace root from CLI config or flag
+- then the local tool's `resolve_path()` helper
 
 ---
 
 ## Bash
 
-Execute shell commands on the node. Supports synchronous execution, background mode, and yield-based async execution with session tracking.
+**Local tool name:** `Bash`
 
-**Tool name:** `Bash`
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `command` | `string` | Yes | Shell command to execute |
+| `workdir` | `string` | No | Working directory. Relative paths resolve against the driver workspace. |
+| `timeout` | `number` | No | Timeout in milliseconds. Default `300000`. |
+| `background` | `boolean` | No | Start immediately in background and return a `sessionId`. |
+| `yieldMs` | `number` | No | Wait up to this many milliseconds, then background the process if still running. Clamped to `10..120000`. |
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `command` | `string` | Yes | — | Shell command to execute. Must not be empty. |
-| `workdir` | `string` | No | Node workspace | Working directory. Relative paths resolve against the node workspace. |
-| `timeout` | `number` | No | `300000` (5 min) | Timeout in milliseconds. When exceeded, the process receives SIGTERM then SIGKILL. |
-| `background` | `boolean` | No | `false` | Run in background immediately and return a `sessionId`. |
-| `yieldMs` | `number` | No | — | Wait this many milliseconds, then background the process if still running. Clamped to range 10–120000 ms. |
+**Execution model**
 
-### Execution Model
+- Commands run through the platform shell: the user's configured shell with `-lc` on Unix, `pwsh -NoLogo -NoProfile -Command` on Windows.
+- Default mode waits for completion.
+- `background: true` returns immediately.
+- `yieldMs` returns a completed result if the command finishes in time, otherwise a background-session result.
 
-Commands are executed via the user's login shell (`$SHELL` environment variable, falling back to `/bin/sh`) with flags `-lc`.
-
-- **Synchronous (default):** Blocks until the command completes. Returns full output.
-- **Background (`background: true`):** Returns immediately with a `sessionId` for tracking.
-- **Yield (`yieldMs`):** Waits up to the specified duration. If the command completes within the window, returns the result. Otherwise, backgrounds the process and returns a `sessionId`.
-
-### Output Constraints
-
-- Maximum captured output: 200,000 characters. Output beyond this limit is truncated (tail preserved).
-- Tail buffer: last 4,000 characters, always maintained.
-- `truncated` field indicates whether output was truncated.
-
-### Output (completed)
+**Completed result**
 
 ```json
 {
-  "status": "completed" | "failed",
-  "sessionId": "<uuid>",
-  "exitCode": <number | null>,
-  "signal": "<string | null>",
-  "timedOut": <boolean>,
-  "startedAt": <timestamp_ms>,
-  "endedAt": <timestamp_ms>,
-  "durationMs": <number>,
-  "output": "<full captured output>",
-  "tail": "<last 4000 chars>",
-  "truncated": <boolean>,
-  "workdir": "<path>"
+  "ok": true,
+  "pid": 12345,
+  "stdout": "hello\n",
+  "stderr": "",
+  "status": "completed",
+  "sessionId": "uuid",
+  "exitCode": 0,
+  "signal": null,
+  "timedOut": false,
+  "startedAt": 1710000000000,
+  "endedAt": 1710000000200,
+  "durationMs": 200,
+  "output": "hello\n",
+  "tail": "hello\n",
+  "truncated": false,
+  "workdir": "/tmp"
 }
 ```
 
-### Output (backgrounded/running)
+**Running result**
 
 ```json
 {
   "status": "running",
-  "sessionId": "<uuid>",
-  "pid": <number>,
-  "startedAt": <timestamp_ms>,
-  "tail": "<last 4000 chars>",
-  "workdir": "<path>"
+  "sessionId": "uuid",
+  "pid": 12345,
+  "startedAt": 1710000000000,
+  "tail": "",
+  "workdir": "/tmp"
 }
 ```
 
-### Security
+**Limits**
 
-- Commands run with the permissions of the user who started the node process.
-- No sandboxing beyond OS-level user permissions.
-- Timeout enforcement: SIGTERM is sent first, followed by SIGKILL after 250ms if the process does not exit.
-
----
-
-## Process
-
-Manage background Bash sessions. This tool is registered alongside `Bash` and provides lifecycle management for backgrounded processes.
-
-**Tool name:** `Process`
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `action` | `string` | Yes | — | Action to perform. One of: `"list"`, `"poll"`, `"log"`, `"write"`, `"submit"`, `"kill"`. |
-| `sessionId` | `string` | Varies | — | Session ID. Required for all actions except `"list"`. |
-| `data` | `string` | No | `""` | Data to send for `"write"` and `"submit"` actions. |
-| `offset` | `number` | No | `0` | Log line offset for `"log"` action. |
-| `limit` | `number` | No | `200` | Maximum log lines for `"log"` action. Minimum 1. |
-
-### Actions
-
-| Action | Description |
-|--------|-------------|
-| `list` | List all backgrounded sessions (running and recently finished). Sorted by start time, newest first. Finished sessions are retained for 30 minutes. |
-| `poll` | Check the status of a backgrounded session. Returns current status, exit code, signal, tail output, and whether still running. |
-| `log` | Retrieve output lines from a backgrounded session with offset/limit pagination. Returns total line count and character count. |
-| `write` | Write raw data to the stdin of a running backgrounded session. |
-| `submit` | Write data to stdin with an appended newline (simulates pressing Enter). |
-| `kill` | Send SIGKILL to a running backgrounded session. |
-
-### Error Conditions
-
-- Actions other than `"list"` fail if `sessionId` is not provided.
-- `poll`, `log`, `write`, `submit`, and `kill` fail if the session is not found or is not backgrounded.
-- `write` and `submit` fail if the session has already exited or stdin is not writable.
+- Output is capped at 200000 characters.
+- `tail` keeps the last 4000 characters.
 
 ---
 
 ## Read
 
-Read file contents from the node's filesystem. Supports text files with line-numbered output and image files with structured content blocks.
+**Local tool name:** `Read`
 
-**Tool name:** `Read`
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `path` | `string` | Yes | File or directory path |
+| `offset` | `number` | No | 0-based starting line for text reads |
+| `limit` | `number` | No | Maximum number of text lines |
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `path` | `string` | Yes | — | Path to the file. Relative paths resolve against the node workspace. |
-| `offset` | `number` | No | `0` | Line number to start reading from (0-based). Ignored for image files. |
-| `limit` | `number` | No | Total line count | Maximum number of lines to read. Ignored for image files. |
+**Behavior**
 
-### Output (text files)
+- Text files return line-numbered content.
+- Directories return sorted `files` and `directories` arrays.
+- Non-UTF-8 image files are returned as structured `content` blocks with base64 image data.
+- Image size is capped at 10 MB.
+- Other binary files return an error.
 
-```json
-{
-  "path": "<resolved absolute path>",
-  "content": "<line-numbered content>",
-  "lines": <number of lines returned>
-}
-```
-
-Content is returned with each line prefixed by a 1-based line number and tab separator (format: `{lineNum}\t{content}`). Line numbering starts at `offset + 1`.
-
-### Output (image files)
-
-When a file cannot be read as UTF-8 text, the tool reads raw bytes and detects the MIME type via magic-byte sniffing (using the `infer` crate). If the file is an image (`image/*`), the tool returns a structured content result:
+**Text result**
 
 ```json
 {
-  "content": [
-    { "type": "text", "text": "Image file: photo.png (image/png, 245760 bytes)" },
-    { "type": "image", "data": "<base64-encoded image data>", "mimeType": "image/png" }
-  ]
+  "ok": true,
+  "path": "/abs/path.txt",
+  "content": "     1\tline 1\n     2\tline 2",
+  "lines": 2,
+  "size": 14
 }
 ```
 
-The Session DO detects this structured format and passes the `ImageContent` block through to the LLM as part of the `ToolResultMessage`, allowing the model to see the actual image.
-
-Image file size is capped at 10 MB. Files larger than 10 MB return an error. The `offset` and `limit` parameters are ignored for image files — the full image is always returned.
-
-### Output (non-image binary files)
-
-Binary files that are not images return a descriptive error:
+**Directory result**
 
 ```json
 {
-  "error": "Binary file: archive.tar.gz (application/gzip, 5242880 bytes) — not a text or image file"
+  "ok": true,
+  "path": "/abs/dir",
+  "files": ["file.txt"],
+  "directories": ["nested"]
 }
 ```
-
-### Error Conditions
-
-- File does not exist or is not readable.
-- Path resolves to a directory.
-- Image file exceeds the 10 MB size cap.
-- Binary file is not an image type.
 
 ---
 
 ## Write
 
-Write content to a file on the node's filesystem.
+**Local tool name:** `Write`
 
-**Tool name:** `Write`
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `path` | `string` | Yes | Destination file path |
+| `content` | `string` | Yes | Full file contents |
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `path` | `string` | Yes | — | Path to the file. Relative paths resolve against the node workspace. |
-| `content` | `string` | Yes | — | Content to write. |
+**Behavior**
 
-### Output
+- Creates parent directories if needed.
+- Overwrites existing files.
+
+**Result**
 
 ```json
 {
-  "path": "<resolved absolute path>",
-  "bytes": <number of bytes written>
+  "ok": true,
+  "path": "/abs/path.txt",
+  "size": 128
 }
 ```
-
-### Side Effects
-
-- Creates parent directories if they do not exist.
-- Overwrites the file if it already exists.
-
-### Error Conditions
-
-- Parent directory creation fails (permissions).
-- File write fails (permissions, disk full).
 
 ---
 
 ## Edit
 
-Edit a file by replacing exact text matches on the node's filesystem.
+**Local tool name:** `Edit`
 
-**Tool name:** `Edit`
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `path` | `string` | Yes | File path |
+| `oldString` | `string` | Yes | Exact text to replace |
+| `newString` | `string` | Yes | Replacement text |
+| `replaceAll` | `boolean` | No | Replace every match instead of requiring a unique match |
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `path` | `string` | Yes | — | Path to the file. Relative paths resolve against the node workspace. |
-| `oldString` | `string` | Yes | — | Exact text to find and replace. |
-| `newString` | `string` | Yes | — | Replacement text. |
-| `replaceAll` | `boolean` | No | `false` | Replace all occurrences. When `false`, replaces only the first occurrence but requires exactly one match. |
+**Behavior**
 
-### Output
+- Requires at least one exact match.
+- With `replaceAll: false`, multiple matches are treated as an error.
+
+**Result**
 
 ```json
 {
-  "path": "<resolved absolute path>",
-  "replacements": <number of replacements made>
+  "ok": true,
+  "path": "/abs/path.txt",
+  "replacements": 1
 }
 ```
 
-### Error Conditions
+---
 
-- File does not exist or is not readable.
-- `oldString` not found in file content.
-- `oldString` found multiple times and `replaceAll` is `false` — error includes the match count and suggests using `replaceAll: true`.
+## Delete
+
+**Local tool name:** `Delete`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `path` | `string` | Yes | File or directory path |
+
+**Behavior**
+
+- Files are removed with `remove_file`.
+- Directories are removed recursively with `remove_dir_all`.
+
+**Result**
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path"
+}
+```
 
 ---
 
 ## Glob
 
-Find files matching a glob pattern on the node's filesystem.
+**Local tool name:** `Glob`
 
-**Tool name:** `Glob`
+This is a CLI-local helper, not a currently routed gateway syscall.
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `pattern` | `string` | Yes | — | Glob pattern (e.g. `"**/*.md"`, `"src/**/*.rs"`). |
-| `path` | `string` | No | Node workspace | Directory to search in. Relative paths resolve against the node workspace. |
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `pattern` | `string` | Yes | Glob pattern |
+| `path` | `string` | No | Search root |
 
-### Output
+**Result**
 
 ```json
 {
-  "pattern": "<original pattern>",
-  "basePath": "<resolved search directory>",
-  "matches": ["<path>", ...],
-  "count": <number of matches>
+  "pattern": "**/*.md",
+  "basePath": "/abs/root",
+  "matches": ["/abs/root/README.md"],
+  "count": 1
 }
 ```
 
-Results are sorted by modification time, newest first.
+Matches are sorted by modification time, newest first.
 
 ---
 
 ## Grep
 
-Search file contents using regular expressions on the node's filesystem.
+**Local tool name:** `Grep`
 
-**Tool name:** `Grep`
+This is the local implementation the current CLI driver tries to use for routed `fs.search` requests.
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `pattern` | `string` | Yes | — | Regex pattern to search for (Rust `regex` crate syntax). |
-| `path` | `string` | No | Node workspace | Directory to search in. Relative paths resolve against the node workspace. |
-| `include` | `string` | No | — | File name glob pattern to filter files (e.g. `"*.md"`, `"*.{rs,ts}"`). Matched against file name only, not full path. |
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `pattern` | `string` | Yes | Rust-regex pattern |
+| `path` | `string` | No | Search root |
+| `include` | `string` | No | File-name glob filter |
 
-### Output
+**Result**
 
 ```json
 {
-  "pattern": "<original pattern>",
-  "basePath": "<resolved search directory>",
+  "ok": true,
   "matches": [
-    { "path": "<file path>", "line": <1-based line number>, "content": "<matching line>" },
-    ...
+    { "path": "/abs/file.ts", "line": 12, "content": "return pattern;" }
   ],
-  "count": <number of matches>
+  "count": 1
 }
 ```
 
-When total matches exceed 100, results are truncated and the output includes `"truncated": true` instead of `"count"`.
+**Behavior**
 
-### Behavior
-
-- Follows symbolic links.
-- Skips binary files (files that fail UTF-8 read).
-- Matching line content is truncated to 200 characters.
-
----
-
-## Capability Mapping
-
-Each node tool reports its capabilities to the Gateway. These capability IDs are used for skill eligibility evaluation.
-
-| Capability ID | Tools |
-|---------------|-------|
-| `filesystem.list` | Glob |
-| `filesystem.read` | Read |
-| `filesystem.write` | Write |
-| `filesystem.edit` | Edit |
-| `text.search` | Grep |
-| `shell.exec` | Bash, Process |
+- Follows symlinks.
+- Searches UTF-8 text files only.
+- Line snippets are truncated to 200 characters.
+- Results truncate at 100 matches and then include `"truncated": true`.
+- The local argument name is `pattern`. The current driver bridge does not rename public syscall `query` into `pattern`.
 
 ---
 
-## Host Capability Profiles
+## Driver Capabilities
 
-Nodes are differentiated by their reported capabilities (not by a fixed role field).
+The current `run_node` path connects drivers with:
 
-| Example profile | Typical capabilities |
-|----------------|----------------------|
-| General-purpose shell node | `filesystem.list`, `filesystem.read`, `filesystem.write`, `filesystem.edit`, `text.search`, `shell.exec` |
-| Search-only node | `text.search` |
+```json
+["fs.*", "shell.*"]
+```
 
----
-
-## Runtime Information
-
-Nodes report additional runtime metadata to the Gateway:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `clientPlatform` | `string` | Client platform string from the node handshake (for example `darwin-arm64`, `linux-x64`). |
-| `clientVersion` | `string` | Node client version string. |
+That capability advertisement is what the gateway uses for routing and `ai.tools` exposure. The old per-tool namespacing and skill-capability mapping described in earlier docs is not part of the current runtime.

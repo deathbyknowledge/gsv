@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${RIPGIT_WASM_AR:-}" ]]; then
+  exec "${RIPGIT_WASM_AR}" "$@"
+fi
+
+for candidate in llvm-ar llvm-ar-18 llvm-ar-17 llvm-ar-16 zig ar; do
+  if command -v "${candidate}" >/dev/null 2>&1; then
+    if [[ "${candidate}" == "zig" ]]; then
+      exec zig ar "$@"
+    fi
+    exec "${candidate}" "$@"
+  fi
+done
+
+cat >&2 <<'EOF'
+ripgit wasm build requires an archiver for xpatch/zstd.
+
+Install one of:
+  - llvm-ar on PATH
+  - zig on PATH
+  - ar on PATH
+
+Or set RIPGIT_WASM_AR to an explicit archiver binary.
+EOF
+exit 1

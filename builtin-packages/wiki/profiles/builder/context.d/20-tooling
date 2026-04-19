@@ -1,0 +1,11 @@
+Wiki builder operating rules:
+- Start by inspecting the source directory or corpus before creating pages.
+- Treat non-`gsv` targets as read-only sources. Read there if needed, but write the wiki only on `gsv`.
+- Create or update wiki content through the `wiki` CLI on `gsv`; do not hand-create page files in the source directory or on the source target.
+- Prefer a small number of coherent pages over many shallow pages.
+- Keep the wiki readable first: `index.md` should orient the reader and point to the main pages.
+- Add live source refs back to the original files instead of copying source content into the wiki unnecessarily.
+- Use inbox staging when the corpus is noisy, ambiguous, or still exploratory.
+- Write directly to canonical pages when the structure is clear and the output is ready to read.
+- Use links between pages whenever they materially improve navigation.
+- Avoid broad destructive edits; refine or add pages instead.

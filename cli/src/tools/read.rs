@@ -47,6 +47,38 @@ fn format_byte_size(bytes: u64) -> String {
     }
 }
 
+fn read_directory(path: &PathBuf) -> Result<Value, String> {
+    let entries =
+        fs::read_dir(path).map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
+
+    let mut files = Vec::new();
+    let mut directories = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("Failed to inspect '{}': {}", entry.path().display(), e))?;
+
+        if file_type.is_dir() {
+            directories.push(name);
+        } else {
+            files.push(name);
+        }
+    }
+
+    directories.sort();
+    files.sort();
+
+    Ok(json!({
+        "ok": true,
+        "path": path.display().to_string(),
+        "files": files,
+        "directories": directories
+    }))
+}
+
 #[async_trait]
 impl Tool for ReadTool {
     fn definition(&self) -> ToolDefinition {
@@ -80,6 +112,12 @@ impl Tool for ReadTool {
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
         let resolved = self.resolve_path(&args.path);
+        let metadata = fs::metadata(&resolved)
+            .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
+
+        if metadata.is_dir() {
+            return read_directory(&resolved);
+        }
 
         match fs::read_to_string(&resolved) {
             Ok(content) => {
@@ -96,9 +134,11 @@ impl Tool for ReadTool {
                     .collect();
 
                 Ok(json!({
+                    "ok": true,
                     "path": resolved.display().to_string(),
                     "content": selected.join("\n"),
-                    "lines": selected.len()
+                    "lines": selected.len(),
+                    "size": metadata.len()
                 }))
             }
             Err(text_read_err) => {
@@ -122,6 +162,9 @@ impl Tool for ReadTool {
                         let encoded = base64::engine::general_purpose::STANDARD.encode(&raw_bytes);
 
                         Ok(json!({
+                            "ok": true,
+                            "path": resolved.display().to_string(),
+                            "size": byte_count,
                             "content": [
                                 {
                                     "type": "text",

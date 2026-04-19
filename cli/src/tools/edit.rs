@@ -99,6 +99,7 @@ impl Tool for EditTool {
             .map_err(|e| format!("Failed to write '{}': {}", resolved.display(), e))?;
 
         Ok(json!({
+            "ok": true,
             "path": resolved.display().to_string(),
             "replacements": if args.replace_all { count } else { 1 }
         }))

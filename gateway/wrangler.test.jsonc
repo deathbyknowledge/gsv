@@ -12,23 +12,27 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"migrations": [
 		{
-			"new_sqlite_classes": ["Gateway"],
+			"new_sqlite_classes": ["Kernel"],
 			"tag": "v1"
 		},
 		{
-			"new_sqlite_classes": ["Session"],
+			"new_sqlite_classes": ["Process"],
 			"tag": "v2"
+		},
+		{
+			"new_sqlite_classes": ["AppRunner"],
+			"tag": "v3"
 		}
 	],
 	"durable_objects": {
 		"bindings": [
 			{
-				"class_name": "Gateway",
-				"name": "GATEWAY"
+				"class_name": "Kernel",
+				"name": "KERNEL"
 			},
 			{
-				"class_name": "Session",
-				"name": "SESSION"
+				"class_name": "Process",
+				"name": "PROCESS"
 			}
 		]
 	},
@@ -41,7 +45,18 @@
 			"binding": "STORAGE",
 			"bucket_name": "gsv-storage-test"
 		}
-	]
+	],
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
+		}
+	],
+	"assets": {
+		"directory": "./test-assets/",
+		"binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/ws", "/apps/*", "/app-rpc/*", "/git/*", "/runtime/*", "/downloads/*"]
+	}
 	// Note: No AI binding, no service bindings for channels
 	// Tests should mock these dependencies
 }

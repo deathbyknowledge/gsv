@@ -1,5 +1,78 @@
 // Integration tests for CLI tools
 
+use std::path::Path;
+
+fn shell_echo_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "Write-Output hello"
+    }
+    #[cfg(not(windows))]
+    {
+        "echo hello"
+    }
+}
+
+fn shell_pwd_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "[System.IO.Directory]::GetCurrentDirectory()"
+    }
+    #[cfg(not(windows))]
+    {
+        "pwd"
+    }
+}
+
+fn shell_background_finish_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "Start-Sleep -Seconds 1; Write-Output async-finished"
+    }
+    #[cfg(not(windows))]
+    {
+        "sleep 1; echo async-finished"
+    }
+}
+
+fn normalize_shell_path(value: &str) -> String {
+    #[cfg(windows)]
+    {
+        return value
+            .trim()
+            .replace('/', "\\")
+            .trim_start_matches(r"\\?\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase();
+    }
+
+    #[cfg(not(windows))]
+    {
+        value.trim().trim_end_matches('/').to_string()
+    }
+}
+
+fn output_matches_workdir(output: &str, expected: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let actual = std::path::PathBuf::from(output.trim().replace('/', "\\"));
+        let actual = std::fs::canonicalize(actual);
+        let expected = std::fs::canonicalize(expected);
+        if let (Ok(actual), Ok(expected)) = (actual, expected) {
+            return actual == expected;
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = expected;
+    }
+
+    let actual = normalize_shell_path(output);
+    let expected = normalize_shell_path(expected.to_string_lossy().as_ref());
+    actual.contains(&expected)
+}
+
 #[tokio::test]
 async fn test_bash_tool_execution() {
     use gsv::tools::{BashTool, Tool};
@@ -15,7 +88,7 @@ async fn test_bash_tool_execution() {
     // Test simple command
     let result = tool
         .execute(json!({
-            "command": "echo hello"
+            "command": shell_echo_command()
         }))
         .await
         .unwrap();
@@ -29,15 +102,18 @@ async fn test_bash_tool_execution() {
 async fn test_bash_tool_workdir() {
     use gsv::tools::{BashTool, Tool};
     use serde_json::json;
+    use std::fs;
 
-    let workspace = std::env::temp_dir();
+    let workspace = std::env::temp_dir().join("gsv_test_bash_tool_workdir_workspace");
+    let custom_workdir = workspace.join("nested");
+    fs::create_dir_all(&custom_workdir).unwrap();
     let tool = BashTool::new(workspace.clone());
 
     // Test with custom workdir
     let result = tool
         .execute(json!({
-            "command": "pwd",
-            "workdir": "/tmp"
+            "command": shell_pwd_command(),
+            "workdir": custom_workdir.to_string_lossy().to_string()
         }))
         .await
         .unwrap();
@@ -45,23 +121,26 @@ async fn test_bash_tool_workdir() {
     assert_eq!(result["status"], "completed");
     assert_eq!(result["exitCode"], 0);
     assert!(
-        result["output"].as_str().unwrap().contains("/tmp")
-            || result["output"].as_str().unwrap().contains("/private/tmp")
-    ); // macOS
+        output_matches_workdir(result["output"].as_str().unwrap(), &custom_workdir),
+        "expected `{}` to resolve to `{}`",
+        result["output"].as_str().unwrap().trim(),
+        custom_workdir.display()
+    );
+
+    fs::remove_dir_all(&workspace).ok();
 }
 
 #[tokio::test]
 async fn test_bash_background_returns_session_id() {
-    use gsv::tools::{BashTool, ProcessTool, Tool};
+    use gsv::tools::{BashTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
     let bash = BashTool::new(workspace.clone());
-    let process = ProcessTool::new();
 
     let start = bash
         .execute(json!({
-            "command": "sleep 1; echo async-finished",
+            "command": shell_background_finish_command(),
             "background": true
         }))
         .await
@@ -70,91 +149,6 @@ async fn test_bash_background_returns_session_id() {
     assert_eq!(start["status"], "running");
     let session_id = start["sessionId"].as_str().unwrap().to_string();
     assert!(!session_id.is_empty());
-
-    let listed = process.execute(json!({ "action": "list" })).await.unwrap();
-    let sessions = listed["sessions"].as_array().unwrap();
-    assert!(sessions
-        .iter()
-        .any(|entry| entry["sessionId"] == session_id));
-}
-
-#[tokio::test]
-async fn test_process_tool_poll_log_and_kill_background_session() {
-    use gsv::tools::{BashTool, ProcessTool, Tool};
-    use serde_json::json;
-
-    let workspace = std::env::temp_dir();
-    let bash = BashTool::new(workspace.clone());
-    let process = ProcessTool::new();
-
-    let start = bash
-        .execute(json!({
-            "command": "while true; do echo heartbeat; sleep 0.2; done",
-            "background": true
-        }))
-        .await
-        .unwrap();
-    assert_eq!(start["status"], "running");
-
-    let session_id = start["sessionId"].as_str().unwrap().to_string();
-
-    let poll_running = process
-        .execute(json!({
-            "action": "poll",
-            "sessionId": session_id.clone()
-        }))
-        .await
-        .unwrap();
-    assert_eq!(poll_running["running"], true);
-
-    let mut saw_heartbeat = false;
-    let mut last_log = String::new();
-    for _ in 0..80 {
-        let log = process
-            .execute(json!({
-                "action": "log",
-                "sessionId": session_id.clone()
-            }))
-            .await
-            .unwrap();
-        let output = log["log"].as_str().unwrap_or("");
-        last_log = output.to_string();
-        if output.contains("heartbeat") {
-            saw_heartbeat = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-
-    let kill = process
-        .execute(json!({
-            "action": "kill",
-            "sessionId": session_id.clone()
-        }))
-        .await
-        .unwrap();
-    assert_eq!(kill["status"], "running");
-
-    for _ in 0..80 {
-        let poll = process
-            .execute(json!({
-                "action": "poll",
-                "sessionId": session_id.clone()
-            }))
-            .await
-            .unwrap();
-        if poll["running"] == false {
-            assert_ne!(poll["status"], "running");
-            assert!(
-                saw_heartbeat,
-                "expected heartbeat in process log before kill, last log: {last_log}"
-            );
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-
-    panic!("background session did not exit after kill");
 }
 
 #[tokio::test]
@@ -190,6 +184,31 @@ async fn test_read_tool() {
 
     // Cleanup
     std::fs::remove_file(&test_file).ok();
+}
+
+#[tokio::test]
+async fn test_read_tool_directory() {
+    use gsv::tools::{ReadTool, Tool};
+    use serde_json::json;
+
+    let workspace = std::env::temp_dir().join("gsv_test_read_dir");
+    std::fs::create_dir_all(workspace.join("nested")).unwrap();
+    std::fs::write(workspace.join("file.txt"), "hello").unwrap();
+
+    let tool = ReadTool::new(std::env::temp_dir());
+
+    let result = tool
+        .execute(json!({
+            "path": workspace.to_str().unwrap()
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["directories"][0], "nested");
+    assert_eq!(result["files"][0], "file.txt");
+
+    std::fs::remove_dir_all(&workspace).ok();
 }
 
 #[tokio::test]
@@ -242,7 +261,7 @@ async fn test_write_tool() {
 
     let test_file = workspace.join("gsv_test_write.txt");
 
-    // Test writing - returns "bytes" not "success"
+    // Test writing - returns native fs.write shape
     let result = tool
         .execute(json!({
             "path": test_file.to_str().unwrap(),
@@ -251,7 +270,8 @@ async fn test_write_tool() {
         .await
         .unwrap();
 
-    assert_eq!(result["bytes"], 19); // "test content\nline 2" = 19 bytes
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["size"], 19); // "test content\nline 2" = 19 bytes
 
     // Verify content
     let content = std::fs::read_to_string(&test_file).unwrap();
@@ -376,14 +396,14 @@ fn test_all_tools_with_workspace() {
     let workspace = std::env::temp_dir();
     let tools = all_tools_with_workspace(workspace);
 
-    // Should have 7 tools: Bash, Process, Read, Write, Edit, Glob, Grep
+    // Should have 7 tools: Bash, Read, Write, Delete, Edit, Glob, Grep
     assert_eq!(tools.len(), 7);
 
     let names: Vec<_> = tools.iter().map(|t| t.definition().name).collect();
     assert!(names.contains(&"Bash".to_string()));
-    assert!(names.contains(&"Process".to_string()));
     assert!(names.contains(&"Read".to_string()));
     assert!(names.contains(&"Write".to_string()));
+    assert!(names.contains(&"Delete".to_string()));
     assert!(names.contains(&"Edit".to_string()));
     assert!(names.contains(&"Glob".to_string()));
     assert!(names.contains(&"Grep".to_string()));
