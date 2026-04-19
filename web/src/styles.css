@@ -138,7 +138,7 @@ button:disabled {
   overflow: visible;
   color: var(--text-main);
   font-family: var(--font-ui);
-  background-image: url("/background.png");
+  background-image: url("https://cdn.midjourney.com/7cf76c86-3f53-4990-9252-3c2fb01f8d95/0_0.png");
   background-size: cover;
   background-position: center;
 }
@@ -603,7 +603,7 @@ button:disabled {
   display: flex;
   align-items: stretch;
   justify-content: center;
-  background: url("/background4.png");
+  background: url("https://cdn.midjourney.com/71e52255-a738-400d-9e51-7ac92b246559/0_0.png");
   background-size: cover;
   background-position: center;
   color: #18314f;
