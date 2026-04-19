@@ -152,7 +152,7 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
       replyToId?: string;
     },
   ): Promise<SendResult> {
-    const botToken = this.env.DISCORD_BOT_TOKEN;
+    const botToken = await this.resolveBotToken(accountId);
     if (!botToken) {
       return { ok: false, error: "No bot token configured" };
     }
@@ -245,7 +245,7 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
   async setTyping(accountId: string, peer: ChannelPeer, typing: boolean): Promise<void> {
     if (!typing) return; // Discord doesn't have "stop typing"
 
-    const botToken = this.env.DISCORD_BOT_TOKEN;
+    const botToken = await this.resolveBotToken(accountId);
     if (!botToken) return;
 
     await this.discordFetch(`/channels/${peer.id}/typing`, {
@@ -261,6 +261,12 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
   private getGatewayDO(accountId: string) {
     const id = this.env.DISCORD_GATEWAY.idFromName(accountId);
     return this.env.DISCORD_GATEWAY.get(id) as unknown as DiscordGatewayStub;
+  }
+
+  private async resolveBotToken(accountId: string): Promise<string | null> {
+    const gateway = this.getGatewayDO(accountId);
+    const persistedToken = await gateway.getBotToken();
+    return persistedToken || this.env.DISCORD_BOT_TOKEN || null;
   }
 
   private async discordFetch(
@@ -362,6 +368,7 @@ interface DiscordGatewayStub {
   start(botToken: string, accountId?: string): Promise<void>;
   stop(): Promise<void>;
   getStatus(): Promise<ChannelAccountStatus>;
+  getBotToken(): Promise<string | null>;
 }
 
 // Default export: HTTP handler for direct requests

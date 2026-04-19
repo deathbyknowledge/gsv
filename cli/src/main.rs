@@ -160,7 +160,7 @@ enum DeviceAction {
 
 #[derive(Subcommand)]
 enum InfraAction {
-    /// First-time infrastructure deploy (wizard + optional device bootstrap)
+    /// Deploy infrastructure and finish onboarding in the web app
     Deploy {
         /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
         #[arg(long, default_value = "latest")]
@@ -182,10 +182,6 @@ enum InfraAction {
         #[arg(long)]
         bundle_dir: Option<PathBuf>,
 
-        /// Disable interactive deploy wizard prompts
-        #[arg(long)]
-        no_wizard: bool,
-
         /// Cloudflare API token (falls back to config `cloudflare.api_token`)
         #[arg(long, env = "CF_API_TOKEN")]
         api_token: Option<String>,
@@ -194,37 +190,9 @@ enum InfraAction {
         #[arg(long, env = "CF_ACCOUNT_ID")]
         account_id: Option<String>,
 
-        /// Gateway auth token to set in gateway config (`auth.token`)
-        #[arg(long, env = "GSV_GATEWAY_AUTH_TOKEN")]
-        gateway_auth_token: Option<String>,
-
-        /// LLM provider to configure on gateway (`anthropic`, `openai`, `google`, `openrouter`, or custom)
-        #[arg(long)]
-        llm_provider: Option<String>,
-
-        /// LLM model ID to configure on gateway
-        #[arg(long)]
-        llm_model: Option<String>,
-
-        /// LLM API key to configure on gateway (`apiKeys.<provider>`)
-        #[arg(long)]
-        llm_api_key: Option<String>,
-
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
         discord_bot_token: Option<String>,
-
-        /// Device ID to persist in local config (used by device daemon)
-        #[arg(long)]
-        id: Option<String>,
-
-        /// Device workspace to persist in local config (used by device daemon)
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-
-        /// Skip device daemon installation/start
-        #[arg(long)]
-        skip_node: bool,
     },
 
     /// Upgrade deployed infrastructure components
@@ -249,10 +217,6 @@ enum InfraAction {
         #[arg(long)]
         bundle_dir: Option<PathBuf>,
 
-        /// Run interactive setup prompts (first-time guided flow)
-        #[arg(long)]
-        wizard: bool,
-
         /// Cloudflare API token (falls back to config `cloudflare.api_token`)
         #[arg(long, env = "CF_API_TOKEN")]
         api_token: Option<String>,
@@ -260,22 +224,6 @@ enum InfraAction {
         /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
         #[arg(long, env = "CF_ACCOUNT_ID")]
         account_id: Option<String>,
-
-        /// Gateway auth token to set in gateway config (`auth.token`)
-        #[arg(long, env = "GSV_GATEWAY_AUTH_TOKEN")]
-        gateway_auth_token: Option<String>,
-
-        /// LLM provider to configure on gateway (`anthropic`, `openai`, `google`, `openrouter`, or custom)
-        #[arg(long)]
-        llm_provider: Option<String>,
-
-        /// LLM model ID to configure on gateway
-        #[arg(long)]
-        llm_model: Option<String>,
-
-        /// LLM API key to configure on gateway (`apiKeys.<provider>`)
-        #[arg(long)]
-        llm_api_key: Option<String>,
 
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
@@ -720,10 +668,6 @@ enum DeployAction {
         #[arg(long)]
         bundle_dir: Option<PathBuf>,
 
-        /// Run interactive setup prompts (first-time guided flow)
-        #[arg(long)]
-        wizard: bool,
-
         /// Cloudflare API token (falls back to config `cloudflare.api_token`)
         #[arg(long, env = "CF_API_TOKEN")]
         api_token: Option<String>,
@@ -731,22 +675,6 @@ enum DeployAction {
         /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
         #[arg(long, env = "CF_ACCOUNT_ID")]
         account_id: Option<String>,
-
-        /// Gateway auth token to set in gateway config (`auth.token`)
-        #[arg(long, env = "GSV_GATEWAY_AUTH_TOKEN")]
-        gateway_auth_token: Option<String>,
-
-        /// LLM provider to configure on gateway (`anthropic`, `openai`, `google`, `openrouter`, or custom)
-        #[arg(long)]
-        llm_provider: Option<String>,
-
-        /// LLM model ID to configure on gateway
-        #[arg(long)]
-        llm_model: Option<String>,
-
-        /// LLM API key to configure on gateway (`apiKeys.<provider>`)
-        #[arg(long)]
-        llm_api_key: Option<String>,
 
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
@@ -1331,17 +1259,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 all,
                 force_fetch,
                 bundle_dir,
-                no_wizard,
                 api_token,
                 account_id,
-                gateway_auth_token,
-                llm_provider,
-                llm_model,
-                llm_api_key,
                 discord_bot_token,
-                id,
-                workspace,
-                skip_node,
             } => {
                 run_setup(
                     &cfg,
@@ -1350,17 +1270,9 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     all,
                     force_fetch,
                     bundle_dir,
-                    no_wizard,
                     api_token,
                     account_id,
-                    gateway_auth_token,
-                    llm_provider,
-                    llm_model,
-                    llm_api_key,
                     discord_bot_token,
-                    id,
-                    workspace,
-                    skip_node,
                 )
                 .await
             }
@@ -1370,13 +1282,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 all,
                 force_fetch,
                 bundle_dir,
-                wizard,
                 api_token,
                 account_id,
-                gateway_auth_token,
-                llm_provider,
-                llm_model,
-                llm_api_key,
                 discord_bot_token,
             } => {
                 run_upgrade(
@@ -1386,13 +1293,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                     all,
                     force_fetch,
                     bundle_dir,
-                    wizard,
                     api_token,
                     account_id,
-                    gateway_auth_token,
-                    llm_provider,
-                    llm_model,
-                    llm_api_key,
                     discord_bot_token,
                 )
                 .await
@@ -1657,19 +1559,6 @@ fn run_local_config(action: LocalConfigAction) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-fn normalize_llm_provider(provider: &str) -> Option<String> {
-    let normalized = provider.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-fn is_builtin_llm_provider(provider: &str) -> bool {
-    matches!(provider, "anthropic" | "openai" | "google" | "openrouter")
-}
-
 fn default_llm_model_for_provider(provider: &str) -> Option<&'static str> {
     match provider {
         "anthropic" => Some("claude-sonnet-4-20250514"),
@@ -1691,14 +1580,6 @@ fn env_api_key_for_provider(provider: &str) -> Option<String> {
         _ => None,
     }
     .filter(|value| !value.trim().is_empty())
-}
-
-fn generate_gateway_auth_token() -> String {
-    format!(
-        "gsv_{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    )
 }
 
 fn can_prompt_interactively() -> bool {
@@ -2355,149 +2236,39 @@ fn component_is_selected(components: &[String], component: &str) -> bool {
     components.iter().any(|c| c == component)
 }
 
-fn prompt_up_components(
-    default_components: &[String],
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let default_all = default_components.is_empty();
-    let mut defaults = Vec::new();
-    if default_all || component_is_selected(default_components, "gateway") {
-        defaults.push("gateway".to_string());
+fn teardown_component_description(component: &str) -> &'static str {
+    match component {
+        "ripgit" => "Git-backed storage worker",
+        "gateway" => "Core API + sessions worker",
+        "channel-whatsapp" => "WhatsApp channel worker",
+        "channel-discord" => "Discord channel worker",
+        _ => "Worker component",
     }
-    if default_all || component_is_selected(default_components, "channel-whatsapp") {
-        defaults.push("channel-whatsapp".to_string());
-    }
-    if default_all || component_is_selected(default_components, "channel-discord") {
-        defaults.push("channel-discord".to_string());
-    }
-
-    let mut prompt = multiselect("Select components to deploy")
-        .item(
-            "gateway".to_string(),
-            "gateway",
-            "Core API + sessions + shared infra",
-        )
-        .item(
-            "channel-whatsapp".to_string(),
-            "channel-whatsapp",
-            "WhatsApp channel worker",
-        )
-        .item(
-            "channel-discord".to_string(),
-            "channel-discord",
-            "Discord channel worker",
-        )
-        .required(true);
-    if !defaults.is_empty() {
-        prompt = prompt.initial_values(defaults);
-    }
-
-    Ok(prompt.interact()?)
 }
 
 fn prompt_down_components(
     default_components: &[String],
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let mut defaults = Vec::new();
-    if component_is_selected(default_components, "gateway") {
-        defaults.push("gateway".to_string());
-    }
-    if component_is_selected(default_components, "channel-whatsapp") {
-        defaults.push("channel-whatsapp".to_string());
-    }
-    if component_is_selected(default_components, "channel-discord") {
-        defaults.push("channel-discord".to_string());
-    }
+    let defaults = deploy::available_components()
+        .iter()
+        .filter(|component| component_is_selected(default_components, component))
+        .map(|component| (*component).to_string())
+        .collect::<Vec<_>>();
 
-    let mut prompt = multiselect("Select components to tear down")
-        .item(
-            "gateway".to_string(),
-            "gateway",
-            "Core API + sessions worker",
-        )
-        .item(
-            "channel-whatsapp".to_string(),
-            "channel-whatsapp",
-            "WhatsApp channel worker",
-        )
-        .item(
-            "channel-discord".to_string(),
-            "channel-discord",
-            "Discord channel worker",
-        )
-        .required(true);
+    let mut prompt = multiselect("Select components to tear down");
+    for component in deploy::available_components() {
+        prompt = prompt.item(
+            (*component).to_string(),
+            *component,
+            teardown_component_description(component),
+        );
+    }
+    prompt = prompt.required(true);
     if !defaults.is_empty() {
         prompt = prompt.initial_values(defaults);
     }
 
     Ok(prompt.interact()?)
-}
-
-fn prompt_llm_provider(
-    default_provider: Option<&str>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let normalized_default = default_provider.and_then(normalize_llm_provider);
-    let initial_value = match normalized_default.as_deref() {
-        Some(provider) if is_builtin_llm_provider(provider) => provider.to_string(),
-        Some(_) => "custom".to_string(),
-        None => "anthropic".to_string(),
-    };
-
-    let mut prompt = select("LLM provider")
-        .item("anthropic".to_string(), "anthropic", "Claude models")
-        .item("openai".to_string(), "openai", "GPT models")
-        .item("google".to_string(), "google", "Gemini models")
-        .item(
-            "openrouter".to_string(),
-            "openrouter",
-            "Routed provider access",
-        )
-        .item(
-            "custom".to_string(),
-            "custom",
-            "Type a provider id manually",
-        )
-        .initial_value(initial_value);
-    let selection = prompt.interact()?;
-    if selection == "custom" {
-        let custom_default = normalized_default
-            .as_deref()
-            .filter(|provider| !is_builtin_llm_provider(provider));
-        let custom =
-            prompt_line("Custom provider ID", custom_default)?.ok_or("Provider is required")?;
-        return normalize_llm_provider(&custom).ok_or("Provider is required".into());
-    }
-
-    Ok(selection)
-}
-
-fn gateway_http_url_to_ws_url(gateway_url: &str) -> String {
-    let mut ws_url = if let Some(rest) = gateway_url.strip_prefix("https://") {
-        format!("wss://{}", rest)
-    } else if let Some(rest) = gateway_url.strip_prefix("http://") {
-        format!("ws://{}", rest)
-    } else {
-        gateway_url.to_string()
-    };
-
-    if !ws_url.ends_with("/ws") {
-        ws_url = ws_url.trim_end_matches('/').to_string();
-        ws_url.push_str("/ws");
-    }
-
-    ws_url
-}
-
-fn save_gateway_local_config(
-    gateway_url: &str,
-    auth_token: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut local_cfg = CliConfig::load();
-    local_cfg.gateway.url = Some(gateway_http_url_to_ws_url(gateway_url));
-    if let Some(token) = auth_token {
-        local_cfg.gateway.token = Some(token.to_string());
-    }
-    local_cfg.save()?;
-    Ok(())
 }
 
 fn normalize_release_channel(value: &str) -> Option<String> {
@@ -2546,25 +2317,10 @@ async fn run_setup(
     all: bool,
     force_fetch: bool,
     bundle_dir: Option<PathBuf>,
-    no_wizard: bool,
     api_token: Option<String>,
     account_id: Option<String>,
-    gateway_auth_token: Option<String>,
-    llm_provider: Option<String>,
-    llm_model: Option<String>,
-    llm_api_key: Option<String>,
     discord_bot_token: Option<String>,
-    node_id: Option<String>,
-    node_workspace: Option<PathBuf>,
-    skip_node: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let wizard = !no_wizard && can_prompt_interactively();
-    if !no_wizard && !wizard {
-        println!(
-            "Interactive terminal not detected; continuing setup without wizard prompts (pass --no-wizard to silence this)."
-        );
-    }
-
     let (version, version_channel_source) = resolve_channel_aware_version(cfg, &version);
     if let Some(source) = version_channel_source {
         println!("Using release channel '{}' from {}.", version, source);
@@ -2577,33 +2333,13 @@ async fn run_setup(
             all,
             force_fetch,
             bundle_dir,
-            wizard,
             api_token,
             account_id,
-            gateway_auth_token,
-            llm_provider,
-            llm_model,
-            llm_api_key,
             discord_bot_token,
         },
         cfg,
     )
-    .await?;
-
-    if skip_node {
-        println!("Skipped device daemon setup (--skip-node).");
-        return Ok(());
-    }
-
-    if !device_service::node_service_management_supported() {
-        println!(
-            "Device daemon management is unsupported on this OS. Run `gsv device run` to start a device manually."
-        );
-        return Ok(());
-    }
-
-    let refreshed_cfg = CliConfig::load();
-    run_node_default_managed(&refreshed_cfg, node_id, node_workspace, None, None, None)
+    .await
 }
 
 async fn run_upgrade(
@@ -2613,13 +2349,8 @@ async fn run_upgrade(
     all: bool,
     force_fetch: bool,
     bundle_dir: Option<PathBuf>,
-    wizard: bool,
     api_token: Option<String>,
     account_id: Option<String>,
-    gateway_auth_token: Option<String>,
-    llm_provider: Option<String>,
-    llm_model: Option<String>,
-    llm_api_key: Option<String>,
     discord_bot_token: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (version, version_channel_source) = resolve_channel_aware_version(cfg, &version);
@@ -2642,13 +2373,8 @@ async fn run_upgrade(
             all,
             force_fetch: effective_force_fetch,
             bundle_dir,
-            wizard,
             api_token,
             account_id,
-            gateway_auth_token,
-            llm_provider,
-            llm_model,
-            llm_api_key,
             discord_bot_token,
         },
         cfg,
@@ -2721,37 +2447,15 @@ async fn run_deploy(
             all,
             force_fetch,
             bundle_dir,
-            wizard,
             api_token,
             account_id,
-            gateway_auth_token,
-            llm_provider,
-            llm_model,
-            llm_api_key,
             discord_bot_token,
         } => {
             if all && !component.is_empty() {
                 return Err("Use either --all or one/more --component values, not both".into());
             }
 
-            let interactive = can_prompt_interactively();
-            let wizard_mode = wizard;
-            let local_account_id_configured = cfg
-                .cloudflare
-                .account_id
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty());
-
-            if wizard_mode && !interactive {
-                return Err("--wizard requires an interactive terminal".into());
-            }
-            deploy::set_notification_output(wizard_mode && interactive);
-            if wizard_mode && interactive {
-                intro("GSV deploy wizard")?;
-            }
-
-            let token =
-                resolve_cloudflare_token_for_deploy(cfg, api_token, wizard_mode, interactive)?;
+            let token = resolve_cloudflare_token_for_deploy(cfg, api_token, false, false)?;
             let configured_account_id = account_id
                 .or_else(|| cfg.cloudflare.account_id.clone())
                 .map(|value| value.trim().to_string())
@@ -2759,13 +2463,13 @@ async fn run_deploy(
             let resolved_account_id = resolve_cloudflare_account_id_for_deploy(
                 &token,
                 configured_account_id,
-                wizard_mode,
-                interactive,
+                false,
+                false,
             )
             .await?;
             println!("Cloudflare account ID: {}", resolved_account_id);
 
-            let mut components = if all {
+            let components = if all {
                 deploy::available_components()
                     .iter()
                     .map(|c| (*c).to_string())
@@ -2774,189 +2478,8 @@ async fn run_deploy(
                 deploy::normalize_components(&component)?
             };
 
-            if wizard_mode && interactive && !all && component.is_empty() {
-                components = prompt_up_components(&components)?;
-                if components.is_empty() {
-                    return Err("No components selected for deployment.".into());
-                }
-            }
-
             let deploying_gateway = components.iter().any(|c| c == "gateway");
-            let deploying_whatsapp = components.iter().any(|c| c == "channel-whatsapp");
             let deploying_discord = components.iter().any(|c| c == "channel-discord");
-
-            if wizard_mode && interactive {
-                note(
-                    "Target",
-                    format!(
-                        "Cloudflare account: {}\nComponents: {}",
-                        resolved_account_id,
-                        components.join(", ")
-                    ),
-                )?;
-                note(
-                    "Security notice",
-                    "GSV agents may execute shell commands and access external services.\nEnsure you trust the environment and connected channels/nodes.",
-                )?;
-                if !prompt_yes_no("I understand the risks and want to proceed", false)? {
-                    let _ = outro_cancel("Deployment cancelled.");
-                    return Err("Deployment cancelled.".into());
-                }
-            }
-
-            if !local_account_id_configured {
-                if wizard_mode
-                    && interactive
-                    && prompt_yes_no(
-                        "Save this Cloudflare account ID for future deploy commands?",
-                        true,
-                    )?
-                {
-                    if persist_cloudflare_account_id(&resolved_account_id)? {
-                        println!("Saved cloudflare.account_id to local config.");
-                    }
-                } else {
-                    println!(
-                        "Tip: persist it with `gsv config --local set cloudflare.account_id {}`",
-                        resolved_account_id
-                    );
-                }
-            }
-
-            let mut resolved_provider = match llm_provider {
-                Some(provider) => Some(
-                    normalize_llm_provider(&provider).ok_or("--llm-provider must not be empty")?,
-                ),
-                None => None,
-            };
-            let mut resolved_llm_model = llm_model;
-            let mut resolved_llm_api_key = llm_api_key;
-            let mut resolved_discord_bot_token = discord_bot_token;
-            let explicit_gateway_auth_token = gateway_auth_token.clone();
-            let mut desired_gateway_auth_token = explicit_gateway_auth_token.clone();
-            let connect_gateway_auth_token = explicit_gateway_auth_token
-                .clone()
-                .or_else(|| cfg.gateway.token.clone());
-
-            if !deploying_gateway
-                && (explicit_gateway_auth_token.is_some()
-                    || resolved_provider.is_some()
-                    || resolved_llm_model.is_some()
-                    || resolved_llm_api_key.is_some())
-            {
-                return Err(
-                    "Gateway bootstrap options require deploying the `gateway` component.".into(),
-                );
-            }
-
-            if resolved_llm_model.is_some() && resolved_provider.is_none() {
-                return Err("--llm-model requires --llm-provider".into());
-            }
-            if resolved_llm_api_key.is_some() && resolved_provider.is_none() {
-                return Err("--llm-api-key requires --llm-provider".into());
-            }
-
-            if deploying_gateway
-                && resolved_provider.is_none()
-                && resolved_llm_model.is_none()
-                && resolved_llm_api_key.is_none()
-                && wizard_mode
-                && interactive
-                && prompt_yes_no("Configure gateway auth + LLM settings now?", true)?
-            {
-                resolved_provider = Some(prompt_llm_provider(Some("anthropic"))?);
-            }
-
-            if let Some(provider) = resolved_provider.as_deref() {
-                if resolved_llm_model.is_none() {
-                    if let Some(default_model) = default_llm_model_for_provider(provider) {
-                        if interactive && wizard_mode {
-                            resolved_llm_model = prompt_line("LLM model", Some(default_model))?;
-                        } else {
-                            resolved_llm_model = Some(default_model.to_string());
-                        }
-                    } else if interactive && wizard_mode {
-                        resolved_llm_model = prompt_line("LLM model", None)?;
-                    } else {
-                        return Err(format!(
-                            "--llm-model is required for custom provider '{}'",
-                            provider
-                        )
-                        .into());
-                    }
-                }
-                if resolved_llm_model
-                    .as_deref()
-                    .map(|model| model.trim().is_empty())
-                    .unwrap_or(true)
-                {
-                    return Err(format!("LLM model is required for provider '{}'", provider).into());
-                }
-
-                if resolved_llm_api_key.is_none() {
-                    resolved_llm_api_key = env_api_key_for_provider(provider);
-                }
-                if resolved_llm_api_key.is_none() && interactive && wizard_mode {
-                    resolved_llm_api_key = prompt_secret(&format!("{} API key", provider))?;
-                }
-                if resolved_llm_api_key.is_none() {
-                    return Err(format!(
-                        "Missing API key for provider '{}'. Use --llm-api-key or set the provider env var.",
-                        provider
-                    )
-                    .into());
-                }
-            }
-
-            if deploying_discord
-                && resolved_discord_bot_token.is_none()
-                && wizard_mode
-                && interactive
-            {
-                note(
-                    "Discord setup checklist",
-                    "1. https://discord.com/developers/applications -> New Application\n2. Bot tab -> Add Bot -> Reset Token\n3. Enable MESSAGE CONTENT INTENT in Bot tab\n4. Invite URL: https://discord.com/oauth2/authorize?client_id=<APP_ID>&permissions=101376&scope=bot",
-                )?;
-                if prompt_yes_no(
-                    "Configure Discord bot token on deployed channel worker now?",
-                    true,
-                )? {
-                    resolved_discord_bot_token = prompt_secret("Discord bot token")?;
-                }
-            }
-
-            if wizard_mode && interactive {
-                let mut summary = format!(
-                    "Account: {}\nComponents: {}",
-                    resolved_account_id,
-                    components.join(", ")
-                );
-                if deploying_gateway {
-                    if let (Some(provider), Some(model)) =
-                        (resolved_provider.as_deref(), resolved_llm_model.as_deref())
-                    {
-                        summary.push_str(&format!("\nGateway model: {}/{}", provider, model));
-                    } else {
-                        summary.push_str("\nGateway model: unchanged");
-                    }
-                }
-                if deploying_discord {
-                    summary.push_str(&format!(
-                        "\nDiscord bot token: {}",
-                        if resolved_discord_bot_token.is_some() {
-                            "provided"
-                        } else {
-                            "not provided"
-                        }
-                    ));
-                }
-                note("Deployment summary", summary)?;
-                if !prompt_yes_no("Ready to deploy?", true)? {
-                    let _ = outro_cancel("Deployment cancelled.");
-                    return Err("Deployment cancelled.".into());
-                }
-                log::step("Starting deployment...")?;
-            }
 
             let bundle_version = if bundle_dir.is_some() {
                 deploy::local_bundle_version_label(&version)
@@ -2985,99 +2508,8 @@ async fn run_deploy(
             )
             .await?;
 
-            if deploying_gateway
-                && desired_gateway_auth_token.is_none()
-                && !apply_result.gateway_existed_before_deploy
-            {
-                desired_gateway_auth_token = cfg
-                    .gateway
-                    .token
-                    .clone()
-                    .or_else(|| Some(generate_gateway_auth_token()));
-            }
-
-            if deploying_gateway {
-                if let Some(gateway_url) = apply_result.gateway_url.as_deref() {
-                    let set_whatsapp_pairing =
-                        deploying_whatsapp && !apply_result.gateway_existed_before_deploy;
-                    let gateway_bootstrap = deploy::GatewayBootstrapConfig {
-                        auth_token: desired_gateway_auth_token.clone(),
-                        llm_provider: resolved_provider.clone(),
-                        llm_model: resolved_llm_model.clone(),
-                        llm_api_key: resolved_llm_api_key.clone(),
-                        set_whatsapp_pairing,
-                    };
-
-                    let should_bootstrap = gateway_bootstrap.auth_token.is_some()
-                        || gateway_bootstrap.llm_provider.is_some()
-                        || gateway_bootstrap.llm_model.is_some()
-                        || gateway_bootstrap.llm_api_key.is_some()
-                        || gateway_bootstrap.set_whatsapp_pairing;
-
-                    let mut bootstrap_applied = false;
-                    if should_bootstrap {
-                        println!();
-                        println!("Applying gateway runtime configuration...");
-                        match deploy::bootstrap_gateway_config(
-                            gateway_url,
-                            connect_gateway_auth_token
-                                .as_deref()
-                                .or(desired_gateway_auth_token.as_deref()),
-                            &gateway_bootstrap,
-                        )
-                        .await
-                        {
-                            Ok(()) => {
-                                bootstrap_applied = true;
-                                if let Some(token_value) = gateway_bootstrap.auth_token.as_deref() {
-                                    if cfg.gateway.token.as_deref() != Some(token_value) {
-                                        println!(
-                                            "Gateway auth token: {}...{}",
-                                            &token_value[..4.min(token_value.len())],
-                                            &token_value[token_value.len().saturating_sub(4)..]
-                                        );
-                                    }
-                                }
-                            }
-                            Err(error) => {
-                                println!(
-                                    "Warning: gateway runtime configuration failed: {}",
-                                    error
-                                );
-                                println!("You can apply settings manually with:");
-                                println!("  gsv config set auth.token <token>");
-                                println!("  gsv config set model.provider <provider>");
-                                println!("  gsv config set model.id <model>");
-                                println!("  gsv config set apiKeys.<provider> <api-key>");
-                            }
-                        }
-                    }
-
-                    let token_to_save = if bootstrap_applied {
-                        desired_gateway_auth_token.as_deref()
-                    } else {
-                        None
-                    };
-                    save_gateway_local_config(gateway_url, token_to_save)?;
-                    if bootstrap_applied {
-                        println!("Saved gateway URL/token to local config.");
-                    } else {
-                        println!("Saved gateway URL to local config.");
-                        if should_bootstrap {
-                            println!(
-                                "Gateway token was not saved because runtime configuration did not complete."
-                            );
-                        }
-                    }
-                } else {
-                    println!(
-                        "Warning: gateway URL was unavailable, skipping runtime configuration step."
-                    );
-                }
-            }
-
             if deploying_discord {
-                if let Some(bot_token) = resolved_discord_bot_token.as_deref() {
+                if let Some(bot_token) = discord_bot_token.as_deref() {
                     println!("Setting DISCORD_BOT_TOKEN secret on Discord channel worker...");
                     deploy::set_discord_bot_token_secret(&resolved_account_id, &token, bot_token)
                         .await?;
@@ -3086,6 +2518,19 @@ async fn run_deploy(
                     println!("Note: Discord bot token not configured.");
                     println!(
                         "Tip: rerun deploy with --discord-bot-token (or DISCORD_BOT_TOKEN env) before `gsv channel discord start`."
+                    );
+                }
+            }
+
+            println!();
+            println!("Infrastructure deployed successfully.");
+            if deploying_gateway {
+                if let Some(gateway_url) = apply_result.gateway_url.as_deref() {
+                    println!("Finish onboarding in the browser:");
+                    println!("{}", gateway_url);
+                } else {
+                    println!(
+                        "Gateway URL unavailable after deploy. Run `gsv infra status --component gateway` to inspect the worker URL."
                     );
                 }
             }
@@ -3349,67 +2794,6 @@ fn persist_gateway_overrides(
     }
 
     Ok(changed)
-}
-
-fn persist_cloudflare_account_id(account_id: &str) -> Result<bool, Box<dyn std::error::Error>> {
-    let trimmed = account_id.trim();
-    if trimmed.is_empty() {
-        return Ok(false);
-    }
-
-    let mut local_cfg = CliConfig::load();
-    if local_cfg.cloudflare.account_id.as_deref() == Some(trimmed) {
-        return Ok(false);
-    }
-
-    local_cfg.cloudflare.account_id = Some(trimmed.to_string());
-    local_cfg.save()?;
-    Ok(true)
-}
-
-fn run_node_default_managed(
-    cfg: &CliConfig,
-    node_id: Option<String>,
-    workspace: Option<PathBuf>,
-    gateway_url_override: Option<&str>,
-    gateway_username_override: Option<&str>,
-    gateway_token_override: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if device_service::node_service_is_installed()? {
-        let gateway_overrides_changed = persist_gateway_overrides(
-            gateway_url_override,
-            gateway_username_override,
-            gateway_token_override,
-        )?;
-        let (node_id, workspace, node_defaults_changed) =
-            persist_node_defaults(cfg, node_id, workspace)?;
-        if gateway_overrides_changed || node_defaults_changed {
-            device_service::restart_node_service()?;
-        } else {
-            run_node_service(DeviceServiceAction::Start, cfg, None, None, None)?;
-        }
-        if gateway_overrides_changed {
-            println!("Saved gateway connection overrides to local config.");
-        }
-        println!(
-            "Using defaults: node.id={}, node.workspace={}",
-            node_id,
-            workspace.display()
-        );
-    } else {
-        run_node_service(
-            DeviceServiceAction::Install {
-                id: node_id,
-                workspace,
-            },
-            cfg,
-            gateway_url_override,
-            gateway_username_override,
-            gateway_token_override,
-        )?;
-    }
-
-    Ok(())
 }
 
 fn run_node_service(
