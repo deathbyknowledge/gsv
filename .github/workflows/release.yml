@@ -110,6 +110,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          targets: wasm32-unknown-unknown
+        with:
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools (Linux ARM64)
@@ -179,8 +181,14 @@ jobs:
             package-lock.json
             gateway/package-lock.json
             web/package-lock.json
+            ripgit/package-lock.json
             adapters/whatsapp/package-lock.json
             adapters/discord/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Build Cloudflare bundles
         run: |
@@ -193,6 +201,7 @@ jobs:
           name: gsv-cloudflare-bundles
           path: |
             release/gsv-cloudflare-gateway.tar.gz
+            release/gsv-cloudflare-ripgit.tar.gz
             release/gsv-cloudflare-channel-whatsapp.tar.gz
             release/gsv-cloudflare-channel-discord.tar.gz
             release/cloudflare-checksums.txt
@@ -223,9 +232,11 @@ jobs:
           cp artifacts/gsv-linux-arm64/gsv-linux-arm64 release/
           cp artifacts/gsv-darwin-x64/gsv-darwin-x64 release/
           cp artifacts/gsv-darwin-arm64/gsv-darwin-arm64 release/
+          cp artifacts/gsv-windows-x64.exe/gsv-windows-x64.exe release/
 
           # Cloudflare deploy bundles (modular, per component/channel)
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-gateway.tar.gz release/
+          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-ripgit.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-whatsapp.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-discord.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/cloudflare-checksums.txt release/
@@ -283,6 +294,7 @@ jobs:
 
           Cloudflare artifacts are split by component:
           - \`gsv-cloudflare-gateway.tar.gz\`
+          - \`gsv-cloudflare-ripgit.tar.gz\`
           - \`gsv-cloudflare-channel-whatsapp.tar.gz\`
           - \`gsv-cloudflare-channel-discord.tar.gz\`
 
@@ -313,6 +325,7 @@ jobs:
             release/gsv-darwin-arm64
             release/gsv-windows-x64.exe
             release/gsv-cloudflare-gateway.tar.gz
+            release/gsv-cloudflare-ripgit.tar.gz
             release/gsv-cloudflare-channel-whatsapp.tar.gz
             release/gsv-cloudflare-channel-discord.tar.gz
             release/cloudflare-checksums.txt

@@ -17,6 +17,7 @@ install_dir() {
 echo "==> Installing dependencies"
 install_dir "${ROOT_DIR}/gateway"
 install_dir "${ROOT_DIR}/web"
+install_dir "${ROOT_DIR}/ripgit"
 install_dir "${ROOT_DIR}/adapters/whatsapp"
 install_dir "${ROOT_DIR}/adapters/discord"
 
@@ -26,12 +27,17 @@ npm run build --prefix "${ROOT_DIR}/web"
 echo "==> Bundling workers with wrangler --dry-run"
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}/gateway/worker"
+mkdir -p "${DIST_DIR}/ripgit/worker"
 mkdir -p "${DIST_DIR}/channel-whatsapp/worker"
 mkdir -p "${DIST_DIR}/channel-discord/worker"
 
 (
   cd "${ROOT_DIR}/gateway"
   npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/gateway/worker"
+)
+(
+  cd "${ROOT_DIR}/ripgit"
+  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/ripgit/worker"
 )
 (
   cd "${ROOT_DIR}/adapters/whatsapp"
@@ -58,6 +64,17 @@ cat > "${DIST_DIR}/gateway/manifest.json" <<'EOF'
   },
   "assetsDir": "assets",
   "templatesDir": "templates"
+}
+EOF
+
+cp "${ROOT_DIR}/ripgit/wrangler.toml" "${DIST_DIR}/ripgit/wrangler.toml"
+cat > "${DIST_DIR}/ripgit/manifest.json" <<'EOF'
+{
+  "component": "ripgit",
+  "worker": {
+    "entrypoint": "worker/index.js",
+    "wranglerConfig": "wrangler.toml"
+  }
 }
 EOF
 
@@ -95,6 +112,7 @@ mkdir -p "${OUT_DIR}"
 rm -f "${OUT_DIR}/gsv-cloudflare-"*.tar.gz "${OUT_DIR}/cloudflare-checksums.txt" 2>/dev/null || true
 
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-gateway.tar.gz" gateway
+tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-ripgit.tar.gz" ripgit
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-whatsapp.tar.gz" channel-whatsapp
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-discord.tar.gz" channel-discord
 

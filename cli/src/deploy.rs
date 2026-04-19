@@ -19,15 +19,18 @@ const REPO_OWNER: &str = "deathbyknowledge";
 const REPO_NAME: &str = "gsv";
 
 const COMPONENT_GATEWAY: &str = "gateway";
+const COMPONENT_RIPGIT: &str = "ripgit";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
 
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
+const BUNDLE_RIPGIT: &str = "gsv-cloudflare-ripgit.tar.gz";
 const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
 const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
 const SCRIPT_GATEWAY: &str = "gsv";
+const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
@@ -397,6 +400,7 @@ struct R2ObjectsPage {
 fn component_to_bundle(component: &str) -> Option<&'static str> {
     match component {
         COMPONENT_GATEWAY => Some(BUNDLE_GATEWAY),
+        COMPONENT_RIPGIT => Some(BUNDLE_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(BUNDLE_CHANNEL_DISCORD),
         _ => None,
@@ -406,6 +410,7 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
 fn component_to_script_name(component: &str) -> Option<&'static str> {
     match component {
         COMPONENT_GATEWAY => Some(SCRIPT_GATEWAY),
+        COMPONENT_RIPGIT => Some(SCRIPT_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(SCRIPT_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(SCRIPT_CHANNEL_DISCORD),
         _ => None,
@@ -414,6 +419,7 @@ fn component_to_script_name(component: &str) -> Option<&'static str> {
 
 pub fn available_components() -> &'static [&'static str] {
     &[
+        COMPONENT_RIPGIT,
         COMPONENT_GATEWAY,
         COMPONENT_CHANNEL_WHATSAPP,
         COMPONENT_CHANNEL_DISCORD,
@@ -1641,10 +1647,21 @@ async fn purge_r2_bucket_objects(
 
 fn deploy_order(component: &str) -> usize {
     match component {
+        COMPONENT_RIPGIT => 0,
         COMPONENT_CHANNEL_WHATSAPP => 1,
         COMPONENT_CHANNEL_DISCORD => 2,
         COMPONENT_GATEWAY => 10,
         _ => 100,
+    }
+}
+
+fn parse_wrangler_config(
+    path: &Path,
+    raw: &str,
+) -> Result<WranglerConfig, Box<dyn std::error::Error>> {
+    match path.extension().and_then(|value| value.to_str()) {
+        Some("toml") => Ok(toml::from_str(raw)?),
+        _ => Ok(json5::from_str(raw)?),
     }
 }
 
@@ -1675,7 +1692,7 @@ fn load_prepared_bundle(
             .unwrap_or("wrangler.jsonc"),
     );
     let raw_wrangler = fs::read_to_string(&wrangler_path)?;
-    let wrangler: WranglerConfig = json5::from_str(&raw_wrangler)?;
+    let wrangler = parse_wrangler_config(&wrangler_path, &raw_wrangler)?;
     if wrangler.name.trim().is_empty() {
         return Err(format!(
             "Wrangler config in {} is missing worker name",
@@ -2518,6 +2535,14 @@ pub async fn apply_deploy(
     let existing_scripts: HashSet<String> =
         existing_scripts_with_migrations.keys().cloned().collect();
     let gateway_existed_before_deploy = existing_scripts.contains(SCRIPT_GATEWAY);
+    let ripgit_available =
+        selected_components.contains(COMPONENT_RIPGIT) || existing_scripts.contains(SCRIPT_RIPGIT);
+    if selected_components.contains(COMPONENT_GATEWAY) && !ripgit_available {
+        return Err(
+            "Deploying `gateway` requires the `ripgit` worker. Include `--component ripgit` or deploy ripgit first."
+                .into(),
+        );
+    }
     let mut available_scripts = existing_scripts.clone();
 
     let mut required_buckets = HashSet::new();
@@ -3117,6 +3142,36 @@ mod tests {
                 .to_string()
                 .contains("Unknown component 'channel-test'"),
             "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn normalize_components_accepts_ripgit() {
+        let components = normalize_components(&["ripgit".to_string()]).unwrap();
+        assert_eq!(components, vec!["ripgit".to_string()]);
+    }
+
+    #[test]
+    fn parse_wrangler_config_supports_toml() {
+        let config = parse_wrangler_config(
+            Path::new("wrangler.toml"),
+            r#"
+name = "ripgit"
+compatibility_date = "2026-03-18"
+
+[durable_objects]
+bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.name, "ripgit");
+        assert_eq!(
+            config
+                .durable_objects
+                .as_ref()
+                .map(|config| config.bindings.len()),
+            Some(1)
         );
     }
 }
