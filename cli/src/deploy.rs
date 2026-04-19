@@ -810,7 +810,7 @@ pub async fn resolve_cloudflare_account_id(
                 details.push_str(&format!("{} ({})", account.name, account.id));
             }
             Err(format!(
-                "API token can access multiple accounts: {}. Set cloudflare.account_id explicitly.",
+                "API token can access multiple accounts: {}. Rerun with --account-id <id> or set cloudflare.account_id explicitly.",
                 details
             )
             .into())
