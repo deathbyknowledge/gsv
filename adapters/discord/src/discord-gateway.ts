@@ -208,6 +208,11 @@ export class DiscordGateway extends DurableObject<Env> {
       },
     };
   }
+
+  async getBotToken(): Promise<string | null> {
+    await this.loadState();
+    return this.state.botToken;
+  }
   
   /** Get the account ID name (e.g., "default"), falling back to hex DO id */
   private getAccountId(): string {

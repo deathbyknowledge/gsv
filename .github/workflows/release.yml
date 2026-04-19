@@ -110,8 +110,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
-        with:
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools (Linux ARM64)
