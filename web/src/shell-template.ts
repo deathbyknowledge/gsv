@@ -196,7 +196,7 @@ export function renderDesktopShell(): string {
                     </label>
                     <label data-setup-source-ref-row hidden>
                       Ref
-                      <input data-setup-bootstrap-ref type="text" autocomplete="off" placeholder="osify" />
+                      <input data-setup-bootstrap-ref type="text" autocomplete="off" placeholder="main" />
                     </label>
                   </div>
                 </section>

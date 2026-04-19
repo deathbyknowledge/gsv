@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_ROOT="$ROOT_DIR/.wrangler/dev-state/v3"
 
 mkdir -p "$STATE_ROOT/do/ripgit-Repository"
-mkdir -p "$STATE_ROOT/do/gsv-os-Kernel"
-mkdir -p "$STATE_ROOT/do/gsv-os-Process"
+mkdir -p "$STATE_ROOT/do/gsv-Kernel"
+mkdir -p "$STATE_ROOT/do/gsv-Process"
 mkdir -p "$STATE_ROOT/do/gsv-channel-whatsapp-WhatsAppAccount"
 
 cd "$ROOT_DIR/ripgit"

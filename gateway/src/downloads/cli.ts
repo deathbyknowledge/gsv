@@ -22,7 +22,6 @@ export type CliBinaryAsset = typeof CLI_BINARY_ASSETS[number];
 export function inferDefaultCliChannel(ref: string): CliReleaseChannel {
   const normalized = ref.trim().toLowerCase();
   if (
-    normalized === "main" ||
     normalized === "stable" ||
     normalized === "release" ||
     normalized.startsWith("release/")

@@ -10,12 +10,11 @@ import {
 
 describe("CLI release helpers", () => {
   it("infers stable channel for mainline refs", () => {
-    expect(inferDefaultCliChannel("main")).toBe("stable");
     expect(inferDefaultCliChannel("release/0.1")).toBe("stable");
   });
 
   it("infers dev channel for feature refs", () => {
-    expect(inferDefaultCliChannel("osify")).toBe("dev");
+    expect(inferDefaultCliChannel("main")).toBe("dev");
   });
 
   it("recognizes semver release tags", () => {

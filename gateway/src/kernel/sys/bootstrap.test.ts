@@ -100,7 +100,7 @@ describe("handleSysBootstrap", () => {
     vi.clearAllMocks();
     importFromUpstreamMock.mockResolvedValue({
       remoteUrl: "https://github.com/deathbyknowledge/gsv",
-      remoteRef: "osify",
+      remoteRef: "main",
       head: "abc123",
       changed: true,
     });
@@ -119,19 +119,19 @@ describe("handleSysBootstrap", () => {
       { owner: "system", repo: "gsv", branch: "main" },
       "root",
       "root@gsv.local",
-      "bootstrap system/gsv from https://github.com/deathbyknowledge/gsv#osify",
+      "bootstrap system/gsv from https://github.com/deathbyknowledge/gsv#main",
       "https://github.com/deathbyknowledge/gsv",
-      "osify",
+      "main",
     );
     expect(buildBuiltinPackageSeedsMock).toHaveBeenCalledWith(ctx.env);
     expect(ctx.packages.seedBuiltinPackages).toHaveBeenCalledWith([{ name: "chat-seed" }]);
-    expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("osify");
+    expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("main");
     expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);
     expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "dev");
     expect(result).toEqual({
       repo: "system/gsv",
       remoteUrl: "https://github.com/deathbyknowledge/gsv",
-      ref: "osify",
+      ref: "main",
       head: "abc123",
       changed: true,
       cli: {
@@ -178,15 +178,15 @@ describe("handleSysBootstrap", () => {
   it("accepts repo shorthand and custom ref", async () => {
     const ctx = makeContext();
 
-    await handleSysBootstrap({ repo: "example/custom-gsv", ref: "feature/osify" }, ctx);
+    await handleSysBootstrap({ repo: "example/custom-gsv", ref: "feature/main" }, ctx);
 
     expect(importFromUpstreamMock).toHaveBeenCalledWith(
       expect.any(Object),
       "root",
       "root@gsv.local",
-      "bootstrap system/gsv from https://github.com/example/custom-gsv#feature/osify",
+      "bootstrap system/gsv from https://github.com/example/custom-gsv#feature/main",
       "https://github.com/example/custom-gsv",
-      "feature/osify",
+      "feature/main",
     );
   });
 
