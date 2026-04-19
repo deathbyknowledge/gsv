@@ -333,7 +333,15 @@ struct PreparedBundle {
     script_name: String,
     entrypoint_part_name: String,
     entrypoint_bytes: Vec<u8>,
+    additional_modules: Vec<WorkerModuleUpload>,
     source_map: Option<(String, Vec<u8>)>,
+}
+
+#[derive(Debug, Clone)]
+struct WorkerModuleUpload {
+    part_name: String,
+    bytes: Vec<u8>,
+    mime_type: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1177,6 +1185,7 @@ async fn upload_worker_script(
     metadata: Value,
     entrypoint_part_name: &str,
     entrypoint_bytes: Vec<u8>,
+    additional_modules: &[WorkerModuleUpload],
     source_map: Option<(String, Vec<u8>)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let metadata_text = metadata.to_string();
@@ -1194,6 +1203,13 @@ async fn upload_worker_script(
                 .file_name(entrypoint_part_name.to_string())
                 .mime_str("application/javascript+module")?;
             form = form.part(entrypoint_part_name.to_string(), entrypoint_part);
+
+            for module in additional_modules {
+                let module_part = multipart::Part::bytes(module.bytes.clone())
+                    .file_name(module.part_name.clone())
+                    .mime_str(module.mime_type.as_str())?;
+                form = form.part(module.part_name.clone(), module_part);
+            }
 
             if let Some((source_map_name, source_map_bytes)) = &source_map {
                 let source_map_part = multipart::Part::bytes(source_map_bytes.clone())
@@ -1665,6 +1681,75 @@ fn parse_wrangler_config(
     }
 }
 
+fn worker_module_mime_type(part_name: &str) -> &'static str {
+    match Path::new(part_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("js") | Some("mjs") => "application/javascript+module",
+        Some("cjs") => "application/javascript",
+        Some("wasm") => "application/wasm",
+        Some("txt") | Some("html") | Some("sql") | Some("md") => "text/plain",
+        _ => "application/octet-stream",
+    }
+}
+
+fn collect_additional_worker_modules(
+    bundle_dir: &Path,
+    entrypoint_rel: &str,
+) -> Result<Vec<WorkerModuleUpload>, Box<dyn std::error::Error>> {
+    let entrypoint_path = bundle_dir.join(entrypoint_rel);
+    let worker_root = entrypoint_path.parent().ok_or_else(|| {
+        format!(
+            "Could not resolve worker output directory from {}",
+            entrypoint_path.display()
+        )
+    })?;
+    let entrypoint_within_worker = entrypoint_path.strip_prefix(worker_root).map_err(|_| {
+        format!(
+            "Could not resolve worker-relative entrypoint path from {}",
+            entrypoint_path.display()
+        )
+    })?;
+
+    let mut modules = Vec::new();
+    for entry in WalkDir::new(worker_root).follow_links(false) {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let absolute_path = entry.path();
+        let relative_path = absolute_path.strip_prefix(worker_root).map_err(|_| {
+            format!(
+                "Could not resolve worker-relative module path from {}",
+                absolute_path.display()
+            )
+        })?;
+        if is_skippable_bundle_file(relative_path)
+            || relative_path == entrypoint_within_worker
+            || relative_path
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("map"))
+        {
+            continue;
+        }
+
+        let part_name = normalize_relative_path(relative_path);
+        modules.push(WorkerModuleUpload {
+            mime_type: worker_module_mime_type(&part_name).to_string(),
+            part_name,
+            bytes: fs::read(absolute_path)?,
+        });
+    }
+
+    modules.sort_by(|a, b| a.part_name.cmp(&b.part_name));
+    Ok(modules)
+}
+
 fn load_prepared_bundle(
     cfg: &CliConfig,
     version: &str,
@@ -1734,6 +1819,8 @@ fn load_prepared_bundle(
     } else {
         None
     };
+    let additional_modules =
+        collect_additional_worker_modules(&bundle_dir, &manifest.worker.entrypoint)?;
 
     Ok(PreparedBundle {
         bundle_dir,
@@ -1743,6 +1830,7 @@ fn load_prepared_bundle(
         wrangler,
         entrypoint_part_name,
         entrypoint_bytes,
+        additional_modules,
         source_map,
     })
 }
@@ -2640,6 +2728,7 @@ pub async fn apply_deploy(
             metadata,
             &bundle.entrypoint_part_name,
             bundle.entrypoint_bytes.clone(),
+            &bundle.additional_modules,
             source_map_for_upload,
         )
         .await?;
@@ -2698,6 +2787,7 @@ pub async fn apply_deploy(
             metadata,
             &bundle.entrypoint_part_name,
             bundle.entrypoint_bytes.clone(),
+            &bundle.additional_modules,
             source_map_for_upload,
         )
         .await?;
@@ -3173,5 +3263,28 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
                 .map(|config| config.bindings.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn collect_additional_worker_modules_includes_wasm_sidecars() {
+        let temp_root =
+            std::env::temp_dir().join(format!("gsv-ripgit-bundle-{}", uuid::Uuid::new_v4()));
+        let worker_dir = temp_root.join("worker");
+        fs::create_dir_all(&worker_dir).unwrap();
+        fs::write(
+            worker_dir.join("index.js"),
+            r#"import wasm from "./module.wasm";"#,
+        )
+        .unwrap();
+        fs::write(worker_dir.join("module.wasm"), b"\0asm").unwrap();
+        fs::write(worker_dir.join("index.js.map"), "{}").unwrap();
+
+        let modules = collect_additional_worker_modules(&temp_root, "worker/index.js").unwrap();
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].part_name, "module.wasm");
+        assert_eq!(modules[0].mime_type, "application/wasm");
+
+        let _ = fs::remove_dir_all(temp_root);
     }
 }
