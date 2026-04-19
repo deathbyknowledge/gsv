@@ -37,8 +37,6 @@ const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
 const MAX_SOURCE_MAP_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
-const TEMPLATE_AGENT_ID: &str = "main";
-const TEMPLATE_SENTINEL_FILE: &str = "SOUL.md";
 static DEPLOY_NOTIFICATION_MODE: AtomicBool = AtomicBool::new(false);
 
 pub fn set_notification_output(enabled: bool) {
@@ -255,8 +253,6 @@ struct BundleManifest {
     worker: WorkerManifest,
     #[serde(rename = "assetsDir")]
     assets_dir: Option<String>,
-    #[serde(rename = "templatesDir")]
-    templates_dir: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -786,9 +782,6 @@ pub async fn inspect_bundle(
     }
     if let Some(assets_dir) = manifest.assets_dir {
         println!("Assets:    {}", bundle_dir.join(assets_dir).display());
-    }
-    if let Some(templates_dir) = manifest.templates_dir {
-        println!("Templates: {}", bundle_dir.join(templates_dir).display());
     }
 
     Ok(())
@@ -1531,78 +1524,6 @@ async fn delete_r2_object(
     .into())
 }
 
-async fn r2_object_exists(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-    bucket_name: &str,
-    jurisdiction: Option<&str>,
-    object_key: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let url = cloudflare_api_url(&format!(
-        "/accounts/{}/r2/buckets/{}/objects/{}",
-        account_id, bucket_name, object_key
-    ));
-    let head_response = send_cloudflare_request_with_retry(
-        || {
-            let mut request = client.head(&url).bearer_auth(api_token);
-            if let Some(value) = jurisdiction {
-                request = request.header("cf-r2-jurisdiction", value);
-            }
-            request.send()
-        },
-        &format!("Check R2 object {}", object_key),
-    )
-    .await?;
-
-    if head_response.status() == StatusCode::NOT_FOUND {
-        return Ok(false);
-    }
-
-    if head_response.status().is_success() {
-        return Ok(true);
-    }
-
-    if head_response.status() == StatusCode::METHOD_NOT_ALLOWED {
-        let get_response = send_cloudflare_request_with_retry(
-            || {
-                let mut request = client.get(&url).bearer_auth(api_token);
-                if let Some(value) = jurisdiction {
-                    request = request.header("cf-r2-jurisdiction", value);
-                }
-                // Existence probe only; request minimal bytes where supported.
-                request = request.header("Range", "bytes=0-0");
-                request.send()
-            },
-            &format!("Check R2 object {} (GET fallback)", object_key),
-        )
-        .await?;
-
-        if get_response.status() == StatusCode::NOT_FOUND {
-            return Ok(false);
-        }
-        if get_response.status().is_success() {
-            return Ok(true);
-        }
-
-        let status = get_response.status();
-        let body = get_response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Check R2 object {} failed after HEAD fallback ({}): {}",
-            object_key, status, body
-        )
-        .into());
-    }
-
-    let status = head_response.status();
-    let body = head_response.text().await.unwrap_or_default();
-    Err(format!(
-        "Check R2 object {} failed ({}): {}",
-        object_key, status, body
-    )
-    .into())
-}
-
 async fn purge_r2_bucket_objects(
     client: &reqwest::Client,
     account_id: &str,
@@ -2264,208 +2185,6 @@ async fn sync_assets_for_bundle(
     Ok(Some(UploadedAssets { jwt, config }))
 }
 
-fn storage_bucket_for_bundle(bundle: &PreparedBundle) -> Option<(String, Option<String>)> {
-    bundle
-        .wrangler
-        .r2_buckets
-        .iter()
-        .find(|binding| binding.binding == "STORAGE" && binding.bucket_name.is_some())
-        .or_else(|| {
-            bundle
-                .wrangler
-                .r2_buckets
-                .iter()
-                .find(|binding| binding.bucket_name.is_some())
-        })
-        .and_then(|binding| {
-            binding
-                .bucket_name
-                .as_ref()
-                .map(|name| (name.clone(), binding.jurisdiction.clone()))
-        })
-}
-
-fn collect_files_for_r2_prefix(
-    root: &Path,
-    key_prefix: &str,
-) -> Result<Vec<(String, PathBuf)>, Box<dyn std::error::Error>> {
-    if !root.exists() || !root.is_dir() {
-        return Ok(Vec::new());
-    }
-
-    let mut out = Vec::new();
-    let mut skipped = 0usize;
-    for entry in WalkDir::new(root).follow_links(false) {
-        let entry = entry?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
-        let absolute_path = entry.path().to_path_buf();
-        let relative = absolute_path.strip_prefix(root).map_err(|_| {
-            format!(
-                "Failed to resolve template path for {}",
-                absolute_path.display()
-            )
-        })?;
-        if is_skippable_bundle_file(relative) {
-            skipped += 1;
-            continue;
-        }
-        let relative_key = normalize_relative_path(relative);
-        let key = format!("{}{}", key_prefix, relative_key);
-        out.push((key, absolute_path));
-    }
-
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    if skipped > 0 {
-        println!(
-            "Note: skipped {} metadata file(s) under {}.",
-            skipped,
-            root.display()
-        );
-    }
-    Ok(out)
-}
-
-async fn put_r2_object(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-    bucket_name: &str,
-    jurisdiction: Option<&str>,
-    key: &str,
-    body: Vec<u8>,
-    content_type: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let url = cloudflare_api_url(&format!(
-        "/accounts/{}/r2/buckets/{}/objects/{}",
-        account_id, bucket_name, key
-    ));
-    let response = send_cloudflare_request_with_retry(
-        || {
-            let mut request = client.put(&url).bearer_auth(api_token).body(body.clone());
-            if !content_type.is_empty() {
-                request = request.header("Content-Type", content_type);
-            }
-            if let Some(value) = jurisdiction {
-                request = request.header("cf-r2-jurisdiction", value);
-            }
-            request.send()
-        },
-        &format!("Upload R2 object {}", key),
-    )
-    .await?;
-
-    if response.status().is_success() {
-        return Ok(());
-    }
-
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    Err(format!("Upload R2 object {} failed ({}): {}", key, status, body).into())
-}
-
-async fn sync_templates_for_bundle(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-    bundle: &PreparedBundle,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(templates_dir_rel) = bundle.manifest.templates_dir.as_deref() else {
-        return Ok(());
-    };
-
-    let templates_root = bundle.bundle_dir.join(templates_dir_rel);
-    if !templates_root.exists() || !templates_root.is_dir() {
-        println!(
-            "Warning: templates directory for {} not found at {}",
-            bundle.script_name,
-            templates_root.display()
-        );
-        return Ok(());
-    }
-
-    let (bucket_name, jurisdiction) = storage_bucket_for_bundle(bundle).ok_or_else(|| {
-        format!(
-            "{} bundle includes templates but no R2 bucket binding is configured",
-            bundle.script_name
-        )
-    })?;
-
-    let mut uploads = Vec::new();
-    let workspace_prefix = format!("agents/{}/", TEMPLATE_AGENT_ID);
-    uploads.extend(collect_files_for_r2_prefix(
-        &templates_root.join("workspace"),
-        &workspace_prefix,
-    )?);
-    uploads.extend(collect_files_for_r2_prefix(
-        &templates_root.join("skills"),
-        "skills/",
-    )?);
-
-    if uploads.is_empty() {
-        println!(
-            "Warning: no template files found for {} in {}",
-            bundle.script_name,
-            templates_root.display()
-        );
-        return Ok(());
-    }
-
-    let sentinel_key = format!("agents/{}/{}", TEMPLATE_AGENT_ID, TEMPLATE_SENTINEL_FILE);
-    if r2_object_exists(
-        client,
-        account_id,
-        api_token,
-        &bucket_name,
-        jurisdiction.as_deref(),
-        &sentinel_key,
-    )
-    .await?
-    {
-        println!(
-            "Template sentinel {} already exists in {}. Skipping template sync for {}.",
-            sentinel_key, bucket_name, bundle.script_name
-        );
-        return Ok(());
-    }
-
-    println!(
-        "Syncing {} template object(s) to R2 bucket {} for {}.",
-        uploads.len(),
-        bucket_name,
-        bundle.script_name
-    );
-    let mut uploaded_count = 0usize;
-    for (key, path) in uploads {
-        let body = fs::read(&path)?;
-        let content_type = mime_guess::from_path(&path)
-            .first_raw()
-            .unwrap_or("application/octet-stream");
-        put_r2_object(
-            client,
-            account_id,
-            api_token,
-            &bucket_name,
-            jurisdiction.as_deref(),
-            &key,
-            body,
-            content_type,
-        )
-        .await?;
-        uploaded_count += 1;
-    }
-    if uploaded_count > 0 {
-        println!(
-            "Uploaded {} template object(s) for {}.",
-            uploaded_count, bundle.script_name
-        );
-    }
-
-    Ok(())
-}
-
 fn build_upload_metadata(
     bundle: &PreparedBundle,
     selected_components: &HashSet<String>,
@@ -2689,9 +2408,6 @@ pub async fn apply_deploy(
             {
                 uploaded_assets_by_script.insert(bundle.script_name.clone(), uploaded_assets);
             }
-        }
-        if bundle.manifest.templates_dir.is_some() {
-            sync_templates_for_bundle(&client, account_id, api_token, bundle).await?;
         }
 
         let metadata = build_upload_metadata(

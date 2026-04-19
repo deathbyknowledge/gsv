@@ -139,7 +139,12 @@ type PendingRequest = {
   call: string;
 };
 
-const REQUEST_TIMEOUT_MS = 20_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
+const REQUEST_TIMEOUTS_MS: Record<string, number> = {
+  "sys.setup": LONG_RUNNING_REQUEST_TIMEOUT_MS,
+  "sys.bootstrap": LONG_RUNNING_REQUEST_TIMEOUT_MS,
+};
 
 function makeId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -155,6 +160,10 @@ function normalizeMessage(value: unknown): string {
   }
 
   return "Gateway request failed";
+}
+
+function requestTimeoutMs(call: string): number {
+  return REQUEST_TIMEOUTS_MS[call] ?? DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 export class GatewayClient implements GatewayClientLike {
@@ -489,12 +498,13 @@ export class GatewayClient implements GatewayClientLike {
 
     const id = makeId();
     const frame: GatewayRequestFrame = { type: "req", id, call, args };
+    const timeoutMs = requestTimeoutMs(call);
 
     return new Promise((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Request timed out: ${call}`));
-      }, REQUEST_TIMEOUT_MS);
+        reject(new Error(`Request timed out after ${timeoutMs}ms: ${call}`));
+      }, timeoutMs);
 
       this.pending.set(id, {
         resolve,
@@ -516,13 +526,14 @@ export class GatewayClient implements GatewayClientLike {
   private requestOverSocket<T>(socket: WebSocket, call: string, args: unknown): Promise<T> {
     const id = makeId();
     const frame: GatewayRequestFrame = { type: "req", id, call, args };
+    const timeoutMs = requestTimeoutMs(call);
 
     return new Promise<T>((resolve, reject) => {
       let settled = false;
       const timeoutId = window.setTimeout(() => {
         cleanup();
-        reject(new Error(`Request timed out: ${call}`));
-      }, REQUEST_TIMEOUT_MS);
+        reject(new Error(`Request timed out after ${timeoutMs}ms: ${call}`));
+      }, timeoutMs);
 
       const cleanup = (): void => {
         if (settled) {
