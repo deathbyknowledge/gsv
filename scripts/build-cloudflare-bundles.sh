@@ -51,9 +51,6 @@ mkdir -p "${DIST_DIR}/channel-discord/worker"
 echo "==> Assembling component metadata"
 cp "${ROOT_DIR}/gateway/wrangler.jsonc" "${DIST_DIR}/gateway/wrangler.jsonc"
 cp -R "${ROOT_DIR}/web/dist" "${DIST_DIR}/gateway/assets"
-mkdir -p "${DIST_DIR}/gateway/templates"
-cp -R "${ROOT_DIR}/templates/workspace" "${DIST_DIR}/gateway/templates/workspace"
-cp -R "${ROOT_DIR}/templates/skills" "${DIST_DIR}/gateway/templates/skills"
 cat > "${DIST_DIR}/gateway/manifest.json" <<'EOF'
 {
   "component": "gateway",
@@ -62,8 +59,7 @@ cat > "${DIST_DIR}/gateway/manifest.json" <<'EOF'
     "sourceMap": "worker/index.js.map",
     "wranglerConfig": "wrangler.jsonc"
   },
-  "assetsDir": "assets",
-  "templatesDir": "templates"
+  "assetsDir": "assets"
 }
 EOF
 
