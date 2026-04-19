@@ -2236,37 +2236,34 @@ fn component_is_selected(components: &[String], component: &str) -> bool {
     components.iter().any(|c| c == component)
 }
 
+fn teardown_component_description(component: &str) -> &'static str {
+    match component {
+        "ripgit" => "Git-backed storage worker",
+        "gateway" => "Core API + sessions worker",
+        "channel-whatsapp" => "WhatsApp channel worker",
+        "channel-discord" => "Discord channel worker",
+        _ => "Worker component",
+    }
+}
+
 fn prompt_down_components(
     default_components: &[String],
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let mut defaults = Vec::new();
-    if component_is_selected(default_components, "gateway") {
-        defaults.push("gateway".to_string());
-    }
-    if component_is_selected(default_components, "channel-whatsapp") {
-        defaults.push("channel-whatsapp".to_string());
-    }
-    if component_is_selected(default_components, "channel-discord") {
-        defaults.push("channel-discord".to_string());
-    }
+    let defaults = deploy::available_components()
+        .iter()
+        .filter(|component| component_is_selected(default_components, component))
+        .map(|component| (*component).to_string())
+        .collect::<Vec<_>>();
 
-    let mut prompt = multiselect("Select components to tear down")
-        .item(
-            "gateway".to_string(),
-            "gateway",
-            "Core API + sessions worker",
-        )
-        .item(
-            "channel-whatsapp".to_string(),
-            "channel-whatsapp",
-            "WhatsApp channel worker",
-        )
-        .item(
-            "channel-discord".to_string(),
-            "channel-discord",
-            "Discord channel worker",
-        )
-        .required(true);
+    let mut prompt = multiselect("Select components to tear down");
+    for component in deploy::available_components() {
+        prompt = prompt.item(
+            (*component).to_string(),
+            *component,
+            teardown_component_description(component),
+        );
+    }
+    prompt = prompt.required(true);
     if !defaults.is_empty() {
         prompt = prompt.initial_values(defaults);
     }
