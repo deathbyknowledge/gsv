@@ -224,9 +224,9 @@ function prepareBundlerProjectFiles(
   analysis: PackageAssemblyAnalysis,
   repoFiles: Record<string, string>,
 ): Record<string, string> {
-  const files: Record<string, string> = {
+  const files: Record<string, string> = applyPreactJsxPragmas({
     ...repoFiles,
-  };
+  });
   const workspacePackages = collectWorkspacePackages(files);
   materializeWorkspacePackages(files, workspacePackages, analysis.package_json.name);
 
@@ -247,11 +247,38 @@ function prepareBundlerProjectFiles(
       "./jsx-dev-runtime": "./jsx-dev-runtime.js",
     },
   }, null, 2);
-  files["node_modules/react/index.js"] = "export * from \"preact\";\n";
+  files["node_modules/react/index.js"] = [
+    "import * as preact from \"preact\";",
+    "export * from \"preact\";",
+    "export default preact;",
+    "",
+  ].join("\n");
   files["node_modules/react/jsx-runtime.js"] = "export * from \"preact/jsx-runtime\";\n";
   files["node_modules/react/jsx-dev-runtime.js"] = "export * from \"preact/jsx-runtime\";\n";
 
   return files;
+}
+
+function applyPreactJsxPragmas(files: Record<string, string>): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const [path, content] of Object.entries(files)) {
+    if (!/\.(tsx|jsx)$/i.test(path)) {
+      next[path] = content;
+      continue;
+    }
+
+    const hasRuntimePragma = /@jsxRuntime\s+/u.test(content);
+    const hasImportSourcePragma = /@jsxImportSource\s+/u.test(content);
+    const pragmas: string[] = [];
+    if (!hasRuntimePragma) {
+      pragmas.push("/** @jsxRuntime automatic */");
+    }
+    if (!hasImportSourcePragma) {
+      pragmas.push("/** @jsxImportSource preact */");
+    }
+    next[path] = pragmas.length > 0 ? `${pragmas.join("\n")}\n${content}` : content;
+  }
+  return next;
 }
 
 type WorkspacePackageManifest = {
