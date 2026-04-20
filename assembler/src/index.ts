@@ -224,9 +224,9 @@ function prepareBundlerProjectFiles(
   analysis: PackageAssemblyAnalysis,
   repoFiles: Record<string, string>,
 ): Record<string, string> {
-  const files: Record<string, string> = applyPreactJsxPragmas({
+  const files: Record<string, string> = {
     ...repoFiles,
-  });
+  };
   const workspacePackages = collectWorkspacePackages(files);
   materializeWorkspacePackages(files, workspacePackages, analysis.package_json.name);
 
@@ -237,48 +237,7 @@ function prepareBundlerProjectFiles(
     dependencies: collectBundlerDependencies(analysis, workspacePackages),
   }, null, 2);
 
-  files["node_modules/react/package.json"] = JSON.stringify({
-    name: "react",
-    version: "0.0.0-gsv-shim",
-    type: "module",
-    exports: {
-      ".": "./index.js",
-      "./jsx-runtime": "./jsx-runtime.js",
-      "./jsx-dev-runtime": "./jsx-dev-runtime.js",
-    },
-  }, null, 2);
-  files["node_modules/react/index.js"] = [
-    "import * as preact from \"preact\";",
-    "export * from \"preact\";",
-    "export default preact;",
-    "",
-  ].join("\n");
-  files["node_modules/react/jsx-runtime.js"] = "export * from \"preact/jsx-runtime\";\n";
-  files["node_modules/react/jsx-dev-runtime.js"] = "export * from \"preact/jsx-runtime\";\n";
-
-  return files;
-}
-
-function applyPreactJsxPragmas(files: Record<string, string>): Record<string, string> {
-  const next: Record<string, string> = {};
-  for (const [path, content] of Object.entries(files)) {
-    if (!/\.(tsx|jsx)$/i.test(path)) {
-      next[path] = content;
-      continue;
-    }
-
-    const hasRuntimePragma = /@jsxRuntime\s+/u.test(content);
-    const hasImportSourcePragma = /@jsxImportSource\s+/u.test(content);
-    const pragmas: string[] = [];
-    if (!hasRuntimePragma) {
-      pragmas.push("/** @jsxRuntime automatic */");
-    }
-    if (!hasImportSourcePragma) {
-      pragmas.push("/** @jsxImportSource preact */");
-    }
-    next[path] = pragmas.length > 0 ? `${pragmas.join("\n")}\n${content}` : content;
-  }
-  return next;
+  return applyJsxCompilerPragmas(files);
 }
 
 type WorkspacePackageManifest = {
@@ -293,6 +252,23 @@ type WorkspacePackageManifest = {
 type WorkspacePackage = {
   root: string;
   manifest: WorkspacePackageManifest;
+};
+
+type JsxCompilerSettings = {
+  runtime?: "automatic" | "classic";
+  importSource?: string;
+  factory?: string;
+  fragmentFactory?: string;
+};
+
+type BuildConfigFile = {
+  extends?: string;
+  compilerOptions?: {
+    jsx?: string;
+    jsxImportSource?: string;
+    jsxFactory?: string;
+    jsxFragmentFactory?: string;
+  };
 };
 
 function collectBundlerDependencies(
@@ -375,6 +351,192 @@ function materializeWorkspacePackages(
 
     files[joinPosix(materializedRoot, "package.json")] = JSON.stringify(pkg.manifest, null, 2);
   }
+}
+
+function applyJsxCompilerPragmas(files: Record<string, string>): Record<string, string> {
+  const next: Record<string, string> = {};
+  const configCache = new Map<string, JsxCompilerSettings | null>();
+
+  for (const [path, content] of Object.entries(files)) {
+    if (!/\.(tsx|jsx)$/i.test(path)) {
+      next[path] = content;
+      continue;
+    }
+
+    const settings = resolveJsxCompilerSettings(path, files, configCache);
+    const pragmas = buildJsxPragmas(content, settings);
+    next[path] = pragmas.length > 0 ? `${pragmas.join("\n")}\n${content}` : content;
+  }
+
+  return next;
+}
+
+function buildJsxPragmas(source: string, settings: JsxCompilerSettings | null): string[] {
+  if (!settings) {
+    return [];
+  }
+
+  const pragmas: string[] = [];
+  if (settings.runtime && !/@jsxRuntime\s+/u.test(source)) {
+    pragmas.push(`/** @jsxRuntime ${settings.runtime} */`);
+  }
+  if (settings.importSource && !/@jsxImportSource\s+/u.test(source)) {
+    pragmas.push(`/** @jsxImportSource ${settings.importSource} */`);
+  }
+  if (settings.factory && !/@jsx\s+/u.test(source)) {
+    pragmas.push(`/** @jsx ${settings.factory} */`);
+  }
+  if (settings.fragmentFactory && !/@jsxFrag\s+/u.test(source)) {
+    pragmas.push(`/** @jsxFrag ${settings.fragmentFactory} */`);
+  }
+  return pragmas;
+}
+
+function resolveJsxCompilerSettings(
+  sourcePath: string,
+  files: Record<string, string>,
+  cache: Map<string, JsxCompilerSettings | null>,
+): JsxCompilerSettings | null {
+  const configPath = findNearestBuildConfigPath(sourcePath, files);
+  if (!configPath) {
+    return null;
+  }
+  return loadJsxCompilerSettings(configPath, files, cache);
+}
+
+function findNearestBuildConfigPath(sourcePath: string, files: Record<string, string>): string | null {
+  let current = dirname(sourcePath);
+  while (true) {
+    for (const configName of ["tsconfig.json", "jsconfig.json"]) {
+      const candidate = current ? joinPosix(current, configName) : configName;
+      if (candidate in files) {
+        return candidate;
+      }
+    }
+    if (!current) {
+      return null;
+    }
+    current = dirname(current);
+  }
+}
+
+function loadJsxCompilerSettings(
+  configPath: string,
+  files: Record<string, string>,
+  cache: Map<string, JsxCompilerSettings | null>,
+): JsxCompilerSettings | null {
+  if (cache.has(configPath)) {
+    return cache.get(configPath) ?? null;
+  }
+
+  const parsed = parseBuildConfigFile(files[configPath]);
+  if (!parsed) {
+    cache.set(configPath, null);
+    return null;
+  }
+
+  const base = resolveExtendedJsxCompilerSettings(configPath, parsed.extends, files, cache);
+  const merged = mergeJsxCompilerSettings(base, normalizeJsxCompilerSettings(parsed.compilerOptions));
+  cache.set(configPath, merged);
+  return merged;
+}
+
+function resolveExtendedJsxCompilerSettings(
+  configPath: string,
+  extendsPath: string | undefined,
+  files: Record<string, string>,
+  cache: Map<string, JsxCompilerSettings | null>,
+): JsxCompilerSettings | null {
+  if (typeof extendsPath !== "string" || extendsPath.trim().length === 0) {
+    return null;
+  }
+  const resolved = resolveExtendedConfigPath(configPath, extendsPath);
+  if (!resolved || !(resolved in files)) {
+    return null;
+  }
+  return loadJsxCompilerSettings(resolved, files, cache);
+}
+
+function resolveExtendedConfigPath(configPath: string, extendsPath: string): string | null {
+  if (!extendsPath.startsWith(".") && !extendsPath.startsWith("/")) {
+    return null;
+  }
+  const candidate = normalizePath(joinPosix(dirname(configPath), extendsPath));
+  const withJson = candidate.endsWith(".json") ? candidate : `${candidate}.json`;
+  return withJson;
+}
+
+function mergeJsxCompilerSettings(
+  base: JsxCompilerSettings | null,
+  override: JsxCompilerSettings | null,
+): JsxCompilerSettings | null {
+  if (!base && !override) {
+    return null;
+  }
+  return {
+    runtime: override?.runtime ?? base?.runtime,
+    importSource: override?.importSource ?? base?.importSource,
+    factory: override?.factory ?? base?.factory,
+    fragmentFactory: override?.fragmentFactory ?? base?.fragmentFactory,
+  };
+}
+
+function normalizeJsxCompilerSettings(
+  compilerOptions: BuildConfigFile["compilerOptions"] | undefined,
+): JsxCompilerSettings | null {
+  if (!compilerOptions) {
+    return null;
+  }
+
+  const jsx = normalizeString(compilerOptions.jsx)?.toLowerCase();
+  const importSource = normalizeString(compilerOptions.jsxImportSource);
+  const factory = normalizeString(compilerOptions.jsxFactory);
+  const fragmentFactory = normalizeString(compilerOptions.jsxFragmentFactory);
+
+  let runtime: JsxCompilerSettings["runtime"];
+  if (jsx === "react-jsx" || jsx === "react-jsxdev") {
+    runtime = "automatic";
+  } else if (jsx === "react") {
+    runtime = "classic";
+  }
+
+  if (!runtime && !importSource && !factory && !fragmentFactory) {
+    return null;
+  }
+
+  return {
+    runtime,
+    importSource,
+    factory,
+    fragmentFactory,
+  };
+}
+
+function parseBuildConfigFile(source: string | undefined): BuildConfigFile | null {
+  if (typeof source !== "string" || source.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(stripJsonComments(source)) as BuildConfigFile;
+  } catch {
+    return null;
+  }
+}
+
+function stripJsonComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/,\s*([}\]])/g, "$1");
+}
+
+function normalizeString(value: string | undefined | null): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function generateDynamicWorkerMainModule(

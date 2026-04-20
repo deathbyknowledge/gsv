@@ -23,6 +23,7 @@ pub(crate) fn snapshot_package(
         }
 
         collect_utf8_files_for_root(sql, &analysis.source, &root, &mut files)?;
+        collect_ancestor_config_files(sql, &analysis.source, &root, &mut files)?;
 
         if let Some(package_json) = files.get(&join_snapshot_path(&root, "package.json")) {
             for dependency_root in collect_file_dependency_roots(&root, package_json)? {
@@ -67,6 +68,29 @@ fn collect_utf8_files_for_root(
         return Ok(());
     };
     collect_utf8_files_under_tree(sql, &tree_hash, root, files)
+}
+
+fn collect_ancestor_config_files(
+    sql: &SqlStorage,
+    source: &ResolvedPackageSource,
+    root: &str,
+    files: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    let mut current = Some(root.to_string());
+    while let Some(dir) = current {
+        for config_name in ["tsconfig.json", "jsconfig.json"] {
+            let path = join_snapshot_path(&dir, config_name);
+            if files.contains_key(&path) {
+                continue;
+            }
+            if let Some(text) = read_utf8_file_at_commit(sql, &source.resolved_commit, &path)? {
+                files.insert(path, text);
+            }
+        }
+
+        current = parent_snapshot_dir(&dir);
+    }
+    Ok(())
 }
 
 fn resolve_tree_hash_at_commit(
@@ -127,6 +151,92 @@ fn resolve_tree_hash_at_commit(
     }
 
     Ok(Some(current_tree))
+}
+
+fn read_utf8_file_at_commit(
+    sql: &SqlStorage,
+    commit_hash: &str,
+    path: &str,
+) -> Result<Option<String>> {
+    let Some(blob_hash) = resolve_blob_hash_at_commit(sql, commit_hash, path)? else {
+        return Ok(None);
+    };
+    let Some(bytes) = crate::store::reconstruct_blob_by_hash(sql, &blob_hash)? else {
+        return Ok(None);
+    };
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(Some(text)),
+        Err(_) => Ok(None),
+    }
+}
+
+fn resolve_blob_hash_at_commit(
+    sql: &SqlStorage,
+    commit_hash: &str,
+    path: &str,
+) -> Result<Option<String>> {
+    #[derive(Deserialize)]
+    struct CommitRow {
+        tree_hash: String,
+    }
+
+    #[derive(Deserialize)]
+    struct TreeRow {
+        mode: i64,
+        entry_hash: String,
+    }
+
+    let commits: Vec<CommitRow> = sql
+        .exec(
+            "SELECT tree_hash FROM commits WHERE hash = ?",
+            vec![SqlStorageValue::from(commit_hash.to_string())],
+        )?
+        .to_array()?;
+    let Some(commit) = commits.into_iter().next() else {
+        return Ok(None);
+    };
+
+    let segments: Vec<&str> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if segments.is_empty() {
+        return Ok(None);
+    }
+
+    let mut current_tree = commit.tree_hash;
+    let final_index = segments.len() - 1;
+
+    for (index, segment) in segments.into_iter().enumerate() {
+        let rows: Vec<TreeRow> = sql
+            .exec(
+                "SELECT mode, entry_hash FROM trees WHERE tree_hash = ? AND name = ?",
+                vec![
+                    SqlStorageValue::from(current_tree.clone()),
+                    SqlStorageValue::from(segment.to_string()),
+                ],
+            )?
+            .to_array()?;
+
+        let Some(entry) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+
+        if index == final_index {
+            return if entry.mode == 0o100644 || entry.mode == 0o100755 {
+                Ok(Some(entry.entry_hash))
+            } else {
+                Ok(None)
+            };
+        }
+
+        if entry.mode != 0o040000 {
+            return Ok(None);
+        }
+        current_tree = entry.entry_hash;
+    }
+
+    Ok(None)
 }
 
 fn collect_utf8_files_under_tree(
@@ -232,4 +342,13 @@ fn resolve_relative_package_path(base: &str, relative: &str) -> Result<String> {
     }
 
     Ok(segments.join("/"))
+}
+
+fn parent_snapshot_dir(path: &str) -> Option<String> {
+    if path.is_empty() {
+        return None;
+    }
+    path.rsplit_once('/')
+        .map(|(parent, _)| parent.to_string())
+        .or_else(|| Some(String::new()))
 }
