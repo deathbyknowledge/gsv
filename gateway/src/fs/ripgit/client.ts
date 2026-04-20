@@ -145,6 +145,7 @@ export type RipgitPackageAnalyzeResponse = {
       has_rpc: boolean;
       rpc_methods: string[];
       browser_entry?: string | null;
+      assets: string[];
     } | null;
     tasks: Array<{
       name: string;

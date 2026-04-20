@@ -1,9 +1,13 @@
 import { getAgentByName } from "agents";
 import { env, WorkerEntrypoint } from "cloudflare:workers";
+import type {
+  PackageAssemblerInterface,
+  PackageAssemblyAnalysis,
+  PackageAssemblyResponse,
+} from "@gsv/protocol/package-assembly";
 import {
   RipgitClient,
   type RipgitPackageAnalyzeResponse,
-  type RipgitPackageBuildResponse,
   type RipgitRepoRef,
 } from "../fs/ripgit/client";
 import type {
@@ -32,6 +36,10 @@ import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
  */
 
 export type PackageRuntime = "dynamic-worker" | "node" | "web-ui";
+
+type PackageAssemblerBinding = Fetcher & Pick<PackageAssemblerInterface, "assemblePackage">;
+const BUILTIN_PACKAGE_ASSEMBLY_CONCURRENCY = 2;
+const STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 export type PackageModuleKind =
   | "esm"
@@ -791,10 +799,15 @@ export async function buildBuiltinPackageSeeds(
   if (!ripgitBinding) {
     throw new Error("RIPGIT binding is required for builtin package resolution");
   }
+  if (!env.ASSEMBLER) {
+    throw new Error("ASSEMBLER binding is required for builtin package resolution");
+  }
 
   const ripgit = new RipgitClient(ripgitBinding);
-  const ripgitSeeds = await Promise.all(
-    BUILTIN_RIPGIT_PACKAGE_SPECS.map((spec) => resolveBuiltinRipgitPackage(ripgit, spec)),
+  const ripgitSeeds = await mapWithConcurrency(
+    BUILTIN_RIPGIT_PACKAGE_SPECS,
+    BUILTIN_PACKAGE_ASSEMBLY_CONCURRENCY,
+    (spec) => resolveBuiltinRipgitPackage(env, ripgit, spec),
   ).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -815,30 +828,36 @@ export async function resolvePackageFromRipgitSource(
   }
 
   const ripgit = new RipgitClient(ripgitBinding);
-  return resolvePackageFromRipgitNativeBuild(ripgit, source);
+  return resolvePackageFromRipgitNativeBuild(env, ripgit, source);
 }
 
 async function resolvePackageFromRipgitNativeBuild(
+  env: Env,
   ripgit: RipgitClient,
   source: PackageSource,
 ): Promise<{ manifest: PackageManifest; artifact: PackageArtifact }> {
+  const assembler = requirePackageAssembler(env);
   const repo = parseRipgitRepoRef(source);
   const subdir = normalizePackageSourceSubdir(source.subdir);
   const analysis = await ripgit.analyzePackage(repo, subdir);
-  const build = await ripgit.buildPackage(repo, subdir, "dynamic-worker");
 
   if (!analysis.ok || !analysis.definition) {
     throw new Error(formatRipgitPackageFailure("package analysis failed", analysis.diagnostics));
   }
-  if (!build.ok || !build.artifact) {
-    throw new Error(formatRipgitPackageFailure("package build failed", build.diagnostics));
-  }
+  const files = await collectPackageAssemblyFiles(ripgit, repo, analysis);
+  const build = await assembler.assemblePackage({
+    analysis: analysis as PackageAssemblyAnalysis,
+    target: "dynamic-worker",
+    files,
+  });
+
+  assertAssemblySucceeded(build);
 
   const packageName = packageNameFromPackageJsonName(analysis.package_json.name);
   const kernelSyscalls = uniqueStrings(analysis.definition.meta.capabilities.kernel);
   const outboundAllowlist = uniqueStrings(analysis.definition.meta.capabilities.outbound);
   const routeBase = packageRouteBase(packageName);
-  const artifact = convertRipgitBuildArtifact(build);
+  const artifact = convertAssembledArtifact(build);
   const icon = toNativePackageIcon(analysis.definition.meta.icon);
   const profiles = await readPackageProfiles(ripgit, repo, subdir);
 
@@ -921,10 +940,11 @@ async function resolvePackageFromRipgitNativeBuild(
 }
 
 async function resolveBuiltinRipgitPackage(
+  env: Env,
   client: RipgitClient,
   spec: BuiltinRipgitPackageSpec,
 ): Promise<PackageSeed> {
-  const { manifest, artifact } = await resolvePackageFromRipgitNativeBuild(client, spec.source);
+  const { manifest, artifact } = await resolvePackageFromRipgitNativeBuild(env, client, spec.source);
 
   return {
     packageId: `builtin:${manifest.name}@${manifest.version}`,
@@ -954,11 +974,11 @@ function parseRipgitRepoRef(source: Pick<PackageSource, "repo" | "ref">): {
   };
 }
 
-function convertRipgitBuildArtifact(
-  build: RipgitPackageBuildResponse,
+function convertAssembledArtifact(
+  build: PackageAssemblyResponse,
 ): PackageArtifact {
   if (!build.artifact) {
-    throw new Error("ripgit build artifact is missing");
+    throw new Error("package assembly artifact is missing");
   }
 
   return {
@@ -971,6 +991,161 @@ function convertRipgitBuildArtifact(
       content: module.content,
     })),
   };
+}
+
+function requirePackageAssembler(env: Env): PackageAssemblerBinding {
+  const binding = env.ASSEMBLER as (Fetcher & Partial<PackageAssemblerInterface>) | undefined;
+  if (!binding || typeof binding.assemblePackage !== "function") {
+    throw new Error("ASSEMBLER binding is required for package assembly");
+  }
+  return binding as PackageAssemblerBinding;
+}
+
+function assertAssemblySucceeded(build: PackageAssemblyResponse): asserts build is PackageAssemblyResponse & {
+  artifact: NonNullable<PackageAssemblyResponse["artifact"]>;
+} {
+  if (!build.ok || !build.artifact) {
+    throw new Error(formatRipgitPackageFailure("package assembly failed", build.diagnostics));
+  }
+}
+
+async function collectPackageAssemblyFiles(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  analysis: RipgitPackageAnalyzeResponse,
+): Promise<Record<string, string>> {
+  const files: Record<string, string> = {};
+  const pendingRoots = [normalizePackageSourceRoot(analysis.package_root || analysis.source.subdir)];
+  const visitedRoots = new Set<string>();
+
+  while (pendingRoots.length > 0) {
+    const root = pendingRoots.shift() ?? "";
+    if (!root || visitedRoots.has(root)) {
+      continue;
+    }
+    visitedRoots.add(root);
+    await collectUtf8Tree(ripgit, repo, root, files);
+    const dependencyRoots = collectFileDependencyRoots(root, files[joinRipgitPath(root, "package.json")]);
+    for (const dependencyRoot of dependencyRoots) {
+      if (!visitedRoots.has(dependencyRoot)) {
+        pendingRoots.push(dependencyRoot);
+      }
+    }
+  }
+
+  return files;
+}
+
+async function collectUtf8Tree(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  root: string,
+  files: Record<string, string>,
+): Promise<void> {
+  const tree = await ripgit.readPath(repo, root);
+  if (tree.kind !== "tree") {
+    return;
+  }
+
+  for (const entry of tree.entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const path = joinRipgitPath(root, entry.name);
+    if (entry.type === "tree") {
+      await collectUtf8Tree(ripgit, repo, path, files);
+      continue;
+    }
+    if (entry.type !== "blob") {
+      continue;
+    }
+    const file = await ripgit.readPath(repo, path);
+    if (file.kind !== "file") {
+      continue;
+    }
+    const decoded = decodeUtf8RepoFile(file.bytes);
+    if (decoded !== null) {
+      files[path] = decoded;
+    }
+  }
+}
+
+function collectFileDependencyRoots(root: string, packageJsonText: string | undefined): string[] {
+  if (!packageJsonText) {
+    return [];
+  }
+
+  try {
+    const packageJson = parseJson<{
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      dev_dependencies?: Record<string, string>;
+    }>(packageJsonText);
+    const specs = [
+      ...Object.values(packageJson.dependencies ?? {}),
+      ...Object.values(packageJson.devDependencies ?? {}),
+      ...Object.values(packageJson.dev_dependencies ?? {}),
+    ];
+    const roots = new Set<string>();
+    for (const spec of specs) {
+      if (typeof spec !== "string" || !spec.startsWith("file:")) {
+        continue;
+      }
+      const resolved = normalizePackageSourceRoot(resolveRelativePackagePath(root, spec.slice(5)));
+      if (resolved) {
+        roots.add(resolved);
+      }
+    }
+    return Array.from(roots).sort((left, right) => left.localeCompare(right));
+  } catch {
+    return [];
+  }
+}
+
+function decodeUtf8RepoFile(bytes: Uint8Array): string | null {
+  for (const byte of bytes) {
+    if (byte === 0) {
+      return null;
+    }
+  }
+  try {
+    return STRICT_UTF8_DECODER.decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function resolveRelativePackagePath(base: string, relative: string): string {
+  const baseSegments = trimSlashes(base).split("/").filter(Boolean);
+  for (const segment of relative.replace(/\\/g, "/").split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      baseSegments.pop();
+      continue;
+    }
+    baseSegments.push(segment);
+  }
+  return baseSegments.join("/");
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const limit = Math.max(1, Math.floor(concurrency));
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+
+  async function worker(): Promise<void> {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, () => worker()));
+  return results;
 }
 
 function packageNameFromPackageJsonName(packageJsonName: string): string {
