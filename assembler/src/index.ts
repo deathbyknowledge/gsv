@@ -229,13 +229,27 @@ function prepareBundlerProjectFiles(
     ...repoFiles,
   });
   const workspacePackages = collectWorkspacePackages(files);
+  const rootPackage: WorkspacePackage = {
+    root: normalizePath(analysis.package_root),
+    manifest: {
+      name: analysis.package_json.name,
+      version: analysis.package_json.version ?? null,
+      type: analysis.package_json.type ?? null,
+      dependencies: analysis.package_json.dependencies ?? {},
+      devDependencies: analysis.package_json.dev_dependencies ?? {},
+    },
+    lockedDependencies: collectLockedDependencyVersions(
+      files,
+      normalizePath(analysis.package_root),
+    ),
+  };
   materializeWorkspacePackages(files, workspacePackages, analysis.package_json.name);
 
   files["package.json"] = JSON.stringify({
     name: analysis.package_json.name,
     version: analysis.package_json.version ?? "0.0.0",
     type: analysis.package_json.type ?? "module",
-    dependencies: collectBundlerDependencies(analysis, workspacePackages),
+    dependencies: collectBundlerDependencies(rootPackage, workspacePackages),
   }, null, 2);
 
   return files;
@@ -253,6 +267,12 @@ type WorkspacePackageManifest = {
 type WorkspacePackage = {
   root: string;
   manifest: WorkspacePackageManifest;
+  lockedDependencies: Record<string, string>;
+};
+
+type PackageLockFile = {
+  packages?: Record<string, { version?: string | null }>;
+  dependencies?: Record<string, { version?: string | null }>;
 };
 
 type JsxCompilerSettings = {
@@ -273,28 +293,22 @@ type BuildConfigFile = {
 };
 
 function collectBundlerDependencies(
-  analysis: PackageAssemblyAnalysis,
+  rootPackage: WorkspacePackage,
   workspacePackages: Map<string, WorkspacePackage>,
 ): Record<string, string> {
   const rewritten: Record<string, string> = {};
 
-  const manifests: WorkspacePackageManifest[] = [
-    {
-      name: analysis.package_json.name,
-      version: analysis.package_json.version ?? null,
-      type: analysis.package_json.type ?? null,
-      dependencies: analysis.package_json.dependencies ?? {},
-      devDependencies: analysis.package_json.dev_dependencies ?? {},
-    },
-    ...Array.from(workspacePackages.values()).map((entry) => entry.manifest),
+  const packages: WorkspacePackage[] = [
+    rootPackage,
+    ...Array.from(workspacePackages.values()),
   ];
 
-  for (const manifest of manifests) {
-    for (const [name, spec] of Object.entries(manifest.dependencies ?? {})) {
+  for (const pkg of packages) {
+    for (const [name, spec] of Object.entries(pkg.manifest.dependencies ?? {})) {
       if (typeof spec !== "string" || spec.startsWith("file:") || name in rewritten) {
         continue;
       }
-      rewritten[name] = spec;
+      rewritten[name] = pkg.lockedDependencies[name] ?? spec;
     }
   }
 
@@ -323,10 +337,65 @@ function collectWorkspacePackages(files: Record<string, string>): Map<string, Wo
     packages.set(manifest.name, {
       root: dirname(path),
       manifest,
+      lockedDependencies: collectLockedDependencyVersions(files, dirname(path)),
     });
   }
 
   return packages;
+}
+
+function collectLockedDependencyVersions(
+  files: Record<string, string>,
+  packageRoot: string,
+): Record<string, string> {
+  const lockfilePath = packageRoot ? joinPosix(packageRoot, "package-lock.json") : "package-lock.json";
+  const source = files[lockfilePath];
+  if (typeof source !== "string" || source.trim().length === 0) {
+    return {};
+  }
+
+  let parsed: PackageLockFile;
+  try {
+    parsed = JSON.parse(source) as PackageLockFile;
+  } catch {
+    return {};
+  }
+
+  const locked: Record<string, string> = {};
+  for (const [entryPath, entry] of Object.entries(parsed.packages ?? {})) {
+    const packageName = topLevelNodeModulesPackageName(entryPath);
+    const version = normalizeString(entry?.version);
+    if (!packageName || !version) {
+      continue;
+    }
+    locked[packageName] = version;
+  }
+
+  for (const [packageName, entry] of Object.entries(parsed.dependencies ?? {})) {
+    const version = normalizeString(entry?.version);
+    if (!version || packageName in locked) {
+      continue;
+    }
+    locked[packageName] = version;
+  }
+
+  return locked;
+}
+
+function topLevelNodeModulesPackageName(path: string): string | null {
+  if (!path.startsWith("node_modules/")) {
+    return null;
+  }
+
+  const relative = path.slice("node_modules/".length);
+  const segments = relative.split("/").filter(Boolean);
+  if (segments.length === 1) {
+    return segments[0];
+  }
+  if (segments[0]?.startsWith("@") && segments.length === 2) {
+    return `${segments[0]}/${segments[1]}`;
+  }
+  return null;
 }
 
 function materializeWorkspacePackages(
