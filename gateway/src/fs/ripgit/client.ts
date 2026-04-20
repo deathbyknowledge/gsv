@@ -178,6 +178,17 @@ export type RipgitPackageBuildResponse = {
   ok: boolean;
 };
 
+export type RipgitPackageSnapshotResponse = {
+  source: {
+    repo: string;
+    ref: string;
+    resolved_commit: string;
+    subdir: string;
+  };
+  package_root: string;
+  files: Record<string, string>;
+};
+
 type RipgitApplyResponse = {
   ok: boolean;
   head?: string | null;
@@ -416,6 +427,19 @@ export class RipgitClient {
     return response.json<RipgitPackageBuildResponse>();
   }
 
+  async snapshotPackage(
+    repo: RipgitRepoRef,
+    subdir: string,
+  ): Promise<RipgitPackageSnapshotResponse> {
+    const response = await this.binding.fetch(this.makePackagesSnapshotUrl(repo, subdir), {
+      headers: this.makeInternalHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `snapshot package '${repo.owner}/${repo.repo}:${subdir}'`));
+    }
+    return response.json<RipgitPackageSnapshotResponse>();
+  }
+
   private makeReadUrl(repo: RipgitRepoRef, path: string): URL {
     return this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/read?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&path=${encodeURIComponent(path)}`,
@@ -487,6 +511,12 @@ export class RipgitClient {
   ): URL {
     return this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/packages/build?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&subdir=${encodeURIComponent(subdir)}&target=${encodeURIComponent(target)}`,
+    );
+  }
+
+  private makePackagesSnapshotUrl(repo: RipgitRepoRef, subdir: string): URL {
+    return this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/packages/snapshot?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&subdir=${encodeURIComponent(subdir)}`,
     );
   }
 

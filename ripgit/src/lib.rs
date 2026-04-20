@@ -2,8 +2,8 @@ mod api;
 mod diff;
 mod git;
 mod hyperspace;
-mod packages;
 mod pack;
+mod packages;
 mod schema;
 mod store;
 
@@ -145,18 +145,29 @@ impl DurableObject for Repository {
                     return resp;
                 }
                 match parts.get(3).copied().unwrap_or("") {
-                    "read" if req.method() == Method::Get => hyperspace::handle_read(&self.sql, &req).await,
+                    "read" if req.method() == Method::Get => {
+                        hyperspace::handle_read(&self.sql, &req).await
+                    }
                     "refs" if req.method() == Method::Get => api::handle_refs(&self.sql),
                     "log" if req.method() == Method::Get => {
                         let url = req.url()?;
                         api::handle_log(&self.sql, &url)
                     }
-                    "search" if req.method() == Method::Get => hyperspace::handle_search(&self.sql, &req).await,
-                    "apply" if req.method() == Method::Post => hyperspace::handle_apply(&self.sql, &mut req).await,
-                    "import" if req.method() == Method::Post => hyperspace::handle_import(&self.sql, &mut req).await,
+                    "search" if req.method() == Method::Get => {
+                        hyperspace::handle_search(&self.sql, &req).await
+                    }
+                    "apply" if req.method() == Method::Post => {
+                        hyperspace::handle_apply(&self.sql, &mut req).await
+                    }
+                    "import" if req.method() == Method::Post => {
+                        hyperspace::handle_import(&self.sql, &mut req).await
+                    }
                     "packages" => match (req.method(), parts.get(4).copied().unwrap_or("")) {
                         (Method::Get, "analyze") => {
                             hyperspace::handle_packages_analyze(&self.sql, &req, &repo_slug).await
+                        }
+                        (Method::Get, "snapshot") => {
+                            hyperspace::handle_packages_snapshot(&self.sql, &req, &repo_slug).await
                         }
                         (Method::Get, "build") => {
                             hyperspace::handle_packages_build(&self.sql, &req, &repo_slug).await

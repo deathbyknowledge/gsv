@@ -39,7 +39,6 @@ export type PackageRuntime = "dynamic-worker" | "node" | "web-ui";
 
 type PackageAssemblerBinding = Fetcher & Pick<PackageAssemblerInterface, "assemblePackage">;
 const BUILTIN_PACKAGE_ASSEMBLY_CONCURRENCY = 2;
-const STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 export type PackageModuleKind =
   | "esm"
@@ -844,11 +843,11 @@ async function resolvePackageFromRipgitNativeBuild(
   if (!analysis.ok || !analysis.definition) {
     throw new Error(formatRipgitPackageFailure("package analysis failed", analysis.diagnostics));
   }
-  const files = await collectPackageAssemblyFiles(ripgit, repo, analysis);
+  const snapshot = await ripgit.snapshotPackage(repo, subdir);
   const build = await assembler.assemblePackage({
     analysis: analysis as PackageAssemblyAnalysis,
     target: "dynamic-worker",
-    files,
+    files: snapshot.files,
   });
 
   assertAssemblySucceeded(build);
@@ -1007,124 +1006,6 @@ function assertAssemblySucceeded(build: PackageAssemblyResponse): asserts build 
   if (!build.ok || !build.artifact) {
     throw new Error(formatRipgitPackageFailure("package assembly failed", build.diagnostics));
   }
-}
-
-async function collectPackageAssemblyFiles(
-  ripgit: RipgitClient,
-  repo: RipgitRepoRef,
-  analysis: RipgitPackageAnalyzeResponse,
-): Promise<Record<string, string>> {
-  const files: Record<string, string> = {};
-  const pendingRoots = [normalizePackageSourceRoot(analysis.package_root || analysis.source.subdir)];
-  const visitedRoots = new Set<string>();
-
-  while (pendingRoots.length > 0) {
-    const root = pendingRoots.shift() ?? "";
-    if (!root || visitedRoots.has(root)) {
-      continue;
-    }
-    visitedRoots.add(root);
-    await collectUtf8Tree(ripgit, repo, root, files);
-    const dependencyRoots = collectFileDependencyRoots(root, files[joinRipgitPath(root, "package.json")]);
-    for (const dependencyRoot of dependencyRoots) {
-      if (!visitedRoots.has(dependencyRoot)) {
-        pendingRoots.push(dependencyRoot);
-      }
-    }
-  }
-
-  return files;
-}
-
-async function collectUtf8Tree(
-  ripgit: RipgitClient,
-  repo: RipgitRepoRef,
-  root: string,
-  files: Record<string, string>,
-): Promise<void> {
-  const tree = await ripgit.readPath(repo, root);
-  if (tree.kind !== "tree") {
-    return;
-  }
-
-  for (const entry of tree.entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const path = joinRipgitPath(root, entry.name);
-    if (entry.type === "tree") {
-      await collectUtf8Tree(ripgit, repo, path, files);
-      continue;
-    }
-    if (entry.type !== "blob") {
-      continue;
-    }
-    const file = await ripgit.readPath(repo, path);
-    if (file.kind !== "file") {
-      continue;
-    }
-    const decoded = decodeUtf8RepoFile(file.bytes);
-    if (decoded !== null) {
-      files[path] = decoded;
-    }
-  }
-}
-
-function collectFileDependencyRoots(root: string, packageJsonText: string | undefined): string[] {
-  if (!packageJsonText) {
-    return [];
-  }
-
-  try {
-    const packageJson = parseJson<{
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-      dev_dependencies?: Record<string, string>;
-    }>(packageJsonText);
-    const specs = [
-      ...Object.values(packageJson.dependencies ?? {}),
-      ...Object.values(packageJson.devDependencies ?? {}),
-      ...Object.values(packageJson.dev_dependencies ?? {}),
-    ];
-    const roots = new Set<string>();
-    for (const spec of specs) {
-      if (typeof spec !== "string" || !spec.startsWith("file:")) {
-        continue;
-      }
-      const resolved = normalizePackageSourceRoot(resolveRelativePackagePath(root, spec.slice(5)));
-      if (resolved) {
-        roots.add(resolved);
-      }
-    }
-    return Array.from(roots).sort((left, right) => left.localeCompare(right));
-  } catch {
-    return [];
-  }
-}
-
-function decodeUtf8RepoFile(bytes: Uint8Array): string | null {
-  for (const byte of bytes) {
-    if (byte === 0) {
-      return null;
-    }
-  }
-  try {
-    return STRICT_UTF8_DECODER.decode(bytes);
-  } catch {
-    return null;
-  }
-}
-
-function resolveRelativePackagePath(base: string, relative: string): string {
-  const baseSegments = trimSlashes(base).split("/").filter(Boolean);
-  for (const segment of relative.replace(/\\/g, "/").split("/")) {
-    if (!segment || segment === ".") {
-      continue;
-    }
-    if (segment === "..") {
-      baseSegments.pop();
-      continue;
-    }
-    baseSegments.push(segment);
-  }
-  return baseSegments.join("/");
 }
 
 async function mapWithConcurrency<T, R>(
@@ -1339,11 +1220,6 @@ function decodeProfileTextFile(bytes: Uint8Array): string | null {
   }
   const text = TEXT_DECODER.decode(bytes).trim();
   return text.length > 0 ? text : null;
-}
-
-function normalizePackageSourceRoot(path: string): string {
-  const normalized = trimSlashes(path.trim());
-  return normalized === "." ? "" : normalized;
 }
 
 function normalizePackageSourceSubdir(path: string): string {
