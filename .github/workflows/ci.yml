@@ -43,7 +43,8 @@ jobs:
         run: npm exec --workspace assembler -- tsc --noEmit
 
       - name: Bundle worker
-        run: npm exec --workspace assembler -- wrangler deploy --dry-run --config assembler/wrangler.jsonc --outdir assembler/dist/worker
+        working-directory: assembler
+        run: npm exec --workspace assembler -- wrangler deploy --dry-run --config wrangler.jsonc --outdir dist/worker
 
   gateway-test:
     name: Gateway Tests
