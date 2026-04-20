@@ -10,6 +10,12 @@ import type {
   PackageAssemblyRequest,
   PackageAssemblyResponse,
 } from "@gsv/protocol/package-assembly";
+import {
+  GSV_APP_LINK_FALLBACK_FILES,
+  GSV_APP_LINK_NAME,
+  GSV_PACKAGE_SDK_FALLBACK_FILES,
+  GSV_PACKAGE_SDK_NAME,
+} from "./sdk-fallback";
 
 type WorkerLoaderModuleLike =
   | string
@@ -225,10 +231,12 @@ function prepareBundlerProjectFiles(
   analysis: PackageAssemblyAnalysis,
   repoFiles: Record<string, string>,
 ): Record<string, string> {
-  const files = applyConfiguredJsxTransforms({
+  const files = {
     ...repoFiles,
-  });
-  const workspacePackages = collectWorkspacePackages(files);
+  };
+  injectBuiltinSdkFiles(files);
+  const transformedFiles = applyConfiguredJsxTransforms(files);
+  const workspacePackages = collectWorkspacePackages(transformedFiles);
   const rootPackage: WorkspacePackage = {
     root: normalizePath(analysis.package_root),
     manifest: {
@@ -239,20 +247,20 @@ function prepareBundlerProjectFiles(
       devDependencies: analysis.package_json.dev_dependencies ?? {},
     },
     lockedDependencies: collectLockedDependencyVersions(
-      files,
+      transformedFiles,
       normalizePath(analysis.package_root),
     ),
   };
-  materializeWorkspacePackages(files, workspacePackages, analysis.package_json.name);
+  materializeWorkspacePackages(transformedFiles, workspacePackages, analysis.package_json.name);
 
-  files["package.json"] = JSON.stringify({
+  transformedFiles["package.json"] = JSON.stringify({
     name: analysis.package_json.name,
     version: analysis.package_json.version ?? "0.0.0",
     type: analysis.package_json.type ?? "module",
     dependencies: collectBundlerDependencies(rootPackage, workspacePackages),
   }, null, 2);
 
-  return files;
+  return transformedFiles;
 }
 
 type WorkspacePackageManifest = {
@@ -302,10 +310,19 @@ function collectBundlerDependencies(
     rootPackage,
     ...Array.from(workspacePackages.values()),
   ];
+  const localPackageNames = new Set(
+    packages
+      .map((pkg) => pkg.manifest.name)
+      .filter((name): name is string => typeof name === "string" && name.length > 0),
+  );
 
   for (const pkg of packages) {
     for (const [name, spec] of Object.entries(pkg.manifest.dependencies ?? {})) {
-      if (typeof spec !== "string" || spec.startsWith("file:") || name in rewritten) {
+      if (
+        typeof spec !== "string"
+        || name in rewritten
+        || isLocalDependencySpec(name, spec, localPackageNames)
+      ) {
         continue;
       }
       rewritten[name] = pkg.lockedDependencies[name] ?? spec;
@@ -313,6 +330,19 @@ function collectBundlerDependencies(
   }
 
   return rewritten;
+}
+
+function isLocalDependencySpec(
+  packageName: string,
+  spec: string,
+  localPackageNames: ReadonlySet<string>,
+): boolean {
+  return (
+    localPackageNames.has(packageName)
+    || spec.startsWith("file:")
+    || spec.startsWith("link:")
+    || spec.startsWith("workspace:")
+  );
 }
 
 function collectWorkspacePackages(files: Record<string, string>): Map<string, WorkspacePackage> {
@@ -342,6 +372,41 @@ function collectWorkspacePackages(files: Record<string, string>): Map<string, Wo
   }
 
   return packages;
+}
+
+function injectBuiltinSdkFiles(files: Record<string, string>): void {
+  if (!repoDeclaresPackage(files, GSV_APP_LINK_NAME)) {
+    for (const [path, content] of Object.entries(GSV_APP_LINK_FALLBACK_FILES)) {
+      files[path] ??= content;
+    }
+  }
+
+  if (!repoDeclaresPackage(files, GSV_PACKAGE_SDK_NAME)) {
+    for (const [path, content] of Object.entries(GSV_PACKAGE_SDK_FALLBACK_FILES)) {
+      files[path] ??= content;
+    }
+  }
+}
+
+function repoDeclaresPackage(files: Record<string, string>, packageName: string): boolean {
+  for (const [path, content] of Object.entries(files)) {
+    if (!path.endsWith("/package.json") && path !== "package.json") {
+      continue;
+    }
+
+    let manifest: WorkspacePackageManifest;
+    try {
+      manifest = JSON.parse(content) as WorkspacePackageManifest;
+    } catch {
+      continue;
+    }
+
+    if (manifest.name === packageName) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function collectLockedDependencyVersions(

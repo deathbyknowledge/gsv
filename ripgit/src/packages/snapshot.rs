@@ -13,6 +13,8 @@ pub(crate) fn snapshot_package(
     locator: &PackageSourceLocator,
 ) -> Result<PackageSnapshot> {
     let analysis = analyze_package(sql, locator)?;
+    let workspace_package_roots =
+        collect_workspace_package_roots(sql, &analysis.source.resolved_commit)?;
     let mut pending_roots = VecDeque::from([normalize_snapshot_root(&analysis.package_root)?]);
     let mut visited_roots = BTreeSet::new();
     let mut files = BTreeMap::new();
@@ -26,7 +28,9 @@ pub(crate) fn snapshot_package(
         collect_ancestor_config_files(sql, &analysis.source, &root, &mut files)?;
 
         if let Some(package_json) = files.get(&join_snapshot_path(&root, "package.json")) {
-            for dependency_root in collect_file_dependency_roots(&root, package_json)? {
+            for dependency_root in
+                collect_local_dependency_roots(&root, package_json, &workspace_package_roots)?
+            {
                 if !visited_roots.contains(&dependency_root) {
                     pending_roots.push_back(dependency_root);
                 }
@@ -285,30 +289,127 @@ fn collect_utf8_files_under_tree(
     Ok(())
 }
 
-fn collect_file_dependency_roots(root: &str, package_json_text: &str) -> Result<Vec<String>> {
+#[derive(Deserialize)]
+struct SnapshotPackageJson {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    dependencies: BTreeMap<String, String>,
+    #[serde(default, rename = "devDependencies", alias = "dev_dependencies")]
+    dev_dependencies: BTreeMap<String, String>,
+    #[serde(default, rename = "optionalDependencies", alias = "optional_dependencies")]
+    optional_dependencies: BTreeMap<String, String>,
+}
+
+fn parse_snapshot_package_json(package_json_text: &str) -> Result<SnapshotPackageJson> {
+    serde_json::from_str(package_json_text)
+        .map_err(|err| Error::RustError(format!("invalid package.json: {}", err)))
+}
+
+fn collect_workspace_package_roots(
+    sql: &SqlStorage,
+    commit_hash: &str,
+) -> Result<BTreeMap<String, String>> {
+    let Some(tree_hash) = resolve_tree_hash_at_commit(sql, commit_hash, "")? else {
+        return Ok(BTreeMap::new());
+    };
+
+    let mut roots = BTreeMap::new();
+    collect_workspace_package_roots_under_tree(sql, &tree_hash, "", &mut roots)?;
+    Ok(roots)
+}
+
+fn collect_workspace_package_roots_under_tree(
+    sql: &SqlStorage,
+    tree_hash: &str,
+    prefix: &str,
+    roots: &mut BTreeMap<String, String>,
+) -> Result<()> {
     #[derive(Deserialize)]
-    struct PackageJson {
-        #[serde(default)]
-        dependencies: BTreeMap<String, String>,
-        #[serde(default, rename = "devDependencies", alias = "dev_dependencies")]
-        dev_dependencies: BTreeMap<String, String>,
+    struct TreeRow {
+        name: String,
+        mode: i64,
+        entry_hash: String,
     }
 
-    let package_json: PackageJson = serde_json::from_str(package_json_text)
-        .map_err(|err| Error::RustError(format!("invalid package.json: {}", err)))?;
-    let mut roots = BTreeSet::new();
+    let rows: Vec<TreeRow> = sql
+        .exec(
+            "SELECT name, mode, entry_hash FROM trees WHERE tree_hash = ? ORDER BY name",
+            vec![SqlStorageValue::from(tree_hash.to_string())],
+        )?
+        .to_array()?;
 
-    for spec in package_json
-        .dependencies
-        .values()
-        .chain(package_json.dev_dependencies.values())
-    {
-        let Some(relative) = spec.strip_prefix("file:") else {
+    for entry in &rows {
+        if entry.mode != 0o100644 && entry.mode != 0o100755 {
+            continue;
+        }
+        if entry.name != "package.json" {
+            continue;
+        }
+
+        let Some(bytes) = crate::store::reconstruct_blob_by_hash(sql, &entry.entry_hash)? else {
+            return Err(Error::RustError(format!(
+                "missing blob for package snapshot file: {}",
+                join_snapshot_path(prefix, &entry.name)
+            )));
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
             continue;
         };
-        let resolved = resolve_relative_package_path(root, relative)?;
-        if !resolved.is_empty() {
-            roots.insert(resolved);
+        let package_json = parse_snapshot_package_json(&text)?;
+        let Some(package_name) = package_json.name else {
+            continue;
+        };
+        roots.entry(package_name).or_insert_with(|| prefix.to_string());
+    }
+
+    for entry in rows {
+        if entry.mode != 0o040000 {
+            continue;
+        }
+
+        let child_prefix = join_snapshot_path(prefix, &entry.name);
+        collect_workspace_package_roots_under_tree(sql, &entry.entry_hash, &child_prefix, roots)?;
+    }
+
+    Ok(())
+}
+
+fn collect_local_dependency_roots(
+    root: &str,
+    package_json_text: &str,
+    workspace_package_roots: &BTreeMap<String, String>,
+) -> Result<Vec<String>> {
+    let package_json = parse_snapshot_package_json(package_json_text)?;
+    let mut roots = BTreeSet::new();
+
+    for (package_name, spec) in package_json
+        .dependencies
+        .iter()
+        .chain(package_json.dev_dependencies.iter())
+        .chain(package_json.optional_dependencies.iter())
+    {
+        if let Some(relative) = spec
+            .strip_prefix("file:")
+            .or_else(|| spec.strip_prefix("link:"))
+        {
+            let resolved = resolve_relative_package_path(root, relative)?;
+            if !resolved.is_empty() {
+                roots.insert(resolved);
+            }
+            continue;
+        }
+
+        if spec.starts_with("workspace:") {
+            let Some(workspace_root) = workspace_package_roots.get(package_name) else {
+                return Err(Error::RustError(format!(
+                    "workspace dependency {} is not present in the resolved repository snapshot",
+                    package_name
+                )));
+            };
+            if !workspace_root.is_empty() {
+                roots.insert(workspace_root.clone());
+            }
         }
     }
 
