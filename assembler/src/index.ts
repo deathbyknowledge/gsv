@@ -1414,14 +1414,33 @@ function makeError(code: string, error: unknown, path: string): PackageAssemblyD
 
 function extractHtmlModuleScriptSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
-  const pattern = /<script\b[^>]*type\s*=\s*["']module["'][^>]*src\s*=\s*["']([^"']+)["'][^>]*>/gi;
-  for (const match of source.matchAll(pattern)) {
-    const specifier = typeof match[1] === "string" ? match[1].trim() : "";
-    if (specifier) {
-      specifiers.push(specifier);
+  const scriptTagPattern = /<script\b([^>]*)>/gi;
+  for (const match of source.matchAll(scriptTagPattern)) {
+    const attributes = parseHtmlAttributes(match[1] ?? "");
+    if (attributes.type?.toLowerCase() !== "module") {
+      continue;
     }
+    const specifier = attributes.src?.trim() ?? "";
+    if (!specifier) {
+      continue;
+    }
+    specifiers.push(specifier);
   }
   return specifiers;
+}
+
+function parseHtmlAttributes(source: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  const pattern = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  for (const match of source.matchAll(pattern)) {
+    const name = match[1]?.trim().toLowerCase();
+    if (!name) {
+      continue;
+    }
+    const value = match[2] ?? match[3] ?? match[4] ?? "";
+    attributes[name] = value;
+  }
+  return attributes;
 }
 
 function resolveAssetSpecifier(importerPath: string, specifier: string): string {

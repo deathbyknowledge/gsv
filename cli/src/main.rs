@@ -2239,6 +2239,7 @@ fn component_is_selected(components: &[String], component: &str) -> bool {
 fn teardown_component_description(component: &str) -> &'static str {
     match component {
         "ripgit" => "Git-backed storage worker",
+        "assembler" => "Package assembly worker",
         "gateway" => "Core API + sessions worker",
         "channel-whatsapp" => "WhatsApp channel worker",
         "channel-discord" => "Discord channel worker",

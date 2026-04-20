@@ -8,6 +8,7 @@ import type {
 import {
   RipgitClient,
   type RipgitPackageAnalyzeResponse,
+  type RipgitPackageSnapshotResponse,
   type RipgitRepoRef,
 } from "../fs/ripgit/client";
 import type {
@@ -843,7 +844,11 @@ async function resolvePackageFromRipgitNativeBuild(
   if (!analysis.ok || !analysis.definition) {
     throw new Error(formatRipgitPackageFailure("package analysis failed", analysis.diagnostics));
   }
-  const snapshot = await ripgit.snapshotPackage(repo, subdir);
+  const snapshot = await ripgit.snapshotPackage({
+    ...repo,
+    branch: analysis.source.resolved_commit,
+  }, subdir);
+  assertSnapshotMatchesAnalysis(analysis, snapshot);
   const build = await assembler.assemblePackage({
     analysis: analysis as PackageAssemblyAnalysis,
     target: "dynamic-worker",
@@ -1005,6 +1010,17 @@ function assertAssemblySucceeded(build: PackageAssemblyResponse): asserts build 
 } {
   if (!build.ok || !build.artifact) {
     throw new Error(formatRipgitPackageFailure("package assembly failed", build.diagnostics));
+  }
+}
+
+function assertSnapshotMatchesAnalysis(
+  analysis: RipgitPackageAnalyzeResponse,
+  snapshot: RipgitPackageSnapshotResponse,
+): void {
+  if (snapshot.source.resolved_commit !== analysis.source.resolved_commit) {
+    throw new Error(
+      `package snapshot commit mismatch: analysis=${analysis.source.resolved_commit} snapshot=${snapshot.source.resolved_commit}`,
+    );
   }
 }
 

@@ -30,7 +30,13 @@ function writeVersionFile(version) {
 }
 
 function listPackageJsonFiles() {
-  const files = ["package.json", "gateway/package.json", "web/package.json", "ripgit/package.json"];
+  const files = [
+    "package.json",
+    "assembler/package.json",
+    "gateway/package.json",
+    "web/package.json",
+    "ripgit/package.json",
+  ];
   for (const group of ["shared", "adapters", "builtin-packages"]) {
     const groupDir = join(ROOT, group);
     for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
