@@ -1,5 +1,6 @@
 import { createWorker } from "@cloudflare/worker-bundler";
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { transform } from "sucrase";
 import type {
   PackageAssemblerInterface,
   PackageAssemblyAnalysis,
@@ -224,9 +225,9 @@ function prepareBundlerProjectFiles(
   analysis: PackageAssemblyAnalysis,
   repoFiles: Record<string, string>,
 ): Record<string, string> {
-  const files: Record<string, string> = {
+  const files = applyConfiguredJsxTransforms({
     ...repoFiles,
-  };
+  });
   const workspacePackages = collectWorkspacePackages(files);
   materializeWorkspacePackages(files, workspacePackages, analysis.package_json.name);
 
@@ -237,7 +238,7 @@ function prepareBundlerProjectFiles(
     dependencies: collectBundlerDependencies(analysis, workspacePackages),
   }, null, 2);
 
-  return applyJsxCompilerPragmas(files);
+  return files;
 }
 
 type WorkspacePackageManifest = {
@@ -353,7 +354,7 @@ function materializeWorkspacePackages(
   }
 }
 
-function applyJsxCompilerPragmas(files: Record<string, string>): Record<string, string> {
+function applyConfiguredJsxTransforms(files: Record<string, string>): Record<string, string> {
   const next: Record<string, string> = {};
   const configCache = new Map<string, JsxCompilerSettings | null>();
 
@@ -364,32 +365,42 @@ function applyJsxCompilerPragmas(files: Record<string, string>): Record<string, 
     }
 
     const settings = resolveJsxCompilerSettings(path, files, configCache);
-    const pragmas = buildJsxPragmas(content, settings);
-    next[path] = pragmas.length > 0 ? `${pragmas.join("\n")}\n${content}` : content;
+    next[path] = transformJsxModule(path, content, settings);
   }
 
   return next;
 }
 
-function buildJsxPragmas(source: string, settings: JsxCompilerSettings | null): string[] {
+function transformJsxModule(
+  path: string,
+  source: string,
+  settings: JsxCompilerSettings | null,
+): string {
   if (!settings) {
-    return [];
+    return source;
   }
 
-  const pragmas: string[] = [];
-  if (settings.runtime && !/@jsxRuntime\s+/u.test(source)) {
-    pragmas.push(`/** @jsxRuntime ${settings.runtime} */`);
+  const runtime = settings.runtime ?? (settings.factory || settings.fragmentFactory ? "classic" : undefined);
+  if (!runtime) {
+    return source;
   }
-  if (settings.importSource && !/@jsxImportSource\s+/u.test(source)) {
-    pragmas.push(`/** @jsxImportSource ${settings.importSource} */`);
+
+  const transforms: Array<"jsx" | "typescript"> = ["jsx"];
+  if (path.endsWith(".tsx")) {
+    transforms.unshift("typescript");
   }
-  if (settings.factory && !/@jsx\s+/u.test(source)) {
-    pragmas.push(`/** @jsx ${settings.factory} */`);
-  }
-  if (settings.fragmentFactory && !/@jsxFrag\s+/u.test(source)) {
-    pragmas.push(`/** @jsxFrag ${settings.fragmentFactory} */`);
-  }
-  return pragmas;
+
+  return transform(source, {
+    filePath: path,
+    transforms,
+    jsxRuntime: runtime,
+    jsxImportSource: settings.importSource,
+    jsxPragma: settings.factory,
+    jsxFragmentPragma: settings.fragmentFactory,
+    production: true,
+    preserveDynamicImport: true,
+    disableESTransforms: true,
+  }).code;
 }
 
 function resolveJsxCompilerSettings(

@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@cloudflare/worker-bundler": "^0.0.3",
-    "@gsv/protocol": "file:../shared/protocol"
+    "@gsv/protocol": "file:../shared/protocol",
+    "sucrase": "^3.35.1"
   },
   "devDependencies": {
     "typescript": "^5.5.2",
