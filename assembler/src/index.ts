@@ -24,6 +24,16 @@ interface Env {}
 
 const DEFAULT_COMPATIBILITY_DATE = "2026-01-28";
 
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/health") {
+      return Response.json({ status: "healthy" });
+    }
+    return new Response("Not Found", { status: 404 });
+  },
+};
+
 export class PackageAssembler extends WorkerEntrypoint<Env> implements PackageAssemblerInterface {
   async assemblePackage(input: PackageAssemblyRequest): Promise<PackageAssemblyResponse> {
     const diagnostics: PackageAssemblyDiagnostic[] = [];
