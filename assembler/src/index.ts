@@ -159,10 +159,7 @@ async function buildPublicAssets(
   });
 
   const declaredAssets = new Set<string>();
-  for (const assetPath of [
-    ...(app.assets ?? []),
-    ...extractHtmlStylesheetSpecifiers(entryHtml),
-  ]) {
+  for (const assetPath of app.assets ?? []) {
     const relPath = normalizePath(assetPath.replace(/^\.\//, ""));
     if (!relPath || declaredAssets.has(relPath)) {
       continue;
@@ -229,12 +226,14 @@ function prepareBundlerProjectFiles(
   const files: Record<string, string> = {
     ...repoFiles,
   };
+  const workspacePackages = collectWorkspacePackages(files);
+  materializeWorkspacePackages(files, workspacePackages, analysis.package_json.name);
 
   files["package.json"] = JSON.stringify({
     name: analysis.package_json.name,
     version: analysis.package_json.version ?? "0.0.0",
     type: analysis.package_json.type ?? "module",
-    dependencies: rewriteRootDependencies(analysis),
+    dependencies: collectBundlerDependencies(analysis, workspacePackages),
   }, null, 2);
 
   files["node_modules/react/package.json"] = JSON.stringify({
@@ -254,20 +253,100 @@ function prepareBundlerProjectFiles(
   return files;
 }
 
-function rewriteRootDependencies(
+type WorkspacePackageManifest = {
+  name: string;
+  version?: string | null;
+  type?: string | null;
+  exports?: unknown;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+};
+
+type WorkspacePackage = {
+  root: string;
+  manifest: WorkspacePackageManifest;
+};
+
+function collectBundlerDependencies(
   analysis: PackageAssemblyAnalysis,
+  workspacePackages: Map<string, WorkspacePackage>,
 ): Record<string, string> {
-  const packageRoot = normalizePath(analysis.source.subdir);
   const rewritten: Record<string, string> = {};
-  for (const [name, spec] of Object.entries(analysis.package_json.dependencies ?? {})) {
-    if (typeof spec === "string" && spec.startsWith("file:")) {
-      const resolved = resolveRelativePackagePath(packageRoot, spec.slice(5));
-      rewritten[name] = `file:./${resolved}`;
+
+  const manifests: WorkspacePackageManifest[] = [
+    {
+      name: analysis.package_json.name,
+      version: analysis.package_json.version ?? null,
+      type: analysis.package_json.type ?? null,
+      dependencies: analysis.package_json.dependencies ?? {},
+      devDependencies: analysis.package_json.dev_dependencies ?? {},
+    },
+    ...Array.from(workspacePackages.values()).map((entry) => entry.manifest),
+  ];
+
+  for (const manifest of manifests) {
+    for (const [name, spec] of Object.entries(manifest.dependencies ?? {})) {
+      if (typeof spec !== "string" || spec.startsWith("file:") || name in rewritten) {
+        continue;
+      }
+      rewritten[name] = spec;
+    }
+  }
+
+  return rewritten;
+}
+
+function collectWorkspacePackages(files: Record<string, string>): Map<string, WorkspacePackage> {
+  const packages = new Map<string, WorkspacePackage>();
+
+  for (const [path, content] of Object.entries(files)) {
+    if (!path.endsWith("/package.json") || path.startsWith("node_modules/")) {
       continue;
     }
-    rewritten[name] = spec;
+
+    let manifest: WorkspacePackageManifest;
+    try {
+      manifest = JSON.parse(content) as WorkspacePackageManifest;
+    } catch {
+      continue;
+    }
+
+    if (typeof manifest.name !== "string" || manifest.name.length === 0) {
+      continue;
+    }
+
+    packages.set(manifest.name, {
+      root: dirname(path),
+      manifest,
+    });
   }
-  return rewritten;
+
+  return packages;
+}
+
+function materializeWorkspacePackages(
+  files: Record<string, string>,
+  workspacePackages: Map<string, WorkspacePackage>,
+  rootPackageName: string,
+): void {
+  for (const [packageName, pkg] of workspacePackages.entries()) {
+    if (packageName === rootPackageName) {
+      continue;
+    }
+
+    const rootPrefix = `${pkg.root}/`;
+    const materializedRoot = joinPosix("node_modules", packageName);
+    for (const [path, content] of Object.entries(files)) {
+      if (!path.startsWith(rootPrefix)) {
+        continue;
+      }
+
+      const relativePath = path.slice(rootPrefix.length);
+      files[joinPosix(materializedRoot, relativePath)] = content;
+    }
+
+    files[joinPosix(materializedRoot, "package.json")] = JSON.stringify(pkg.manifest, null, 2);
+  }
 }
 
 function generateDynamicWorkerMainModule(
@@ -1083,25 +1162,9 @@ function extractHtmlModuleScriptSpecifiers(source: string): string[] {
   return specifiers;
 }
 
-function extractHtmlStylesheetSpecifiers(source: string): string[] {
-  const specifiers: string[] = [];
-  const pattern = /<link\b[^>]*rel\s*=\s*["']stylesheet["'][^>]*href\s*=\s*["']([^"']+)["'][^>]*>/gi;
-  for (const match of source.matchAll(pattern)) {
-    const specifier = typeof match[1] === "string" ? match[1].trim() : "";
-    if (specifier && !/^(https?:)?\/\//i.test(specifier) && !specifier.startsWith("/")) {
-      specifiers.push(specifier);
-    }
-  }
-  return specifiers;
-}
-
 function resolveAssetSpecifier(importerPath: string, specifier: string): string {
   const importerDir = dirname(importerPath);
   return normalizePath(joinPosix(importerDir, specifier));
-}
-
-function resolveRelativePackagePath(base: string, relative: string): string {
-  return normalizePath(joinPosix(base, relative));
 }
 
 function relativeAssetSpecifier(fromPath: string, toPath: string): string {
