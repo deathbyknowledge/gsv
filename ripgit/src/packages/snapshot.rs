@@ -394,9 +394,7 @@ fn collect_local_dependency_roots(
             .or_else(|| spec.strip_prefix("link:"))
         {
             let resolved = resolve_relative_package_path(root, relative)?;
-            if !resolved.is_empty() {
-                roots.insert(resolved);
-            }
+            roots.insert(resolved);
             continue;
         }
 
@@ -407,9 +405,7 @@ fn collect_local_dependency_roots(
                     package_name
                 )));
             };
-            if !workspace_root.is_empty() {
-                roots.insert(workspace_root.clone());
-            }
+            roots.insert(workspace_root.clone());
         }
     }
 
