@@ -74,7 +74,8 @@ export class PackageAssembler extends WorkerEntrypoint<Env> implements PackageAs
         diagnostics.push(makeWarning("runtime-bundle-warning", warning, input.analysis.source.subdir));
       }
 
-      const artifact = await toArtifact(runtimeBundle.mainModule, runtimeBundle.modules);
+      const passthroughModules = collectPassthroughArtifactModules(input.analysis, bundlerFiles);
+      const artifact = await toArtifact(runtimeBundle.mainModule, runtimeBundle.modules, passthroughModules);
       return {
         source: input.analysis.source,
         analysis_hash: input.analysis.analysis_hash,
@@ -1042,15 +1043,22 @@ function workerModuleToAsset(path: string, module: WorkerLoaderModuleLike): Publ
 async function toArtifact(
   mainModule: string,
   modules: Record<string, WorkerLoaderModuleLike>,
+  passthroughModules: PackageAssemblyArtifactModule[],
 ): Promise<PackageAssemblyArtifact> {
-  const artifactModules: PackageAssemblyArtifactModule[] = [];
+  const artifactModules = new Map<string, PackageAssemblyArtifactModule>();
   for (const [path, module] of Object.entries(modules)) {
-    artifactModules.push(convertModule(path, module));
+    const converted = convertModule(path, module);
+    artifactModules.set(converted.path, converted);
   }
-  artifactModules.sort((left, right) => left.path.localeCompare(right.path));
+  for (const module of passthroughModules) {
+    if (!artifactModules.has(module.path)) {
+      artifactModules.set(module.path, module);
+    }
+  }
+  const sortedModules = Array.from(artifactModules.values()).sort((left, right) => left.path.localeCompare(right.path));
   const hashInput = JSON.stringify({
     mainModule,
-    modules: artifactModules,
+    modules: sortedModules,
     compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
   });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(hashInput));
@@ -1058,9 +1066,42 @@ async function toArtifact(
 
   return {
     main_module: mainModule,
-    modules: artifactModules,
+    modules: sortedModules,
     hash: `sha256:${hash}`,
   };
+}
+
+function collectPassthroughArtifactModules(
+  analysis: PackageAssemblyAnalysis,
+  files: Record<string, string>,
+): PackageAssemblyArtifactModule[] {
+  const packageRoot = normalizePath(analysis.source.subdir);
+  const rootPrefix = packageRoot ? `${packageRoot}/` : "";
+  const modules: PackageAssemblyArtifactModule[] = [];
+
+  for (const [path, content] of Object.entries(files)) {
+    if (!isPathWithinRoot(path, packageRoot)) {
+      continue;
+    }
+
+    const relPath = rootPrefix ? path.slice(rootPrefix.length) : path;
+    if (!relPath || relPath.startsWith("node_modules/")) {
+      continue;
+    }
+
+    const kind = inferArtifactModuleKind(path);
+    if (kind === "source-module" || kind === "commonjs") {
+      continue;
+    }
+
+    modules.push({
+      path: relPath,
+      kind,
+      content,
+    });
+  }
+
+  return modules;
 }
 
 function convertModule(path: string, module: WorkerLoaderModuleLike): PackageAssemblyArtifactModule {
@@ -1104,6 +1145,27 @@ function convertModule(path: string, module: WorkerLoaderModuleLike): PackageAss
     kind: "data",
     content: encodeDataModule(module.data),
   };
+}
+
+function inferArtifactModuleKind(path: string): PackageAssemblyArtifactModule["kind"] {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".json")) {
+    return "json";
+  }
+  if (
+    lower.endsWith(".ts")
+    || lower.endsWith(".tsx")
+    || lower.endsWith(".js")
+    || lower.endsWith(".jsx")
+    || lower.endsWith(".mts")
+    || lower.endsWith(".mjs")
+  ) {
+    return "source-module";
+  }
+  if (lower.endsWith(".cts") || lower.endsWith(".cjs")) {
+    return "commonjs";
+  }
+  return "text";
 }
 
 function encodeDataModule(data: ArrayBuffer | ArrayBufferView | undefined): string {
@@ -1165,6 +1227,13 @@ function extractHtmlModuleScriptSpecifiers(source: string): string[] {
 function resolveAssetSpecifier(importerPath: string, specifier: string): string {
   const importerDir = dirname(importerPath);
   return normalizePath(joinPosix(importerDir, specifier));
+}
+
+function isPathWithinRoot(path: string, root: string): boolean {
+  if (!root) {
+    return true;
+  }
+  return path === root || path.startsWith(`${root}/`);
 }
 
 function relativeAssetSpecifier(fromPath: string, toPath: string): string {
