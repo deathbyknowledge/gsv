@@ -604,6 +604,11 @@ pub(crate) fn resolve_ref(sql: &SqlStorage, name: &str) -> Result<Option<String>
         commit_hash: String,
     }
 
+    #[derive(serde::Deserialize)]
+    struct CommitRow {
+        hash: String,
+    }
+
     // Try exact match first
     let rows: Vec<Row> = sql
         .exec(
@@ -636,7 +641,19 @@ pub(crate) fn resolve_ref(sql: &SqlStorage, name: &str) -> Result<Option<String>
         )?
         .to_array()?;
 
-    Ok(rows.into_iter().next().map(|r| r.commit_hash))
+    if let Some(r) = rows.into_iter().next() {
+        return Ok(Some(r.commit_hash));
+    }
+
+    // Allow callers to pin an exact commit hash, not just a symbolic ref.
+    let commits: Vec<CommitRow> = sql
+        .exec(
+            "SELECT hash FROM commits WHERE hash = ?",
+            vec![SqlStorageValue::from(name.to_string())],
+        )?
+        .to_array()?;
+
+    Ok(commits.into_iter().next().map(|row| row.hash))
 }
 
 #[cfg(test)]

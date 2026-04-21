@@ -700,6 +700,70 @@ describe("Process DO — mechanical", () => {
         data: { content: "hello" },
       } as any);
     });
+
+    it("does not continue the run until all tool calls in a batch are dispatched", async () => {
+      const pid = "mech-res-multi-tool-batch";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const continuedRunIds: string[] = [];
+
+        process.currentRun = {
+          runId: "run-multi-tool-batch",
+          queued: false,
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        process.sendSignal = async () => {};
+        process.continueAgentLoop = async (runId: string) => {
+          continuedRunIds.push(runId);
+        };
+        process.dispatchSyscall = async (
+          dispatchRunId: string,
+          id: string,
+          call: string,
+          args: unknown,
+        ) => {
+          process.store.register(id, dispatchRunId, call, args);
+
+          if (id === "call-1") {
+            await process.handleRes({
+              type: "res",
+              id,
+              ok: true,
+              data: { path: "/tmp/one.txt", content: "first" },
+            });
+          }
+        };
+
+        await process.processToolCalls("run-multi-tool-batch", [
+          { type: "toolCall", id: "call-1", name: "Read", arguments: { path: "/tmp/one.txt" } },
+          { type: "toolCall", id: "call-2", name: "Read", arguments: { path: "/tmp/two.txt" } },
+        ]);
+
+        expect(continuedRunIds).toEqual([]);
+        expect(process.store.getResults("run-multi-tool-batch")).toEqual([
+          expect.objectContaining({
+            id: "call-1",
+            status: "completed",
+          }),
+          expect.objectContaining({
+            id: "call-2",
+            status: "pending",
+          }),
+        ]);
+
+        await process.handleRes({
+          type: "res",
+          id: "call-2",
+          ok: true,
+          data: { path: "/tmp/two.txt", content: "second" },
+        });
+
+        expect(continuedRunIds).toEqual(["run-multi-tool-batch"]);
+      });
+    });
   });
 });
 

@@ -375,6 +375,26 @@ button {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
   gap: 18px;
+  align-items: start;
+}
+
+.adapters-challenge-graphic {
+  width: 100%;
+  max-width: 280px;
+  min-height: 280px;
+  border: 1px solid var(--adapters-line);
+  background: rgba(255,255,255,0.96);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.adapters-challenge-graphic svg,
+.adapters-challenge-graphic img {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 .adapters-challenge-code {
