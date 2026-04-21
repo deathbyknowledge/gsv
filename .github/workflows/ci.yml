@@ -16,10 +16,35 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Verify synced versions
         run: npm run version:check
+
+  assembler-build:
+    name: Assembler Build
+    runs-on: ubuntu-latest
+    needs: [version-check]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        working-directory: assembler
+        run: npm exec --workspace assembler -- tsc --noEmit
+
+      - name: Bundle worker
+        working-directory: assembler
+        run: npm exec --workspace assembler -- wrangler deploy --dry-run --config wrangler.jsonc --outdir dist/worker
 
   gateway-test:
     name: Gateway Tests

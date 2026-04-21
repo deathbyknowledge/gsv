@@ -20,15 +20,18 @@ const REPO_NAME: &str = "gsv";
 
 const COMPONENT_GATEWAY: &str = "gateway";
 const COMPONENT_RIPGIT: &str = "ripgit";
+const COMPONENT_ASSEMBLER: &str = "assembler";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
 
+const BUNDLE_ASSEMBLER: &str = "gsv-cloudflare-assembler.tar.gz";
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
 const BUNDLE_RIPGIT: &str = "gsv-cloudflare-ripgit.tar.gz";
 const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
 const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
+const SCRIPT_ASSEMBLER: &str = "gsv-assembler";
 const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
@@ -403,6 +406,7 @@ struct R2ObjectsPage {
 
 fn component_to_bundle(component: &str) -> Option<&'static str> {
     match component {
+        COMPONENT_ASSEMBLER => Some(BUNDLE_ASSEMBLER),
         COMPONENT_GATEWAY => Some(BUNDLE_GATEWAY),
         COMPONENT_RIPGIT => Some(BUNDLE_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
@@ -413,6 +417,7 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
 
 fn component_to_script_name(component: &str) -> Option<&'static str> {
     match component {
+        COMPONENT_ASSEMBLER => Some(SCRIPT_ASSEMBLER),
         COMPONENT_GATEWAY => Some(SCRIPT_GATEWAY),
         COMPONENT_RIPGIT => Some(SCRIPT_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(SCRIPT_CHANNEL_WHATSAPP),
@@ -424,6 +429,7 @@ fn component_to_script_name(component: &str) -> Option<&'static str> {
 pub fn available_components() -> &'static [&'static str] {
     &[
         COMPONENT_RIPGIT,
+        COMPONENT_ASSEMBLER,
         COMPONENT_GATEWAY,
         COMPONENT_CHANNEL_WHATSAPP,
         COMPONENT_CHANNEL_DISCORD,
@@ -1585,8 +1591,9 @@ async fn purge_r2_bucket_objects(
 fn deploy_order(component: &str) -> usize {
     match component {
         COMPONENT_RIPGIT => 0,
-        COMPONENT_CHANNEL_WHATSAPP => 1,
-        COMPONENT_CHANNEL_DISCORD => 2,
+        COMPONENT_ASSEMBLER => 1,
+        COMPONENT_CHANNEL_WHATSAPP => 2,
+        COMPONENT_CHANNEL_DISCORD => 3,
         COMPONENT_GATEWAY => 10,
         _ => 100,
     }
@@ -2344,9 +2351,17 @@ pub async fn apply_deploy(
     let gateway_existed_before_deploy = existing_scripts.contains(SCRIPT_GATEWAY);
     let ripgit_available =
         selected_components.contains(COMPONENT_RIPGIT) || existing_scripts.contains(SCRIPT_RIPGIT);
+    let assembler_available = selected_components.contains(COMPONENT_ASSEMBLER)
+        || existing_scripts.contains(SCRIPT_ASSEMBLER);
     if selected_components.contains(COMPONENT_GATEWAY) && !ripgit_available {
         return Err(
             "Deploying `gateway` requires the `ripgit` worker. Include `--component ripgit` or deploy ripgit first."
+                .into(),
+        );
+    }
+    if selected_components.contains(COMPONENT_GATEWAY) && !assembler_available {
+        return Err(
+            "Deploying `gateway` requires the `assembler` worker. Include `--component assembler` or deploy assembler first."
                 .into(),
         );
     }

@@ -1,11 +1,13 @@
 mod analyze;
 mod build;
+mod snapshot;
 
 use serde::{Deserialize, Serialize};
 use worker::{Error, Result, SqlStorage};
 
 pub(crate) use analyze::analyze_package;
 pub(crate) use build::build_package;
+pub(crate) use snapshot::snapshot_package;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -47,6 +49,13 @@ pub struct ResolvedPackageSource {
     pub subdir: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PackageSnapshot {
+    pub source: ResolvedPackageSource,
+    pub package_root: String,
+    pub files: std::collections::BTreeMap<String, String>,
+}
+
 pub(crate) fn resolve_source(
     sql: &SqlStorage,
     locator: &PackageSourceLocator,
@@ -71,7 +80,10 @@ pub(crate) fn normalize_subdir(subdir: &str) -> Result<String> {
             continue;
         }
         if segment == ".." {
-            return Err(Error::RustError(format!("invalid package subdir: {}", subdir)));
+            return Err(Error::RustError(format!(
+                "invalid package subdir: {}",
+                subdir
+            )));
         }
         segments.push(segment);
     }

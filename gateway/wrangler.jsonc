@@ -69,6 +69,11 @@
 		{
 			"binding": "RIPGIT",
 			"service": "ripgit"
+		},
+		{
+			"binding": "ASSEMBLER",
+			"service": "gsv-assembler",
+			"entrypoint": "PackageAssembler"
 		}
 	],
 	"worker_loaders": [

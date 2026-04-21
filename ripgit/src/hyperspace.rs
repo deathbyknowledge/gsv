@@ -138,6 +138,16 @@ pub async fn handle_packages_build(
     Response::from_json(&build)
 }
 
+pub async fn handle_packages_snapshot(
+    sql: &SqlStorage,
+    req: &Request,
+    repo: &str,
+) -> Result<Response> {
+    let locator = package_source_locator(req, repo)?;
+    let snapshot = packages::snapshot_package(sql, &locator)?;
+    Response::from_json(&snapshot)
+}
+
 fn package_source_locator(req: &Request, repo: &str) -> Result<packages::PackageSourceLocator> {
     let url = req.url()?;
     let requested_ref = api::get_query(&url, "ref").unwrap_or_else(|| "main".to_string());
@@ -585,7 +595,6 @@ fn git_sha1(obj_type: &str, content: &[u8]) -> String {
     hasher.update(content);
     hasher.digest().to_string()
 }
-
 
 fn hex_to_bytes(hex: &str) -> std::result::Result<[u8; 20], ()> {
     if hex.len() != 40 {

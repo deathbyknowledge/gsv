@@ -173,7 +173,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
@@ -198,6 +198,7 @@ jobs:
         with:
           name: gsv-cloudflare-bundles
           path: |
+            release/gsv-cloudflare-assembler.tar.gz
             release/gsv-cloudflare-gateway.tar.gz
             release/gsv-cloudflare-ripgit.tar.gz
             release/gsv-cloudflare-channel-whatsapp.tar.gz
@@ -233,6 +234,7 @@ jobs:
           cp artifacts/gsv-windows-x64.exe/gsv-windows-x64.exe release/
 
           # Cloudflare deploy bundles (modular, per component/channel)
+          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-assembler.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-gateway.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-ripgit.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-whatsapp.tar.gz release/
@@ -291,6 +293,7 @@ jobs:
           ### Cloudflare Bundles
 
           Cloudflare artifacts are split by component:
+          - \`gsv-cloudflare-assembler.tar.gz\`
           - \`gsv-cloudflare-gateway.tar.gz\`
           - \`gsv-cloudflare-ripgit.tar.gz\`
           - \`gsv-cloudflare-channel-whatsapp.tar.gz\`
@@ -322,6 +325,7 @@ jobs:
             release/gsv-darwin-x64
             release/gsv-darwin-arm64
             release/gsv-windows-x64.exe
+            release/gsv-cloudflare-assembler.tar.gz
             release/gsv-cloudflare-gateway.tar.gz
             release/gsv-cloudflare-ripgit.tar.gz
             release/gsv-cloudflare-channel-whatsapp.tar.gz
