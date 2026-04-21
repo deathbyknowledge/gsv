@@ -95,7 +95,7 @@ type RunState = {
   approvalPolicy?: ToolApprovalPolicy;
 };
 
-type ActiveRunPhase = "toolResults" | "generation";
+type ActiveRunPhase = "toolDispatch" | "toolResults" | "generation";
 
 const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TEXT_ENCODER = new TextEncoder();
@@ -245,6 +245,13 @@ export class Process extends Host<Env> {
     }
 
     if (this.store.getPendingHilForRun(pending.runId)) {
+      return;
+    }
+
+    if (
+      this.activeRunPhase?.runId === pending.runId
+      && this.activeRunPhase.phase === "toolDispatch"
+    ) {
       return;
     }
 
@@ -1278,87 +1285,94 @@ export class Process extends Host<Env> {
       return null;
     }
 
-    for (let index = 0; index < toolCalls.length; index += 1) {
-      const tc = toolCalls[index];
-      const syscall = TOOL_TO_SYSCALL[tc.name];
+    this.activeRunPhase = { runId, phase: "toolDispatch" };
+    try {
+      for (let index = 0; index < toolCalls.length; index += 1) {
+        const tc = toolCalls[index];
+        const syscall = TOOL_TO_SYSCALL[tc.name];
 
-      if (!syscall) {
-        await this.appendSyntheticToolResult(
-          runId,
-          tc.id,
-          tc.name,
-          `Unknown tool "${tc.name}"`,
-        );
-        continue;
-      }
+        if (!syscall) {
+          await this.appendSyntheticToolResult(
+            runId,
+            tc.id,
+            tc.name,
+            `Unknown tool "${tc.name}"`,
+          );
+          continue;
+        }
 
-      const approval = resolveToolApproval(
-        approvalPolicy,
-        syscall,
-        tc.arguments,
-        this.identity,
-        this.profile,
-      );
-
-      if (approval.action === "deny") {
-        await this.appendSyntheticToolResult(
-          runId,
-          tc.id,
+        const approval = resolveToolApproval(
+          approvalPolicy,
           syscall,
-          "Tool execution denied by policy",
+          tc.arguments,
+          this.identity,
+          this.profile,
         );
-        continue;
-      }
 
-      if (approval.action === "ask") {
-        if (isNonInteractiveProfile(this.profile)) {
+        if (approval.action === "deny") {
           await this.appendSyntheticToolResult(
             runId,
             tc.id,
             syscall,
-            "Tool execution requires interactive approval, which is unavailable for this profile",
+            "Tool execution denied by policy",
           );
           continue;
         }
-        const pendingHil: PendingHilRecord = {
-          requestId: crypto.randomUUID(),
-          runId,
-          toolCallId: tc.id,
-          toolName: tc.name,
+
+        if (approval.action === "ask") {
+          if (isNonInteractiveProfile(this.profile)) {
+            await this.appendSyntheticToolResult(
+              runId,
+              tc.id,
+              syscall,
+              "Tool execution requires interactive approval, which is unavailable for this profile",
+            );
+            continue;
+          }
+          const pendingHil: PendingHilRecord = {
+            requestId: crypto.randomUUID(),
+            runId,
+            toolCallId: tc.id,
+            toolName: tc.name,
+            syscall,
+            args: tc.arguments as Record<string, unknown>,
+            remainingToolCalls: toolCalls.slice(index + 1),
+            createdAt: Date.now(),
+          };
+          this.store.setPendingHil(pendingHil);
+          await this.sendSignal("chat.hil", this.toProcHilRequest(pendingHil));
+          return pendingHil;
+        }
+
+        await this.sendSignal("chat.tool_call", {
+          name: tc.name,
           syscall,
-          args: tc.arguments as Record<string, unknown>,
-          remainingToolCalls: toolCalls.slice(index + 1),
-          createdAt: Date.now(),
-        };
-        this.store.setPendingHil(pendingHil);
-        await this.sendSignal("chat.hil", this.toProcHilRequest(pendingHil));
-        return pendingHil;
+          args: tc.arguments,
+          callId: tc.id,
+          pid: this.pid,
+          runId,
+        });
+        if (this.handleRunStopped(runId)) {
+          return null;
+        }
+
+        await this.dispatchSyscall(
+          runId,
+          tc.id,
+          syscall as SyscallName,
+          tc.arguments,
+        );
+        if (this.handleRunStopped(runId)) {
+          return null;
+        }
       }
 
-      await this.sendSignal("chat.tool_call", {
-        name: tc.name,
-        syscall,
-        args: tc.arguments,
-        callId: tc.id,
-        pid: this.pid,
-        runId,
-      });
-      if (this.handleRunStopped(runId)) {
-        return null;
-      }
-
-      await this.dispatchSyscall(
-        runId,
-        tc.id,
-        syscall as SyscallName,
-        tc.arguments,
-      );
-      if (this.handleRunStopped(runId)) {
-        return null;
+      return null;
+    } finally {
+      if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "toolDispatch") {
+        this.activeRunPhase = null;
       }
     }
-
-    return null;
   }
 
   private async resolveToolApprovalPolicy(run: RunState): Promise<ToolApprovalPolicy> {
