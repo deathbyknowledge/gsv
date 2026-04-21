@@ -15,7 +15,6 @@ import type {
   Frame,
   RequestFrame,
   ResponseFrame,
-  ResponseOkFrame,
   ResponseErrFrame,
   SignalFrame,
 } from "../protocol/frames";
@@ -25,7 +24,6 @@ import type {
   AiConfigResult,
   AiContextProfile,
   AiToolsDevice,
-  AiToolsResult,
 } from "../syscalls/ai";
 import { isAiContextProfile } from "../syscalls/ai";
 import type {

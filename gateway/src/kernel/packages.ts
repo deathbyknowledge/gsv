@@ -844,10 +844,11 @@ async function resolvePackageFromRipgitNativeBuild(
   if (!analysis.ok || !analysis.definition) {
     throw new Error(formatRipgitPackageFailure("package analysis failed", analysis.diagnostics));
   }
-  const snapshot = await ripgit.snapshotPackage({
+  const resolvedRepo = {
     ...repo,
     branch: analysis.source.resolved_commit,
-  }, subdir);
+  };
+  const snapshot = await ripgit.snapshotPackage(resolvedRepo, subdir);
   assertSnapshotMatchesAnalysis(analysis, snapshot);
   const build = await assembler.assemblePackage({
     analysis: analysis as PackageAssemblyAnalysis,
@@ -863,7 +864,7 @@ async function resolvePackageFromRipgitNativeBuild(
   const routeBase = packageRouteBase(packageName);
   const artifact = convertAssembledArtifact(build);
   const icon = toNativePackageIcon(analysis.definition.meta.icon);
-  const profiles = await readPackageProfiles(ripgit, repo, subdir);
+  const profiles = await readPackageProfiles(ripgit, resolvedRepo, subdir);
 
   const entrypoints: PackageEntrypoint[] = [
     ...analysis.definition.commands.map((command) => ({
