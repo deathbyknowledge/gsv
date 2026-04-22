@@ -72,8 +72,7 @@
 		},
 		{
 			"binding": "ASSEMBLER",
-			"service": "gsv-assembler",
-			"entrypoint": "PackageAssembler"
+			"service": "gsv-assembler"
 		}
 	],
 	"worker_loaders": [

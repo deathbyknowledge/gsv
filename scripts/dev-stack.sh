@@ -12,7 +12,7 @@ mkdir -p "$STATE_ROOT/do/gsv-channel-whatsapp-WhatsAppAccount"
 cd "$ROOT_DIR/ripgit"
 exec npm exec -- wrangler dev \
   -c ../gateway/wrangler.jsonc \
-  -c ../assembler/wrangler.jsonc \
+  -c ../assembler-rs/wrangler.toml \
   -c ../adapters/whatsapp/wrangler.jsonc \
   -c wrangler.toml \
   --ip 0.0.0.0 \

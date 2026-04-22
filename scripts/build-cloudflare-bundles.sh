@@ -23,7 +23,7 @@ install_workspace() {
 }
 
 echo "==> Installing dependencies"
-install_workspace "assembler"
+install_workspace "assembler-rs"
 install_dir "${ROOT_DIR}/gateway"
 install_dir "${ROOT_DIR}/web"
 install_dir "${ROOT_DIR}/ripgit"
@@ -43,7 +43,7 @@ mkdir -p "${DIST_DIR}/channel-discord/worker"
 
 (
   cd "${ROOT_DIR}"
-  npm exec --workspace assembler -- wrangler deploy --dry-run --config "${ROOT_DIR}/assembler/wrangler.jsonc" --outdir "${DIST_DIR}/assembler/worker"
+  npm exec --workspace assembler-rs -- wrangler deploy --dry-run --config "${ROOT_DIR}/assembler-rs/wrangler.toml" --outdir "${DIST_DIR}/assembler/worker"
 )
 (
   cd "${ROOT_DIR}/gateway"
@@ -63,14 +63,13 @@ mkdir -p "${DIST_DIR}/channel-discord/worker"
 )
 
 echo "==> Assembling component metadata"
-cp "${ROOT_DIR}/assembler/wrangler.jsonc" "${DIST_DIR}/assembler/wrangler.jsonc"
+cp "${ROOT_DIR}/assembler-rs/wrangler.toml" "${DIST_DIR}/assembler/wrangler.toml"
 cat > "${DIST_DIR}/assembler/manifest.json" <<'EOF'
 {
   "component": "assembler",
   "worker": {
     "entrypoint": "worker/index.js",
-    "sourceMap": "worker/index.js.map",
-    "wranglerConfig": "wrangler.jsonc"
+    "wranglerConfig": "wrangler.toml"
   }
 }
 EOF

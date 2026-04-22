@@ -32,7 +32,7 @@ function writeVersionFile(version) {
 function listPackageJsonFiles() {
   const files = [
     "package.json",
-    "assembler/package.json",
+    "assembler-rs/package.json",
     "gateway/package.json",
     "web/package.json",
     "ripgit/package.json",

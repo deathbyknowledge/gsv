@@ -181,3 +181,13 @@ pub struct PackageAssemblyArtifact {
     pub modules: Vec<PackageAssemblyArtifactModule>,
     pub hash: String,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageAssemblyResponse {
+    pub source: PackageAssemblySource,
+    pub analysis_hash: String,
+    pub target: PackageAssemblyTarget,
+    pub artifact: Option<PackageAssemblyArtifact>,
+    pub diagnostics: Vec<PackageAssemblyDiagnostic>,
+    pub ok: bool,
+}

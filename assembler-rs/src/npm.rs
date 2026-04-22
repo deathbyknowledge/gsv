@@ -11,6 +11,9 @@ use crate::diagnostics::{has_errors, PackageAssemblyDiagnostic};
 use crate::pipeline::{PlannedAssembly, StageOutcome};
 use crate::virtual_fs::{join_posix, normalize_repo_path, VirtualFileTree};
 
+#[cfg(target_arch = "wasm32")]
+use worker::{Fetch, Url};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstalledDependencyRecord {
     pub name: String,
@@ -222,7 +225,153 @@ pub fn install_registry_dependencies<C: NpmRegistryClient>(
     )
 }
 
-fn resolve_packument_version<'a>(
+#[cfg(target_arch = "wasm32")]
+pub async fn install_registry_dependencies_with_fetch(
+    planned: &PlannedAssembly,
+) -> StageOutcome<InstalledAssembly> {
+    let mut diagnostics = Vec::new();
+    let mut files = planned.files.clone();
+    let mut install_records = Vec::new();
+
+    for dependency in &planned.install_plan.registry_dependencies {
+        let packument_url = format!(
+            "https://registry.npmjs.org/{}",
+            urlencoding::encode(&dependency.name)
+        );
+        let packument = match fetch_json::<NpmPackument>(&packument_url).await {
+            Ok(packument) => packument,
+            Err(error) => {
+                diagnostics.push(PackageAssemblyDiagnostic::error(
+                    "install.registry-unreachable",
+                    format!(
+                        "Could not fetch package metadata for {}: {error}",
+                        dependency.name
+                    ),
+                    dependency
+                        .manifest_paths
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "package.json".to_string()),
+                ));
+                continue;
+            }
+        };
+
+        let Some(published) = resolve_packument_version(&packument, &dependency.install_spec)
+        else {
+            diagnostics.push(PackageAssemblyDiagnostic::error(
+                "install.version-unsatisfied",
+                format!(
+                    "No published version of {} satisfies install spec {}.",
+                    dependency.name, dependency.install_spec
+                ),
+                dependency
+                    .manifest_paths
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "package.json".to_string()),
+            ));
+            continue;
+        };
+
+        let tarball = match fetch_bytes(&published.dist.tarball).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                diagnostics.push(PackageAssemblyDiagnostic::error(
+                    "install.registry-unreachable",
+                    format!(
+                        "Could not fetch tarball for {}@{}: {error}",
+                        dependency.name, published.version
+                    ),
+                    dependency
+                        .manifest_paths
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "package.json".to_string()),
+                ));
+                continue;
+            }
+        };
+
+        match extract_tarball_into_tree(&dependency.name, &tarball, &mut files) {
+            Ok(()) => install_records.push(InstalledDependencyRecord {
+                name: dependency.name.clone(),
+                version: published.version.clone(),
+                package_root: join_posix("node_modules", &dependency.name),
+                tarball_url: published.dist.tarball.clone(),
+            }),
+            Err(error) => diagnostics.push(PackageAssemblyDiagnostic::error(
+                error.code(),
+                error.to_string(),
+                dependency
+                    .manifest_paths
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "package.json".to_string()),
+            )),
+        }
+    }
+
+    if has_errors(&diagnostics) {
+        return StageOutcome::failure(diagnostics);
+    }
+
+    StageOutcome::success(
+        InstalledAssembly {
+            files,
+            browser_entry: planned.browser_entry.clone(),
+            backend_entry: planned.backend_entry.clone(),
+            command_entries: planned.command_entries.clone(),
+            asset_paths: planned.asset_paths.clone(),
+            install_records,
+        },
+        diagnostics,
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, NpmRegistryError> {
+    let parsed = Url::parse(url).map_err(|error| NpmRegistryError::Request(error.to_string()))?;
+    let mut response = Fetch::Url(parsed)
+        .send()
+        .await
+        .map_err(|error| NpmRegistryError::Request(error.to_string()))?;
+
+    if !(200..300).contains(&response.status_code()) {
+        return Err(NpmRegistryError::Request(format!(
+            "unexpected registry status {}",
+            response.status_code()
+        )));
+    }
+
+    response
+        .json::<T>()
+        .await
+        .map_err(|error| NpmRegistryError::InvalidResponse(error.to_string()))
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_bytes(url: &str) -> Result<Vec<u8>, NpmRegistryError> {
+    let parsed = Url::parse(url).map_err(|error| NpmRegistryError::Request(error.to_string()))?;
+    let mut response = Fetch::Url(parsed)
+        .send()
+        .await
+        .map_err(|error| NpmRegistryError::Request(error.to_string()))?;
+
+    if !(200..300).contains(&response.status_code()) {
+        return Err(NpmRegistryError::Request(format!(
+            "unexpected registry status {}",
+            response.status_code()
+        )));
+    }
+
+    response
+        .bytes()
+        .await
+        .map_err(|error| NpmRegistryError::Request(error.to_string()))
+}
+
+pub(crate) fn resolve_packument_version<'a>(
     packument: &'a NpmPackument,
     install_spec: &str,
 ) -> Option<&'a NpmPackumentVersion> {
@@ -249,7 +398,7 @@ fn resolve_packument_version<'a>(
         .map(|(_, published)| published)
 }
 
-fn extract_tarball_into_tree(
+pub(crate) fn extract_tarball_into_tree(
     package_name: &str,
     tarball_bytes: &[u8],
     files: &mut VirtualFileTree,
@@ -326,7 +475,7 @@ fn is_safe_archive_member_path(path: &str) -> bool {
 }
 
 #[derive(Debug, Error)]
-enum TarballExtractError {
+pub(crate) enum TarballExtractError {
     #[error("{0}")]
     InvalidTarball(String),
     #[error("{0}")]
@@ -334,7 +483,7 @@ enum TarballExtractError {
 }
 
 impl TarballExtractError {
-    fn code(&self) -> &'static str {
+    pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::InvalidTarball(_) => "install.tarball-invalid",
             Self::UnsupportedPackage(_) => "install.unsupported-package",
