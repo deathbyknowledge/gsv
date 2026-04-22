@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use assembler_rs::diagnostics::PackageAssemblyDiagnostic;
 use assembler_rs::model::{
     PackageAppDefinition, PackageAppHandlerDefinition, PackageAssemblyAnalysis,
-    PackageAssemblyRequest, PackageAssemblySource, PackageAssemblyTarget,
-    PackageCapabilityDefinition, PackageDefinition, PackageIdentity, PackageJsonDefinition,
-    PackageMetaDefinition,
+    PackageAssemblyRequest, PackageAssemblySource, PackageAssemblyTarget, PackageBackendDefinition,
+    PackageBrowserDefinition, PackageCapabilityDefinition, PackageCommandDefinition,
+    PackageDefinition, PackageIdentity, PackageJsonDefinition, PackageMetaDefinition,
 };
 use assembler_rs::pipeline::{
     plan_installs, prepare_request, prepare_sources, validate_request, RegistryDependencyPlanItem,
@@ -42,6 +42,8 @@ fn base_request() -> PackageAssemblyRequest {
                     capabilities: PackageCapabilityDefinition::default(),
                 },
                 commands: Vec::new(),
+                browser: None,
+                backend: None,
                 app: Some(PackageAppDefinition {
                     handler: PackageAppHandlerDefinition {
                         export_name: "App".to_string(),
@@ -122,6 +124,10 @@ fn rejects_failed_analysis() {
 #[test]
 fn rejects_html_browser_entry() {
     let mut request = base_request();
+    request.analysis.definition.as_mut().unwrap().browser = Some(PackageBrowserDefinition {
+        entry: "./src/index.html".to_string(),
+        assets: vec!["./src/styles.css".to_string()],
+    });
     request
         .analysis
         .definition
@@ -151,6 +157,86 @@ fn rejects_missing_browser_entry_file() {
 
     assert!(outcome.value.is_none());
     assert!(diagnostic_codes(&outcome.diagnostics).contains(&"contract.browser-entry-missing"));
+}
+
+#[test]
+fn accepts_declarative_browser_definition() {
+    let mut request = base_request();
+    request.analysis.definition.as_mut().unwrap().browser = Some(PackageBrowserDefinition {
+        entry: "./src/main.tsx".to_string(),
+        assets: vec!["./src/styles.css".to_string()],
+    });
+    request.analysis.definition.as_mut().unwrap().app = None;
+
+    let outcome = validate_request(&request);
+
+    assert!(outcome.value.is_some());
+    let validated = outcome.value.unwrap();
+    assert_eq!(
+        validated.browser_entry.as_deref(),
+        Some("apps/demo/src/main.tsx")
+    );
+    assert_eq!(
+        validated.asset_paths,
+        vec!["apps/demo/src/styles.css".to_string()]
+    );
+}
+
+#[test]
+fn accepts_declarative_backend_and_command_definitions() {
+    let mut request = base_request();
+    request.analysis.definition.as_mut().unwrap().app = None;
+    request.analysis.definition.as_mut().unwrap().backend = Some(PackageBackendDefinition {
+        entry: "./src/backend.ts".to_string(),
+        public_routes: vec!["/webhooks/github".to_string()],
+    });
+    request.analysis.definition.as_mut().unwrap().commands = vec![PackageCommandDefinition {
+        name: "sync".to_string(),
+        entry: Some("./src/cli/sync.ts".to_string()),
+    }];
+    request.files.extend(files([
+        (
+            "apps/demo/src/backend.ts",
+            "export default class DemoBackend { async ping(args) { return args; } }",
+        ),
+        (
+            "apps/demo/src/cli/sync.ts",
+            "export default async function run(ctx) { await ctx.stdout.write('ok'); }",
+        ),
+    ]));
+
+    let outcome = validate_request(&request);
+
+    assert!(outcome.value.is_some());
+    let validated = outcome.value.unwrap();
+    assert_eq!(
+        validated.backend_entry.as_deref(),
+        Some("apps/demo/src/backend.ts")
+    );
+    assert_eq!(
+        validated.command_entries.get("sync").map(String::as_str),
+        Some("apps/demo/src/cli/sync.ts")
+    );
+}
+
+#[test]
+fn rejects_missing_backend_and_command_entry_files() {
+    let mut request = base_request();
+    request.analysis.definition.as_mut().unwrap().app = None;
+    request.analysis.definition.as_mut().unwrap().backend = Some(PackageBackendDefinition {
+        entry: "./src/backend.ts".to_string(),
+        public_routes: Vec::new(),
+    });
+    request.analysis.definition.as_mut().unwrap().commands = vec![PackageCommandDefinition {
+        name: "sync".to_string(),
+        entry: Some("./src/cli/sync.ts".to_string()),
+    }];
+
+    let outcome = validate_request(&request);
+
+    assert!(outcome.value.is_none());
+    assert!(diagnostic_codes(&outcome.diagnostics).contains(&"contract.backend-entry-missing"));
+    assert!(diagnostic_codes(&outcome.diagnostics).contains(&"contract.command-entry-missing"));
 }
 
 #[test]

@@ -94,11 +94,26 @@ pub struct PackageMetaDefinition {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageCommandDefinition {
     pub name: String,
+    pub entry: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageAppHandlerDefinition {
     pub export_name: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageBrowserDefinition {
+    pub entry: String,
+    #[serde(default)]
+    pub assets: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageBackendDefinition {
+    pub entry: String,
+    #[serde(default)]
+    pub public_routes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +132,8 @@ pub struct PackageDefinition {
     pub meta: PackageMetaDefinition,
     #[serde(default)]
     pub commands: Vec<PackageCommandDefinition>,
+    pub browser: Option<PackageBrowserDefinition>,
+    pub backend: Option<PackageBackendDefinition>,
     pub app: Option<PackageAppDefinition>,
 }
 

@@ -4,7 +4,8 @@ use assembler_rs::artifact::finalize_artifact;
 use assembler_rs::model::{
     PackageAppDefinition, PackageAppHandlerDefinition, PackageAssemblyAnalysis,
     PackageAssemblyArtifactModuleKind, PackageAssemblyRequest, PackageAssemblySource,
-    PackageAssemblyTarget, PackageCapabilityDefinition, PackageDefinition, PackageIdentity,
+    PackageAssemblyTarget, PackageBackendDefinition, PackageBrowserDefinition,
+    PackageCapabilityDefinition, PackageCommandDefinition, PackageDefinition, PackageIdentity,
     PackageJsonDefinition, PackageMetaDefinition,
 };
 use assembler_rs::npm::{
@@ -57,6 +58,8 @@ fn request() -> PackageAssemblyRequest {
                     capabilities: PackageCapabilityDefinition::default(),
                 },
                 commands: Vec::new(),
+                browser: None,
+                backend: None,
                 app: Some(PackageAppDefinition {
                     handler: PackageAppHandlerDefinition {
                         export_name: "App".to_string(),
@@ -100,6 +103,98 @@ export default definePackage({
         .into_iter()
         .collect(),
     }
+}
+
+fn declarative_request() -> PackageAssemblyRequest {
+    let mut req = request();
+    req.analysis.definition = Some(PackageDefinition {
+        meta: PackageMetaDefinition {
+            display_name: "Demo".to_string(),
+            description: Some("Demo package".to_string()),
+            icon: None,
+            window: None,
+            capabilities: PackageCapabilityDefinition::default(),
+        },
+        commands: vec![PackageCommandDefinition {
+            name: "sync".to_string(),
+            entry: Some("./src/cli/sync.ts".to_string()),
+        }],
+        browser: Some(PackageBrowserDefinition {
+            entry: "./src/main.tsx".to_string(),
+            assets: vec!["./src/styles.css".to_string()],
+        }),
+        backend: Some(PackageBackendDefinition {
+            entry: "./src/backend.ts".to_string(),
+            public_routes: vec!["/webhooks/github".to_string()],
+        }),
+        app: None,
+    });
+    req.files.insert(
+        "apps/demo/src/package.ts".to_string(),
+        r#"import { definePackage } from "@gsv/package/manifest";
+export default definePackage({
+  meta: { displayName: "Demo" },
+  browser: { entry: "./src/main.tsx", assets: ["./src/styles.css"] },
+  backend: { entry: "./src/backend.ts", public_routes: ["/webhooks/github"] },
+  cli: { commands: { sync: "./src/cli/sync.ts" } }
+});"#
+            .to_string(),
+    );
+    req.files.insert(
+        "apps/demo/src/backend.ts".to_string(),
+        r#"export default class DemoBackend {
+  async ping(args) { return args; }
+  async fetch() { return new Response("ok"); }
+}"#
+        .to_string(),
+    );
+    req.files.insert(
+        "apps/demo/src/cli/sync.ts".to_string(),
+        r#"export default async function run(ctx) {
+  await ctx.stdout.write("synced");
+}"#
+        .to_string(),
+    );
+    req
+}
+
+fn command_only_request() -> PackageAssemblyRequest {
+    let mut req = request();
+    req.analysis.definition = Some(PackageDefinition {
+        meta: PackageMetaDefinition {
+            display_name: "Demo".to_string(),
+            description: Some("Demo package".to_string()),
+            icon: None,
+            window: None,
+            capabilities: PackageCapabilityDefinition::default(),
+        },
+        commands: vec![PackageCommandDefinition {
+            name: "sync".to_string(),
+            entry: Some("./src/cli/sync.ts".to_string()),
+        }],
+        browser: None,
+        backend: None,
+        app: None,
+    });
+    req.files.remove("apps/demo/src/main.tsx");
+    req.files.remove("apps/demo/src/styles.css");
+    req.files.insert(
+        "apps/demo/src/package.ts".to_string(),
+        r#"import { definePackage } from "@gsv/package/manifest";
+export default definePackage({
+  meta: { displayName: "Demo" },
+  cli: { commands: { sync: "./src/cli/sync.ts" } }
+});"#
+            .to_string(),
+    );
+    req.files.insert(
+        "apps/demo/src/cli/sync.ts".to_string(),
+        r#"export default async function run(ctx) {
+  await ctx.stdout.write("synced");
+}"#
+        .to_string(),
+    );
+    req
 }
 
 #[test]
@@ -166,4 +261,70 @@ fn missing_definition_source_is_reported() {
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == "contract.definition-source-missing"));
+}
+
+#[test]
+fn builds_runtime_artifact_for_declarative_backend_and_commands() {
+    let request = declarative_request();
+    let prepared = prepare_request(&request).value.expect("prepared");
+    let installed = install_registry_dependencies(&prepared, &EmptyRegistry)
+        .value
+        .expect("installed");
+    let runtime = build_runtime_assembly(&request.analysis, &installed)
+        .value
+        .expect("runtime");
+    let artifact = finalize_artifact(&request.analysis, &runtime)
+        .value
+        .expect("artifact");
+
+    let modules = artifact
+        .modules
+        .iter()
+        .map(|module| (module.path.as_str(), module))
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(
+        modules.get("src/backend.ts").map(|module| &module.kind),
+        Some(&PackageAssemblyArtifactModuleKind::SourceModule)
+    );
+    assert_eq!(
+        modules.get("src/cli/sync.ts").map(|module| &module.kind),
+        Some(&PackageAssemblyArtifactModuleKind::SourceModule)
+    );
+
+    let wrapper = modules.get("__gsv__/main.ts").unwrap().content.as_str();
+    assert!(wrapper.contains("import GsvPackageBackendModule from \"../src/backend.ts\";"));
+    assert!(wrapper.contains("const COMMAND_MODULES = new Map(["));
+    assert!(wrapper.contains("[\"sync\", __gsv_command_0],"));
+    assert!(wrapper.contains("export class GsvCommandEntrypoint extends WorkerEntrypoint"));
+    assert!(wrapper.contains("export class GsvAppSignalEntrypoint extends WorkerEntrypoint"));
+}
+
+#[test]
+fn builds_runtime_artifact_for_command_only_package() {
+    let request = command_only_request();
+    let prepared = prepare_request(&request).value.expect("prepared");
+    let installed = install_registry_dependencies(&prepared, &EmptyRegistry)
+        .value
+        .expect("installed");
+    let runtime = build_runtime_assembly(&request.analysis, &installed)
+        .value
+        .expect("runtime");
+    let artifact = finalize_artifact(&request.analysis, &runtime)
+        .value
+        .expect("artifact");
+
+    let modules = artifact
+        .modules
+        .iter()
+        .map(|module| (module.path.as_str(), module))
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(
+        modules.get("src/cli/sync.ts").map(|module| &module.kind),
+        Some(&PackageAssemblyArtifactModuleKind::SourceModule)
+    );
+    let wrapper = modules.get("__gsv__/main.ts").unwrap().content.as_str();
+    assert!(wrapper.contains("const BROWSER_ENTRY = null;"));
+    assert!(wrapper.contains("export class GsvCommandEntrypoint extends WorkerEntrypoint"));
 }

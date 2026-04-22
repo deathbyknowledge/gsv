@@ -15,6 +15,11 @@ use super::{
     PackageSourceLocator, ResolvedPackageSource,
 };
 
+const DEFINE_PACKAGE_IMPORT_SOURCES: [&str; 2] = [
+    "@gsv/package/manifest",
+    "@gsv/package/worker",
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ExtractedHandlerReferenceKind {
     #[serde(rename = "inline-function")]
@@ -57,7 +62,8 @@ pub struct ExtractedPackageMeta {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtractedCommandDefinition {
     pub name: String,
-    pub handler: ExtractedHandlerReference,
+    pub handler: Option<ExtractedHandlerReference>,
+    pub entry: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -77,10 +83,24 @@ pub struct ExtractedAppDefinition {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtractedBrowserDefinition {
+    pub entry: String,
+    pub assets: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtractedBackendDefinition {
+    pub entry: String,
+    pub public_routes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtractedPackageDefinition {
     pub meta: ExtractedPackageMeta,
     pub setup: Option<ExtractedHandlerReference>,
     pub commands: Vec<ExtractedCommandDefinition>,
+    pub browser: Option<ExtractedBrowserDefinition>,
+    pub backend: Option<ExtractedBackendDefinition>,
     pub app: Option<ExtractedAppDefinition>,
     pub tasks: Vec<ExtractedTaskDefinition>,
 }
@@ -298,7 +318,7 @@ fn extract_definition(source_text: &str) -> (Option<ExtractedPackageDefinition>,
     for statement in program.body.iter() {
         match statement {
             Statement::ImportDeclaration(import_decl) => {
-                if import_decl.source.value.as_str() != "@gsv/package/worker" {
+                if !DEFINE_PACKAGE_IMPORT_SOURCES.contains(&import_decl.source.value.as_str()) {
                     continue;
                 }
                 if let Some(specifiers) = import_decl.specifiers.as_ref() {
@@ -351,7 +371,7 @@ fn extract_definition(source_text: &str) -> (Option<ExtractedPackageDefinition>,
         diagnostics.push(simple_diagnostic(
             PackageDiagnosticSeverity::Error,
             "missing-define-package-import",
-            "src/package.ts must import definePackage directly from @gsv/package/worker".to_string(),
+            "src/package.ts must import definePackage directly from @gsv/package/manifest".to_string(),
             "src/package.ts",
             None,
             source_text,
@@ -443,6 +463,8 @@ fn extract_package_object(
     let mut meta_expr: Option<&Expression<'_>> = None;
     let mut setup = None;
     let mut commands = Vec::new();
+    let mut browser = None;
+    let mut backend = None;
     let mut app = None;
     let mut tasks = Vec::new();
 
@@ -491,13 +513,28 @@ fn extract_package_object(
             "commands" => {
                 commands = extract_named_handlers(&prop.value, local_identifiers, source_text, diagnostics, "command")
             }
+            "browser" => {
+                browser = extract_browser_definition(&prop.value, source_text, diagnostics);
+            }
+            "backend" => {
+                backend = extract_backend_definition(&prop.value, source_text, diagnostics);
+            }
+            "cli" => {
+                let extracted = extract_cli_commands(&prop.value, source_text, diagnostics);
+                commands.extend(extracted);
+            }
             "app" => {
                 app = extract_app_definition(&prop.value, local_identifiers, source_text, diagnostics)
             }
             "tasks" => {
                 tasks = extract_named_handlers(&prop.value, local_identifiers, source_text, diagnostics, "task")
                     .into_iter()
-                    .map(|entry| ExtractedTaskDefinition { name: entry.name, handler: entry.handler })
+                    .filter_map(|entry| {
+                        entry.handler.map(|handler| ExtractedTaskDefinition {
+                            name: entry.name,
+                            handler,
+                        })
+                    })
                     .collect();
             }
             other => diagnostics.push(simple_diagnostic(
@@ -531,6 +568,8 @@ fn extract_package_object(
         meta,
         setup,
         commands,
+        browser,
+        backend,
         app,
         tasks,
     })
@@ -761,7 +800,281 @@ fn extract_named_handlers(
         let Some(handler) = extract_handler_reference(&prop.value, local_identifiers, source_text, diagnostics) else {
             continue;
         };
-        entries.push(ExtractedCommandDefinition { name, handler });
+        entries.push(ExtractedCommandDefinition {
+            name,
+            handler: Some(handler),
+            entry: None,
+        });
+    }
+    entries
+}
+
+fn extract_browser_definition(
+    expr: &Expression<'_>,
+    source_text: &str,
+    diagnostics: &mut Vec<PackageDiagnostic>,
+) -> Option<ExtractedBrowserDefinition> {
+    let Some(object) = get_object_expr(expr) else {
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "non-literal-browser",
+            "browser must be an object literal".to_string(),
+            "src/package.ts",
+            Some(expr.span()),
+            source_text,
+        ));
+        return None;
+    };
+
+    let mut entry = None;
+    let mut assets = Vec::new();
+    for property in object.properties.iter() {
+        let ObjectPropertyKind::ObjectProperty(prop) = property else {
+            continue;
+        };
+        if prop.computed {
+            continue;
+        }
+        let Some(key) = static_property_name(prop, source_text) else {
+            continue;
+        };
+        match key.as_str() {
+            "entry" => {
+                entry = extract_string_literal(&prop.value);
+                if entry.is_none() {
+                    diagnostics.push(simple_diagnostic(
+                        PackageDiagnosticSeverity::Error,
+                        "non-literal-browser-entry",
+                        "browser.entry must be a string literal".to_string(),
+                        "src/package.ts",
+                        Some(prop.span),
+                        source_text,
+                    ));
+                }
+            }
+            "assets" => {
+                let values = extract_string_array(&prop.value);
+                if let Some(value) = values {
+                    assets = value;
+                } else {
+                    diagnostics.push(simple_diagnostic(
+                        PackageDiagnosticSeverity::Error,
+                        "non-literal-browser-assets",
+                        "browser.assets must be an array of string literals".to_string(),
+                        "src/package.ts",
+                        Some(prop.span),
+                        source_text,
+                    ));
+                }
+            }
+            other => diagnostics.push(simple_diagnostic(
+                PackageDiagnosticSeverity::Error,
+                "unknown-browser-key",
+                format!("unsupported browser property: {}", other),
+                "src/package.ts",
+                Some(prop.span),
+                source_text,
+            )),
+        }
+    }
+
+    let Some(entry) = entry else {
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "missing-browser-entry",
+            "browser.entry is required".to_string(),
+            "src/package.ts",
+            Some(expr.span()),
+            source_text,
+        ));
+        return None;
+    };
+
+    Some(ExtractedBrowserDefinition { entry, assets })
+}
+
+fn extract_backend_definition(
+    expr: &Expression<'_>,
+    source_text: &str,
+    diagnostics: &mut Vec<PackageDiagnostic>,
+) -> Option<ExtractedBackendDefinition> {
+    let Some(object) = get_object_expr(expr) else {
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "non-literal-backend",
+            "backend must be an object literal".to_string(),
+            "src/package.ts",
+            Some(expr.span()),
+            source_text,
+        ));
+        return None;
+    };
+
+    let mut entry = None;
+    let mut public_routes = Vec::new();
+    for property in object.properties.iter() {
+        let ObjectPropertyKind::ObjectProperty(prop) = property else {
+            continue;
+        };
+        if prop.computed {
+            continue;
+        }
+        let Some(key) = static_property_name(prop, source_text) else {
+            continue;
+        };
+        match key.as_str() {
+            "entry" => {
+                entry = extract_string_literal(&prop.value);
+                if entry.is_none() {
+                    diagnostics.push(simple_diagnostic(
+                        PackageDiagnosticSeverity::Error,
+                        "non-literal-backend-entry",
+                        "backend.entry must be a string literal".to_string(),
+                        "src/package.ts",
+                        Some(prop.span),
+                        source_text,
+                    ));
+                }
+            }
+            "public_routes" => {
+                let values = extract_string_array(&prop.value);
+                if let Some(value) = values {
+                    public_routes = value;
+                } else {
+                    diagnostics.push(simple_diagnostic(
+                        PackageDiagnosticSeverity::Error,
+                        "non-literal-public-routes",
+                        "backend.public_routes must be an array of string literals".to_string(),
+                        "src/package.ts",
+                        Some(prop.span),
+                        source_text,
+                    ));
+                }
+            }
+            other => diagnostics.push(simple_diagnostic(
+                PackageDiagnosticSeverity::Error,
+                "unknown-backend-key",
+                format!("unsupported backend property: {}", other),
+                "src/package.ts",
+                Some(prop.span),
+                source_text,
+            )),
+        }
+    }
+
+    let Some(entry) = entry else {
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "missing-backend-entry",
+            "backend.entry is required".to_string(),
+            "src/package.ts",
+            Some(expr.span()),
+            source_text,
+        ));
+        return None;
+    };
+
+    Some(ExtractedBackendDefinition {
+        entry,
+        public_routes,
+    })
+}
+
+fn extract_cli_commands(
+    expr: &Expression<'_>,
+    source_text: &str,
+    diagnostics: &mut Vec<PackageDiagnostic>,
+) -> Vec<ExtractedCommandDefinition> {
+    let Some(object) = get_object_expr(expr) else {
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "non-literal-cli",
+            "cli must be an object literal".to_string(),
+            "src/package.ts",
+            Some(expr.span()),
+            source_text,
+        ));
+        return Vec::new();
+    };
+
+    for property in object.properties.iter() {
+        let ObjectPropertyKind::ObjectProperty(prop) = property else {
+            continue;
+        };
+        if prop.computed {
+            continue;
+        }
+        let Some(key) = static_property_name(prop, source_text) else {
+            continue;
+        };
+        if key == "commands" {
+            return extract_command_entries(&prop.value, source_text, diagnostics);
+        }
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "unknown-cli-key",
+            format!("unsupported cli property: {}", key),
+            "src/package.ts",
+            Some(prop.span),
+            source_text,
+        ));
+    }
+
+    Vec::new()
+}
+
+fn extract_command_entries(
+    expr: &Expression<'_>,
+    source_text: &str,
+    diagnostics: &mut Vec<PackageDiagnostic>,
+) -> Vec<ExtractedCommandDefinition> {
+    let Some(object) = get_object_expr(expr) else {
+        diagnostics.push(simple_diagnostic(
+            PackageDiagnosticSeverity::Error,
+            "non-literal-cli-commands",
+            "cli.commands must be an object literal".to_string(),
+            "src/package.ts",
+            Some(expr.span()),
+            source_text,
+        ));
+        return Vec::new();
+    };
+
+    let mut entries = Vec::new();
+    for property in object.properties.iter() {
+        let ObjectPropertyKind::ObjectProperty(prop) = property else {
+            continue;
+        };
+        if prop.computed {
+            diagnostics.push(simple_diagnostic(
+                PackageDiagnosticSeverity::Error,
+                "computed-cli-command-key",
+                "cli.commands keys must be static".to_string(),
+                "src/package.ts",
+                Some(prop.span),
+                source_text,
+            ));
+            continue;
+        }
+        let Some(name) = static_property_name(prop, source_text) else {
+            continue;
+        };
+        let Some(entry) = extract_string_literal(&prop.value) else {
+            diagnostics.push(simple_diagnostic(
+                PackageDiagnosticSeverity::Error,
+                "non-literal-cli-command-entry",
+                "cli.commands values must be string literal module paths".to_string(),
+                "src/package.ts",
+                Some(prop.span),
+                source_text,
+            ));
+            continue;
+        };
+        entries.push(ExtractedCommandDefinition {
+            name,
+            handler: None,
+            entry: Some(entry),
+        });
     }
     entries
 }
@@ -1165,7 +1478,7 @@ mod tests {
     fn analyze_package_source_supports_local_const_export() {
         let package_json = r#"{ "name": "@gsv/example" }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package/worker";
+          import { definePackage } from "@gsv/package/manifest";
           const setup = async (ctx) => { void ctx; };
           const pkg = definePackage({
             meta: { displayName: "Example" },
@@ -1182,6 +1495,77 @@ mod tests {
         let definition = analysis.definition.unwrap();
         assert!(definition.app.is_some());
         assert!(definition.setup.is_some());
+    }
+
+    #[test]
+    fn analyze_package_source_accepts_manifest_import_path() {
+        let package_json = r#"{ "name": "@gsv/example" }"#;
+        let package_ts = r#"
+          import { definePackage } from "@gsv/package/manifest";
+
+          export default definePackage({
+            meta: { displayName: "Example" },
+          });
+        "#;
+
+        let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
+        assert!(analysis.ok);
+        assert_eq!(
+            analysis.definition.as_ref().map(|definition| definition.meta.display_name.as_str()),
+            Some("Example")
+        );
+    }
+
+    #[test]
+    fn analyze_package_source_extracts_declarative_browser_backend_and_cli() {
+        let package_json = r#"{ "name": "@gsv/example" }"#;
+        let package_ts = r#"
+          import { definePackage } from "@gsv/package/manifest";
+
+          export default definePackage({
+            meta: { displayName: "Example" },
+            browser: {
+              entry: "./src/main.tsx",
+              assets: ["./src/styles.css"],
+            },
+            backend: {
+              entry: "./src/backend.ts",
+              public_routes: ["/webhooks/github"],
+            },
+            cli: {
+              commands: {
+                sync: "./src/cli/sync.ts",
+              },
+            },
+          });
+        "#;
+
+        let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
+        assert!(analysis.ok);
+        let definition = analysis.definition.unwrap();
+        assert_eq!(
+            definition.browser.as_ref().map(|browser| browser.entry.as_str()),
+            Some("./src/main.tsx")
+        );
+        assert_eq!(
+            definition.browser.as_ref().map(|browser| browser.assets.as_slice()),
+            Some(vec!["./src/styles.css".to_string()].as_slice())
+        );
+        assert_eq!(
+            definition.backend.as_ref().map(|backend| backend.entry.as_str()),
+            Some("./src/backend.ts")
+        );
+        assert_eq!(
+            definition
+                .backend
+                .as_ref()
+                .map(|backend| backend.public_routes.as_slice()),
+            Some(vec!["/webhooks/github".to_string()].as_slice())
+        );
+        assert_eq!(definition.commands.len(), 1);
+        assert_eq!(definition.commands[0].name, "sync");
+        assert_eq!(definition.commands[0].entry.as_deref(), Some("./src/cli/sync.ts"));
+        assert!(definition.commands[0].handler.is_none());
     }
 
     #[test]

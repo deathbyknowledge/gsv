@@ -79,6 +79,8 @@ fn base_request(entry_source: &str) -> PackageAssemblyRequest {
                     capabilities: PackageCapabilityDefinition::default(),
                 },
                 commands: Vec::new(),
+                browser: None,
+                backend: None,
                 app: Some(PackageAppDefinition {
                     handler: PackageAppHandlerDefinition {
                         export_name: "App".to_string(),

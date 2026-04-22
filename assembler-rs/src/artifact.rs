@@ -21,21 +21,18 @@ pub fn finalize_artifact(
 
     let mut modules = BTreeMap::<String, PackageAssemblyArtifactModule>::new();
 
-    for module in runtime
-        .browser_graph
-        .modules
-        .iter()
-        .chain(runtime.definition_graph.modules.iter())
-    {
-        let path = artifact_path_for_module(&module.path, &analysis.package_root);
-        modules.insert(
-            path.clone(),
-            PackageAssemblyArtifactModule {
-                path,
-                kind: module.kind.clone(),
-                content: module.content.clone(),
-            },
-        );
+    for graph in &runtime.graphs {
+        for module in &graph.modules {
+            let path = artifact_path_for_module(&module.path, &analysis.package_root);
+            modules.insert(
+                path.clone(),
+                PackageAssemblyArtifactModule {
+                    path,
+                    kind: module.kind.clone(),
+                    content: module.content.clone(),
+                },
+            );
+        }
     }
 
     for module in &runtime.generated_modules {

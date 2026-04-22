@@ -8,7 +8,11 @@
   },
   "exports": {
     ".": "./src/index.ts",
+    "./manifest": "./src/manifest.ts",
+    "./backend": "./src/backend.ts",
     "./browser": "./src/browser.ts",
+    "./cli": "./src/cli.ts",
+    "./context": "./src/context.ts",
     "./worker": "./src/worker.ts",
     "./host": "./src/host.ts"
   }

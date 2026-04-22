@@ -1,22 +1,18 @@
-export type PackageWindowMeta = {
-  width?: number;
-  height?: number;
-  minWidth?: number;
-  minHeight?: number;
-};
+export type {
+  PackageCapabilityMeta,
+  PackageMeta,
+  PackageWindowMeta,
+} from "./manifest";
+export { definePackage } from "./manifest";
+export type { KernelClientLike } from "./context";
 
-export type PackageCapabilityMeta = {
-  kernel?: string[];
-  outbound?: string[];
-};
-
-export type PackageMeta = {
-  displayName: string;
-  description?: string;
-  icon?: string;
-  window?: PackageWindowMeta;
-  capabilities?: PackageCapabilityMeta;
-};
+import type {
+  KernelClientLike,
+  PackageAppSessionBinding,
+  PackageDaemonContext,
+  PackageMetaBinding,
+  PackageViewerBinding,
+} from "./context";
 
 /**
  * TODO(app-storage): We are intentionally not exposing package/app-private
@@ -76,69 +72,11 @@ export type PackageMeta = {
  * - explicit files/knowledge/workspace state where appropriate
  */
 export type PackageBaseContext = {
-  meta: {
-    packageName: string;
-    packageId: string;
-    routeBase: string | null;
-  };
-  viewer: {
-    uid: number;
-    username: string;
-  };
-  app?: {
-    sessionId: string;
-    clientId: string;
-    rpcBase: string;
-    expiresAt: number;
-  };
+  meta: PackageMetaBinding;
+  viewer: PackageViewerBinding;
+  app?: PackageAppSessionBinding;
   daemon?: PackageDaemonContext;
-  kernel: {
-    request<T = unknown>(call: string, args?: unknown): Promise<T>;
-  };
-};
-
-export type PackageDaemonSchedule =
-  | { kind: "at"; atMs: number }
-  | { kind: "after"; afterMs: number }
-  | { kind: "every"; everyMs: number; anchorMs?: number };
-
-export type PackageDaemonInvocation =
-  | {
-    kind: "schedule";
-    key: string;
-    scheduledAt: number;
-    firedAt: number;
-  };
-
-export type PackageDaemonScheduleRecord = {
-  key: string;
-  rpcMethod: string;
-  schedule: PackageDaemonSchedule;
-  payload?: unknown;
-  enabled: boolean;
-  createdAt: number;
-  updatedAt: number;
-  nextRunAt?: number | null;
-  runningAt?: number | null;
-  lastRunAt?: number | null;
-  lastStatus?: "ok" | "error" | null;
-  lastError?: string | null;
-  lastDurationMs?: number | null;
-};
-
-export type PackageDaemonContext = {
-  upsertRpcSchedule(
-    input: {
-      key: string;
-      rpcMethod: string;
-      schedule: PackageDaemonSchedule;
-      payload?: unknown;
-      enabled?: boolean;
-    },
-  ): Promise<PackageDaemonScheduleRecord>;
-  removeRpcSchedule(key: string): Promise<{ removed: boolean }>;
-  listRpcSchedules(): Promise<PackageDaemonScheduleRecord[]>;
-  trigger?: PackageDaemonInvocation;
+  kernel: KernelClientLike;
 };
 
 export type PackageSetupContext = PackageBaseContext;
@@ -198,12 +136,8 @@ export type PackageAppDefinition = {
 };
 
 export type PackageDefinition = {
-  meta: PackageMeta;
+  meta: import("./manifest").PackageMeta;
   setup?: PackageSetupHandler;
   commands?: Record<string, PackageCommandHandler>;
   app?: PackageAppDefinition;
 };
-
-export function definePackage<const T extends PackageDefinition>(definition: T): T {
-  return definition;
-}

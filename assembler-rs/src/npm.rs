@@ -23,6 +23,8 @@ pub struct InstalledDependencyRecord {
 pub struct InstalledAssembly {
     pub files: VirtualFileTree,
     pub browser_entry: Option<String>,
+    pub backend_entry: Option<String>,
+    pub command_entries: BTreeMap<String, String>,
     pub asset_paths: Vec<String>,
     pub install_records: Vec<InstalledDependencyRecord>,
 }
@@ -211,6 +213,8 @@ pub fn install_registry_dependencies<C: NpmRegistryClient>(
         InstalledAssembly {
             files,
             browser_entry: planned.browser_entry.clone(),
+            backend_entry: planned.backend_entry.clone(),
+            command_entries: planned.command_entries.clone(),
             asset_paths: planned.asset_paths.clone(),
             install_records,
         },

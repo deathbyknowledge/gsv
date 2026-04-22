@@ -198,6 +198,7 @@ export interface PackageManifest {
   runtime: PackageRuntime;
   source: PackageSource;
   entrypoints: PackageEntrypoint[];
+  publicRoutes?: string[];
   profiles?: PackageProfileManifest[];
   capabilities?: PackageCapabilityDeclaration;
 }
@@ -864,6 +865,12 @@ async function resolvePackageFromRipgitNativeBuild(
   const artifact = convertAssembledArtifact(build);
   const icon = toNativePackageIcon(analysis.definition.meta.icon);
   const profiles = await readPackageProfiles(ripgit, resolvedRepo, subdir);
+  const hasBrowserEntrypoint = Boolean(analysis.definition.browser ?? analysis.definition.app);
+  const hasBackendEntrypoint = Boolean(
+    analysis.definition.backend
+    || analysis.definition.app?.has_rpc,
+  );
+  const publicRoutes = uniqueStrings(analysis.definition.backend?.public_routes ?? []);
 
   const entrypoints: PackageEntrypoint[] = [
     ...analysis.definition.commands.map((command) => ({
@@ -874,7 +881,7 @@ async function resolvePackageFromRipgitNativeBuild(
       command: command.name,
       description: analysis.definition?.meta.description ?? undefined,
     })),
-    ...(analysis.definition.app ? [{
+    ...(hasBrowserEntrypoint ? [{
       name: analysis.definition.meta.display_name,
       kind: "ui" as const,
       module: artifact.mainModule,
@@ -890,7 +897,7 @@ async function resolvePackageFromRipgitNativeBuild(
           }
         : undefined,
     }] : []),
-    ...(analysis.definition.app?.has_rpc ? [{
+    ...(hasBackendEntrypoint ? [{
       name: `${analysis.definition.meta.display_name} RPC`,
       kind: "rpc" as const,
       module: artifact.mainModule,
@@ -904,7 +911,7 @@ async function resolvePackageFromRipgitNativeBuild(
       name: packageName,
       description: analysis.definition.meta.description ?? "",
       version: analysis.package_json.version?.trim() || "0.0.0",
-      runtime: analysis.definition.app ? "web-ui" : "dynamic-worker",
+      runtime: hasBrowserEntrypoint ? "web-ui" : "dynamic-worker",
       source: {
         repo: source.repo,
         ref: source.ref,
@@ -912,6 +919,7 @@ async function resolvePackageFromRipgitNativeBuild(
         resolvedCommit: build.source.resolved_commit,
       },
       entrypoints,
+      ...(publicRoutes.length > 0 ? { publicRoutes } : {}),
       ...(profiles.length > 0 ? { profiles } : {}),
       capabilities: {
         bindings: [

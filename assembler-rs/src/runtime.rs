@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::diagnostics::{has_errors, PackageAssemblyDiagnostic};
 use crate::graph::{build_module_graph_for_entry, ModuleGraph};
 use crate::model::{
@@ -10,8 +12,7 @@ use crate::virtual_fs::{relative_specifier, relativize_to_root, resolve_from_roo
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeAssembly {
     pub main_module: String,
-    pub browser_graph: ModuleGraph,
-    pub definition_graph: ModuleGraph,
+    pub graphs: Vec<ModuleGraph>,
     pub generated_modules: Vec<PackageAssemblyArtifactModule>,
 }
 
@@ -20,15 +21,7 @@ pub fn build_runtime_assembly(
     installed: &InstalledAssembly,
 ) -> StageOutcome<RuntimeAssembly> {
     let mut diagnostics = Vec::new();
-
-    let Some(browser_entry) = installed.browser_entry.as_deref() else {
-        diagnostics.push(PackageAssemblyDiagnostic::error(
-            "runtime-wrapper.missing-handler",
-            "Package app is missing a browser entry module.",
-            "src/package.ts",
-        ));
-        return StageOutcome::failure(diagnostics);
-    };
+    let mut graphs = Vec::new();
 
     let definition_repo_path = resolve_from_root(&analysis.package_root, "src/package.ts");
     if !installed.files.contains(&definition_repo_path) {
@@ -40,24 +33,45 @@ pub fn build_runtime_assembly(
         return StageOutcome::failure(diagnostics);
     }
 
-    let browser_graph = build_module_graph_for_entry(installed, browser_entry);
-    diagnostics.extend(browser_graph.diagnostics);
-    let Some(browser_graph) = browser_graph.value else {
-        return StageOutcome::failure(diagnostics);
-    };
-
     let definition_graph = build_module_graph_for_entry(installed, &definition_repo_path);
     diagnostics.extend(definition_graph.diagnostics);
     let Some(definition_graph) = definition_graph.value else {
         return StageOutcome::failure(diagnostics);
     };
+    graphs.push(definition_graph);
 
-    let generated_modules = generate_runtime_modules(
-        analysis,
-        installed,
-        relativize_to_root(browser_entry, &analysis.package_root),
-        relativize_to_root(&definition_repo_path, &analysis.package_root),
-    );
+    if let Some(browser_entry) = installed.browser_entry.as_deref() {
+        let browser_graph = build_module_graph_for_entry(installed, browser_entry);
+        diagnostics.extend(browser_graph.diagnostics);
+        let Some(browser_graph) = browser_graph.value else {
+            return StageOutcome::failure(diagnostics);
+        };
+        graphs.push(browser_graph);
+    }
+
+    if let Some(backend_entry) = installed.backend_entry.as_deref() {
+        let backend_graph = build_module_graph_for_entry(installed, backend_entry);
+        diagnostics.extend(backend_graph.diagnostics);
+        let Some(backend_graph) = backend_graph.value else {
+            return StageOutcome::failure(diagnostics);
+        };
+        graphs.push(backend_graph);
+    }
+
+    let mut seen_command_paths = BTreeSet::new();
+    for entry_path in installed.command_entries.values() {
+        if !seen_command_paths.insert(entry_path.clone()) {
+            continue;
+        }
+        let command_graph = build_module_graph_for_entry(installed, entry_path);
+        diagnostics.extend(command_graph.diagnostics);
+        let Some(command_graph) = command_graph.value else {
+            return StageOutcome::failure(diagnostics);
+        };
+        graphs.push(command_graph);
+    }
+
+    let generated_modules = generate_runtime_modules(analysis, installed, &definition_repo_path);
 
     if has_errors(&diagnostics) {
         return StageOutcome::failure(diagnostics);
@@ -66,8 +80,7 @@ pub fn build_runtime_assembly(
     StageOutcome::success(
         RuntimeAssembly {
             main_module: "__gsv__/main.ts".to_string(),
-            browser_graph,
-            definition_graph,
+            graphs,
             generated_modules,
         },
         diagnostics,
@@ -77,12 +90,13 @@ pub fn build_runtime_assembly(
 fn generate_runtime_modules(
     analysis: &PackageAssemblyAnalysis,
     installed: &InstalledAssembly,
-    browser_entry_artifact_path: String,
-    definition_artifact_path: String,
+    definition_repo_path: &str,
 ) -> Vec<PackageAssemblyArtifactModule> {
     let mut modules = Vec::new();
     let mut asset_imports = Vec::new();
     let mut asset_entries = Vec::new();
+    let mut command_imports = Vec::new();
+    let mut command_entries = Vec::new();
 
     for (index, asset_path) in installed.asset_paths.iter().enumerate() {
         let artifact_asset_path = relativize_to_root(asset_path, &analysis.package_root);
@@ -107,6 +121,42 @@ fn generate_runtime_modules(
         ));
     }
 
+    let backend_import = if let Some(backend_entry) = installed.backend_entry.as_ref() {
+        let artifact_backend_path = relativize_to_root(backend_entry, &analysis.package_root);
+        format!(
+            "import GsvPackageBackendModule from {};",
+            serde_json::to_string(&relative_specifier(
+                "__gsv__/main.ts",
+                &artifact_backend_path
+            ))
+            .unwrap()
+        )
+    } else {
+        "const GsvPackageBackendModule = null;".to_string()
+    };
+
+    for (index, (command_name, entry_path)) in installed.command_entries.iter().enumerate() {
+        let artifact_command_path = relativize_to_root(entry_path, &analysis.package_root);
+        command_imports.push(format!(
+            "import __gsv_command_{index} from {};",
+            serde_json::to_string(&relative_specifier(
+                "__gsv__/main.ts",
+                &artifact_command_path
+            ))
+            .unwrap()
+        ));
+        command_entries.push(format!(
+            "  [{}, __gsv_command_{index}],",
+            serde_json::to_string(command_name).unwrap(),
+        ));
+    }
+
+    let definition_artifact_path = relativize_to_root(definition_repo_path, &analysis.package_root);
+    let browser_entry_artifact_path = installed
+        .browser_entry
+        .as_ref()
+        .map(|path| relativize_to_root(path, &analysis.package_root));
+
     let app_rpc_methods = analysis
         .definition
         .as_ref()
@@ -124,15 +174,12 @@ fn generate_runtime_modules(
         })
         .unwrap_or_default();
 
-    let asset_import_block = if asset_imports.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", asset_imports.join("\n"))
-    };
-
+    let asset_import_block = join_import_block(&asset_imports);
+    let command_import_block = join_import_block(&command_imports);
     let wrapper = format!(
-        r#"{asset_import_block}import {{ RpcTarget, WorkerEntrypoint }} from "cloudflare:workers";
+        r#"{asset_import_block}{command_import_block}import {{ RpcTarget, WorkerEntrypoint }} from "cloudflare:workers";
 import definition from {definition_import};
+{backend_import}
 
 const STATIC_META = Object.freeze({{
   packageName: {package_name},
@@ -143,15 +190,107 @@ const BROWSER_ENTRY = {browser_entry};
 const STATIC_ASSETS = new Map([
 {asset_entries}
 ]);
+const COMMAND_MODULES = new Map([
+{command_entries}
+]);
 
-function buildBaseContext() {{
+let setupPromise = null;
+
+function mergeMeta(overrides) {{
+  if (!overrides) {{
+    return STATIC_META;
+  }}
   return {{
-    meta: STATIC_META,
-    viewer: {{ uid: 0, username: "" }},
-    kernel: {{
-      async request() {{
-        throw new Error("kernel binding is unavailable");
-      }},
+    ...STATIC_META,
+    ...overrides,
+  }};
+}}
+
+function buildKernelClient(env, props, kernelOverride) {{
+  if (kernelOverride && typeof kernelOverride.request === "function") {{
+    return kernelOverride;
+  }}
+  if (props?.kernel && typeof props.kernel.request === "function") {{
+    return props.kernel;
+  }}
+  if (env.KERNEL && typeof env.KERNEL.request === "function") {{
+    return env.KERNEL;
+  }}
+  return {{
+    async request() {{
+      throw new Error("kernel binding is unavailable");
+    }},
+  }};
+}}
+
+function buildDaemonClient(daemonOverride, triggerOverride) {{
+  if (
+    !daemonOverride
+    || typeof daemonOverride.upsertRpcSchedule !== "function"
+    || typeof daemonOverride.removeRpcSchedule !== "function"
+    || typeof daemonOverride.listRpcSchedules !== "function"
+  ) {{
+    return undefined;
+  }}
+  const trigger = triggerOverride && typeof triggerOverride === "object"
+    ? {{
+        kind: "schedule",
+        key: typeof triggerOverride.key === "string" ? triggerOverride.key : "",
+        scheduledAt: typeof triggerOverride.scheduledAt === "number" ? triggerOverride.scheduledAt : 0,
+        firedAt: typeof triggerOverride.firedAt === "number" ? triggerOverride.firedAt : 0,
+      }}
+    : undefined;
+  return {{
+    async upsertRpcSchedule(input) {{
+      return daemonOverride.upsertRpcSchedule(input);
+    }},
+    async removeRpcSchedule(key) {{
+      return daemonOverride.removeRpcSchedule(key);
+    }},
+    async listRpcSchedules() {{
+      return daemonOverride.listRpcSchedules();
+    }},
+    ...(trigger ? {{ trigger }} : {{}}),
+  }};
+}}
+
+function createBaseContext(metaOverrides, props, env, kernelOverride, daemonOverride, daemonTrigger) {{
+  const appFrame = props?.appFrame && typeof props.appFrame === "object" ? props.appFrame : null;
+  return {{
+    meta: mergeMeta(metaOverrides),
+    viewer: appFrame
+      ? {{
+          uid: typeof appFrame.uid === "number" ? appFrame.uid : 0,
+          username: typeof appFrame.username === "string" ? appFrame.username : "",
+        }}
+      : {{ uid: 0, username: "" }},
+    app: props?.appSession && typeof props.appSession === "object"
+      ? {{
+          sessionId: typeof props.appSession.sessionId === "string" ? props.appSession.sessionId : "",
+          clientId: typeof props.appSession.clientId === "string" ? props.appSession.clientId : "",
+          rpcBase: typeof props.appSession.rpcBase === "string" ? props.appSession.rpcBase : "",
+          expiresAt: typeof props.appSession.expiresAt === "number" ? props.appSession.expiresAt : 0,
+        }}
+      : undefined,
+    daemon: buildDaemonClient(daemonOverride, daemonTrigger),
+    kernel: buildKernelClient(env, props, kernelOverride),
+  }};
+}}
+
+async function ensureSetup(ctx) {{
+  if (typeof definition?.setup !== "function") {{
+    return;
+  }}
+  if (!setupPromise) {{
+    setupPromise = Promise.resolve(definition.setup(ctx));
+  }}
+  await setupPromise;
+}}
+
+function noOpStdin() {{
+  return {{
+    async text() {{
+      return "";
     }},
   }};
 }}
@@ -173,6 +312,55 @@ function getAppRpcHandler(app, method) {{
     return null;
   }}
   return handler;
+}}
+
+function createBackendInstance(ctx) {{
+  if (typeof GsvPackageBackendModule !== "function") {{
+    return null;
+  }}
+  const backend = new GsvPackageBackendModule();
+  backend.meta = ctx.meta;
+  backend.kernel = ctx.kernel;
+  backend.viewer = ctx.viewer;
+  if (ctx.app) {{
+    backend.app = ctx.app;
+  }}
+  if (ctx.daemon) {{
+    backend.daemon = ctx.daemon;
+  }}
+  return backend;
+}}
+
+function getBackendRpcHandler(backend, method) {{
+  if (!backend || typeof method !== "string") {{
+    return null;
+  }}
+  if (
+    method === "constructor"
+    || method === "fetch"
+    || method === "onSignal"
+    || method.startsWith("__")
+  ) {{
+    return null;
+  }}
+  const handler = backend[method];
+  if (typeof handler !== "function") {{
+    return null;
+  }}
+  return handler.bind(backend);
+}}
+
+function getCommandHandler(commandName) {{
+  const handler = COMMAND_MODULES.get(commandName);
+  if (typeof handler === "function") {{
+    return handler;
+  }}
+  const group = definition && definition.commands;
+  if (!group || typeof group !== "object") {{
+    return null;
+  }}
+  const legacyHandler = group[commandName];
+  return typeof legacyHandler === "function" ? legacyHandler : null;
 }}
 
 function serveStaticAsset(request, routeBase) {{
@@ -211,27 +399,143 @@ function serveStaticAsset(request, routeBase) {{
 
 export default class GsvAppEntrypoint extends WorkerEntrypoint {{
   async fetch(request) {{
-    const routeBase = "/";
+    const props = this.ctx.props ?? {{}};
+    const ctx = createBaseContext({{
+      packageId: props.appFrame?.packageId ?? props.packageId ?? this.env.GSV_PACKAGE_ID ?? STATIC_META.packageId,
+      routeBase: props.appFrame?.routeBase ?? props.routeBase ?? this.env.GSV_ROUTE_BASE ?? STATIC_META.routeBase,
+    }}, props, this.env);
+    const routeBase = ctx.meta.routeBase ?? "/";
     const assetResponse = serveStaticAsset(request, routeBase);
     if (assetResponse) {{
       return assetResponse;
+    }}
+    const backend = createBackendInstance(ctx);
+    if (backend && typeof backend.fetch === "function") {{
+      return backend.fetch(request);
     }}
     const app = getAppDefinition();
     if (!app || typeof app.fetch !== "function") {{
       return new Response("Not Found", {{ status: 404 }});
     }}
-    return app.fetch(request, buildBaseContext());
+    await ensureSetup(ctx);
+    return app.fetch(request, ctx);
+  }}
+}}
+
+export class GsvCommandEntrypoint extends WorkerEntrypoint {{
+  async run(input) {{
+    const props = this.ctx.props ?? {{}};
+    const resolvedCommandName =
+      typeof input === "string" && input.length > 0
+        ? input
+        : props.commandName;
+    if (typeof resolvedCommandName !== "string" || resolvedCommandName.length === 0) {{
+      throw new Error("package command name is required");
+    }}
+    const commandInput = input && typeof input === "object" ? input : {{}};
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    const ctx = {{
+      ...createBaseContext({{
+        packageId: props.packageId ?? this.env.GSV_PACKAGE_ID ?? STATIC_META.packageId,
+        routeBase: props.routeBase ?? this.env.GSV_ROUTE_BASE ?? STATIC_META.routeBase,
+      }}, props, this.env),
+      argv: Array.isArray(commandInput.args)
+        ? commandInput.args
+        : (Array.isArray(props.argv) ? props.argv : []),
+      stdin: typeof commandInput.stdin === "string"
+        ? {{
+            async text() {{
+              return commandInput.stdin;
+            }},
+          }}
+        : (props.stdin ?? noOpStdin()),
+      stdout: props.stdout ?? {{
+        async write(value) {{
+          stdoutChunks.push(String(value ?? ""));
+        }},
+      }},
+      stderr: props.stderr ?? {{
+        async write(value) {{
+          stderrChunks.push(String(value ?? ""));
+        }},
+      }},
+    }};
+    await ensureSetup(ctx);
+    const handler = getCommandHandler(resolvedCommandName);
+    if (typeof handler !== "function") {{
+      throw new Error(`unknown package command handler: ${{resolvedCommandName}}`);
+    }}
+    await handler(ctx);
+    return {{
+      stdout: stdoutChunks.join(""),
+      stderr: stderrChunks.join(""),
+      exitCode: 0,
+    }};
+  }}
+}}
+
+export class GsvAppSignalEntrypoint extends WorkerEntrypoint {{
+  async run(signalName) {{
+    const props = this.ctx.props ?? {{}};
+    const resolvedSignalName =
+      typeof signalName === "string" && signalName.length > 0
+        ? signalName
+        : props.signal;
+    if (typeof resolvedSignalName !== "string" || resolvedSignalName.length === 0) {{
+      throw new Error("package signal name is required");
+    }}
+    const ctx = {{
+      ...createBaseContext({{
+        packageId: props.appFrame?.packageId ?? props.packageId ?? STATIC_META.packageId,
+        routeBase: props.appFrame?.routeBase ?? props.routeBase ?? STATIC_META.routeBase,
+      }}, props, this.env, undefined, undefined, props.daemonTrigger),
+      signal: resolvedSignalName,
+      payload: props.payload,
+      sourcePid: typeof props.sourcePid === "string" ? props.sourcePid : undefined,
+      watch: props.watch && typeof props.watch === "object" ? props.watch : undefined,
+    }};
+    const backend = createBackendInstance(ctx);
+    if (backend && typeof backend.onSignal === "function") {{
+      await backend.onSignal({{
+        signal: ctx.signal,
+        payload: ctx.payload,
+        sourcePid: ctx.sourcePid,
+        watch: ctx.watch,
+      }});
+      return;
+    }}
+    const app = getAppDefinition();
+    if (!app || typeof app.onSignal !== "function") {{
+      throw new Error("package app has no onSignal handler");
+    }}
+    await ensureSetup(ctx);
+    await app.onSignal(ctx);
   }}
 }}
 
 class GsvPackageAppBackend extends RpcTarget {{
-  constructor() {{
+  constructor(env, props) {{
     super();
-    this.__gsvCtx = buildBaseContext();
+    const ctx = createBaseContext({{
+      packageId: props.appFrame?.packageId ?? props.packageId ?? env.GSV_PACKAGE_ID ?? STATIC_META.packageId,
+      routeBase: props.appFrame?.routeBase ?? props.routeBase ?? env.GSV_ROUTE_BASE ?? STATIC_META.routeBase,
+    }}, props, env);
+    this.__gsvCtx = ctx;
     this.__gsvApp = getAppDefinition();
+    this.__gsvBackend = createBackendInstance(ctx);
+    this.__gsvSetupReady = null;
   }}
 
   async __invoke(method, args) {{
+    const backendHandler = getBackendRpcHandler(this.__gsvBackend, method);
+    if (backendHandler) {{
+      return backendHandler(args);
+    }}
+    if (!this.__gsvSetupReady) {{
+      this.__gsvSetupReady = ensureSetup(this.__gsvCtx);
+    }}
+    await this.__gsvSetupReady;
     const handler = getAppRpcHandler(this.__gsvApp, method);
     if (!handler) {{
       throw new Error(`Unknown app RPC method: ${{method}}`);
@@ -244,22 +548,30 @@ class GsvPackageAppBackend extends RpcTarget {{
 export class GsvAppRpcEntrypoint extends WorkerEntrypoint {{
   async getBackend() {{
     const app = getAppDefinition();
-    if (!app || !app.rpc || typeof app.rpc !== "object") {{
-      throw new Error("package app has no rpc handlers");
+    const hasLegacyRpc = Boolean(app && app.rpc && typeof app.rpc === "object");
+    const hasBackend = typeof GsvPackageBackendModule === "function";
+    if (!hasLegacyRpc && !hasBackend) {{
+      throw new Error("package app has no backend rpc");
     }}
-    return new GsvPackageAppBackend();
+    return new GsvPackageAppBackend(this.env, this.ctx.props ?? {{}});
   }}
 }}
 "#,
+        asset_import_block = asset_import_block,
+        command_import_block = command_import_block,
         definition_import = serde_json::to_string(&relative_specifier(
             "__gsv__/main.ts",
             &definition_artifact_path
         ))
         .unwrap(),
+        backend_import = backend_import,
         package_name = serde_json::to_string(&analysis.package_json.name).unwrap(),
         package_id = serde_json::to_string(&analysis.package_json.name).unwrap(),
-        browser_entry = serde_json::to_string(&browser_entry_artifact_path).unwrap(),
+        browser_entry = browser_entry_artifact_path
+            .map(|path| serde_json::to_string(&path).unwrap())
+            .unwrap_or_else(|| "null".to_string()),
         asset_entries = asset_entries.join("\n"),
+        command_entries = command_entries.join("\n"),
     );
 
     modules.push(PackageAssemblyArtifactModule {
@@ -268,6 +580,14 @@ export class GsvAppRpcEntrypoint extends WorkerEntrypoint {{
         content: wrapper,
     });
     modules
+}
+
+fn join_import_block(imports: &[String]) -> String {
+    if imports.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", imports.join("\n"))
+    }
 }
 
 fn content_type_for_path(path: &str) -> &'static str {

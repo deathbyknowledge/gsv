@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Deserialize;
 
 use crate::diagnostics::{has_errors, PackageAssemblyDiagnostic};
-use crate::model::{PackageAssemblyRequest, PackageAssemblyTarget, PackageJsonDefinition};
+use crate::model::{
+    PackageAssemblyRequest, PackageAssemblyTarget, PackageDefinition, PackageJsonDefinition,
+};
 use crate::sdk_fallback::{
     GSV_APP_LINK_FALLBACK_FILES, GSV_APP_LINK_NAME, GSV_PACKAGE_SDK_FALLBACK_FILES,
     GSV_PACKAGE_SDK_NAME,
@@ -39,6 +41,8 @@ impl<T> StageOutcome<T> {
 pub struct ValidatedRequest {
     pub request: PackageAssemblyRequest,
     pub browser_entry: Option<String>,
+    pub backend_entry: Option<String>,
+    pub command_entries: BTreeMap<String, String>,
     pub asset_paths: Vec<String>,
 }
 
@@ -65,6 +69,8 @@ pub struct PreparedSources {
     pub root_package: WorkspacePackage,
     pub workspace_packages: BTreeMap<String, WorkspacePackage>,
     pub browser_entry: Option<String>,
+    pub backend_entry: Option<String>,
+    pub command_entries: BTreeMap<String, String>,
     pub asset_paths: Vec<String>,
 }
 
@@ -88,6 +94,8 @@ pub struct PlannedAssembly {
     pub root_package: WorkspacePackage,
     pub workspace_packages: BTreeMap<String, WorkspacePackage>,
     pub browser_entry: Option<String>,
+    pub backend_entry: Option<String>,
+    pub command_entries: BTreeMap<String, String>,
     pub asset_paths: Vec<String>,
     pub install_plan: InstallPlan,
 }
@@ -142,6 +150,8 @@ pub fn prepare_request(request: &PackageAssemblyRequest) -> StageOutcome<Planned
             root_package: prepared.root_package,
             workspace_packages: prepared.workspace_packages,
             browser_entry: prepared.browser_entry,
+            backend_entry: prepared.backend_entry,
+            command_entries: prepared.command_entries,
             asset_paths: prepared.asset_paths,
             install_plan,
         },
@@ -152,6 +162,8 @@ pub fn prepare_request(request: &PackageAssemblyRequest) -> StageOutcome<Planned
 pub fn validate_request(request: &PackageAssemblyRequest) -> StageOutcome<ValidatedRequest> {
     let mut diagnostics = request.analysis.diagnostics.clone();
     let mut browser_entry = None;
+    let mut backend_entry = None;
+    let mut command_entries = BTreeMap::new();
     let mut asset_paths = Vec::new();
 
     if !request.analysis.ok {
@@ -187,52 +199,57 @@ pub fn validate_request(request: &PackageAssemblyRequest) -> StageOutcome<Valida
         return StageOutcome::failure(diagnostics);
     };
 
-    if let Some(app) = definition.app.as_ref() {
-        if let Some(entry) = app
-            .browser_entry
-            .as_deref()
-            .filter(|entry| !entry.trim().is_empty())
-        {
-            let resolved_entry = resolve_from_root(&request.analysis.package_root, entry);
-            let entry_extension = extension(&resolved_entry)
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            if matches!(entry_extension.as_str(), "html" | "htm") {
-                diagnostics.push(PackageAssemblyDiagnostic::error(
-                    "contract.browser-entry-html",
-                    "app.browser_entry must point to a JavaScript or TypeScript module, not HTML.",
-                    resolved_entry.clone(),
-                ));
-            } else if !SUPPORTED_BROWSER_ENTRY_EXTENSIONS.contains(&entry_extension.as_str()) {
-                diagnostics.push(PackageAssemblyDiagnostic::error(
-                    "contract.browser-entry-invalid",
-                    format!(
-                        "Unsupported app.browser_entry extension .{entry_extension}. Expected a JS or TS module."
-                    ),
-                    resolved_entry.clone(),
-                ));
-            } else if !request.files.contains_key(&resolved_entry) {
-                diagnostics.push(PackageAssemblyDiagnostic::error(
-                    "contract.browser-entry-missing",
-                    "app.browser_entry does not exist in the package snapshot.",
-                    resolved_entry.clone(),
-                ));
-            } else {
-                browser_entry = Some(resolved_entry);
-            }
-        }
+    if let Some(entry) = browser_entry_spec(definition) {
+        browser_entry = validate_module_entry(
+            request,
+            entry,
+            "browser.entry",
+            "contract.browser-entry-missing",
+            "contract.browser-entry-invalid",
+            Some((
+                "contract.browser-entry-html",
+                "browser.entry must point to a JavaScript or TypeScript module, not HTML.",
+            )),
+            &mut diagnostics,
+        );
+    }
 
-        for asset in &app.assets {
-            let resolved_asset = resolve_from_root(&request.analysis.package_root, asset);
-            if !request.files.contains_key(&resolved_asset) {
-                diagnostics.push(PackageAssemblyDiagnostic::error(
-                    "contract.asset-missing",
-                    "app.assets references a file that is missing from the package snapshot.",
-                    resolved_asset.clone(),
-                ));
-            } else {
-                asset_paths.push(resolved_asset);
-            }
+    if let Some(entry) = backend_entry_spec(definition) {
+        backend_entry = validate_module_entry(
+            request,
+            entry,
+            "backend.entry",
+            "contract.backend-entry-missing",
+            "contract.backend-entry-invalid",
+            None,
+            &mut diagnostics,
+        );
+    }
+
+    for (command_name, entry) in command_entry_specs(definition) {
+        if let Some(resolved_entry) = validate_module_entry(
+            request,
+            entry,
+            &format!("cli.commands.{command_name}"),
+            "contract.command-entry-missing",
+            "contract.command-entry-invalid",
+            None,
+            &mut diagnostics,
+        ) {
+            command_entries.insert(command_name, resolved_entry);
+        }
+    }
+
+    for asset in browser_asset_specs(definition) {
+        let resolved_asset = resolve_from_root(&request.analysis.package_root, asset);
+        if !request.files.contains_key(&resolved_asset) {
+            diagnostics.push(PackageAssemblyDiagnostic::error(
+                "contract.asset-missing",
+                "browser.assets references a file that is missing from the package snapshot.",
+                resolved_asset.clone(),
+            ));
+        } else {
+            asset_paths.push(resolved_asset);
         }
     }
 
@@ -244,10 +261,121 @@ pub fn validate_request(request: &PackageAssemblyRequest) -> StageOutcome<Valida
         ValidatedRequest {
             request: request.clone(),
             browser_entry,
+            backend_entry,
+            command_entries,
             asset_paths,
         },
         diagnostics,
     )
+}
+
+fn browser_entry_spec<'a>(definition: &'a PackageDefinition) -> Option<&'a str> {
+    if let Some(browser) = definition.browser.as_ref() {
+        let entry = browser.entry.trim();
+        if !entry.is_empty() {
+            return Some(entry);
+        }
+    }
+
+    definition
+        .app
+        .as_ref()
+        .and_then(|app| app.browser_entry.as_deref())
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+}
+
+fn browser_asset_specs<'a>(definition: &'a PackageDefinition) -> Vec<&'a str> {
+    if let Some(browser) = definition.browser.as_ref() {
+        return browser
+            .assets
+            .iter()
+            .map(String::as_str)
+            .filter(|asset| !asset.trim().is_empty())
+            .collect();
+    }
+
+    definition
+        .app
+        .as_ref()
+        .map(|app| {
+            app.assets
+                .iter()
+                .map(String::as_str)
+                .filter(|asset| !asset.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn backend_entry_spec<'a>(definition: &'a PackageDefinition) -> Option<&'a str> {
+    definition
+        .backend
+        .as_ref()
+        .map(|backend| backend.entry.trim())
+        .filter(|entry| !entry.is_empty())
+}
+
+fn command_entry_specs(definition: &PackageDefinition) -> Vec<(String, &str)> {
+    definition
+        .commands
+        .iter()
+        .filter_map(|command| {
+            let entry = command.entry.as_deref()?.trim();
+            if command.name.trim().is_empty() || entry.is_empty() {
+                return None;
+            }
+            Some((command.name.clone(), entry))
+        })
+        .collect()
+}
+
+fn validate_module_entry(
+    request: &PackageAssemblyRequest,
+    entry: &str,
+    field_name: &str,
+    missing_code: &str,
+    invalid_code: &str,
+    html_error: Option<(&str, &str)>,
+    diagnostics: &mut Vec<PackageAssemblyDiagnostic>,
+) -> Option<String> {
+    let resolved_entry = resolve_from_root(&request.analysis.package_root, entry);
+    let entry_extension = extension(&resolved_entry)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if matches!(entry_extension.as_str(), "html" | "htm") {
+        if let Some((html_code, html_message)) = html_error {
+            diagnostics.push(PackageAssemblyDiagnostic::error(
+                html_code,
+                html_message,
+                resolved_entry.clone(),
+            ));
+            return None;
+        }
+    }
+
+    if !SUPPORTED_BROWSER_ENTRY_EXTENSIONS.contains(&entry_extension.as_str()) {
+        diagnostics.push(PackageAssemblyDiagnostic::error(
+            invalid_code,
+            format!(
+                "Unsupported {field_name} extension .{entry_extension}. Expected a JS or TS module."
+            ),
+            resolved_entry.clone(),
+        ));
+        return None;
+    }
+
+    if !request.files.contains_key(&resolved_entry) {
+        diagnostics.push(PackageAssemblyDiagnostic::error(
+            missing_code,
+            format!("{field_name} does not exist in the package snapshot."),
+            resolved_entry.clone(),
+        ));
+        return None;
+    }
+
+    Some(resolved_entry)
 }
 
 pub fn prepare_sources(validated: &ValidatedRequest) -> StageOutcome<PreparedSources> {
@@ -279,6 +407,8 @@ pub fn prepare_sources(validated: &ValidatedRequest) -> StageOutcome<PreparedSou
             root_package,
             workspace_packages,
             browser_entry: validated.browser_entry.clone(),
+            backend_entry: validated.backend_entry.clone(),
+            command_entries: validated.command_entries.clone(),
             asset_paths: validated.asset_paths.clone(),
         },
         diagnostics,

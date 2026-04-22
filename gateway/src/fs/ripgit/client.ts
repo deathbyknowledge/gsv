@@ -137,7 +137,16 @@ export type RipgitPackageAnalyzeResponse = {
     };
     commands: Array<{
       name: string;
+      entry?: string | null;
     }>;
+    browser?: {
+      entry: string;
+      assets: string[];
+    } | null;
+    backend?: {
+      entry: string;
+      public_routes: string[];
+    } | null;
     app?: {
       handler: {
         export_name: string;

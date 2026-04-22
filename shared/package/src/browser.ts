@@ -82,7 +82,7 @@ function buildRpcWebSocketUrl(rpcBase: string): string {
   return url.toString();
 }
 
-export async function connectAppBackend<T = unknown>(): Promise<T> {
+export async function connectBackend<T = unknown>(): Promise<T> {
   const existing = globalThis.window?.__GSV_BACKEND_READY__;
   if (existing) {
     return existing as Promise<T>;
@@ -109,5 +109,9 @@ export async function connectAppBackend<T = unknown>(): Promise<T> {
 }
 
 export async function getBackend<T = unknown>(): Promise<T> {
-  return connectAppBackend<T>();
+  return connectBackend<T>();
+}
+
+export async function connectAppBackend<T = unknown>(): Promise<T> {
+  return connectBackend<T>();
 }
