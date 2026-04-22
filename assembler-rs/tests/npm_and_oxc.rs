@@ -8,7 +8,7 @@ use assembler_rs::npm::{
     install_registry_dependencies, NpmDist, NpmPackument, NpmPackumentVersion, NpmRegistryClient,
     NpmRegistryError,
 };
-use assembler_rs::oxc::{parse_source_text_with_oxc, OxcResolver};
+use assembler_rs::oxc::{parse_source_text_with_oxc, transform_source_text_with_oxc, OxcResolver};
 use assembler_rs::pipeline::prepare_request;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -397,4 +397,24 @@ fn installer_rejects_non_utf8_package_files() {
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == "install.unsupported-package"));
+}
+
+#[test]
+fn transforms_typescript_and_preact_jsx_with_oxc() {
+    let transformed = transform_source_text_with_oxc(
+        "apps/demo/src/main.tsx",
+        r#"type Props = { name?: string };
+
+export default function App({ name }: Props) {
+  return <main>{name ?? "hello"}</main>;
+}"#,
+    )
+    .expect("transform tsx");
+
+    assert!(transformed.contains("from \"preact/jsx-runtime\""));
+    assert!(transformed.contains("function App({ name })"));
+    assert!(transformed.contains("_jsx(\"main\""));
+    assert!(!transformed.contains("type Props"));
+    assert!(!transformed.contains(": Props"));
+    assert!(!transformed.contains("<main>"));
 }

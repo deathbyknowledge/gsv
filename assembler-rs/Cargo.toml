@@ -11,10 +11,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 oxc_allocator = "0.127.0"
+oxc_codegen = "0.127.0"
 oxc_parser = "0.127.0"
 oxc_resolver = "11.19.1"
+oxc_semantic = "0.127.0"
 oxc_span = "0.127.0"
 oxc_syntax = "0.127.0"
+oxc_transformer = "0.127.0"
 semver = "1"
 tar = "0.4"
 thiserror = "2"

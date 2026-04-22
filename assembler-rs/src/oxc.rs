@@ -4,13 +4,16 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use oxc_allocator::Allocator;
+use oxc_codegen::Codegen;
 use oxc_parser::Parser;
 use oxc_resolver::{
     FileMetadata, FileSystem, ModuleType, PackageType, ResolveError, ResolveOptions,
     ResolverGeneric,
 };
+use oxc_semantic::SemanticBuilder;
 use oxc_span::SourceType;
 use oxc_syntax::module_record::ModuleRecord;
+use oxc_transformer::{TransformOptions, Transformer};
 
 use crate::diagnostics::PackageAssemblyDiagnostic;
 use crate::virtual_fs::{dirname, extension, normalize_repo_path, VirtualFileTree};
@@ -37,6 +40,13 @@ pub struct ResolvedModule {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedModuleDependencies {
+    pub requested_modules: Vec<String>,
+    pub has_module_syntax: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransformedModuleSource {
+    pub content: String,
     pub requested_modules: Vec<String>,
     pub has_module_syntax: bool,
 }
@@ -245,6 +255,13 @@ pub fn parse_source_text_with_oxc(
     parse_module_dependencies_with_oxc(path, source_text).map(|_| ())
 }
 
+pub fn transform_source_text_with_oxc(
+    path: &str,
+    source_text: &str,
+) -> Result<String, PackageAssemblyDiagnostic> {
+    transform_module_source_with_oxc(path, source_text).map(|transformed| transformed.content)
+}
+
 pub fn parse_module_dependencies_with_oxc(
     path: &str,
     source_text: &str,
@@ -278,6 +295,86 @@ pub fn parse_module_dependencies_with_oxc(
     })
 }
 
+pub fn transform_module_source_with_oxc(
+    path: &str,
+    source_text: &str,
+) -> Result<TransformedModuleSource, PackageAssemblyDiagnostic> {
+    let source_type = source_type_from_path(path)?;
+    let normalized = normalize_repo_path(path);
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source_text, source_type).parse();
+    if parsed.panicked {
+        return Err(PackageAssemblyDiagnostic::error(
+            "transform.parse-error",
+            format!("Oxc parser panicked while parsing {path}."),
+            path,
+        ));
+    }
+    if !parsed.errors.is_empty() {
+        let message = parsed
+            .errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(PackageAssemblyDiagnostic::error(
+            "transform.parse-error",
+            format!("Oxc parser reported syntax errors: {message}"),
+            path,
+        ));
+    }
+
+    let mut program = parsed.program;
+
+    let semantic = SemanticBuilder::new()
+        .with_check_syntax_error(true)
+        .with_excess_capacity(2.0)
+        .build(&program);
+    if !semantic.errors.is_empty() {
+        let message = semantic
+            .errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(PackageAssemblyDiagnostic::error(
+            "transform.semantic-error",
+            format!("Oxc semantic analysis reported errors: {message}"),
+            path,
+        ));
+    }
+
+    let scoping = semantic.semantic.into_scoping();
+    let transform_options = transform_options_for_path(path);
+    let transformed = Transformer::new(&allocator, Path::new(&normalized), &transform_options)
+        .build_with_scoping(scoping, &mut program);
+    if !transformed.errors.is_empty() {
+        let message = transformed
+            .errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(PackageAssemblyDiagnostic::error(
+            "transform.emit-error",
+            format!("Oxc transformer reported errors: {message}"),
+            path,
+        ));
+    }
+
+    let content = Codegen::new()
+        .with_scoping(Some(transformed.scoping))
+        .build(&program)
+        .code;
+    let transformed_dependencies = parse_module_dependencies_with_oxc(path, &content)?;
+
+    Ok(TransformedModuleSource {
+        content,
+        requested_modules: transformed_dependencies.requested_modules,
+        has_module_syntax: transformed_dependencies.has_module_syntax,
+    })
+}
+
 fn source_type_from_path(path: &str) -> Result<SourceType, PackageAssemblyDiagnostic> {
     let normalized = normalize_repo_path(path);
     SourceType::from_path(&normalized).map_err(|_| {
@@ -288,6 +385,12 @@ fn source_type_from_path(path: &str) -> Result<SourceType, PackageAssemblyDiagno
             normalized,
         )
     })
+}
+
+fn transform_options_for_path(_path: &str) -> TransformOptions {
+    let mut options = TransformOptions::default();
+    options.jsx.import_source = Some("preact".to_string());
+    options
 }
 
 fn collect_directories(files: &VirtualFileTree) -> BTreeSet<String> {

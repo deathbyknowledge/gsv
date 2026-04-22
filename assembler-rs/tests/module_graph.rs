@@ -276,3 +276,69 @@ export default missing;"#,
         .iter()
         .any(|diagnostic| diagnostic.code == "resolve.not-found"));
 }
+
+#[test]
+fn graph_transforms_typescript_and_jsx_modules() {
+    let mut request = base_request(
+        r#"type Props = { name?: string };
+
+export default function App({ name }: Props) {
+  return <main>{name ?? "hello"}</main>;
+}"#,
+    );
+    request
+        .analysis
+        .package_json
+        .dependencies
+        .insert("preact".to_string(), "10.24.1".to_string());
+
+    let tarball_url = "https://registry.example/preact/-/preact-10.24.1.tgz";
+    let client = MockNpmRegistryClient::default()
+        .with_package("preact", packument(&[("10.24.1", tarball_url)]))
+        .with_tarball(
+            tarball_url,
+            tarball(&[
+                (
+                    "package.json",
+                    br#"{
+  "name": "preact",
+  "version": "10.24.1",
+  "type": "module",
+  "exports": {
+    ".": "./dist/preact.module.js",
+    "./jsx-runtime": "./jsx-runtime/dist/jsxRuntime.module.js"
+  }
+}"#,
+                ),
+                (
+                    "dist/preact.module.js",
+                    br#"export function render() { return null; }"#,
+                ),
+                (
+                    "jsx-runtime/dist/jsxRuntime.module.js",
+                    br#"export function jsx(type, props) { return { type, props }; }"#,
+                ),
+            ]),
+        );
+
+    let planned = prepare_request(&request).value.expect("planned");
+    let installed = install_registry_dependencies(&planned, &client)
+        .value
+        .expect("installed");
+    let graph = build_module_graph(&installed).value.expect("graph");
+
+    let main = graph
+        .modules
+        .iter()
+        .find(|module| module.path == "apps/demo/src/main.tsx")
+        .expect("main module");
+
+    assert!(main.content.contains("from \"preact/jsx-runtime\""));
+    assert!(!main.content.contains("type Props"));
+    assert!(!main.content.contains(": Props"));
+    assert!(!main.content.contains("<main>"));
+    assert!(graph
+        .modules
+        .iter()
+        .any(|module| module.path == "node_modules/preact/jsx-runtime/dist/jsxRuntime.module.js"));
+}

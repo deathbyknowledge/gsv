@@ -9,13 +9,35 @@ use assembler_rs::model::{
     PackageJsonDefinition, PackageMetaDefinition,
 };
 use assembler_rs::npm::{
-    install_registry_dependencies, NpmPackument, NpmRegistryClient, NpmRegistryError,
+    install_registry_dependencies, NpmDist, NpmPackument, NpmPackumentVersion, NpmRegistryClient,
+    NpmRegistryError,
 };
 use assembler_rs::pipeline::prepare_request;
 use assembler_rs::runtime::build_runtime_assembly;
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use tar::{Builder, Header};
 
 #[derive(Clone, Debug, Default)]
 struct EmptyRegistry;
+
+#[derive(Clone, Debug, Default)]
+struct MockNpmRegistryClient {
+    packuments: BTreeMap<String, NpmPackument>,
+    tarballs: BTreeMap<String, Vec<u8>>,
+}
+
+impl MockNpmRegistryClient {
+    fn with_package(mut self, name: &str, packument: NpmPackument) -> Self {
+        self.packuments.insert(name.to_string(), packument);
+        self
+    }
+
+    fn with_tarball(mut self, url: &str, tarball: Vec<u8>) -> Self {
+        self.tarballs.insert(url.to_string(), tarball);
+        self
+    }
+}
 
 impl NpmRegistryClient for EmptyRegistry {
     fn fetch_packument(&self, _package_name: &str) -> Result<NpmPackument, NpmRegistryError> {
@@ -25,6 +47,58 @@ impl NpmRegistryClient for EmptyRegistry {
     fn fetch_tarball(&self, _tarball_url: &str) -> Result<Vec<u8>, NpmRegistryError> {
         Err(NpmRegistryError::Request("not used".to_string()))
     }
+}
+
+impl NpmRegistryClient for MockNpmRegistryClient {
+    fn fetch_packument(&self, package_name: &str) -> Result<NpmPackument, NpmRegistryError> {
+        self.packuments.get(package_name).cloned().ok_or_else(|| {
+            NpmRegistryError::Request(format!("missing mock packument for {package_name}"))
+        })
+    }
+
+    fn fetch_tarball(&self, tarball_url: &str) -> Result<Vec<u8>, NpmRegistryError> {
+        self.tarballs.get(tarball_url).cloned().ok_or_else(|| {
+            NpmRegistryError::Request(format!("missing mock tarball for {tarball_url}"))
+        })
+    }
+}
+
+fn packument(versions: &[(&str, &str)]) -> NpmPackument {
+    NpmPackument {
+        versions: versions
+            .iter()
+            .map(|(version, tarball)| {
+                (
+                    (*version).to_string(),
+                    NpmPackumentVersion {
+                        version: (*version).to_string(),
+                        dist: NpmDist {
+                            tarball: (*tarball).to_string(),
+                        },
+                    },
+                )
+            })
+            .collect(),
+        dist_tags: BTreeMap::from([("latest".to_string(), versions.last().unwrap().0.to_string())]),
+    }
+}
+
+fn tarball(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let encoder = GzEncoder::new(Vec::new(), Compression::default());
+    let mut archive = Builder::new(encoder);
+
+    for (path, contents) in files {
+        let mut header = Header::new_gnu();
+        header.set_mode(0o644);
+        header.set_size(contents.len() as u64);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, format!("package/{path}"), &mut &contents[..])
+            .expect("append tar entry");
+    }
+
+    let encoder = archive.into_inner().expect("finalize tar");
+    encoder.finish().expect("finish gzip")
 }
 
 fn request() -> PackageAssemblyRequest {
@@ -327,4 +401,117 @@ fn builds_runtime_artifact_for_command_only_package() {
     let wrapper = modules.get("__gsv__/main.ts").unwrap().content.as_str();
     assert!(wrapper.contains("const BROWSER_ENTRY = null;"));
     assert!(wrapper.contains("export class GsvCommandEntrypoint extends WorkerEntrypoint"));
+}
+
+#[test]
+fn runtime_artifact_transforms_typescript_and_jsx_modules() {
+    let mut request = declarative_request();
+    request
+        .analysis
+        .package_json
+        .dependencies
+        .insert("preact".to_string(), "10.24.1".to_string());
+    request.files.insert(
+        "apps/demo/src/package.ts".to_string(),
+        r#"import { definePackage } from "@gsv/package/manifest";
+
+const publicRoutes: string[] = ["/webhooks/github"];
+
+export default definePackage({
+  meta: { displayName: "Demo" },
+  browser: { entry: "./src/main.tsx", assets: ["./src/styles.css"] },
+  backend: { entry: "./src/backend.ts", public_routes: publicRoutes },
+  cli: { commands: { sync: "./src/cli/sync.ts" } }
+});"#
+            .to_string(),
+    );
+    request.files.insert(
+        "apps/demo/src/main.tsx".to_string(),
+        r#"type Props = { name?: string };
+
+export default function App({ name }: Props) {
+  return <main>{name ?? "hello"}</main>;
+}"#
+        .to_string(),
+    );
+    request.files.insert(
+        "apps/demo/src/backend.ts".to_string(),
+        r#"export default class DemoBackend {
+  async ping(args: { value: string }) {
+    return args;
+  }
+}"#
+        .to_string(),
+    );
+    request.files.insert(
+        "apps/demo/src/cli/sync.ts".to_string(),
+        r#"export default async function run(ctx: { stdout: { write(value: string): Promise<void> } }) {
+  await ctx.stdout.write("synced");
+}"#
+        .to_string(),
+    );
+
+    let tarball_url = "https://registry.example/preact/-/preact-10.24.1.tgz";
+    let client = MockNpmRegistryClient::default()
+        .with_package("preact", packument(&[("10.24.1", tarball_url)]))
+        .with_tarball(
+            tarball_url,
+            tarball(&[
+                (
+                    "package.json",
+                    br#"{
+  "name": "preact",
+  "version": "10.24.1",
+  "type": "module",
+  "exports": {
+    ".": "./dist/preact.module.js",
+    "./jsx-runtime": "./jsx-runtime/dist/jsxRuntime.module.js"
+  }
+}"#,
+                ),
+                (
+                    "dist/preact.module.js",
+                    br#"export function render() { return null; }"#,
+                ),
+                (
+                    "jsx-runtime/dist/jsxRuntime.module.js",
+                    br#"export function jsx(type, props) { return { type, props }; }"#,
+                ),
+            ]),
+        );
+
+    let prepared = prepare_request(&request).value.expect("prepared");
+    let installed = install_registry_dependencies(&prepared, &client)
+        .value
+        .expect("installed");
+    let runtime = build_runtime_assembly(&request.analysis, &installed)
+        .value
+        .expect("runtime");
+    let artifact = finalize_artifact(&request.analysis, &runtime)
+        .value
+        .expect("artifact");
+
+    let modules = artifact
+        .modules
+        .iter()
+        .map(|module| (module.path.as_str(), module))
+        .collect::<BTreeMap<_, _>>();
+
+    let package_definition = modules.get("src/package.ts").unwrap().content.as_str();
+    assert!(!package_definition.contains(": string[]"));
+
+    let main = modules.get("src/main.tsx").unwrap().content.as_str();
+    assert!(main.contains("from \"preact/jsx-runtime\""));
+    assert!(!main.contains("type Props"));
+    assert!(!main.contains(": Props"));
+    assert!(!main.contains("<main>"));
+    assert!(modules.contains_key("node_modules/preact/jsx-runtime/dist/jsxRuntime.module.js"));
+
+    let backend = modules.get("src/backend.ts").unwrap().content.as_str();
+    assert!(backend.contains("async ping(args)"));
+    assert!(!backend.contains(": { value: string }"));
+
+    let command = modules.get("src/cli/sync.ts").unwrap().content.as_str();
+    assert!(command.contains("async function run(ctx)"));
+    assert!(!command.contains(": { stdout:"));
 }

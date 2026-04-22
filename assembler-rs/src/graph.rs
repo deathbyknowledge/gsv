@@ -5,7 +5,7 @@ use oxc_resolver::ModuleType;
 use crate::diagnostics::{has_errors, PackageAssemblyDiagnostic};
 use crate::model::{PackageAssemblyArtifactModule, PackageAssemblyArtifactModuleKind};
 use crate::npm::InstalledAssembly;
-use crate::oxc::{parse_module_dependencies_with_oxc, OxcResolver};
+use crate::oxc::{transform_module_source_with_oxc, OxcResolver};
 use crate::pipeline::StageOutcome;
 use crate::virtual_fs::extension;
 
@@ -68,17 +68,17 @@ pub fn build_module_graph_for_entry(
         let kind = infer_module_kind(&path, entry.module_type);
         match kind {
             Some(PackageAssemblyArtifactModuleKind::SourceModule) => {
-                match parse_module_dependencies_with_oxc(&path, content) {
-                    Ok(parsed) => {
+                match transform_module_source_with_oxc(&path, content) {
+                    Ok(transformed) => {
                         emitted.insert(
                             path.clone(),
                             PackageAssemblyArtifactModule {
                                 path: path.clone(),
                                 kind: PackageAssemblyArtifactModuleKind::SourceModule,
-                                content: content.to_string(),
+                                content: transformed.content,
                             },
                         );
-                        for requested in parsed.requested_modules {
+                        for requested in transformed.requested_modules {
                             match resolver.resolve_specifier(&path, &requested) {
                                 Ok(resolved) => {
                                     let resolved_kind = infer_module_kind(
