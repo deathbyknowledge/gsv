@@ -216,7 +216,7 @@ fn resolve_shell_program() -> ShellProgram {
     #[cfg(windows)]
     {
         ShellProgram {
-            executable: "pwsh".to_string(),
+            executable: "powershell.exe".to_string(),
             launch_args: vec![
                 "-NoLogo".to_string(),
                 "-NoProfile".to_string(),
@@ -250,8 +250,10 @@ fn resolve_shell_program() -> ShellProgram {
 fn format_shell_spawn_error(_shell: &str, error: &std::io::Error) -> String {
     #[cfg(windows)]
     {
-        if _shell.eq_ignore_ascii_case("pwsh") && error.kind() == std::io::ErrorKind::NotFound {
-            return "Failed to execute: pwsh not found. Install PowerShell 7 and ensure `pwsh` is on PATH.".to_string();
+        if _shell.eq_ignore_ascii_case("powershell.exe")
+            && error.kind() == std::io::ErrorKind::NotFound
+        {
+            return "Failed to execute: powershell.exe not found. Ensure Windows PowerShell is available on PATH.".to_string();
         }
     }
 
