@@ -271,6 +271,8 @@ struct WranglerConfig {
     r2_buckets: Vec<WranglerR2BucketBinding>,
     #[serde(default)]
     services: Vec<WranglerServiceBinding>,
+    #[serde(default)]
+    worker_loaders: Vec<WranglerWorkerLoaderBinding>,
     ai: Option<WranglerAiBinding>,
     assets: Option<WranglerAssetsConfig>,
     observability: Option<Value>,
@@ -303,6 +305,11 @@ struct WranglerServiceBinding {
     service: String,
     environment: Option<String>,
     entrypoint: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct WranglerWorkerLoaderBinding {
+    binding: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -2260,6 +2267,13 @@ fn build_upload_metadata(
         metadata_bindings.push(value);
     }
 
+    for loader in &bundle.wrangler.worker_loaders {
+        metadata_bindings.push(json!({
+            "name": loader.binding,
+            "type": "worker_loader"
+        }));
+    }
+
     if let Some(ai) = &bundle.wrangler.ai {
         let mut value = json!({
             "name": ai.binding,
@@ -2994,6 +3008,74 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
                 .map(|config| config.bindings.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn parse_wrangler_config_supports_worker_loaders() {
+        let config = parse_wrangler_config(
+            Path::new("wrangler.jsonc"),
+            r#"
+{
+  "name": "gsv",
+  "compatibility_date": "2026-01-28",
+  "worker_loaders": [
+    { "binding": "LOADER" }
+  ]
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.name, "gsv");
+        assert_eq!(config.worker_loaders.len(), 1);
+        assert_eq!(config.worker_loaders[0].binding, "LOADER");
+    }
+
+    #[test]
+    fn build_upload_metadata_includes_worker_loader_bindings() {
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_GATEWAY.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_GATEWAY.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_GATEWAY.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                worker_loaders: vec![WranglerWorkerLoaderBinding {
+                    binding: "LOADER".to_string(),
+                }],
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_GATEWAY.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let metadata = build_upload_metadata(
+            &bundle,
+            &HashSet::new(),
+            &HashSet::new(),
+            None,
+            false,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let bindings = metadata["bindings"].as_array().unwrap();
+        assert!(bindings
+            .iter()
+            .any(|binding| { binding["name"] == "LOADER" && binding["type"] == "worker_loader" }));
     }
 
     #[test]
