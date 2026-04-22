@@ -427,7 +427,7 @@ fn windows_task_registration_script(
 Import-Module ScheduledTasks -ErrorAction Stop\n\
 $action = New-ScheduledTaskAction -Execute {exe_path} -Argument {args}\n\
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User {user_id}\n\
-$principal = New-ScheduledTaskPrincipal -UserId {user_id} -LogonType InteractiveToken -RunLevel Limited\n\
+	$principal = New-ScheduledTaskPrincipal -UserId {user_id} -LogonType Interactive -RunLevel Limited\n\
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n\
 $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description {description}\n\
 $task.Settings.AllowStartOnDemand = $true\n\
@@ -985,7 +985,7 @@ mod tests {
             "$trigger = New-ScheduledTaskTrigger -AtLogOn -User 'ACME\\hank'"
         ));
         assert!(script.contains(
-            "$principal = New-ScheduledTaskPrincipal -UserId 'ACME\\hank' -LogonType InteractiveToken -RunLevel Limited"
+            "$principal = New-ScheduledTaskPrincipal -UserId 'ACME\\hank' -LogonType Interactive -RunLevel Limited"
         ));
         assert!(script.contains(
             "$action = New-ScheduledTaskAction -Execute 'C:\\Program Files\\GSV\\gsv.exe' -Argument 'device run'"
