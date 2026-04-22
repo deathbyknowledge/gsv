@@ -1,0 +1,15 @@
+{
+  "name": "assembler-rs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build:worker": "cargo install -q \"worker-build@^0.7\" && worker-build --release",
+    "test:rust": "cargo test",
+    "test": "cargo test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.83.0"
+  }
+}
