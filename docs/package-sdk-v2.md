@@ -32,6 +32,8 @@ This matches the assembly v2 direction in:
 - every backend path not listed in `public_routes` remains session-authenticated
 - backend built-ins use reserved method names instead of a large `app` object
 - the platform shell owns browser bootstrap and static app HTML
+- browser framework dependencies stay explicit; JSX packages must declare
+  `preact` instead of relying on hidden platform injection
 
 ## default export convention
 
@@ -323,6 +325,11 @@ The browser entrypoint does not own the top-level HTML document.
  * - getAppBoot(): package/app boot metadata for this browser session
  * - hasAppBoot(): test whether boot metadata is available
  * - connectBackend<T>(): connect to the package backend RPC client
+ *
+ * Framework note:
+ * - if this file uses JSX, declare `preact` in package.json
+ * - the compiler may emit `preact/jsx-runtime`, but the package must own that
+ *   dependency explicitly
  *
  * Browser entrypoints do not get direct kernel access.
  * Use the backend when the UI needs privileged or kernel-facing work.

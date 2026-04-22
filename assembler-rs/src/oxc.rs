@@ -45,6 +45,13 @@ pub struct ParsedModuleDependencies {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleRequestSpan {
+    pub specifier: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransformedModuleSource {
     pub content: String,
     pub requested_modules: Vec<String>,
@@ -253,6 +260,50 @@ pub fn parse_source_text_with_oxc(
     source_text: &str,
 ) -> Result<(), PackageAssemblyDiagnostic> {
     parse_module_dependencies_with_oxc(path, source_text).map(|_| ())
+}
+
+pub fn collect_module_request_spans_with_oxc(
+    path: &str,
+    source_text: &str,
+) -> Result<Vec<ModuleRequestSpan>, PackageAssemblyDiagnostic> {
+    let source_type = source_type_from_path(path)?;
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source_text, source_type).parse();
+    if parsed.panicked {
+        return Err(PackageAssemblyDiagnostic::error(
+            "transform.parse-error",
+            format!("Oxc parser panicked while parsing {path}."),
+            path,
+        ));
+    }
+    if !parsed.errors.is_empty() {
+        let message = parsed
+            .errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(PackageAssemblyDiagnostic::error(
+            "transform.parse-error",
+            format!("Oxc parser reported syntax errors: {message}"),
+            path,
+        ));
+    }
+
+    let mut spans = parsed
+        .module_record
+        .requested_modules
+        .iter()
+        .flat_map(|(specifier, occurrences)| {
+            occurrences.iter().map(|occurrence| ModuleRequestSpan {
+                specifier: specifier.to_string(),
+                start: occurrence.span.start as usize,
+                end: occurrence.span.end as usize,
+            })
+        })
+        .collect::<Vec<_>>();
+    spans.sort_by_key(|span| (span.start, span.end));
+    Ok(spans)
 }
 
 pub fn transform_source_text_with_oxc(

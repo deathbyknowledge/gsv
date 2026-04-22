@@ -311,12 +311,16 @@ fn builds_runtime_artifact_with_wrapper_and_hash() {
             .map(|module| &module.kind),
         Some(&PackageAssemblyArtifactModuleKind::SourceModule)
     );
+    assert!(modules
+        .keys()
+        .any(|path| path.starts_with("__gsv_browser_assets__/")));
 
     let wrapper = modules.get("__gsv__/main.ts").unwrap().content.as_str();
     assert!(wrapper.contains("import definition from \"../src/package.ts\";"));
     assert!(wrapper.contains("class GsvPackageAppBackend extends RpcTarget"));
     assert!(wrapper.contains("async [\"ping\"](args)"));
-    assert!(wrapper.contains("const BROWSER_ENTRY = \"src/main.tsx\";"));
+    assert!(wrapper.contains("const BROWSER_ENTRY = \"__gsv_browser__/src/main.js\";"));
+    assert!(wrapper.contains("const APP_SHELL_HTML = \"<!doctype html>"));
 }
 
 #[test]
@@ -514,4 +518,95 @@ export default function App({ name }: Props) {
     let command = modules.get("src/cli/sync.ts").unwrap().content.as_str();
     assert!(command.contains("async function run(ctx)"));
     assert!(!command.contains(": { stdout:"));
+}
+
+#[test]
+fn runtime_artifact_rewrites_browser_asset_specifiers() {
+    let mut request = declarative_request();
+    request
+        .analysis
+        .package_json
+        .dependencies
+        .insert("preact".to_string(), "10.24.1".to_string());
+    request.files.insert(
+        "apps/demo/src/main.tsx".to_string(),
+        r#"import { render } from "preact";
+import { App } from "./app/app";
+
+const root = document.getElementById("root");
+if (!root) throw new Error("missing root");
+
+render(<App />, root);"#
+            .to_string(),
+    );
+    request.files.insert(
+        "apps/demo/src/app/app.tsx".to_string(),
+        r#"export function App() {
+  return <main>hello</main>;
+}"#
+        .to_string(),
+    );
+
+    let tarball_url = "https://registry.example/preact/-/preact-10.24.1.tgz";
+    let client = MockNpmRegistryClient::default()
+        .with_package("preact", packument(&[("10.24.1", tarball_url)]))
+        .with_tarball(
+            tarball_url,
+            tarball(&[
+                (
+                    "package.json",
+                    br#"{
+  "name": "preact",
+  "version": "10.24.1",
+  "type": "module",
+  "exports": {
+    ".": "./dist/preact.module.js",
+    "./jsx-runtime": "./jsx-runtime/dist/jsxRuntime.module.js"
+  }
+}"#,
+                ),
+                (
+                    "dist/preact.module.js",
+                    br#"export function render() { return null; }"#,
+                ),
+                (
+                    "jsx-runtime/dist/jsxRuntime.module.js",
+                    br#"export function jsx(type, props) { return { type, props }; }"#,
+                ),
+            ]),
+        );
+
+    let prepared = prepare_request(&request).value.expect("prepared");
+    let installed = install_registry_dependencies(&prepared, &client)
+        .value
+        .expect("installed");
+    let runtime = build_runtime_assembly(&request.analysis, &installed)
+        .value
+        .expect("runtime");
+    let artifact = finalize_artifact(&request.analysis, &runtime)
+        .value
+        .expect("artifact");
+
+    let modules = artifact
+        .modules
+        .iter()
+        .map(|module| (module.path.as_str(), module))
+        .collect::<BTreeMap<_, _>>();
+    let wrapper = modules.get("__gsv__/main.ts").unwrap().content.as_str();
+    assert!(wrapper.contains("href=\\\"./src/styles.css\\\""));
+    assert!(wrapper.contains("src=\\\"./__gsv_browser__/src/main.js\\\""));
+
+    let browser_assets = modules
+        .iter()
+        .filter(|(path, _)| path.starts_with("__gsv_browser_assets__/"))
+        .map(|(_, module)| module.content.as_str())
+        .collect::<Vec<_>>();
+    assert!(browser_assets
+        .iter()
+        .any(|content| content.contains("./app/app.js")));
+    assert!(browser_assets
+        .iter()
+        .any(|content| content.contains("../node_modules/preact/dist/preact.module.js")));
+    assert!(browser_assets.iter().any(|content| content
+        .contains("../../node_modules/preact/jsx-runtime/dist/jsxRuntime.module.js")));
 }

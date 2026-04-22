@@ -278,6 +278,28 @@ export default missing;"#,
 }
 
 #[test]
+fn jsx_graph_requires_declared_preact_dependency() {
+    let request = base_request(
+        r#"export default function App() {
+  return <main>hello</main>;
+}"#,
+    );
+
+    let planned = prepare_request(&request).value.expect("planned");
+    let installed = install_registry_dependencies(&planned, &MockNpmRegistryClient::default())
+        .value
+        .expect("installed");
+    let outcome = build_module_graph(&installed);
+
+    assert!(outcome.value.is_none());
+    assert!(outcome
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == "resolve.not-found"
+            && diagnostic.message.contains("preact/jsx-runtime")));
+}
+
+#[test]
 fn graph_transforms_typescript_and_jsx_modules() {
     let mut request = base_request(
         r#"type Props = { name?: string };

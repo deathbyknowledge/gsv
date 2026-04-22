@@ -153,6 +153,15 @@ When `app.browser.entry` is present:
 - it is assembled into Dynamic Worker modules
 - it is loaded by the fixed platform shell
 
+If the browser entry uses JSX, the package must declare its UI runtime
+dependency explicitly.
+
+For the current GSV browser contract:
+
+- Oxc will emit `preact/jsx-runtime` imports for JSX modules
+- packages that use JSX must declare `preact` in `package.json`
+- the assembler must not inject `preact` as an implicit fallback dependency
+
 ### assets
 
 `app.assets` remains supported.
