@@ -1,4 +1,4 @@
-import { definePackage } from "@gsv/package/worker";
+import { definePackage } from "@gsv/package/manifest";
 
 export default definePackage({
   meta: {
@@ -12,9 +12,8 @@ export default definePackage({
       minHeight: 480,
     },
   },
-  app: {
-    browser: {
-      entry: "./index.html",
-    },
+  browser: {
+    entry: "./src/ascii-starfield-main.ts",
+    assets: ["./src/ascii-starfield.css"],
   },
 });

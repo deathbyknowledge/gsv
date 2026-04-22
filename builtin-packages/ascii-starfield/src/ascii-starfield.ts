@@ -1,3 +1,5 @@
+/// <reference path="./pretext.d.ts" />
+
 import { layoutWithLines, prepareWithSegments, walkLineRanges } from "@chenglou/pretext"
 
 const FONT_WEIGHT = 500
