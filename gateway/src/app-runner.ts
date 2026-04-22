@@ -3,6 +3,12 @@ import { getAgentByName } from "agents";
 import { packageArtifactToWorkerCode, type PackageArtifact } from "./kernel/packages";
 import type { AppFrameContext, PackageAppSignalWatchInfo } from "./protocol/app-frame";
 import type { RequestFrame, ResponseFrame } from "./protocol/frames";
+import {
+  AppRpcScheduleStore,
+  type AppRpcSchedule,
+  type AppRpcScheduleRecord,
+  type AppRpcScheduleUpsertInput,
+} from "./app-daemons";
 
 type AppRunnerProps = {
   packageId: string;
@@ -30,6 +36,12 @@ type AppSessionInfo = {
 type AppFacetRuntime = {
   appFrame: AppFrameContext;
   appSession?: AppSessionInfo;
+  daemonTrigger?: {
+    kind: "schedule";
+    key: string;
+    scheduledAt: number;
+    firedAt: number;
+  };
 };
 
 export type AppHttpRequest = {
@@ -61,8 +73,19 @@ type SignalSinkStub = Rpc.RpcTargetBranded & {
 };
 
 type AppFacetStub = Rpc.DurableObjectBranded & {
-  gsvFetch(request: AppHttpRequest, runtime?: AppFacetRuntime): Promise<AppHttpResponse>;
-  gsvInvoke(method: string, args: unknown, runtime?: AppFacetRuntime, kernel?: KernelBridgeStub): Promise<unknown>;
+  gsvFetch(
+    request: AppHttpRequest,
+    runtime?: AppFacetRuntime,
+    kernel?: KernelBridgeStub,
+    daemon?: AppRunnerDaemonStub,
+  ): Promise<AppHttpResponse>;
+  gsvInvoke(
+    method: string,
+    args: unknown,
+    runtime?: AppFacetRuntime,
+    kernel?: KernelBridgeStub,
+    daemon?: AppRunnerDaemonStub,
+  ): Promise<unknown>;
   gsvSubscribeSignal(args: unknown, runtime?: AppFacetRuntime, kernel?: KernelBridgeStub): Promise<unknown>;
   gsvUnsubscribeSignal(args: unknown, runtime?: AppFacetRuntime, kernel?: KernelBridgeStub): Promise<unknown>;
   gsvHandleSignal(
@@ -72,7 +95,14 @@ type AppFacetStub = Rpc.DurableObjectBranded & {
     watch?: PackageAppSignalWatchInfo,
     runtime?: AppFacetRuntime,
     kernel?: KernelBridgeStub,
+    daemon?: AppRunnerDaemonStub,
   ): Promise<void>;
+};
+
+type AppRunnerDaemonStub = Rpc.RpcTargetBranded & {
+  upsertRpcSchedule(input: unknown): Promise<unknown>;
+  removeRpcSchedule(key: string): Promise<{ removed: boolean }>;
+  listRpcSchedules(): Promise<unknown[]>;
 };
 
 const PROPS_KEY = "app-runner:props";
@@ -153,6 +183,24 @@ class AppRunnerBackendTarget extends RpcTarget {
   }
 }
 
+class AppRunnerDaemonTarget extends RpcTarget {
+  constructor(private readonly runner: AppRunner) {
+    super();
+  }
+
+  async upsertRpcSchedule(input: unknown): Promise<unknown> {
+    return this.runner.upsertRpcSchedule(input);
+  }
+
+  async removeRpcSchedule(key: string): Promise<{ removed: boolean }> {
+    return this.runner.removeRpcSchedule(key);
+  }
+
+  async listRpcSchedules(): Promise<unknown[]> {
+    return this.runner.listRpcSchedules();
+  }
+}
+
 export async function serializeAppHttpRequest(request: Request): Promise<AppHttpRequest> {
   let body: ArrayBuffer | null = null;
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -175,7 +223,14 @@ export function deserializeAppHttpResponse(response: AppHttpResponse): Response 
 }
 
 export class AppRunner extends DurableObject<Env> {
+  private readonly daemonSchedules: AppRpcScheduleStore;
   private readonly liveSignalSubscriptions = new Map<string, LiveSignalSubscription>();
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.daemonSchedules = new AppRpcScheduleStore(ctx.storage.sql);
+    this.daemonSchedules.init();
+  }
 
   async ensureRuntime(props: AppRunnerProps): Promise<void> {
     const previous = this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY);
@@ -217,12 +272,35 @@ export class AppRunner extends DurableObject<Env> {
       input.watch,
       runtime,
       this.#createKernelBridge(runtime.appFrame),
+      this.#createDaemonBridge(),
     );
     await this.#forwardSignalToLiveSubscriber(input, runtime);
   }
 
   async invokeAppRpc(method: string, args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
-    return this.#getFacet().gsvInvoke(method, args, runtime, this.#createKernelBridge(runtime.appFrame));
+    return this.#getFacet().gsvInvoke(
+      method,
+      args,
+      runtime,
+      this.#createKernelBridge(runtime.appFrame),
+      this.#createDaemonBridge(),
+    );
+  }
+
+  async upsertRpcSchedule(input: unknown): Promise<unknown> {
+    const record = this.daemonSchedules.upsert(this.#normalizeRpcScheduleInput(input));
+    await this.#syncDaemonAlarm();
+    return this.#serializeDaemonRecord(record);
+  }
+
+  async removeRpcSchedule(key: string): Promise<{ removed: boolean }> {
+    const removed = this.daemonSchedules.remove(key);
+    await this.#syncDaemonAlarm();
+    return { removed };
+  }
+
+  async listRpcSchedules(): Promise<unknown[]> {
+    return this.daemonSchedules.list().map((record) => this.#serializeDaemonRecord(record));
   }
 
   async subscribeSignal(args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
@@ -272,14 +350,31 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async #gsvFetch(request: AppHttpRequest, runtime: AppFacetRuntime): Promise<AppHttpResponse> {
-    return this.#getFacet().gsvFetch(request, runtime);
+    return this.#getFacet().gsvFetch(
+      request,
+      runtime,
+      this.#createKernelBridge(runtime.appFrame),
+      this.#createDaemonBridge(),
+    );
   }
 
-  #defaultRuntime(appSession?: AppSessionInfo): AppFacetRuntime {
+  async alarm(): Promise<void> {
+    const due = this.daemonSchedules.due(Date.now());
+    for (const record of due) {
+      await this.#runDueRpcSchedule(record);
+    }
+    await this.#syncDaemonAlarm();
+  }
+
+  #defaultRuntime(
+    appSession?: AppSessionInfo,
+    daemonTrigger?: AppFacetRuntime["daemonTrigger"],
+  ): AppFacetRuntime {
     const props = this.#getProps();
     return {
       appFrame: this.#runtimeAppFrame(props),
       ...(appSession ? { appSession } : {}),
+      ...(daemonTrigger ? { daemonTrigger } : {}),
     };
   }
 
@@ -294,6 +389,10 @@ export class AppRunner extends DurableObject<Env> {
 
   #createKernelBridge(appFrame: AppFrameContext): KernelBridge {
     return new KernelBridge(this.env.KERNEL, appFrame);
+  }
+
+  #createDaemonBridge(): AppRunnerDaemonTarget {
+    return new AppRunnerDaemonTarget(this);
   }
 
   #normalizeSignalSubscriptionArgs(args: unknown): {
@@ -456,5 +555,96 @@ export class AppRunner extends DurableObject<Env> {
       props.entrypointName,
       props.artifact.hash,
     ].join(":");
+  }
+
+  async #runDueRpcSchedule(record: AppRpcScheduleRecord): Promise<void> {
+    const firedAt = Date.now();
+    const running = this.daemonSchedules.markRunning(record.key, record.version, firedAt);
+    if (!running) {
+      return;
+    }
+    const trigger = {
+      kind: "schedule" as const,
+      key: record.key,
+      scheduledAt: record.nextRunAt ?? firedAt,
+      firedAt,
+    };
+    const runtime = this.#defaultRuntime(undefined, trigger);
+    const startedAt = Date.now();
+    let status: "ok" | "error" = "ok";
+    let errorMessage: string | null = null;
+    try {
+      await this.#getFacet().gsvInvoke(
+        record.rpcMethod,
+        record.payload,
+        runtime,
+        this.#createKernelBridge(runtime.appFrame),
+        this.#createDaemonBridge(),
+      );
+    } catch (error) {
+      status = "error";
+      errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(`[app-runner] daemon rpc ${record.rpcMethod} (${record.key}) failed: ${errorMessage}`);
+    }
+    this.daemonSchedules.finishRun({
+      key: record.key,
+      version: record.version,
+      finishedAt: Date.now(),
+      status,
+      error: errorMessage,
+      durationMs: Date.now() - startedAt,
+    });
+  }
+
+  async #syncDaemonAlarm(): Promise<void> {
+    const nextAlarmAt = this.daemonSchedules.nextAlarmAt();
+    if (nextAlarmAt === null) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    await this.ctx.storage.setAlarm(nextAlarmAt);
+  }
+
+  #normalizeRpcScheduleInput(input: unknown): AppRpcScheduleUpsertInput {
+    const record = input && typeof input === "object" ? input as Record<string, unknown> : null;
+    const key = typeof record?.key === "string" ? record.key.trim() : "";
+    if (!key) {
+      throw new Error("daemon schedule key is required");
+    }
+    const rpcMethod = typeof record?.rpcMethod === "string" ? record.rpcMethod.trim() : "";
+    if (!rpcMethod) {
+      throw new Error("daemon schedule rpcMethod is required");
+    }
+    if (!record?.schedule || typeof record.schedule !== "object") {
+      throw new Error("daemon schedule is required");
+    }
+    const enabled = record.enabled === undefined
+      ? undefined
+      : Boolean(record.enabled);
+    return {
+      key,
+      rpcMethod,
+      schedule: record.schedule as AppRpcSchedule,
+      payload: record.payload,
+      ...(enabled === undefined ? {} : { enabled }),
+    };
+  }
+
+  #serializeDaemonRecord(record: AppRpcScheduleRecord): Record<string, unknown> {
+    return {
+      key: record.key,
+      rpcMethod: record.rpcMethod,
+      schedule: record.schedule,
+      ...(record.payload === undefined ? {} : { payload: record.payload }),
+      enabled: record.enabled,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      nextRunAt: record.nextRunAt,
+      runningAt: record.runningAt,
+      lastRunAt: record.lastRunAt,
+      lastStatus: record.lastStatus,
+      lastError: record.lastError,
+      lastDurationMs: record.lastDurationMs,
+    };
   }
 }

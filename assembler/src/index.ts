@@ -776,7 +776,38 @@ function buildKernelClient(env, props, kernelOverride) {
   };
 }
 
-function createBaseContext(env, metaOverrides, props, kernelOverride) {
+function buildDaemonClient(daemonOverride, triggerOverride) {
+  if (
+    !daemonOverride
+    || typeof daemonOverride.upsertRpcSchedule !== "function"
+    || typeof daemonOverride.removeRpcSchedule !== "function"
+    || typeof daemonOverride.listRpcSchedules !== "function"
+  ) {
+    return undefined;
+  }
+  const trigger = triggerOverride && typeof triggerOverride === "object"
+    ? {
+        kind: "schedule",
+        key: typeof triggerOverride.key === "string" ? triggerOverride.key : "",
+        scheduledAt: typeof triggerOverride.scheduledAt === "number" ? triggerOverride.scheduledAt : 0,
+        firedAt: typeof triggerOverride.firedAt === "number" ? triggerOverride.firedAt : 0,
+      }
+    : undefined;
+  return {
+    async upsertRpcSchedule(input) {
+      return daemonOverride.upsertRpcSchedule(input);
+    },
+    async removeRpcSchedule(key) {
+      return daemonOverride.removeRpcSchedule(key);
+    },
+    async listRpcSchedules() {
+      return daemonOverride.listRpcSchedules();
+    },
+    ...(trigger ? { trigger } : {}),
+  };
+}
+
+function createBaseContext(env, metaOverrides, props, kernelOverride, daemonOverride, daemonTrigger) {
   return {
     meta: mergeMeta(metaOverrides),
     viewer: props?.appFrame && typeof props.appFrame === "object"
@@ -793,6 +824,7 @@ function createBaseContext(env, metaOverrides, props, kernelOverride) {
           expiresAt: typeof props.appSession.expiresAt === "number" ? props.appSession.expiresAt : 0,
         }
       : undefined,
+    daemon: buildDaemonClient(daemonOverride, daemonTrigger),
     kernel: buildKernelClient(env, props, kernelOverride),
   };
 }
@@ -1029,7 +1061,7 @@ export class GsvAppFacet extends DurableObject {
     this.__gsvSignalWatchRefs = new Map();
   }
 
-  __context(runtime, kernel) {
+  __context(runtime, kernel, daemon) {
     const appFrame = runtime?.appFrame ?? resolveAppFrame(this.env, {});
     return createBaseContext(this.env, {
       packageId: appFrame?.packageId ?? this.__gsvMeta.packageId,
@@ -1037,11 +1069,11 @@ export class GsvAppFacet extends DurableObject {
     }, {
       ...(appFrame ? { appFrame } : {}),
       ...(runtime?.appSession ? { appSession: runtime.appSession } : {}),
-    }, kernel);
+    }, kernel, daemon, runtime?.daemonTrigger);
   }
 
-  async __invoke(method, args, runtime, kernel) {
-    const ctx = this.__context(runtime, kernel);
+  async __invoke(method, args, runtime, kernel, daemon) {
+    const ctx = this.__context(runtime, kernel, daemon);
     await ensureSetup(ctx);
     const handler = getAppRpcHandler(this.__gsvApp, method);
     if (!handler) {
@@ -1054,8 +1086,8 @@ export class GsvAppFacet extends DurableObject {
     return \`__gsv_live__:\${signal}:\${processId ?? "*"}\`;
   }
 
-  async gsvSubscribeSignal(args, runtime, kernel) {
-    const ctx = this.__context(runtime, kernel);
+  async gsvSubscribeSignal(args, runtime, kernel, daemon) {
+    const ctx = this.__context(runtime, kernel, daemon);
     await ensureSetup(ctx);
     const signals = Array.isArray(args?.signals)
       ? Array.from(new Set(args.signals.filter((value) => typeof value === "string" && value.length > 0)))
@@ -1105,8 +1137,8 @@ export class GsvAppFacet extends DurableObject {
     return { subscriptionId };
   }
 
-  async gsvUnsubscribeSignal(args, runtime, kernel) {
-    const ctx = this.__context(runtime, kernel);
+  async gsvUnsubscribeSignal(args, runtime, kernel, daemon) {
+    const ctx = this.__context(runtime, kernel, daemon);
     const subscriptionId =
       typeof args?.subscriptionId === "string" && args.subscriptionId.length > 0
         ? args.subscriptionId
@@ -1134,8 +1166,8 @@ export class GsvAppFacet extends DurableObject {
     return { removed: true };
   }
 
-  async gsvHandleSignal(signalName, payload, sourcePid, watch, runtime, kernel) {
-    const ctx = this.__context(runtime, kernel);
+  async gsvHandleSignal(signalName, payload, sourcePid, watch, runtime, kernel, daemon) {
+    const ctx = this.__context(runtime, kernel, daemon);
     await ensureSetup(ctx);
 
     if (typeof this.__gsvApp.onSignal === "function") {
@@ -1187,9 +1219,9 @@ export class GsvAppFacet extends DurableObject {
     }
   }
 
-  async gsvFetch(input, runtime, kernel) {
+  async gsvFetch(input, runtime, kernel, daemon) {
     const request = deserializeHttpRequest(input);
-    const ctx = this.__context(runtime, kernel);
+    const ctx = this.__context(runtime, kernel, daemon);
     const app = this.__gsvApp;
     if (!app) {
       return serializeHttpResponse(new Response("Not Found", { status: 404 }));
@@ -1220,8 +1252,8 @@ export class GsvAppFacet extends DurableObject {
     });
   }
 
-  async gsvInvoke(method, args, runtime, kernel) {
-    return this.__invoke(method, args, runtime, kernel);
+  async gsvInvoke(method, args, runtime, kernel, daemon) {
+    return this.__invoke(method, args, runtime, kernel, daemon);
   }
 
 ${appRpcMethods}}

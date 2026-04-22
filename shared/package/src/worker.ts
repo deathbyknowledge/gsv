@@ -91,9 +91,54 @@ export type PackageBaseContext = {
     rpcBase: string;
     expiresAt: number;
   };
+  daemon?: PackageDaemonContext;
   kernel: {
     request<T = unknown>(call: string, args?: unknown): Promise<T>;
   };
+};
+
+export type PackageDaemonSchedule =
+  | { kind: "at"; atMs: number }
+  | { kind: "after"; afterMs: number }
+  | { kind: "every"; everyMs: number; anchorMs?: number };
+
+export type PackageDaemonInvocation =
+  | {
+    kind: "schedule";
+    key: string;
+    scheduledAt: number;
+    firedAt: number;
+  };
+
+export type PackageDaemonScheduleRecord = {
+  key: string;
+  rpcMethod: string;
+  schedule: PackageDaemonSchedule;
+  payload?: unknown;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  nextRunAt?: number | null;
+  runningAt?: number | null;
+  lastRunAt?: number | null;
+  lastStatus?: "ok" | "error" | null;
+  lastError?: string | null;
+  lastDurationMs?: number | null;
+};
+
+export type PackageDaemonContext = {
+  upsertRpcSchedule(
+    input: {
+      key: string;
+      rpcMethod: string;
+      schedule: PackageDaemonSchedule;
+      payload?: unknown;
+      enabled?: boolean;
+    },
+  ): Promise<PackageDaemonScheduleRecord>;
+  removeRpcSchedule(key: string): Promise<{ removed: boolean }>;
+  listRpcSchedules(): Promise<PackageDaemonScheduleRecord[]>;
+  trigger?: PackageDaemonInvocation;
 };
 
 export type PackageSetupContext = PackageBaseContext;
