@@ -148,9 +148,9 @@ export type RipgitPackageAnalyzeResponse = {
       public_routes: string[];
     } | null;
     app?: {
-      handler: {
+      handler?: {
         export_name: string;
-      };
+      } | null;
       has_rpc: boolean;
       rpc_methods: string[];
       browser_entry?: string | null;

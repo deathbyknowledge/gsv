@@ -45,9 +45,9 @@ fn base_request() -> PackageAssemblyRequest {
                 browser: None,
                 backend: None,
                 app: Some(PackageAppDefinition {
-                    handler: PackageAppHandlerDefinition {
+                    handler: Some(PackageAppHandlerDefinition {
                         export_name: "App".to_string(),
-                    },
+                    }),
                     has_rpc: true,
                     rpc_methods: vec!["ping".to_string()],
                     browser_entry: Some("./src/main.tsx".to_string()),
@@ -179,6 +179,27 @@ fn accepts_declarative_browser_definition() {
     assert_eq!(
         validated.asset_paths,
         vec!["apps/demo/src/styles.css".to_string()]
+    );
+}
+
+#[test]
+fn accepts_legacy_browser_only_app_without_handler() {
+    let mut request = base_request();
+    request.analysis.definition.as_mut().unwrap().app = Some(PackageAppDefinition {
+        handler: None,
+        has_rpc: false,
+        rpc_methods: Vec::new(),
+        browser_entry: Some("./src/main.tsx".to_string()),
+        assets: vec!["./src/styles.css".to_string()],
+    });
+
+    let outcome = validate_request(&request);
+
+    assert!(outcome.value.is_some());
+    let validated = outcome.value.unwrap();
+    assert_eq!(
+        validated.browser_entry.as_deref(),
+        Some("apps/demo/src/main.tsx")
     );
 }
 

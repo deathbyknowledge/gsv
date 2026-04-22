@@ -81,9 +81,9 @@ fn base_request(entry_source: &str) -> PackageAssemblyRequest {
                 browser: None,
                 backend: None,
                 app: Some(PackageAppDefinition {
-                    handler: PackageAppHandlerDefinition {
+                    handler: Some(PackageAppHandlerDefinition {
                         export_name: "App".to_string(),
-                    },
+                    }),
                     has_rpc: true,
                     rpc_methods: vec!["ping".to_string()],
                     browser_entry: Some("./src/main.tsx".to_string()),

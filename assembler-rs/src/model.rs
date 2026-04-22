@@ -118,7 +118,7 @@ pub struct PackageBackendDefinition {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageAppDefinition {
-    pub handler: PackageAppHandlerDefinition,
+    pub handler: Option<PackageAppHandlerDefinition>,
     pub has_rpc: bool,
     #[serde(default)]
     pub rpc_methods: Vec<String>,
