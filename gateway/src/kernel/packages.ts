@@ -865,11 +865,8 @@ async function resolvePackageFromRipgitNativeBuild(
   const artifact = convertAssembledArtifact(build);
   const icon = toNativePackageIcon(analysis.definition.meta.icon);
   const profiles = await readPackageProfiles(ripgit, resolvedRepo, subdir);
-  const hasBrowserEntrypoint = Boolean(analysis.definition.browser ?? analysis.definition.app);
-  const hasBackendEntrypoint = Boolean(
-    analysis.definition.backend
-    || analysis.definition.app?.has_rpc,
-  );
+  const hasBrowserEntrypoint = Boolean(analysis.definition.browser);
+  const hasBackendEntrypoint = Boolean(analysis.definition.backend);
   const publicRoutes = uniqueStrings(analysis.definition.backend?.public_routes ?? []);
 
   const entrypoints: PackageEntrypoint[] = [

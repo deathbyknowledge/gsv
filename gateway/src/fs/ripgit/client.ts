@@ -147,15 +147,6 @@ export type RipgitPackageAnalyzeResponse = {
       entry: string;
       public_routes: string[];
     } | null;
-    app?: {
-      handler?: {
-        export_name: string;
-      } | null;
-      has_rpc: boolean;
-      rpc_methods: string[];
-      browser_entry?: string | null;
-      assets: string[];
-    } | null;
   } | null;
   diagnostics: RipgitPackageDiagnostic[];
   ok: boolean;

@@ -2,11 +2,10 @@ use std::collections::BTreeMap;
 
 use assembler_rs::artifact::finalize_artifact;
 use assembler_rs::model::{
-    PackageAppDefinition, PackageAppHandlerDefinition, PackageAssemblyAnalysis,
-    PackageAssemblyArtifactModuleKind, PackageAssemblyRequest, PackageAssemblySource,
-    PackageAssemblyTarget, PackageBackendDefinition, PackageBrowserDefinition,
-    PackageCapabilityDefinition, PackageCommandDefinition, PackageDefinition, PackageIdentity,
-    PackageJsonDefinition, PackageMetaDefinition,
+    PackageAssemblyAnalysis, PackageAssemblyArtifactModuleKind, PackageAssemblyRequest,
+    PackageAssemblySource, PackageAssemblyTarget, PackageBackendDefinition,
+    PackageBrowserDefinition, PackageCapabilityDefinition, PackageCommandDefinition,
+    PackageDefinition, PackageIdentity, PackageJsonDefinition, PackageMetaDefinition,
 };
 use assembler_rs::npm::{
     install_registry_dependencies, NpmDist, NpmPackument, NpmPackumentVersion, NpmRegistryClient,
@@ -132,17 +131,11 @@ fn request() -> PackageAssemblyRequest {
                     capabilities: PackageCapabilityDefinition::default(),
                 },
                 commands: Vec::new(),
-                browser: None,
-                backend: None,
-                app: Some(PackageAppDefinition {
-                    handler: Some(PackageAppHandlerDefinition {
-                        export_name: "App".to_string(),
-                    }),
-                    has_rpc: true,
-                    rpc_methods: vec!["ping".to_string()],
-                    browser_entry: Some("./src/main.tsx".to_string()),
+                browser: Some(PackageBrowserDefinition {
+                    entry: "./src/main.tsx".to_string(),
                     assets: vec!["./src/styles.css".to_string()],
                 }),
+                backend: None,
             }),
             diagnostics: Vec::new(),
             ok: true,
@@ -152,16 +145,10 @@ fn request() -> PackageAssemblyRequest {
         files: [
             (
                 "apps/demo/src/package.ts".to_string(),
-                r#"import { definePackage } from "@gsv/package/worker";
+                r#"import { definePackage } from "@gsv/package/manifest";
 export default definePackage({
   meta: { displayName: "Demo" },
-  app: {
-    browser: { entry: "./src/main.tsx" },
-    assets: ["./src/styles.css"],
-    rpc: {
-      async ping(args) { return args; }
-    }
-  }
+  browser: { entry: "./src/main.tsx", assets: ["./src/styles.css"] }
 });"#
                     .to_string(),
             ),
@@ -201,7 +188,6 @@ fn declarative_request() -> PackageAssemblyRequest {
             entry: "./src/backend.ts".to_string(),
             public_routes: vec!["/webhooks/github".to_string()],
         }),
-        app: None,
     });
     req.files.insert(
         "apps/demo/src/package.ts".to_string(),
@@ -248,7 +234,6 @@ fn command_only_request() -> PackageAssemblyRequest {
         }],
         browser: None,
         backend: None,
-        app: None,
     });
     req.files.remove("apps/demo/src/main.tsx");
     req.files.remove("apps/demo/src/styles.css");
@@ -318,7 +303,6 @@ fn builds_runtime_artifact_with_wrapper_and_hash() {
     let wrapper = modules.get("__gsv__/main.ts").unwrap().content.as_str();
     assert!(wrapper.contains("import definition from \"../src/package.ts\";"));
     assert!(wrapper.contains("class GsvPackageAppBackend extends RpcTarget"));
-    assert!(wrapper.contains("async [\"ping\"](args)"));
     assert!(wrapper.contains("const BROWSER_ENTRY = \"__gsv_browser__/src/main.js\";"));
     assert!(wrapper.contains("const APP_SHELL_HTML = \"<!doctype html>"));
 }

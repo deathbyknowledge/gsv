@@ -56,6 +56,56 @@ declare global {
   }
 }
 
+const SHELL_LAYOUT = `
+  <main class="shell-app">
+    <section class="shell-toolbar">
+      <label class="shell-field">
+        <span>Target</span>
+        <select data-shell-target></select>
+      </label>
+      <label class="shell-field shell-field-workdir">
+        <span>Working directory</span>
+        <input data-shell-workdir type="text" value="" placeholder="Optional" spellcheck="false" />
+      </label>
+      <div class="shell-toolbar-actions">
+        <div class="shell-status-indicator" data-shell-status data-kind="booting" aria-label="Shell status" title="Shell loading">
+          <span class="shell-status-dot" aria-hidden="true"></span>
+        </div>
+        <details class="shell-settings">
+          <summary aria-label="Shell options" title="Shell options">⚙</summary>
+          <div class="shell-options">
+            <label class="shell-field">
+              <span>Timeout (ms)</span>
+              <input data-shell-timeout type="text" inputmode="numeric" value="" placeholder="30000" />
+            </label>
+            <label class="shell-field">
+              <span>Yield (ms)</span>
+              <input data-shell-yield type="text" inputmode="numeric" value="" placeholder="2000" />
+            </label>
+            <label class="shell-toggle-row">
+              <input data-shell-background type="checkbox" />
+              <span class="shell-toggle">Run in background</span>
+            </label>
+          </div>
+        </details>
+      </div>
+    </section>
+    <section class="shell-stage">
+      <div class="shell-terminal-wrap">
+        <div class="shell-terminal" data-shell-terminal></div>
+      </div>
+    </section>
+  </main>
+`;
+
+const root = document.getElementById("root");
+if (root) {
+  root.innerHTML = SHELL_LAYOUT;
+}
+if (!window.__GSV_GHOSTTY__) {
+  window.__GSV_GHOSTTY__ = import("https://cdn.jsdelivr.net/npm/ghostty-web@0.4.0/+esm");
+}
+
 const streamNode = document.querySelector<HTMLElement>("[data-shell-terminal]");
 const statusNode = document.querySelector<HTMLElement>("[data-shell-status]");
 const targetSelect = document.querySelector<HTMLSelectElement>("[data-shell-target]");
@@ -324,6 +374,9 @@ async function runCommand(backend: ShellBackend, command: string): Promise<void>
 }
 
 async function boot(): Promise<void> {
+  if (!root) {
+    throw new Error("shell root missing");
+  }
   if (!streamNode || !statusNode || !targetSelect || !workdirInput || !timeoutInput || !yieldInput || !backgroundInput) {
     throw new Error("Shell UI is incomplete.");
   }

@@ -1,13 +1,4 @@
-import { definePackage } from "@gsv/package/worker";
-import {
-  abortRun,
-  decideHil,
-  getHistory,
-  listProfiles,
-  listWorkspaces,
-  sendMessage,
-  spawnProcess,
-} from "./backend/api";
+import { definePackage } from "@gsv/package/manifest";
 
 export default definePackage({
   meta: {
@@ -23,33 +14,11 @@ export default definePackage({
       kernel: ["proc.spawn", "proc.send", "proc.abort", "proc.hil", "proc.history", "proc.profile.list", "sys.workspace.list", "signal.watch", "signal.unwatch"],
     },
   },
-  app: {
-    browser: {
-      entry: "./src/index.html",
-    },
+  browser: {
+    entry: "./src/app/main.js",
     assets: ["./src/styles.css"],
-    rpc: {
-      async listProfiles(args, ctx) {
-        return listProfiles(ctx.kernel, args);
-      },
-      async listWorkspaces(args, ctx) {
-        return listWorkspaces(ctx.kernel, args);
-      },
-      async spawnProcess(args, ctx) {
-        return spawnProcess(ctx.kernel, args);
-      },
-      async sendMessage(args, ctx) {
-        return sendMessage(ctx.kernel, args);
-      },
-      async getHistory(args, ctx) {
-        return getHistory(ctx.kernel, args);
-      },
-      async abortRun(args, ctx) {
-        return abortRun(ctx.kernel, args);
-      },
-      async decideHil(args, ctx) {
-        return decideHil(ctx.kernel, args);
-      },
-    },
+  },
+  backend: {
+    entry: "./src/backend.ts",
   },
 });

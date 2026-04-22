@@ -1,5 +1,4 @@
-import { definePackage } from "@gsv/package/worker";
-import { execCommand, loadState } from "./backend/api";
+import { definePackage } from "@gsv/package/manifest";
 
 export default definePackage({
   meta: {
@@ -15,18 +14,11 @@ export default definePackage({
       kernel: ["shell.exec", "sys.device.list"],
     },
   },
-  app: {
-    browser: {
-      entry: "./src/index.html",
-    },
+  browser: {
+    entry: "./src/main.tsx",
     assets: ["./src/styles.css"],
-    rpc: {
-      async loadState(_args, ctx) {
-        return loadState(ctx.kernel);
-      },
-      async execCommand(args, ctx) {
-        return execCommand(ctx.kernel, args);
-      },
-    },
+  },
+  backend: {
+    entry: "./src/backend.ts",
   },
 });

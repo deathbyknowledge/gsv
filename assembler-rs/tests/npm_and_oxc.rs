@@ -1,8 +1,7 @@
 use assembler_rs::model::{
-    PackageAppDefinition, PackageAppHandlerDefinition, PackageAssemblyAnalysis,
-    PackageAssemblyRequest, PackageAssemblySource, PackageAssemblyTarget,
-    PackageCapabilityDefinition, PackageDefinition, PackageIdentity, PackageJsonDefinition,
-    PackageMetaDefinition,
+    PackageAssemblyAnalysis, PackageAssemblyRequest, PackageAssemblySource,
+    PackageAssemblyTarget, PackageBrowserDefinition, PackageCapabilityDefinition,
+    PackageDefinition, PackageIdentity, PackageJsonDefinition, PackageMetaDefinition,
 };
 use assembler_rs::npm::{
     install_registry_dependencies, NpmDist, NpmPackument, NpmPackumentVersion, NpmRegistryClient,
@@ -78,17 +77,11 @@ fn base_request(entry_source: &str) -> PackageAssemblyRequest {
                     capabilities: PackageCapabilityDefinition::default(),
                 },
                 commands: Vec::new(),
-                browser: None,
-                backend: None,
-                app: Some(PackageAppDefinition {
-                    handler: Some(PackageAppHandlerDefinition {
-                        export_name: "App".to_string(),
-                    }),
-                    has_rpc: true,
-                    rpc_methods: vec!["ping".to_string()],
-                    browser_entry: Some("./src/main.tsx".to_string()),
+                browser: Some(PackageBrowserDefinition {
+                    entry: "./src/main.tsx".to_string(),
                     assets: vec!["./src/styles.css".to_string()],
                 }),
+                backend: None,
             }),
             diagnostics: Vec::new(),
             ok: true,
@@ -232,7 +225,7 @@ export default function App() {
 #[test]
 fn installs_scoped_package_and_resolves_export_subpath() {
     let mut request = base_request(
-        r#"import { definePackage } from "@gsv/package/worker";
+        r#"import { definePackage } from "@gsv/package/manifest";
 import worker from "@scope/demo/worker";
 export default worker;"#,
     );
@@ -282,19 +275,19 @@ export default worker;"#,
 #[test]
 fn oxc_resolver_resolves_injected_gsv_sdk_packages() {
     let request = base_request(
-        r#"import { definePackage } from "@gsv/package/worker";
+        r#"import { definePackage } from "@gsv/package/manifest";
 export default definePackage;"#,
     );
 
     let planned = prepare_request(&request).value.expect("planned request");
     let resolver = OxcResolver::new(planned.files.clone());
     let resolved = resolver
-        .resolve_specifier("apps/demo/src/main.tsx", "@gsv/package/worker")
+        .resolve_specifier("apps/demo/src/main.tsx", "@gsv/package/manifest")
         .expect("resolve injected sdk");
 
     assert_eq!(
         resolved.repo_path,
-        "node_modules/@gsv/package/src/worker.ts"
+        "node_modules/@gsv/package/src/manifest.ts"
     );
     assert_eq!(
         resolved.package_json_path.as_deref(),

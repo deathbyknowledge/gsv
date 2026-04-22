@@ -64,7 +64,6 @@ fn request() -> PackageAssemblyRequest {
                     entry: "./src/backend.ts".to_string(),
                     public_routes: vec!["/webhooks/github".to_string()],
                 }),
-                app: None,
             }),
             diagnostics: Vec::new(),
             ok: true,

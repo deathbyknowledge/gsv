@@ -204,23 +204,6 @@ fn generate_runtime_modules(
 
     let definition_artifact_path = relativize_to_root(definition_repo_path, &analysis.package_root);
 
-    let app_rpc_methods = analysis
-        .definition
-        .as_ref()
-        .and_then(|definition| definition.app.as_ref())
-        .map(|app| {
-            app.rpc_methods
-                .iter()
-                .map(|name| {
-                    format!(
-                        "  async [{name_json}](args) {{\n    return this.__invoke({name_json}, args);\n  }}\n",
-                        name_json = serde_json::to_string(name).unwrap()
-                    )
-                })
-                .collect::<String>()
-        })
-        .unwrap_or_default();
-
     let asset_import_block = join_import_block(&asset_imports);
     let command_import_block = join_import_block(&command_imports);
     let wrapper = format!(
@@ -241,8 +224,6 @@ const STATIC_ASSETS = new Map([
 const COMMAND_MODULES = new Map([
 {command_entries}
 ]);
-
-let setupPromise = null;
 
 function mergeMeta(overrides) {{
   if (!overrides) {{
@@ -325,41 +306,12 @@ function createBaseContext(metaOverrides, props, env, kernelOverride, daemonOver
   }};
 }}
 
-async function ensureSetup(ctx) {{
-  if (typeof definition?.setup !== "function") {{
-    return;
-  }}
-  if (!setupPromise) {{
-    setupPromise = Promise.resolve(definition.setup(ctx));
-  }}
-  await setupPromise;
-}}
-
 function noOpStdin() {{
   return {{
     async text() {{
       return "";
     }},
   }};
-}}
-
-function getAppDefinition() {{
-  const app = definition && definition.app;
-  if (!app || typeof app !== "object") {{
-    return null;
-  }}
-  return app;
-}}
-
-function getAppRpcHandler(app, method) {{
-  if (!app || !app.rpc || typeof app.rpc !== "object") {{
-    return null;
-  }}
-  const handler = app.rpc[method];
-  if (typeof handler !== "function") {{
-    return null;
-  }}
-  return handler;
 }}
 
 function createBackendInstance(ctx) {{
@@ -400,15 +352,7 @@ function getBackendRpcHandler(backend, method) {{
 
 function getCommandHandler(commandName) {{
   const handler = COMMAND_MODULES.get(commandName);
-  if (typeof handler === "function") {{
-    return handler;
-  }}
-  const group = definition && definition.commands;
-  if (!group || typeof group !== "object") {{
-    return null;
-  }}
-  const legacyHandler = group[commandName];
-  return typeof legacyHandler === "function" ? legacyHandler : null;
+  return typeof handler === "function" ? handler : null;
 }}
 
 function serveStaticAsset(request, routeBase) {{
@@ -466,15 +410,10 @@ export default class GsvAppEntrypoint extends WorkerEntrypoint {{
       return assetResponse;
     }}
     const backend = createBackendInstance(ctx);
-    if (backend && typeof backend.fetch === "function") {{
+    if (backend) {{
       return backend.fetch(request);
     }}
-    const app = getAppDefinition();
-    if (!app || typeof app.fetch !== "function") {{
-      return new Response("Not Found", {{ status: 404 }});
-    }}
-    await ensureSetup(ctx);
-    return app.fetch(request, ctx);
+    return new Response("Not Found", {{ status: 404 }});
   }}
 }}
 
@@ -517,7 +456,6 @@ export class GsvCommandEntrypoint extends WorkerEntrypoint {{
         }},
       }},
     }};
-    await ensureSetup(ctx);
     const handler = getCommandHandler(resolvedCommandName);
     if (typeof handler !== "function") {{
       throw new Error(`unknown package command handler: ${{resolvedCommandName}}`);
@@ -552,7 +490,7 @@ export class GsvAppSignalEntrypoint extends WorkerEntrypoint {{
       watch: props.watch && typeof props.watch === "object" ? props.watch : undefined,
     }};
     const backend = createBackendInstance(ctx);
-    if (backend && typeof backend.onSignal === "function") {{
+    if (backend) {{
       await backend.onSignal({{
         signal: ctx.signal,
         payload: ctx.payload,
@@ -561,12 +499,7 @@ export class GsvAppSignalEntrypoint extends WorkerEntrypoint {{
       }});
       return;
     }}
-    const app = getAppDefinition();
-    if (!app || typeof app.onSignal !== "function") {{
-      throw new Error("package app has no onSignal handler");
-    }}
-    await ensureSetup(ctx);
-    await app.onSignal(ctx);
+    throw new Error("package has no backend signal handler");
   }}
 }}
 
@@ -578,9 +511,7 @@ class GsvPackageAppBackend extends RpcTarget {{
       routeBase: props.appFrame?.routeBase ?? props.routeBase ?? env.GSV_ROUTE_BASE ?? STATIC_META.routeBase,
     }}, props, env);
     this.__gsvCtx = ctx;
-    this.__gsvApp = getAppDefinition();
     this.__gsvBackend = createBackendInstance(ctx);
-    this.__gsvSetupReady = null;
   }}
 
   async __invoke(method, args) {{
@@ -588,25 +519,14 @@ class GsvPackageAppBackend extends RpcTarget {{
     if (backendHandler) {{
       return backendHandler(args);
     }}
-    if (!this.__gsvSetupReady) {{
-      this.__gsvSetupReady = ensureSetup(this.__gsvCtx);
-    }}
-    await this.__gsvSetupReady;
-    const handler = getAppRpcHandler(this.__gsvApp, method);
-    if (!handler) {{
-      throw new Error(`Unknown app RPC method: ${{method}}`);
-    }}
-    return handler(args, this.__gsvCtx);
+    throw new Error(`Unknown app RPC method: ${{method}}`);
   }}
-
-{app_rpc_methods}}}
+}}
 
 export class GsvAppRpcEntrypoint extends WorkerEntrypoint {{
   async getBackend() {{
-    const app = getAppDefinition();
-    const hasLegacyRpc = Boolean(app && app.rpc && typeof app.rpc === "object");
     const hasBackend = typeof GsvPackageBackendModule === "function";
-    if (!hasLegacyRpc && !hasBackend) {{
+    if (!hasBackend) {{
       throw new Error("package app has no backend rpc");
     }}
     return new GsvPackageAppBackend(this.env, this.ctx.props ?? {{}});

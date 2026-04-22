@@ -270,36 +270,20 @@ pub fn validate_request(request: &PackageAssemblyRequest) -> StageOutcome<Valida
 }
 
 fn browser_entry_spec<'a>(definition: &'a PackageDefinition) -> Option<&'a str> {
-    if let Some(browser) = definition.browser.as_ref() {
-        let entry = browser.entry.trim();
-        if !entry.is_empty() {
-            return Some(entry);
-        }
-    }
-
     definition
-        .app
+        .browser
         .as_ref()
-        .and_then(|app| app.browser_entry.as_deref())
-        .map(str::trim)
+        .map(|browser| browser.entry.trim())
         .filter(|entry| !entry.is_empty())
 }
 
 fn browser_asset_specs<'a>(definition: &'a PackageDefinition) -> Vec<&'a str> {
-    if let Some(browser) = definition.browser.as_ref() {
-        return browser
-            .assets
-            .iter()
-            .map(String::as_str)
-            .filter(|asset| !asset.trim().is_empty())
-            .collect();
-    }
-
     definition
-        .app
+        .browser
         .as_ref()
-        .map(|app| {
-            app.assets
+        .map(|browser| {
+            browser
+                .assets
                 .iter()
                 .map(String::as_str)
                 .filter(|asset| !asset.trim().is_empty())

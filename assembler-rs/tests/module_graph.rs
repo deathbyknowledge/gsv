@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use assembler_rs::graph::build_module_graph;
 use assembler_rs::model::{
-    PackageAppDefinition, PackageAppHandlerDefinition, PackageAssemblyAnalysis,
-    PackageAssemblyArtifactModuleKind, PackageAssemblyRequest, PackageAssemblySource,
-    PackageAssemblyTarget, PackageCapabilityDefinition, PackageDefinition, PackageIdentity,
-    PackageJsonDefinition, PackageMetaDefinition,
+    PackageAssemblyAnalysis, PackageAssemblyArtifactModuleKind, PackageAssemblyRequest,
+    PackageAssemblySource, PackageAssemblyTarget, PackageBrowserDefinition,
+    PackageCapabilityDefinition, PackageDefinition, PackageIdentity, PackageJsonDefinition,
+    PackageMetaDefinition,
 };
 use assembler_rs::npm::{
     install_registry_dependencies, NpmDist, NpmPackument, NpmPackumentVersion, NpmRegistryClient,
@@ -79,17 +79,11 @@ fn base_request(entry_source: &str) -> PackageAssemblyRequest {
                     capabilities: PackageCapabilityDefinition::default(),
                 },
                 commands: Vec::new(),
-                browser: None,
-                backend: None,
-                app: Some(PackageAppDefinition {
-                    handler: Some(PackageAppHandlerDefinition {
-                        export_name: "App".to_string(),
-                    }),
-                    has_rpc: true,
-                    rpc_methods: vec!["ping".to_string()],
-                    browser_entry: Some("./src/main.tsx".to_string()),
+                browser: Some(PackageBrowserDefinition {
+                    entry: "./src/main.tsx".to_string(),
                     assets: vec!["./src/styles.css".to_string()],
                 }),
+                backend: None,
             }),
             diagnostics: Vec::new(),
             ok: true,

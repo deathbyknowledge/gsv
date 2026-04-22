@@ -15,10 +15,7 @@ use super::{
     PackageSourceLocator, ResolvedPackageSource,
 };
 
-const DEFINE_PACKAGE_IMPORT_SOURCES: [&str; 2] = [
-    "@gsv/package/manifest",
-    "@gsv/package/worker",
-];
+const DEFINE_PACKAGE_IMPORT_SOURCES: [&str; 1] = ["@gsv/package/manifest"];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ExtractedHandlerReferenceKind {
@@ -73,16 +70,6 @@ pub struct ExtractedTaskDefinition {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ExtractedAppDefinition {
-    pub handler: Option<ExtractedHandlerReference>,
-    pub signal_handler: Option<ExtractedHandlerReference>,
-    pub has_rpc: bool,
-    pub rpc_methods: Vec<String>,
-    pub browser_entry: Option<String>,
-    pub assets: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtractedBrowserDefinition {
     pub entry: String,
     pub assets: Vec<String>,
@@ -97,11 +84,9 @@ pub struct ExtractedBackendDefinition {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtractedPackageDefinition {
     pub meta: ExtractedPackageMeta,
-    pub setup: Option<ExtractedHandlerReference>,
     pub commands: Vec<ExtractedCommandDefinition>,
     pub browser: Option<ExtractedBrowserDefinition>,
     pub backend: Option<ExtractedBackendDefinition>,
-    pub app: Option<ExtractedAppDefinition>,
     pub tasks: Vec<ExtractedTaskDefinition>,
 }
 
@@ -461,11 +446,9 @@ fn extract_package_object(
     diagnostics: &mut Vec<PackageDiagnostic>,
 ) -> Option<ExtractedPackageDefinition> {
     let mut meta_expr: Option<&Expression<'_>> = None;
-    let mut setup = None;
     let mut commands = Vec::new();
     let mut browser = None;
     let mut backend = None;
-    let mut app = None;
     let mut tasks = Vec::new();
 
     for property in object.properties.iter() {
@@ -507,9 +490,6 @@ fn extract_package_object(
 
         match key.as_str() {
             "meta" => meta_expr = Some(&prop.value),
-            "setup" => {
-                setup = extract_handler_reference(&prop.value, local_identifiers, source_text, diagnostics)
-            }
             "commands" => {
                 commands = extract_named_handlers(&prop.value, local_identifiers, source_text, diagnostics, "command")
             }
@@ -522,9 +502,6 @@ fn extract_package_object(
             "cli" => {
                 let extracted = extract_cli_commands(&prop.value, source_text, diagnostics);
                 commands.extend(extracted);
-            }
-            "app" => {
-                app = extract_app_definition(&prop.value, local_identifiers, source_text, diagnostics)
             }
             "tasks" => {
                 tasks = extract_named_handlers(&prop.value, local_identifiers, source_text, diagnostics, "task")
@@ -566,11 +543,9 @@ fn extract_package_object(
 
     Some(ExtractedPackageDefinition {
         meta,
-        setup,
         commands,
         browser,
         backend,
-        app,
         tasks,
     })
 }
@@ -1079,192 +1054,6 @@ fn extract_command_entries(
     entries
 }
 
-fn extract_app_definition(
-    expr: &Expression<'_>,
-    local_identifiers: &HashSet<String>,
-    source_text: &str,
-    diagnostics: &mut Vec<PackageDiagnostic>,
-) -> Option<ExtractedAppDefinition> {
-    let Some(object) = get_object_expr(expr) else {
-        diagnostics.push(simple_diagnostic(
-            PackageDiagnosticSeverity::Error,
-            "non-literal-app",
-            "app must be an object literal".to_string(),
-            "src/package.ts",
-            Some(expr.span()),
-            source_text,
-        ));
-        return None;
-    };
-
-    let mut handler = None;
-    let mut signal_handler = None;
-    let mut has_rpc = false;
-    let mut rpc_methods = Vec::new();
-    let mut browser_entry = None;
-    let mut assets = Vec::new();
-    for property in object.properties.iter() {
-        let ObjectPropertyKind::ObjectProperty(prop) = property else {
-            continue;
-        };
-        if prop.computed {
-            continue;
-        }
-        let Some(key) = static_property_name(prop, source_text) else {
-            continue;
-        };
-        match key.as_str() {
-            "fetch" => {
-                handler = extract_handler_reference(&prop.value, local_identifiers, source_text, diagnostics)
-            }
-            "onSignal" => {
-                signal_handler =
-                    extract_handler_reference(&prop.value, local_identifiers, source_text, diagnostics)
-            }
-            "rpc" => {
-                has_rpc = true;
-                if let Some(rpc_object) = get_object_expr(&prop.value) {
-                    for rpc_property in rpc_object.properties.iter() {
-                        let ObjectPropertyKind::ObjectProperty(rpc_prop) = rpc_property else {
-                            continue;
-                        };
-                        if rpc_prop.computed {
-                            continue;
-                        }
-                        let Some(rpc_name) = static_property_name(rpc_prop, source_text) else {
-                            continue;
-                        };
-                        rpc_methods.push(rpc_name);
-                    }
-                } else {
-                    diagnostics.push(simple_diagnostic(
-                        PackageDiagnosticSeverity::Error,
-                        "non-literal-app-rpc",
-                        "app.rpc must be an object literal with static method names".to_string(),
-                        "src/package.ts",
-                        Some(prop.span),
-                        source_text,
-                    ));
-                }
-            }
-            "browser" => {
-                browser_entry = extract_browser_entry(&prop.value, source_text, diagnostics);
-            }
-            "assets" => {
-                let values = extract_string_array(&prop.value);
-                if let Some(value) = values {
-                    assets = value;
-                } else {
-                    diagnostics.push(simple_diagnostic(
-                        PackageDiagnosticSeverity::Error,
-                        "non-literal-app-assets",
-                        "app.assets must be an array of string literals".to_string(),
-                        "src/package.ts",
-                        Some(prop.span),
-                        source_text,
-                    ));
-                }
-            }
-            other => diagnostics.push(simple_diagnostic(
-                PackageDiagnosticSeverity::Error,
-                "unknown-app-key",
-                format!("unsupported app property: {}", other),
-                "src/package.ts",
-                Some(prop.span),
-                source_text,
-            )),
-        }
-    }
-
-    if handler.is_none() && browser_entry.is_none() && signal_handler.is_none() && !has_rpc {
-        diagnostics.push(simple_diagnostic(
-            PackageDiagnosticSeverity::Error,
-            "empty-app-definition",
-            "app must declare fetch, rpc, onSignal, and/or browser.entry".to_string(),
-            "src/package.ts",
-            Some(expr.span()),
-            source_text,
-        ));
-        return None;
-    }
-
-    Some(ExtractedAppDefinition {
-        handler,
-        signal_handler,
-        has_rpc,
-        rpc_methods,
-        browser_entry,
-        assets,
-    })
-}
-
-fn extract_browser_entry(
-    expr: &Expression<'_>,
-    source_text: &str,
-    diagnostics: &mut Vec<PackageDiagnostic>,
-) -> Option<String> {
-    let Some(object) = get_object_expr(expr) else {
-        diagnostics.push(simple_diagnostic(
-            PackageDiagnosticSeverity::Error,
-            "non-literal-browser-app",
-            "app.browser must be an object literal".to_string(),
-            "src/package.ts",
-            Some(expr.span()),
-            source_text,
-        ));
-        return None;
-    };
-
-    let mut entry = None;
-    for property in object.properties.iter() {
-        let ObjectPropertyKind::ObjectProperty(prop) = property else {
-            continue;
-        };
-        if prop.computed {
-            continue;
-        }
-        let Some(key) = static_property_name(prop, source_text) else {
-            continue;
-        };
-        match key.as_str() {
-            "entry" => {
-                entry = extract_string_literal(&prop.value);
-                if entry.is_none() {
-                    diagnostics.push(simple_diagnostic(
-                        PackageDiagnosticSeverity::Error,
-                        "non-literal-browser-entry",
-                        "app.browser.entry must be a string literal".to_string(),
-                        "src/package.ts",
-                        Some(prop.span),
-                        source_text,
-                    ));
-                }
-            }
-            other => diagnostics.push(simple_diagnostic(
-                PackageDiagnosticSeverity::Error,
-                "unknown-browser-app-key",
-                format!("unsupported app.browser property: {}", other),
-                "src/package.ts",
-                Some(prop.span),
-                source_text,
-            )),
-        }
-    }
-
-    if entry.is_none() {
-        diagnostics.push(simple_diagnostic(
-            PackageDiagnosticSeverity::Error,
-            "missing-browser-entry",
-            "app.browser.entry is required".to_string(),
-            "src/package.ts",
-            Some(expr.span()),
-            source_text,
-        ));
-    }
-
-    entry
-}
-
 fn extract_handler_reference(
     expr: &Expression<'_>,
     local_identifiers: &HashSet<String>,
@@ -1438,11 +1227,7 @@ mod tests {
           "type": "module"
         }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package/worker";
-
-          async function doctor(ctx) {
-            await ctx.stdout.write("ok\n");
-          }
+          import { definePackage } from "@gsv/package/manifest";
 
           export default definePackage({
             meta: {
@@ -1455,8 +1240,10 @@ mod tests {
                 outbound: ["https://*"],
               },
             },
-            commands: {
-              doctor,
+            cli: {
+              commands: {
+                doctor: "./src/cli/doctor.ts",
+              },
             },
             tasks: {
               refresh: async (ctx) => { void ctx; },
@@ -1479,12 +1266,14 @@ mod tests {
         let package_json = r#"{ "name": "@gsv/example" }"#;
         let package_ts = r#"
           import { definePackage } from "@gsv/package/manifest";
-          const setup = async (ctx) => { void ctx; };
           const pkg = definePackage({
             meta: { displayName: "Example" },
-            setup,
-            app: {
-              fetch: async (request, ctx) => new Response("ok"),
+            browser: {
+              entry: "./src/main.tsx",
+              assets: ["./src/styles.css"],
+            },
+            backend: {
+              entry: "./src/backend.ts",
             },
           });
           export default pkg;
@@ -1493,8 +1282,14 @@ mod tests {
         let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
         assert!(analysis.ok);
         let definition = analysis.definition.unwrap();
-        assert!(definition.app.is_some());
-        assert!(definition.setup.is_some());
+        assert_eq!(
+            definition.browser.as_ref().map(|browser| browser.entry.as_str()),
+            Some("./src/main.tsx")
+        );
+        assert_eq!(
+            definition.backend.as_ref().map(|backend| backend.entry.as_str()),
+            Some("./src/backend.ts")
+        );
     }
 
     #[test]
@@ -1589,7 +1384,7 @@ mod tests {
     fn analyze_package_source_reports_non_literal_display_name() {
         let package_json = r#"{ "name": "@gsv/example" }"#;
         let package_ts = r#"
-          import { definePackage } from "@gsv/package/worker";
+          import { definePackage } from "@gsv/package/manifest";
           const title = "Example";
           export default definePackage({
             meta: {

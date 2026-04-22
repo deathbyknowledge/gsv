@@ -1,7 +1,7 @@
 import type {
   KernelClientLike,
-  PackageAppRpcContext,
-} from "@gsv/package/worker";
+  PackageViewerBinding,
+} from "@gsv/package/backend";
 import type {
   PkgRepoDiffResult,
   PkgRepoLogResult,
@@ -60,6 +60,10 @@ type PackageLike = Record<string, unknown> & {
   };
   installedAt: number;
   updatedAt: number;
+};
+
+type ViewerRuntime = {
+  viewer?: PackageViewerBinding;
 };
 
 function unique<T>(items: T[]): T[] {
@@ -321,9 +325,12 @@ async function loadPackageDetail(kernel: KernelClientLike, packageId: string) {
 export async function loadState(
   args: { packageId?: string } | undefined,
   kernel: KernelClientLike,
-  ctx: PackageAppRpcContext,
+  ctx: ViewerRuntime,
 ) {
-  const viewer = normalizeViewer(ctx.viewer);
+  const viewer = normalizeViewer({
+    uid: ctx.viewer?.uid ?? 0,
+    username: ctx.viewer?.username ?? "",
+  });
   const packagesRaw = await listPackages(kernel);
   const refsByRepo = await loadRefsForPackages(kernel, packagesRaw);
   const packages = packagesRaw.map((pkg) => derivePackageView(pkg, refsByRepo, viewer));

@@ -1,9 +1,4 @@
-import { definePackage } from "@gsv/package/worker";
-import {
-  createNodeToken,
-  loadState,
-  revokeToken,
-} from "./backend/api";
+import { definePackage } from "@gsv/package/manifest";
 
 export default definePackage({
   meta: {
@@ -25,21 +20,11 @@ export default definePackage({
       ],
     },
   },
-  app: {
-    browser: {
-      entry: "./src/index.html",
-    },
+  browser: {
+    entry: "./src/main.tsx",
     assets: ["./src/styles.css"],
-    rpc: {
-      async loadState(args, ctx) {
-        return loadState(args, ctx.kernel, ctx);
-      },
-      async createNodeToken(args, ctx) {
-        return createNodeToken(args, ctx.kernel, ctx);
-      },
-      async revokeToken(args, ctx) {
-        return revokeToken(args, ctx.kernel, ctx);
-      },
-    },
+  },
+  backend: {
+    entry: "./src/backend.ts",
   },
 });

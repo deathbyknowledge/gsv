@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use assembler_rs::diagnostics::PackageAssemblyDiagnostic;
 use assembler_rs::model::{
-    PackageAppDefinition, PackageAppHandlerDefinition, PackageAssemblyAnalysis,
-    PackageAssemblyRequest, PackageAssemblySource, PackageAssemblyTarget, PackageBackendDefinition,
-    PackageBrowserDefinition, PackageCapabilityDefinition, PackageCommandDefinition,
-    PackageDefinition, PackageIdentity, PackageJsonDefinition, PackageMetaDefinition,
+    PackageAssemblyAnalysis, PackageAssemblyRequest, PackageAssemblySource,
+    PackageAssemblyTarget, PackageBackendDefinition, PackageBrowserDefinition,
+    PackageCapabilityDefinition, PackageCommandDefinition, PackageDefinition, PackageIdentity,
+    PackageJsonDefinition, PackageMetaDefinition,
 };
 use assembler_rs::pipeline::{
     plan_installs, prepare_request, prepare_sources, validate_request, RegistryDependencyPlanItem,
@@ -42,17 +42,11 @@ fn base_request() -> PackageAssemblyRequest {
                     capabilities: PackageCapabilityDefinition::default(),
                 },
                 commands: Vec::new(),
-                browser: None,
-                backend: None,
-                app: Some(PackageAppDefinition {
-                    handler: Some(PackageAppHandlerDefinition {
-                        export_name: "App".to_string(),
-                    }),
-                    has_rpc: true,
-                    rpc_methods: vec!["ping".to_string()],
-                    browser_entry: Some("./src/main.tsx".to_string()),
+                browser: Some(PackageBrowserDefinition {
+                    entry: "./src/main.tsx".to_string(),
                     assets: vec!["./src/styles.css".to_string()],
                 }),
+                backend: None,
             }),
             diagnostics: Vec::new(),
             ok: true,
@@ -128,15 +122,6 @@ fn rejects_html_browser_entry() {
         entry: "./src/index.html".to_string(),
         assets: vec!["./src/styles.css".to_string()],
     });
-    request
-        .analysis
-        .definition
-        .as_mut()
-        .unwrap()
-        .app
-        .as_mut()
-        .unwrap()
-        .browser_entry = Some("./src/index.html".to_string());
     request.files.insert(
         "apps/demo/src/index.html".to_string(),
         "<html></html>".to_string(),
@@ -161,12 +146,7 @@ fn rejects_missing_browser_entry_file() {
 
 #[test]
 fn accepts_declarative_browser_definition() {
-    let mut request = base_request();
-    request.analysis.definition.as_mut().unwrap().browser = Some(PackageBrowserDefinition {
-        entry: "./src/main.tsx".to_string(),
-        assets: vec!["./src/styles.css".to_string()],
-    });
-    request.analysis.definition.as_mut().unwrap().app = None;
+    let request = base_request();
 
     let outcome = validate_request(&request);
 
@@ -183,30 +163,8 @@ fn accepts_declarative_browser_definition() {
 }
 
 #[test]
-fn accepts_legacy_browser_only_app_without_handler() {
-    let mut request = base_request();
-    request.analysis.definition.as_mut().unwrap().app = Some(PackageAppDefinition {
-        handler: None,
-        has_rpc: false,
-        rpc_methods: Vec::new(),
-        browser_entry: Some("./src/main.tsx".to_string()),
-        assets: vec!["./src/styles.css".to_string()],
-    });
-
-    let outcome = validate_request(&request);
-
-    assert!(outcome.value.is_some());
-    let validated = outcome.value.unwrap();
-    assert_eq!(
-        validated.browser_entry.as_deref(),
-        Some("apps/demo/src/main.tsx")
-    );
-}
-
-#[test]
 fn accepts_declarative_backend_and_command_definitions() {
     let mut request = base_request();
-    request.analysis.definition.as_mut().unwrap().app = None;
     request.analysis.definition.as_mut().unwrap().backend = Some(PackageBackendDefinition {
         entry: "./src/backend.ts".to_string(),
         public_routes: vec!["/webhooks/github".to_string()],
@@ -243,7 +201,6 @@ fn accepts_declarative_backend_and_command_definitions() {
 #[test]
 fn rejects_missing_backend_and_command_entry_files() {
     let mut request = base_request();
-    request.analysis.definition.as_mut().unwrap().app = None;
     request.analysis.definition.as_mut().unwrap().backend = Some(PackageBackendDefinition {
         entry: "./src/backend.ts".to_string(),
         public_routes: Vec::new(),

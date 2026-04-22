@@ -1,5 +1,4 @@
-import { definePackage } from "@gsv/package/worker";
-import { connectAccount, disconnectAccount, loadState } from "./backend/api";
+import { definePackage } from "@gsv/package/manifest";
 
 export default definePackage({
   meta: {
@@ -20,15 +19,11 @@ export default definePackage({
       ],
     },
   },
-  app: {
-    browser: {
-      entry: "./src/index.html",
-    },
+  browser: {
+    entry: "./src/main.tsx",
     assets: ["./src/styles.css"],
-    rpc: {
-      loadState: async (_args, ctx) => loadState(ctx.kernel),
-      connectAccount: async (args, ctx) => connectAccount(ctx.kernel, args),
-      disconnectAccount: async (args, ctx) => disconnectAccount(ctx.kernel, args),
-    },
+  },
+  backend: {
+    entry: "./src/backend.ts",
   },
 });

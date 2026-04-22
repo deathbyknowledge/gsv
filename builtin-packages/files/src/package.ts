@@ -1,5 +1,4 @@
-import { definePackage } from "@gsv/package/worker";
-import { createFile, deletePath, loadState, saveFile } from "./backend/api";
+import { definePackage } from "@gsv/package/manifest";
 
 export default definePackage({
   meta: {
@@ -15,24 +14,11 @@ export default definePackage({
       kernel: ["fs.read", "fs.search", "fs.write", "fs.edit", "fs.delete", "sys.device.list"],
     },
   },
-  app: {
-    browser: {
-      entry: "./src/index.html",
-    },
+  browser: {
+    entry: "./src/main.tsx",
     assets: ["./src/styles.css"],
-    rpc: {
-      async loadState(args, ctx) {
-        return loadState(ctx.kernel, args);
-      },
-      async saveFile(args, ctx) {
-        return saveFile(ctx.kernel, args);
-      },
-      async deletePath(args, ctx) {
-        return deletePath(ctx.kernel, args);
-      },
-      async createFile(args, ctx) {
-        return createFile(ctx.kernel, args);
-      },
-    },
+  },
+  backend: {
+    entry: "./src/backend.ts",
   },
 });
