@@ -1,4 +1,6 @@
 use crate::logger;
+#[cfg(any(test, target_os = "windows"))]
+use base64::Engine;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -404,30 +406,61 @@ fn windows_arguments_string(args: &[String]) -> String {
 }
 
 #[cfg(any(test, target_os = "windows"))]
-fn windows_task_run_string(spec: &DeviceServiceInstallSpec) -> String {
-    let exe = windows_quote_argument(&spec.exe_path.display().to_string());
-    if spec.args.is_empty() {
-        exe
-    } else {
-        format!("{} {}", exe, windows_arguments_string(&spec.args))
-    }
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 #[cfg(any(test, target_os = "windows"))]
-fn windows_task_create_args(task_name: &str, spec: &DeviceServiceInstallSpec) -> Vec<String> {
-    vec![
-        "/create".to_string(),
-        "/tn".to_string(),
-        task_name.to_string(),
-        "/tr".to_string(),
-        windows_task_run_string(spec),
-        "/sc".to_string(),
-        "onlogon".to_string(),
-        "/it".to_string(),
-        "/rl".to_string(),
-        "LIMITED".to_string(),
-        "/f".to_string(),
-    ]
+fn windows_task_registration_script(
+    task_name: &str,
+    user_id: &str,
+    spec: &DeviceServiceInstallSpec,
+) -> String {
+    let task_name = powershell_single_quote(task_name);
+    let user_id = powershell_single_quote(user_id);
+    let description = powershell_single_quote(spec.description);
+    let exe_path = powershell_single_quote(&spec.exe_path.display().to_string());
+    let args = powershell_single_quote(&windows_arguments_string(&spec.args));
+
+    format!(
+        "$ErrorActionPreference = 'Stop'\n\
+Import-Module ScheduledTasks -ErrorAction Stop\n\
+$action = New-ScheduledTaskAction -Execute {exe_path} -Argument {args}\n\
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User {user_id}\n\
+$principal = New-ScheduledTaskPrincipal -UserId {user_id} -LogonType InteractiveToken -RunLevel Limited\n\
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n\
+$task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description {description}\n\
+$task.Settings.AllowStartOnDemand = $true\n\
+$task.Settings.ExecutionTimeLimit = 'PT0S'\n\
+$task.Settings.Enabled = $true\n\
+$task.Settings.Hidden = $false\n\
+Register-ScheduledTask -TaskName {task_name} -InputObject $task -Force | Out-Null\n"
+    )
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn encode_powershell_script(script: &str) -> String {
+    let mut utf16 = Vec::with_capacity(script.len() * 2);
+    for unit in script.encode_utf16() {
+        utf16.extend_from_slice(&unit.to_le_bytes());
+    }
+    base64::engine::general_purpose::STANDARD.encode(utf16)
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_powershell_script(script: &str, context: &str) -> Result<(), DynError> {
+    let encoded = encode_powershell_script(script);
+    run_command_capture(
+        Command::new("powershell.exe")
+            .arg("-NoLogo")
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-EncodedCommand")
+            .arg(encoded),
+        context,
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -761,10 +794,9 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
     }
 
     fn install(&self, spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
-        run_command_capture(
-            Command::new("schtasks").args(windows_task_create_args(NODE_WINDOWS_TASK_NAME, spec)),
-            "Failed to register Windows scheduled task",
-        )?;
+        let user_id = current_windows_user_id();
+        let script = windows_task_registration_script(NODE_WINDOWS_TASK_NAME, &user_id, spec);
+        run_windows_powershell_script(&script, "Failed to register Windows scheduled task")?;
 
         run_command_capture(
             Command::new("schtasks")
@@ -842,6 +874,21 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
                 .arg("/v"),
             "Failed to read Windows scheduled task status",
         )
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn current_windows_user_id() -> String {
+    let username = std::env::var("USERNAME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(whoami::username);
+    let domain = std::env::var("USERDOMAIN")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    match domain {
+        Some(domain) => format!(r"{}\{}", domain, username),
+        None => username,
     }
 }
 
@@ -924,26 +971,28 @@ mod tests {
     }
 
     #[test]
-    fn test_windows_task_create_args_use_onlogon_interactive_task() {
+    fn test_encode_powershell_script_uses_utf16le_base64() {
+        assert_eq!(encode_powershell_script("A"), "QQA=");
+    }
+
+    #[test]
+    fn test_windows_task_registration_script_sets_infinite_execution_time() {
         let mut spec = test_spec();
         spec.exe_path = PathBuf::from(r"C:\Program Files\GSV\gsv.exe");
+        let script = windows_task_registration_script("gsvd", r"ACME\hank", &spec);
 
-        let args = windows_task_create_args("gsvd", &spec);
-        assert_eq!(
-            args,
-            vec![
-                "/create",
-                "/tn",
-                "gsvd",
-                "/tr",
-                "\"C:\\Program Files\\GSV\\gsv.exe\" device run",
-                "/sc",
-                "onlogon",
-                "/it",
-                "/rl",
-                "LIMITED",
-                "/f",
-            ]
-        );
+        assert!(script.contains(
+            "$trigger = New-ScheduledTaskTrigger -AtLogOn -User 'ACME\\hank'"
+        ));
+        assert!(script.contains(
+            "$principal = New-ScheduledTaskPrincipal -UserId 'ACME\\hank' -LogonType InteractiveToken -RunLevel Limited"
+        ));
+        assert!(script.contains(
+            "$action = New-ScheduledTaskAction -Execute 'C:\\Program Files\\GSV\\gsv.exe' -Argument 'device run'"
+        ));
+        assert!(script.contains("$task.Settings.ExecutionTimeLimit = 'PT0S'"));
+        assert!(script.contains(
+            "Register-ScheduledTask -TaskName 'gsvd' -InputObject $task -Force | Out-Null"
+        ));
     }
 }
