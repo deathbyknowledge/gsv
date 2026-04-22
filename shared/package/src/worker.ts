@@ -18,16 +18,6 @@ export type PackageMeta = {
   capabilities?: PackageCapabilityMeta;
 };
 
-export type TaskScheduleSpec = {
-  at?: number;
-  afterMs?: number;
-  everyMs?: number;
-};
-
-export type TaskScheduleOptions = {
-  key?: string;
-};
-
 /**
  * TODO(app-storage): We are intentionally not exposing package/app-private
  * durable storage through the package SDK yet.
@@ -121,17 +111,6 @@ export type PackageCommandContext = PackageBaseContext & {
   };
 };
 
-export type TaskTriggerKind = "manual" | "schedule" | "app" | "command";
-
-export type PackageTaskContext = PackageBaseContext & {
-  taskName: string;
-  trigger: {
-    kind: TaskTriggerKind;
-    scheduledAt?: number;
-  };
-  payload: unknown;
-};
-
 export type PackageAppContext = PackageBaseContext;
 
 export type PackageAppSignalContext = PackageAppContext & {
@@ -165,10 +144,6 @@ export type PackageCommandHandler = (
   ctx: PackageCommandContext,
 ) => Promise<void> | void;
 
-export type PackageTaskHandler = (
-  ctx: PackageTaskContext,
-) => Promise<void> | void;
-
 export type PackageAppDefinition = {
   browser?: PackageBrowserAppDefinition;
   assets?: string[];
@@ -182,7 +157,6 @@ export type PackageDefinition = {
   setup?: PackageSetupHandler;
   commands?: Record<string, PackageCommandHandler>;
   app?: PackageAppDefinition;
-  tasks?: Record<string, PackageTaskHandler>;
 };
 
 export function definePackage<const T extends PackageDefinition>(definition: T): T {

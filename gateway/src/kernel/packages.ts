@@ -52,7 +52,6 @@ export type PackageEntrypointKind =
   | "command"
   | "http"
   | "rpc"
-  | "task"
   | "ui";
 
 export type PackageInstallScope =
@@ -898,13 +897,6 @@ async function resolvePackageFromRipgitNativeBuild(
       exportName: "GsvAppRpcEntrypoint",
       description: analysis.definition?.meta.description ?? undefined,
     }] : []),
-    ...analysis.definition.tasks.map((task) => ({
-      name: task.name,
-      kind: "task" as const,
-      module: artifact.mainModule,
-      exportName: "GsvTaskEntrypoint",
-      description: analysis.definition?.meta.description ?? undefined,
-    })),
   ];
 
   return {

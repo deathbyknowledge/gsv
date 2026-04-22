@@ -147,9 +147,6 @@ export type RipgitPackageAnalyzeResponse = {
       browser_entry?: string | null;
       assets: string[];
     } | null;
-    tasks: Array<{
-      name: string;
-    }>;
   } | null;
   diagnostics: RipgitPackageDiagnostic[];
   ok: boolean;

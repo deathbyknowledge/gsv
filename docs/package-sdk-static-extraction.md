@@ -18,7 +18,7 @@ Static extraction is responsible for:
 - finding the package definition
 - extracting package metadata
 - extracting command names
-- detecting presence of app and tasks
+- detecting presence of app
 - identifying handler references
 - validating that the definition is statically analyzable
 
@@ -123,7 +123,6 @@ Allowed top-level keys:
 - `setup`
 - `commands`
 - `app`
-- `tasks`
 
 Unknown top-level keys are rejected in v1.
 
@@ -142,7 +141,6 @@ type ExtractedPackageDefinition = {
   setup: ExtractedHandlerReference | null;
   commands: ExtractedCommandDefinition[];
   app: ExtractedAppDefinition | null;
-  tasks: ExtractedTaskDefinition[];
 };
 
 type ExtractedPackageMeta = {
@@ -162,11 +160,6 @@ type ExtractedPackageMeta = {
 };
 
 type ExtractedCommandDefinition = {
-  name: string;
-  handler: ExtractedHandlerReference;
-};
-
-type ExtractedTaskDefinition = {
   name: string;
   handler: ExtractedHandlerReference;
 };
@@ -312,7 +305,7 @@ Allowed:
 ```ts
 const refreshFeeds = async (ctx) => { ... };
 
-tasks: {
+commands: {
   refreshFeeds,
 }
 ```
@@ -407,31 +400,6 @@ app: {
 Reason:
 
 - async app routing hooks are not part of the v1 runtime contract
-
-## `tasks` rules
-
-`tasks` is optional.
-
-If present:
-
-- it must be an object literal
-- each key must be a static task name
-- each value must be an inline function or same-module identifier
-
-Allowed:
-
-```ts
-tasks: {
-  refreshFeeds: async (ctx) => { ... },
-  reindex: reindexTask,
-}
-```
-
-Rejected:
-
-```ts
-tasks: makeTasks()
-```
 
 ## allowed expressions inside extracted metadata
 

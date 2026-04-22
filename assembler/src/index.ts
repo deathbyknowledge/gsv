@@ -815,16 +815,6 @@ function noOpStdin() {
   };
 }
 
-function normalizeTrigger(trigger) {
-  if (!trigger || typeof trigger !== "object") {
-    return { kind: "manual" };
-  }
-  return {
-    kind: typeof trigger.kind === "string" ? trigger.kind : "manual",
-    scheduledAt: typeof trigger.scheduledAt === "number" ? trigger.scheduledAt : undefined,
-  };
-}
-
 function getAppDefinition() {
   const app = definition && definition.app;
   if (!app || typeof app !== "object") {
@@ -984,31 +974,6 @@ export class GsvCommandEntrypoint extends WorkerEntrypoint {
       stderr: stderrChunks.join(""),
       exitCode: 0,
     };
-  }
-}
-
-export class GsvTaskEntrypoint extends WorkerEntrypoint {
-  async run(taskName) {
-    const props = this.ctx.props ?? {};
-    const resolvedTaskName =
-      typeof taskName === "string" && taskName.length > 0
-        ? taskName
-        : props.taskName;
-    if (typeof resolvedTaskName !== "string" || resolvedTaskName.length === 0) {
-      throw new Error("package task name is required");
-    }
-    const ctx = {
-      ...createBaseContext(this.env, {
-        packageId: props.packageId ?? STATIC_META.packageId,
-        routeBase: props.routeBase ?? STATIC_META.routeBase,
-      }),
-      taskName: resolvedTaskName,
-      trigger: normalizeTrigger(props.trigger),
-      payload: props.payload,
-    };
-    await ensureSetup(ctx);
-    const handler = requireNamedHandler("tasks", resolvedTaskName);
-    return handler(ctx);
   }
 }
 

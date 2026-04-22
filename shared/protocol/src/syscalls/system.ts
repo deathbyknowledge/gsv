@@ -214,7 +214,7 @@ export type SysBootstrapResult = {
     };
     entrypoints: Array<{
       name: string;
-      kind: "command" | "ui" | "task";
+      kind: "command" | "ui";
       description?: string;
       command?: string;
       route?: string;

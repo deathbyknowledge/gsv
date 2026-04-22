@@ -59,9 +59,6 @@ export type PackageAssemblyAnalysis = {
       browser_entry?: string | null;
       assets: string[];
     } | null;
-    tasks: Array<{
-      name: string;
-    }>;
   } | null;
   diagnostics: PackageAssemblyDiagnostic[];
   ok: boolean;
