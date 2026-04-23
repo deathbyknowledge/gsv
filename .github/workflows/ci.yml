@@ -49,7 +49,7 @@ jobs:
 
       - name: Bundle worker
         working-directory: assembler
-        run: npm exec --workspace assembler -- wrangler deploy --dry-run --config wrangler.jsonc --outdir dist/worker
+        run: npm run deploy -- --dry-run --outdir dist/worker
 
   gateway-test:
     name: Gateway Tests
