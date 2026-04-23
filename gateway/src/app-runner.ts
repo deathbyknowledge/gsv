@@ -5,6 +5,7 @@ import {
   packageArtifactToWorkerCode,
   type PackageArtifactMetadata,
 } from "./kernel/packages";
+import { encodeBase64Bytes } from "./shared/base64";
 import type { AppFrameContext, PackageAppSignalWatchInfo } from "./protocol/app-frame";
 import { buildAppRunnerName } from "./protocol/app-session";
 import type { RequestFrame, ResponseFrame } from "./protocol/frames";
@@ -690,10 +691,10 @@ export class AppRunner extends DurableObject<Env> {
       return value;
     }
     if (value instanceof ArrayBuffer) {
-      return btoa(String.fromCharCode(...new Uint8Array(value)));
+      return encodeBase64Bytes(value);
     }
     if (ArrayBuffer.isView(value)) {
-      return btoa(String.fromCharCode(...new Uint8Array(value.buffer)));
+      return encodeBase64Bytes(value);
     }
     return String(value);
   }
