@@ -756,14 +756,11 @@ function createEmbeddedHostClient(backend) {
   async function watchPid(pid) {
     const nextVersion = ++signalWatchVersion;
     const normalizedPid = typeof pid === "string" && pid.trim() ? pid.trim() : null;
-    if (normalizedPid === activePid) {
-      return;
-    }
     const previousPid = activePid;
     if (normalizedPid !== activePid) {
       activePid = normalizedPid;
+      await clearSignalSubscription(previousPid);
     }
-    await clearSignalSubscription(previousPid);
     if (!normalizedPid) {
       return;
     }
