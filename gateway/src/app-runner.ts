@@ -309,7 +309,7 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async deliverSignal(input: AppRunnerSignalInput): Promise<void> {
-    const runtime = this.#defaultRuntime();
+    const runtime = this.#runtimeForSignal(input);
     console.log(`[app-runner] deliverSignal signal=${input.signal} watchId=${input.watch.id} key=${input.watch.key ?? ""} sourcePid=${input.sourcePid ?? ""}`);
     await this.#getSignalEntrypoint(runtime, input).run(input.signal);
   }
@@ -415,6 +415,20 @@ export class AppRunner extends DurableObject<Env> {
       ...(appSession ? { appSession } : {}),
       ...(daemonTrigger ? { daemonTrigger } : {}),
     };
+  }
+
+  #runtimeForSignal(input: AppRunnerSignalInput): AppRuntimeContext {
+    const state = input.watch.state && typeof input.watch.state === "object"
+      ? input.watch.state as Record<string, unknown>
+      : null;
+    const clientId = typeof state?.clientId === "string" && state.clientId.trim().length > 0
+      ? state.clientId.trim()
+      : null;
+    const appSession = clientId ? this.appClients.get(clientId)?.session : undefined;
+    if (clientId) {
+      console.log(`[app-runner] runtimeForSignal clientId=${clientId} hasSession=${Boolean(appSession)}`);
+    }
+    return this.#defaultRuntime(appSession);
   }
 
   #runtimeAppFrame(props: AppRunnerProps): AppFrameContext {

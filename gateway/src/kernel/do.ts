@@ -1624,6 +1624,11 @@ export class Kernel extends Host<Env> {
     for (const watch of watches) {
       try {
         console.log(`[kernel] dispatchSignalWatches -> watchId=${watch.watchId} target=${watch.targetKind} key=${watch.key ?? ""}`);
+        if (this.isLegacySignalWatchKey(watch.key)) {
+          console.log(`[kernel] pruning legacy signal watch watchId=${watch.watchId} key=${watch.key ?? ""}`);
+          this.signalWatches.deleteHandled(watch.watchId);
+          continue;
+        }
         if (watch.targetKind === "app") {
           await this.invokePackageAppSignalHandler(watch, processId, frame);
         } else {
@@ -1638,6 +1643,10 @@ export class Kernel extends Host<Env> {
         console.warn(`[Kernel] signal watch ${watch.watchId} failed: ${message}`);
       }
     }
+  }
+
+  private isLegacySignalWatchKey(key: string | null | undefined): boolean {
+    return typeof key === "string" && (key.startsWith("live:") || key.startsWith("__gsv_live__:"));
   }
 
   private async invokePackageAppSignalHandler(
