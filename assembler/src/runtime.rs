@@ -382,6 +382,30 @@ function buildStorageClient(env) {{
   }};
 }}
 
+function buildAppClient(env, props) {{
+  const api = env.GSV_API;
+  const session = props?.appSession && typeof props.appSession === "object"
+    ? {{
+        ...(typeof props.appSession.sessionId === "string" ? {{ sessionId: props.appSession.sessionId }} : {{}}),
+        ...(typeof props.appSession.clientId === "string" ? {{ clientId: props.appSession.clientId }} : {{}}),
+        ...(typeof props.appSession.rpcBase === "string" ? {{ rpcBase: props.appSession.rpcBase }} : {{}}),
+        ...(typeof props.appSession.expiresAt === "number" ? {{ expiresAt: props.appSession.expiresAt }} : {{}}),
+      }}
+    : null;
+  if (!api || typeof api.emitAppEvent !== "function") {{
+    return session ?? undefined;
+  }}
+  return {{
+    ...(session ?? {{}}),
+    async emit(event, payload) {{
+      return api.emitAppEvent(event, payload);
+    }},
+    async emitTo(clientId, event, payload) {{
+      return api.emitAppEvent(event, payload, clientId);
+    }},
+  }};
+}}
+
 function createBaseContext(metaOverrides, props, env, kernelOverride, daemonOverride, daemonTrigger) {{
   const appFrame = props?.appFrame && typeof props.appFrame === "object" ? props.appFrame : null;
   return {{
@@ -392,14 +416,7 @@ function createBaseContext(metaOverrides, props, env, kernelOverride, daemonOver
           username: typeof appFrame.username === "string" ? appFrame.username : "",
         }}
       : {{ uid: 0, username: "" }},
-    app: props?.appSession && typeof props.appSession === "object"
-      ? {{
-          sessionId: typeof props.appSession.sessionId === "string" ? props.appSession.sessionId : "",
-          clientId: typeof props.appSession.clientId === "string" ? props.appSession.clientId : "",
-          rpcBase: typeof props.appSession.rpcBase === "string" ? props.appSession.rpcBase : "",
-          expiresAt: typeof props.appSession.expiresAt === "number" ? props.appSession.expiresAt : 0,
-        }}
-      : undefined,
+    app: buildAppClient(env, props),
     daemon: buildDaemonClient(env, props, daemonOverride, daemonTrigger),
     kernel: buildKernelClient(env, props, kernelOverride),
     storage: buildStorageClient(env),

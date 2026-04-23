@@ -12,7 +12,7 @@ export type PackageAppBoot = {
 
 type CapnwebGlobal = {
   newWebSocketRpcSession<T = unknown>(url: string, localMain?: unknown): T;
-  RpcTarget?: new (...args: unknown[]) => unknown;
+  RpcTarget?: abstract new (...args: unknown[]) => object;
 };
 
 type RemoteBackend = {
@@ -23,6 +23,8 @@ type BackendProxyControl = {
   invoke(method: string, args?: unknown): Promise<unknown>;
   reconnect(): Promise<void>;
 };
+
+export type AppEventListener = (event: string, payload: unknown) => void;
 
 declare global {
   interface Window {
@@ -55,6 +57,8 @@ function getCapnweb(): CapnwebGlobal {
 
 let backendConnectionPromise: Promise<RemoteBackend> | null = null;
 let backendProxy: unknown = null;
+let appClientTarget: unknown = null;
+const appEventListeners = new Set<AppEventListener>();
 
 function isReconnectableBackendError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -75,6 +79,32 @@ function resetBackendConnection(): void {
   }
 }
 
+function emitAppEvent(event: string, payload: unknown): void {
+  for (const listener of appEventListeners) {
+    try {
+      listener(event, payload);
+    } catch (error) {
+      console.warn("[gsv-package] app event listener failed", error);
+    }
+  }
+}
+
+function getOrCreateAppClientTarget(): unknown {
+  if (appClientTarget) {
+    return appClientTarget;
+  }
+  const RpcTargetCtor = getCapnweb().RpcTarget;
+  if (typeof RpcTargetCtor !== "function") {
+    throw new Error("capnweb RpcTarget is unavailable");
+  }
+  appClientTarget = new class extends RpcTargetCtor {
+    async onAppEvent(event: unknown, payload: unknown) {
+      emitAppEvent(typeof event === "string" ? event : String(event ?? ""), payload);
+    }
+  }();
+  return appClientTarget;
+}
+
 async function connectBackendTransport(): Promise<RemoteBackend> {
   if (backendConnectionPromise) {
     return backendConnectionPromise;
@@ -86,9 +116,9 @@ async function connectBackendTransport(): Promise<RemoteBackend> {
   const capnweb = getCapnweb();
   const ready = (async () => {
     const session = capnweb.newWebSocketRpcSession<{
-      authenticate(secret: string): unknown;
+      authenticate(secret: string, clientTarget?: unknown): unknown;
     }>(buildRpcWebSocketUrl(boot.rpcBase));
-    const backend = await session.authenticate(boot.sessionSecret);
+    const backend = await session.authenticate(boot.sessionSecret, getOrCreateAppClientTarget());
     if (!backend || (typeof backend !== "object" && typeof backend !== "function")) {
       throw new Error("package backend rpc returned an invalid target");
     }
@@ -169,4 +199,11 @@ export async function connectBackend<T = unknown>(): Promise<T> {
 
 export async function getBackend<T = unknown>(): Promise<T> {
   return connectBackend<T>();
+}
+
+export function onAppEvent(listener: AppEventListener): () => void {
+  appEventListeners.add(listener);
+  return () => {
+    appEventListeners.delete(listener);
+  };
 }

@@ -10,10 +10,12 @@ export type PackageViewerBinding = {
 };
 
 export type PackageAppSessionBinding = {
-  sessionId: string;
-  clientId: string;
-  rpcBase: string;
-  expiresAt: number;
+  sessionId?: string;
+  clientId?: string;
+  rpcBase?: string;
+  expiresAt?: number;
+  emit(event: string, payload?: unknown): Promise<{ delivered: number }>;
+  emitTo(clientId: string, event: string, payload?: unknown): Promise<{ delivered: number }>;
 };
 
 export type KernelClientLike = {

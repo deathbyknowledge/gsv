@@ -1,4 +1,4 @@
-import { getBackend } from "@gsv/package/browser";
+import { getBackend, onAppEvent } from "@gsv/package/browser";
 import { openApp } from "@gsv/package/host";
 
 const CHAT_LAYOUT = `
@@ -705,18 +705,7 @@ function createEmbeddedHostClient(backend) {
   const statusListeners = new Set();
   const signalListeners = new Set();
   let activePid = null;
-  let activeSubscriptionId = null;
   let signalWatchVersion = 0;
-
-  const signalNames = [
-    "chat.tool_call",
-    "chat.tool_result",
-    "chat.text",
-    "chat.complete",
-    "chat.hil",
-    "chat.error",
-    "process.exit",
-  ];
 
   function emitStatus() {
     for (const listener of statusListeners) {
@@ -749,14 +738,17 @@ function createEmbeddedHostClient(backend) {
     }
   }
 
-  async function clearSignalSubscription() {
-    const subscriptionId = activeSubscriptionId;
-    activeSubscriptionId = null;
-    if (!subscriptionId) {
+  onAppEvent((signal, payload) => {
+    emitSignal(signal, payload);
+  });
+
+  async function clearSignalSubscription(pid) {
+    const normalizedPid = typeof pid === "string" && pid.trim() ? pid.trim() : null;
+    if (!normalizedPid) {
       return;
     }
     try {
-      await backend.gsvUnsubscribeSignal({ subscriptionId });
+      await backend.unwatchProcessSignals({ pid: normalizedPid });
     } catch {
     }
   }
@@ -764,42 +756,23 @@ function createEmbeddedHostClient(backend) {
   async function watchPid(pid) {
     const nextVersion = ++signalWatchVersion;
     const normalizedPid = typeof pid === "string" && pid.trim() ? pid.trim() : null;
-    if (normalizedPid === activePid && activeSubscriptionId) {
+    if (normalizedPid === activePid) {
       return;
     }
+    const previousPid = activePid;
     if (normalizedPid !== activePid) {
       activePid = normalizedPid;
     }
-    await clearSignalSubscription();
+    await clearSignalSubscription(previousPid);
     if (!normalizedPid) {
       return;
     }
 
-    const RpcTargetCtor = window.capnweb?.RpcTarget;
-    if (typeof RpcTargetCtor !== "function") {
-      throw new Error("capnweb RpcTarget is unavailable");
-    }
-
-    const sink = new class extends RpcTargetCtor {
-      async onSignal(signal, envelope) {
-        const record = asRecord(envelope);
-        emitSignal(signal, record && "payload" in record ? record.payload : envelope);
-      }
-    }();
-
-    const result = await backend.gsvSubscribeSignal({
-      processId: normalizedPid,
-      signals: signalNames,
-      sink,
-    });
+    await backend.watchProcessSignals({ pid: normalizedPid });
     if (nextVersion !== signalWatchVersion) {
-      const staleId = asString(asRecord(result)?.subscriptionId);
-      if (staleId) {
-        await backend.gsvUnsubscribeSignal({ subscriptionId: staleId }).catch(() => {});
-      }
+      await backend.unwatchProcessSignals({ pid: normalizedPid }).catch(() => {});
       return;
     }
-    activeSubscriptionId = asString(asRecord(result)?.subscriptionId);
     updateStatus(null);
   }
 

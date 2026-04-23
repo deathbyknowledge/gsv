@@ -540,7 +540,7 @@ class PackageAppSessionRpcTarget extends RpcTarget {
     super();
   }
 
-  async authenticate(secret: string): Promise<unknown> {
+  async authenticate(secret: string, clientTarget?: unknown): Promise<unknown> {
     const kernel = await getAgentByName(this.env.KERNEL, "singleton");
     const resolved = await kernel.resolvePackageAppRpcSession({
       packageName: this.packageName,
@@ -562,12 +562,17 @@ class PackageAppSessionRpcTarget extends RpcTarget {
       appFrame: resolved.appFrame,
     });
 
-    return runner.getBackend({
-      sessionId: resolved.clientSession.sessionId,
-      clientId: resolved.clientSession.clientId,
-      rpcBase: resolved.clientSession.rpcBase,
-      expiresAt: resolved.clientSession.expiresAt,
-    });
+    return runner.getBackend(
+      {
+        sessionId: resolved.clientSession.sessionId,
+        clientId: resolved.clientSession.clientId,
+        rpcBase: resolved.clientSession.rpcBase,
+        expiresAt: resolved.clientSession.expiresAt,
+      },
+      clientTarget && (typeof clientTarget === "object" || typeof clientTarget === "function")
+        ? clientTarget as never
+        : null,
+    );
   }
 }
 

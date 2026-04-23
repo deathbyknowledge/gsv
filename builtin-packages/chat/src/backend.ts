@@ -1,4 +1,4 @@
-import { PackageBackendEntrypoint } from "@gsv/package/backend";
+import { PackageBackendEntrypoint, type PackageSignalContext } from "@gsv/package/backend";
 import {
   abortRun,
   decideHil,
@@ -7,6 +7,8 @@ import {
   listWorkspaces,
   sendMessage,
   spawnProcess,
+  unwatchProcessSignals,
+  watchProcessSignals,
 } from "./backend/api";
 
 export default class ChatBackend extends PackageBackendEntrypoint {
@@ -36,5 +38,30 @@ export default class ChatBackend extends PackageBackendEntrypoint {
 
   async decideHil(args: unknown): Promise<unknown> {
     return decideHil(this.kernel, args);
+  }
+
+  async watchProcessSignals(args: unknown): Promise<unknown> {
+    return watchProcessSignals(this.kernel, this.app, args);
+  }
+
+  async unwatchProcessSignals(args: unknown): Promise<unknown> {
+    return unwatchProcessSignals(this.kernel, this.app, args);
+  }
+
+  override async onSignal(ctx: PackageSignalContext): Promise<void> {
+    if (!this.app) {
+      return;
+    }
+    const state = ctx.watch.state && typeof ctx.watch.state === "object"
+      ? ctx.watch.state as Record<string, unknown>
+      : null;
+    const clientId = typeof state?.clientId === "string" && state.clientId.trim().length > 0
+      ? state.clientId.trim()
+      : null;
+    if (clientId) {
+      await this.app.emitTo(clientId, ctx.signal, ctx.payload);
+      return;
+    }
+    await this.app.emit(ctx.signal, ctx.payload);
   }
 }
