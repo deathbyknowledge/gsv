@@ -301,10 +301,13 @@ fn builds_runtime_artifact_with_wrapper_and_hash() {
         .any(|path| path.starts_with("__gsv_browser_assets__/")));
 
     let wrapper = modules.get("__gsv__/main.ts").unwrap().content.as_str();
+    let package_definition = modules.get("src/package.ts").unwrap().content.as_str();
     assert!(wrapper.contains("import definition from \"../src/package.ts\";"));
     assert!(wrapper.contains("class GsvPackageAppBackend extends RpcTarget"));
     assert!(wrapper.contains("const BROWSER_ENTRY = \"__gsv_browser__/src/main.js\";"));
     assert!(wrapper.contains("const APP_SHELL_HTML = \"<!doctype html>"));
+    assert!(!package_definition.contains("\"@gsv/package/manifest\""));
+    assert!(package_definition.contains("\"../node_modules/@gsv/package/src/manifest.ts\""));
 }
 
 #[test]

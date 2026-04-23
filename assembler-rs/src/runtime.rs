@@ -37,9 +37,14 @@ pub fn build_runtime_assembly(
 
     let definition_graph = build_module_graph_for_entry(installed, &definition_repo_path);
     diagnostics.extend(definition_graph.diagnostics);
-    let Some(definition_graph) = definition_graph.value else {
+    let Some(mut definition_graph) = definition_graph.value else {
         return StageOutcome::failure(diagnostics);
     };
+    diagnostics.extend(rewrite_runtime_module_graph(
+        &mut definition_graph,
+        analysis,
+        &OxcResolver::new(installed.files.clone()),
+    ));
     graphs.push(definition_graph);
 
     if let Some(browser_entry) = installed.browser_entry.as_deref() {
@@ -55,9 +60,14 @@ pub fn build_runtime_assembly(
     if let Some(backend_entry) = installed.backend_entry.as_deref() {
         let backend_graph = build_module_graph_for_entry(installed, backend_entry);
         diagnostics.extend(backend_graph.diagnostics);
-        let Some(backend_graph) = backend_graph.value else {
+        let Some(mut backend_graph) = backend_graph.value else {
             return StageOutcome::failure(diagnostics);
         };
+        diagnostics.extend(rewrite_runtime_module_graph(
+            &mut backend_graph,
+            analysis,
+            &OxcResolver::new(installed.files.clone()),
+        ));
         graphs.push(backend_graph);
     }
 
@@ -68,9 +78,14 @@ pub fn build_runtime_assembly(
         }
         let command_graph = build_module_graph_for_entry(installed, entry_path);
         diagnostics.extend(command_graph.diagnostics);
-        let Some(command_graph) = command_graph.value else {
+        let Some(mut command_graph) = command_graph.value else {
             return StageOutcome::failure(diagnostics);
         };
+        diagnostics.extend(rewrite_runtime_module_graph(
+            &mut command_graph,
+            analysis,
+            &OxcResolver::new(installed.files.clone()),
+        ));
         graphs.push(command_graph);
     }
 
@@ -97,6 +112,43 @@ pub fn build_runtime_assembly(
         },
         diagnostics,
     )
+}
+
+fn rewrite_runtime_module_graph(
+    graph: &mut ModuleGraph,
+    analysis: &PackageAssemblyAnalysis,
+    resolver: &OxcResolver,
+) -> Vec<PackageAssemblyDiagnostic> {
+    let route_map = graph
+        .modules
+        .iter()
+        .map(|module| {
+            (
+                module.path.clone(),
+                artifact_module_path(&module.path, &analysis.package_root),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut diagnostics = Vec::new();
+
+    for module in &mut graph.modules {
+        if module.kind != PackageAssemblyArtifactModuleKind::SourceModule {
+            continue;
+        }
+        match rewrite_runtime_module_source(
+            module,
+            route_map
+                .get(&module.path)
+                .expect("current module route path must exist"),
+            &route_map,
+            resolver,
+        ) {
+            Ok(content) => module.content = content,
+            Err(error) => diagnostics.push(error),
+        }
+    }
+
+    diagnostics
 }
 
 fn generate_runtime_modules(
@@ -718,6 +770,41 @@ fn rewrite_browser_module_source(
     Ok(rewritten)
 }
 
+fn rewrite_runtime_module_source(
+    module: &PackageAssemblyArtifactModule,
+    artifact_path: &str,
+    route_map: &BTreeMap<String, String>,
+    resolver: &OxcResolver,
+) -> Result<String, PackageAssemblyDiagnostic> {
+    let mut rewritten = module.content.clone();
+    let rewrites = collect_module_request_spans_with_oxc(&module.path, &module.content)?
+        .into_iter()
+        .map(|request| {
+            let resolved = resolver.resolve_specifier(&module.path, &request.specifier)?;
+            let target_artifact_path = route_map.get(&resolved.repo_path).ok_or_else(|| {
+                PackageAssemblyDiagnostic::error(
+                    "runtime.unsupported-specifier",
+                    format!(
+                        "Runtime module {} depends on unresolved artifact module {}.",
+                        module.path, resolved.repo_path
+                    ),
+                    module.path.clone(),
+                )
+            })?;
+            Ok((
+                request.start,
+                request.end,
+                serde_json::to_string(&relative_specifier(artifact_path, target_artifact_path))
+                    .unwrap(),
+            ))
+        })
+        .collect::<Result<Vec<_>, PackageAssemblyDiagnostic>>()?;
+    for (start, end, replacement) in rewrites.into_iter().rev() {
+        rewritten.replace_range(start..end, &replacement);
+    }
+    Ok(rewritten)
+}
+
 fn emitted_browser_route_path(module_path: &str, package_root: &str) -> String {
     let artifact_path = relativize_to_root(module_path, package_root);
     let emitted = match artifact_path.rsplit_once('.') {
@@ -731,6 +818,14 @@ fn emitted_browser_route_path(module_path: &str, package_root: &str) -> String {
         None => format!("{artifact_path}.js"),
     };
     format!("__gsv_browser__/{emitted}")
+}
+
+fn artifact_module_path(module_path: &str, package_root: &str) -> String {
+    if module_path == "__gsv__/main.ts" || module_path.starts_with("__gsv_") {
+        module_path.to_string()
+    } else {
+        relativize_to_root(module_path, package_root)
+    }
 }
 
 fn build_browser_shell_html(browser_entry: &str, stylesheet_paths: &[String]) -> String {
