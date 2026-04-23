@@ -26,10 +26,10 @@ features:
   - title: Explanation
     details: Understand the system — architecture, the agent loop, memory, channels, security.
     link: /explanation/architecture
-  - title: Package Assembly v2
-    details: Design spec for the next package assembly pipeline — npm installs, Oxc transforms, Dynamic Workers output.
-    link: /package-assembly-v2
-  - title: Package SDK v2
-    details: Example-first package contract proposal — declarative manifest, backend entrypoint, browser entrypoint, and CLI commands.
-    link: /package-sdk-v2
+  - title: Write a Package App
+    details: Build a package with a declarative manifest, backend entrypoint, browser app, and CLI commands.
+    link: /how-to/write-a-package-app
+  - title: Package SDK
+    details: Reference for package manifests, backend bindings, browser helpers, CLI context, and public routes.
+    link: /reference/package-sdk
 ---

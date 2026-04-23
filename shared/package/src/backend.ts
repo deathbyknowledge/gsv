@@ -4,12 +4,14 @@ import type {
   PackageDaemonContext,
   PackageMetaBinding,
   PackageSignalContext,
+  PackageStorageBinding,
   PackageViewerBinding,
 } from "./context";
 
 export type PackageBackendBindings = {
   meta: PackageMetaBinding;
   kernel: KernelClientLike;
+  storage?: PackageStorageBinding;
   viewer?: PackageViewerBinding;
   app?: PackageAppSessionBinding;
   daemon?: PackageDaemonContext;
@@ -18,6 +20,7 @@ export type PackageBackendBindings = {
 export abstract class PackageBackendEntrypoint implements PackageBackendBindings {
   meta!: PackageMetaBinding;
   kernel!: KernelClientLike;
+  storage?: PackageStorageBinding;
   viewer?: PackageViewerBinding;
   app?: PackageAppSessionBinding;
   daemon?: PackageDaemonContext;
@@ -41,5 +44,8 @@ export type {
   PackageMetaBinding,
   PackageSignalContext,
   PackageSignalWatchInfo,
+  PackageSqlBindingValue,
+  PackageStorageBinding,
+  PackageStorageSqlBinding,
   PackageViewerBinding,
 } from "./context";

@@ -89,6 +89,7 @@ type AppRunnerDaemonStub = Rpc.RpcTargetBranded & {
   upsertRpcSchedule(input: unknown): Promise<unknown>;
   removeRpcSchedule(key: string): Promise<{ removed: boolean }>;
   listRpcSchedules(): Promise<unknown[]>;
+  packageSqlExec(statement: string, bindings?: unknown[]): Promise<unknown[]>;
 };
 
 type GsvApiBindingProps = {
@@ -181,6 +182,10 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
 
   async listRpcSchedules(): Promise<unknown[]> {
     return this.#getRunner().listRpcSchedules();
+  }
+
+  async packageSqlExec(statement: string, bindings?: unknown[]): Promise<unknown[]> {
+    return this.#getRunner().packageSqlExec(statement, bindings);
   }
 
   #getRunner(): AppRunnerDaemonStub {
@@ -302,6 +307,21 @@ export class AppRunner extends DurableObject<Env> {
 
   async listRpcSchedules(): Promise<unknown[]> {
     return this.daemonSchedules.list().map((record) => this.#serializeDaemonRecord(record));
+  }
+
+  async packageSqlExec(statement: string, bindings?: unknown[]): Promise<unknown[]> {
+    const normalizedStatement = typeof statement === "string" ? statement.trim() : "";
+    if (!normalizedStatement) {
+      throw new Error("package sql statement is required");
+    }
+    const normalizedBindings = Array.isArray(bindings)
+      ? bindings.map((value) => this.#normalizeSqlBindingValue(value))
+      : [];
+    const rows = this.ctx.storage.sql.exec<Record<string, SqlStorageValue>>(
+      normalizedStatement,
+      ...normalizedBindings,
+    ).toArray();
+    return rows.map((row) => this.#serializeSqlRow(row));
   }
 
   async subscribeSignal(args: unknown, runtime: AppRuntimeContext): Promise<unknown> {
@@ -655,5 +675,43 @@ export class AppRunner extends DurableObject<Env> {
       lastError: record.lastError,
       lastDurationMs: record.lastDurationMs,
     };
+  }
+
+  #normalizeSqlBindingValue(value: unknown): string | number | null {
+    if (
+      value === null
+      || typeof value === "string"
+      || typeof value === "number"
+    ) {
+      return value;
+    }
+    if (typeof value === "boolean") {
+      return value ? 1 : 0;
+    }
+    throw new Error("package sql bindings must be string, number, boolean, or null");
+  }
+
+  #serializeSqlRow(row: Record<string, SqlStorageValue>): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(row).map(([key, value]) => [key, this.#serializeSqlValue(value)]),
+    );
+  }
+
+  #serializeSqlValue(value: unknown): unknown {
+    if (
+      value === null
+      || typeof value === "string"
+      || typeof value === "number"
+      || typeof value === "boolean"
+    ) {
+      return value;
+    }
+    if (value instanceof ArrayBuffer) {
+      return btoa(String.fromCharCode(...new Uint8Array(value)));
+    }
+    if (ArrayBuffer.isView(value)) {
+      return btoa(String.fromCharCode(...new Uint8Array(value.buffer)));
+    }
+    return String(value);
   }
 }

@@ -1,6 +1,7 @@
 import type {
   KernelClientLike,
   PackageMetaBinding,
+  PackageStorageBinding,
   PackageViewerBinding,
 } from "./context";
 
@@ -8,6 +9,7 @@ export type PackageCommandContext = {
   meta: PackageMetaBinding;
   viewer: PackageViewerBinding;
   kernel: KernelClientLike;
+  storage?: PackageStorageBinding;
   argv: string[];
   stdin: {
     text(): Promise<string>;
@@ -31,5 +33,8 @@ export function defineCommand<const T extends PackageCommandHandler>(handler: T)
 export type {
   KernelClientLike,
   PackageMetaBinding,
+  PackageSqlBindingValue,
+  PackageStorageBinding,
+  PackageStorageSqlBinding,
   PackageViewerBinding,
 } from "./context";

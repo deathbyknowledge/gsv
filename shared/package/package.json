@@ -13,7 +13,6 @@
     "./browser": "./src/browser.ts",
     "./cli": "./src/cli.ts",
     "./context": "./src/context.ts",
-    "./worker": "./src/worker.ts",
     "./host": "./src/host.ts"
   }
 }

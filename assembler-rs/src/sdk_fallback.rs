@@ -12,7 +12,7 @@ pub const GSV_APP_LINK_FALLBACK_FILES: [(&str, &str); 2] = [
     ),
 ];
 
-pub const GSV_PACKAGE_SDK_FALLBACK_FILES: [(&str, &str); 9] = [
+pub const GSV_PACKAGE_SDK_FALLBACK_FILES: [(&str, &str); 8] = [
     (
         "__gsv_sdk/@gsv/package/package.json",
         include_str!("../../shared/package/package.json"),
@@ -32,10 +32,6 @@ pub const GSV_PACKAGE_SDK_FALLBACK_FILES: [(&str, &str); 9] = [
     (
         "__gsv_sdk/@gsv/package/src/cli.ts",
         include_str!("../../shared/package/src/cli.ts"),
-    ),
-    (
-        "__gsv_sdk/@gsv/package/src/worker.ts",
-        include_str!("../../shared/package/src/worker.ts"),
     ),
     (
         "__gsv_sdk/@gsv/package/src/host.ts",

@@ -364,6 +364,8 @@ fn builds_runtime_artifact_for_declarative_backend_and_commands() {
     assert!(wrapper.contains("export class GsvCommandEntrypoint extends WorkerEntrypoint"));
     assert!(wrapper.contains("export class GsvAppSignalEntrypoint extends WorkerEntrypoint"));
     assert!(wrapper.contains("function buildDaemonClient(env, props, daemonOverride, triggerOverride)"));
+    assert!(wrapper.contains("function buildStorageClient(env)"));
+    assert!(wrapper.contains("typeof api.packageSqlExec !== \"function\""));
     assert!(wrapper.contains("async invoke(method, args)"));
     assert!(wrapper.contains("const api = env.GSV_API;"));
 }

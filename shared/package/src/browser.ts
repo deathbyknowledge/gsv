@@ -15,10 +15,14 @@ type CapnwebGlobal = {
   RpcTarget?: new (...args: unknown[]) => unknown;
 };
 
-type WrappedBackend = {
+type RemoteBackend = {
   invoke(method: string, args?: unknown): Promise<unknown>;
-  dup?: () => unknown;
 } & Record<string | symbol, unknown>;
+
+type BackendProxyControl = {
+  invoke(method: string, args?: unknown): Promise<unknown>;
+  reconnect(): Promise<void>;
+};
 
 declare global {
   interface Window {
@@ -49,43 +53,31 @@ function getCapnweb(): CapnwebGlobal {
   return capnweb;
 }
 
-function wrapAppBackend<T = unknown>(backend: unknown): T {
-  if (!backend || (typeof backend !== "object" && typeof backend !== "function")) {
-    return backend as T;
-  }
-  const target = backend as WrappedBackend;
-  if (typeof target.invoke !== "function") {
-    return backend as T;
-  }
-  return new Proxy(target, {
-    get(proxyTarget, prop) {
-      if (prop === "then") {
-        return undefined;
-      }
-      if (typeof prop !== "string") {
-        return Reflect.get(proxyTarget, prop);
-      }
-      if (prop === "invoke" || prop === "dup") {
-        const value = Reflect.get(proxyTarget, prop);
-        return typeof value === "function" ? value.bind(proxyTarget) : value;
-      }
-      return (args?: unknown) => {
-        return proxyTarget.invoke(prop, args);
-      };
-    },
-  }) as T;
+let backendConnectionPromise: Promise<RemoteBackend> | null = null;
+let backendProxy: unknown = null;
+
+function isReconnectableBackendError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return normalized.includes("websocket disconnected")
+    || normalized.includes("websocket closed")
+    || normalized.includes("connection closed")
+    || normalized.includes("transport closed")
+    || normalized.includes("socket closed")
+    || normalized.includes("broken pipe")
+    || normalized.includes("rpc stream closed");
 }
 
-function buildRpcWebSocketUrl(rpcBase: string): string {
-  const url = new URL(rpcBase, globalThis.window?.location?.href ?? "http://localhost");
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return url.toString();
+function resetBackendConnection(): void {
+  backendConnectionPromise = null;
+  if (globalThis.window) {
+    globalThis.window.__GSV_BACKEND_READY__ = undefined;
+  }
 }
 
-export async function connectBackend<T = unknown>(): Promise<T> {
-  const existing = globalThis.window?.__GSV_BACKEND_READY__;
-  if (existing) {
-    return existing as Promise<T>;
+async function connectBackendTransport(): Promise<RemoteBackend> {
+  if (backendConnectionPromise) {
+    return backendConnectionPromise;
   }
   const boot = getAppBoot();
   if (!boot.hasBackend) {
@@ -96,22 +88,85 @@ export async function connectBackend<T = unknown>(): Promise<T> {
     const session = capnweb.newWebSocketRpcSession<{
       authenticate(secret: string): unknown;
     }>(buildRpcWebSocketUrl(boot.rpcBase));
-    const backend = wrapAppBackend<T>(await session.authenticate(boot.sessionSecret));
-    if (globalThis.window) {
-      globalThis.window.backend = backend;
+    const backend = await session.authenticate(boot.sessionSecret);
+    if (!backend || (typeof backend !== "object" && typeof backend !== "function")) {
+      throw new Error("package backend rpc returned an invalid target");
     }
-    return backend;
-  })();
+    const target = backend as RemoteBackend;
+    if (typeof target.invoke !== "function") {
+      throw new Error("package backend rpc target is missing invoke()");
+    }
+    return target;
+  })().catch((error) => {
+    if (backendConnectionPromise === ready) {
+      resetBackendConnection();
+    }
+    throw error;
+  });
+  backendConnectionPromise = ready;
   if (globalThis.window) {
-    globalThis.window.__GSV_BACKEND_READY__ = ready;
+    globalThis.window.__GSV_BACKEND_READY__ = ready.then(() => backendProxy ?? null);
   }
   return ready;
 }
 
-export async function getBackend<T = unknown>(): Promise<T> {
-  return connectBackend<T>();
+async function invokeBackend(method: string, args?: unknown): Promise<unknown> {
+  try {
+    const backend = await connectBackendTransport();
+    return await backend.invoke(method, args);
+  } catch (error) {
+    if (!isReconnectableBackendError(error)) {
+      throw error;
+    }
+  }
+
+  resetBackendConnection();
+  const backend = await connectBackendTransport();
+  return backend.invoke(method, args);
 }
 
-export async function connectAppBackend<T = unknown>(): Promise<T> {
+function createBackendProxy<T = unknown>(): T {
+  if (backendProxy) {
+    return backendProxy as T;
+  }
+  backendProxy = new Proxy({} as BackendProxyControl, {
+    get(_target, prop) {
+      if (prop === "then") {
+        return undefined;
+      }
+      if (prop === "invoke") {
+        return invokeBackend;
+      }
+      if (prop === "reconnect") {
+        return async () => {
+          resetBackendConnection();
+          await connectBackendTransport();
+        };
+      }
+      if (typeof prop !== "string") {
+        return undefined;
+      }
+      return (args?: unknown) => invokeBackend(prop, args);
+    },
+  }) as T;
+  if (globalThis.window) {
+    globalThis.window.backend = backendProxy;
+  }
+  return backendProxy as T;
+}
+
+function buildRpcWebSocketUrl(rpcBase: string): string {
+  const url = new URL(rpcBase, globalThis.window?.location?.href ?? "http://localhost");
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
+
+export async function connectBackend<T = unknown>(): Promise<T> {
+  const proxy = createBackendProxy<T>();
+  await connectBackendTransport();
+  return proxy;
+}
+
+export async function getBackend<T = unknown>(): Promise<T> {
   return connectBackend<T>();
 }

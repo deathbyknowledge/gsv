@@ -20,6 +20,23 @@ export type KernelClientLike = {
   request<T = unknown>(call: string, args?: unknown): Promise<T>;
 };
 
+export type PackageSqlBindingValue =
+  | string
+  | number
+  | boolean
+  | null;
+
+export type PackageStorageSqlBinding = {
+  exec<T extends Record<string, unknown> = Record<string, unknown>>(
+    statement: string,
+    ...bindings: PackageSqlBindingValue[]
+  ): Promise<T[]>;
+};
+
+export type PackageStorageBinding = {
+  sql: PackageStorageSqlBinding;
+};
+
 export type PackageDaemonSchedule =
   | { kind: "at"; atMs: number }
   | { kind: "after"; afterMs: number }

@@ -368,6 +368,20 @@ function buildDaemonClient(env, props, daemonOverride, triggerOverride) {{
   }};
 }}
 
+function buildStorageClient(env) {{
+  const api = env.GSV_API;
+  if (!api || typeof api.packageSqlExec !== "function") {{
+    return undefined;
+  }}
+  return {{
+    sql: {{
+      async exec(statement, ...bindings) {{
+        return api.packageSqlExec(statement, bindings);
+      }},
+    }},
+  }};
+}}
+
 function createBaseContext(metaOverrides, props, env, kernelOverride, daemonOverride, daemonTrigger) {{
   const appFrame = props?.appFrame && typeof props.appFrame === "object" ? props.appFrame : null;
   return {{
@@ -388,6 +402,7 @@ function createBaseContext(metaOverrides, props, env, kernelOverride, daemonOver
       : undefined,
     daemon: buildDaemonClient(env, props, daemonOverride, daemonTrigger),
     kernel: buildKernelClient(env, props, kernelOverride),
+    storage: buildStorageClient(env),
   }};
 }}
 
@@ -406,6 +421,9 @@ function createBackendInstance(ctx) {{
   const backend = new GsvPackageBackendModule();
   backend.meta = ctx.meta;
   backend.kernel = ctx.kernel;
+  if (ctx.storage) {{
+    backend.storage = ctx.storage;
+  }}
   backend.viewer = ctx.viewer;
   if (ctx.app) {{
     backend.app = ctx.app;

@@ -274,7 +274,7 @@ fn prepare_sources_injects_sdk_fallbacks_and_materializes_workspace_packages() {
 
     assert!(prepared
         .files
-        .contains("node_modules/@gsv/package/src/worker.ts"));
+        .contains("node_modules/@gsv/package/src/manifest.ts"));
     assert!(prepared
         .files
         .contains("node_modules/@gsv/app-link/src/index.ts"));
