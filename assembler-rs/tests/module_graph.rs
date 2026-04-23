@@ -252,6 +252,106 @@ export default [data, pad];"#,
 }
 
 #[test]
+fn graph_treats_browser_module_js_exports_as_source_modules() {
+    let mut request = base_request(
+        r#"import preact from "preact-like";
+import { useThing } from "preact-like/hooks";
+import { jsx } from "preact-like/jsx-runtime";
+export default [preact, useThing, jsx];"#,
+    );
+    request
+        .analysis
+        .package_json
+        .dependencies
+        .insert("preact-like".to_string(), "1.0.0".to_string());
+    request.files.insert(
+        "apps/demo/package-lock.json".to_string(),
+        r#"{
+  "packages": {
+    "": { "version": "0.1.0" },
+    "node_modules/preact-like": { "version": "1.0.0" }
+  }
+}"#
+        .to_string(),
+    );
+
+    let tarball_url = "https://registry.example/preact-like/-/preact-like-1.0.0.tgz";
+    let client = MockNpmRegistryClient::default()
+        .with_package("preact-like", packument(&[("1.0.0", tarball_url)]))
+        .with_tarball(
+            tarball_url,
+            tarball(&[
+                (
+                    "package.json",
+                    br#"{
+  "name": "preact-like",
+  "version": "1.0.0",
+  "exports": {
+    ".": {
+      "browser": "./dist/preact.module.js",
+      "import": "./dist/preact.mjs",
+      "require": "./dist/preact.js"
+    },
+    "./hooks": {
+      "browser": "./hooks/dist/hooks.module.js",
+      "import": "./hooks/dist/hooks.mjs",
+      "require": "./hooks/dist/hooks.js"
+    },
+    "./jsx-runtime": {
+      "browser": "./jsx-runtime/dist/jsxRuntime.module.js",
+      "import": "./jsx-runtime/dist/jsxRuntime.mjs",
+      "require": "./jsx-runtime/dist/jsxRuntime.js"
+    }
+  }
+}"#,
+                ),
+                (
+                    "dist/preact.module.js",
+                    br#"export default { h() { return null; } };"#,
+                ),
+                ("dist/preact.mjs", br#"export default { h() { return null; } };"#),
+                ("dist/preact.js", br#"module.exports = { h() { return null; } };"#),
+                (
+                    "hooks/dist/hooks.module.js",
+                    br#"export function useThing() { return "ok"; }"#,
+                ),
+                ("hooks/dist/hooks.mjs", br#"export function useThing() { return "ok"; }"#),
+                ("hooks/dist/hooks.js", br#"exports.useThing = function useThing() { return "ok"; };"#),
+                (
+                    "jsx-runtime/dist/jsxRuntime.module.js",
+                    br#"export function jsx() { return null; }"#,
+                ),
+                ("jsx-runtime/dist/jsxRuntime.mjs", br#"export function jsx() { return null; }"#),
+                ("jsx-runtime/dist/jsxRuntime.js", br#"exports.jsx = function jsx() { return null; };"#),
+            ]),
+        );
+
+    let planned = prepare_request(&request).value.expect("planned");
+    let installed = install_registry_dependencies(&planned, &client)
+        .value
+        .expect("installed");
+    let graph = build_module_graph(&installed).value.expect("graph");
+
+    let kinds = graph
+        .modules
+        .iter()
+        .map(|module| (module.path.as_str(), &module.kind))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        kinds.get("node_modules/preact-like/dist/preact.module.js"),
+        Some(&&PackageAssemblyArtifactModuleKind::SourceModule)
+    );
+    assert_eq!(
+        kinds.get("node_modules/preact-like/hooks/dist/hooks.module.js"),
+        Some(&&PackageAssemblyArtifactModuleKind::SourceModule)
+    );
+    assert_eq!(
+        kinds.get("node_modules/preact-like/jsx-runtime/dist/jsxRuntime.module.js"),
+        Some(&&PackageAssemblyArtifactModuleKind::SourceModule)
+    );
+}
+
+#[test]
 fn graph_reports_unresolved_imports() {
     let request = base_request(
         r#"import { missing } from "./missing";

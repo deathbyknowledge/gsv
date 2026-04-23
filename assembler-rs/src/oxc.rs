@@ -210,11 +210,18 @@ impl OxcResolver {
         let package_type = resolution
             .package_json()
             .and_then(|package_json| package_json.r#type());
+        let inferred_module_type = infer_module_type_from_path(&resolution.full_path(), package_type);
         Ok(ResolvedModule {
             repo_path,
-            module_type: resolution
-                .module_type()
-                .or_else(|| infer_module_type_from_path(&resolution.full_path(), package_type)),
+            module_type: match (resolution.module_type(), inferred_module_type) {
+                (Some(ModuleType::CommonJs), Some(ModuleType::Module))
+                    if prefers_esm_module_type(&resolution.full_path()) =>
+                {
+                    Some(ModuleType::Module)
+                }
+                (Some(module_type), _) => Some(module_type),
+                (None, inferred) => inferred,
+            },
             package_json_path,
         })
     }
@@ -471,6 +478,10 @@ fn infer_module_type_from_path(
     path: &Path,
     package_type: Option<PackageType>,
 ) -> Option<ModuleType> {
+    if prefers_esm_module_type(path) {
+        return Some(ModuleType::Module);
+    }
+
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
         "mjs" | "mts" | "ts" | "tsx" => Some(ModuleType::Module),
@@ -482,6 +493,14 @@ fn infer_module_type_from_path(
         },
         _ => None,
     }
+}
+
+fn prefers_esm_module_type(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let lower = file_name.to_ascii_lowercase();
+    lower.ends_with(".module.js") || lower.ends_with(".module.jsx") || lower.ends_with(".esm.js")
 }
 
 fn metadata_for_path(is_file: bool, is_dir: bool) -> Result<FileMetadata, io::Error> {
