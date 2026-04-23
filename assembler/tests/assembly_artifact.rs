@@ -306,6 +306,7 @@ fn builds_runtime_artifact_with_wrapper_and_hash() {
     assert!(wrapper.contains("class GsvPackageAppBackend extends RpcTarget"));
     assert!(wrapper.contains("const BROWSER_ENTRY = \"__gsv_browser__/src/main.js\";"));
     assert!(wrapper.contains("const APP_SHELL_HTML = \"<!doctype html>"));
+    assert!(wrapper.contains("const GSV_RUNTIME_WRAPPER_MARKER = \"app-events-emitto-2026-04-23\";"));
     assert!(!package_definition.contains("\"@gsv/package/manifest\""));
     assert!(package_definition.contains("\"../node_modules/@gsv/package/src/manifest.ts\""));
 }
@@ -365,6 +366,7 @@ fn builds_runtime_artifact_for_declarative_backend_and_commands() {
     assert!(wrapper.contains("export class GsvAppSignalEntrypoint extends WorkerEntrypoint"));
     assert!(wrapper.contains("function buildDaemonClient(env, props, daemonOverride, triggerOverride)"));
     assert!(wrapper.contains("function buildStorageClient(env)"));
+    assert!(wrapper.contains("function buildAppClient(env, props)"));
     assert!(wrapper.contains("typeof api.packageSqlExec !== \"function\""));
     assert!(wrapper.contains("async invoke(method, args)"));
     assert!(wrapper.contains("const api = env.GSV_API;"));

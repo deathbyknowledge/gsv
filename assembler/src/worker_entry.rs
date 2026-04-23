@@ -6,7 +6,7 @@ use crate::artifact::finalize_artifact;
 use crate::model::{PackageAssemblyRequest, PackageAssemblyResponse};
 use crate::npm::install_registry_dependencies_with_fetch;
 use crate::pipeline::prepare_request;
-use crate::runtime::build_runtime_assembly;
+use crate::runtime::{build_runtime_assembly, RUNTIME_WRAPPER_MARKER};
 use crate::service::build_assembly_response;
 
 #[event(fetch)]
@@ -14,6 +14,7 @@ async fn fetch(_req: Request, _env: worker::Env, _ctx: Context) -> worker::Resul
     Response::from_json(&json!({
         "name": "gsv-assembler",
         "version": env!("CARGO_PKG_VERSION"),
+        "runtime_wrapper_marker": RUNTIME_WRAPPER_MARKER,
         "status": "ready"
     }))
 }
@@ -31,26 +32,62 @@ pub async fn assemble_package(input: JsValue) -> Result<JsValue, JsValue> {
 }
 
 async fn assemble_package_response(request: PackageAssemblyRequest) -> PackageAssemblyResponse {
+    worker::console_log!(
+        "[assembler] assemble start package_root={} analysis_hash={} wrapper={}",
+        request.analysis.package_root,
+        request.analysis.analysis_hash,
+        RUNTIME_WRAPPER_MARKER,
+    );
     let prepared = prepare_request(&request);
     let mut diagnostics = prepared.diagnostics;
     let Some(planned) = prepared.value else {
+        worker::console_log!(
+            "[assembler] assemble failed package_root={} stage=prepare wrapper={}",
+            request.analysis.package_root,
+            RUNTIME_WRAPPER_MARKER,
+        );
         return build_assembly_response(&request, None, diagnostics);
     };
 
     let installed = install_registry_dependencies_with_fetch(&planned).await;
     diagnostics.extend(installed.diagnostics);
     let Some(installed) = installed.value else {
+        worker::console_log!(
+            "[assembler] assemble failed package_root={} stage=install wrapper={}",
+            request.analysis.package_root,
+            RUNTIME_WRAPPER_MARKER,
+        );
         return build_assembly_response(&request, None, diagnostics);
     };
 
     let runtime = build_runtime_assembly(&request.analysis, &installed);
     diagnostics.extend(runtime.diagnostics);
     let Some(runtime) = runtime.value else {
+        worker::console_log!(
+            "[assembler] assemble failed package_root={} stage=runtime wrapper={}",
+            request.analysis.package_root,
+            RUNTIME_WRAPPER_MARKER,
+        );
         return build_assembly_response(&request, None, diagnostics);
     };
 
     let artifact = finalize_artifact(&request.analysis, &runtime);
     diagnostics.extend(artifact.diagnostics);
+
+    if let Some(artifact) = artifact.value.as_ref() {
+        worker::console_log!(
+            "[assembler] assemble ok package_root={} hash={} wrapper={}",
+            request.analysis.package_root,
+            artifact.hash,
+            RUNTIME_WRAPPER_MARKER,
+        );
+    } else {
+        worker::console_log!(
+            "[assembler] assemble failed package_root={} stage=finalize wrapper={}",
+            request.analysis.package_root,
+            RUNTIME_WRAPPER_MARKER,
+        );
+    }
 
     build_assembly_response(&request, artifact.value, diagnostics)
 }
