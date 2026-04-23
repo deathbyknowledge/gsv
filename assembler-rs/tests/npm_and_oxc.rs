@@ -273,6 +273,63 @@ export default worker;"#,
 }
 
 #[test]
+fn browser_resolver_prefers_import_export_over_require_export() {
+    let mut request = base_request(r#"import qrcode from "qrcode-generator"; export default qrcode;"#);
+    request
+        .analysis
+        .package_json
+        .dependencies
+        .insert("qrcode-generator".to_string(), "2.0.4".to_string());
+    request.files.insert(
+        "apps/demo/package-lock.json".to_string(),
+        r#"{
+  "packages": {
+    "": { "version": "0.1.0" },
+    "node_modules/qrcode-generator": { "version": "2.0.4" }
+  }
+}"#
+        .to_string(),
+    );
+
+    let tarball_url = "https://registry.example/qrcode-generator/-/qrcode-generator-2.0.4.tgz";
+    let client = MockNpmRegistryClient::default()
+        .with_package("qrcode-generator", packument(&[("2.0.4", tarball_url)]))
+        .with_tarball(
+            tarball_url,
+            tarball(&[
+                (
+                    "package.json",
+                    br#"{
+  "name": "qrcode-generator",
+  "version": "2.0.4",
+  "main": "dist/qrcode.js",
+  "module": "dist/qrcode.mjs",
+  "exports": {
+    "types": "./dist/qrcode.d.ts",
+    "require": "./dist/qrcode.js",
+    "import": "./dist/qrcode.mjs"
+  }
+}"#,
+                ),
+                ("dist/qrcode.js", br#"module.exports = function qrcode() {};"#),
+                ("dist/qrcode.mjs", br#"export default function qrcode() {}"#),
+                ("dist/qrcode.d.ts", br#"declare const qrcode: unknown; export default qrcode;"#),
+            ]),
+        );
+
+    let planned = prepare_request(&request).value.expect("planned request");
+    let installed = install_registry_dependencies(&planned, &client)
+        .value
+        .expect("installed dependencies");
+
+    let resolved = OxcResolver::new_browser(installed.files.clone())
+        .resolve_specifier("apps/demo/src/main.tsx", "qrcode-generator")
+        .expect("resolve qrcode-generator");
+
+    assert_eq!(resolved.repo_path, "node_modules/qrcode-generator/dist/qrcode.mjs");
+}
+
+#[test]
 fn oxc_resolver_resolves_injected_gsv_sdk_packages() {
     let request = base_request(
         r#"import { definePackage } from "@gsv/package/manifest";

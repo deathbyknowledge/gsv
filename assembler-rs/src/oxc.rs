@@ -31,6 +31,12 @@ pub struct OxcResolver {
     resolver: ResolverGeneric<OxcVirtualFileSystem>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResolverMode {
+    Generic,
+    Browser,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedModule {
     pub repo_path: String,
@@ -125,17 +131,27 @@ impl Default for OxcResolver {
 
 impl OxcResolver {
     pub fn new(files: VirtualFileTree) -> Self {
+        Self::new_with_mode(files, ResolverMode::Generic)
+    }
+
+    pub fn new_browser(files: VirtualFileTree) -> Self {
+        Self::new_with_mode(files, ResolverMode::Browser)
+    }
+
+    fn new_with_mode(files: VirtualFileTree, mode: ResolverMode) -> Self {
         let file_system = OxcVirtualFileSystem::from_virtual_tree(files);
         let resolver = ResolverGeneric::new_with_file_system(
             file_system.clone(),
             ResolveOptions {
                 alias_fields: vec![vec!["browser".into()]],
-                condition_names: vec![
-                    "browser".into(),
-                    "import".into(),
-                    "require".into(),
-                    "default".into(),
-                ],
+                condition_names: match mode {
+                    ResolverMode::Generic => {
+                        vec!["browser".into(), "import".into(), "require".into(), "default".into()]
+                    }
+                    ResolverMode::Browser => {
+                        vec!["browser".into(), "import".into(), "default".into()]
+                    }
+                },
                 extensions: vec![
                     ".js".into(),
                     ".jsx".into(),

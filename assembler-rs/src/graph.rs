@@ -32,17 +32,34 @@ pub fn build_module_graph(installed: &InstalledAssembly) -> StageOutcome<ModuleG
         return StageOutcome::failure(diagnostics);
     };
 
-    build_module_graph_for_entry(installed, &main_module)
+    build_module_graph_for_browser_entry(installed, &main_module)
 }
 
 pub fn build_module_graph_for_entry(
     installed: &InstalledAssembly,
     entry_path: &str,
 ) -> StageOutcome<ModuleGraph> {
+    build_module_graph_for_entry_with_resolver(installed, entry_path, OxcResolver::new(installed.files.clone()))
+}
+
+pub fn build_module_graph_for_browser_entry(
+    installed: &InstalledAssembly,
+    entry_path: &str,
+) -> StageOutcome<ModuleGraph> {
+    build_module_graph_for_entry_with_resolver(
+        installed,
+        entry_path,
+        OxcResolver::new_browser(installed.files.clone()),
+    )
+}
+
+fn build_module_graph_for_entry_with_resolver(
+    installed: &InstalledAssembly,
+    entry_path: &str,
+    resolver: OxcResolver,
+) -> StageOutcome<ModuleGraph> {
     let mut diagnostics = Vec::new();
     let main_module = entry_path.to_string();
-
-    let resolver = OxcResolver::new(installed.files.clone());
     let mut queue = VecDeque::from([QueueEntry {
         path: main_module.clone(),
         module_type: None,

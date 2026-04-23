@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::{has_errors, PackageAssemblyDiagnostic};
-use crate::graph::{build_module_graph_for_entry, ModuleGraph};
+use crate::graph::{build_module_graph_for_browser_entry, build_module_graph_for_entry, ModuleGraph};
 use crate::model::{
     PackageAssemblyAnalysis, PackageAssemblyArtifactModule, PackageAssemblyArtifactModuleKind,
 };
@@ -43,7 +43,7 @@ pub fn build_runtime_assembly(
     graphs.push(definition_graph);
 
     if let Some(browser_entry) = installed.browser_entry.as_deref() {
-        let browser_graph_outcome = build_module_graph_for_entry(installed, browser_entry);
+        let browser_graph_outcome = build_module_graph_for_browser_entry(installed, browser_entry);
         diagnostics.extend(browser_graph_outcome.diagnostics);
         let Some(resolved_browser_graph) = browser_graph_outcome.value else {
             return StageOutcome::failure(diagnostics);
@@ -584,7 +584,7 @@ fn generate_browser_runtime_assets(
     installed: &InstalledAssembly,
 ) -> StageOutcome<BrowserRuntimeAssets> {
     let mut diagnostics = Vec::new();
-    let resolver = OxcResolver::new(installed.files.clone());
+    let resolver = OxcResolver::new_browser(installed.files.clone());
     let mut route_map = BTreeMap::new();
     let mut emitted_paths = BTreeMap::<String, String>::new();
 
