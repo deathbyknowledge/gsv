@@ -164,9 +164,6 @@ class AppRunnerBackendTarget extends RpcTarget {
   }
 
   async invoke(method: string, args?: unknown): Promise<unknown> {
-    if (this.client && this.runtime.appSession) {
-      this.runner.registerAppClient(this.runtime.appSession, this.client);
-    }
     console.log(`[app-runner] backend invoke method=${method} clientId=${this.runtime.appSession?.clientId ?? ""}`);
     return this.runner.invokeAppRpc(method, args, this.runtime);
   }
