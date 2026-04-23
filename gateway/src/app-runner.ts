@@ -33,7 +33,7 @@ type AppSessionInfo = {
   expiresAt: number;
 };
 
-type AppFacetRuntime = {
+type AppRuntimeContext = {
   appFrame: AppFrameContext;
   appSession?: AppSessionInfo;
   daemonTrigger?: {
@@ -72,31 +72,16 @@ type SignalSinkStub = Rpc.RpcTargetBranded & {
   [Symbol.dispose]?: () => void;
 };
 
-type AppFacetStub = Rpc.DurableObjectBranded & {
-  gsvFetch(
-    request: AppHttpRequest,
-    runtime?: AppFacetRuntime,
-    kernel?: KernelBridgeStub,
-    daemon?: AppRunnerDaemonStub,
-  ): Promise<AppHttpResponse>;
-  gsvInvoke(
-    method: string,
-    args: unknown,
-    runtime?: AppFacetRuntime,
-    kernel?: KernelBridgeStub,
-    daemon?: AppRunnerDaemonStub,
-  ): Promise<unknown>;
-  gsvSubscribeSignal(args: unknown, runtime?: AppFacetRuntime, kernel?: KernelBridgeStub): Promise<unknown>;
-  gsvUnsubscribeSignal(args: unknown, runtime?: AppFacetRuntime, kernel?: KernelBridgeStub): Promise<unknown>;
-  gsvHandleSignal(
-    signalName: string,
-    payload?: unknown,
-    sourcePid?: string | null,
-    watch?: PackageAppSignalWatchInfo,
-    runtime?: AppFacetRuntime,
-    kernel?: KernelBridgeStub,
-    daemon?: AppRunnerDaemonStub,
-  ): Promise<void>;
+type AppFetchEntrypointStub = Rpc.WorkerEntrypointBranded & {
+  fetch(request: Request): Promise<Response>;
+};
+
+type AppRpcEntrypointStub = Rpc.WorkerEntrypointBranded & {
+  invoke(method: string, args: unknown): Promise<unknown>;
+};
+
+type AppSignalEntrypointStub = Rpc.WorkerEntrypointBranded & {
+  run(signalName?: string): Promise<void>;
 };
 
 type AppRunnerDaemonStub = Rpc.RpcTargetBranded & {
@@ -140,34 +125,16 @@ class KernelBridge extends RpcTarget {
 }
 
 /**
- * Browser-facing RPC shim for app facets.
+ * Browser-facing RPC shim for package backends.
  *
- * Why this exists:
- * - The intended architecture is for the browser to talk directly to the
- *   package facet stub and call real app methods on it.
- * - Today that fails in workerd when the facet stub crosses the RPC boundary.
- *   The underlying runtime returns the facet as a Fetcher-backed stub, and the
- *   transfer path hits `getSubrequestChannel()` on a factory that does not yet
- *   implement it.
- * - We therefore return a plain RpcTarget here and forward app methods to the
- *   facet behind the scenes.
- *
- * Constraints:
- * - Keep the public browser-facing surface to a single generic method
- *   (`invoke(...)`) plus the reserved live-signal helpers.
- * - Do not grow this into a second app protocol.
- * - App-specific method names still belong to the facet/backend surface.
- *
- * What needs to change upstream:
- * - workerd needs to support transferring facet stubs directly over RPC
- *   without tripping the current Fetcher/subrequest-channel limitation.
- * - Once that works reliably, AppRunner can return the facet stub directly and
- *   this wrapper can be removed.
+ * Keep the public browser-facing surface to a single generic `invoke(...)`
+ * plus the reserved live-signal helpers. App-specific methods still belong to
+ * the package backend surface; AppRunner just forwards them.
  */
 class AppRunnerBackendTarget extends RpcTarget {
   constructor(
     private readonly runner: AppRunner,
-    private readonly runtime: AppFacetRuntime,
+    private readonly runtime: AppRuntimeContext,
   ) {
     super();
   }
@@ -222,6 +189,30 @@ export function deserializeAppHttpResponse(response: AppHttpResponse): Response 
   });
 }
 
+function deserializeAppHttpRequest(request: AppHttpRequest): Request {
+  const init: RequestInit = {
+    method: request.method,
+    headers: request.headers,
+  };
+  if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
+    init.body = request.body;
+  }
+  return new Request(request.url, init);
+}
+
+async function serializeAppHttpResponseValue(response: Response): Promise<AppHttpResponse> {
+  let body: ArrayBuffer | null = null;
+  if (response.body) {
+    body = await response.clone().arrayBuffer();
+  }
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    headers: Array.from(response.headers.entries()),
+    body,
+  };
+}
+
 export class AppRunner extends DurableObject<Env> {
   private readonly daemonSchedules: AppRpcScheduleStore;
   private readonly liveSignalSubscriptions = new Map<string, LiveSignalSubscription>();
@@ -265,26 +256,12 @@ export class AppRunner extends DurableObject<Env> {
 
   async deliverSignal(input: AppRunnerSignalInput): Promise<void> {
     const runtime = this.#defaultRuntime();
-    await this.#getFacet().gsvHandleSignal(
-      input.signal,
-      input.payload,
-      input.sourcePid ?? null,
-      input.watch,
-      runtime,
-      this.#createKernelBridge(runtime.appFrame),
-      this.#createDaemonBridge(),
-    );
+    await this.#getSignalEntrypoint(runtime, input).run(input.signal);
     await this.#forwardSignalToLiveSubscriber(input, runtime);
   }
 
-  async invokeAppRpc(method: string, args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
-    return this.#getFacet().gsvInvoke(
-      method,
-      args,
-      runtime,
-      this.#createKernelBridge(runtime.appFrame),
-      this.#createDaemonBridge(),
-    );
+  async invokeAppRpc(method: string, args: unknown, runtime: AppRuntimeContext): Promise<unknown> {
+    return this.#getRpcEntrypoint(runtime).invoke(method, args);
   }
 
   async upsertRpcSchedule(input: unknown): Promise<unknown> {
@@ -303,7 +280,7 @@ export class AppRunner extends DurableObject<Env> {
     return this.daemonSchedules.list().map((record) => this.#serializeDaemonRecord(record));
   }
 
-  async subscribeSignal(args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
+  async subscribeSignal(args: unknown, runtime: AppRuntimeContext): Promise<unknown> {
     const input = this.#normalizeSignalSubscriptionArgs(args);
     if (!input.sink) {
       throw new Error("signal sink must implement onSignal()");
@@ -337,7 +314,7 @@ export class AppRunner extends DurableObject<Env> {
     return { subscriptionId };
   }
 
-  async unsubscribeSignal(args: unknown, runtime: AppFacetRuntime): Promise<unknown> {
+  async unsubscribeSignal(args: unknown, runtime: AppRuntimeContext): Promise<unknown> {
     const subscriptionId =
       typeof (args as { subscriptionId?: unknown } | null)?.subscriptionId === "string"
         ? ((args as { subscriptionId: string }).subscriptionId.trim() || null)
@@ -349,13 +326,9 @@ export class AppRunner extends DurableObject<Env> {
     return { removed };
   }
 
-  async #gsvFetch(request: AppHttpRequest, runtime: AppFacetRuntime): Promise<AppHttpResponse> {
-    return this.#getFacet().gsvFetch(
-      request,
-      runtime,
-      this.#createKernelBridge(runtime.appFrame),
-      this.#createDaemonBridge(),
-    );
+  async #gsvFetch(request: AppHttpRequest, runtime: AppRuntimeContext): Promise<AppHttpResponse> {
+    const response = await this.#getAppEntrypoint(runtime).fetch(deserializeAppHttpRequest(request));
+    return serializeAppHttpResponseValue(response);
   }
 
   async alarm(): Promise<void> {
@@ -368,8 +341,8 @@ export class AppRunner extends DurableObject<Env> {
 
   #defaultRuntime(
     appSession?: AppSessionInfo,
-    daemonTrigger?: AppFacetRuntime["daemonTrigger"],
-  ): AppFacetRuntime {
+    daemonTrigger?: AppRuntimeContext["daemonTrigger"],
+  ): AppRuntimeContext {
     const props = this.#getProps();
     return {
       appFrame: this.#runtimeAppFrame(props),
@@ -419,7 +392,7 @@ export class AppRunner extends DurableObject<Env> {
     };
   }
 
-  async #forwardSignalToLiveSubscriber(input: AppRunnerSignalInput, runtime: AppFacetRuntime): Promise<void> {
+  async #forwardSignalToLiveSubscriber(input: AppRunnerSignalInput, runtime: AppRuntimeContext): Promise<void> {
     const state = input.watch.state && typeof input.watch.state === "object"
       ? input.watch.state as Record<string, unknown>
       : null;
@@ -461,7 +434,7 @@ export class AppRunner extends DurableObject<Env> {
     return typeof key === "string" && key.startsWith("__gsv_live__:");
   }
 
-  async #cleanupLegacyLiveSignalWatch(input: AppRunnerSignalInput, runtime: AppFacetRuntime): Promise<void> {
+  async #cleanupLegacyLiveSignalWatch(input: AppRunnerSignalInput, runtime: AppRuntimeContext): Promise<void> {
     const key = input.watch.key;
     if (!this.#isLegacyLiveSignalWatchKey(key)) {
       return;
@@ -508,10 +481,6 @@ export class AppRunner extends DurableObject<Env> {
     return props;
   }
 
-  #facetName(props: AppRunnerProps): string {
-    return `app:${props.entrypointName}`;
-  }
-
   #loadWorker(props: AppRunnerProps): WorkerStub {
     const appFrame = this.#runtimeAppFrame(props);
     return this.env.LOADER.get(
@@ -528,28 +497,53 @@ export class AppRunner extends DurableObject<Env> {
     );
   }
 
-  #getFacet(): AppFacetStub {
+  #entrypointProps(
+    runtime: AppRuntimeContext,
+    extras?: Record<string, unknown>,
+  ): Record<string, unknown> {
     const props = this.#getProps();
-    const worker = this.#loadWorker(props);
-    const facetName = this.#facetName(props);
-    const codeKey = this.#codeKey(props);
-    const versionKey = `facet:${facetName}:code-key`;
-    const facets = this.ctx.facets;
-    const previousCodeKey = this.ctx.storage.kv.get<string>(versionKey);
-    if (previousCodeKey && previousCodeKey !== codeKey) {
-      facets.abort(facetName, new Error("App facet code updated"));
-    }
-    if (previousCodeKey !== codeKey) {
-      this.ctx.storage.kv.put(versionKey, codeKey);
-    }
-    return facets.get<AppFacetStub>(facetName, (): FacetStartupOptions<AppFacetStub> => ({
-      class: worker.getDurableObjectClass<AppFacetStub>("GsvAppFacet"),
-    }));
+    return {
+      packageId: props.packageId,
+      packageName: props.packageName,
+      routeBase: props.routeBase,
+      appFrame: runtime.appFrame,
+      ...(runtime.appSession ? { appSession: runtime.appSession } : {}),
+      ...(runtime.daemonTrigger ? { daemonTrigger: runtime.daemonTrigger } : {}),
+      kernel: this.#createKernelBridge(runtime.appFrame),
+      daemon: this.#createDaemonBridge(),
+      ...(extras ?? {}),
+    };
+  }
+
+  #getAppEntrypoint(runtime: AppRuntimeContext): AppFetchEntrypointStub {
+    const worker = this.#loadWorker(this.#getProps());
+    return worker.getEntrypoint<AppFetchEntrypointStub>(undefined, {
+      props: this.#entrypointProps(runtime),
+    });
+  }
+
+  #getRpcEntrypoint(runtime: AppRuntimeContext): AppRpcEntrypointStub {
+    const worker = this.#loadWorker(this.#getProps());
+    return worker.getEntrypoint<AppRpcEntrypointStub>("GsvAppRpcEntrypoint", {
+      props: this.#entrypointProps(runtime),
+    });
+  }
+
+  #getSignalEntrypoint(runtime: AppRuntimeContext, input: AppRunnerSignalInput): AppSignalEntrypointStub {
+    const worker = this.#loadWorker(this.#getProps());
+    return worker.getEntrypoint<AppSignalEntrypointStub>("GsvAppSignalEntrypoint", {
+      props: this.#entrypointProps(runtime, {
+        signal: input.signal,
+        payload: input.payload,
+        sourcePid: input.sourcePid ?? null,
+        watch: input.watch,
+      }),
+    });
   }
 
   #codeKey(props: AppRunnerProps): string {
     return [
-      "app-facet",
+      "app-runtime",
       String(props.appFrame.uid),
       props.packageId,
       props.entrypointName,
@@ -574,13 +568,7 @@ export class AppRunner extends DurableObject<Env> {
     let status: "ok" | "error" = "ok";
     let errorMessage: string | null = null;
     try {
-      await this.#getFacet().gsvInvoke(
-        record.rpcMethod,
-        record.payload,
-        runtime,
-        this.#createKernelBridge(runtime.appFrame),
-        this.#createDaemonBridge(),
-      );
+      await this.#getRpcEntrypoint(runtime).invoke(record.rpcMethod, record.payload);
     } catch (error) {
       status = "error";
       errorMessage = error instanceof Error ? error.message : String(error);

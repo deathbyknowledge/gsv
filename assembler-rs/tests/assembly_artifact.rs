@@ -363,6 +363,8 @@ fn builds_runtime_artifact_for_declarative_backend_and_commands() {
     assert!(wrapper.contains("[\"sync\", __gsv_command_0],"));
     assert!(wrapper.contains("export class GsvCommandEntrypoint extends WorkerEntrypoint"));
     assert!(wrapper.contains("export class GsvAppSignalEntrypoint extends WorkerEntrypoint"));
+    assert!(wrapper.contains("function buildDaemonClient(props, daemonOverride, triggerOverride)"));
+    assert!(wrapper.contains("async invoke(method, args)"));
 }
 
 #[test]

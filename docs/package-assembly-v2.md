@@ -24,6 +24,8 @@ The goal of v2 is:
 - make the package build surface explicit and debuggable
 - standardize package browser boot around a fixed platform HTML shell
 - preserve the current Dynamic Workers artifact model
+- make the package runtime entrypoint-based by default instead of relying on
+  implicit generated Durable Object facets
 
 ## non-goals
 
@@ -55,6 +57,44 @@ The output artifact shape remains:
 See:
 
 - [shared/protocol/src/package-assembly.ts](/home/hank/theagentscompany/gsv/shared/protocol/src/package-assembly.ts:1)
+
+### `AppRunner` stays the supervisor
+
+The gateway-side `AppRunner` Durable Object remains the package runtime
+supervisor.
+
+Its responsibilities include:
+
+- per-package runtime identity
+- app session coordination
+- signal subscriptions and delivery
+- daemon scheduling
+- any package-scoped durable state the platform chooses to expose
+
+What changes in v2 is the child runtime contract.
+
+The package worker should be treated as an explicit set of entrypoints:
+
+- HTTP/UI fetch
+- backend RPC
+- signal handling
+- CLI commands
+
+v2 should not require every package artifact to export a hidden `GsvAppFacet`
+Durable Object just to satisfy transport plumbing.
+
+### package-owned durable state is explicit
+
+If packages need SQLite-backed state, that should be modeled as an explicit
+capability, for example package-scoped storage surfaced by the supervisor.
+
+For the current GSV runtime shape, the simplest default is:
+
+- one logical package database per `AppRunner` identity
+- exposed through a package binding such as `storage.sql`
+
+Facets remain a possible future implementation choice for more complex cases,
+but they should not be the default contract for every package app.
 
 ### package apps use a fixed HTML shell
 
@@ -341,15 +381,15 @@ Diagnostic family:
 Responsibilities:
 
 - generate the Dynamic Worker runtime wrapper
-- wire package `setup`
-- wire package app `fetch`
-- wire package app `rpc`
-- wire package app `onSignal`
+- wire package HTTP/UI fetch entrypoints
+- wire package backend RPC entrypoints
+- wire package signal entrypoints
+- wire package command entrypoints
 - attach asset lookup tables
 - expose the browser entry path to the fixed shell/runtime
 
-This keeps the current GSV package runtime shape but removes the bundler from
-the middle.
+This keeps the current package product surface while making the runtime
+contract explicit and removing the bundler from the middle.
 
 Diagnostic family:
 

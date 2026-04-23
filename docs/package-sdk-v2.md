@@ -31,6 +31,7 @@ This matches the assembly v2 direction in:
 - backend may declare `public_routes` as exact path auth exceptions
 - every backend path not listed in `public_routes` remains session-authenticated
 - backend built-ins use reserved method names instead of a large `app` object
+- package-owned durable state is explicit, not implicit
 - the platform shell owns browser bootstrap and static app HTML
 - browser framework dependencies stay explicit; JSX packages must declare
   `preact` instead of relying on hidden platform injection
@@ -129,6 +130,8 @@ The entry module default export should be the backend class.
  *   absent on routes declared in `backend.public_routes`
  * - this.app: { sessionId, clientId, rpcBase, expiresAt } for browser-app
  *   requests
+ * - this.storage.sql: package-scoped SQLite access when the package declares
+ *   the storage capability
  * - this.daemon: daemon scheduling helpers when daemon support is available
  *
  * The default export of this module is the backend entrypoint.
@@ -270,9 +273,18 @@ The backend entrypoint can build on top of these bindings:
   `{ uid, username }`
 - `this.app`: inspect the active browser app session when the call came from a
   browser app `{ sessionId, clientId, rpcBase, expiresAt }`
+- `this.storage.sql`: package-scoped SQLite access when the package declares a
+  storage capability; v1 should treat this as one logical database per
+  `AppRunner` identity, not as arbitrary Durable Object access
 - `this.daemon`: manage daemon schedules when the backend is running in a
   daemon-capable environment with `upsertRpcSchedule(...)`,
   `removeRpcSchedule(...)`, `listRpcSchedules()`, and schedule trigger metadata
+
+The backend does not get an implicit Durable Object facet by default.
+
+If a package needs durable state, it should declare that explicitly and receive
+it through a modeled binding such as `this.storage.sql`, rather than by
+depending on hidden runtime topology.
 
 #### `onSignal(ctx)`
 

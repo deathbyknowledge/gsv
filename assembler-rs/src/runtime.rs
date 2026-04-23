@@ -312,12 +312,13 @@ function buildKernelClient(env, props, kernelOverride) {{
   }};
 }}
 
-function buildDaemonClient(daemonOverride, triggerOverride) {{
+function buildDaemonClient(props, daemonOverride, triggerOverride) {{
+  const daemonClient = daemonOverride ?? props?.daemon;
   if (
-    !daemonOverride
-    || typeof daemonOverride.upsertRpcSchedule !== "function"
-    || typeof daemonOverride.removeRpcSchedule !== "function"
-    || typeof daemonOverride.listRpcSchedules !== "function"
+    !daemonClient
+    || typeof daemonClient.upsertRpcSchedule !== "function"
+    || typeof daemonClient.removeRpcSchedule !== "function"
+    || typeof daemonClient.listRpcSchedules !== "function"
   ) {{
     return undefined;
   }}
@@ -331,13 +332,13 @@ function buildDaemonClient(daemonOverride, triggerOverride) {{
     : undefined;
   return {{
     async upsertRpcSchedule(input) {{
-      return daemonOverride.upsertRpcSchedule(input);
+      return daemonClient.upsertRpcSchedule(input);
     }},
     async removeRpcSchedule(key) {{
-      return daemonOverride.removeRpcSchedule(key);
+      return daemonClient.removeRpcSchedule(key);
     }},
     async listRpcSchedules() {{
-      return daemonOverride.listRpcSchedules();
+      return daemonClient.listRpcSchedules();
     }},
     ...(trigger ? {{ trigger }} : {{}}),
   }};
@@ -361,7 +362,7 @@ function createBaseContext(metaOverrides, props, env, kernelOverride, daemonOver
           expiresAt: typeof props.appSession.expiresAt === "number" ? props.appSession.expiresAt : 0,
         }}
       : undefined,
-    daemon: buildDaemonClient(daemonOverride, daemonTrigger),
+    daemon: buildDaemonClient(props, daemonOverride, daemonTrigger),
     kernel: buildKernelClient(env, props, kernelOverride),
   }};
 }}
@@ -569,7 +570,7 @@ class GsvPackageAppBackend extends RpcTarget {{
     const ctx = createBaseContext({{
       packageId: props.appFrame?.packageId ?? props.packageId ?? env.GSV_PACKAGE_ID ?? STATIC_META.packageId,
       routeBase: props.appFrame?.routeBase ?? props.routeBase ?? env.GSV_ROUTE_BASE ?? STATIC_META.routeBase,
-    }}, props, env);
+    }}, props, env, undefined, undefined, props.daemonTrigger);
     this.__gsvCtx = ctx;
     this.__gsvBackend = createBackendInstance(ctx);
   }}
@@ -584,6 +585,15 @@ class GsvPackageAppBackend extends RpcTarget {{
 }}
 
 export class GsvAppRpcEntrypoint extends WorkerEntrypoint {{
+  async invoke(method, args) {{
+    const hasBackend = typeof GsvPackageBackendModule === "function";
+    if (!hasBackend) {{
+      throw new Error("package app has no backend rpc");
+    }}
+    const backend = new GsvPackageAppBackend(this.env, this.ctx.props ?? {{}});
+    return backend.__invoke(method, args);
+  }}
+
   async getBackend() {{
     const hasBackend = typeof GsvPackageBackendModule === "function";
     if (!hasBackend) {{
