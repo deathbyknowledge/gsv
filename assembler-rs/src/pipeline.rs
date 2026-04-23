@@ -253,6 +253,19 @@ pub fn validate_request(request: &PackageAssemblyRequest) -> StageOutcome<Valida
         }
     }
 
+    if let Some(icon_path) = definition.meta.icon.as_deref().map(str::trim).filter(|path| !path.is_empty()) {
+        let resolved_icon = resolve_from_root(&request.analysis.package_root, icon_path);
+        if !request.files.contains_key(&resolved_icon) {
+            diagnostics.push(PackageAssemblyDiagnostic::error(
+                "contract.icon-missing",
+                "meta.icon references a file that is missing from the package snapshot.",
+                resolved_icon,
+            ));
+        } else if !asset_paths.contains(&resolved_icon) {
+            asset_paths.push(resolved_icon);
+        }
+    }
+
     if has_errors(&diagnostics) {
         return StageOutcome::failure(diagnostics);
     }

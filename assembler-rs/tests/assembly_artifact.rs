@@ -392,6 +392,42 @@ fn builds_runtime_artifact_for_command_only_package() {
 }
 
 #[test]
+fn runtime_artifact_emits_icon_asset_module() {
+    let mut request = declarative_request();
+    request.analysis.definition.as_mut().unwrap().meta.icon = Some("./ui/icon.svg".to_string());
+    request.files.insert(
+        "apps/demo/ui/icon.svg".to_string(),
+        r#"<svg viewBox="0 0 16 16"></svg>"#.to_string(),
+    );
+
+    let prepared = prepare_request(&request).value.expect("prepared");
+    let installed = install_registry_dependencies(&prepared, &EmptyRegistry)
+        .value
+        .expect("installed");
+    let runtime = build_runtime_assembly(&request.analysis, &installed)
+        .value
+        .expect("runtime");
+    let artifact = finalize_artifact(&request.analysis, &runtime)
+        .value
+        .expect("artifact");
+
+    let modules = artifact
+        .modules
+        .iter()
+        .map(|module| (module.path.as_str(), module))
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(
+        modules.get("ui/icon.svg").map(|module| &module.kind),
+        Some(&PackageAssemblyArtifactModuleKind::Text)
+    );
+    assert_eq!(
+        modules.get("ui/icon.svg").map(|module| module.content.as_str()),
+        Some(r#"<svg viewBox="0 0 16 16"></svg>"#)
+    );
+}
+
+#[test]
 fn runtime_artifact_transforms_typescript_and_jsx_modules() {
     let mut request = declarative_request();
     request

@@ -146,7 +146,12 @@ fn rejects_missing_browser_entry_file() {
 
 #[test]
 fn accepts_declarative_browser_definition() {
-    let request = base_request();
+    let mut request = base_request();
+    request.analysis.definition.as_mut().unwrap().meta.icon = Some("./ui/icon.svg".to_string());
+    request.files.insert(
+        "apps/demo/ui/icon.svg".to_string(),
+        "<svg></svg>".to_string(),
+    );
 
     let outcome = validate_request(&request);
 
@@ -158,7 +163,10 @@ fn accepts_declarative_browser_definition() {
     );
     assert_eq!(
         validated.asset_paths,
-        vec!["apps/demo/src/styles.css".to_string()]
+        vec![
+            "apps/demo/src/styles.css".to_string(),
+            "apps/demo/ui/icon.svg".to_string(),
+        ]
     );
 }
 
@@ -226,6 +234,17 @@ fn rejects_missing_asset_file() {
 
     assert!(outcome.value.is_none());
     assert!(diagnostic_codes(&outcome.diagnostics).contains(&"contract.asset-missing"));
+}
+
+#[test]
+fn rejects_missing_icon_file() {
+    let mut request = base_request();
+    request.analysis.definition.as_mut().unwrap().meta.icon = Some("./ui/icon.svg".to_string());
+
+    let outcome = validate_request(&request);
+
+    assert!(outcome.value.is_none());
+    assert!(diagnostic_codes(&outcome.diagnostics).contains(&"contract.icon-missing"));
 }
 
 #[test]

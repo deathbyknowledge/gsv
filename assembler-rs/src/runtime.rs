@@ -106,6 +106,7 @@ fn generate_runtime_modules(
     browser_graph: Option<&ModuleGraph>,
 ) -> StageOutcome<Vec<PackageAssemblyArtifactModule>> {
     let mut modules = Vec::new();
+    let mut emitted_asset_modules = BTreeSet::new();
     let mut asset_imports = Vec::new();
     let mut asset_entries = Vec::new();
     let mut command_imports = Vec::new();
@@ -116,6 +117,13 @@ fn generate_runtime_modules(
         let artifact_asset_path = relativize_to_root(asset_path, &analysis.package_root);
         let generated_path = format!("__gsv_assets__/{index}.ts");
         let content = installed.files.get(asset_path).unwrap_or_default();
+        if emitted_asset_modules.insert(artifact_asset_path.clone()) {
+            modules.push(PackageAssemblyArtifactModule {
+                path: artifact_asset_path.clone(),
+                kind: PackageAssemblyArtifactModuleKind::Text,
+                content: content.to_string(),
+            });
+        }
         modules.push(PackageAssemblyArtifactModule {
             path: generated_path.clone(),
             kind: PackageAssemblyArtifactModuleKind::SourceModule,
