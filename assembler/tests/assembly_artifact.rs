@@ -306,7 +306,6 @@ fn builds_runtime_artifact_with_wrapper_and_hash() {
     assert!(wrapper.contains("class GsvPackageAppBackend extends RpcTarget"));
     assert!(wrapper.contains("const BROWSER_ENTRY = \"__gsv_browser__/src/main.js\";"));
     assert!(wrapper.contains("const APP_SHELL_HTML = \"<!doctype html>"));
-    assert!(wrapper.contains("const GSV_RUNTIME_WRAPPER_MARKER = \"app-events-emitto-2026-04-23\";"));
     assert!(!package_definition.contains("\"@gsv/package/manifest\""));
     assert!(package_definition.contains("\"../node_modules/@gsv/package/src/manifest.ts\""));
 }

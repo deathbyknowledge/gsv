@@ -739,7 +739,6 @@ function createEmbeddedHostClient(backend) {
   }
 
   onAppEvent((signal, payload) => {
-    console.log("[chat-app] app event", signal, payload);
     emitSignal(signal, payload);
   });
 
@@ -748,7 +747,6 @@ function createEmbeddedHostClient(backend) {
     if (!normalizedPid) {
       return;
     }
-    console.log("[chat-app] clearSignalSubscription", normalizedPid);
     try {
       await backend.unwatchProcessSignals({ pid: normalizedPid });
     } catch {
@@ -758,7 +756,6 @@ function createEmbeddedHostClient(backend) {
   async function watchPid(pid) {
     const nextVersion = ++signalWatchVersion;
     const normalizedPid = typeof pid === "string" && pid.trim() ? pid.trim() : null;
-    console.log("[chat-app] watchPid", { pid: normalizedPid, activePid, nextVersion });
     const previousPid = activePid;
     if (normalizedPid !== activePid) {
       activePid = normalizedPid;
@@ -769,7 +766,6 @@ function createEmbeddedHostClient(backend) {
     }
 
     await backend.watchProcessSignals({ pid: normalizedPid });
-    console.log("[chat-app] watchPid installed", normalizedPid);
     if (nextVersion !== signalWatchVersion) {
       await backend.unwatchProcessSignals({ pid: normalizedPid }).catch(() => {});
       return;

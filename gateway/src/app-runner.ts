@@ -164,7 +164,6 @@ class AppRunnerBackendTarget extends RpcTarget {
   }
 
   async invoke(method: string, args?: unknown): Promise<unknown> {
-    console.log(`[app-runner] backend invoke method=${method} clientId=${this.runtime.appSession?.clientId ?? ""}`);
     return this.runner.invokeAppRpc(method, args, this.runtime);
   }
 }
@@ -202,7 +201,6 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
   }
 
   async emitAppEvent(event: string, payload?: unknown, clientId?: string): Promise<{ delivered: number }> {
-    console.log(`[gsv-api] emitAppEvent event=${event} clientId=${clientId ?? "*"}`);
     return this.#getRunner().emitAppEvent(event, payload, clientId);
   }
 
@@ -301,13 +299,11 @@ export class AppRunner extends DurableObject<Env> {
     if (client) {
       this.registerAppClient(appSession, client);
     }
-    console.log(`[app-runner] getBackend clientId=${appSession.clientId} hasClient=${Boolean(client)}`);
     return new AppRunnerBackendTarget(this, this.#defaultRuntime(appSession), client ?? null);
   }
 
   async deliverSignal(input: AppRunnerSignalInput): Promise<void> {
     const runtime = this.#runtimeForSignal(input);
-    console.log(`[app-runner] deliverSignal signal=${input.signal} watchId=${input.watch.id} key=${input.watch.key ?? ""} sourcePid=${input.sourcePid ?? ""}`);
     await this.#getSignalEntrypoint(runtime, input).run(input.signal);
   }
 
@@ -377,7 +373,6 @@ export class AppRunner extends DurableObject<Env> {
     const targetClientId = typeof clientId === "string" && clientId.trim().length > 0
       ? clientId.trim()
       : null;
-    console.log(`[app-runner] emitAppEvent event=${normalizedEvent} targetClientId=${targetClientId ?? "*"} registeredClients=${this.appClients.size}`);
     const delivered = await this.#emitAppEventToClients(normalizedEvent, payload, targetClientId);
     return { delivered };
   }
@@ -422,9 +417,6 @@ export class AppRunner extends DurableObject<Env> {
       ? state.clientId.trim()
       : null;
     const appSession = clientId ? this.appClients.get(clientId)?.session : undefined;
-    if (clientId) {
-      console.log(`[app-runner] runtimeForSignal clientId=${clientId} hasSession=${Boolean(appSession)}`);
-    }
     return this.#defaultRuntime(appSession);
   }
 
@@ -461,18 +453,15 @@ export class AppRunner extends DurableObject<Env> {
       session: appSession,
       registeredAt: Date.now(),
     });
-    console.log(`[app-runner] registerAppClient clientId=${clientId} sessionId=${appSession.sessionId} totalClients=${this.appClients.size}`);
   }
 
   async #emitAppEventToClients(event: string, payload: unknown, clientId: string | null): Promise<number> {
     const targets = clientId
       ? [...this.appClients.entries()].filter(([id]) => id === clientId)
       : [...this.appClients.entries()];
-    console.log(`[app-runner] fanout event=${event} targetCount=${targets.length} requestedClientId=${clientId ?? "*"}`);
     let delivered = 0;
     for (const [targetClientId, registration] of targets) {
       try {
-        console.log(`[app-runner] fanout -> clientId=${targetClientId} sessionId=${registration.session.sessionId}`);
         await registration.client.onAppEvent(event, payload);
         delivered += 1;
       } catch (error) {
@@ -490,7 +479,6 @@ export class AppRunner extends DurableObject<Env> {
       return;
     }
     this.appClients.delete(clientId);
-    console.log(`[app-runner] removeAppClient clientId=${clientId} remainingClients=${this.appClients.size}`);
     try {
       registration.client[Symbol.dispose]?.();
     } catch {

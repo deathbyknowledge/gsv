@@ -50,7 +50,6 @@ export default class ChatBackend extends PackageBackendEntrypoint {
 
   override async onSignal(ctx: PackageSignalContext): Promise<void> {
     if (!this.app) {
-      console.log(`[chat-backend] onSignal signal=${ctx.signal} no app binding`);
       return;
     }
     const state = ctx.watch.state && typeof ctx.watch.state === "object"
@@ -59,13 +58,10 @@ export default class ChatBackend extends PackageBackendEntrypoint {
     const clientId = typeof state?.clientId === "string" && state.clientId.trim().length > 0
       ? state.clientId.trim()
       : null;
-    console.log(`[chat-backend] onSignal signal=${ctx.signal} clientId=${clientId ?? "*"} watchKey=${ctx.watch.key ?? ""}`);
     if (clientId) {
-      const result = await this.app.emitTo(clientId, ctx.signal, ctx.payload);
-      console.log(`[chat-backend] onSignal emitTo delivered=${result.delivered} signal=${ctx.signal} clientId=${clientId}`);
+      await this.app.emitTo(clientId, ctx.signal, ctx.payload);
       return;
     }
-    const result = await this.app.emit(ctx.signal, ctx.payload);
-    console.log(`[chat-backend] onSignal emit delivered=${result.delivered} signal=${ctx.signal}`);
+    await this.app.emit(ctx.signal, ctx.payload);
   }
 }

@@ -541,7 +541,6 @@ class PackageAppSessionRpcTarget extends RpcTarget {
   }
 
   async authenticate(secret: string, clientTarget?: unknown): Promise<unknown> {
-    console.log(`[app-rpc] authenticate start package=${this.packageName} session=${this.sessionId} hasClientTarget=${Boolean(clientTarget)}`);
     const kernel = await getAgentByName(this.env.KERNEL, "singleton");
     const resolved = await kernel.resolvePackageAppRpcSession({
       packageName: this.packageName,
@@ -550,7 +549,6 @@ class PackageAppSessionRpcTarget extends RpcTarget {
     }) as ResolvedPackageAppRpcSession;
 
     if (!resolved.ok) {
-      console.warn(`[app-rpc] authenticate failed package=${this.packageName} session=${this.sessionId} status=${resolved.status} message=${resolved.message}`);
       throw new Error(resolved.message);
     }
 
@@ -564,7 +562,6 @@ class PackageAppSessionRpcTarget extends RpcTarget {
       appFrame: resolved.appFrame,
     });
 
-    console.log(`[app-rpc] authenticate resolved uid=${resolved.auth.uid} packageId=${resolved.packageId} clientId=${resolved.clientSession.clientId}`);
     return runner.getBackend(
       {
         sessionId: resolved.clientSession.sessionId,

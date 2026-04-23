@@ -10,8 +10,6 @@ use crate::oxc::{collect_module_request_spans_with_oxc, OxcResolver};
 use crate::pipeline::StageOutcome;
 use crate::virtual_fs::{relative_specifier, relativize_to_root, resolve_from_root};
 
-pub const RUNTIME_WRAPPER_MARKER: &str = "app-events-emitto-2026-04-23";
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeAssembly {
     pub main_module: String,
@@ -278,7 +276,6 @@ const STATIC_META = Object.freeze({{
   packageId: {package_id},
   routeBase: null,
 }});
-const GSV_RUNTIME_WRAPPER_MARKER = {runtime_wrapper_marker};
 const BROWSER_ENTRY = {browser_entry};
 const APP_SHELL_HTML = {app_shell_html};
 const STATIC_ASSETS = new Map([
@@ -679,7 +676,6 @@ export class GsvAppRpcEntrypoint extends WorkerEntrypoint {{
             .map(|graph| emitted_browser_route_path(&graph.main_module, &analysis.package_root))
             .map(|path| serde_json::to_string(&path).unwrap())
             .unwrap_or_else(|| "null".to_string()),
-        runtime_wrapper_marker = serde_json::to_string(RUNTIME_WRAPPER_MARKER).unwrap(),
         app_shell_html = browser_shell_html
             .map(|path| serde_json::to_string(&path).unwrap())
             .unwrap_or_else(|| "null".to_string()),
