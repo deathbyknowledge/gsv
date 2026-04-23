@@ -1,7 +1,8 @@
-import { DurableObject, RpcTarget } from "cloudflare:workers";
+import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { getAgentByName } from "agents";
 import { packageArtifactToWorkerCode, type PackageArtifact } from "./kernel/packages";
 import type { AppFrameContext, PackageAppSignalWatchInfo } from "./protocol/app-frame";
+import { buildAppRunnerName } from "./protocol/app-session";
 import type { RequestFrame, ResponseFrame } from "./protocol/frames";
 import {
   AppRpcScheduleStore,
@@ -90,6 +91,10 @@ type AppRunnerDaemonStub = Rpc.RpcTargetBranded & {
   listRpcSchedules(): Promise<unknown[]>;
 };
 
+type GsvApiBindingProps = {
+  appRunnerName: string;
+};
+
 const PROPS_KEY = "app-runner:props";
 const RUNTIME_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -150,21 +155,40 @@ class AppRunnerBackendTarget extends RpcTarget {
   }
 }
 
-class AppRunnerDaemonTarget extends RpcTarget {
-  constructor(private readonly runner: AppRunner) {
-    super();
+export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
+  async kernelRequest(appFrame: AppFrameContext, call: string, args?: unknown): Promise<unknown> {
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as unknown as KernelAppStub;
+    const frame: RequestFrame = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call,
+      args,
+    } as RequestFrame;
+    const response = await kernel.appRequest(appFrame, frame);
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+    return response.data;
   }
 
   async upsertRpcSchedule(input: unknown): Promise<unknown> {
-    return this.runner.upsertRpcSchedule(input);
+    return this.#getRunner().upsertRpcSchedule(input);
   }
 
   async removeRpcSchedule(key: string): Promise<{ removed: boolean }> {
-    return this.runner.removeRpcSchedule(key);
+    return this.#getRunner().removeRpcSchedule(key);
   }
 
   async listRpcSchedules(): Promise<unknown[]> {
-    return this.runner.listRpcSchedules();
+    return this.#getRunner().listRpcSchedules();
+  }
+
+  #getRunner(): AppRunnerDaemonStub {
+    const runnerName = this.ctx.props?.appRunnerName?.trim();
+    if (!runnerName) {
+      throw new Error("GSV_API requires appRunnerName");
+    }
+    return this.ctx.exports.AppRunner.getByName(runnerName) as unknown as AppRunnerDaemonStub;
   }
 }
 
@@ -364,10 +388,6 @@ export class AppRunner extends DurableObject<Env> {
     return new KernelBridge(this.env.KERNEL, appFrame);
   }
 
-  #createDaemonBridge(): AppRunnerDaemonTarget {
-    return new AppRunnerDaemonTarget(this);
-  }
-
   #normalizeSignalSubscriptionArgs(args: unknown): {
     processId: string | null;
     signals: string[];
@@ -482,17 +502,20 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #loadWorker(props: AppRunnerProps): WorkerStub {
-    const appFrame = this.#runtimeAppFrame(props);
     return this.env.LOADER.get(
       this.#codeKey(props),
       () => packageArtifactToWorkerCode(props.artifact, {
         PACKAGE_NAME: props.packageName,
         PACKAGE_ID: props.packageId,
         PACKAGE_ROUTE_BASE: props.routeBase,
+        GSV_API: this.ctx.exports.GsvApiBinding({
+          props: {
+            appRunnerName: buildAppRunnerName(props.appFrame.uid, props.packageId),
+          },
+        }),
         GSV_PACKAGE_NAME: props.packageName,
         GSV_PACKAGE_ID: props.packageId,
         GSV_ROUTE_BASE: props.routeBase,
-        GSV_APP_FRAME: appFrame,
       }),
     );
   }
@@ -509,8 +532,6 @@ export class AppRunner extends DurableObject<Env> {
       appFrame: runtime.appFrame,
       ...(runtime.appSession ? { appSession: runtime.appSession } : {}),
       ...(runtime.daemonTrigger ? { daemonTrigger: runtime.daemonTrigger } : {}),
-      kernel: this.#createKernelBridge(runtime.appFrame),
-      daemon: this.#createDaemonBridge(),
       ...(extras ?? {}),
     };
   }

@@ -22,7 +22,7 @@ import {
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
 export { KernelBinding } from "./kernel/packages";
-export { AppRunner } from "./app-runner";
+export { AppRunner, GsvApiBinding } from "./app-runner";
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {

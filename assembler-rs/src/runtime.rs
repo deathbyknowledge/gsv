@@ -299,8 +299,14 @@ function buildKernelClient(env, props, kernelOverride) {{
   if (kernelOverride && typeof kernelOverride.request === "function") {{
     return kernelOverride;
   }}
-  if (props?.kernel && typeof props.kernel.request === "function") {{
-    return props.kernel;
+  const api = env.GSV_API;
+  const appFrame = props?.appFrame && typeof props.appFrame === "object" ? props.appFrame : null;
+  if (api && typeof api.kernelRequest === "function" && appFrame) {{
+    return {{
+      async request(call, args) {{
+        return api.kernelRequest(appFrame, call, args);
+      }},
+    }};
   }}
   if (env.KERNEL && typeof env.KERNEL.request === "function") {{
     return env.KERNEL;
@@ -312,8 +318,26 @@ function buildKernelClient(env, props, kernelOverride) {{
   }};
 }}
 
-function buildDaemonClient(props, daemonOverride, triggerOverride) {{
-  const daemonClient = daemonOverride ?? props?.daemon;
+function buildDaemonClient(env, props, daemonOverride, triggerOverride) {{
+  const api = env.GSV_API;
+  const daemonClient = daemonOverride ?? (
+    api
+    && typeof api.upsertRpcSchedule === "function"
+    && typeof api.removeRpcSchedule === "function"
+    && typeof api.listRpcSchedules === "function"
+      ? {{
+          async upsertRpcSchedule(input) {{
+            return api.upsertRpcSchedule(input);
+          }},
+          async removeRpcSchedule(key) {{
+            return api.removeRpcSchedule(key);
+          }},
+          async listRpcSchedules() {{
+            return api.listRpcSchedules();
+          }},
+        }}
+      : null
+  );
   if (
     !daemonClient
     || typeof daemonClient.upsertRpcSchedule !== "function"
@@ -362,7 +386,7 @@ function createBaseContext(metaOverrides, props, env, kernelOverride, daemonOver
           expiresAt: typeof props.appSession.expiresAt === "number" ? props.appSession.expiresAt : 0,
         }}
       : undefined,
-    daemon: buildDaemonClient(props, daemonOverride, daemonTrigger),
+    daemon: buildDaemonClient(env, props, daemonOverride, daemonTrigger),
     kernel: buildKernelClient(env, props, kernelOverride),
   }};
 }}
