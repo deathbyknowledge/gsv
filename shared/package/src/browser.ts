@@ -80,6 +80,7 @@ function resetBackendConnection(): void {
 }
 
 function emitAppEvent(event: string, payload: unknown): void {
+  console.log(`[gsv-package] emitAppEvent event=${event} listenerCount=${appEventListeners.size}`);
   for (const listener of appEventListeners) {
     try {
       listener(event, payload);
@@ -99,9 +100,12 @@ function getOrCreateAppClientTarget(): unknown {
   }
   appClientTarget = new class extends RpcTargetCtor {
     async onAppEvent(event: unknown, payload: unknown) {
-      emitAppEvent(typeof event === "string" ? event : String(event ?? ""), payload);
+      const normalizedEvent = typeof event === "string" ? event : String(event ?? "");
+      console.log(`[gsv-package] onAppEvent event=${normalizedEvent}`);
+      emitAppEvent(normalizedEvent, payload);
     }
   }();
+  console.log("[gsv-package] created app client target");
   return appClientTarget;
 }
 
@@ -118,6 +122,7 @@ async function connectBackendTransport(): Promise<RemoteBackend> {
     const session = capnweb.newWebSocketRpcSession<{
       authenticate(secret: string, clientTarget?: unknown): unknown;
     }>(buildRpcWebSocketUrl(boot.rpcBase));
+    console.log(`[gsv-package] authenticate backend rpc rpcBase=${boot.rpcBase} clientId=${boot.clientId}`);
     const backend = await session.authenticate(boot.sessionSecret, getOrCreateAppClientTarget());
     if (!backend || (typeof backend !== "object" && typeof backend !== "function")) {
       throw new Error("package backend rpc returned an invalid target");
@@ -126,6 +131,7 @@ async function connectBackendTransport(): Promise<RemoteBackend> {
     if (typeof target.invoke !== "function") {
       throw new Error("package backend rpc target is missing invoke()");
     }
+    console.log(`[gsv-package] backend rpc ready clientId=${boot.clientId}`);
     return target;
   })().catch((error) => {
     if (backendConnectionPromise === ready) {
@@ -203,7 +209,9 @@ export async function getBackend<T = unknown>(): Promise<T> {
 
 export function onAppEvent(listener: AppEventListener): () => void {
   appEventListeners.add(listener);
+  console.log(`[gsv-package] onAppEvent listener added count=${appEventListeners.size}`);
   return () => {
     appEventListeners.delete(listener);
+    console.log(`[gsv-package] onAppEvent listener removed count=${appEventListeners.size}`);
   };
 }

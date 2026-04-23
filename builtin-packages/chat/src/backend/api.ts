@@ -105,6 +105,7 @@ export async function watchProcessSignals(kernel: KernelClient, app: AppBinding 
   if (!clientId) {
     throw new Error("client signal watch requires an app session");
   }
+  console.log(`[chat-backend] watchProcessSignals pid=${pid} clientId=${clientId}`);
   await Promise.all(CHAT_RUNTIME_SIGNALS.map((signal) => kernel.request("signal.watch", {
     signal,
     processId: pid,
@@ -127,6 +128,7 @@ export async function unwatchProcessSignals(kernel: KernelClient, app: AppBindin
   if (!clientId) {
     return { pid, removed: 0 };
   }
+  console.log(`[chat-backend] unwatchProcessSignals pid=${pid} clientId=${clientId}`);
   let removed = 0;
   await Promise.all(CHAT_RUNTIME_SIGNALS.map(async (signal) => {
     const result = await kernel.request("signal.unwatch", {

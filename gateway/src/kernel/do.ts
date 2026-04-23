@@ -615,6 +615,7 @@ export class Kernel extends Host<Env> {
       console.warn(`[Kernel] Signal from unknown process ${processId}`);
       return;
     }
+    console.log(`[kernel] handleProcessSignal signal=${frame.signal} processId=${processId} uid=${identity.uid}`);
 
     const runId = this.extractRunId(frame.payload);
     let automationJob: AutomationJobRecord | null = null;
@@ -681,7 +682,6 @@ export class Kernel extends Host<Env> {
         }
       });
     this.pendingProcessSignals.set(processId, queued);
-    this.ctx.waitUntil(queued);
   }
 
   private deliverSignalToConnection(
@@ -1620,8 +1620,10 @@ export class Kernel extends Host<Env> {
     frame: SignalFrame,
   ): Promise<void> {
     const watches = this.signalWatches.match(uid, frame.signal, processId);
+    console.log(`[kernel] dispatchSignalWatches signal=${frame.signal} processId=${processId} watchCount=${watches.length}`);
     for (const watch of watches) {
       try {
+        console.log(`[kernel] dispatchSignalWatches -> watchId=${watch.watchId} target=${watch.targetKind} key=${watch.key ?? ""}`);
         if (watch.targetKind === "app") {
           await this.invokePackageAppSignalHandler(watch, processId, frame);
         } else {
@@ -1681,6 +1683,7 @@ export class Kernel extends Host<Env> {
     };
 
     const runner = this.ctx.exports.AppRunner.getByName(buildAppRunnerName(user.uid, record.packageId));
+    console.log(`[kernel] invokePackageAppSignalHandler watchId=${watch.watchId} package=${record.manifest.name} routeBase=${watch.routeBase} signal=${frame.signal}`);
     await runner.ensureRuntime({
       packageId: record.packageId,
       packageName: record.manifest.name,
@@ -1690,6 +1693,7 @@ export class Kernel extends Host<Env> {
       appFrame,
     });
 
+    console.log(`[kernel] invokePackageAppSignalHandler -> runner.deliverSignal watchId=${watch.watchId} key=${watch.key ?? ""}`);
     await runner.deliverSignal({
       signal: frame.signal,
       payload: frame.payload,
