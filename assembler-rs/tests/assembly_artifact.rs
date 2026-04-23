@@ -636,3 +636,58 @@ render(<App />, root);"#
     assert!(browser_assets.iter().any(|content| content
         .contains("../../node_modules/preact/jsx-runtime/dist/jsxRuntime.module.js")));
 }
+
+#[test]
+fn runtime_artifact_rewrites_browser_worker_urls() {
+    let mut request = declarative_request();
+    request.files.insert(
+        "apps/demo/src/main.ts".to_string(),
+        r#"const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+worker.postMessage({ type: "ping" });
+"#
+        .to_string(),
+    );
+    request.files.insert(
+        "apps/demo/src/worker.ts".to_string(),
+        r#"self.addEventListener("message", () => {
+  self.postMessage({ type: "pong" });
+});
+"#
+        .to_string(),
+    );
+    request.analysis.definition.as_mut().unwrap().browser = Some(PackageBrowserDefinition {
+        entry: "./src/main.ts".to_string(),
+        assets: vec!["./src/styles.css".to_string()],
+    });
+    request.files.remove("apps/demo/src/main.tsx");
+
+    let prepared = prepare_request(&request).value.expect("prepared");
+    let installed = install_registry_dependencies(&prepared, &EmptyRegistry)
+        .value
+        .expect("installed");
+    let runtime = build_runtime_assembly(&request.analysis, &installed)
+        .value
+        .expect("runtime");
+    let artifact = finalize_artifact(&request.analysis, &runtime)
+        .value
+        .expect("artifact");
+
+    let modules = artifact
+        .modules
+        .iter()
+        .map(|module| (module.path.as_str(), module))
+        .collect::<BTreeMap<_, _>>();
+
+    let browser_assets = modules
+        .iter()
+        .filter(|(path, _)| path.starts_with("__gsv_browser_assets__/"))
+        .map(|(_, module)| module.content.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(browser_assets
+        .iter()
+        .any(|content| content.contains("new URL(\\\"./worker.js\\\", import.meta.url)")));
+    assert!(!browser_assets
+        .iter()
+        .any(|content| content.contains("new URL(\\\"./worker.ts\\\", import.meta.url)")));
+}

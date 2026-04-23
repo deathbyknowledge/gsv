@@ -325,7 +325,11 @@ pub fn collect_module_request_spans_with_oxc(
             })
         })
         .collect::<Vec<_>>();
+    spans.extend(collect_import_meta_url_request_spans(source_text));
     spans.sort_by_key(|span| (span.start, span.end));
+    spans.dedup_by(|left, right| {
+        left.start == right.start && left.end == right.end && left.specifier == right.specifier
+    });
     Ok(spans)
 }
 
@@ -364,7 +368,7 @@ pub fn parse_module_dependencies_with_oxc(
         ));
     }
     Ok(ParsedModuleDependencies {
-        requested_modules: collect_requested_modules(&parsed.module_record),
+        requested_modules: collect_requested_modules(&parsed.module_record, source_text),
         has_module_syntax: parsed.module_record.has_module_syntax,
     })
 }
@@ -479,15 +483,106 @@ fn collect_directories(files: &VirtualFileTree) -> BTreeSet<String> {
     directories
 }
 
-fn collect_requested_modules(module_record: &ModuleRecord<'_>) -> Vec<String> {
+fn collect_requested_modules(module_record: &ModuleRecord<'_>, source_text: &str) -> Vec<String> {
     let mut requested = module_record
         .requested_modules
         .keys()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+    requested.extend(
+        collect_import_meta_url_request_spans(source_text)
+            .into_iter()
+            .map(|span| span.specifier),
+    );
     requested.sort();
     requested.dedup();
     requested
+}
+
+fn collect_import_meta_url_request_spans(source: &str) -> Vec<ModuleRequestSpan> {
+    let mut spans = Vec::new();
+    let mut search_from = 0usize;
+    const PATTERN: &str = "new URL(";
+    const IMPORT_META_URL: &str = "import.meta.url";
+
+    while let Some(relative_match) = source[search_from..].find(PATTERN) {
+        let pattern_start = search_from + relative_match;
+        let mut index = pattern_start + PATTERN.len();
+        index = skip_ascii_whitespace(source, index);
+        let Some(quote) = source[index..].chars().next() else {
+            break;
+        };
+        if quote != '"' && quote != '\'' {
+            search_from = index.saturating_add(1);
+            continue;
+        }
+
+        let literal_start = index;
+        index += quote.len_utf8();
+        let Some(literal_end) = find_quoted_literal_end(source, index, quote) else {
+            search_from = index;
+            continue;
+        };
+        let specifier = source[index..literal_end].to_string();
+
+        let mut suffix_index = skip_ascii_whitespace(source, literal_end + quote.len_utf8());
+        if !source[suffix_index..].starts_with(',') {
+            search_from = literal_end + quote.len_utf8();
+            continue;
+        }
+        suffix_index += 1;
+        suffix_index = skip_ascii_whitespace(source, suffix_index);
+        if !source[suffix_index..].starts_with(IMPORT_META_URL) {
+            search_from = literal_end + quote.len_utf8();
+            continue;
+        }
+        suffix_index += IMPORT_META_URL.len();
+        suffix_index = skip_ascii_whitespace(source, suffix_index);
+        if !source[suffix_index..].starts_with(')') {
+            search_from = literal_end + quote.len_utf8();
+            continue;
+        }
+
+        spans.push(ModuleRequestSpan {
+            specifier,
+            start: literal_start,
+            end: literal_end + quote.len_utf8(),
+        });
+        search_from = suffix_index + 1;
+    }
+
+    spans
+}
+
+fn skip_ascii_whitespace(source: &str, mut index: usize) -> usize {
+    while let Some(ch) = source[index..].chars().next() {
+        if !ch.is_ascii_whitespace() {
+            break;
+        }
+        index += ch.len_utf8();
+    }
+    index
+}
+
+fn find_quoted_literal_end(source: &str, mut index: usize, quote: char) -> Option<usize> {
+    let mut escaped = false;
+    while let Some(ch) = source[index..].chars().next() {
+        if escaped {
+            escaped = false;
+            index += ch.len_utf8();
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            index += ch.len_utf8();
+            continue;
+        }
+        if ch == quote {
+            return Some(index);
+        }
+        index += ch.len_utf8();
+    }
+    None
 }
 
 fn infer_module_type_from_path(
