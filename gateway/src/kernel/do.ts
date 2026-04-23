@@ -189,6 +189,7 @@ export class Kernel extends Host<Env> {
   private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
+  private readonly pendingProcessSignals = new Map<string, Promise<void>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -326,7 +327,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (frame.type === "sig") {
-      await this.handleProcessSignal(processId, frame);
+      this.enqueueProcessSignal(processId, frame);
       return null;
     }
 
@@ -663,6 +664,24 @@ export class Kernel extends Host<Env> {
     if (frame.signal === "chat.complete") {
       this.runRoutes.delete(runId);
     }
+  }
+
+  private enqueueProcessSignal(processId: string, frame: SignalFrame): void {
+    const previous = this.pendingProcessSignals.get(processId) ?? Promise.resolve();
+    const queued = previous
+      .catch(() => {})
+      .then(() => this.handleProcessSignal(processId, frame))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[Kernel] process signal dispatch failed for ${processId}/${frame.signal}: ${message}`);
+      })
+      .finally(() => {
+        if (this.pendingProcessSignals.get(processId) === queued) {
+          this.pendingProcessSignals.delete(processId);
+        }
+      });
+    this.pendingProcessSignals.set(processId, queued);
+    this.ctx.waitUntil(queued);
   }
 
   private deliverSignalToConnection(
