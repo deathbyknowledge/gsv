@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 
-use assembler_rs::graph::build_module_graph;
-use assembler_rs::model::{
+use assembler::graph::build_module_graph;
+use assembler::model::{
     PackageAssemblyAnalysis, PackageAssemblyArtifactModuleKind, PackageAssemblyRequest,
     PackageAssemblySource, PackageAssemblyTarget, PackageBrowserDefinition,
     PackageCapabilityDefinition, PackageDefinition, PackageIdentity, PackageJsonDefinition,
     PackageMetaDefinition,
 };
-use assembler_rs::npm::{
+use assembler::npm::{
     install_registry_dependencies, NpmDist, NpmPackument, NpmPackumentVersion, NpmRegistryClient,
     NpmRegistryError,
 };
-use assembler_rs::pipeline::prepare_request;
+use assembler::pipeline::prepare_request;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use tar::{Builder, Header};

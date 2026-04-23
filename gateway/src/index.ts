@@ -9,7 +9,7 @@ import { getAgentByName } from "agents";
 import type { AppFrameContext } from "./protocol/app-frame";
 import { buildAppRunnerName } from "./protocol/app-session";
 import { deserializeAppHttpResponse, serializeAppHttpRequest } from "./app-runner";
-import type { PackageArtifact } from "./kernel/packages";
+import type { PackageArtifactMetadata } from "./kernel/packages";
 import {
   buildCliInstallPowerShell,
   buildCliInstallScript,
@@ -185,7 +185,7 @@ type ResolvedPackageRoute = {
   packageId: string;
   packageName: string;
   routeBase: string;
-  artifact: PackageArtifact;
+  artifact: PackageArtifactMetadata;
   appFrame: AppFrameContext;
   clientSession: {
     sessionId: string;
@@ -212,7 +212,7 @@ type ResolvedPackageAppRpcSession =
       packageId: string;
       packageName: string;
       routeBase: string;
-      artifact: PackageArtifact;
+      artifact: PackageArtifactMetadata;
       appFrame: AppFrameContext;
       clientSession: {
         sessionId: string;

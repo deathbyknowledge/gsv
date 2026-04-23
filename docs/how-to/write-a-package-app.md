@@ -201,7 +201,7 @@ cargo run -- -u root packages sync
 If you changed the package runtime or SDK as well:
 
 ```bash
-cd assembler-rs && npm run deploy
+cd assembler && npm run deploy
 cd ../gateway && npm run deploy
 cd .. && cargo run -- -u root packages sync
 ```

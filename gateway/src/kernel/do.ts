@@ -50,7 +50,7 @@ import {
   PackageStore,
   type PackageEntrypoint,
   packageRouteBase,
-  type PackageArtifact,
+  type PackageArtifactMetadata,
   visiblePackageScopesForActor,
 } from "./packages";
 import {
@@ -90,7 +90,7 @@ type ResolvePackageHttpResult =
       packageId: string;
       packageName: string;
       routeBase: string;
-      artifact: PackageArtifact;
+      artifact: PackageArtifactMetadata;
       appFrame: AppFrameContext;
       clientSession: AppClientSessionContext & { secret: string };
       auth: {
@@ -118,7 +118,7 @@ type ResolvePackageAppRpcResult =
       packageId: string;
       packageName: string;
       routeBase: string;
-      artifact: PackageArtifact;
+      artifact: PackageArtifactMetadata;
       appFrame: AppFrameContext;
       clientSession: AppClientSessionContext;
       auth: {
@@ -235,11 +235,15 @@ export class Kernel extends Host<Env> {
     this.appSessions = new AppSessionStore(sql);
     this.appSessions.init();
 
-    this.packages = new PackageStore(sql);
+    this.packages = new PackageStore(sql, env.STORAGE);
     this.packages.init();
-    this.ready = Promise.resolve();
+    this.ready = this.initialize();
 
     this.rehydrateConnections();
+  }
+
+  private async initialize(): Promise<void> {
+    await this.packages.migrateArtifacts();
   }
 
   shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
@@ -1244,6 +1248,7 @@ export class Kernel extends Host<Env> {
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
+      getAppRunner: this.getAppRunner.bind(this),
     };
 
     const origin: RouteOrigin = { type: "process", id: processId };
@@ -1306,6 +1311,7 @@ export class Kernel extends Host<Env> {
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
+      getAppRunner: this.getAppRunner.bind(this),
     };
   }
 
@@ -1330,7 +1336,12 @@ export class Kernel extends Host<Env> {
       appFrame,
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
+      getAppRunner: this.getAppRunner.bind(this),
     };
+  }
+
+  private getAppRunner(uid: number, packageId: string): unknown {
+    return this.ctx.exports.AppRunner.getByName(buildAppRunnerName(uid, packageId));
   }
 
   private buildDispatchDeps(): DispatchDeps {

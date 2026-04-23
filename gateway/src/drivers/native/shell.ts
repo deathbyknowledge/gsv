@@ -12,6 +12,7 @@ import { Bash, defineCommand } from "just-bash";
 import type { BashExecResult, ExecResult } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
 import type { ExtendedStat } from "../../fs/gsv-fs";
+import type { AppRunnerCommandInput } from "../../app-runner";
 import {
   createHomeKnowledgeBackend,
   createPackageBackend,
@@ -40,9 +41,7 @@ import {
   resolveInstalledPackage,
 } from "../../kernel/pkg";
 import {
-  packageArtifactToWorkerCode,
   packageRouteBase,
-  packageWorkerKey,
   visiblePackageScopesForActor,
   type InstalledPackageRecord,
   type PackageEntrypoint,
@@ -221,20 +220,30 @@ function classifyIndicator(st: ExtendedStat): string {
 }
 
 type NameCache = { uid: Map<number, string>; gid: Map<number, string> };
-type PackageCommandInput = {
-  args: string[];
-  cwd: string;
-  uid: number;
-  gid: number;
-  username: string;
-};
 type PackageCommandResult = {
   exitCode?: number;
   stdout?: string;
   stderr?: string;
 };
-type PackageCommandStub = {
-  run: (input?: PackageCommandInput) => Promise<PackageCommandResult>;
+type PackageRunnerStub = {
+  ensureRuntime(input: {
+    packageId: string;
+    packageName: string;
+    routeBase: string;
+    entrypointName: string;
+    artifact: InstalledPackageRecord["artifact"];
+    appFrame: {
+      uid: number;
+      username: string;
+      packageId: string;
+      packageName: string;
+      entrypointName: string;
+      routeBase: string;
+      issuedAt: number;
+      expiresAt: number;
+    };
+  }): Promise<void>;
+  runCommand(input: AppRunnerCommandInput): Promise<PackageCommandResult>;
 };
 
 function loadNameCache(ctx: KernelContext, identity: ProcessIdentity): NameCache {
@@ -1223,35 +1232,39 @@ async function runPackageCommand(
   identity: ProcessIdentity,
   ctx: KernelContext,
 ): Promise<PackageCommandResult> {
-  const worker = ctx.env.LOADER.get(
-    packageWorkerKey(record),
-    () => packageArtifactToWorkerCode(record.artifact, {
-      PACKAGE_NAME: record.manifest.name,
-      PACKAGE_ID: record.packageId,
-    }),
-  );
-  const stub = worker.getEntrypoint(resolvePackageCommandExportName(entrypoint.exportName), {
-    props: {
-      commandName: entrypoint.command ?? entrypoint.name,
+  if (!ctx.getAppRunner) {
+    throw new Error("package command runtime is unavailable");
+  }
+  const commandName = entrypoint.command?.trim() || entrypoint.name;
+  const routeBase = packageRouteBase(record.manifest.name);
+  const runner = ctx.getAppRunner(identity.uid, record.packageId) as PackageRunnerStub;
+  const now = Date.now();
+  await runner.ensureRuntime({
+    packageId: record.packageId,
+    packageName: record.manifest.name,
+    routeBase,
+    entrypointName: commandName,
+    artifact: record.artifact,
+    appFrame: {
+      uid: identity.uid,
+      username: identity.username,
       packageId: record.packageId,
-      routeBase: packageRouteBase(record.manifest.name),
+      packageName: record.manifest.name,
+      entrypointName: commandName,
+      routeBase,
+      issuedAt: now,
+      expiresAt: now + 365 * 24 * 60 * 60 * 1000,
     },
-  }) as unknown as PackageCommandStub;
+  });
 
-  return stub.run({
+  return runner.runCommand({
+    commandName,
     args,
     cwd,
     uid: identity.uid,
     gid: identity.gid,
     username: identity.username,
   });
-}
-
-function resolvePackageCommandExportName(exportName?: string): string | undefined {
-  if (!exportName || exportName === "default") {
-    return undefined;
-  }
-  return exportName;
 }
 
 function truncate(str: string, maxBytes: number): string {

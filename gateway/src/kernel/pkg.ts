@@ -40,7 +40,6 @@ import type {
 } from "@gsv/protocol/syscalls/packages";
 import type {
   InstalledPackageRecord,
-  PackageArtifact,
   PackageBindingGrant,
   PackageEntrypoint,
   PackageGrantSet,
@@ -250,7 +249,7 @@ export async function handlePkgAdd(
     ? (requestedEnable ?? existing?.enabled ?? true)
     : (existing?.enabled ?? false);
   const grants = grantsForManifest(resolved.manifest, scope);
-  const updated = ctx.packages.install({
+  const updated = await ctx.packages.install({
     packageId,
     scope,
     manifest: resolved.manifest,
@@ -285,7 +284,7 @@ export async function handlePkgSync(
   ctx: KernelContext,
 ): Promise<PkgSyncResult> {
   const builtinSeeds = await buildBuiltinPackageSeeds(ctx.env);
-  const installed = ctx.packages.seedBuiltinPackages(builtinSeeds);
+  const installed = await ctx.packages.seedBuiltinPackages(builtinSeeds);
   return {
     packages: installed.map((record) => toPkgSummary(record, ctx)),
   };
@@ -312,7 +311,7 @@ export async function handlePkgCheckout(
     throw new Error(`Package source mismatch: expected ${record.manifest.name}, got ${resolved.manifest.name}`);
   }
 
-  const updated = ctx.packages.install({
+  const updated = await ctx.packages.install({
     packageId: record.packageId,
     scope: record.scope,
     manifest: resolved.manifest,
@@ -706,7 +705,7 @@ function toPkgSummary(record: InstalledPackageRecord, ctx: KernelContext): PkgSu
       description: entrypoint.description,
       command: entrypoint.command,
       route: entrypoint.route,
-      icon: resolveEntrypointIcon(entrypoint, record.artifact),
+      icon: entrypoint.icon,
       syscalls: entrypoint.syscalls,
       windowDefaults: entrypoint.windowDefaults,
     })),
@@ -738,35 +737,11 @@ function toCatalogEntry(record: InstalledPackageRecord): PkgCatalogEntry {
       description: entrypoint.description,
       command: entrypoint.command,
       route: entrypoint.route,
-      icon: resolveEntrypointIcon(entrypoint, record.artifact),
+      icon: entrypoint.icon,
       syscalls: entrypoint.syscalls,
       windowDefaults: entrypoint.windowDefaults,
     })),
     bindingNames: (record.manifest.capabilities?.bindings ?? []).map((binding) => binding.binding),
-  };
-}
-
-function resolveEntrypointIcon(
-  entrypoint: PackageEntrypoint,
-  artifact: PackageArtifact,
-): { kind: "builtin"; id: string } | { kind: "svg"; svg: string } | undefined {
-  const icon = entrypoint.icon;
-  if (!icon) {
-    return undefined;
-  }
-
-  if (icon.kind === "builtin") {
-    return { kind: "builtin", id: icon.id };
-  }
-
-  const module = artifact.modules.find((item) => item.path === icon.module);
-  if (!module || module.content.trim().length === 0) {
-    return undefined;
-  }
-
-  return {
-    kind: "svg",
-    svg: module.content,
   };
 }
 

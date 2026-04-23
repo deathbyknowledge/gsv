@@ -1,18 +1,18 @@
 use std::collections::BTreeMap;
 
-use assembler_rs::artifact::finalize_artifact;
-use assembler_rs::model::{
+use assembler::artifact::finalize_artifact;
+use assembler::model::{
     PackageAssemblyAnalysis, PackageAssemblyArtifactModuleKind, PackageAssemblyRequest,
     PackageAssemblySource, PackageAssemblyTarget, PackageBackendDefinition,
     PackageBrowserDefinition, PackageCapabilityDefinition, PackageCommandDefinition,
     PackageDefinition, PackageIdentity, PackageJsonDefinition, PackageMetaDefinition,
 };
-use assembler_rs::npm::{
+use assembler::npm::{
     install_registry_dependencies, NpmDist, NpmPackument, NpmPackumentVersion, NpmRegistryClient,
     NpmRegistryError,
 };
-use assembler_rs::pipeline::prepare_request;
-use assembler_rs::runtime::build_runtime_assembly;
+use assembler::pipeline::prepare_request;
+use assembler::runtime::build_runtime_assembly;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use tar::{Builder, Header};

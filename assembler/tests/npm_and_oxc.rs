@@ -1,14 +1,14 @@
-use assembler_rs::model::{
+use assembler::model::{
     PackageAssemblyAnalysis, PackageAssemblyRequest, PackageAssemblySource,
     PackageAssemblyTarget, PackageBrowserDefinition, PackageCapabilityDefinition,
     PackageDefinition, PackageIdentity, PackageJsonDefinition, PackageMetaDefinition,
 };
-use assembler_rs::npm::{
+use assembler::npm::{
     install_registry_dependencies, NpmDist, NpmPackument, NpmPackumentVersion, NpmRegistryClient,
     NpmRegistryError,
 };
-use assembler_rs::oxc::{parse_source_text_with_oxc, transform_source_text_with_oxc, OxcResolver};
-use assembler_rs::pipeline::prepare_request;
+use assembler::oxc::{parse_source_text_with_oxc, transform_source_text_with_oxc, OxcResolver};
+use assembler::pipeline::prepare_request;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::collections::BTreeMap;

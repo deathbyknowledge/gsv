@@ -1,6 +1,10 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { getAgentByName } from "agents";
-import { packageArtifactToWorkerCode, type PackageArtifact } from "./kernel/packages";
+import {
+  loadPackageArtifact,
+  packageArtifactToWorkerCode,
+  type PackageArtifactMetadata,
+} from "./kernel/packages";
 import type { AppFrameContext, PackageAppSignalWatchInfo } from "./protocol/app-frame";
 import { buildAppRunnerName } from "./protocol/app-session";
 import type { RequestFrame, ResponseFrame } from "./protocol/frames";
@@ -16,7 +20,7 @@ type AppRunnerProps = {
   packageName: string;
   routeBase: string;
   entrypointName: string;
-  artifact: PackageArtifact;
+  artifact: PackageArtifactMetadata;
   appFrame: AppFrameContext;
 };
 
@@ -59,6 +63,15 @@ export type AppHttpResponse = {
   body?: ArrayBuffer | null;
 };
 
+export type AppRunnerCommandInput = {
+  commandName: string;
+  args: string[];
+  cwd: string;
+  uid: number;
+  gid: number;
+  username: string;
+};
+
 type KernelAppStub = {
   appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame>;
 };
@@ -75,6 +88,10 @@ type SignalSinkStub = Rpc.RpcTargetBranded & {
 
 type AppFetchEntrypointStub = Rpc.WorkerEntrypointBranded & {
   fetch(request: Request): Promise<Response>;
+};
+
+type AppCommandEntrypointStub = Rpc.WorkerEntrypointBranded & {
+  run(input?: unknown): Promise<unknown>;
 };
 
 type AppRpcEntrypointStub = Rpc.WorkerEntrypointBranded & {
@@ -293,6 +310,29 @@ export class AppRunner extends DurableObject<Env> {
     return this.#getRpcEntrypoint(runtime).invoke(method, args);
   }
 
+  async runCommand(input: AppRunnerCommandInput): Promise<unknown> {
+    const props = this.#getProps();
+    const now = Date.now();
+    const runtime = this.#runtimeForAppFrame({
+      uid: input.uid,
+      username: input.username,
+      packageId: props.packageId,
+      packageName: props.packageName,
+      entrypointName: input.commandName,
+      routeBase: props.routeBase,
+      issuedAt: now,
+      expiresAt: now + RUNTIME_TTL_MS,
+    });
+    return this.#getCommandEntrypoint(runtime, input.commandName).run({
+      commandName: input.commandName,
+      args: input.args,
+      cwd: input.cwd,
+      uid: input.uid,
+      gid: input.gid,
+      username: input.username,
+    });
+  }
+
   async upsertRpcSchedule(input: unknown): Promise<unknown> {
     const record = this.daemonSchedules.upsert(this.#normalizeRpcScheduleInput(input));
     await this.#syncDaemonAlarm();
@@ -387,9 +427,16 @@ export class AppRunner extends DurableObject<Env> {
     appSession?: AppSessionInfo,
     daemonTrigger?: AppRuntimeContext["daemonTrigger"],
   ): AppRuntimeContext {
-    const props = this.#getProps();
+    return this.#runtimeForAppFrame(this.#runtimeAppFrame(this.#getProps()), appSession, daemonTrigger);
+  }
+
+  #runtimeForAppFrame(
+    appFrame: AppFrameContext,
+    appSession?: AppSessionInfo,
+    daemonTrigger?: AppRuntimeContext["daemonTrigger"],
+  ): AppRuntimeContext {
     return {
-      appFrame: this.#runtimeAppFrame(props),
+      appFrame,
       ...(appSession ? { appSession } : {}),
       ...(daemonTrigger ? { daemonTrigger } : {}),
     };
@@ -524,7 +571,7 @@ export class AppRunner extends DurableObject<Env> {
   #loadWorker(props: AppRunnerProps): WorkerStub {
     return this.env.LOADER.get(
       this.#codeKey(props),
-      () => packageArtifactToWorkerCode(props.artifact, {
+      async () => packageArtifactToWorkerCode(await loadPackageArtifact(this.env.STORAGE, props.artifact.hash), {
         PACKAGE_NAME: props.packageName,
         PACKAGE_ID: props.packageId,
         PACKAGE_ROUTE_BASE: props.routeBase,
@@ -563,6 +610,15 @@ export class AppRunner extends DurableObject<Env> {
     });
   }
 
+  #getCommandEntrypoint(runtime: AppRuntimeContext, commandName: string): AppCommandEntrypointStub {
+    const worker = this.#loadWorker(this.#getProps());
+    return worker.getEntrypoint<AppCommandEntrypointStub>("GsvCommandEntrypoint", {
+      props: this.#entrypointProps(runtime, {
+        commandName,
+      }),
+    });
+  }
+
   #getRpcEntrypoint(runtime: AppRuntimeContext): AppRpcEntrypointStub {
     const worker = this.#loadWorker(this.#getProps());
     return worker.getEntrypoint<AppRpcEntrypointStub>("GsvAppRpcEntrypoint", {
@@ -587,7 +643,6 @@ export class AppRunner extends DurableObject<Env> {
       "app-runtime",
       String(props.appFrame.uid),
       props.packageId,
-      props.entrypointName,
       props.artifact.hash,
     ].join(":");
   }

@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
-use assembler_rs::diagnostics::PackageAssemblyDiagnostic;
-use assembler_rs::model::{
+use assembler::diagnostics::PackageAssemblyDiagnostic;
+use assembler::model::{
     PackageAssemblyAnalysis, PackageAssemblyRequest, PackageAssemblySource,
     PackageAssemblyTarget, PackageBackendDefinition, PackageBrowserDefinition,
     PackageCapabilityDefinition, PackageCommandDefinition, PackageDefinition, PackageIdentity,
     PackageJsonDefinition, PackageMetaDefinition,
 };
-use assembler_rs::pipeline::{
+use assembler::pipeline::{
     plan_installs, prepare_request, prepare_sources, validate_request, RegistryDependencyPlanItem,
 };
 

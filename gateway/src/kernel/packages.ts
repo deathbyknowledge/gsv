@@ -61,7 +61,7 @@ export type PackageInstallScope =
 
 export type PackageIcon =
   | { kind: "builtin"; id: string }
-  | { kind: "asset"; module: string };
+  | { kind: "svg"; svg: string };
 
 export type PackageBindingKind =
   | "kernel"
@@ -101,6 +101,14 @@ export interface PackageArtifact {
   compatibilityDate?: string;
   compatibilityFlags?: string[];
   modules: PackageModuleDef[];
+}
+
+export interface PackageArtifactMetadata {
+  hash: string;
+  mainModule: string;
+  compatibilityDate?: string;
+  compatibilityFlags?: string[];
+  modulePaths: string[];
 }
 
 export interface PackageEntrypoint {
@@ -231,7 +239,7 @@ export interface InstalledPackageRecord {
   packageId: string;
   scope: PackageInstallScope;
   manifest: PackageManifest;
-  artifact: PackageArtifact;
+  artifact: PackageArtifactMetadata;
   grants?: PackageGrantSet;
   enabled: boolean;
   reviewRequired: boolean;
@@ -240,7 +248,13 @@ export interface InstalledPackageRecord {
   updatedAt: number;
 }
 
-export type PackageSeed = Omit<InstalledPackageRecord, "installedAt" | "updatedAt">;
+export interface PackageInstallRecordInput extends Omit<InstalledPackageRecord, "artifact" | "installedAt" | "updatedAt"> {
+  artifact: PackageArtifact;
+  installedAt?: number;
+  updatedAt?: number;
+}
+
+export type PackageSeed = Omit<PackageInstallRecordInput, "installedAt" | "updatedAt">;
 
 
 
@@ -431,6 +445,38 @@ export function packageWorkerKey(record: {
   return `pkg:${record.manifest.name}@${record.artifact.hash}`;
 }
 
+const PACKAGE_ARTIFACT_PREFIX = "runtime/package-artifacts";
+
+export function artifactMetadataFromArtifact(artifact: PackageArtifact): PackageArtifactMetadata {
+  return {
+    hash: artifact.hash,
+    mainModule: artifact.mainModule,
+    compatibilityDate: artifact.compatibilityDate,
+    compatibilityFlags: artifact.compatibilityFlags,
+    modulePaths: artifact.modules.map((module) => module.path),
+  };
+}
+
+export function packageArtifactStorageKey(hash: string): string {
+  return `${PACKAGE_ARTIFACT_PREFIX}/${encodeURIComponent(hash)}.json`;
+}
+
+export async function storePackageArtifact(bucket: R2Bucket, artifact: PackageArtifact): Promise<void> {
+  await bucket.put(packageArtifactStorageKey(artifact.hash), JSON.stringify(artifact), {
+    httpMetadata: {
+      contentType: "application/json; charset=utf-8",
+    },
+  });
+}
+
+export async function loadPackageArtifact(bucket: R2Bucket, hash: string): Promise<PackageArtifact> {
+  const record = await bucket.get(packageArtifactStorageKey(hash));
+  if (!record) {
+    throw new Error(`Package artifact not found for hash: ${hash}`);
+  }
+  return JSON.parse(await record.text()) as PackageArtifact;
+}
+
 export function resolvePackageProfileReference(
   reference: string,
   packages: PackageStore,
@@ -510,31 +556,84 @@ export function packageArtifactToWorkerCode(
   };
 }
 
+type LegacyPackageIcon = PackageIcon | { kind: "asset"; module: string };
+type StoredPackageEntrypoint = Omit<PackageEntrypoint, "icon"> & { icon?: LegacyPackageIcon };
+type StoredPackageManifest = Omit<PackageManifest, "entrypoints"> & {
+  entrypoints: StoredPackageEntrypoint[];
+};
+
+function normalizeStoredManifest(
+  manifest: StoredPackageManifest,
+  artifact?: PackageArtifact | null,
+): PackageManifest {
+  return {
+    ...manifest,
+    entrypoints: manifest.entrypoints.map((entrypoint) => {
+      const { icon: rawIcon, ...rest } = entrypoint;
+      const normalizedIcon = rawIcon
+        ? normalizeStoredIcon(rawIcon, artifact)
+        : undefined;
+      return {
+        ...rest,
+        ...(normalizedIcon ? { icon: normalizedIcon } : {}),
+      };
+    }),
+  };
+}
+
+function normalizeStoredIcon(
+  icon: LegacyPackageIcon,
+  artifact?: PackageArtifact | null,
+): PackageIcon {
+  if (icon.kind !== "asset") {
+    return icon;
+  }
+  if (!artifact) {
+    throw new Error(`Package icon ${icon.module} requires artifact content for migration`);
+  }
+  const module = artifact.modules.find((candidate) => candidate.path === icon.module);
+  if (!module || module.content.trim().length === 0) {
+    throw new Error(`Package icon asset not found in artifact: ${icon.module}`);
+  }
+  return {
+    kind: "svg",
+    svg: module.content,
+  };
+}
+
 export class PackageStore {
-  constructor(private readonly sql: SqlStorage) {}
+  constructor(
+    private readonly sql: SqlStorage,
+    private readonly bucket: R2Bucket,
+  ) {}
 
   init(): void {
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS packages (
-        package_id       TEXT    NOT NULL,
-        scope_key        TEXT    NOT NULL,
-        scope_kind       TEXT    NOT NULL,
-        scope_uid        INTEGER,
+        package_id         TEXT    NOT NULL,
+        scope_key          TEXT    NOT NULL,
+        scope_kind         TEXT    NOT NULL,
+        scope_uid          INTEGER,
         scope_workspace_id TEXT,
-        name             TEXT    NOT NULL,
-        version          TEXT    NOT NULL,
-        runtime          TEXT    NOT NULL,
-        enabled          INTEGER NOT NULL DEFAULT 1,
-        manifest_json    TEXT    NOT NULL,
-        artifact_json    TEXT    NOT NULL,
-        grants_json      TEXT,
-        installed_at     INTEGER NOT NULL,
-        updated_at       INTEGER NOT NULL,
-        review_required  INTEGER NOT NULL DEFAULT 0,
-        reviewed_at      INTEGER,
+        name               TEXT    NOT NULL,
+        version            TEXT    NOT NULL,
+        runtime            TEXT    NOT NULL,
+        enabled            INTEGER NOT NULL DEFAULT 1,
+        manifest_json      TEXT    NOT NULL,
+        artifact_hash      TEXT,
+        artifact_meta_json TEXT,
+        artifact_json      TEXT    NOT NULL DEFAULT '',
+        grants_json        TEXT,
+        installed_at       INTEGER NOT NULL,
+        updated_at         INTEGER NOT NULL,
+        review_required    INTEGER NOT NULL DEFAULT 0,
+        reviewed_at        INTEGER,
         UNIQUE(package_id, scope_key)
       )
     `);
+
+    this.#ensureColumn("packages", "artifact_hash", "TEXT");
+    this.#ensureColumn("packages", "artifact_meta_json", "TEXT");
 
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_packages_name_runtime ON packages (name, runtime, updated_at DESC)",
@@ -547,10 +646,49 @@ export class PackageStore {
     );
   }
 
-  seedBuiltinPackages(
+  async migrateArtifacts(): Promise<void> {
+    const rows = this.sql.exec<RowShape>(
+      `SELECT * FROM packages
+       WHERE artifact_hash IS NULL
+          OR artifact_hash = ''
+          OR artifact_meta_json IS NULL
+          OR artifact_meta_json = ''
+          OR artifact_json <> ''`,
+    ).toArray();
+
+    for (const row of rows) {
+      const legacyArtifact = row.artifact_json.trim().length > 0
+        ? parseJson<PackageArtifact>(row.artifact_json)
+        : null;
+      const artifactHash = legacyArtifact?.hash ?? (row.artifact_hash?.trim() || null);
+      if (!artifactHash) {
+        throw new Error(`Package ${row.package_id} is missing artifact data`);
+      }
+      const artifact = legacyArtifact ?? await loadPackageArtifact(this.bucket, artifactHash);
+      const manifest = normalizeStoredManifest(
+        parseJson<StoredPackageManifest>(row.manifest_json),
+        artifact,
+      );
+      const artifactMetadata = artifactMetadataFromArtifact(artifact);
+      await storePackageArtifact(this.bucket, artifact);
+
+      this.sql.exec(
+        `UPDATE packages
+         SET manifest_json = ?, artifact_hash = ?, artifact_meta_json = ?, artifact_json = ''
+         WHERE package_id = ? AND scope_key = ?`,
+        JSON.stringify(manifest),
+        artifactMetadata.hash,
+        JSON.stringify(artifactMetadata),
+        row.package_id,
+        row.scope_key,
+      );
+    }
+  }
+
+  async seedBuiltinPackages(
     builtinSeeds: readonly PackageSeed[],
     now: number = Date.now(),
-  ): InstalledPackageRecord[] {
+  ): Promise<InstalledPackageRecord[]> {
     const installed: InstalledPackageRecord[] = [];
     const builtinPackageIds = new Set(builtinSeeds.map((seed) => seed.packageId));
 
@@ -562,7 +700,7 @@ export class PackageStore {
 
     for (const seed of builtinSeeds) {
       const existing = this.get(seed.packageId, seed.scope);
-      installed.push(this.install({
+      installed.push(await this.install({
         ...seed,
         enabled: existing?.enabled ?? seed.enabled,
         installedAt: existing?.installedAt ?? now,
@@ -573,25 +711,25 @@ export class PackageStore {
     return installed;
   }
 
-  install(
-    input: Omit<InstalledPackageRecord, "installedAt" | "updatedAt"> & {
-      installedAt?: number;
-      updatedAt?: number;
-    },
-  ): InstalledPackageRecord {
+  async install(input: PackageInstallRecordInput): Promise<InstalledPackageRecord> {
     const now = Date.now();
+    const manifest = normalizeStoredManifest(input.manifest, input.artifact);
+    const artifactMetadata = artifactMetadataFromArtifact(input.artifact);
     const record: InstalledPackageRecord = {
       ...input,
+      manifest,
+      artifact: artifactMetadata,
       installedAt: input.installedAt ?? now,
       updatedAt: input.updatedAt ?? now,
     };
 
     assertValidPackageRecord(record);
+    await storePackageArtifact(this.bucket, input.artifact);
 
     this.sql.exec(
       `INSERT OR REPLACE INTO packages
-        (package_id, scope_key, scope_kind, scope_uid, scope_workspace_id, name, version, runtime, enabled, manifest_json, artifact_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (package_id, scope_key, scope_kind, scope_uid, scope_workspace_id, name, version, runtime, enabled, manifest_json, artifact_hash, artifact_meta_json, artifact_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.packageId,
       packageScopeKey(record.scope),
       record.scope.kind,
@@ -602,7 +740,9 @@ export class PackageStore {
       record.manifest.runtime,
       record.enabled ? 1 : 0,
       JSON.stringify(record.manifest),
+      record.artifact.hash,
       JSON.stringify(record.artifact),
+      "",
       record.grants ? JSON.stringify(record.grants) : null,
       record.installedAt,
       record.updatedAt,
@@ -611,6 +751,10 @@ export class PackageStore {
     );
 
     return record;
+  }
+
+  async getArtifact(hash: string): Promise<PackageArtifact> {
+    return loadPackageArtifact(this.bucket, hash);
   }
 
   get(
@@ -738,6 +882,13 @@ export class PackageStore {
     );
     return true;
   }
+
+  #ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray();
+    if (!columns.some((candidate) => candidate.name === column)) {
+      this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
 }
 
 type RowShape = {
@@ -747,6 +898,8 @@ type RowShape = {
   scope_uid: number | null;
   scope_workspace_id: string | null;
   manifest_json: string;
+  artifact_hash: string | null;
+  artifact_meta_json: string | null;
   artifact_json: string;
   grants_json: string | null;
   enabled: number;
@@ -757,11 +910,25 @@ type RowShape = {
 };
 
 function toRecord(row: RowShape): InstalledPackageRecord {
+  const legacyArtifact = row.artifact_json.trim().length > 0
+    ? parseJson<PackageArtifact>(row.artifact_json)
+    : null;
+  const artifact = row.artifact_meta_json
+    ? parseJson<PackageArtifactMetadata>(row.artifact_meta_json)
+    : legacyArtifact
+      ? artifactMetadataFromArtifact(legacyArtifact)
+      : null;
+  if (!artifact) {
+    throw new Error(`Invalid package row: missing artifact metadata for ${row.package_id}`);
+  }
   return {
     packageId: row.package_id,
     scope: scopeFromRow(row),
-    manifest: parseJson<PackageManifest>(row.manifest_json),
-    artifact: parseJson<PackageArtifact>(row.artifact_json),
+    manifest: normalizeStoredManifest(
+      parseJson<StoredPackageManifest>(row.manifest_json),
+      legacyArtifact,
+    ),
+    artifact,
     grants: row.grants_json ? parseJson<PackageGrantSet>(row.grants_json) : undefined,
     enabled: row.enabled !== 0,
     reviewRequired: row.review_required !== 0,
@@ -863,7 +1030,7 @@ async function resolvePackageFromRipgitNativeBuild(
   const outboundAllowlist = uniqueStrings(analysis.definition.meta.capabilities.outbound);
   const routeBase = packageRouteBase(packageName);
   const artifact = convertAssembledArtifact(build);
-  const icon = toNativePackageIcon(analysis.definition.meta.icon);
+  const icon = toNativePackageIcon(analysis.definition.meta.icon, artifact);
   const profiles = await readPackageProfiles(ripgit, resolvedRepo, subdir);
   const hasBrowserEntrypoint = Boolean(analysis.definition.browser);
   const hasBackendEntrypoint = Boolean(analysis.definition.backend);
@@ -1167,13 +1334,21 @@ async function readPackageProfileIconPath(
   return iconEntry ? joinRipgitPath(profileRoot, iconEntry.name) : null;
 }
 
-function toNativePackageIcon(iconPath?: string | null): PackageIcon | undefined {
+function toNativePackageIcon(
+  iconPath: string | null | undefined,
+  artifact: PackageArtifact,
+): PackageIcon | undefined {
   if (!iconPath) {
     return undefined;
   }
+  const normalizedPath = normalizePackageModulePath(iconPath.replace(/^(\.\/)+/, ""));
+  const module = artifact.modules.find((candidate) => candidate.path === normalizedPath);
+  if (!module || module.content.trim().length === 0) {
+    throw new Error(`Package icon asset not found in artifact: ${normalizedPath}`);
+  }
   return {
-    kind: "asset",
-    module: normalizePackageModulePath(iconPath.replace(/^(\.\/)+/, "")),
+    kind: "svg",
+    svg: module.content,
   };
 }
 
@@ -1275,11 +1450,11 @@ function assertValidPackageRecord(record: InstalledPackageRecord): void {
   if (record.artifact.mainModule.trim().length === 0) {
     throw new Error("artifact.mainModule is required");
   }
-  if (record.artifact.modules.length === 0) {
-    throw new Error("artifact.modules must contain at least one module");
+  if (record.artifact.modulePaths.length === 0) {
+    throw new Error("artifact.modulePaths must contain at least one module");
   }
 
-  const modulePaths = new Set(record.artifact.modules.map((module) => module.path));
+  const modulePaths = new Set(record.artifact.modulePaths);
   if (!modulePaths.has(record.artifact.mainModule)) {
     throw new Error(`artifact.mainModule not found in modules: ${record.artifact.mainModule}`);
   }
@@ -1288,8 +1463,8 @@ function assertValidPackageRecord(record: InstalledPackageRecord): void {
     if (!modulePaths.has(entrypoint.module)) {
       throw new Error(`entrypoint module not found in artifact: ${entrypoint.module}`);
     }
-    if (entrypoint.icon?.kind === "asset" && !modulePaths.has(entrypoint.icon.module)) {
-      throw new Error(`entrypoint icon module not found in artifact: ${entrypoint.icon.module}`);
+    if (entrypoint.icon?.kind === "svg" && entrypoint.icon.svg.trim().length === 0) {
+      throw new Error(`entrypoint icon svg must not be empty: ${entrypoint.name}`);
     }
     if (entrypoint.kind === "ui") {
       const expectedPrefix = packageRouteBase(record.manifest.name);

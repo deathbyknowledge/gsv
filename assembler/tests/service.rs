@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
-use assembler_rs::model::{
+use assembler::model::{
     PackageAssemblyAnalysis, PackageAssemblyRequest, PackageAssemblySource, PackageAssemblyTarget,
     PackageBackendDefinition, PackageBrowserDefinition, PackageCapabilityDefinition,
     PackageCommandDefinition, PackageDefinition, PackageIdentity, PackageJsonDefinition,
     PackageMetaDefinition,
 };
-use assembler_rs::npm::{NpmPackument, NpmRegistryClient, NpmRegistryError};
-use assembler_rs::service::assemble_package_with_client;
+use assembler::npm::{NpmPackument, NpmRegistryClient, NpmRegistryError};
+use assembler::service::assemble_package_with_client;
 
 #[derive(Clone, Debug, Default)]
 struct EmptyRegistry;
