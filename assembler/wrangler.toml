@@ -4,7 +4,7 @@ compatibility_date = "2026-04-22"
 workers_dev = false
 
 [build]
-command = "cargo install -q \"worker-build@^0.7\" && worker-build --release"
+command = "bash ../scripts/worker-build.sh assembler --release"
 
 [observability]
 [observability.logs]
