@@ -1,14 +1,4 @@
-import { definePackage } from "@gsv/package/worker";
-import {
-  applyRawConfig,
-  consumeLinkCode,
-  createLink,
-  createToken,
-  loadState,
-  revokeToken,
-  saveEntry,
-  unlink,
-} from "./backend/api";
+import { definePackage } from "@gsv/package/manifest";
 
 export default definePackage({
   meta: {
@@ -34,36 +24,11 @@ export default definePackage({
       ],
     },
   },
-  app: {
-    browser: {
-      entry: "./src/index.html",
-    },
+  browser: {
+    entry: "./src/main.tsx",
     assets: ["./src/styles.css"],
-    rpc: {
-      async loadState(_args, ctx) {
-        return loadState(ctx.kernel, ctx);
-      },
-      async saveEntry(args, ctx) {
-        return saveEntry(ctx.kernel, ctx, args);
-      },
-      async createToken(args, ctx) {
-        return createToken(ctx.kernel, ctx, args);
-      },
-      async revokeToken(args, ctx) {
-        return revokeToken(ctx.kernel, ctx, args);
-      },
-      async consumeLinkCode(args, ctx) {
-        return consumeLinkCode(ctx.kernel, ctx, args);
-      },
-      async createLink(args, ctx) {
-        return createLink(ctx.kernel, ctx, args);
-      },
-      async unlink(args, ctx) {
-        return unlink(ctx.kernel, ctx, args);
-      },
-      async applyRawConfig(args, ctx) {
-        return applyRawConfig(ctx.kernel, ctx, args);
-      },
-    },
+  },
+  backend: {
+    entry: "./src/backend.ts",
   },
 });

@@ -41,4 +41,5 @@ export type KernelContext = {
   appFrame?: AppFrameContext;
   serverVersion: string;
   broadcastToUid?: (uid: number, signal: string, payload?: unknown) => void;
+  getAppRunner?: (uid: number, packageId: string) => unknown;
 };

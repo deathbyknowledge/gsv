@@ -1,5 +1,4 @@
-import { definePackage } from "@gsv/package/worker";
-import { killProcess, loadState } from "./backend/api";
+import { definePackage } from "@gsv/package/manifest";
 
 export default definePackage({
   meta: {
@@ -15,18 +14,11 @@ export default definePackage({
       kernel: ["proc.list", "proc.kill"],
     },
   },
-  app: {
-    browser: {
-      entry: "./src/index.html",
-    },
+  browser: {
+    entry: "./src/main.tsx",
     assets: ["./src/styles.css"],
-    rpc: {
-      async loadState(_args, ctx) {
-        return loadState(ctx.kernel);
-      },
-      async killProcess(args, ctx) {
-        return killProcess(ctx.kernel, args);
-      },
-    },
+  },
+  backend: {
+    entry: "./src/backend.ts",
   },
 });

@@ -1,14 +1,4 @@
-import { definePackage } from "@gsv/package/worker";
-import {
-  compileInboxNote,
-  createDatabase,
-  handleAppSignal,
-  ingestSource,
-  loadWorkspace,
-  previewContent,
-  savePage,
-  startBuild,
-} from "./backend/api";
+import { definePackage } from "@gsv/package/manifest";
 
 export default definePackage({
   meta: {
@@ -42,22 +32,11 @@ export default definePackage({
       ],
     },
   },
-  app: {
-    browser: {
-      entry: "./index.html",
-    },
+  browser: {
+    entry: "./main.tsx",
     assets: ["./styles.css"],
-    rpc: {
-      loadWorkspace: async (args, ctx) => loadWorkspace(ctx.kernel, args),
-      previewContent: async (args, ctx) => previewContent(ctx.kernel, args),
-      createDatabase: async (args, ctx) => createDatabase(ctx.kernel, args),
-      savePage: async (args, ctx) => savePage(ctx.kernel, args),
-      ingestSource: async (args, ctx) => ingestSource(ctx.kernel, args),
-      compileInboxNote: async (args, ctx) => compileInboxNote(ctx.kernel, args),
-      startBuild: async (args, ctx) => startBuild(ctx.kernel, args),
-    },
-    async onSignal(ctx) {
-      await handleAppSignal(ctx);
-    },
+  },
+  backend: {
+    entry: "./src/backend.ts",
   },
 });

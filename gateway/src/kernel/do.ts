@@ -50,7 +50,7 @@ import {
   PackageStore,
   type PackageEntrypoint,
   packageRouteBase,
-  type PackageArtifact,
+  type PackageArtifactMetadata,
   visiblePackageScopesForActor,
 } from "./packages";
 import {
@@ -90,7 +90,7 @@ type ResolvePackageHttpResult =
       packageId: string;
       packageName: string;
       routeBase: string;
-      artifact: PackageArtifact;
+      artifact: PackageArtifactMetadata;
       appFrame: AppFrameContext;
       clientSession: AppClientSessionContext & { secret: string };
       auth: {
@@ -118,7 +118,7 @@ type ResolvePackageAppRpcResult =
       packageId: string;
       packageName: string;
       routeBase: string;
-      artifact: PackageArtifact;
+      artifact: PackageArtifactMetadata;
       appFrame: AppFrameContext;
       clientSession: AppClientSessionContext;
       auth: {
@@ -189,6 +189,7 @@ export class Kernel extends Host<Env> {
   private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
+  private readonly pendingProcessSignals = new Map<string, Promise<void>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -235,11 +236,15 @@ export class Kernel extends Host<Env> {
     this.appSessions = new AppSessionStore(sql);
     this.appSessions.init();
 
-    this.packages = new PackageStore(sql);
+    this.packages = new PackageStore(sql, env.STORAGE);
     this.packages.init();
-    this.ready = Promise.resolve();
+    this.ready = this.initialize();
 
     this.rehydrateConnections();
+  }
+
+  private async initialize(): Promise<void> {
+    await this.packages.migrateArtifacts();
   }
 
   shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
@@ -322,7 +327,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (frame.type === "sig") {
-      await this.handleProcessSignal(processId, frame);
+      this.enqueueProcessSignal(processId, frame);
       return null;
     }
 
@@ -659,6 +664,23 @@ export class Kernel extends Host<Env> {
     if (frame.signal === "chat.complete") {
       this.runRoutes.delete(runId);
     }
+  }
+
+  private enqueueProcessSignal(processId: string, frame: SignalFrame): void {
+    const previous = this.pendingProcessSignals.get(processId) ?? Promise.resolve();
+    const queued = previous
+      .catch(() => {})
+      .then(() => this.handleProcessSignal(processId, frame))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[Kernel] process signal dispatch failed for ${processId}/${frame.signal}: ${message}`);
+      })
+      .finally(() => {
+        if (this.pendingProcessSignals.get(processId) === queued) {
+          this.pendingProcessSignals.delete(processId);
+        }
+      });
+    this.pendingProcessSignals.set(processId, queued);
   }
 
   private deliverSignalToConnection(
@@ -1244,6 +1266,7 @@ export class Kernel extends Host<Env> {
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
+      getAppRunner: this.getAppRunner.bind(this),
     };
 
     const origin: RouteOrigin = { type: "process", id: processId };
@@ -1306,6 +1329,7 @@ export class Kernel extends Host<Env> {
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
+      getAppRunner: this.getAppRunner.bind(this),
     };
   }
 
@@ -1330,7 +1354,12 @@ export class Kernel extends Host<Env> {
       appFrame,
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
+      getAppRunner: this.getAppRunner.bind(this),
     };
+  }
+
+  private getAppRunner(uid: number, packageId: string): unknown {
+    return this.ctx.exports.AppRunner.getByName(buildAppRunnerName(uid, packageId));
   }
 
   private buildDispatchDeps(): DispatchDeps {
@@ -1592,6 +1621,10 @@ export class Kernel extends Host<Env> {
     const watches = this.signalWatches.match(uid, frame.signal, processId);
     for (const watch of watches) {
       try {
+        if (this.isLegacySignalWatchKey(watch.key)) {
+          this.signalWatches.deleteHandled(watch.watchId);
+          continue;
+        }
         if (watch.targetKind === "app") {
           await this.invokePackageAppSignalHandler(watch, processId, frame);
         } else {
@@ -1606,6 +1639,10 @@ export class Kernel extends Host<Env> {
         console.warn(`[Kernel] signal watch ${watch.watchId} failed: ${message}`);
       }
     }
+  }
+
+  private isLegacySignalWatchKey(key: string | null | undefined): boolean {
+    return typeof key === "string" && (key.startsWith("live:") || key.startsWith("__gsv_live__:"));
   }
 
   private async invokePackageAppSignalHandler(

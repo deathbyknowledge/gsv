@@ -38,7 +38,7 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
         },
       },
     },
-    artifact: { hash: "hash1", mainModule: "index.js", modules: [] },
+    artifact: { hash: "hash1", mainModule: "index.js", modulePaths: ["index.js"] },
     grants: {
       bindings: [],
       egress: {
@@ -58,6 +58,7 @@ function makeContext(options?: {
   capabilities?: string[];
   mounts?: Array<{ mountPath: string; packageId: string }>;
   pkg?: InstalledPackageRecord;
+  getAppRunner?: KernelContext["getAppRunner"];
 }): KernelContext {
   const pkg = options?.pkg ?? makePackage();
   const records = new Map([[pkg.packageId, pkg]]);
@@ -126,6 +127,7 @@ function makeContext(options?: {
     },
     processId: "task:pkg",
     serverVersion: "0.1.0",
+    getAppRunner: options?.getAppRunner,
   } as KernelContext;
 }
 
@@ -169,5 +171,63 @@ describe("pkg shell command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("enabled ascii-starfield");
     expect(result.stderr).toBe("");
+  });
+
+  it("runs package commands through app runner", async () => {
+    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const runner = {
+      async ensureRuntime(input: unknown) {
+        calls.push({ kind: "ensure", value: input });
+      },
+      async runCommand(input: unknown) {
+        calls.push({ kind: "run", value: input });
+        return {
+          stdout: "hello from runner\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    };
+
+    const result = await handleShellExec(
+      { command: "hello-world alpha beta" },
+      makeContext({
+        pkg: makePackage({
+          enabled: true,
+          reviewRequired: false,
+          manifest: {
+            ...makePackage().manifest,
+            entrypoints: [
+              {
+                name: "Hello World",
+                kind: "command",
+                module: "index.js",
+                exportName: "GsvCommandEntrypoint",
+                command: "hello-world",
+              },
+            ],
+          },
+        }),
+        getAppRunner() {
+          return runner;
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("hello from runner");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.kind).toBe("ensure");
+    expect(calls[1]).toEqual({
+      kind: "run",
+      value: {
+        commandName: "hello-world",
+        args: ["alpha", "beta"],
+        cwd: "/home/sam",
+        uid: 1000,
+        gid: 1000,
+        username: "sam",
+      },
+    });
   });
 });

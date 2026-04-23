@@ -169,9 +169,6 @@ impl DurableObject for Repository {
                         (Method::Get, "snapshot") => {
                             hyperspace::handle_packages_snapshot(&self.sql, &req, &repo_slug).await
                         }
-                        (Method::Get, "build") => {
-                            hyperspace::handle_packages_build(&self.sql, &req, &repo_slug).await
-                        }
                         _ => Response::error("Not Found", 404),
                     },
                     _ => Response::error("Not Found", 404),

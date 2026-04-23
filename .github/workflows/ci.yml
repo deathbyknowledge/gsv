@@ -35,16 +35,21 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
+      - name: Rust check
         working-directory: assembler
-        run: npm exec --workspace assembler -- tsc --noEmit
+        run: cargo check --target wasm32-unknown-unknown
 
       - name: Bundle worker
         working-directory: assembler
-        run: npm exec --workspace assembler -- wrangler deploy --dry-run --config wrangler.jsonc --outdir dist/worker
+        run: npm run deploy -- --dry-run --outdir dist/worker
 
   gateway-test:
     name: Gateway Tests

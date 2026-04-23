@@ -124,20 +124,6 @@ pub async fn handle_packages_analyze(
     Response::from_json(&analysis)
 }
 
-pub async fn handle_packages_build(
-    sql: &SqlStorage,
-    req: &Request,
-    repo: &str,
-) -> Result<Response> {
-    let locator = package_source_locator(req, repo)?;
-    let target = match api::get_query(&req.url()?, "target").as_deref() {
-        None | Some("dynamic-worker") => packages::PackageBuildTarget::DynamicWorker,
-        Some(other) => return Response::error(format!("unsupported build target: {}", other), 400),
-    };
-    let build = packages::build_package(sql, &locator, target).await?;
-    Response::from_json(&build)
-}
-
 pub async fn handle_packages_snapshot(
     sql: &SqlStorage,
     req: &Request,

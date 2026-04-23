@@ -9,7 +9,7 @@ import { getAgentByName } from "agents";
 import type { AppFrameContext } from "./protocol/app-frame";
 import { buildAppRunnerName } from "./protocol/app-session";
 import { deserializeAppHttpResponse, serializeAppHttpRequest } from "./app-runner";
-import type { PackageArtifact } from "./kernel/packages";
+import type { PackageArtifactMetadata } from "./kernel/packages";
 import {
   buildCliInstallPowerShell,
   buildCliInstallScript,
@@ -22,7 +22,7 @@ import {
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
 export { KernelBinding } from "./kernel/packages";
-export { AppRunner } from "./app-runner";
+export { AppRunner, GsvApiBinding } from "./app-runner";
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
@@ -185,7 +185,7 @@ type ResolvedPackageRoute = {
   packageId: string;
   packageName: string;
   routeBase: string;
-  artifact: PackageArtifact;
+  artifact: PackageArtifactMetadata;
   appFrame: AppFrameContext;
   clientSession: {
     sessionId: string;
@@ -212,7 +212,7 @@ type ResolvedPackageAppRpcSession =
       packageId: string;
       packageName: string;
       routeBase: string;
-      artifact: PackageArtifact;
+      artifact: PackageArtifactMetadata;
       appFrame: AppFrameContext;
       clientSession: {
         sessionId: string;
@@ -540,7 +540,7 @@ class PackageAppSessionRpcTarget extends RpcTarget {
     super();
   }
 
-  async authenticate(secret: string): Promise<unknown> {
+  async authenticate(secret: string, clientTarget?: unknown): Promise<unknown> {
     const kernel = await getAgentByName(this.env.KERNEL, "singleton");
     const resolved = await kernel.resolvePackageAppRpcSession({
       packageName: this.packageName,
@@ -562,12 +562,17 @@ class PackageAppSessionRpcTarget extends RpcTarget {
       appFrame: resolved.appFrame,
     });
 
-    return runner.getBackend({
-      sessionId: resolved.clientSession.sessionId,
-      clientId: resolved.clientSession.clientId,
-      rpcBase: resolved.clientSession.rpcBase,
-      expiresAt: resolved.clientSession.expiresAt,
-    });
+    return runner.getBackend(
+      {
+        sessionId: resolved.clientSession.sessionId,
+        clientId: resolved.clientSession.clientId,
+        rpcBase: resolved.clientSession.rpcBase,
+        expiresAt: resolved.clientSession.expiresAt,
+      },
+      clientTarget && (typeof clientTarget === "object" || typeof clientTarget === "function")
+        ? clientTarget as never
+        : null,
+    );
   }
 }
 

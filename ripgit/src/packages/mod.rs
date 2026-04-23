@@ -1,12 +1,10 @@
 mod analyze;
-mod build;
 mod snapshot;
 
 use serde::{Deserialize, Serialize};
 use worker::{Error, Result, SqlStorage};
 
 pub(crate) use analyze::analyze_package;
-pub(crate) use build::build_package;
 pub(crate) use snapshot::snapshot_package;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -24,12 +22,6 @@ pub struct PackageDiagnostic {
     pub path: String,
     pub line: u32,
     pub column: u32,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum PackageBuildTarget {
-    DynamicWorker,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

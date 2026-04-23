@@ -1,0 +1,12 @@
+name = "gsv-assembler"
+main = "build/index.js"
+compatibility_date = "2026-04-22"
+workers_dev = false
+
+[build]
+command = "bash ../scripts/worker-build.sh assembler --release"
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true

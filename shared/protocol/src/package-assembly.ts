@@ -49,19 +49,16 @@ export type PackageAssemblyAnalysis = {
     };
     commands: Array<{
       name: string;
+      entry?: string | null;
     }>;
-    app?: {
-      handler: {
-        export_name: string;
-      };
-      has_rpc: boolean;
-      rpc_methods: string[];
-      browser_entry?: string | null;
+    browser?: {
+      entry: string;
       assets: string[];
     } | null;
-    tasks: Array<{
-      name: string;
-    }>;
+    backend?: {
+      entry: string;
+      public_routes: string[];
+    } | null;
   } | null;
   diagnostics: PackageAssemblyDiagnostic[];
   ok: boolean;

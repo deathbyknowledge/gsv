@@ -26,4 +26,10 @@ features:
   - title: Explanation
     details: Understand the system — architecture, the agent loop, memory, channels, security.
     link: /explanation/architecture
+  - title: Write a Package App
+    details: Build a package with a declarative manifest, backend entrypoint, browser app, and CLI commands.
+    link: /how-to/write-a-package-app
+  - title: Package SDK
+    details: Reference for package manifests, backend bindings, browser helpers, CLI context, and public routes.
+    link: /reference/package-sdk
 ---

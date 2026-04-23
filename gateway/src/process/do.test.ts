@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { env, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import type { Process } from "./do";
-import type { Kernel } from "../kernel/do";
+import { Kernel } from "../kernel/do";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import { getProcessByPid, getKernelPtr } from "../shared/utils";
@@ -308,6 +308,51 @@ describe("Process DO — mechanical", () => {
         expect(store.queueSize()).toBe(0);
         expect(process.currentRun).toMatchObject({ runId: "run-2" });
       });
+    });
+
+    it("returns without waiting for signal fanout delivery", async () => {
+      const pid = "mech-abort-nonblocking-signal";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = { runId: "run-1", queued: false };
+      });
+
+      let releaseSignalDispatch!: () => void;
+      const signalDispatchBlocked = new Promise<void>((resolve) => {
+        releaseSignalDispatch = resolve;
+      });
+      const signalSpy = vi
+        .spyOn(Kernel.prototype as never, "handleProcessSignal" as never)
+        .mockImplementation(async () => {
+          await signalDispatchBlocked;
+        });
+
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const res = await Promise.race([
+          stub.recvFrame(makeReq("proc.abort", {})),
+          new Promise<never>((_resolve, reject) => {
+            timeoutId = setTimeout(() => reject(new Error("proc.abort timed out waiting for signal delivery")), 150);
+          }),
+        ]) as ResponseOkFrame;
+
+        expect(res.ok).toBe(true);
+        expect(res.data).toMatchObject({
+          ok: true,
+          pid,
+          aborted: true,
+          runId: "run-1",
+        });
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        releaseSignalDispatch();
+        await signalDispatchBlocked;
+        signalSpy.mockRestore();
+      }
     });
   });
 

@@ -1,3 +1,99 @@
+const STARFIELD_SHELL_HTML = `
+  <main id="page" class="page">
+    <canvas id="starfield" aria-label="Animated ASCII starfield"></canvas>
+
+    <section id="intro-screen" class="intro-screen" aria-label="Intro">
+      <div class="intro-card">
+        <span class="intro-kicker">Pretext Demo</span>
+        <h1 class="intro-title">ASCII Starfield</h1>
+        <p class="intro-copy">
+          A first-person solar-system flythrough rendered as text.
+          <strong>Pretext</strong> fits the text grid and layout surfaces; the scene itself is drawn live into that field.
+        </p>
+        <div class="intro-controls intro-controls-desktop" aria-label="Desktop controls">
+          <span>Mouse to look, click to lock</span>
+          <span>W A S D to move, Q / E to rise and descend</span>
+          <span>Shift to boost, Space to brake, aim at bodies for briefs</span>
+        </div>
+        <div class="intro-controls intro-controls-touch" aria-label="Touch controls">
+          <span>Left stick to move, right stick to look</span>
+          <span>Up / Down for lift, Brake to stop, Info to open briefs</span>
+        </div>
+        <div class="intro-actions">
+          <button id="intro-start" class="intro-start" type="button">Start Flight</button>
+          <span class="intro-note">The scene is already running behind this screen. Start drops you straight into free flight.</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="readout readout-date" aria-label="Simulation date">
+      <span class="readout-label">Date</span>
+      <span id="sim-date" class="readout-value"></span>
+    </div>
+
+    <div class="readout readout-speed" aria-label="Current speed">
+      <span class="readout-label">Speed</span>
+      <span id="speedometer" class="readout-value"></span>
+    </div>
+
+    <div class="readout readout-fps" aria-label="Frame rate">
+      <span class="readout-label">FPS</span>
+      <span id="fps" class="readout-value"></span>
+    </div>
+
+    <aside class="minimap-shell" aria-label="Solar system minimap">
+      <canvas id="minimap" class="minimap" width="200" height="200" aria-label="Solar system minimap"></canvas>
+    </aside>
+
+    <aside id="ask-panel" class="ask-panel" aria-label="Question panel" hidden>
+      <div class="ask-panel-head">
+        <span class="ask-panel-kicker">Field Guide</span>
+        <h2 id="ask-title" class="ask-panel-title"></h2>
+        <p id="ask-context" class="ask-panel-context"></p>
+      </div>
+
+      <div class="ask-brief">
+        <p id="ask-summary" class="ask-summary"></p>
+        <div id="ask-telemetry" class="ask-telemetry"></div>
+      </div>
+
+      <form id="ask-form" class="ask-form">
+        <label class="sr-only" for="ask-input">Ask a question about the selected body</label>
+        <input id="ask-input" class="ask-input" type="text" autocomplete="off" spellcheck="false" placeholder="Ask a question">
+        <button id="ask-submit" class="ask-submit" type="submit">Ask</button>
+      </form>
+
+      <div class="ask-section">
+        <span class="ask-label">Suggested Questions</span>
+        <div id="ask-suggestions" class="ask-suggestions"></div>
+      </div>
+    </aside>
+
+    <div id="answer-layer" class="answer-layer" aria-live="polite"></div>
+
+    <div class="touch-overlay" aria-label="Touch flight controls">
+      <div id="touch-move" class="touch-stick touch-stick-left">
+        <div id="touch-move-knob" class="touch-stick-knob"></div>
+        <span class="touch-stick-label">Move</span>
+      </div>
+
+      <div class="touch-actions">
+        <button id="touch-lift-up" class="touch-action" type="button">Up</button>
+        <button id="touch-brief" class="touch-action" type="button">Info</button>
+        <button id="touch-lift-down" class="touch-action" type="button">Down</button>
+        <button id="touch-brake" class="touch-action touch-action-wide" type="button">Brake</button>
+      </div>
+
+      <div id="touch-look" class="touch-stick touch-stick-right">
+        <div id="touch-look-knob" class="touch-stick-knob"></div>
+        <span class="touch-stick-label">Look</span>
+      </div>
+    </div>
+  </main>
+`
+
+mountStarfieldShell()
+
 type InfoDatum = {
   label: string
   value: string
@@ -132,6 +228,15 @@ type HostBridgeClient = {
   call: <T = unknown>(call: string, args?: unknown) => Promise<T>
   spawnProcess: (args: ProcSpawnArgs) => Promise<ProcSpawnResult>
   sendMessage: (message: string, pid?: string) => Promise<ProcSendResult>
+}
+
+function mountStarfieldShell(): void {
+  document.title = 'ASCII Starfield'
+  const root = document.getElementById('root')
+  if (!(root instanceof HTMLElement)) {
+    throw new Error('Missing #root mount')
+  }
+  root.innerHTML = STARFIELD_SHELL_HTML
 }
 
 const page = getRequiredMain('page')
@@ -1045,14 +1150,14 @@ async function requestLiveAnswer(windowRecord: AnswerWindowRecord, question: str
       workspace: { mode: 'none' },
     })
     if (!spawnResult.ok) {
-      throw new Error(spawnResult.error)
+      throw new Error('error' in spawnResult ? spawnResult.error : 'process spawn failed')
     }
 
     windowRecord.pid = spawnResult.pid
 
     const sendResult = await hostClient.sendMessage(buildGuidePrompt(question, brief), spawnResult.pid)
     if (!sendResult.ok) {
-      throw new Error(sendResult.error)
+      throw new Error('error' in sendResult ? sendResult.error : 'message send failed')
     }
 
     windowRecord.runId = sendResult.runId

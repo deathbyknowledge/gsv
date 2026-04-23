@@ -35,6 +35,7 @@ export default defineConfig({
           items: [
             { text: "Deploy GSV", link: "/how-to/deploy" },
             { text: "Configure an Agent", link: "/how-to/configure-agent" },
+            { text: "Write a Package App", link: "/how-to/write-a-package-app" },
             { text: "Run a Node", link: "/how-to/run-a-node" },
             { text: "Manage Sessions", link: "/how-to/manage-sessions" },
             { text: "Set Up Cron Jobs", link: "/how-to/set-up-cron" },
@@ -48,6 +49,7 @@ export default defineConfig({
           text: "Reference",
           items: [
             { text: "CLI Commands", link: "/reference/cli-commands" },
+            { text: "Package SDK", link: "/reference/package-sdk" },
             { text: "WebSocket Protocol", link: "/reference/websocket-protocol" },
             { text: "Configuration", link: "/reference/configuration" },
             { text: "Workspace Files", link: "/reference/workspace-files" },

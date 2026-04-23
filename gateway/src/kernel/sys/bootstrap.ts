@@ -156,7 +156,7 @@ function toSysBootstrapRuntime(runtime: PackageRuntime): SysBootstrapResult["pac
 function toSysBootstrapEntrypoint(
   entrypoint: PackageEntrypoint,
 ): SysBootstrapResult["packages"][number]["entrypoints"] {
-  if (entrypoint.kind !== "command" && entrypoint.kind !== "task" && entrypoint.kind !== "ui") {
+  if (entrypoint.kind !== "command" && entrypoint.kind !== "ui") {
     return [];
   }
   return [{

@@ -1,4 +1,4 @@
-import type { KernelClientLike, PackageAppRpcContext } from "@gsv/package/worker";
+import type { KernelClientLike, PackageViewerBinding } from "@gsv/package/backend";
 import type {
   SysDeviceDetail,
   SysDeviceGetResult,
@@ -17,10 +17,14 @@ import type {
   RevokeTokenArgs,
 } from "../app/types";
 
+type ViewerRuntime = {
+  viewer?: PackageViewerBinding;
+};
+
 export async function loadState(
   args: LoadDevicesStateArgs | undefined,
   kernel: KernelClientLike,
-  runtime: PackageAppRpcContext,
+  runtime: ViewerRuntime,
 ): Promise<DevicesState> {
   const viewer = resolveViewer(runtime);
   const [deviceList, tokenList] = await Promise.all([
@@ -62,7 +66,7 @@ export async function loadState(
 export async function createNodeToken(
   args: CreateNodeTokenArgs,
   kernel: KernelClientLike,
-  runtime: PackageAppRpcContext,
+  runtime: ViewerRuntime,
 ): Promise<CreateNodeTokenResult> {
   const result = await kernel.request("sys.token.create", {
     kind: "node",
@@ -81,7 +85,7 @@ export async function createNodeToken(
 export async function revokeToken(
   args: RevokeTokenArgs,
   kernel: KernelClientLike,
-  runtime: PackageAppRpcContext,
+  runtime: ViewerRuntime,
 ): Promise<DevicesState> {
   await kernel.request("sys.token.revoke", {
     tokenId: normalizeRequired(args.tokenId, "tokenId"),
@@ -91,9 +95,9 @@ export async function revokeToken(
   return loadState(selectedDeviceId ? { deviceId: selectedDeviceId } : {}, kernel, runtime);
 }
 
-function resolveViewer(runtime: PackageAppRpcContext): DevicesViewer {
-  const uid = runtime.viewer.uid;
-  const username = runtime.viewer.username || (uid === 0 ? "root" : "user");
+function resolveViewer(runtime: ViewerRuntime): DevicesViewer {
+  const uid = runtime.viewer?.uid ?? 0;
+  const username = runtime.viewer?.username || (uid === 0 ? "root" : "user");
   return {
     uid,
     username,

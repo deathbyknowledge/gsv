@@ -1,0 +1,35 @@
+[package]
+name = "assembler"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+oxc_allocator = "0.127.0"
+oxc_codegen = "0.127.0"
+oxc_parser = "0.127.0"
+oxc_resolver = "11.19.1"
+oxc_semantic = "0.127.0"
+oxc_span = "0.127.0"
+oxc_syntax = "0.127.0"
+oxc_transformer = "0.127.0"
+semver = "1"
+tar = "0.4"
+thiserror = "2"
+urlencoding = "2"
+sha2 = "0.10"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+worker = { version = "0.7" }
+worker-macros = { version = "0.7" }

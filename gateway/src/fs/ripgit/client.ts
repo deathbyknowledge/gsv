@@ -137,45 +137,20 @@ export type RipgitPackageAnalyzeResponse = {
     };
     commands: Array<{
       name: string;
+      entry?: string | null;
     }>;
-    app?: {
-      handler: {
-        export_name: string;
-      };
-      has_rpc: boolean;
-      rpc_methods: string[];
-      browser_entry?: string | null;
+    browser?: {
+      entry: string;
       assets: string[];
     } | null;
-    tasks: Array<{
-      name: string;
-    }>;
+    backend?: {
+      entry: string;
+      public_routes: string[];
+    } | null;
   } | null;
   diagnostics: RipgitPackageDiagnostic[];
   ok: boolean;
   analysis_hash: string;
-};
-
-export type RipgitPackageBuildResponse = {
-  source: {
-    repo: string;
-    ref: string;
-    resolved_commit: string;
-    subdir: string;
-  };
-  analysis_hash: string;
-  target: "dynamic-worker";
-  artifact?: {
-    main_module: string;
-    modules: Array<{
-      path: string;
-      kind: "source-module" | "json" | "text";
-      content: string;
-    }>;
-    hash: string;
-  } | null;
-  diagnostics: RipgitPackageDiagnostic[];
-  ok: boolean;
 };
 
 export type RipgitPackageSnapshotResponse = {
@@ -413,20 +388,6 @@ export class RipgitClient {
     return response.json<RipgitPackageAnalyzeResponse>();
   }
 
-  async buildPackage(
-    repo: RipgitRepoRef,
-    subdir: string,
-    target: "dynamic-worker" = "dynamic-worker",
-  ): Promise<RipgitPackageBuildResponse> {
-    const response = await this.binding.fetch(this.makePackagesBuildUrl(repo, subdir, target), {
-      headers: this.makeInternalHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(await this.readError(response, `build package '${repo.owner}/${repo.repo}:${subdir}'`));
-    }
-    return response.json<RipgitPackageBuildResponse>();
-  }
-
   async snapshotPackage(
     repo: RipgitRepoRef,
     subdir: string,
@@ -501,16 +462,6 @@ export class RipgitClient {
   private makePackagesAnalyzeUrl(repo: RipgitRepoRef, subdir: string): URL {
     return this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/packages/analyze?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&subdir=${encodeURIComponent(subdir)}`,
-    );
-  }
-
-  private makePackagesBuildUrl(
-    repo: RipgitRepoRef,
-    subdir: string,
-    target: "dynamic-worker",
-  ): URL {
-    return this.makeUrl(
-      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/packages/build?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&subdir=${encodeURIComponent(subdir)}&target=${encodeURIComponent(target)}`,
     );
   }
 

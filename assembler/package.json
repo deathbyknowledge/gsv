@@ -2,21 +2,14 @@
   "name": "assembler",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "cf-typegen": "wrangler types",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@cloudflare/worker-bundler": "^0.0.3",
-    "@gsv/protocol": "file:../shared/protocol",
-    "sucrase": "^3.35.1"
+    "deploy": "wrangler deploy",
+    "build:worker": "bash ../scripts/worker-build.sh assembler --release",
+    "test:rust": "cargo test",
+    "test": "cargo test"
   },
   "devDependencies": {
-    "typescript": "^5.5.2",
     "wrangler": "^4.83.0"
   }
 }

@@ -8,7 +8,7 @@ export type PkgListArgs = {
 
 export type PkgEntrypointSummary = {
   name: string;
-  kind: "command" | "http" | "rpc" | "task" | "ui";
+  kind: "command" | "http" | "rpc" | "ui";
   description?: string;
   command?: string;
   route?: string;
