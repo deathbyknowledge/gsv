@@ -38,9 +38,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
+      - name: Rust check
         working-directory: assembler
-        run: npm exec --workspace assembler -- tsc --noEmit
+        run: cargo check --target wasm32-unknown-unknown
 
       - name: Bundle worker
         working-directory: assembler
