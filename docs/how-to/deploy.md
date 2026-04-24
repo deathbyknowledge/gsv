@@ -112,7 +112,13 @@ Re-run `gsv deploy up` with the same components. It fetches the latest release b
 gsv deploy up --all
 ```
 
-To force re-download of bundles (e.g., if a release was re-published):
+To track the latest commit on `main`, use the moving `dev` channel:
+
+```bash
+gsv deploy up --all --version dev
+```
+
+To force re-download of bundles for an immutable tag or local bundle:
 
 ```bash
 gsv deploy up --all --force-fetch

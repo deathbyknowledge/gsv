@@ -27,12 +27,8 @@ function stableTag() {
   return `v${readVersion()}`;
 }
 
-function devTag(runNumberRaw) {
-  const runNumber = `${runNumberRaw ?? ""}`.trim();
-  if (!/^\d+$/.test(runNumber)) {
-    fail("Dev tag requires a numeric run number");
-  }
-  return `${stableTag()}-dev.${runNumber}`;
+function devTag() {
+  return "dev";
 }
 
 function run(command, args) {
@@ -78,7 +74,7 @@ function cutStableTag() {
 function usage() {
   console.log("Usage:");
   console.log("  node scripts/release.mjs stable-tag");
-  console.log("  node scripts/release.mjs dev-tag <run-number>");
+  console.log("  node scripts/release.mjs dev-tag");
   console.log("  node scripts/release.mjs check-stable-tag <tag>");
   console.log("  node scripts/release.mjs cut-stable");
 }
@@ -90,7 +86,7 @@ switch (command) {
     console.log(stableTag());
     break;
   case "dev-tag":
-    console.log(devTag(value));
+    console.log(devTag());
     break;
   case "check-stable-tag":
     if (!value) {

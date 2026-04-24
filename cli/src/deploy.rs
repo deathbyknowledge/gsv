@@ -11,7 +11,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use walkdir::WalkDir;
 
@@ -36,6 +36,7 @@ const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
+const DEV_RELEASE_TAG: &str = "dev";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
@@ -166,6 +167,10 @@ fn is_semver_prerelease_tag(tag: &str) -> bool {
     is_semver_release_tag(tag) && tag.contains('-')
 }
 
+fn is_dev_channel_release_tag(tag: &str) -> bool {
+    tag.trim().eq_ignore_ascii_case(DEV_RELEASE_TAG)
+}
+
 fn select_latest_prerelease_tag(releases: &[GitHubRelease]) -> Option<String> {
     releases.iter().find_map(|release| {
         if release.draft || !release.prerelease || !is_semver_prerelease_tag(&release.tag_name) {
@@ -173,6 +178,18 @@ fn select_latest_prerelease_tag(releases: &[GitHubRelease]) -> Option<String> {
         }
         Some(release.tag_name.clone())
     })
+}
+
+fn select_dev_channel_release_tag(releases: &[GitHubRelease]) -> Option<String> {
+    releases
+        .iter()
+        .find_map(|release| {
+            if release.draft || !is_dev_channel_release_tag(&release.tag_name) {
+                return None;
+            }
+            Some(release.tag_name.clone())
+        })
+        .or_else(|| select_latest_prerelease_tag(releases))
 }
 
 async fn fetch_latest_stable_release_tag(
@@ -199,6 +216,30 @@ async fn fetch_latest_stable_release_tag(
 async fn fetch_latest_dev_release_tag(
     client: &reqwest::Client,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let fixed_url = format!(
+        "https://api.github.com/repos/{}/{}/releases/tags/{}",
+        REPO_OWNER, REPO_NAME, DEV_RELEASE_TAG
+    );
+    let fixed_response = client
+        .get(&fixed_url)
+        .header("User-Agent", "gsv-cli")
+        .send()
+        .await?;
+    if fixed_response.status() != reqwest::StatusCode::NOT_FOUND {
+        let release: GitHubRelease = fixed_response.error_for_status()?.json().await?;
+        if release.draft {
+            return Err("Dev channel release is still a draft".into());
+        }
+        if !is_dev_channel_release_tag(&release.tag_name) {
+            return Err(format!(
+                "Dev channel release tag is invalid: expected {}, got {}",
+                DEV_RELEASE_TAG, release.tag_name
+            )
+            .into());
+        }
+        return Ok(release.tag_name);
+    }
+
     let url = format!(
         "https://api.github.com/repos/{}/{}/releases?per_page=20",
         REPO_OWNER, REPO_NAME
@@ -211,8 +252,8 @@ async fn fetch_latest_dev_release_tag(
         .error_for_status()?
         .json()
         .await?;
-    select_latest_prerelease_tag(&releases)
-        .ok_or_else(|| "No semver dev prerelease found on GitHub releases".into())
+    select_dev_channel_release_tag(&releases)
+        .ok_or_else(|| "No dev channel release found on GitHub releases".into())
 }
 
 #[derive(Debug, Deserialize)]
@@ -450,6 +491,19 @@ fn base_release_url(tag: &str) -> String {
     )
 }
 
+fn release_download_url(tag: &str, file_name: &str) -> String {
+    let base = format!("{}/{}", base_release_url(tag), file_name);
+    if !is_dev_channel_release_tag(tag) {
+        return base;
+    }
+
+    let cache_bust = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{}?ts={}", base, cache_bust)
+}
+
 fn latest_tag_path(cfg: &CliConfig) -> PathBuf {
     cfg.gsv_home()
         .join("deploy")
@@ -657,9 +711,9 @@ pub async fn fetch_bundles(
     force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tag = resolve_release_tag(version).await?;
-    let release_url = base_release_url(&tag);
-    let checksums_url = format!("{}/{}", release_url, BUNDLE_CHECKSUMS);
+    let checksums_url = release_download_url(&tag, BUNDLE_CHECKSUMS);
     let client = reqwest::Client::new();
+    let refresh_mutable_dev = is_dev_channel_release_tag(&tag);
 
     println!("Fetching checksums: {}", checksums_url);
     let checksums_resp = client
@@ -684,11 +738,11 @@ Use a newer release tag or publish a release that includes Cloudflare bundles.",
     for component in components {
         let bundle_file = component_to_bundle(component)
             .ok_or_else(|| format!("Unsupported component '{}'", component))?;
-        let bundle_url = format!("{}/{}", release_url, bundle_file);
+        let bundle_url = release_download_url(&tag, bundle_file);
         let component_dir = version_root.join(component);
 
         if component_dir.exists() {
-            if force {
+            if force || refresh_mutable_dev {
                 fs::remove_dir_all(&component_dir)?;
             } else {
                 println!(
@@ -2944,6 +2998,13 @@ mod tests {
     }
 
     #[test]
+    fn dev_channel_release_detection_accepts_fixed_dev_tag() {
+        assert!(is_dev_channel_release_tag("dev"));
+        assert!(is_dev_channel_release_tag("DEV"));
+        assert!(!is_dev_channel_release_tag("v0.1.0-dev.42"));
+    }
+
+    #[test]
     fn latest_prerelease_selection_skips_drafts_and_non_semver_tags() {
         let releases = vec![
             GitHubRelease {
@@ -2967,6 +3028,24 @@ mod tests {
             select_latest_prerelease_tag(&releases),
             Some("v0.2.0-dev.42".to_string())
         );
+    }
+
+    #[test]
+    fn dev_channel_selection_prefers_fixed_dev_tag() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "v0.2.0-dev.42".to_string(),
+                prerelease: true,
+                draft: false,
+            },
+            GitHubRelease {
+                tag_name: "dev".to_string(),
+                prerelease: true,
+                draft: false,
+            },
+        ];
+
+        assert_eq!(select_dev_channel_release_tag(&releases), Some("dev".to_string()));
     }
 
     #[test]
