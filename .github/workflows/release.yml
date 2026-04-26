@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -273,7 +277,7 @@ jobs:
 
           `dev` is a moving prerelease channel that always tracks the latest commit on `main`.
           For an immutable release, install a versioned `v*.*.*` tag instead.
-DEV_NOTE
+          DEV_NOTE
             )
           fi
           INSTALL_TAG_CMD_PS="\$env:GSV_VERSION='${RELEASE_TAG}'; irm https://install.gsv.space/install.ps1 | iex"
@@ -331,6 +335,12 @@ DEV_NOTE
         run: |
           set -euo pipefail
           REPO="${{ github.repository }}"
+          MAIN_SHA="$(gh api "repos/${REPO}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "${MAIN_SHA}" != "${GITHUB_SHA}" ]; then
+            echo "Refusing to publish stale dev release: main is ${MAIN_SHA}, this run is ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+
           if gh api "repos/${REPO}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
             gh api "repos/${REPO}/git/refs/tags/${RELEASE_TAG}" \
               -X PATCH \
