@@ -15,6 +15,8 @@ The source of truth is:
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
 
+For syscall arguments, result shapes, and domain behavior, see [Syscalls Reference](/reference/syscalls).
+
 ---
 
 ## Frame Types
@@ -210,9 +212,9 @@ The gateway rejects setup-mode connections with error code `425` and details:
 
 ---
 
-## Request Routing
+## Syscall Dispatch
 
-The websocket protocol itself is uniform, but syscall handling depends on the domain:
+The websocket protocol is uniform: every operation is a `req` frame with a syscall name in `call`. Dispatch behavior depends on the syscall domain:
 
 | Domain | Behavior |
 |---|---|
@@ -226,125 +228,7 @@ The websocket protocol itself is uniform, but syscall handling depends on the do
 
 For routed `fs.*` and `shell.exec` requests, the gateway strips `args.target` before forwarding the request frame to the driver.
 
-Current compatibility caveat:
-
-- the CLI driver bridge is still legacy in a few spots, notably `fs.search` (`query` vs local `pattern`)
-
----
-
-## Current Syscall Surface
-
-The dispatcher in `gateway/src/kernel/dispatch.ts` currently handles these names:
-
-### Filesystem
-
-- `fs.read`
-- `fs.write`
-- `fs.edit`
-- `fs.delete`
-- `fs.search`
-
-### Shell
-
-- `shell.exec`
-
-### Processes
-
-- `proc.list`
-- `proc.profile.list`
-- `proc.spawn`
-- `proc.send`
-- `proc.abort`
-- `proc.hil`
-- `proc.kill`
-- `proc.history`
-- `proc.reset`
-- `proc.setidentity`
-
-### Packages
-
-- `pkg.list`
-- `pkg.add`
-- `pkg.sync`
-- `pkg.checkout`
-- `pkg.install`
-- `pkg.review.approve`
-- `pkg.remove`
-- `pkg.repo.refs`
-- `pkg.repo.read`
-- `pkg.repo.log`
-- `pkg.repo.search`
-- `pkg.repo.diff`
-- `pkg.remote.list`
-- `pkg.remote.add`
-- `pkg.remote.remove`
-- `pkg.public.list`
-- `pkg.public.set`
-
-### AI Bootstrap
-
-- `ai.tools`
-- `ai.config`
-
-### System
-
-- `sys.connect`
-- `sys.setup.assist`
-- `sys.setup`
-- `sys.bootstrap`
-- `sys.config.get`
-- `sys.config.set`
-- `sys.device.list`
-- `sys.device.get`
-- `sys.workspace.list`
-- `sys.token.create`
-- `sys.token.list`
-- `sys.token.revoke`
-- `sys.link`
-- `sys.unlink`
-- `sys.link.list`
-- `sys.link.consume`
-
-### Scheduler
-
-- `sched.list`
-- `sched.add`
-- `sched.update`
-- `sched.remove`
-- `sched.run`
-
-### Adapters
-
-- `adapter.connect`
-- `adapter.disconnect`
-- `adapter.inbound`
-- `adapter.state.update`
-- `adapter.send`
-- `adapter.status`
-
-### Knowledge
-
-- `knowledge.list`
-- `knowledge.db.list`
-- `knowledge.db.init`
-- `knowledge.db.delete`
-- `knowledge.read`
-- `knowledge.write`
-- `knowledge.search`
-- `knowledge.merge`
-- `knowledge.promote`
-- `knowledge.query`
-- `knowledge.ingest`
-- `knowledge.compile`
-
-### Notifications and Signal Watches
-
-- `notification.create`
-- `notification.list`
-- `notification.mark_read`
-- `notification.dismiss`
-- `signal.watch`
-- `signal.unwatch`
+Use the [Syscalls Reference](/reference/syscalls) for the full syscall surface.
 
 ---
 

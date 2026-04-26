@@ -1,258 +1,136 @@
-# Session Routing Reference
+# Routing Reference
 
-Sessions in GSV are keyed conversations between an agent and one or more peers. Session routing determines which Durable Object instance handles a given conversation by constructing a deterministic session key from the agent, channel, account, and peer identifiers.
+GSV routing is kernel-level message and syscall routing. It is not only chat/session routing. The Kernel Durable Object is the central router for WebSocket clients, agent processes, package apps, adapter workers, and connected devices.
 
-## Session Key Format
+## Routing Surfaces
 
-All structured session keys begin with the `agent:` prefix. The full format depends on the peer kind and the configured `dmScope`.
+| Surface | Entry Point | Routed By | Destination |
+|---|---|---|---|
+| CLI or browser client | WebSocket request frame | syscall name, caller capabilities, optional `target` | Kernel handler, Process DO, or device driver |
+| Agent process | `Kernel.recvFrame(pid, frame)` | process identity and syscall | Kernel handler or device driver |
+| Package app | `Kernel.appRequest(...)` | app frame, package manifest, entrypoint grants | Kernel handler or device driver |
+| Adapter worker | `adapter.inbound` syscall | linked actor identity and surface route | User init process or routed process |
+| Device driver | WebSocket response frame | persisted route id | Original client, process, or app |
 
-### Main Session Key
-
-```
-agent:{agentId}:{mainKey}
-```
-
-The main session is the canonical session for an agent. It is used when `dmScope` is `main` (all DMs collapse to a single session) or when referenced directly by alias.
-
-| Component | Description | Default |
-|---|---|---|
-| `agentId` | Normalized agent identifier | `main` |
-| `mainKey` | Canonical key suffix for the main session | `main` |
-
-Default main session key: `agent:main:main`
-
-### DM Session Keys
-
-DM (direct message) session keys vary by `dmScope`:
-
-| dmScope | Key Format | Description |
-|---|---|---|
-| `main` | `agent:{agentId}:{mainKey}` | All DMs route to the agent's main session |
-| `per-peer` | `agent:{agentId}:dm:{peerId}` | One session per peer, regardless of channel |
-| `per-channel-peer` | `agent:{agentId}:{channel}:dm:{peerId}` | One session per channel+peer combination |
-| `per-account-channel-peer` | `agent:{agentId}:{channel}:{accountId}:dm:{peerId}` | One session per account+channel+peer |
-
-### Non-DM Session Keys
-
-For non-DM peer kinds (e.g., groups):
-
-```
-agent:{agentId}:{channel}:{peerKind}:{peerId}
-```
-
-Non-DM keys are not affected by `dmScope`.
-
-## Key Components
-
-### `agentId`
-
-| Property | Value |
-|---|---|
-| Default | `main` |
-| Max length | 64 characters |
-| Valid characters | `[a-z0-9][a-z0-9_-]*` (case-insensitive, stored lowercase) |
-| Normalization | Lowercased. Invalid characters replaced with `-`. Leading/trailing dashes stripped. Empty or invalid input resolves to `main`. |
-
-### `channel`
-
-| Property | Value |
-|---|---|
-| Default | `unknown` |
-| Normalization | Lowercased. Invalid characters (outside `[a-z0-9+\-_@.]`) replaced with `_`. |
-
-Common channel values:
-
-| Channel | Source |
-|---|---|
-| `cli` | CLI client connections |
-| `whatsapp` | WhatsApp channel worker |
-| `discord` | Discord channel worker |
-
-### `accountId`
-
-| Property | Value |
-|---|---|
-| Default | `default` |
-| Max length | 64 characters |
-| Valid characters | `[a-z0-9][a-z0-9_-]*` (case-insensitive, stored lowercase) |
-| Normalization | Same rules as `agentId`. Empty or invalid input resolves to `default`. |
-
-Used only in `per-account-channel-peer` scope to distinguish between multiple bot accounts on the same channel.
-
-### `peerKind`
-
-| Property | Value |
-|---|---|
-| Default | `dm` |
-| Normalization | Lowercased. Invalid characters replaced with `_`. |
-
-Identifies the type of conversation. The value `dm` activates DM-specific routing logic (dmScope). All other values use the non-DM key format.
-
-### `peerId`
-
-| Property | Value |
-|---|---|
-| Default | `unknown` |
-| Normalization | Lowercased. Invalid characters replaced with `_`. |
-
-Identifies the remote peer. For WhatsApp, this is the phone number JID (e.g., `31628552611@s.whatsapp.net`). For Discord, the user or channel ID.
-
-### `mainKey`
-
-| Property | Value |
-|---|---|
-| Default | `main` |
-| Normalization | Lowercased. Empty input resolves to `main`. |
-| Config path | `session.mainKey` |
-
-The suffix used for the agent's main session. Configurable to allow renaming the main session without breaking existing non-main sessions.
-
-## Identity Links
-
-Identity links allow multiple channel-specific peer IDs to resolve to a single canonical peer identity for session routing. When a linked identity is found, it replaces the `peerId` in key construction.
-
-Configuration path: `session.identityLinks`
+All requests use the same frame shape:
 
 ```json
 {
-  "session": {
-    "identityLinks": {
-      "steve": ["+31628552611", "telegram:123456789", "whatsapp:+34675706329"]
-    }
-  }
+  "type": "req",
+  "id": "call-id",
+  "call": "fs.read",
+  "args": { "path": "/home/alice/context.d/00-role.md" }
 }
 ```
 
-Link entries support two formats:
+## Syscall Routing
 
-| Format | Example | Matching |
-|---|---|---|
-| Plain (no prefix) | `+31628552611` | Matched against any channel after E.164 normalization |
-| Channel-prefixed | `whatsapp:+34675706329` | Matched only when the channel name matches |
+The dispatcher first checks `args.target`. If `target` is omitted or set to `gsv`, the syscall is handled natively by the Kernel. If `target` names a connected device and the syscall is routable, the Kernel forwards it to that device.
 
-When a match is found, the canonical name (e.g., `steve`) is used as the `peerId`.
-
-## dmScope Modes
-
-The `dmScope` config field (`session.dmScope`) controls how DM conversations are mapped to sessions.
-
-| Mode | Key Format | Use Case |
-|---|---|---|
-| `main` | `agent:{agentId}:{mainKey}` | Single shared session. All DMs from all channels and peers are handled in one session. |
-| `per-peer` | `agent:{agentId}:dm:{peerId}` | One session per unique peer. The same person messaging from WhatsApp and Discord shares one session (when identity links are configured). |
-| `per-channel-peer` | `agent:{agentId}:{channel}:dm:{peerId}` | One session per channel+peer. The same person on different channels gets separate sessions. |
-| `per-account-channel-peer` | `agent:{agentId}:{channel}:{accountId}:dm:{peerId}` | Most granular. Separates sessions by bot account, useful when multiple bot accounts exist on the same channel. |
-
-Default: `main`
-
-## Canonicalization
-
-`canonicalizeSessionKey()` normalizes any session key by parsing and rebuilding it through `buildAgentSessionKey`. This applies:
-
-- dmScope collapsing (e.g., a `per-channel-peer` key collapses to `main` when dmScope is `main`)
-- mainKey aliasing (both `main` and the configured mainKey resolve to the same key)
-- Identifier normalization (lowercasing, invalid character replacement)
-
-Simple aliases (strings not starting with `agent:`) that match the mainKey or `main` are resolved to the full main session key.
-
-## Main Session Detection
-
-A session key is considered the "main session" when its canonicalized form equals `agent:{agentId}:{mainKey}`. This check is used to:
-
-- Control whether `MEMORY.md` is loaded (main sessions only)
-- Report session type in the system prompt runtime section
-
-## Session Key Parsing
-
-`parseSessionKey()` decomposes a structured key into its parts:
-
-```typescript
-type ParsedSessionKey = {
-  agentId: string;
-  channel?: string;
-  accountId?: string;
-  peer: { kind: string; id: string };
-};
-```
-
-The parser locates the `dm` marker in the colon-separated segments. Segments before `dm` are assigned to `channel` and `accountId` (positionally). Segments after `dm` are joined to form the peer ID (allowing colons in peer IDs).
-
-Returns `null` for keys with fewer than 4 colon-separated parts or keys not starting with `agent:`.
-
-## Auto-Reset Policies
-
-Each session has an optional reset policy that controls automatic session clearing.
-
-### Reset Policy Type
-
-```typescript
-type ResetPolicy = {
-  mode: "manual" | "daily" | "idle";
-  atHour?: number;
-  idleMinutes?: number;
-};
-```
-
-### Modes
-
-| Mode | Behavior | Parameters |
-|---|---|---|
-| `manual` | No automatic reset. Sessions are reset only by explicit user action. | None |
-| `daily` | Reset once per day when the first message arrives after the configured hour. | `atHour`: hour of day (0-23). Default: `4`. |
-| `idle` | Reset when the session has been idle longer than the configured duration. | `idleMinutes`: minutes of inactivity. Default: `60`. |
-
-### Daily Mode Logic
-
-The reset boundary is computed as the most recent occurrence of `atHour:00:00.000` in server time. If the session's `updatedAt` timestamp is before this boundary, the next inbound message triggers a reset before processing.
-
-### Idle Mode Logic
-
-A reset triggers when `now - updatedAt > idleMinutes * 60000`.
-
-### Default Policy
-
-New sessions inherit the default reset policy from gateway config at `session.defaultResetPolicy`. The system default is:
+Only `fs.*` and `shell.exec` support device routing. Other domains such as `sys.*`, `proc.*`, `pkg.*`, `adapter.*`, `knowledge.*`, and `notification.*` are kernel-internal.
 
 ```json
-{
-  "mode": "daily",
-  "atHour": 4
-}
+{ "path": "/etc/passwd", "target": "gsv" }
 ```
 
-### Reset Behavior
+```json
+{ "command": "git status --short", "target": "laptop" }
+```
 
-When an auto-reset triggers:
+Before forwarding to a device, the Kernel checks:
 
-1. Current messages are archived to R2 (see R2 Storage Layout Reference).
-2. Memories are extracted from the conversation and appended to the daily memory file dated to the conversation's last activity.
-3. Session media is deleted from R2.
-4. Messages are cleared from SQLite.
-5. A new `sessionId` (UUID) is generated.
-6. The old `sessionId` is appended to `previousSessionIds`.
-7. Token counters are zeroed.
-8. `lastResetAt` is set to the current time.
-9. The triggering user message is added to the fresh session.
-10. The agent loop continues with the new message.
+- The caller can access the device by ownership, group ACL, or root.
+- The device is online.
+- The device advertises an `implements` capability matching the syscall.
+- A live driver WebSocket exists for the device id.
 
-## Session Lifecycle
+Forwarded calls are stored in the Kernel SQLite `routing_table` with the call id, syscall, origin, target device, and timeout schedule. When the device responds, the Kernel consumes the route and returns the response to the original origin. If the route expires first, the origin receives a `504` timeout response.
 
-### Creation
+## Process Routing
 
-A session Durable Object is created on first message. The `sessionKey` is set from the routed key, and a `sessionId` (UUID v4) is generated. The session key is the Durable Object's identity and is stable across resets.
+Agent conversations are durable processes, identified by PIDs. The long-lived home process for a user is `init:{uid}`. Other processes are spawned with `proc.spawn` and usually receive UUID PIDs.
 
-### Active Use
+The Kernel stores process metadata in the `processes` table: uid, gids, profile, parent PID, cwd, workspace id, source mounts, state, label, and context files. `proc.list` is answered directly from this registry.
 
-Messages are stored in SQLite within the DO. Each message triggers an agent loop: LLM call, optional tool calls, response broadcast. Messages arriving during an active run are queued and processed sequentially.
+These syscalls are forwarded to the target Process DO after ownership checks:
 
-### Compaction
+```text
+proc.send
+proc.abort
+proc.hil
+proc.kill
+proc.history
+proc.reset
+```
 
-When the estimated context size approaches the model's context window, automatic compaction summarizes older messages, archives them to R2 as partial archives, extracts memories to the daily memory file, and replaces old messages with a synthetic summary.
+When no PID is supplied, process syscalls default to the caller's `init:{uid}` process. Non-root callers cannot access another user's process.
 
-### Reset
+## Chat Signal Routing
 
-Resets can be manual (user-initiated) or automatic (policy-driven). Both follow the same archival and cleanup procedure. The session key remains stable; only the `sessionId` changes.
+Process DOs emit chat signals such as `chat.delta`, `chat.tool_result`, `chat.hil`, and `chat.complete`. The Kernel routes those signals using `run_routes`.
 
-### Archival
+For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it maps `runId` to the adapter, account id, surface kind, surface id, and optional thread id. Routes expire after 30 minutes.
 
-On reset, the complete message history is serialized to JSONL, gzip-compressed, and stored in R2 at `agents/{agentId}/sessions/{sessionId}.jsonl.gz`. Partial archives from compaction use the suffix `-part{timestamp}`.
+If a run route is missing, the Kernel falls back to broadcasting the signal to connected clients for the owning uid.
+
+## Adapter Routing
+
+Messaging adapters call `adapter.inbound` through a service identity. The Kernel normalizes the adapter id and account id, then resolves the external actor id through `identity_links`.
+
+Inbound behavior:
+
+- Linked actor: resolve the local uid and deliver to a process.
+- Unlinked DM actor: return a link challenge such as `gsv auth link CODE`.
+- Unlinked non-DM actor: drop the message as `unlinked_actor`.
+
+The default delivery target is the user's `init:{uid}` process. A `surface_routes` entry can override this for a specific adapter account and surface:
+
+```text
+adapter + accountId + surface.kind + surface.id -> pid
+```
+
+Human-in-the-loop replies are routed specially. If the target process has a pending HIL request, a DM reply of approval or denial resumes `proc.hil` instead of starting a new chat turn.
+
+## Package App Routing
+
+Package UI and RPC calls are routed through package identity frames. The Kernel verifies:
+
+- The package is installed and enabled.
+- The route base and entrypoint match the installed manifest.
+- The entrypoint grants the requested syscall.
+- The user identity in the app frame is still valid.
+
+Package app syscalls can use the same device routing path as clients and processes. Async device responses are held in memory as pending app responses until the device reply or timeout arrives.
+
+## Device Routing
+
+Devices are persistent records in Kernel SQLite. A driver connection registers a device id, owner uid, owner gid, platform, version, and `implements` list. The access model is Linux-like:
+
+- Root can use every device.
+- The owner uid can use the device.
+- Members of granted groups can use the device.
+
+Device routing does not rename syscalls. Agents and clients always see the same syscall names, such as `fs.read` and `shell.exec`; `target` selects whether the call runs on `gsv` or a device.
+
+## Failure Behavior
+
+| Failure | Result |
+|---|---|
+| Missing capability | `403 Permission denied` |
+| Device access denied | `403 Access denied to device` |
+| Device offline | `503 Device offline` |
+| No active device connection | `503 No active connection` |
+| Device does not implement syscall | `400 Device does not implement` |
+| Device route timeout | `504 Syscall timed out` |
+| Unknown or foreign process | `Process not found` or `Permission denied` |
+
+## Related Stores
+
+| Store | Purpose |
+|---|---|
+| `routing_table` | In-flight device-routed syscalls. |
+| `run_routes` | Routes process chat signals back to connections or adapter surfaces. |
+| `processes` | Kernel process registry and process ownership. |
+| `devices`, `device_access` | Device catalog and group ACLs. |
+| `identity_links` | External adapter actor to local uid mapping. |
+| `surface_routes` | Adapter surface to process mapping. |

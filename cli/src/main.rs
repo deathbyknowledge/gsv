@@ -1396,6 +1396,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_adapt_driver_search_args_maps_query_to_pattern() {
+        let args = adapt_driver_args(
+            "fs.search",
+            serde_json::json!({
+                "query": "literal.value",
+                "path": ".",
+            }),
+        );
+
+        assert_eq!(
+            args.get("query").and_then(|v| v.as_str()),
+            Some("literal.value")
+        );
+        assert_eq!(
+            args.get("pattern").and_then(|v| v.as_str()),
+            Some("literal\\.value")
+        );
+    }
+
     #[tokio::test]
     async fn test_flush_exec_event_outbox_retry_keeps_event_queued() {
         let logger = test_logger();
@@ -3035,7 +3055,10 @@ async fn handle_driver_request(
     req: &RequestFrame,
     logger: &NodeLogger,
 ) {
-    let args = req.args.clone().unwrap_or(serde_json::Value::Null);
+    let args = adapt_driver_args(
+        &req.call,
+        req.args.clone().unwrap_or(serde_json::Value::Null),
+    );
 
     let result: Result<serde_json::Value, String> = match req.call.as_str() {
         call => {
@@ -3105,6 +3128,23 @@ async fn handle_driver_request(
             );
         }
     }
+}
+
+fn adapt_driver_args(call: &str, mut args: serde_json::Value) -> serde_json::Value {
+    if call == "fs.search" {
+        if let Some(obj) = args.as_object_mut() {
+            if !obj.contains_key("pattern") {
+                if let Some(query) = obj.get("query").and_then(|value| value.as_str()) {
+                    obj.insert(
+                        "pattern".to_string(),
+                        serde_json::Value::String(regex::escape(query)),
+                    );
+                }
+            }
+        }
+    }
+
+    args
 }
 
 async fn execute_tool_by_name(

@@ -15,7 +15,7 @@ hero:
 
 features:
   - title: Tutorials
-    details: Learn GSV step by step — deploy your first agent, connect a channel, write a skill.
+    details: Learn GSV step by step -- deploy your first agent, connect a channel, and build package apps.
     link: /tutorials/getting-started
   - title: How-to Guides
     details: Accomplish specific tasks — deploy, configure agents, manage sessions, set up cron.
