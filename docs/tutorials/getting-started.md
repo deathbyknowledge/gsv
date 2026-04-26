@@ -1,162 +1,122 @@
 # Getting Started with GSV
 
-In this tutorial, we will deploy a GSV agent to Cloudflare, send it a message from the command line, and then connect a node so the agent can run commands on your machine. By the end, you will have a working AI agent you can chat with that has access to tools on your computer.
+This tutorial deploys GSV, completes first-run setup in the Web UI, opens the
+Desktop, and connects your machine as a device. After this, agents can chat,
+read files, run shell commands, and target devices through the same Linux-like
+syscall surface they use in production.
 
 ## Prerequisites
 
-Before we begin, make sure you have:
-
-- A [Cloudflare account](https://dash.cloudflare.com/sign-up) (the free tier works)
-- A [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens) with the **Edit Cloudflare Workers** template
-- An API key from an LLM provider (Anthropic, OpenAI, Google, or OpenRouter)
-
-## 1. Install the CLI
-
-Run the install script to download the `gsv` binary:
+- A Cloudflare account with Workers, Durable Objects, and R2 access.
+- A Cloudflare API token that can edit Workers and R2 resources.
+- An AI provider API key.
+- The `gsv` CLI installed:
 
 ```bash
 curl -sSL https://install.gsv.space | bash
+gsv version
 ```
 
-Verify the installation:
+Save Cloudflare credentials locally if you do not want to pass flags each time:
 
 ```bash
-gsv --version
+gsv config --local set cloudflare.api_token "$CF_API_TOKEN"
+gsv config --local set cloudflare.account_id "$CF_ACCOUNT_ID"
 ```
 
-You should see output like `gsv 0.x.x`.
+## 1. Deploy GSV
 
-## 2. Deploy the gateway
-
-The gateway is the central worker that runs your agent on Cloudflare's edge network. We will use the deploy wizard, which walks you through the setup interactively.
-
-Run:
+Deploy the current Cloudflare components:
 
 ```bash
-gsv deploy up --wizard
+gsv infra deploy --all
 ```
 
-The wizard will prompt you for several things. Here is what to expect:
+This deploys the Gateway, Kernel-facing services, shared storage, and adapter
+Workers for WhatsApp and Discord. The command prints a Gateway URL such as:
 
-1. **Cloudflare API token** -- paste the token you created in the prerequisites.
-2. **Cloudflare account** -- if your token has access to multiple accounts, select the one you want to use.
-3. **Components** -- select `gateway` for now. We will add channels later.
-4. **Security notice** -- confirm that you understand the agent can execute commands.
-5. **LLM provider** -- select your provider (e.g., `anthropic`).
-6. **LLM model** -- accept the default or type a specific model ID.
-7. **LLM API key** -- paste your provider API key.
-8. **Deployment summary** -- review and confirm.
-
-The wizard downloads prebuilt bundles from GitHub, creates an R2 storage bucket, and deploys the gateway worker. This takes about a minute.
-
-When it finishes, you will see output that includes your gateway URL, something like:
-
-```
-Gateway URL: https://gsv.your-subdomain.workers.dev
+```text
+https://gsv.<your-subdomain>.workers.dev
 ```
 
-The wizard automatically saves the gateway URL and auth token to your local config at `~/.config/gsv/config.toml`. You can verify this:
+Open that URL in your browser.
+
+## 2. Complete Web Setup
+
+The first browser visit opens setup mode. Choose the setup path that matches
+what you need:
+
+- **Quick start** creates the first Desktop user with sensible defaults.
+- **Customize** lets you set the AI provider, model, API key, and initial device.
+- **Advanced** exposes the same controls plus lower-level system source options.
+
+When setup finishes, enter the Desktop. If setup produced CLI or device
+bootstrap commands, keep them available; they contain the exact Gateway URL,
+username, device id, and token for this deployment.
+
+## 3. Use the Desktop
+
+The Desktop is the primary interface for day-to-day work. Start here before
+reaching for CLI commands:
+
+- **Chat** sends messages to your init process.
+- **Files** browses the GSV filesystem.
+- **Shell** runs commands in the gateway OS context.
+- **Processes** shows running agent processes and history.
+- **Devices** lists connected local drivers and can issue device tokens.
+- **Packages** reviews and manages installed package apps.
+- **Adapters** connects WhatsApp and Discord accounts.
+- **Control** manages users, tokens, configuration, and identity links.
+
+Open **Chat** and ask:
+
+```text
+What can you do in this GSV?
+```
+
+## 4. Configure Local CLI Access
+
+The Web UI may already give you a ready-to-run CLI setup command. If you need to
+configure it manually, set the WebSocket URL and log in:
 
 ```bash
-gsv local-config show
+gsv config --local set gateway.url "wss://gsv.<your-subdomain>.workers.dev/ws"
+gsv auth login --username admin
+gsv chat "hello from the CLI"
 ```
 
-Notice the `[gateway]` section now has `url` and `token` values filled in.
+Use the CLI for automation and debugging. Use the Desktop for normal interactive
+setup, especially package apps and adapters.
 
-## 3. Send your first message
+## 5. Connect This Machine as a Device
 
-Now that the gateway is deployed, we can chat with the agent using the CLI client:
+Devices expose local hardware-style capabilities such as filesystem and shell
+access. Agents always see the same tool/syscall interface; the selected device
+decides where the work runs.
+
+Recommended path:
+
+1. Open **Devices** in the Desktop.
+2. Issue a token for a device id such as `macbook` or use the token created
+   during setup.
+3. Run the bootstrap command shown by the Web UI.
+
+Manual equivalent:
 
 ```bash
-gsv client "Hello, what can you help me with?"
+gsv config --local set gateway.username "admin"
+gsv config --local set node.id "macbook"
+gsv config --local set node.token "<device-token>"
+gsv device install --id macbook --workspace ~/projects
+gsv device status
 ```
 
-You should see the agent respond. The first message triggers the agent's commissioning ceremony -- it will introduce itself and may ask about your name and preferences. This is normal; the agent is setting up its identity through its workspace files.
+After the device connects, ask Chat to inspect a project or run a shell command
+on that device. GSV routes the request to the selected device without exposing a
+different tool set for each machine.
 
-To enter an interactive chat session (where you can send multiple messages), run `gsv client` without a message argument:
+## Next Steps
 
-```bash
-gsv client
-```
-
-Type messages and press Enter to send. Press `Ctrl+C` to exit.
-
-At this point, the agent can chat but has no tools -- it cannot run commands or access files on your machine. Let's fix that.
-
-## 4. Connect a node
-
-A node is a CLI instance running on your machine that provides tools (Bash, Read, Write, Edit, Glob, Grep) to the agent. When a node is connected, the agent can execute shell commands, read and write files, and search your codebase.
-
-Start a node in the foreground:
-
-```bash
-gsv node --foreground --id mynode --workspace ~/projects
-```
-
-- `--id mynode` sets the node's name. The agent sees tools prefixed with this name (e.g., `mynode__Bash`, `mynode__Read`).
-- `--workspace ~/projects` sets the root directory the node's file tools operate in.
-
-You should see output indicating the node connected to the gateway:
-
-```
-Connected to gateway as node "mynode"
-Registered tools: Bash, Read, Write, Edit, Glob, Grep
-```
-
-Leave this terminal running. The node needs to stay connected for the agent to use its tools.
-
-## 5. Verify the agent can use tools
-
-Open a second terminal and ask the agent to do something that requires tools:
-
-```bash
-gsv client "List the files in my workspace"
-```
-
-The agent will use the `mynode__Glob` or `mynode__Bash` tool to list files and return the results. You should see it reference the files in `~/projects`.
-
-Try another command:
-
-```bash
-gsv client "What operating system am I running? Use bash to find out."
-```
-
-The agent will call `mynode__Bash` with a command like `uname -a` and report back.
-
-Notice in the first terminal (where the node is running) that you can see the tool invocations being processed.
-
-## 6. Install the node as a service (optional)
-
-Running the node in the foreground is useful for debugging, but for day-to-day use you will want it running as a background service. Stop the foreground node with `Ctrl+C`, then install it:
-
-```bash
-gsv node install --id mynode --workspace ~/projects
-```
-
-This installs and starts the node as a system service (launchd on macOS, systemd on Linux). Check its status:
-
-```bash
-gsv node status
-```
-
-View the logs:
-
-```bash
-gsv node logs --follow
-```
-
-The node will automatically reconnect to the gateway if the connection drops.
-
-## What we accomplished
-
-You now have a working GSV deployment:
-
-- A **gateway** worker running on Cloudflare that hosts your AI agent
-- A **CLI client** for chatting with the agent
-- A **node** on your machine giving the agent access to shell commands and file operations
-
-From here, you can:
-
-- [Connect a messaging channel](setting-up-a-channel.md) (WhatsApp or Discord) so you can talk to your agent from your phone
-- [Write a custom skill](writing-a-skill.md) to teach the agent new capabilities
-- Customize the agent's personality by editing its workspace files (`gsv config get` to see current config, or mount the R2 workspace with `gsv mount`)
+- [Connect WhatsApp or Discord adapters](setting-up-a-channel.md).
+- [Write a package app](../how-to/write-a-package-app.md).
+- [Review the architecture](../explanation/architecture.md).

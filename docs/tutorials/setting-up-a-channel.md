@@ -1,198 +1,96 @@
-# Connecting a Channel
+# Connecting Adapters
 
-In this tutorial, we will connect a messaging platform to your GSV agent so you can chat with it from WhatsApp or Discord. By the end, you will be able to send a message on your chosen platform and receive a response from your agent.
+Adapters let external systems talk to GSV processes. This tutorial connects
+WhatsApp or Discord from the Web Desktop. Use this flow first; the CLI commands
+are mainly useful for automation and recovery.
 
-This tutorial assumes you have already completed [Getting Started with GSV](getting-started.md) and have a deployed gateway.
+This assumes you completed [Getting Started with GSV](getting-started.md) and
+can open the Desktop in your browser.
 
-## Choose your channel
+## 1. Open the Adapter UI
 
-GSV supports two messaging channels. Pick the one you want to set up:
+The Desktop is made of package apps. Open **Packages** if you need to verify the
+built-in apps are installed, then open **Adapters**.
 
-- **[WhatsApp](#whatsapp)** -- uses QR code authentication, connects to your personal WhatsApp account
-- **[Discord](#discord)** -- uses a bot token, runs as a Discord bot in your server
-
----
-
-## WhatsApp
-
-### 1. Deploy the WhatsApp channel worker
-
-If you did not deploy the WhatsApp channel during your initial setup, deploy it now:
+If adapter Workers were not deployed yet, deploy them from the CLI:
 
 ```bash
-gsv deploy up -c channel-whatsapp
+gsv infra deploy -c channel-whatsapp
+gsv infra deploy -c channel-discord --discord-bot-token "$DISCORD_BOT_TOKEN"
 ```
 
-This downloads the WhatsApp channel bundle and deploys it as a separate Cloudflare Worker with a Service Binding to your gateway.
+Deploying everything with `gsv infra deploy --all` includes both adapter Workers.
 
-When it finishes, you should see:
+## 2. Connect WhatsApp
 
-```
-Deploy complete.
-```
+In **Adapters**:
 
-### 2. Log in with your WhatsApp account
+1. Select **WhatsApp**.
+2. Use account id `primary` unless you need multiple WhatsApp accounts.
+3. Click **Connect**. Enable the force/reconnect option if you are replacing an
+   old pairing.
+4. Scan the QR code with WhatsApp: Settings, Linked Devices, Link a Device.
 
-The WhatsApp channel uses the Baileys library to connect to WhatsApp's servers. Authentication works through a QR code -- the same flow as WhatsApp Web.
+The account should move to a connected status after pairing completes. Send a
+test message to the linked WhatsApp account from another sender.
 
-Run:
+## 3. Connect Discord
+
+Create a Discord bot in the Discord Developer Portal:
+
+1. Create an application and add a bot.
+2. Copy the bot token.
+3. Enable **Message Content Intent** when the bot needs to read message text.
+4. Invite the bot to the server where you want to use it.
+
+In **Adapters**:
+
+1. Select **Discord**.
+2. Use account id `main` unless you need multiple bot accounts.
+3. Paste the bot token, or leave it blank if it was provided during deploy.
+4. Click **Connect** and confirm the status becomes connected.
+
+Mention the bot in a server channel or send it a direct message.
+
+## 4. Link External Identities
+
+GSV does not deliver unlinked external actors directly into a user's process.
+The normal flow is:
+
+1. Send a message from WhatsApp or Discord.
+2. Copy the one-time link code returned by the adapter.
+3. Open **Control**, then **Access**.
+4. Redeem the code under **Identity links**.
+5. Send another message from the external account.
+
+Root users can also create links manually in the same **Control** panel when
+they know the adapter, account id, actor id, and target uid.
+
+## 5. CLI Fallback
+
+Use CLI adapter commands only when you want scripts or terminal diagnostics:
 
 ```bash
-gsv channel whatsapp login
+gsv adapter connect --adapter whatsapp --account-id primary --config-json '{"force":true}'
+gsv adapter status --adapter whatsapp --account-id primary
+
+gsv adapter connect --adapter discord --account-id main \
+  --config-json '{"botToken":"<discord-bot-token>"}'
+gsv adapter status --adapter discord --account-id main
 ```
 
-A QR code will appear in your terminal. On your phone:
-
-1. Open WhatsApp
-2. Go to **Settings > Linked Devices**
-3. Tap **Link a Device**
-4. Scan the QR code in your terminal
-
-After scanning, wait a few seconds. You should see output confirming the connection:
-
-```
-WhatsApp connected
-```
-
-Check the status to confirm:
+Redeem a link code from the CLI if you are logged in as the target user:
 
 ```bash
-gsv channel whatsapp status
+gsv auth link CODE
 ```
 
-You should see `connected: true` and `authenticated: true` in the output.
+## Troubleshooting
 
-### 3. Send a test message
-
-From a different phone or WhatsApp account, send a message to the WhatsApp number you just linked. Alternatively, you can message yourself (some WhatsApp versions allow this).
-
-The first message from a new sender triggers a **pairing request**. GSV does not reply to unknown senders until you approve them. Check for pending requests:
-
-```bash
-gsv pair list
-```
-
-You should see the sender listed. Approve them:
-
-```bash
-gsv pair approve whatsapp "+1234567890"
-```
-
-Replace `+1234567890` with the actual sender ID shown in the pair list.
-
-Now send another message from that number. The agent will respond through WhatsApp.
-
-You can verify the session was created:
-
-```bash
-gsv session list
-```
-
-Look for a session key like `agent:main:whatsapp:dm:1234567890@s.whatsapp.net`.
-
-**You now have WhatsApp connected.** Skip ahead to [What we accomplished](#what-we-accomplished).
-
----
-
-## Discord
-
-### 1. Create a Discord bot
-
-Go to the [Discord Developer Portal](https://discord.com/developers/applications):
-
-1. Click **New Application** and give it a name (e.g., "GSV")
-2. Go to the **Bot** tab
-3. Click **Reset Token** and copy the bot token -- you will need it in the next step
-4. Under **Privileged Gateway Intents**, enable **MESSAGE CONTENT INTENT**
-
-### 2. Invite the bot to your server
-
-Still in the Developer Portal, note the **Application ID** from the General Information tab. Construct the invite URL by replacing `<APP_ID>` below:
-
-```
-https://discord.com/oauth2/authorize?client_id=<APP_ID>&permissions=101376&scope=bot
-```
-
-Open that URL in your browser, select your server, and authorize the bot. You should see the bot appear in your server's member list (it will be offline for now).
-
-### 3. Deploy the Discord channel worker
-
-Deploy the channel with your bot token:
-
-```bash
-gsv deploy up -c channel-discord --discord-bot-token "your-bot-token-here"
-```
-
-This deploys the Discord channel worker and uploads the bot token as a Cloudflare Worker secret. When it finishes, you should see:
-
-```
-Deploy complete.
-```
-
-### 4. Start the Discord bot
-
-Tell the gateway to start the Discord connection:
-
-```bash
-gsv channel discord start
-```
-
-Check the status:
-
-```bash
-gsv channel discord status
-```
-
-You should see `connected: true` in the output. The bot should now appear as online in your Discord server.
-
-### 5. Send a test message
-
-In your Discord server, send a message that mentions the bot:
-
-```
-@GSV Hello, are you there?
-```
-
-The agent should reply in the channel. Direct messages to the bot also work.
-
-As with WhatsApp, new senders may require pairing approval. Check with:
-
-```bash
-gsv pair list
-```
-
-And approve if needed:
-
-```bash
-gsv pair approve discord "your-discord-user-id"
-```
-
-Verify the session:
-
-```bash
-gsv session list
-```
-
-You should see a Discord session in the list.
-
----
-
-## What we accomplished
-
-You now have a messaging channel connected to your GSV agent:
-
-- The channel worker runs as a separate Cloudflare Worker alongside your gateway
-- Inbound messages are routed to the gateway, which creates a session and runs the agent loop
-- The agent's responses are sent back through the channel
-
-A few things to note:
-
-- Each channel requires an always-on Durable Object. The Cloudflare free tier supports one always-on DO, so running multiple channels may require a paid plan.
-- You can connect both WhatsApp and Discord to the same gateway -- the agent maintains separate sessions for each conversation.
-- Channel sessions are independent from your CLI session. The agent has separate message history for each.
-
-From here, you can:
-
-- [Write a custom skill](writing-a-skill.md) to extend what the agent can do
-- Manage sessions with `gsv session list`, `gsv session preview <key>`, and `gsv session reset <key>`
-- Configure channel policies with `gsv config set` (e.g., allowlists, DM policies)
+- If **Adapters** is missing, open **Packages** and sync built-in packages, or run
+  `gsv packages sync`.
+- If WhatsApp does not show a QR code, reconnect with the force option enabled.
+- If Discord stays offline, check the bot token, invite permissions, Gateway
+  status, and Message Content Intent.
+- If messages are ignored, open **Control** and confirm the external actor is
+  linked to the intended user.

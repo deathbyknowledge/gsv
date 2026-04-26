@@ -8,7 +8,7 @@ GSV's answer to this problem is a layered memory system that combines in-session
 
 Consider what's in the context window when the LLM is called:
 
-- **System prompt**: Personality, operating instructions, memory files, tool definitions, skill metadata, runtime context. This alone can be 3,000-10,000 tokens depending on configuration.
+- **System prompt**: Personality, operating instructions, memory files, tool definitions, and runtime context. This alone can be 3,000-10,000 tokens depending on configuration.
 - **Conversation history**: Every user message, every assistant response, every tool call and its result. Tool results can be massive — a `Bash` command that outputs 200 lines of log data might be 2,000+ tokens.
 - **Tool definitions**: JSON schemas for every available tool. With multiple nodes connected, this can be 50+ tools.
 
