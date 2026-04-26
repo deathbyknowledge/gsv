@@ -263,10 +263,10 @@ Fetches prebuilt bundles from GitHub releases (or a local directory), then deplo
 
 | Flag | Type | Env Var | Default | Description |
 |------|------|---------|---------|-------------|
-| `--version` | `string` | | `latest` | Release tag (e.g., `v0.2.0`) or `"latest"`. |
+| `--version` | `string` | | `latest` | Release ref: immutable tag (e.g., `v0.2.0`), `"latest"`/`"stable"`, or the moving `"dev"` channel. |
 | `-c`, `--component` | `string` (repeatable) | | *(all)* | Component to include. Repeat for multiple. |
 | `--all` | `bool` | | `false` | Include all components. Mutually exclusive with `--component`. |
-| `--force-fetch` | `bool` | | `false` | Overwrite existing extracted bundle directories. |
+| `--force-fetch` | `bool` | | `false` | Overwrite existing extracted bundle directories. The moving `dev` channel refreshes automatically without this flag. |
 | `--bundle-dir` | `path` | | *(none)* | Use local bundle directory instead of downloading from GitHub. |
 | `--wizard` | `bool` | | `false` | Run interactive setup prompts. Requires an interactive terminal. |
 | `--api-token` | `string` | `CF_API_TOKEN` | Config `cloudflare.api_token` | Cloudflare API token. |

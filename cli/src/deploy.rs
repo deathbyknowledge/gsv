@@ -11,7 +11,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use walkdir::WalkDir;
 
@@ -36,6 +36,7 @@ const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
+const DEV_RELEASE_TAG: &str = "dev";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
@@ -166,6 +167,10 @@ fn is_semver_prerelease_tag(tag: &str) -> bool {
     is_semver_release_tag(tag) && tag.contains('-')
 }
 
+fn is_dev_channel_release_tag(tag: &str) -> bool {
+    tag.trim().eq_ignore_ascii_case(DEV_RELEASE_TAG)
+}
+
 fn select_latest_prerelease_tag(releases: &[GitHubRelease]) -> Option<String> {
     releases.iter().find_map(|release| {
         if release.draft || !release.prerelease || !is_semver_prerelease_tag(&release.tag_name) {
@@ -173,6 +178,18 @@ fn select_latest_prerelease_tag(releases: &[GitHubRelease]) -> Option<String> {
         }
         Some(release.tag_name.clone())
     })
+}
+
+fn select_dev_channel_release_tag(releases: &[GitHubRelease]) -> Option<String> {
+    releases
+        .iter()
+        .find_map(|release| {
+            if release.draft || !is_dev_channel_release_tag(&release.tag_name) {
+                return None;
+            }
+            Some(release.tag_name.clone())
+        })
+        .or_else(|| select_latest_prerelease_tag(releases))
 }
 
 async fn fetch_latest_stable_release_tag(
@@ -199,6 +216,30 @@ async fn fetch_latest_stable_release_tag(
 async fn fetch_latest_dev_release_tag(
     client: &reqwest::Client,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let fixed_url = format!(
+        "https://api.github.com/repos/{}/{}/releases/tags/{}",
+        REPO_OWNER, REPO_NAME, DEV_RELEASE_TAG
+    );
+    let fixed_response = client
+        .get(&fixed_url)
+        .header("User-Agent", "gsv-cli")
+        .send()
+        .await?;
+    if fixed_response.status() != reqwest::StatusCode::NOT_FOUND {
+        let release: GitHubRelease = fixed_response.error_for_status()?.json().await?;
+        if release.draft {
+            return Err("Dev channel release is still a draft".into());
+        }
+        if !is_dev_channel_release_tag(&release.tag_name) {
+            return Err(format!(
+                "Dev channel release tag is invalid: expected {}, got {}",
+                DEV_RELEASE_TAG, release.tag_name
+            )
+            .into());
+        }
+        return Ok(release.tag_name);
+    }
+
     let url = format!(
         "https://api.github.com/repos/{}/{}/releases?per_page=20",
         REPO_OWNER, REPO_NAME
@@ -211,8 +252,8 @@ async fn fetch_latest_dev_release_tag(
         .error_for_status()?
         .json()
         .await?;
-    select_latest_prerelease_tag(&releases)
-        .ok_or_else(|| "No semver dev prerelease found on GitHub releases".into())
+    select_dev_channel_release_tag(&releases)
+        .ok_or_else(|| "No dev channel release found on GitHub releases".into())
 }
 
 #[derive(Debug, Deserialize)]
@@ -450,6 +491,19 @@ fn base_release_url(tag: &str) -> String {
     )
 }
 
+fn release_download_url(tag: &str, file_name: &str) -> String {
+    let base = format!("{}/{}", base_release_url(tag), file_name);
+    if !is_dev_channel_release_tag(tag) {
+        return base;
+    }
+
+    let cache_bust = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{}?ts={}", base, cache_bust)
+}
+
 fn latest_tag_path(cfg: &CliConfig) -> PathBuf {
     cfg.gsv_home()
         .join("deploy")
@@ -558,6 +612,161 @@ fn extract_bundle(
     Ok(())
 }
 
+fn component_staging_dir(version_root: &Path, component: &str) -> PathBuf {
+    version_root.join(format!(".{}-staging-{}", component, uuid::Uuid::new_v4()))
+}
+
+fn component_backup_dir(version_root: &Path, component: &str) -> PathBuf {
+    version_root.join(format!(".{}-backup-{}", component, uuid::Uuid::new_v4()))
+}
+
+#[cfg(target_os = "linux")]
+fn exchange_component_dirs(
+    staged_component_dir: &Path,
+    component_dir: &Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    use std::ffi::CString;
+    use std::io;
+    use std::os::unix::ffi::OsStrExt;
+
+    fn path_to_cstring(path: &Path) -> Result<CString, io::Error> {
+        CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("path contains a NUL byte: {}", path.display()),
+            )
+        })
+    }
+
+    let staged = path_to_cstring(staged_component_dir)?;
+    let current = path_to_cstring(component_dir)?;
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            staged.as_ptr(),
+            libc::AT_FDCWD,
+            current.as_ptr(),
+            libc::RENAME_EXCHANGE,
+        )
+    };
+
+    if result == 0 {
+        return Ok(true);
+    }
+
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(code)
+            if code == libc::ENOSYS
+                || code == libc::EINVAL
+                || code == libc::ENOTSUP
+                || code == libc::EOPNOTSUPP =>
+        {
+            Ok(false)
+        }
+        _ => Err(format!(
+            "Failed to atomically swap bundle directory {} with {}: {}",
+            staged_component_dir.display(),
+            component_dir.display(),
+            error
+        )
+        .into()),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn exchange_component_dirs(
+    _staged_component_dir: &Path,
+    _component_dir: &Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    Ok(false)
+}
+
+fn replace_component_dir(
+    staged_component_dir: &Path,
+    component_dir: &Path,
+    backup_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !component_dir.exists() {
+        fs::rename(staged_component_dir, component_dir)?;
+        return Ok(());
+    }
+
+    if exchange_component_dirs(staged_component_dir, component_dir)? {
+        return Ok(());
+    }
+
+    fs::rename(component_dir, backup_dir)?;
+    match fs::rename(staged_component_dir, component_dir) {
+        Ok(()) => {
+            if let Err(error) = fs::remove_dir_all(backup_dir) {
+                eprintln!(
+                    "Warning: installed replacement but failed to remove old bundle backup {}: {}",
+                    backup_dir.display(),
+                    error
+                );
+            }
+            Ok(())
+        }
+        Err(error) => {
+            match fs::rename(backup_dir, component_dir) {
+                Ok(()) => Err(format!(
+                    "Failed to replace bundle directory {}: {}",
+                    component_dir.display(),
+                    error
+                )
+                .into()),
+                Err(restore_error) => Err(format!(
+                    "Failed to replace bundle directory {}: {}; original bundle remains at {} but could not be restored: {}",
+                    component_dir.display(),
+                    error,
+                    backup_dir.display(),
+                    restore_error
+                )
+                .into()),
+            }
+        }
+    }
+}
+
+fn install_extracted_component(
+    bundle_bytes: &[u8],
+    version_root: &Path,
+    component: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let component_dir = version_root.join(component);
+    let staging_dir = component_staging_dir(version_root, component);
+    let backup_dir = component_backup_dir(version_root, component);
+    fs::create_dir_all(&staging_dir)?;
+
+    let result = (|| {
+        extract_bundle(bundle_bytes, &staging_dir)?;
+        let staged_component_dir = staging_dir.join(component);
+        if !staged_component_dir.exists() {
+            return Err(format!(
+                "Bundle extracted but component directory missing: {}",
+                staged_component_dir.display()
+            )
+            .into());
+        }
+
+        replace_component_dir(&staged_component_dir, &component_dir, &backup_dir)
+    })();
+
+    if staging_dir.exists() {
+        if let Err(error) = fs::remove_dir_all(&staging_dir) {
+            eprintln!(
+                "Warning: failed to remove bundle staging directory {}: {}",
+                staging_dir.display(),
+                error
+            );
+        }
+    }
+
+    result
+}
+
 pub fn local_bundle_version_label(version: &str) -> String {
     if version == "latest" {
         "local".to_string()
@@ -635,14 +844,7 @@ pub fn install_bundles_from_dir(
             component,
             bundle_path.display()
         );
-        extract_bundle(bytes.as_ref(), &version_root)?;
-        if !component_dir.exists() {
-            return Err(format!(
-                "Bundle extracted but component directory missing: {}",
-                component_dir.display()
-            )
-            .into());
-        }
+        install_extracted_component(bytes.as_ref(), &version_root, component)?;
     }
 
     write_latest_tag(cfg, &version_label)?;
@@ -657,9 +859,9 @@ pub async fn fetch_bundles(
     force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tag = resolve_release_tag(version).await?;
-    let release_url = base_release_url(&tag);
-    let checksums_url = format!("{}/{}", release_url, BUNDLE_CHECKSUMS);
+    let checksums_url = release_download_url(&tag, BUNDLE_CHECKSUMS);
     let client = reqwest::Client::new();
+    let refresh_mutable_dev = is_dev_channel_release_tag(&tag);
 
     println!("Fetching checksums: {}", checksums_url);
     let checksums_resp = client
@@ -684,13 +886,11 @@ Use a newer release tag or publish a release that includes Cloudflare bundles.",
     for component in components {
         let bundle_file = component_to_bundle(component)
             .ok_or_else(|| format!("Unsupported component '{}'", component))?;
-        let bundle_url = format!("{}/{}", release_url, bundle_file);
+        let bundle_url = release_download_url(&tag, bundle_file);
         let component_dir = version_root.join(component);
 
         if component_dir.exists() {
-            if force {
-                fs::remove_dir_all(&component_dir)?;
-            } else {
+            if !(force || refresh_mutable_dev) {
                 println!(
                     "Skipping {} (already exists, use --force to overwrite)",
                     component
@@ -732,7 +932,7 @@ This release likely predates Cloudflare bundle publishing.",
         }
 
         println!("Checksum OK for {}", bundle_file);
-        extract_bundle(bytes.as_ref(), &version_root)?;
+        install_extracted_component(bytes.as_ref(), &version_root, component)?;
         println!("Extracted {} to {}", component, component_dir.display());
     }
 
@@ -2944,6 +3144,13 @@ mod tests {
     }
 
     #[test]
+    fn dev_channel_release_detection_accepts_fixed_dev_tag() {
+        assert!(is_dev_channel_release_tag("dev"));
+        assert!(is_dev_channel_release_tag("DEV"));
+        assert!(!is_dev_channel_release_tag("v0.1.0-dev.42"));
+    }
+
+    #[test]
     fn latest_prerelease_selection_skips_drafts_and_non_semver_tags() {
         let releases = vec![
             GitHubRelease {
@@ -2967,6 +3174,101 @@ mod tests {
             select_latest_prerelease_tag(&releases),
             Some("v0.2.0-dev.42".to_string())
         );
+    }
+
+    #[test]
+    fn dev_channel_selection_prefers_fixed_dev_tag() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "v0.2.0-dev.42".to_string(),
+                prerelease: true,
+                draft: false,
+            },
+            GitHubRelease {
+                tag_name: "dev".to_string(),
+                prerelease: true,
+                draft: false,
+            },
+        ];
+
+        assert_eq!(
+            select_dev_channel_release_tag(&releases),
+            Some("dev".to_string())
+        );
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gsv-{name}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn test_bundle(component: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+
+        for (path, contents) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(contents.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(
+                    &mut header,
+                    format!("{component}/{path}"),
+                    std::io::Cursor::new(*contents),
+                )
+                .unwrap();
+        }
+
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn install_extracted_component_replaces_existing_after_staged_extract() {
+        let version_root = temp_test_dir("bundle-replace");
+        let component_dir = version_root.join(COMPONENT_GATEWAY);
+        fs::create_dir_all(&component_dir).unwrap();
+        fs::write(component_dir.join("old.txt"), "old").unwrap();
+
+        let bundle = test_bundle(COMPONENT_GATEWAY, &[("new.txt", b"new")]);
+
+        install_extracted_component(&bundle, &version_root, COMPONENT_GATEWAY).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(version_root.join(COMPONENT_GATEWAY).join("new.txt")).unwrap(),
+            "new"
+        );
+        assert!(!version_root
+            .join(COMPONENT_GATEWAY)
+            .join("old.txt")
+            .exists());
+
+        let _ = fs::remove_dir_all(version_root);
+    }
+
+    #[test]
+    fn install_extracted_component_preserves_existing_when_archive_is_invalid() {
+        let version_root = temp_test_dir("bundle-preserve");
+        let component_dir = version_root.join(COMPONENT_GATEWAY);
+        fs::create_dir_all(&component_dir).unwrap();
+        fs::write(component_dir.join("old.txt"), "old").unwrap();
+
+        let bundle = test_bundle(COMPONENT_RIPGIT, &[("new.txt", b"new")]);
+        let error = install_extracted_component(&bundle, &version_root, COMPONENT_GATEWAY)
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("Bundle extracted but component directory missing"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            fs::read_to_string(version_root.join(COMPONENT_GATEWAY).join("old.txt")).unwrap(),
+            "old"
+        );
+
+        let _ = fs::remove_dir_all(version_root);
     }
 
     #[test]

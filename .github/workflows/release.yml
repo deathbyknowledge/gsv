@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -22,6 +26,7 @@ jobs:
       kind: ${{ steps.channel.outputs.kind }}
       short_sha: ${{ steps.channel.outputs.short_sha }}
       release_tag: ${{ steps.channel.outputs.release_tag }}
+      release_name: ${{ steps.channel.outputs.release_name }}
       built_at: ${{ steps.channel.outputs.built_at }}
       prerelease: ${{ steps.channel.outputs.prerelease }}
     steps:
@@ -57,9 +62,11 @@ jobs:
               echo "Stable release tag must match ${EXPECTED_TAG}, got ${RELEASE_TAG}" >&2
               exit 1
             fi
+            RELEASE_NAME="GSV ${RELEASE_TAG}"
             PRERELEASE="false"
           else
-            RELEASE_TAG="$(node ./scripts/release.mjs dev-tag "${GITHUB_RUN_NUMBER}")"
+            RELEASE_TAG="$(node ./scripts/release.mjs dev-tag)"
+            RELEASE_NAME="GSV (dev)"
             PRERELEASE="true"
           fi
 
@@ -67,6 +74,7 @@ jobs:
           echo "kind=${KIND}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
           echo "built_at=${BUILT_AT}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
 
@@ -212,6 +220,7 @@ jobs:
     env:
       KIND: ${{ needs.resolve.outputs.kind }}
       RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      RELEASE_NAME: ${{ needs.resolve.outputs.release_name }}
       SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
       BUILT_AT: ${{ needs.resolve.outputs.built_at }}
     steps:
@@ -255,13 +264,21 @@ jobs:
         id: body
         run: |
           if [ "$KIND" = "stable" ]; then
-            TITLE="GSV ${RELEASE_TAG}"
+            TITLE="${RELEASE_NAME}"
             INSTALL_CMD='curl -sSL https://install.gsv.space | bash'
             INSTALL_CMD_PS='irm https://install.gsv.space/install.ps1 | iex'
+            DEV_CHANNEL_NOTE=""
           else
-            TITLE="GSV ${RELEASE_TAG}"
+            TITLE="${RELEASE_NAME}"
             INSTALL_CMD='curl -sSL https://install.gsv.space | GSV_CHANNEL=dev bash'
             INSTALL_CMD_PS='$env:GSV_CHANNEL="dev"; irm https://install.gsv.space/install.ps1 | iex'
+            DEV_CHANNEL_NOTE=$(cat <<'DEV_NOTE'
+          ### Dev Channel
+
+          `dev` is a moving prerelease channel that always tracks the latest commit on `main`.
+          For an immutable release, install a versioned `v*.*.*` tag instead.
+          DEV_NOTE
+            )
           fi
           INSTALL_TAG_CMD_PS="\$env:GSV_VERSION='${RELEASE_TAG}'; irm https://install.gsv.space/install.ps1 | iex"
 
@@ -290,6 +307,8 @@ jobs:
           ${INSTALL_TAG_CMD_PS}
           \`\`\`
 
+          ${DEV_CHANNEL_NOTE}
+
           ### Cloudflare Bundles
 
           Cloudflare artifacts are split by component:
@@ -309,15 +328,42 @@ jobs:
           - **Windows (x64)**: \`gsv-windows-x64.exe\`
           BODY
 
+      - name: Move mutable dev tag
+        if: needs.resolve.outputs.kind == 'dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          MAIN_SHA="$(gh api "repos/${REPO}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "${MAIN_SHA}" != "${GITHUB_SHA}" ]; then
+            echo "Refusing to publish stale dev release: main is ${MAIN_SHA}, this run is ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+
+          if gh api "repos/${REPO}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh api "repos/${REPO}/git/refs/tags/${RELEASE_TAG}" \
+              -X PATCH \
+              -f sha="${GITHUB_SHA}" \
+              -F force=true >/dev/null
+          else
+            gh api "repos/${REPO}/git/refs" \
+              -X POST \
+              -f ref="refs/tags/${RELEASE_TAG}" \
+              -f sha="${GITHUB_SHA}" >/dev/null
+          fi
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
-          name: GSV ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
           draft: false
           prerelease: ${{ needs.resolve.outputs.prerelease == 'true' }}
           make_latest: ${{ needs.resolve.outputs.kind == 'stable' }}
+          overwrite_files: true
+          append_body: false
           body_path: body.md
           files: |
             release/gsv-linux-x64

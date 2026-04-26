@@ -22,6 +22,7 @@ INSTALL_DIR="${GSV_INSTALL_DIR:-/usr/local/bin}"
 CHANNEL="${GSV_CHANNEL:-stable}"
 VERSION="${GSV_VERSION:-}"
 CONFIG_DIR="${HOME}/.config/gsv"
+DEV_RELEASE_TAG="dev"
 
 # Colors
 RED='\033[0;31m'
@@ -130,6 +131,18 @@ github_api_get() {
     exit 1
 }
 
+cache_bust_url_if_dev() {
+    local release_ref="$1"
+    local url="$2"
+
+    if [ "$release_ref" != "$DEV_RELEASE_TAG" ]; then
+        printf '%s\n' "$url"
+        return
+    fi
+
+    printf '%s?ts=%s\n' "$url" "$(date +%s)"
+}
+
 resolve_release_ref() {
     if [ -n "$VERSION" ]; then
         printf '%s\n' "$VERSION"
@@ -152,8 +165,16 @@ resolve_release_ref() {
     fi
 
     local response
-    response=$(github_api_get "https://api.github.com/repos/${REPO}/releases?per_page=20")
     local tag
+    if response=$(github_api_get "https://api.github.com/repos/${REPO}/releases/tags/${DEV_RELEASE_TAG}" 2>/dev/null); then
+        tag=$(printf '%s' "$response" | tr -d '\n' | sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p')
+        if [ -n "$tag" ]; then
+            printf '%s\n' "$tag"
+            return
+        fi
+    fi
+
+    response=$(github_api_get "https://api.github.com/repos/${REPO}/releases?per_page=20")
     tag=$(
         printf '%s' "$response" \
           | tr -d '\n' \
@@ -172,7 +193,7 @@ resolve_release_ref() {
               }
               /"prerelease"/ {
                   prerelease=$2
-                  if (draft == "false" && prerelease == "true" && tag ~ /^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$/) {
+                  if (draft == "false" && (tag == "dev" || (prerelease == "true" && tag ~ /^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$/))) {
                       print tag
                       exit
                   }
@@ -195,6 +216,7 @@ download_cli() {
     release_ref="$(resolve_release_ref)"
 
     local url="https://github.com/${REPO}/releases/download/${release_ref}/${BINARY_NAME}"
+    url="$(cache_bust_url_if_dev "$release_ref" "$url")"
     local tmp_dir=$(mktemp -d)
     local tmp_file="${tmp_dir}/gsv"
     
