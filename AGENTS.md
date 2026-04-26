@@ -27,7 +27,7 @@ gsv-app-runtime/
 │   │   └── protocol/        # WS and RPC frame types
 │   ├── wrangler.jsonc
 │   └── package.json
-├── builtin-packages/        # builtin apps synced from system/gsv
+├── builtin-packages/        # builtin apps synced from root/gsv
 ├── shared/                  # shared SDKs, contracts, and app-link types
 ├── web/
 │   ├── src/                # desktop shell, host bridge, setup/login UI
@@ -123,7 +123,7 @@ Examples:
 - `packages`
 - `adapters`
 
-They are synced from `system/gsv` into the running system. A builtin app change is not applied by redeploying the gateway worker alone.
+They are synced from `root/gsv` into the running system. A builtin app change is not applied by redeploying the gateway worker alone.
 
 ### Adapter workers
 

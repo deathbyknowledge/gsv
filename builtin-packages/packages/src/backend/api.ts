@@ -98,7 +98,7 @@ function parseImportSource(raw: string): { remoteUrl?: string; repo?: string } {
 }
 
 function isBuiltinRepo(repo: string): boolean {
-  return repo === "system/gsv";
+  return repo === "root/gsv";
 }
 
 function repoOwner(repo: string): string {

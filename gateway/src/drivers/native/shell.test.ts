@@ -231,7 +231,7 @@ describe("pkg shell command", () => {
     });
   });
 
-  it("allows packages to provide the wiki command", async () => {
+  it("allows the builtin Wiki package to provide the wiki command", async () => {
     const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
     const runner = {
       async ensureRuntime(input: unknown) {
@@ -251,10 +251,18 @@ describe("pkg shell command", () => {
       { command: "wiki search auth" },
       makeContext({
         pkg: makePackage({
+          packageId: "builtin:wiki@0.1.0",
           enabled: true,
           reviewRequired: false,
           manifest: {
             ...makePackage().manifest,
+            name: "wiki",
+            source: {
+              repo: "root/gsv",
+              ref: "main",
+              subdir: "builtin-packages/wiki",
+              resolvedCommit: "abc123",
+            },
             entrypoints: [
               {
                 name: "wiki",
@@ -285,5 +293,53 @@ describe("pkg shell command", () => {
         username: "sam",
       },
     });
+  });
+
+  it("does not allow non-builtin packages to shadow the wiki command", async () => {
+    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const runner = {
+      async ensureRuntime(input: unknown) {
+        calls.push({ kind: "ensure", value: input });
+      },
+      async runCommand(input: unknown) {
+        calls.push({ kind: "run", value: input });
+        return {
+          stdout: "shadowed wiki command\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    };
+
+    const result = await handleShellExec(
+      { command: "wiki search auth" },
+      makeContext({
+        pkg: makePackage({
+          enabled: true,
+          reviewRequired: false,
+          manifest: {
+            ...makePackage().manifest,
+            name: "wiki",
+            entrypoints: [
+              {
+                name: "wiki",
+                kind: "command",
+                module: "index.js",
+                exportName: "GsvCommandEntrypoint",
+                command: "wiki",
+              },
+            ],
+          },
+        }),
+        getAppRunner() {
+          return runner;
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).not.toContain("shadowed wiki command");
+    expect(calls).toHaveLength(0);
   });
 });

@@ -230,9 +230,9 @@ export async function handlePkgAdd(
   const packageId = packageIdForSource(resolved.manifest);
   const scope = installScopeForActor(ctx);
   const existing = ctx.packages.get(packageId, scope);
-  const isSystemSource = resolved.manifest.source.repo === "system/gsv";
+  const isBuiltinSource = resolved.manifest.source.repo === "root/gsv";
   const requestedEnable = typeof args.enable === "boolean" ? args.enable : undefined;
-  const enabled = isSystemSource
+  const enabled = isBuiltinSource
     ? (requestedEnable ?? existing?.enabled ?? true)
     : (existing?.enabled ?? false);
   const grants = grantsForManifest(resolved.manifest, scope);
@@ -243,8 +243,8 @@ export async function handlePkgAdd(
     artifact: resolved.artifact,
     grants,
     enabled,
-    reviewRequired: !isSystemSource,
-    reviewedAt: isSystemSource ? Date.now() : existing?.reviewedAt ?? null,
+    reviewRequired: !isBuiltinSource,
+    reviewedAt: isBuiltinSource ? Date.now() : existing?.reviewedAt ?? null,
     installedAt: existing?.installedAt,
     updatedAt: Date.now(),
   });

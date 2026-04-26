@@ -21,7 +21,7 @@ This branch has the package review architecture replacement in progress:
   - Devices
   - Processes
   - Packages
-- Added upstream bootstrap flow for `system/gsv`.
+- Added upstream bootstrap flow for `root/gsv`.
 - Fixed CI after the `gateway-os -> gateway` rename.
 - Added third-party package review gating:
   - imported third-party packages default disabled

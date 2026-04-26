@@ -180,4 +180,4 @@ gsv packages sync
 
 Treat package review like code review. Check requested Kernel syscalls,
 filesystem writes, shell usage, adapter behavior, and network assumptions before
-enabling non-system packages.
+enabling non-builtin packages.

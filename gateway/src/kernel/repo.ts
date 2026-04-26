@@ -62,14 +62,14 @@ export function handleRepoList(
     });
   };
 
-  add(toSummary(homeKnowledgeRepoRef(identity.process.uid), "home", ctx));
+  add(toSummary(homeKnowledgeRepoRef(identity.process.username), "home", ctx));
 
   const workspaceRecords = identity.process.uid === 0
     ? ctx.workspaces.list()
     : ctx.workspaces.list(identity.process.uid);
   for (const workspace of workspaceRecords) {
     add({
-      ...toSummary(workspaceRepoRef(workspace.workspaceId, workspace.ownerUid), "workspace", ctx),
+      ...toSummary(workspaceRepoRef(workspace.workspaceId, workspace.ownerUsername), "workspace", ctx),
       description: workspace.label ?? undefined,
       updatedAt: workspace.updatedAt,
     });
@@ -389,9 +389,6 @@ function canReadRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (canWriteRepo(repoSlug(repo), ctx)) {
     return true;
   }
-  if (repo.owner === "system") {
-    return true;
-  }
   if (isRepoPublic(repoSlug(repo), ctx)) {
     return true;
   }
@@ -405,7 +402,7 @@ function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   if (identity.process.uid === 0 || identity.capabilities.includes("*")) {
     return true;
   }
-  return repo.owner === identity.process.username || repo.owner === `uid-${identity.process.uid}`;
+  return repo.owner === identity.process.username;
 }
 
 function toSummary(
@@ -420,7 +417,7 @@ function toSummary(
     name: repo.repo,
     kind,
     writable: canWriteRepo(slug, ctx),
-    public: isRepoPublic(slug, ctx) || repo.owner === "system",
+    public: isRepoPublic(slug, ctx),
   };
 }
 

@@ -257,7 +257,7 @@ export function renderDesktopShell(): string {
                   <article class="onboarding-summary-card">
                     <span>System source</span>
                     <strong data-setup-summary-source></strong>
-                    <p>The source imported into <code>system/gsv</code> during setup.</p>
+                    <p>The source imported into <code>root/gsv</code> during setup.</p>
                   </article>
                   <article class="onboarding-summary-card">
                     <span>Device token</span>

@@ -121,9 +121,9 @@ imports.
 
 GSV uses repositories for more than source control:
 
-- `uid-{uid}/home` stores user-global knowledge and context.
-- `uid-{uid}/{workspaceId}` stores workspace files and checkpoints.
-- `system/gsv` can mirror the deployed GSV source.
+- `{username}/home` stores user-global knowledge and context.
+- `{username}/{workspaceId}` stores workspace files and checkpoints.
+- `root/gsv` can mirror the deployed GSV source.
 - Package source repositories provide installable apps and CLI commands.
 
 This is how GSV can host its own source, install packages from repos, and expose

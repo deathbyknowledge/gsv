@@ -50,7 +50,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
   ) {}
 
   private get repo() {
-    return homeKnowledgeRepoRef(this.identity.uid);
+    return homeKnowledgeRepoRef(this.identity.username);
   }
 
   private get home() {

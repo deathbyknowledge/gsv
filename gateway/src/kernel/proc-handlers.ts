@@ -432,18 +432,18 @@ async function materializeSpawnIdentity(
       }
 
       ctx.workspaces.touch(spec.workspaceId);
-        return {
-          ok: true,
-          identity: {
-            ...baseIdentity,
-            cwd: workspaceRootPath(spec.workspaceId),
-            workspaceId: spec.workspaceId,
-          },
+      return {
+        ok: true,
+        identity: {
+          ...baseIdentity,
+          cwd: workspaceRootPath(spec.workspaceId),
           workspaceId: spec.workspaceId,
+        },
+        workspaceId: spec.workspaceId,
       };
     }
     case "new": {
-      const workspaceRecord = ctx.workspaces.create(baseIdentity.uid, {
+      const workspaceRecord = ctx.workspaces.create(baseIdentity, {
         label: spec.label ?? label,
         kind: spec.kind ?? "thread",
       });
@@ -532,6 +532,7 @@ async function ensureWorkspaceRoot(
     const payload = JSON.stringify({
       workspaceId,
       ownerUid: identity.uid,
+      ownerUsername: identity.username,
       label: ctx.workspaces.get(workspaceId)?.label ?? null,
       kind,
       createdAt: Date.now(),

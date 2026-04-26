@@ -137,15 +137,15 @@ must come through an app session, target an enabled package, and match a syscall
 declared by the package entrypoint. The Kernel executes those syscalls as the
 authenticated user and still applies normal syscall/device/resource checks.
 
-Non-system packages require review before they can be enabled. Package metadata
+Non-builtin packages require review before they can be enabled. Package metadata
 records requested bindings and egress grants; default egress is `none`.
 Mutating package operations require root, wildcard capability, or ownership of
 the user package scope.
 
 Git HTTP uses Basic auth with either password or user token credentials. Public
-repository reads are allowed only for repos explicitly marked public. Pushes
-require the repo owner, root, or wildcard capability; `system/*` repositories
-are root-only for writes.
+repository reads are allowed only for repos explicitly marked public. Package
+source repositories are readable only when their package is visible to the
+caller. Pushes require the repo owner, root, or wildcard capability.
 
 ## What GSV Does Not Protect Against
 

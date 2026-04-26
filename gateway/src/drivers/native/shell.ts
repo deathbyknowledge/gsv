@@ -718,38 +718,65 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
     "man",
     "ls",
     "stat",
+    "wiki",
   ]);
-
-  for (const record of ctx.packages.list({
+  const packageRecords = ctx.packages.list({
     enabled: true,
     scopes: visiblePackageScopesForActor(identity),
-  })) {
+  });
+
+  for (const record of packageRecords) {
+    if (!isBuiltinWikiPackage(record)) continue;
+    const wikiEntrypoint = record.manifest.entrypoints.find((entrypoint) =>
+      entrypoint.kind === "command" && entrypoint.command?.trim() === "wiki"
+    );
+    if (wikiEntrypoint) {
+      commands.push(buildPackageCommand("wiki", record, wikiEntrypoint, identity, ctx));
+    }
+    break;
+  }
+
+  for (const record of packageRecords) {
     for (const entrypoint of record.manifest.entrypoints) {
       if (entrypoint.kind !== "command") continue;
       const commandName = entrypoint.command?.trim();
       if (!commandName || reserved.has(commandName)) continue;
       reserved.add(commandName);
-      commands.push(defineCommand(commandName, async (args, bashCtx): Promise<ExecResult> => {
-        try {
-          const result = await runPackageCommand(record, entrypoint, args, bashCtx.cwd, identity, ctx);
-          return {
-            stdout: result.stdout ?? "",
-            stderr: result.stderr ?? "",
-            exitCode: result.exitCode ?? 0,
-          };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          return {
-            stdout: "",
-            stderr: `${commandName}: ${message}\n`,
-            exitCode: 1,
-          };
-        }
-      }));
+      commands.push(buildPackageCommand(commandName, record, entrypoint, identity, ctx));
     }
   }
 
   return commands;
+}
+
+function buildPackageCommand(
+  commandName: string,
+  record: InstalledPackageRecord,
+  entrypoint: PackageEntrypoint,
+  identity: ProcessIdentity,
+  ctx: KernelContext,
+) {
+  return defineCommand(commandName, async (args, bashCtx): Promise<ExecResult> => {
+    try {
+      const result = await runPackageCommand(record, entrypoint, args, bashCtx.cwd, identity, ctx);
+      return {
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        exitCode: result.exitCode ?? 0,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        stdout: "",
+        stderr: `${commandName}: ${message}\n`,
+        exitCode: 1,
+      };
+    }
+  });
+}
+
+function isBuiltinWikiPackage(record: InstalledPackageRecord): boolean {
+  return record.packageId.startsWith("builtin:wiki@") && record.manifest.name === "wiki";
 }
 
 function buildPkgCommand(ctx: KernelContext) {

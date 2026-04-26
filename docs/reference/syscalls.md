@@ -369,8 +369,8 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `pkg.list` | `handlePkgList` | Lists visible packages with optional `enabled`, exact trimmed `name`, and `runtime` filters. Visible scope is actor user scope first, then global. |
-| `pkg.add` | `handlePkgAdd` | Imports a package from `remoteUrl` or GitHub `repo`, resolves and assembles it, stores the artifact, and upserts the package record. Defaults `ref` to `main` and `subdir` to `.`. Non-system imports stay disabled and review-required by default. |
-| `pkg.sync` | `handlePkgSync` | Rebuilds builtin package seeds from `system/gsv`, removes stale builtin rows, and preserves existing enabled state. Requires `RIPGIT` and `ASSEMBLER`. Broadcasts `pkg.changed` after success. |
+| `pkg.add` | `handlePkgAdd` | Imports a package from `remoteUrl` or GitHub `repo`, resolves and assembles it, stores the artifact, and upserts the package record. Defaults `ref` to `main` and `subdir` to `.`. Imports outside `root/gsv` stay disabled and review-required by default. |
+| `pkg.sync` | `handlePkgSync` | Rebuilds builtin package seeds from `root/gsv`, removes stale builtin rows, and preserves existing enabled state. Requires `RIPGIT` and `ASSEMBLER`. Broadcasts `pkg.changed` after success. |
 | `pkg.checkout` | `handlePkgCheckout` | Re-resolves an existing package at a new ref and replaces manifest and artifact while preserving grants, enabled state, review flags, and install time. Requires mutable package access. |
 | `pkg.install` | `handlePkgInstall` | Enables an installed package. Errors if review is required and not approved. Idempotent when already enabled. |
 | `pkg.review.approve` | `handlePkgReviewApprove` | Sets review approval metadata for review-required packages. If review is not required, returns unchanged. |
@@ -456,8 +456,8 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `repo.list` | `handleRepoList` | Lists repositories visible to the caller. Results include home, workspace, visible package source, and registered user repos. Optional `owner` filters by repo owner. |
-| `repo.create` | `handleRepoCreate` | Creates a repository by writing an empty initial commit to `ref`, default `main`. Existing refs return `created: false`. Only root, wildcard, the username owner, or `uid-{uid}` owner can write. |
-| `repo.refs` | `handleRepoRefs` | Reads heads and tags. Allows owned repos, public repos, `system/*`, and visible package source repos. |
+| `repo.create` | `handleRepoCreate` | Creates a repository by writing an empty initial commit to `ref`, default `main`. Existing refs return `created: false`. Only root, wildcard, or the username owner can write. |
+| `repo.refs` | `handleRepoRefs` | Reads heads and tags. Allows owned repos, public repos, and visible package source repos. |
 | `repo.read` | `handleRepoRead` | Reads a tree or file at `repo`, `ref`, and `path`. Defaults `ref` to `main` and `path` to root. Binary files return `content: null`. |
 | `repo.search` | `handleRepoSearch` | Searches text in a repo, optionally under `prefix`. Requires a non-empty query. |
 | `repo.log` | `handleRepoLog` | Reads first-parent commit history. `limit` defaults to 30 and clamps to 1-100; `offset` defaults to 0. |
@@ -466,7 +466,7 @@ Runtime behavior:
 | `repo.apply` | `handleRepoApply` | Atomically commits `put`, `delete`, and `move` operations to one ref. `expectedHead` enables optimistic concurrency. `allowEmpty` permits an empty commit. |
 | `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo. |
 
-Write access is intentionally narrower than read access. Non-root users can write repos owned by their username or by `uid-{uid}`. Public repos and visible package source repos are readable but not writable unless ownership also matches.
+Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos and visible package source repos are readable but not writable unless ownership also matches.
 
 ```ts
 type RepoDiffFile = {
@@ -549,7 +549,7 @@ Runtime behavior:
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
 | `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional AI config, optional node token, home layout, and optional system bootstrap. Username and password are validated. |
-| `sys.bootstrap` | `handleSysBootstrap` | Imports `system/gsv`, seeds builtin packages, mirrors stable/dev CLI assets, stores default CLI channel, and broadcasts `pkg.changed`. Defaults repo to `deathbyknowledge/gsv` and ref to `main`. Requires `RIPGIT` and storage. |
+| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv`, seeds builtin packages, mirrors stable/dev CLI assets, stores default CLI channel, and broadcasts `pkg.changed`. Defaults repo to `deathbyknowledge/gsv` and ref to `main`. Requires `RIPGIT` and storage. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
 | `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |

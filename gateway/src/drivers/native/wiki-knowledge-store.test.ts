@@ -20,8 +20,8 @@ class InMemoryKnowledgeClient {
     if (name === "repo.list") {
       const repos: RepoSummary[] = [
         {
-          repo: "uid-1/home",
-          owner: "uid-1",
+          repo: "hank/home",
+          owner: "hank",
           name: "home",
           kind: "home",
           writable: true,
@@ -37,7 +37,7 @@ class InMemoryKnowledgeClient {
     if (name === "repo.apply") {
       const { ops } = args as { ops: RepoApplyOp[] };
       this.apply(ops);
-      return { ok: true, repo: "uid-1/home", ref: "main", head: "head" } as T;
+      return { ok: true, repo: "hank/home", ref: "main", head: "head" } as T;
     }
     throw new Error(`unexpected request ${name}`);
   }
@@ -46,7 +46,7 @@ class InMemoryKnowledgeClient {
     const exact = this.files.get(path);
     if (typeof exact === "string") {
       return {
-        repo: "uid-1/home",
+        repo: "hank/home",
         ref: "main",
         path,
         kind: "file",
@@ -87,7 +87,7 @@ class InMemoryKnowledgeClient {
     }
 
     return {
-      repo: "uid-1/home",
+      repo: "hank/home",
       ref: "main",
       path,
       kind: "tree",

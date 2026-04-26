@@ -262,7 +262,7 @@ export type PackageSeed = Omit<PackageInstallRecordInput, "installedAt" | "updat
 
 
 export const DEFAULT_PACKAGE_COMPATIBILITY_DATE = "2026-01-28";
-export const BUILTIN_SOURCE_OWNER = "system";
+export const BUILTIN_SOURCE_OWNER = "root";
 export const BUILTIN_SOURCE_REPO = "gsv";
 export const BUILTIN_SOURCE_REF = "main";
 
@@ -978,7 +978,7 @@ export async function buildBuiltinPackageSeeds(
   ).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Failed to resolve builtin packages from ripgit. Push the gsv monorepo to system/gsv first. ${message}`,
+      `Failed to resolve builtin packages from ripgit. Push the gsv monorepo to root/gsv first. ${message}`,
     );
   });
 

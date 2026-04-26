@@ -47,7 +47,11 @@ function makeConfig(seed: Record<string, string> = {}) {
   };
 }
 
-function makeContext(fetcher: Fetcher, configSeed: Record<string, string> = {}): KernelContext {
+function makeContext(
+  fetcher: Fetcher,
+  configSeed: Record<string, string> = {},
+  packages: Array<{ manifest: { source: { repo: string } } }> = [],
+): KernelContext {
   const config = makeConfig(configSeed);
   return {
     env: {
@@ -68,7 +72,7 @@ function makeContext(fetcher: Fetcher, configSeed: Record<string, string> = {}):
       },
     },
     packages: {
-      list: () => [],
+      list: () => packages,
     },
     workspaces: {
       list: () => [],
@@ -159,6 +163,45 @@ describe("repo syscalls", () => {
       repo: "bob/private",
       path: "README.md",
     }, ctx)).rejects.toThrow("Forbidden: cannot read repo bob/private");
+  });
+
+  it("denies root-owned repos unless they are explicitly visible", async () => {
+    const ctx = makeContext(makeFetcher(() => {
+      throw new Error("ripgit should not be called");
+    }));
+
+    await expect(handleRepoRead({
+      repo: "root/gsv",
+      path: "README.md",
+    }, ctx)).rejects.toThrow("Forbidden: cannot read repo root/gsv");
+  });
+
+  it("allows reads from visible package source repos", async () => {
+    const fetcher = makeFetcher((url) => {
+      expect(url.pathname).toBe("/hyperspace/repos/root/gsv/read");
+      expect(url.searchParams.get("path")).toBe("builtin-packages/wiki/src/package.ts");
+      return new Response("export default {}\n", {
+        headers: { "Content-Type": "text/plain" },
+      });
+    });
+    const ctx = makeContext(fetcher, {}, [
+      {
+        manifest: {
+          source: {
+            repo: "root/gsv",
+          },
+        },
+      },
+    ]);
+
+    await expect(handleRepoRead({
+      repo: "root/gsv",
+      path: "builtin-packages/wiki/src/package.ts",
+    }, ctx)).resolves.toMatchObject({
+      repo: "root/gsv",
+      kind: "file",
+      content: "export default {}\n",
+    });
   });
 
   it("allows reads from public repos owned by another user", async () => {

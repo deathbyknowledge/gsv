@@ -45,7 +45,7 @@ function makeInstalledPackage() {
       version: "1.0.0",
       runtime: "web-ui" as const,
       source: {
-        repo: "system/gsv",
+        repo: "root/gsv",
         ref: "main",
         subdir: "builtin-packages/chat",
         resolvedCommit: "abc123",
@@ -110,16 +110,16 @@ describe("handleSysBootstrap", () => {
     storeDefaultCliChannelMock.mockResolvedValue(undefined);
   });
 
-  it("bootstraps system/gsv from the default upstream and reseeds builtins", async () => {
+  it("bootstraps root/gsv from the default upstream and reseeds builtins", async () => {
     const ctx = makeContext();
 
     const result = await handleSysBootstrap(undefined, ctx);
 
     expect(importFromUpstreamMock).toHaveBeenCalledWith(
-      { owner: "system", repo: "gsv", branch: "main" },
+      { owner: "root", repo: "gsv", branch: "main" },
       "root",
       "root@gsv.local",
-      "bootstrap system/gsv from https://github.com/deathbyknowledge/gsv#main",
+      "bootstrap root/gsv from https://github.com/deathbyknowledge/gsv#main",
       "https://github.com/deathbyknowledge/gsv",
       "main",
     );
@@ -129,7 +129,7 @@ describe("handleSysBootstrap", () => {
     expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);
     expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "dev");
     expect(result).toEqual({
-      repo: "system/gsv",
+      repo: "root/gsv",
       remoteUrl: "https://github.com/deathbyknowledge/gsv",
       ref: "main",
       head: "abc123",
@@ -148,7 +148,7 @@ describe("handleSysBootstrap", () => {
           runtime: "web-ui",
           enabled: true,
           source: {
-            repo: "system/gsv",
+            repo: "root/gsv",
             ref: "main",
             subdir: "builtin-packages/chat",
             resolvedCommit: "abc123",
@@ -184,7 +184,7 @@ describe("handleSysBootstrap", () => {
       expect.any(Object),
       "root",
       "root@gsv.local",
-      "bootstrap system/gsv from https://github.com/example/custom-gsv#feature/main",
+      "bootstrap root/gsv from https://github.com/example/custom-gsv#feature/main",
       "https://github.com/example/custom-gsv",
       "feature/main",
     );
@@ -206,7 +206,7 @@ describe("handleSysBootstrap", () => {
       expect.any(Object),
       "root",
       "root@gsv.local",
-      "bootstrap system/gsv from https://git.example.com/team/gsv.git#stable",
+      "bootstrap root/gsv from https://git.example.com/team/gsv.git#stable",
       "https://git.example.com/team/gsv.git",
       "stable",
     );
