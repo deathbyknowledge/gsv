@@ -1,132 +1,116 @@
-# How to Run a Node
+# How to Run a Device
 
-Nodes are machines running the GSV CLI that provide tools to the agent over WebSocket. When a node connects, the agent gains access to Bash, Read, Write, Edit, Glob, and Grep on that machine. The Read tool supports both text and image files — when reading an image, the model sees the actual image content rather than raw bytes.
+Devices are local machines that connect to the Kernel as driver processes. They
+implement the same hardware syscall interface as the native `gsv` target,
+usually `fs.*` and `shell.exec`.
 
-## Install and start a node as a background service
+## Create a Device Token
 
-This is the recommended approach. The node runs as a system service (launchd on macOS, systemd on Linux) and reconnects automatically.
-
-```bash
-gsv node install --id macbook --workspace ~/projects
-```
-
-`--id` sets the node's name (used as a namespace prefix for tools). `--workspace` sets the root directory for file operations.
-
-Check status and logs:
+Device connections use token auth. If `gsv auth setup --node-id ...` already
+issued a token, skip this step. Otherwise create one:
 
 ```bash
-gsv node status
-gsv node logs --follow
+gsv auth token create --kind node --device macbook --label macbook
 ```
 
-Stop and start the service:
+Save the returned raw token and device id in local CLI config on the device
+machine:
 
 ```bash
-gsv node stop
-gsv node start
+gsv config --local set gateway.username admin
+gsv config --local set node.id macbook
+gsv config --local set node.token "<returned-token>"
 ```
 
-## Run a node in the foreground
-
-Useful for debugging or one-off sessions. The node stops when you close the terminal.
+If this machine was not used for deployment, also set the Gateway URL:
 
 ```bash
-gsv node --foreground --id macbook --workspace ~/projects
+gsv config --local set gateway.url wss://gsv.<your-subdomain>.workers.dev/ws
 ```
 
-## Uninstall the node service
+## Run in the Foreground
+
+Foreground mode is best for testing:
 
 ```bash
-gsv node uninstall
+gsv device run --id macbook --workspace ~/projects
 ```
 
-This stops the service and removes the service definition. It does not delete the CLI or config.
+The device remains connected until the process exits. Relative file paths and
+shell workdirs resolve from `--workspace`; absolute paths are used as-is on the
+device.
 
-## How tool namespacing works
+## Install as a Service
 
-Each tool from a node is prefixed with `{nodeId}__`. If a node connects with `--id laptop`, the agent sees:
-
-- `laptop__Bash` -- run shell commands
-- `laptop__Read` -- read files
-- `laptop__Write` -- write files
-- `laptop__Edit` -- edit files (find-and-replace)
-- `laptop__Glob` -- find files by pattern
-- `laptop__Grep` -- search file contents
-
-The agent uses the prefix to target the correct machine: "I'll check the logs on the server" leads to a `server__Bash` call.
-
-## Connect multiple nodes
-
-You can connect nodes from different machines, each with a different ID and workspace:
+For a persistent device daemon:
 
 ```bash
-# On your laptop
-gsv node install --id laptop --workspace ~/code
-
-# On a server
-gsv node install --id server --workspace /var/app
+gsv device install --id macbook --workspace ~/projects
 ```
 
-The agent sees tools from all connected nodes simultaneously and can reason about which machine to use for a given task.
+This installs a launchd agent on macOS or a systemd user unit on Linux and
+starts it immediately.
 
-## Transfer files between nodes
-
-With multiple nodes connected, the agent can transfer files between them using the `gsv__Transfer` native tool. Transfer endpoints use the format `{nodeId}:/path/to/file` for node filesystems or `gsv:workspace/path` for R2 workspace storage.
-
-```
-# Examples the agent might use:
-gsv__Transfer { source: "server:/var/app/build.tar.gz", destination: "laptop:/tmp/build.tar.gz" }
-gsv__Transfer { source: "laptop:/path/to/config.json", destination: "gsv:workspace/config.json" }
-```
-
-Transfers flow as binary data through the Gateway relay. No manual file transfer setup is needed — the agent handles it when the task requires moving files between machines.
-
-## Set default node config
-
-To avoid passing `--id` and `--workspace` every time, save defaults to local config:
+Manage it with:
 
 ```bash
-gsv local-config set node.id macbook
-gsv local-config set node.workspace /Users/me/projects
+gsv device status
+gsv device logs --follow
+gsv device stop
+gsv device start
 ```
 
-Then you can simply run:
+Logs are written under `~/.gsv/logs/node.log`; the local config keys still use
+`node.*` because they are the persisted driver fields.
+
+## Use Devices From an Agent
+
+Agents do not receive prefixed tools. They see the normal tools and choose a
+target:
+
+```json
+{ "path": "README.md", "target": "gsv" }
+```
+
+```json
+{ "command": "git status --short", "target": "macbook", "workdir": "~/projects/gsv" }
+```
+
+Use `target: "gsv"` for the cloud filesystem and Kernel-backed paths such as
+`/home`, `/workspaces`, `/sys`, `/proc`, and `/usr/local/bin`. Use a device id
+only when the file, network, credential, OS package, or hardware exists on that
+machine.
+
+## Run Multiple Devices
+
+Each device needs a stable id and, preferably, a token bound to that id:
 
 ```bash
-gsv node install
+gsv auth token create --kind node --device laptop --label laptop
+gsv auth token create --kind node --device server --label server
 ```
 
-## Node capabilities and skills
-
-Nodes report capabilities and runtime metadata to the gateway. Skill eligibility is currently based on capability requirements plus node online/offline status.
-
-To check which skills are eligible given your current nodes:
+Then configure each machine locally:
 
 ```bash
-gsv skills status
+gsv config --local set node.id server
+gsv config --local set node.workspace /srv/app
+gsv config --local set node.token "<server-token>"
+gsv device install
 ```
 
-To refresh eligibility status:
+The Kernel shows only accessible online devices to the process. Device routing
+also checks owner/group ACLs and the device `implements` list before forwarding
+a syscall.
+
+## Security Notes
+
+Device execution is not a sandbox. `shell.exec` runs as the OS user that started
+`gsv device`, and file tools can use absolute paths. Run the daemon as an
+unprivileged user, bind tokens to device ids, keep workspaces narrow, and revoke
+tokens you no longer need:
 
 ```bash
-gsv skills update
+gsv auth token list
+gsv auth token revoke <token-id> --reason "rotated device credential"
 ```
-
-## Node logs
-
-Node logs are structured JSON at `~/.gsv/logs/node.log` with automatic rotation (default: 10MB, 5 files). Override the limits with environment variables:
-
-```bash
-export GSV_NODE_LOG_MAX_BYTES=20000000
-export GSV_NODE_LOG_MAX_FILES=3
-```
-
-## Verify connected nodes
-
-From any machine with CLI access to the gateway:
-
-```bash
-gsv tools list
-```
-
-This shows all tools from all connected nodes and native gateway tools.

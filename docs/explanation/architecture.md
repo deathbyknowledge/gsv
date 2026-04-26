@@ -1,128 +1,200 @@
 # Architecture Overview
 
-GSV is named after the General Systems Vehicles from Iain M. Banks' Culture series — planet-scale sentient ships that carry entire civilizations within them, coordinating billions of activities while maintaining a singular identity. The name is aspirational rather than literal, but it captures something true about the design intent: a single distributed intelligence that spans multiple machines and communication channels, maintaining coherent identity across all of them.
+GSV is a personal cloud computer: an always-on operating system for humans,
+machines, and agents. It runs on Cloudflare, but it is intentionally modeled like
+a Linux-like computer rather than a chatbot backend. Users have identities,
+agents are processes, storage is exposed as a filesystem, capabilities are
+reached through syscalls, and external machines appear as devices.
 
-This document explains why GSV is built the way it is, how the pieces connect, and what trade-offs that architecture implies.
+This is a mental model, not POSIX compatibility. The point is to give humans and
+AI processes familiar operating-system affordances: inspectable files, stable
+paths, process IDs, permissions, device targets, packages, and command surfaces.
 
-## The Three Pillars
+## The Current Pillars
 
-GSV's architecture rests on three distinct component types, each with a clear role:
+### Kernel
 
-**The Gateway** is the brain. It runs on Cloudflare's edge network as a Worker with Durable Objects. It holds configuration, routes messages, manages the tool registry, coordinates channels, and spawns agent sessions. There is exactly one Gateway Durable Object instance — a singleton — which acts as the central coordination point for the entire system. Every message, every tool call, every configuration change flows through this single point.
+The Gateway Worker and Kernel Durable Object are the GSV kernel. The Worker owns
+HTTP/WebSocket entrypoints; the Kernel DO is the serialized control plane behind
+them.
 
-**Nodes** are the hands. They are machines running the Rust CLI in node mode, providing tools that let the agent interact with the physical world — running shell commands, reading and writing files, searching codebases. A laptop, a server, a Raspberry Pi — any machine can be a node. Multiple nodes can connect simultaneously, each offering its own set of tools namespaced by its ID.
+The Kernel is responsible for:
 
-**Channels** are the senses. They are separate Cloudflare Workers that bridge external messaging platforms — WhatsApp, Discord, and potentially others — into the GSV ecosystem. Each channel translates platform-specific protocols (WhatsApp's Baileys WebSocket, Discord's Gateway API) into GSV's uniform message format.
+- Authenticating users, service identities, and device drivers.
+- Maintaining users, groups, tokens, capabilities, devices, packages, adapter
+  links, workspaces, routes, notifications, and runtime config in Kernel SQLite.
+- Dispatching syscalls such as `fs.read`, `shell.exec`, `proc.spawn`,
+  `pkg.sync`, `sys.config.get`, and `adapter.inbound`.
+- Routing requests between browser clients, the CLI, package apps, Process DOs,
+  adapter workers, and connected devices.
 
-This separation is deliberate. The brain doesn't need to know how WhatsApp authentication works, and the hands don't need to know which channel a message came from. Each pillar has a single responsibility, and the interfaces between them are narrow and well-defined.
+The Kernel is deliberately the place where policy lives. Process DOs run agents,
+AppRunner DOs run package code, and devices execute local hardware work, but the
+Kernel decides whether a caller is allowed to do something and where the request
+should go.
 
-The Gateway also serves as a relay for file transfers between nodes. The `gsv__Transfer` tool moves files between any combination of node filesystems and R2 workspace storage. Data flows as binary WebSocket frames alongside the normal JSON text frames, using a 4-byte transfer ID prefix for demultiplexing. This allows the agent to coordinate work across machines — pulling build artifacts from a CI server to a development laptop, or archiving files from a node into the R2 workspace.
+### Agent Processes
 
-## Why Cloudflare Workers and Durable Objects?
+Agents are durable processes, not sessions. Each user has a long-lived init
+process, `init:{uid}`, and can spawn child processes with `proc.spawn`. A process
+has a PID, uid/gid identity, parent, profile, current working directory, optional
+workspace, state, and persistent message history.
 
-This is probably the most important architectural decision in GSV, and it's worth understanding why.
+Process state lives in a Process Durable Object with its own SQLite database.
+That database stores active messages, pending tool calls, queued messages,
+human-in-the-loop state, and process-local metadata. The Kernel registry stores
+the process metadata needed for routing and permissions.
 
-The alternative would have been a traditional server — a VPS running Node.js, a container on AWS, a Kubernetes pod. That's the obvious path. But GSV chose Cloudflare Workers for several interconnected reasons:
+The agent loop belongs to the Process DO. It assembles context, calls the model,
+receives tool calls, issues syscalls, waits for results, and emits `chat.*`
+signals back through the Kernel. `gsv chat` is therefore just one client for a
+process; browser apps and adapters can target the same process model.
 
-**No server to maintain.** GSV is designed as personal AI infrastructure. The target user doesn't want to babysit a server, worry about uptime, manage SSL certificates, or handle OS updates. Workers run on Cloudflare's edge network with zero infrastructure management. You deploy, and it works. This matters enormously for a system that's meant to be always-available — your AI agent shouldn't go offline because you forgot to renew a domain or a VPS ran out of disk.
+### Filesystem and Storage
 
-**Global edge deployment.** Workers run in over 300 data centers worldwide. When you send a WhatsApp message to your agent from Tokyo, the Gateway Worker spins up at the nearest edge location. This isn't just about latency — it's about the system being genuinely available everywhere, like a phone number rather than a website.
+GSV exposes a virtual filesystem through `GsvFs`. Agents and apps interact with
+paths such as `/home/alice`, `/workspaces/{workspaceId}`, `/sys`, `/proc`,
+`/dev`, `/etc`, `/src/package`, and `/usr/local/bin` instead of storage APIs.
 
-**Durable Objects solve the state problem.** Serverless functions are stateless by nature, but an AI agent is fundamentally stateful — it has conversation history, configuration, pending tool calls, heartbeat schedules. Durable Objects provide strongly consistent, single-threaded state machines that live on the edge. The Gateway DO maintains WebSocket connections, the tool registry, and routing tables. Session DOs maintain per-conversation message history in SQLite and manage the agent loop lifecycle.
+Different path families are backed by different stores:
 
-**Hibernation.** This is subtle but important. Durable Objects can hibernate — they persist their state and release compute resources, then wake up when needed. A Session DO that hasn't received a message in hours isn't consuming any resources. It just has state sitting in storage, waiting. When a message arrives, the DO wakes, rehydrates its WebSocket connections, and picks up exactly where it left off. This is what allows GSV to maintain hundreds of sessions without scaling concerns.
+- Kernel SQLite backs control-plane paths such as `/sys`, `/proc`, `/dev`, and
+  auth/config overlays in `/etc`.
+- Process SQLite backs active conversation and run state.
+- R2 stores ordinary bytes, process media, archives, package artifacts, and CLI
+  download mirrors.
+- ripgit stores versioned home knowledge, workspace trees, package source, and
+  repository content.
 
-**The cost model works.** Cloudflare's free tier includes Durable Objects, R2 storage, and Workers. For a personal AI agent with moderate usage, the entire infrastructure can run at zero cost. This removes one of the biggest barriers to adoption.
+This split matters operationally, but it should be hidden from agents whenever
+possible. The filesystem is the stable interface. Prompt context follows the
+same rule: profile context, `~/context.d/*.md`, workspace `.gsv/context.d/*.md`,
+and current process context are ordinary inspectable files or explicit runtime
+providers.
 
-The trade-off is real, though. Workers have execution time limits (30 seconds on the free tier, though Durable Objects get longer). The agent loop must be designed around hibernation — you can't just hold a loop open indefinitely. Tool calls are dispatched, the DO sets an alarm, and it may hibernate while waiting for results. This constraint shaped the entire Session DO design.
+### Devices
 
-## Gateway DO: The Singleton Orchestrator
+Devices are connected machines that implement part of the syscall surface. A
+device driver connects over WebSocket with a hardware descriptor containing its
+device id, platform, version, owner, and `implements` list such as:
 
-The Gateway is instantiated as a singleton — `env.GATEWAY.idFromName("singleton")`. Every WebSocket connection, every RPC call, every channel event routes through this single instance. This might seem like a bottleneck, and in a system serving thousands of users it would be. But GSV is personal infrastructure. One person, one Gateway, many sessions.
-
-The singleton pattern buys something valuable: a single authoritative view of the world. The Gateway knows exactly which nodes are connected and what tools they provide. It knows which channels are active. It knows every pending tool call and can route results back to the correct session. There's no distributed consensus problem, no cache invalidation, no split-brain scenario. The trade-off of single-point-of-failure is acceptable because Cloudflare's infrastructure handles the availability concern at the platform level.
-
-The Gateway maintains several key registries as persisted state:
-
-- **Tool Registry**: maps node IDs to their tool definitions. When a node connects, it registers its tools. When it disconnects, the registry is cleaned up.
-- **Session Registry**: tracks active sessions and their metadata.
-- **Channel Registry**: tracks connected channel workers.
-- **Config Store**: holds the global GSV configuration (model settings, API keys, channel config, heartbeat settings).
-- **Pending Tool Calls**: tracks in-flight tool dispatches, linking call IDs to their originating sessions or clients.
-
-All of these use `PersistedObject`, a utility that wraps Durable Object KV storage with a Proxy-based API that makes reads/writes look like plain object property access while automatically persisting changes. This is essential for hibernation — the state survives DO eviction without explicit save calls.
-
-## Session DOs: Per-Conversation State Machines
-
-While the Gateway is a singleton, Sessions are many. Each conversation — identified by a session key like `agent:main:cli:dm:main` or `agent:main:whatsapp:dm:+1234567890` — gets its own Durable Object instance. The session key is the DO's name, so the mapping is deterministic: the same conversation always maps to the same DO.
-
-A Session DO is a state machine with a clear lifecycle:
-
-1. **Idle**: No active run. Messages in SQLite. Waiting for input.
-2. **Processing**: A run is active. The agent loop is calling LLMs and dispatching tools.
-3. **Waiting**: Tools have been dispatched. The DO may hibernate with an alarm set for timeout. It will wake when tool results arrive.
-
-Messages are stored in SQLite (provided by Durable Objects), not KV. This is a deliberate choice — SQLite supports ordered queries, counting, and bulk operations that are awkward with KV. The conversation history is the Session's primary data structure, and SQLite handles it well.
-
-The Session doesn't maintain WebSocket connections of its own. It communicates with the outside world through the Gateway. When the Session has a response to broadcast, it calls back to the Gateway DO, which routes the message to the appropriate clients and channels. This indirection keeps the Session focused on its core concern: running the agent loop.
-
-## How Everything Connects
-
-The flow of a typical message through the system:
-
-```
-User types in CLI
-  → CLI sends WebSocket frame to Gateway Worker
-    → Worker routes to Gateway DO (singleton)
-      → Gateway resolves session key, calls Session DO
-        → Session builds system prompt from R2 workspace files
-        → Session calls LLM provider (Anthropic, OpenAI, etc.)
-        → LLM responds with tool calls
-          → Session asks Gateway to dispatch tools
-            → Gateway finds the right node, sends WebSocket event
-              → Node executes tool (Bash, Read, etc.)
-              → Node sends result back via WebSocket
-            → Gateway routes result to Session
-          → Session feeds result back to LLM
-          → LLM produces final response
-        → Session broadcasts response via Gateway
-      → Gateway sends to connected clients/channels
-    → CLI displays response
+```json
+{ "deviceId": "macbook", "implements": ["fs.*", "shell.exec"] }
 ```
 
-For channel messages, the flow is slightly different at the edges. A WhatsApp message arrives at the WhatsApp Channel Worker, which calls `GatewayEntrypoint.channelInbound()` via Service Binding. The Gateway determines the session key from the sender's identity and peer context, then the rest flows identically. The response travels back through the Gateway, which calls `channel.send()` on the appropriate channel worker.
+Agents always see the same tool names: `Read`, `Write`, `Edit`, `Delete`,
+`Search`, and `Shell`. The `target` argument selects where the syscall runs.
+`target: "gsv"` uses the native cloud implementation inside the Worker sandbox.
+`target: "macbook"` routes the same `fs.*` or `shell.exec` syscall to that
+device after ownership, group ACL, online-state, and capability checks.
 
-## R2: The Persistent Memory Layer
+This is the hardware abstraction layer. Devices can be laptops, servers, or any
+CLI-run machine, but agents do not need a different API for each one.
 
-Cloudflare R2 serves as GSV's long-term storage, organized under a single bucket:
+### Packages and Apps
 
+Packages are GSV software. A package declares a manifest, source repository,
+entrypoints, and requested capabilities. Entry points can be browser UI, backend
+HTTP/RPC, CLI commands, or package profiles.
+
+Package source is resolved from ripgit, assembled by the assembler worker, stored
+as an immutable artifact in R2, and executed by AppRunner Durable Objects.
+AppRunner gives package code a scoped runtime with:
+
+- Kernel access through the package SDK.
+- Package-scoped SQLite.
+- Browser boot metadata and backend RPC sessions.
+- Optional public routes for webhooks.
+- CLI command handlers that behave like OS commands.
+
+The result is closer to an OS app model than a plugin folder. Packages can call
+Kernel syscalls with granted capabilities, expose UI in the web shell, store
+their own state, ship commands, and be reviewed or installed from repository
+source.
+
+### Git and Distribution
+
+ripgit is GSV's built-in Git service and repository API. It supports Git HTTP
+paths for clone/fetch/push and an internal `/hyperspace/repos/...` API used by
+the Kernel for reads, writes, search, package analysis, snapshots, and upstream
+imports.
+
+GSV uses repositories for more than source control:
+
+- `uid-{uid}/home` stores user-global knowledge and context.
+- `uid-{uid}/{workspaceId}` stores workspace files and checkpoints.
+- `system/gsv` can mirror the deployed GSV source.
+- Package source repositories provide installable apps and CLI commands.
+
+This is how GSV can host its own source, install packages from repos, and expose
+public package metadata to other GSVs. Distribution is repository-based rather
+than registry-only: a package is source plus manifest plus assembled artifact.
+
+## How Requests Move
+
+A typical chat request follows this path:
+
+```text
+CLI, browser, or adapter
+  -> Gateway Worker
+  -> Kernel DO
+  -> Process DO
+  -> model call
+  -> syscall request
+  -> Kernel dispatch
+  -> native handler, Process DO, AppRunner, or device driver
+  -> response
+  -> Process DO continues the run
+  -> chat.* signals return through Kernel run routing
+  -> original client or adapter surface
 ```
-agents/{agentId}/
-  SOUL.md           - Core personality and values
-  IDENTITY.md       - Name, emoji, profile
-  USER.md           - Information about the human
-  AGENTS.md         - Operating instructions
-  MEMORY.md         - Long-term persistent memory
-  TOOLS.md          - Tool usage notes
-  HEARTBEAT.md      - Heartbeat behavior config
-  BOOTSTRAP.md      - First-run commissioning (deleted after use)
-  memory/YYYY-MM-DD.md  - Daily memory extractions
-  sessions/{id}.jsonl.gz - Archived conversation transcripts
-  skills/{name}/SKILL.md - Agent-specific skill overrides
-```
 
-These files serve dual purposes. They're loaded into the system prompt to give the agent its identity and context. But they're also writable — the agent can update its own MEMORY.md, modify its SOUL.md, or create daily memory files. This is what makes the agent persistent across conversations. When a session is reset, the conversation history is archived, but the workspace files remain. The agent "remembers" through its workspace, not through its conversation buffer.
+The same dispatcher handles non-chat requests. A package app can issue
+`fs.read`; the Kernel checks the package entrypoint grants and either runs the
+native filesystem handler or routes to a device if `target` names one. An adapter
+can call `adapter.inbound`; the Kernel resolves the external actor through
+identity links and delivers the message to a process. A CLI call to `gsv proc
+kill` becomes a `proc.kill` syscall forwarded to the target Process DO after
+ownership checks.
 
-The R2 layout also supports multiple agents. Each agent gets its own workspace under `agents/{agentId}/`. The default agent is "main", but you could have "work", "personal", "research" — each with different personalities, memories, and operating instructions, all running on the same Gateway.
+The key architectural choice is that syscall names do not change based on where
+they run. `fs.read` is still `fs.read` whether it reads from the cloud filesystem
+or a connected laptop.
 
-## Why Distributed Instead of Monolithic?
+## Why Cloudflare
 
-One could imagine a simpler architecture: a single binary that runs on your laptop, includes the LLM client, the WhatsApp bridge, and the tool execution, all in one process. Why didn't GSV do that?
+GSV needs to be reachable when no personal machine is online. Cloudflare Workers
+provide the always-on edge entrypoint, Durable Objects provide serialized
+stateful actors, R2 provides object storage, and service bindings connect the
+Gateway, ripgit, assembler, adapters, and AppRunner without running a traditional
+server.
 
-The answer is availability. A personal AI agent that only works when your laptop is open and connected to the internet isn't very useful. WhatsApp messages arrive at 3 AM. Discord pings come while you're on a plane. The agent needs to be reachable even when no physical machine is available.
+The system uses multiple Durable Object roles instead of one monolith:
 
-The Gateway runs on Cloudflare's always-on infrastructure. It can receive messages, interact with the LLM, and respond — even with no nodes connected. It can't run Bash commands or read files without a node, but it can carry on conversations, access its R2 workspace, use native tools (workspace file read/write), and schedule tasks.
+- Kernel DO: authoritative control plane and router.
+- Process DOs: durable agent loops and process-local SQLite.
+- AppRunner DOs: package runtime state, RPC sessions, daemon schedules, and
+  package SQL.
+- ripgit objects/workers: repository storage and Git protocol handling.
 
-When a node does connect, the agent gains access to that machine's tools. When it disconnects, the agent gracefully degrades — it knows which tools it has and doesn't try to use ones that aren't available. Multiple nodes can connect simultaneously, and the agent can reason about which node to use for a given task based on the namespaced tool names ("I'll check the logs on the server, then edit the code on the laptop").
+The tradeoff is that the architecture must be explicit about routing, timeouts,
+and state boundaries. Long-running local work should happen on devices. Durable
+agent state belongs in Process SQLite and workspace files. Control-plane truth
+belongs in Kernel SQLite. Opaque bytes belong in R2. Versioned work belongs in
+ripgit.
 
-This is the Culture ship analogy in practice. The ship's Mind (Gateway) thinks independently. Its drones and avatars (Nodes) extend its reach into the physical world. Its communication arrays (Channels) let it talk to anyone, anywhere. Remove a drone, and the Mind still thinks. Add a new communication channel, and the Mind can immediately use it. The architecture mirrors the metaphor.
+## Design Rules
+
+GSV favors stable OS-like interfaces over implementation leakage.
+
+- Agents should use paths and syscalls, not database names or storage buckets.
+- Workspaces outlive processes; processes are execution, workspaces are durable
+  artifacts.
+- Devices are optional hardware. The cloud `gsv` target should remain useful
+  even when no device is connected.
+- Package capabilities are explicit grants, not ambient access.
+- Repository history is part of the system model because agents and apps need
+  source, diffs, review context, and distribution.
+
+These rules are what make GSV feel like a cloud computer instead of a collection
+of chat integrations.

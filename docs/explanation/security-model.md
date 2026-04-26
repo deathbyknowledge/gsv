@@ -1,168 +1,167 @@
 # Security Model
 
-GSV is personal AI infrastructure that can run shell commands on your machines, read and write your files, and communicate on your behalf through messaging platforms. The security stakes are high — a compromised agent could exfiltrate data, execute malicious code, or impersonate you in conversations. This document explains what GSV protects against, how it does so, and — importantly — what it does *not* protect against.
+GSV is powerful personal infrastructure. It can run agent processes, execute
+shell commands, read and write files, connect external devices, install
+packages, and send messages through adapters. Its security model is therefore
+closer to a small Linux-like computer than to a chatbot API.
+
+The core rule is simple: callers authenticate as an identity, receive group
+capabilities, and issue syscalls. The Kernel checks those capabilities and then
+applies resource-specific rules for files, processes, devices, packages,
+adapters, and repositories.
 
 ## Trust Boundaries
 
-GSV has several trust boundaries, and understanding them is essential to understanding the security model.
-
-### The Gateway: Trusted Core
-
-The Gateway Worker runs on your Cloudflare account. You deploy it, you configure it, you control its secrets. The Gateway is the most trusted component in the system. It holds:
-
-- API keys for LLM providers (Anthropic, OpenAI, etc.)
-- The auth token that gates WebSocket connections
-- Channel configurations (bot tokens, allowed senders)
-- The agent's workspace files (personality, memory, instructions)
-
-Anyone with access to your Cloudflare account effectively has full access to the Gateway. This is the fundamental trust assumption: your Cloudflare account is secure. If it isn't, everything downstream is compromised.
-
-### Nodes: Trusted but Bounded
-
-Nodes are machines running the Rust CLI in node mode, connected to the Gateway via WebSocket. A node is trusted in the sense that the Gateway will send it tool execution requests and accept the results. But the trust is established through the auth token — any client that presents the correct token during the WebSocket handshake is accepted as a legitimate node.
-
-What can a connected node do? It can:
-
-- Execute any tool call the Gateway sends to it (Bash commands, file operations)
-- Report tool results back to the Gateway
-- Register its tools in the Gateway's registry
-
-What can't a node do? It cannot:
-
-- Directly access other nodes' tool calls
-- Modify the Gateway's configuration
-- Send messages as the agent (it can only respond to tool invocations)
-- Access R2 storage or the agent's workspace files
-
-The node's security posture depends on the tool implementations in the Rust CLI. The Bash tool, for instance, runs commands in the workspace directory with the permissions of the user who started the node daemon. There's no sandboxing beyond the OS-level user permissions. If you run the node as your user, the agent can do anything your user can do on that machine.
-
-### Channels: Implicitly Trusted
-
-Channel workers connect to the Gateway via Cloudflare Service Bindings. The trust model here is deployment-level: if the Service Binding exists in your Cloudflare configuration, the channel worker can call `GatewayEntrypoint.channelInbound()`. There's no runtime authentication between channels and the Gateway.
-
-This is secure because Service Bindings are configured at deploy time within a single Cloudflare account. A malicious actor would need access to your Cloudflare account to deploy a rogue channel worker — at which point they already have access to everything.
-
-### External Senders: Untrusted Until Paired
-
-People who message your agent through channels (WhatsApp, Discord) are untrusted by default. The pairing system controls who can interact with the agent.
-
-## The Pairing Model
-
-When someone sends a message to your agent's WhatsApp number or Discord bot for the first time, the Gateway checks if the sender is in the `allowFrom` list for that channel. If not, the message is held as a pending pairing request rather than being processed.
-
-You (the operator) can then approve or reject the pairing via the CLI:
-
-```bash
-gsv pair list          # See pending requests
-gsv pair approve whatsapp +1234567890  # Approve a sender
-```
-
-Approval adds the sender's ID to the channel's `allowFrom` list in the Gateway configuration. Future messages from that sender are processed normally.
-
-This is a simple allowlist model. It doesn't use cryptographic verification of sender identity — it trusts the channel's reported sender ID. For WhatsApp, this is a phone number (E.164 format). For Discord, it's a user ID. The security of sender identification depends on the platform's own authentication.
-
-The pairing model is primarily designed for personal use where you know who should have access. It's not designed for public-facing bots where you'd need rate limiting, abuse prevention, and more sophisticated access control.
-
-## Authentication: The Auth Token
-
-The Gateway supports a single shared auth token that gates WebSocket connections. When configured (via `auth.token` in the Gateway config), every connecting client and node must present this token in the `connect` handshake.
-
-The token check uses timing-safe string comparison (`timingSafeEqualStr`) to prevent timing attacks — even though the practical risk of a timing attack over a WebSocket handshake is minimal, it's the right thing to do.
-
-If no auth token is configured, the Gateway accepts any connection. This is the default for local development but should not be used in production.
-
-The auth token is:
-
-- Stored in the Gateway's config (Cloudflare Durable Object storage)
-- Stored in the CLI's local config (`~/.config/gsv/config.toml`)
-- Transmitted during the WebSocket handshake (over TLS via `wss://`)
-
-There's no token rotation mechanism, no token scoping (all tokens have equal access), and no per-client tokens. A single token authenticates all clients and nodes. If the token is compromised, all connections can be impersonated until the token is changed.
-
-This simplicity is a deliberate choice for personal infrastructure. A multi-user system would need per-user tokens, OAuth flows, and role-based access. GSV assumes a single operator and optimizes for simplicity over sophistication.
-
-## Secret Management
-
-Secrets in GSV live in several places:
-
-### Cloudflare Worker Secrets
-
-LLM API keys and other sensitive configuration can be stored as Worker secrets via `wrangler secret put` or in the Cloudflare dashboard. These are encrypted at rest and available to the Worker as environment variables. The Gateway reads them during initialization and stores them in its config.
-
-### CLI Config File
-
-The CLI stores its configuration at `~/.config/gsv/config.toml`. This includes the Gateway URL, auth token, Cloudflare API token (for deploy commands), and R2 credentials (for the mount command). The file has no special permissions protection — it relies on standard OS file permissions.
-
-### `.dev.vars`
-
-For local development, Worker secrets are stored in `.dev.vars` files (one per Worker directory). These are gitignored and contain environment variables like API keys and tokens. The Gateway, channel workers, and test workers each have their own `.dev.vars`.
-
-### Gateway Config Store
-
-The Gateway's Durable Object config store (accessible via `config.get`/`config.set` RPC) holds runtime configuration including API keys. This is the authoritative runtime source — even if secrets are initially set via Wrangler, the Gateway may store additional keys configured after deployment.
-
-## API Key Flow
-
-LLM provider API keys follow a specific path through the system:
-
-1. Keys are configured in the Gateway's config (via initial setup or `gsv config set apiKeys.anthropic sk-...`).
-2. When a Session needs to call the LLM, it requests the full config from the Gateway DO.
-3. The Session extracts the API key for the configured provider and passes it to the LLM client library.
-4. The API call goes directly from the Cloudflare Worker to the LLM provider's API. Keys never transit through nodes or channels.
-
-This means API keys only exist in two places at runtime: the Gateway's config store and in-memory during LLM calls. They're never sent to nodes, never included in WebSocket frames, and never stored in session history.
-
-## Tool Execution Security
-
-This is perhaps the area that deserves the most honest assessment. GSV's tool execution model is powerful and, by design, permissive.
-
-### What Constraints Exist
-
-- **Workspace scoping**: When a node starts, it's configured with a workspace directory. The file tools (Read, Write, Edit, Glob, Grep) are scoped to this directory — they validate that requested paths fall within the workspace and reject attempts to access files outside it.
-
-- **Tool namespacing**: Nodes can only receive tool calls that match their registered tools. A node that only registered `Read` and `Glob` won't receive `Bash` calls (though in practice, most nodes register all tools).
-
-- **No direct user input execution**: Tool calls come from the LLM, not directly from user input. The user's message is interpreted by the LLM, which generates structured tool calls. The user can't inject arbitrary shell commands — but the LLM can be convinced to run them.
-
-### What Constraints Do Not Exist
-
-- **No sandboxing of Bash**: The `Bash` tool executes commands with the full permissions of the user running the node daemon. There's no container, no seccomp profile, no cgroups isolation. If the node runs as root (don't do this), the agent can do anything.
-
-- **No command filtering**: The Bash tool doesn't filter or blocklist dangerous commands. `rm -rf /`, `curl | sh`, `sudo anything` — if the LLM generates it and the OS user has permission, it executes.
-
-- **No network isolation**: Tools can make arbitrary network requests. The Bash tool can curl external URLs, and there's no egress filtering.
-
-- **No rate limiting on tool execution**: The agent can make as many tool calls as the LLM generates. A runaway loop of tool calls is bounded only by the LLM's behavior and the tool timeout.
-
-The security model for tool execution is essentially: *the agent has the same capabilities as the OS user running the node*. The assumption is that you trust the LLM not to do destructive things unprompted, and you trust yourself not to ask it to do destructive things accidentally.
-
-The system prompt includes a safety section that instructs the agent not to bypass safeguards and to confirm before destructive actions. But this is a soft constraint — it depends on the LLM following instructions, which is not guaranteed against adversarial inputs.
-
-## What the Security Model Does NOT Protect Against
-
-Being honest about limitations is more valuable than overstating protections:
-
-- **Prompt injection via channels**: If an attacker sends carefully crafted messages through WhatsApp or Discord, they might convince the LLM to execute unintended tool calls. The pairing system limits who can message the agent, but approved senders could still attempt prompt injection.
-
-- **Compromised LLM provider**: If the LLM provider's API is compromised or returns malicious responses, those responses could include harmful tool calls that GSV would execute.
-
-- **Token theft**: If the auth token is leaked, an attacker can connect as a client or node. Since there's no per-client identity, there's no way to distinguish a legitimate connection from an illegitimate one with the same token.
-
-- **Workspace escape via symlinks**: While file tools validate that paths are within the workspace, symlinks within the workspace could point outside it. The current implementation doesn't resolve symlinks before path validation.
-
-- **Multi-user isolation**: GSV is designed for single-operator use. If multiple people share an instance, there's no access control between them — anyone with the auth token can read any session, modify any config, or access any workspace file.
-
-- **Side-channel leakage**: The agent's responses might include information from MEMORY.md or workspace files. In sessions with external senders (via channels), the agent might inadvertently share personal information if not carefully instructed.
-
-## Security Recommendations
-
-Given the current model, the practical security posture comes down to:
-
-1. **Always set an auth token** for production deployments. Without it, anyone who discovers the Gateway URL can connect.
-2. **Run node daemons as unprivileged users** with minimal necessary permissions. The node inherits its user's filesystem and execution rights.
-3. **Be selective with pairing approvals.** Each approved sender can interact with the agent and potentially trigger tool execution.
-4. **Scope node workspaces carefully.** Don't point a node at `/` — point it at the specific directory the agent needs access to.
-5. **Use MEMORY.md awareness.** If the agent serves external users through channels, be aware that personal memory might influence responses.
-6. **Keep the CLI config file secure.** `~/.config/gsv/config.toml` contains your auth token and potentially Cloudflare credentials. Standard file permissions (600) are appropriate.
-
-The security model is honest about being designed for personal use by a trusted operator. It prioritizes capability and simplicity over defense-in-depth. If your threat model includes sophisticated adversaries, additional layers (network isolation, sandboxed execution, audit logging) would be needed on top of what GSV provides.
+The Cloudflare account and deployed bindings are the root of trust. Anyone who
+can change Worker code, Durable Object state, Worker secrets, R2 buckets, or
+bound services can effectively control the GSV instance.
+
+The Kernel Durable Object is the trusted control plane. It owns users, groups,
+tokens, capabilities, config, devices, process registry, workspaces, package
+records, adapter links, routing tables, and public package state in Kernel
+SQLite.
+
+Process Durable Objects run agent loops under a Kernel-issued process identity.
+AppRunner Durable Objects run installed package code. CLI devices run on user
+machines and execute only the syscalls they advertise, but local OS permissions
+remain the final boundary on those machines.
+
+## Authentication
+
+`sys.connect` is the WebSocket login syscall. A client connects as one of three
+roles:
+
+- `user`: interactive clients and user tokens; password auth is allowed.
+- `driver`: CLI devices; token auth is required and may be bound to one device
+  id.
+- `service`: adapter/service workers; token auth is required.
+
+Setup mode accepts only setup syscalls until the first user/root credential state
+is created. Passwords are stored in `/etc/shadow` form using salted
+PBKDF2-SHA-512 hashes. Issued tokens are stored hashed with high-entropy token
+prefix metadata, optional expiry, revocation state, allowed role, and optional
+device binding. Raw tokens are returned only at creation time.
+
+The CLI stores local credentials in `~/.config/gsv/config.toml`. On Unix it
+writes the file as `0600` and ignores cached session tokens if the file is
+group/world-readable.
+
+## Secrets and Runtime Config
+
+Deployment secrets live in Cloudflare configuration and bound services. Runtime
+configuration lives in Kernel SQLite under `config/...` and `users/{uid}/...`.
+Sensitive config names such as `api_key`, `secret`, `token`, and `password` are
+filtered from non-root config reads.
+
+Agent processes receive the AI runtime configuration they need to call the
+selected model provider, including the resolved provider key. That key is used
+by the process runtime; it is not sent to CLI devices as part of normal device
+routing. Treat root access, package review, process prompts, and model-provider
+trust as part of the secret boundary.
+
+## Authorization
+
+Capabilities are group based. The Kernel stores grants such as `fs.*`,
+`shell.*`, `proc.*`, `sys.config.get`, or `*` in `group_capabilities`. Every
+normal syscall is rejected unless the caller's resolved capabilities match the
+exact syscall, the syscall domain wildcard, or `*`.
+
+Default groups are intentionally OS-like:
+
+- `root` (`gid 0`) receives `*`.
+- `users` (`gid 100`) receives broad user capabilities, including filesystem,
+  shell, process, package, adapter status/connect, token, workspace, and config
+  syscalls.
+- `drivers` (`gid 101`) receives `fs.*` and `shell.*` for device execution.
+- `services` (`gid 102`) receives `adapter.*`.
+
+Capabilities are necessary but not always sufficient. Handlers also enforce
+object ownership. Non-root users can access only their own processes and
+workspaces. Non-root config reads include their own `users/{uid}/...` keys and
+non-sensitive `config/...` keys; sensitive key names such as `api_key`,
+`secret`, `token`, and `password` are hidden. Non-root config writes are limited
+to user-overridable `users/{uid}/ai/...` keys.
+
+## Files and Shell
+
+Native GSV file access uses a virtual filesystem. `/sys`, `/proc`, `/dev`, and
+`/etc` expose Kernel state; `/workspaces/{workspaceId}` is workspace-backed;
+ordinary paths are stored in R2 with Unix-like uid/gid/mode metadata. Root can
+read/write broadly. Non-root reads and writes are checked against owner, group,
+and other mode bits where the backend supports them.
+
+Device file tools and shell tools are not a sandbox. Relative paths resolve
+against the device workspace, but absolute paths are used as-is on the device.
+`shell.exec` runs with the OS permissions of the user running `gsv device`.
+Run device daemons as an unprivileged account and point their workspace at the
+smallest useful directory.
+
+Tool approval is a policy layer, not an isolation layer. Profiles can auto,
+deny, or ask for matching syscalls. The default interactive policy asks for
+`shell.exec` and `fs.delete`; non-interactive profiles cannot pause for human
+approval.
+
+## Devices
+
+Devices register with a hardware descriptor: device id, owner uid, platform,
+version, and an `implements` list such as `["fs.*", "shell.exec"]`.
+
+Only `fs.*` and `shell.exec` are hardware-routable. `target: "gsv"` runs the
+native implementation. A device target is forwarded only when:
+
+- The caller can access the device by root, owner uid, or device group ACL.
+- The device is online.
+- The device advertises an implementation matching the syscall.
+- A live driver WebSocket exists for that device id.
+
+The forwarded request keeps the same syscall shape. Agents always see the same
+tools; `target` selects the hardware.
+
+## Adapters and External Actors
+
+Adapters bridge external messaging systems into GSV. Inbound adapter calls
+require a service identity. External actors are not automatically users: an
+actor must be linked to a local uid before messages are delivered to that user's
+processes.
+
+For unlinked actors, direct messages receive a link challenge such as
+`gsv auth link CODE`. Non-DM messages from unlinked actors are dropped. Once
+linked, adapter messages are delivered to the user's routed process or their
+`init:{uid}` process. Pending human-in-the-loop approvals can be answered from a
+linked DM surface.
+
+## Packages, Apps, and Git
+
+Packages run as installed GSV software, not ambient code. Package app RPC calls
+must come through an app session, target an enabled package, and match a syscall
+declared by the package entrypoint. The Kernel executes those syscalls as the
+authenticated user and still applies normal syscall/device/resource checks.
+
+Non-system packages require review before they can be enabled. Package metadata
+records requested bindings and egress grants; default egress is `none`.
+Mutating package operations require root, wildcard capability, or ownership of
+the user package scope.
+
+Git HTTP uses Basic auth with either password or user token credentials. Public
+repository reads are allowed only for repos explicitly marked public. Pushes
+require the repo owner, root, or wildcard capability; `system/*` repositories
+are root-only for writes.
+
+## What GSV Does Not Protect Against
+
+GSV does not protect against a compromised Cloudflare account, deployed Worker,
+R2 bucket, Durable Object state, ripgit service, or LLM provider. It does not
+turn device execution into a container or VM sandbox. It does not prevent a
+trusted/root user, approved package, linked external actor, or prompt-injected
+agent from requesting dangerous work if policy allows the syscall.
+
+Security depends on operational discipline:
+
+- Use strong passwords and prefer scoped, expiring tokens for automation.
+- Bind device tokens to the expected device id.
+- Revoke unused tokens with `gsv auth token revoke`.
+- Run `gsv device` as an unprivileged OS user.
+- Treat package review as code review, especially for shell, filesystem,
+  adapter, and network behavior.
+- Link adapter actors intentionally and use HIL policies for destructive or
+  remote work.

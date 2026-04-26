@@ -1,170 +1,111 @@
-# How to Manage Channels
+# How to Manage Adapters
 
-Channels connect GSV to messaging platforms. Each channel runs as a separate Cloudflare Worker with its own Durable Object for maintaining persistent connections. The gateway communicates with channels via Service Bindings.
+Adapters connect GSV processes to external messaging systems such as WhatsApp
+and Discord. The deployed channel Workers host protocol-specific code; the
+Kernel sees them through `adapter.*` syscalls and linked external actors.
 
-## Deploy channels
+## Deploy Adapter Workers
 
-Channels are deployed alongside the gateway. Include them during initial deployment:
-
-```bash
-gsv deploy up --all
-```
-
-Or deploy a specific channel:
+Deploy adapter components with infrastructure commands:
 
 ```bash
-gsv deploy up -c channel-whatsapp
-gsv deploy up -c channel-discord
+gsv infra deploy -c channel-whatsapp
+gsv infra deploy -c channel-discord --discord-bot-token "$DISCORD_BOT_TOKEN"
 ```
 
-Both WhatsApp and Discord channels require an always-on Durable Object. The free Cloudflare tier supports one always-on DO. Running multiple channels or multiple accounts within a channel requires a paid Workers plan.
-
-## WhatsApp
-
-### Connect WhatsApp
-
-WhatsApp uses QR-code authentication via the Baileys library. The connection runs in a Durable Object that maintains the WebSocket to WhatsApp's servers.
+If you deploy all components, both adapter Workers are included:
 
 ```bash
-gsv channel whatsapp login
+gsv infra deploy --all
 ```
 
-This displays a QR code in your terminal. Scan it with WhatsApp on your phone (Settings > Linked Devices > Link a Device).
+## Connect WhatsApp
 
-You can specify an account ID if you want to manage multiple WhatsApp accounts:
+Start or reconnect a WhatsApp account:
 
 ```bash
-gsv channel whatsapp login my-second-account
+gsv adapter connect --adapter whatsapp --account-id personal --config-json '{"force":true}'
 ```
 
-### Check WhatsApp status
+When WhatsApp needs pairing, the CLI prints a QR challenge. Scan it from
+WhatsApp: Settings, Linked Devices, Link a Device.
+
+Check and disconnect:
 
 ```bash
-gsv channel whatsapp status
+gsv adapter status --adapter whatsapp --account-id personal
+gsv adapter disconnect --adapter whatsapp --account-id personal
 ```
 
-### Disconnect WhatsApp
+## Connect Discord
 
-Stop the connection (keeps credentials for reconnection):
+Discord needs a bot token. You can provide it during deploy as a Worker secret,
+or pass it when connecting:
 
 ```bash
-gsv channel whatsapp stop
+gsv adapter connect --adapter discord --account-id default \
+  --config-json '{"botToken":"<discord-bot-token>"}'
 ```
 
-Log out completely (clears stored credentials):
+If the token is already configured as `DISCORD_BOT_TOKEN`, omit `--config-json`:
 
 ```bash
-gsv channel whatsapp logout
+gsv adapter connect --adapter discord --account-id default
+gsv adapter status --adapter discord
 ```
 
-After logout, you'll need to scan the QR code again to reconnect.
+Invite the bot with the permissions required by your deployment and enable the
+Discord Message Content Intent when the bot needs to read message text.
 
-### WhatsApp reconnection
+## Link External Actors
 
-The WhatsApp Durable Object automatically reconnects when the connection drops. Stored auth credentials survive DO hibernation, so the connection resumes without re-scanning the QR code unless you explicitly log out.
+Inbound messages are not delivered to processes until the external actor is
+linked to a GSV user.
 
-## Discord
+For direct messages, an unlinked actor receives a challenge:
 
-### Set up a Discord bot
+```text
+Link your account by running: gsv auth link CODE
+```
 
-Before connecting, you need a Discord bot token:
-
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Create a New Application
-3. Go to the **Bot** tab, click **Add Bot**, then **Reset Token** to get your token
-4. Enable **MESSAGE CONTENT INTENT** in the Bot tab
-5. Invite the bot to your server using:
-   ```
-   https://discord.com/oauth2/authorize?client_id=<APP_ID>&permissions=101376&scope=bot
-   ```
-
-Pass the bot token during deployment:
+Run that command as the target user:
 
 ```bash
-gsv deploy up -c channel-discord --discord-bot-token "$DISCORD_BOT_TOKEN"
+gsv auth link CODE
 ```
 
-### Start the Discord bot
+Root can link manually when the adapter, account, and actor id are known:
 
 ```bash
-gsv channel discord start
+gsv auth link --adapter discord --account-id default --actor-id discord:user:123456 --uid 1000
+gsv auth link --adapter whatsapp --account-id personal --actor-id wa:jid:31600000000@s.whatsapp.net --uid 1000
 ```
 
-The Discord channel maintains a Gateway WebSocket connection to Discord's API, handling heartbeats and message dispatch through the Durable Object.
-
-### Check Discord status
+Inspect and remove links:
 
 ```bash
-gsv channel discord status
+gsv auth link-list
+gsv auth unlink --adapter discord --account-id default --actor-id discord:user:123456
 ```
 
-### Stop the Discord bot
+## How Messages Route
 
-```bash
-gsv channel discord stop
-```
+1. The adapter Worker receives a platform message.
+2. The Worker calls the Kernel with `adapter.inbound` using a service identity.
+3. The Kernel resolves the adapter/account/actor link to a local uid.
+4. The message is delivered to the surface-routed process or `init:{uid}`.
+5. The Process DO runs the agent loop and emits `chat.*` signals.
+6. The Kernel sends replies back through `adapter.send`.
 
-## Configure channel access control
-
-Each channel has a DM policy that controls who can message the agent.
-
-### Pairing mode (default for WhatsApp)
-
-Unknown senders trigger a pairing request. You approve them via CLI:
-
-```bash
-# List pending pairing requests
-gsv pair list
-
-# Approve a sender
-gsv pair approve whatsapp "+1234567890"
-
-# Reject a sender
-gsv pair reject whatsapp "+1234567890"
-```
-
-### Allowlist mode
-
-Only specific senders can message:
-
-```bash
-gsv config set channels.whatsapp.dmPolicy "allowlist"
-gsv config set channels.whatsapp.allowFrom '["+1234567890", "+0987654321"]'
-```
-
-### Open mode (default for Discord)
-
-Anyone can message. Use with caution:
-
-```bash
-gsv config set channels.discord.dmPolicy "open"
-```
-
-## Monitor channel status
-
-List all connected channel accounts:
-
-```bash
-gsv channel list
-```
-
-## How inbound messages route to sessions
-
-1. A message arrives at the channel worker (e.g., WhatsApp DO receives a message)
-2. The channel DO calls `env.GATEWAY.channelInbound()` via Service Binding RPC
-3. The gateway checks the sender against the channel's DM policy
-4. If allowed, the gateway resolves the agent ID (using agent bindings if configured)
-5. The gateway builds a session key based on `dmScope` and identity links
-6. The message is routed to the appropriate Session DO
-7. The Session DO runs the agent loop (LLM + tools)
-8. The response is sent back through the channel via `channel.send()`
+Pending human-in-the-loop approvals can be approved or denied from a linked DM
+surface. Non-DM messages from unlinked actors are dropped.
 
 ## Troubleshooting
 
-**WhatsApp QR code not appearing:** Check that the channel-whatsapp worker is deployed (`gsv deploy status -c channel-whatsapp`) and that you have network connectivity to the gateway.
-
-**WhatsApp disconnects frequently:** The DO may be hibernating and failing to resume. Check `gsv channel whatsapp status` for the connection state. Try `gsv channel whatsapp logout` then `gsv channel whatsapp login` for a fresh session.
-
-**Discord bot not responding:** Verify the bot has the MESSAGE CONTENT INTENT enabled and is invited to the server with correct permissions. Check `gsv channel discord status`.
-
-**Messages from unknown senders are blocked:** Check your DM policy. In `pairing` mode, senders need explicit approval. In `allowlist` mode, add the sender's ID to the allowlist. Run `gsv pair list` to see pending requests.
+- If `adapter.connect` fails, verify the channel Worker was deployed and the
+  Gateway has the correct service binding.
+- If WhatsApp does not show a QR code, reconnect with `{"force":true}`.
+- If Discord does not respond, check the bot token, gateway status, invite
+  permissions, and Message Content Intent.
+- If a message is ignored, check `gsv auth link-list` and confirm the actor id is
+  linked to the intended user.

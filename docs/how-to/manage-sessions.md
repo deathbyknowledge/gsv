@@ -1,137 +1,105 @@
-# How to Manage Sessions
+# How to Manage Processes
 
-Sessions hold per-conversation agent state: message history, model settings, and reset policy. Each session runs as a Durable Object with persistent storage.
+GSV no longer models conversation state as sessions. Agents run as durable
+processes. Each user has an init process (`init:{uid}`), and additional task
+processes can be spawned for isolated work.
 
-## List sessions
-
-```bash
-gsv session list
-```
-
-Shows the most recent sessions sorted by last activity. Limit the count:
+## List Processes
 
 ```bash
-gsv session list --limit 10
+gsv proc list
 ```
 
-## Inspect a session
-
-Get session info (settings, status, message count):
+Root can inspect another user's processes:
 
 ```bash
-gsv session get agent:main:cli:dm:main
+gsv proc list --uid 1000
 ```
 
-Preview the message history:
+The list shows process ids, labels, owners, profiles, state, current working
+directory, and workspace attachment when available.
+
+## Chat With a Process
+
+Without `--pid`, `gsv chat` targets your init process and waits for streamed
+`chat.*` signals:
 
 ```bash
-gsv session preview agent:main:cli:dm:main
-gsv session preview agent:main:cli:dm:main --limit 5
+gsv chat "Summarize my current workspace."
 ```
 
-View token usage statistics:
+Target a specific process:
 
 ```bash
-gsv session stats agent:main:cli:dm:main
+gsv chat --pid task:abc123 "Continue the implementation."
 ```
 
-View previous session IDs (from past resets):
+Use `proc send` when you only need to enqueue a message and do not want to wait
+for streamed output:
 
 ```bash
-gsv session history agent:main:cli:dm:main
+gsv proc send --pid task:abc123 "Run the checks now."
 ```
 
-## Reset a session
+## Spawn a Task Process
 
-Resetting archives the current conversation to R2 and clears the message history. The agent starts fresh on the next message.
+Create a child process for isolated work:
 
 ```bash
-gsv session reset agent:main:cli:dm:main
+gsv proc spawn --label "docs audit" --prompt "Review the how-to docs for stale commands."
 ```
 
-The default session key is `agent:main:cli:dm:main`, so for the main CLI session you can simply:
+To spawn under a specific parent:
 
 ```bash
-gsv session reset
+gsv proc spawn --parent init:1000 --label "release notes"
 ```
 
-## Compact a session
+The command prints the new PID. Use that PID with `gsv chat --pid ...`,
+`gsv proc history --pid ...`, or `gsv proc kill ...`.
 
-Compaction trims the conversation to the most recent messages without a full reset. Use this when the context is getting long but you don't want to lose continuity:
+## Read History
+
+Show recent process messages:
 
 ```bash
-gsv session compact agent:main:cli:dm:main --keep 20
+gsv proc history --limit 30
+gsv proc history --pid task:abc123 --limit 50 --offset 0
 ```
 
-Automatic compaction also runs when the conversation approaches the model's context window limit. Configure it via:
+History is active process state stored in the Process Durable Object. It is not
+the durable artifact of work; important outputs should live in workspace files,
+home context, package state, or repositories.
+
+## Reset a Process
+
+Reset clears the process conversation state while preserving the process entry:
 
 ```bash
-gsv config set compaction.enabled true
-gsv config set compaction.reserveTokens 20000
-gsv config set compaction.keepRecentTokens 20000
+gsv proc reset
+gsv proc reset --pid task:abc123
 ```
 
-When `extractMemories` is enabled, compaction writes durable observations to the daily memory file before trimming.
+Reset attempts to checkpoint workspace continuity files, archives old messages
+to R2 under `var/sessions/{username}/{pid}/...jsonl.gz`, deletes process media,
+and starts the next run with fresh message history.
 
-## Configure auto-reset policies
+## Kill a Process
 
-Auto-reset policies control when sessions automatically clear themselves. Set the default for all new sessions:
+Kill stops a non-init process and optionally archives it first:
 
 ```bash
-gsv config set session.defaultResetPolicy.mode "daily"
-gsv config set session.defaultResetPolicy.atHour 4
+gsv proc kill task:abc123
+gsv proc kill task:abc123 --no-archive
 ```
 
-Available modes:
+Use `--no-archive` only when the process history is disposable. Workspaces and
+their ripgit-backed files outlive the process either way.
 
-| Mode | Behavior |
-|---|---|
-| `manual` | Only reset when explicitly requested |
-| `daily` | Reset if the last message was before `atHour` (0-23, default 4) |
-| `idle` | Reset after `idleMinutes` of inactivity (default 60) |
+## Process Management Patterns
 
-Override the policy on a specific session:
-
-```bash
-gsv session set agent:main:cli:dm:main resetPolicy.mode "idle"
-gsv session set agent:main:cli:dm:main resetPolicy.idleMinutes 30
-```
-
-## Override session model settings
-
-Change the model for a specific session without affecting the global config:
-
-```bash
-gsv session set agent:main:cli:dm:main model.provider openai
-gsv session set agent:main:cli:dm:main model.id gpt-4.1
-```
-
-## Understanding session keys
-
-Session keys follow the pattern: `agent:{agentId}:{channel}:{accountId}:dm:{peerId}`
-
-For the CLI, the default is `agent:main:cli:dm:main`.
-
-The `dmScope` config setting controls how much of this key varies across conversations:
-
-- **`main`** (default) -- all DMs collapse into `agent:{agentId}:cli:dm:main`
-- **`per-peer`** -- each peer gets `agent:{agentId}:cli:dm:{peerId}`
-- **`per-channel-peer`** -- per channel per peer
-- **`per-account-channel-peer`** -- fully isolated
-
-Change the scope:
-
-```bash
-gsv config set session.dmScope "per-peer"
-```
-
-When using `per-peer` or more specific scoping, each distinct conversation partner gets their own session with independent history and reset policy.
-
-## What happens during a reset
-
-1. The current message history is serialized and archived as a gzipped JSONL file in R2 at `agents/{agentId}/sessions/{sessionId}.jsonl.gz`
-2. The session's message list is cleared
-3. A new session ID is generated
-4. On the next inbound message, the agent workspace is reloaded and a fresh conversation begins
-
-The archived session can be retrieved later via the R2 mount or direct R2 access.
+- Use the init process for ongoing personal context and general chat.
+- Spawn task processes for bounded work that should not pollute init history.
+- Reset when the process has too much stale context but should continue existing.
+- Kill when the work is complete and any useful state has been written to files.
+- Prefer `chat` for interactive use and `proc send` for automation or scripts.

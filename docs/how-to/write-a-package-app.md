@@ -1,16 +1,11 @@
-# Write a Package App
+# How to Write a Package App
 
-GSV package apps are split into three explicit entrypoint types:
+GSV packages are source-backed apps that can provide browser UI, backend RPC,
+signal handlers, package-scoped storage, and optional CLI commands.
 
-- `src/package.ts`: declarative manifest
-- `backend`: worker-side RPC, HTTP routes, signals, and package state
-- `browser`: browser UI entry module
-- `cli`: optional command entry modules
+## Create the Manifest
 
-## Start with the manifest
-
-`src/package.ts` stays declarative. It describes the package and points at the
-modules the platform should load.
+Put the package definition in `src/package.ts`:
 
 ```ts
 import { definePackage } from "@gsv/package/manifest";
@@ -18,9 +13,13 @@ import { definePackage } from "@gsv/package/manifest";
 export default definePackage({
   meta: {
     displayName: "Notes",
-    description: "Simple note taking package",
+    description: "Simple notes backed by the GSV filesystem.",
     capabilities: {
-      kernel: ["fs.read", "fs.write"],
+      kernel: ["fs.read", "fs.write", "fs.search"],
+    },
+    window: {
+      width: 900,
+      height: 640,
     },
   },
   browser: {
@@ -29,81 +28,54 @@ export default definePackage({
   },
   backend: {
     entry: "./src/backend.ts",
-    public_routes: ["/webhooks/github"],
   },
   cli: {
     commands: {
-      sync: "./src/cli/sync.ts",
+      notes: "./src/cli/notes.ts",
     },
   },
 });
 ```
 
-Rules:
+`browser.entry` is a JS/TS module, not an HTML document. Backend and CLI paths
+point to modules with default exports.
 
-- `browser.entry` must be a JS/TS module, not HTML
-- `backend.entry` points at the default-export backend class
-- `cli.commands[name]` points at the default-export command handler
-- paths in `backend.public_routes` are exact public auth exceptions
-- every backend path not listed in `public_routes` remains session-authenticated
+## Add a Backend
 
-## Add a backend
-
-The backend runs on the worker side. Use it for:
-
-- RPC methods called from the browser
-- optional HTTP routes through `fetch()`
-- signal handling through `onSignal()`
-- kernel access through `this.kernel`
-- package-scoped SQLite through `this.storage.sql`
+Backends extend `PackageBackendEntrypoint`. Public methods are exposed over the
+package RPC surface.
 
 ```ts
 import { PackageBackendEntrypoint } from "@gsv/package/backend";
 
 export default class NotesBackend extends PackageBackendEntrypoint {
   async listNotes() {
-    return this.kernel.request("fs.list", { path: "/notes" });
+    return this.kernel.request("fs.read", { path: "/home/notes" });
   }
 
   async saveNote(args: { path: string; content: string }) {
     await this.kernel.request("fs.write", args);
     await this.storage?.sql.exec(
-      "INSERT INTO note_log(path, updated_at) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET updated_at = excluded.updated_at",
+      "INSERT INTO note_log(path, updated_at) VALUES (?, ?)",
       args.path,
       Date.now(),
     );
     return { ok: true };
   }
-
-  async fetch(request: Request) {
-    const url = new URL(request.url);
-    if (url.pathname.endsWith("/webhooks/github")) {
-      const payload = await request.json();
-      await this.kernel.request("signal.emit", {
-        signal: "notes:webhook",
-        payload,
-      });
-      return new Response("ok");
-    }
-    return new Response("Not Found", { status: 404 });
-  }
-
-  async onSignal(ctx: { signal: string; payload: unknown }) {
-    if (ctx.signal === "notes:refresh") {
-      await this.listNotes();
-    }
-  }
 }
 ```
 
-## Add a browser app
+Useful backend bindings:
 
-The browser entrypoint renders into the fixed platform shell. Package apps do
-not own the HTML document.
+- `this.kernel.request(call, args)` issues granted Kernel syscalls.
+- `this.storage.sql.exec(...)` stores package-scoped SQLite state.
+- `this.viewer` identifies the authenticated user for session-backed requests.
+- `this.daemon` manages package daemon schedules when available.
 
-If you use JSX, declare `preact` in `package.json`. The assembler rewrites JSX
-to `preact/jsx-runtime`, but it does not inject `preact` as a hidden
-dependency.
+## Add Browser UI
+
+The browser entry renders into the platform shell. If you use JSX, declare
+`preact` in the package dependencies.
 
 ```tsx
 import { render } from "preact";
@@ -111,21 +83,18 @@ import { useEffect, useState } from "preact/hooks";
 import { connectBackend, getAppBoot } from "@gsv/package/browser";
 
 type NotesBackend = {
-  listNotes(): Promise<string[]>;
-  saveNote(args: { path: string; content: string }): Promise<{ ok: true }>;
+  listNotes(): Promise<{ files: string[]; directories: string[] }>;
 };
 
 function App() {
-  const [notes, setNotes] = useState<string[]>([]);
+  const [files, setFiles] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const backend = await connectBackend<NotesBackend>();
-      const next = await backend.listNotes();
-      if (!cancelled) {
-        setNotes(next);
-      }
+      const result = await backend.listNotes();
+      if (!cancelled) setFiles(result.files ?? []);
     })();
     return () => {
       cancelled = true;
@@ -135,7 +104,7 @@ function App() {
   return (
     <main>
       <h1>{getAppBoot().packageName}</h1>
-      <ul>{notes.map((path) => <li key={path}>{path}</li>)}</ul>
+      <ul>{files.map((file) => <li key={file}>{file}</li>)}</ul>
     </main>
   );
 }
@@ -143,65 +112,60 @@ function App() {
 render(<App />, document.getElementById("root")!);
 ```
 
-`connectBackend()` returns a stable client proxy. If the backend RPC websocket
-dies, the helper reconnects automatically on the next call and retries the
-request once for transport-level disconnects.
+`connectBackend()` caches a stable RPC proxy and retries once after a transport
+disconnect.
 
-## Add a CLI command
+## Add a CLI Command
 
-CLI commands are optional. They are normal modules whose default export is a
-command handler.
+CLI commands are package modules that default-export `defineCommand(...)`:
 
 ```ts
 import { defineCommand } from "@gsv/package/cli";
 
 export default defineCommand(async (ctx) => {
-  const target = ctx.argv[0] ?? "/notes/today.md";
-  await ctx.stdout.write(`syncing ${target}\n`);
+  const target = ctx.argv[0] ?? "/home/notes";
+  const result = await ctx.kernel.request("fs.read", { path: target });
+  await ctx.stdout.write(JSON.stringify(result, null, 2) + "\n");
 });
 ```
 
-## Public routes
+Package commands run with the authenticated viewer identity and the package's
+declared grants.
 
-Use `backend.public_routes` only when a backend path must bypass app-session
-auth, for example third-party webhooks.
+## Add Background Work
 
-Example:
+For package-owned recurring work, schedule backend RPC methods with
+`this.daemon.upsertRpcSchedule(...)`:
 
 ```ts
-backend: {
-  entry: "./src/backend.ts",
-  public_routes: ["/webhooks/github"],
-}
+await this.daemon?.upsertRpcSchedule({
+  key: "refresh-cache",
+  rpcMethod: "refreshCache",
+  schedule: { kind: "every", everyMs: 60 * 60 * 1000 },
+  enabled: true,
+});
 ```
 
-That setting only controls auth bypass. Routing still belongs to
-`backend.fetch()`.
+Use `kind: "at"`, `kind: "after"`, or `kind: "every"`. The scheduled method
+receives the stored payload, and `this.daemon.trigger` describes the invocation.
 
-## Package state
+## Ship Built-in Package Changes
 
-Backends can use package-scoped SQLite through `this.storage.sql.exec(...)`.
-
-Notes:
-
-- storage is scoped to the package runtime identity managed by `AppRunner`
-- SQL access is asynchronous from package code because it crosses the runtime
-  boundary through RPC
-- package code should avoid using system-reserved tables
-
-## Ship the change
-
-If you changed a builtin package:
+After changing a built-in package source tree:
 
 ```bash
 git push <remote> HEAD:main
-cargo run -- -u root packages sync
+gsv packages sync
 ```
 
-If you changed the package runtime or SDK as well:
+If you changed the package runtime, SDK, assembler, or Gateway code, redeploy the
+infrastructure first:
 
 ```bash
-cd assembler && npm run deploy
-cd ../gateway && npm run deploy
-cd .. && cargo run -- -u root packages sync
+gsv infra deploy -c assembler -c gateway
+gsv packages sync
 ```
+
+Treat package review like code review. Check requested Kernel syscalls,
+filesystem writes, shell usage, adapter behavior, and network assumptions before
+enabling non-system packages.

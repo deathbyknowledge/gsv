@@ -1,325 +1,133 @@
 # Configuration Reference
 
-GSV configuration is a JSON object stored in the Gateway Durable Object. Configuration is applied by deep-merging user-provided overrides onto the default configuration. Arrays and primitives in overrides replace defaults; objects are merged recursively.
+GSV configuration is a SQLite-backed key/value store owned by the Kernel Durable Object. Keys are slash-separated strings and values are stored as strings. System-wide configuration lives under `config/`; per-user overrides live under `users/{uid}/`.
 
-The full configuration type is `GsvConfig` (defined in `gateway/src/config/index.ts`). Defaults are in `gateway/src/config/defaults.ts`.
+The same store is exposed through:
 
----
+- `/sys/config/*` for system configuration.
+- `/sys/users/{uid}/*` for user-scoped configuration.
+- `sys.config.get` and `sys.config.set` for syscall clients.
 
-## Model
+Defaults are seeded when the Kernel starts, but only when a key is missing. Existing values are preserved.
 
-Top-level model settings used by the agent LLM loop. Per-agent overrides are available via `agents.list[].model`.
+## Access Model
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `model.provider` | `string` | `"anthropic"` | LLM provider identifier. Used for API routing. |
-| `model.id` | `string` | `"claude-sonnet-4-20250514"` | Model identifier passed to the provider API. |
+Root (`uid 0`) can read and write all configuration. Non-root users can read their own `users/{uid}/*` keys and non-sensitive `config/*` keys. Sensitive system keys are hidden from non-root reads, including prefix listings.
 
----
+Sensitive final path segments include `api_key`, `secret`, `token`, `password`, `access_token`, `refresh_token`, and `client_secret`. Suffixes such as `_api_key`, `_secret`, `_token`, and `_password` are also treated as sensitive.
 
-## API Keys
+`sys.config.set` lets non-root users write only their own `users/{uid}/ai/*` keys. System writes under `/sys/config/*` require root.
 
-Provider API keys. Stored as worker secrets or in config. All keys are optional; only the key for the active provider is required at runtime.
+## Reading and Writing
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `apiKeys.anthropic` | `string` | `undefined` | Anthropic API key. |
-| `apiKeys.openai` | `string` | `undefined` | OpenAI API key. |
-| `apiKeys.google` | `string` | `undefined` | Google AI API key. |
-| `apiKeys.openrouter` | `string` | `undefined` | OpenRouter API key. |
+Inside a GSV shell, use the filesystem view:
 
----
+```sh
+cat /sys/config/ai/provider
+cat /sys/users/1000/ai/model
+printf '%s\n' openai > /sys/users/1000/ai/provider
+```
 
-## Timeouts
+From an API or WebSocket client, use syscalls:
 
-Timeout durations for LLM calls and tool execution.
+```json
+{ "key": "config/ai" }
+```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `timeouts.llmMs` | `number` | `300000` (5 min) | Maximum duration in milliseconds for a single LLM API call. |
-| `timeouts.toolMs` | `number` | `60000` (1 min) | Maximum duration in milliseconds for a single tool execution. |
+```json
+{ "key": "users/1000/ai/model", "value": "gpt-4.1-mini" }
+```
 
----
+Reading a prefix returns every readable key below that prefix. Reading an exact key returns that key's value or fails if access is denied.
 
-## Auth
+## AI Model Config
 
-Authentication settings for client/node WebSocket connections.
+The AI runtime resolves per-user values first, then falls back to system defaults.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `auth.token` | `string` | `undefined` | Shared secret token for authenticating WebSocket clients and nodes. Optional. |
+| System Key | User Override | Default | Description |
+|---|---|---|---|
+| `config/ai/provider` | `users/{uid}/ai/provider` | `workers-ai` | Provider adapter. |
+| `config/ai/model` | `users/{uid}/ai/model` | `@cf/nvidia/nemotron-3-120b-a12b` | Provider model identifier. |
+| `config/ai/api_key` | `users/{uid}/ai/api_key` | empty | Provider credential. Sensitive. |
+| `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `off` | Reasoning mode hint. |
+| `config/ai/max_tokens` | `users/{uid}/ai/max_tokens` | `8192` | Maximum output tokens. |
+| `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
 
----
+## Profile Context
 
-## Transcription
+Built-in AI profiles load prompt context from:
 
-Audio-to-text transcription settings for voice messages received from channels.
+```text
+config/ai/profile/{profile}/context.d/*.md
+```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `transcription.provider` | `"workers-ai" \| "openai"` | `"workers-ai"` | Transcription provider. |
+Supported built-in profiles are `init`, `task`, `review`, `cron`, `mcp`, `app`, `archivist`, and `curator`. Files are sorted lexically, empty files are skipped, and Markdown content is concatenated into the profile context.
 
----
+Use numeric prefixes to make ordering explicit:
 
-## System Prompt
+```text
+config/ai/profile/task/context.d/00-role.md
+config/ai/profile/task/context.d/10-runtime.md
+config/ai/profile/task/context.d/20-tooling.md
+```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `systemPrompt` | `string` | `undefined` | Default system prompt base text for all agents. When unset, the built-in default is used: `"You are a helpful AI assistant running inside GSV."` Per-agent overrides are available via `agents.list[].systemPrompt`. |
+Profile context supports runtime template variables such as `profile`, `identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`, `workspace`, `devices`, and `known_paths`.
 
----
+## Tool Approval Policy
 
-## User Timezone
+Each built-in profile has a JSON policy at:
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `userTimezone` | `string` | `"UTC"` | IANA timezone string (e.g. `"America/Chicago"`, `"Europe/Amsterdam"`). Used in message envelopes, cron scheduling, heartbeat active-hours evaluation, and the system prompt runtime section. |
+```text
+config/ai/profile/{profile}/tools/approval
+```
 
----
-
-## Channels
-
-Per-channel access control and DM policy settings. Each key in the `channels` object is a channel name (e.g. `"whatsapp"`, `"discord"`).
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `channels.<name>.dmPolicy` | `"open" \| "allowlist" \| "pairing"` | See below | DM access policy for the channel. |
-| `channels.<name>.allowFrom` | `string[]` | `[]` | List of allowed sender IDs. Supports E.164 phone numbers, WhatsApp JIDs, and a `"*"` wildcard. |
-
-### Default Channel Configuration
-
-| Channel | `dmPolicy` | `allowFrom` |
-|---------|-----------|-------------|
-| `whatsapp` | `"pairing"` | `[]` |
-| `discord` | `"open"` | `[]` |
-
-Channels not listed in the config default to allowing all senders.
-
-### DM Policy Values
-
-| Value | Behavior |
-|-------|----------|
-| `"open"` | Any sender can message. No access control. |
-| `"allowlist"` | Only senders in `allowFrom` can message. Others are silently blocked. |
-| `"pairing"` | Senders in `allowFrom` can message. Unknown senders trigger a pairing request that must be approved via CLI. |
-
-### Sender ID Normalization
-
-Sender IDs are normalized to E.164 format for comparison. WhatsApp JID suffixes (`@s.whatsapp.net`, `@c.us`), device suffixes (`:0`), and non-digit characters are stripped. A `+` prefix is added to numbers with 10 or more digits.
-
----
-
-## Session
-
-Session lifecycle and routing configuration.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `session.defaultResetPolicy.mode` | `"manual" \| "daily" \| "idle"` | `"daily"` | Auto-reset mode for new sessions. |
-| `session.defaultResetPolicy.atHour` | `number` | `4` | Hour of day (0-23) for `"daily"` mode reset. |
-| `session.defaultResetPolicy.idleMinutes` | `number` | `undefined` | Minutes of inactivity before reset in `"idle"` mode. |
-| `session.mainKey` | `string` | `"main"` | Canonical session key for the per-agent main session. |
-| `session.dmScope` | `DmScope` | `"main"` | How direct-message sessions are keyed. See DM Scope values below. |
-| `session.identityLinks` | `Record<string, string[]>` | `{}` | Maps canonical names to arrays of channel identity strings. Used to route multiple channel identities to a single session. |
-
-### DM Scope Values
-
-| Value | Behavior |
-|-------|----------|
-| `"main"` | All DMs route to the main session. |
-| `"per-peer"` | Each peer gets a separate session. |
-| `"per-channel-peer"` | Each channel+peer combination gets a separate session. |
-| `"per-account-channel-peer"` | Each account+channel+peer combination gets a separate session. |
-
-### Identity Links
-
-Identity links map multiple channel identities to a canonical name for session routing. Keys are canonical names; values are arrays of identity strings.
-
-Identity strings may be:
-- A bare phone number: `"+31628552611"` — matches any channel after E.164 normalization.
-- A channel-prefixed identifier: `"telegram:123456789"` — matches only the specified channel. Channel name comparison is case-insensitive.
-
----
-
-## Skills
-
-Skill availability and runtime eligibility overrides.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `skills.entries` | `Record<string, SkillEntryConfig>` | `{}` | Per-skill policy entries, keyed by skill name, directory key, or location path. |
-
-### SkillEntryConfig
-
-Each entry in `skills.entries` configures a single skill.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | `boolean` | `undefined` | Hard toggle. When `false`, the skill is hidden from the prompt. When `undefined` or `true`, default visibility rules apply. |
-| `always` | `boolean` | `undefined` | Overrides skill frontmatter `always` flag. When `true`, the skill is always included regardless of runtime requirements. |
-| `requires` | `SkillRequirementsConfig` | `undefined` | Overrides skill frontmatter runtime requirements. |
-
-### SkillRequirementsConfig
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `capabilities` | `string[]` | Require all listed capabilities on the same host. Valid values: `"filesystem.list"`, `"filesystem.read"`, `"filesystem.write"`, `"filesystem.edit"`, `"text.search"`, `"shell.exec"`. |
-
-Current behavior: runtime skill eligibility enforcement uses `requires.capabilities` (plus node online state).
-
----
-
-## Tool Approval
-
-Human-in-the-loop tool gating for session runs.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `toolApproval.defaultDecision` | `"allow" \| "ask" \| "deny"` | `"allow"` | Decision used when no rule matches. |
-| `toolApproval.rules` | `ToolApprovalRule[]` | `[]` | Ordered policy rules. First matching rule wins. |
-
-### ToolApprovalRule
-
-| Key | Type | Required | Description |
-|-----|------|----------|-------------|
-| `id` | `string` | yes | Stable identifier for logs/debugging. |
-| `tool` | `string` | yes | Tool name pattern (supports `*` wildcard). |
-| `when` | `ToolApprovalArgCondition[]` | no | Arg predicates; all must match. |
-| `decision` | `"allow" \| "ask" \| "deny"` | yes | Rule decision. |
-| `reason` | `string` | no | Optional reason shown in pause/deny context. |
-
-### ToolApprovalArgCondition
-
-| Key | Type | Required | Description |
-|-----|------|----------|-------------|
-| `path` | `string` | yes | Dot path into args (for example `command`, `options.force`, `steps.0.name`). |
-| `op` | `"equals" \| "contains" \| "startsWith" \| "regex"` | yes | Match operator. |
-| `value` | `string \| number \| boolean \| null` | yes | Match value (`string` required for `contains`, `startsWith`, `regex`). |
-| `flags` | `string` | no | Regex flags (`op: "regex"` only). |
-
-Example:
+Policy shape:
 
 ```json
 {
-  "toolApproval": {
-    "defaultDecision": "allow",
-    "rules": [
-      {
-        "id": "deny-destructive-shell",
-        "tool": "gsv__Bash",
-        "when": [
-          {
-            "path": "command",
-            "op": "regex",
-            "value": "(^|\\s)rm\\s+-rf\\s+/"
-          }
-        ],
-        "decision": "deny",
-        "reason": "destructive command"
-      },
-      {
-        "id": "ask-all-shell",
-        "tool": "gsv__Bash",
-        "decision": "ask"
-      }
-    ]
-  }
+  "default": "auto",
+  "rules": [
+    { "match": "shell.exec", "action": "ask" },
+    { "match": "fs.delete", "action": "deny" },
+    { "match": "fs.*", "when": { "target": "device" }, "action": "ask" }
+  ]
 }
 ```
 
-Behavior summary:
+Actions are `auto`, `ask`, or `deny`. `match` accepts an exact syscall name or a domain wildcard such as `fs.*`. `when` can filter by `profile`, `anyProfile`, `anyTag`, `allTags`, `argEquals`, `argPrefix`, or `target` (`gsv` or `device`). Invalid or missing JSON falls back to the runtime default policy.
 
-- `allow`: dispatch immediately.
-- `ask`: pause run until user replies `yes` or `no`.
-- `deny`: do not dispatch; tool call is completed with a policy error.
+Default policies:
 
----
+| Profiles | Default | Rules |
+|---|---|---|
+| `init`, `task`, `review`, `app`, `mcp` | `auto` | Ask for `shell.exec` and `fs.delete`. |
+| `cron`, `archivist`, `curator` | `auto` | Deny `fs.delete`; allow `shell.exec`. |
 
-## Agents
+## Runtime Config Keys
 
-Multi-agent configuration: agent definitions, channel-to-agent bindings, and default heartbeat settings.
+| Key | Default | Description |
+|---|---|---|
+| `config/server/name` | `gsv` | Server name used by hostname-style tools and package metadata. |
+| `config/server/timezone` | `UTC` | Runtime timezone value. |
+| `config/server/version` | `0.1.0` | Server version value. |
+| `config/shell/timeout_ms` | `30000` | Default native shell timeout. |
+| `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
+| `config/shell/max_output_bytes` | `524288` | Maximum captured shell output. |
+| `config/process/init_label` | `init ({username})` | Default init process label template. |
+| `config/process/max_per_user` | `0` | Maximum processes per user. `0` means unlimited. |
+| `config/automation/archivist/min_interval_ms` | `300000` | Minimum archivist interval. |
+| `config/automation/curator/interval_ms` | `3600000` | Curator interval. `0` disables periodic curator runs. |
+| `config/automation/curator/batch_size` | `5` | Maximum curator batch size. |
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `agents.list` | `AgentConfig[]` | `[]` | List of agent configurations. |
-| `agents.bindings` | `AgentBinding[]` | `[]` | Rules mapping channels/chats to specific agents. |
-| `agents.defaultHeartbeat` | `HeartbeatConfig` | See below | Default heartbeat configuration applied to all agents. |
+## Package Config
 
-### AgentConfig
+Package-related config is also stored in the same key/value store:
 
-Each entry in `agents.list` defines an agent.
+| Key Pattern | Description |
+|---|---|
+| `users/{uid}/pkg/remotes/{name}` | User package catalog remotes managed by `pkg.remote.*`. |
+| `config/pkg/public-repos/{owner}/{repo}` | Public package repo allowlist managed by `pkg.public.*`. |
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `id` | `string` | — | Agent identifier. Required. |
-| `default` | `boolean` | `false` | Whether this is the default agent. The first agent with `default: true` is used when no binding matches. If no agent is marked default, `"main"` is used. |
-| `model.provider` | `string` | Inherits top-level `model.provider` | LLM provider override for this agent. |
-| `model.id` | `string` | Inherits top-level `model.id` | Model ID override for this agent. |
-| `systemPrompt` | `string` | Inherits top-level `systemPrompt` | System prompt base text override for this agent. |
-| `heartbeat` | `HeartbeatConfig` | Inherits `agents.defaultHeartbeat` | Heartbeat configuration override for this agent. |
+## Practical Notes
 
-### AgentBinding
-
-Bindings route inbound channel messages to a specific agent based on match criteria. Bindings are evaluated in order; the first match wins.
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `agentId` | `string` | Agent ID to route to. Required. |
-| `match.channel` | `string` | Channel name to match (e.g. `"whatsapp"`, `"discord"`). Optional. |
-| `match.accountId` | `string` | Account ID to match (for multi-account channels). Optional. |
-| `match.peer.kind` | `"dm" \| "group"` | Peer kind to match. Optional. |
-| `match.peer.id` | `string` | Peer ID to match. Optional. |
-
-All `match` fields are optional. Omitted fields match any value.
-
-### HeartbeatConfig
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `every` | `string` | `"30m"` | Interval between heartbeats. Duration string (e.g. `"30m"`, `"1h"`, `"2h30m"`). `"0"` or `"0m"` disables heartbeats. |
-| `prompt` | `string` | `"Read HEARTBEAT.md if it exists in your workspace. Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK."` | Custom prompt injected when a heartbeat fires. |
-| `target` | `"last" \| "none" \| string` | `"last"` | Delivery target for heartbeat responses. `"last"` sends to the last active channel. `"none"` discards the response. Any other string is treated as a specific channel name. |
-| `activeHours.start` | `string` | `"08:00"` | Start of active hours in `HH:MM` format. Heartbeats are skipped outside active hours. |
-| `activeHours.end` | `string` | `"23:00"` | End of active hours in `HH:MM` format. |
-| `activeHours.timezone` | `string` | `undefined` | Timezone for active hours evaluation. `"user"` uses `userTimezone`, `"local"` uses system local time, or specify an IANA zone. Optional. |
-
-### Duration String Format
-
-Duration strings support hours (`h`), minutes (`m`), and seconds (`s`) components. They can be combined: `"2h30m"`, `"1h"`, `"30m"`, `"90s"`. The value `"0"` or `"0m"` parses to 0 milliseconds.
-
----
-
-## Compaction
-
-Automatic context compaction settings. Compaction summarizes older messages when the conversation approaches the model's context window limit.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `compaction.enabled` | `boolean` | `true` | Whether automatic context compaction is enabled. |
-| `compaction.reserveTokens` | `number` | `20000` | Token headroom reserved below the context window for the model's response and system prompt. |
-| `compaction.keepRecentTokens` | `number` | `20000` | Estimated token budget for recent messages kept verbatim (not summarized). |
-| `compaction.extractMemories` | `boolean` | `true` | Whether to extract durable memories to the daily memory file during compaction. |
-
----
-
-## Cron
-
-Cron job scheduler configuration.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `cron.enabled` | `boolean` | `true` | Whether the cron scheduler is active. |
-| `cron.maxJobs` | `number` | `200` | Maximum number of cron jobs. |
-| `cron.maxRunsPerJobHistory` | `number` | `200` | Maximum number of run history entries retained per job. |
-| `cron.maxConcurrentRuns` | `number` | `4` | Maximum number of cron jobs executing concurrently. |
-
----
-
-## Configuration Merging
-
-User-provided configuration is a deep-partial type (`GsvConfigInput`). The `mergeConfig` function deep-merges overrides onto the default config:
-
-- **Objects** are merged recursively.
-- **Arrays** in overrides replace the base array entirely.
-- **Primitives** (`string`, `number`, `boolean`) in overrides replace the base value.
-- **`undefined`** values in overrides are ignored (base value preserved).
+All values are strings. Callers parse booleans and numbers at the point of use. Prefer user-scoped AI overrides for per-user model settings, and reserve system keys for defaults that should apply across the GSV instance.
