@@ -5,7 +5,7 @@ target/
 
 # Build artifacts
 dist/
-.vitepress/cache/
+docs/.vitepress/cache/
 
 # Alchemy state
 .alchemy/

@@ -604,6 +604,7 @@ dependencies = [
  "hostname",
  "infer",
  "json5",
+ "libc",
  "mime_guess",
  "qrcode",
  "regex",
