@@ -1,4 +1,4 @@
-use crate::{api, git, packages, store, KEYFRAME_INTERVAL};
+use crate::{api, diff, git, packages, store, KEYFRAME_INTERVAL};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use worker::*;
 
@@ -10,6 +10,7 @@ pub struct ApplyRequest {
     pub email: String,
     pub message: String,
     pub expected_head: Option<String>,
+    pub allow_empty: Option<bool>,
     pub ops: Vec<ApplyOp>,
 }
 
@@ -114,6 +115,18 @@ pub async fn handle_search(sql: &SqlStorage, req: &Request) -> Result<Response> 
     })
 }
 
+pub async fn handle_compare(sql: &SqlStorage, req: &Request) -> Result<Response> {
+    let url = req.url()?;
+    let Some(base) = api::get_query(&url, "base").filter(|value| !value.trim().is_empty()) else {
+        return Response::error("missing 'base' query parameter", 400);
+    };
+    let Some(head) = api::get_query(&url, "head").filter(|value| !value.trim().is_empty()) else {
+        return Response::error("missing 'head' query parameter", 400);
+    };
+    let spec = format!("{}...{}", base, head);
+    diff::handle_compare(sql, &spec, &url)
+}
+
 pub async fn handle_packages_analyze(
     sql: &SqlStorage,
     req: &Request,
@@ -205,7 +218,7 @@ pub async fn handle_apply(sql: &SqlStorage, req: &mut Request) -> Result<Respons
         }
     }
 
-    if changed_paths.is_empty() {
+    if changed_paths.is_empty() && !apply.allow_empty.unwrap_or(false) {
         let response = ApplyResponse {
             ok: true,
             head: current_head.as_deref(),

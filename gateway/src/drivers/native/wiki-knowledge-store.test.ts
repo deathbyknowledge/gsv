@@ -1,38 +1,68 @@
 import { describe, expect, it } from "vitest";
 import type {
-  RipgitApplyOp,
-  RipgitPathResult,
-  RipgitRepoRef,
-  RipgitTreeEntry,
-} from "../fs/ripgit/client";
-import { KnowledgeStore } from "./knowledge";
+  RepoApplyOp,
+  RepoReadResult,
+  RepoSummary,
+  RepoTreeEntry,
+} from "@gsv/protocol/syscalls/repositories";
+import { WikiKnowledgeStore } from "../../../../builtin-packages/wiki/src/backend/knowledge-store";
 
 class InMemoryKnowledgeClient {
-  private readonly files = new Map<string, Uint8Array>();
+  private readonly files = new Map<string, string>();
 
   constructor(initial?: Record<string, string>) {
     for (const [path, content] of Object.entries(initial ?? {})) {
-      this.files.set(path, new TextEncoder().encode(content));
+      this.files.set(path, content);
     }
   }
 
-  async readPath(_repo: RipgitRepoRef, path: string): Promise<RipgitPathResult> {
+  async request<T = unknown>(name: string, args: unknown): Promise<T> {
+    if (name === "repo.list") {
+      const repos: RepoSummary[] = [
+        {
+          repo: "uid-1/home",
+          owner: "uid-1",
+          name: "home",
+          kind: "home",
+          writable: true,
+          public: false,
+        },
+      ];
+      return { repos } as T;
+    }
+    if (name === "repo.read") {
+      const { path = "" } = args as { path?: string };
+      return this.readPath(path) as T;
+    }
+    if (name === "repo.apply") {
+      const { ops } = args as { ops: RepoApplyOp[] };
+      this.apply(ops);
+      return { ok: true, repo: "uid-1/home", ref: "main", head: "head" } as T;
+    }
+    throw new Error(`unexpected request ${name}`);
+  }
+
+  private readPath(path: string): RepoReadResult {
     const exact = this.files.get(path);
-    if (exact) {
+    if (typeof exact === "string") {
       return {
+        repo: "uid-1/home",
+        ref: "main",
+        path,
         kind: "file",
-        bytes: exact,
-        size: exact.length,
+        size: new TextEncoder().encode(exact).length,
+        isBinary: false,
+        content: exact,
       };
     }
 
     const prefix = path ? `${path}/` : "";
     const children = [...this.files.keys()].filter((candidate) => candidate.startsWith(prefix));
     if (children.length === 0) {
-      return { kind: "missing" };
+      throw new Error(`Path not found: ${path || "/"}`);
     }
 
-    const byName = new Map<string, RipgitTreeEntry>();
+    const byName = new Map<string, RepoTreeEntry>();
     for (const child of children) {
       const remainder = child.slice(prefix.length);
       const [name, ...rest] = remainder.split("/");
@@ -40,6 +70,7 @@ class InMemoryKnowledgeClient {
       if (rest.length > 0) {
         byName.set(name, {
           name,
+          path: path ? `${path}/${name}` : name,
           mode: "040000",
           hash: `tree-${name}`,
           type: "tree",
@@ -47,6 +78,7 @@ class InMemoryKnowledgeClient {
       } else {
         byName.set(name, {
           name,
+          path: path ? `${path}/${name}` : name,
           mode: "100644",
           hash: `blob-${name}`,
           type: "blob",
@@ -55,21 +87,18 @@ class InMemoryKnowledgeClient {
     }
 
     return {
+      repo: "uid-1/home",
+      ref: "main",
+      path,
       kind: "tree",
       entries: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
     };
   }
 
-  async apply(
-    _repo: RipgitRepoRef,
-    _author: string,
-    _email: string,
-    _message: string,
-    ops: RipgitApplyOp[],
-  ): Promise<{ head?: string | null }> {
+  private apply(ops: RepoApplyOp[]): void {
     for (const op of ops) {
       if (op.type === "put") {
-        this.files.set(op.path, new Uint8Array(op.contentBytes));
+        this.files.set(op.path, op.content ?? "");
         continue;
       }
       if (op.type === "delete") {
@@ -82,24 +111,21 @@ class InMemoryKnowledgeClient {
         continue;
       }
       if (op.type === "move") {
-        const bytes = this.files.get(op.from);
-        if (bytes) {
-          this.files.set(op.to, bytes);
+        const content = this.files.get(op.from);
+        if (typeof content === "string") {
+          this.files.set(op.to, content);
           this.files.delete(op.from);
         }
       }
     }
-    return { head: "head" };
   }
 }
 
-const repo: RipgitRepoRef = { owner: "uid-1", repo: "home" };
-
-function createStore(initial?: Record<string, string>): KnowledgeStore {
-  return new KnowledgeStore(new InMemoryKnowledgeClient(initial), repo, "hank", "hank@gsv.local");
+function createStore(initial?: Record<string, string>): WikiKnowledgeStore {
+  return new WikiKnowledgeStore(new InMemoryKnowledgeClient(initial));
 }
 
-describe("KnowledgeStore", () => {
+describe("WikiKnowledgeStore", () => {
   it("initializes and lists knowledge databases", async () => {
     const store = createStore({
       "knowledge/.dir": "",

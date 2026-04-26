@@ -3,11 +3,16 @@ import type {
   PackageViewerBinding,
 } from "@gsv/package/backend";
 import type {
-  PkgRepoDiffResult,
-  PkgRepoLogResult,
-  PkgRepoReadResult,
-  PkgRepoSearchResult,
-} from "@gsv/protocol/syscalls/packages";
+  RepoDiffResult,
+  RepoLogResult,
+  RepoReadResult,
+  RepoSearchResult,
+} from "@gsv/protocol/syscalls/repositories";
+import type {
+  PackageRepoDiffResult,
+  PackageRepoReadResult,
+  PackageRepoSearchResult,
+} from "../app/types";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -21,6 +26,17 @@ function asArray<T = unknown>(value: unknown): T[] {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function asStringRecord(value: unknown): Record<string, string> {
+  const record = asRecord(value) ?? {};
+  const result: Record<string, string> = {};
+  for (const [key, item] of Object.entries(record)) {
+    if (typeof item === "string") {
+      result[key] = item;
+    }
+  }
+  return result;
 }
 
 function asNumber(value: unknown): number {
@@ -147,12 +163,12 @@ async function loadRefsForPackages(
     }
   }
 
-  const entries = await Promise.all([...byRepo.entries()].map(async ([repo, pkg]) => {
+  const entries = await Promise.all([...byRepo.keys()].map(async (repo) => {
     try {
-      const refs = asRecord(await kernel.request("pkg.repo.refs", { packageId: pkg.packageId }));
+      const refs = asRecord(await kernel.request("repo.refs", { repo }));
       return [repo, {
-        ...asRecord(refs?.heads),
-        ...asRecord(refs?.tags),
+        ...asStringRecord(refs?.heads),
+        ...asStringRecord(refs?.tags),
       }] as const;
     } catch {
       return [repo, {}] as const;
@@ -301,15 +317,20 @@ async function loadCatalogs(kernel: KernelClientLike): Promise<Array<{
   return catalogs;
 }
 
-async function loadPackageDetail(kernel: KernelClientLike, packageId: string) {
+async function loadPackageDetail(kernel: KernelClientLike, pkg: PackageLike) {
   const [refs, log] = await Promise.all([
-    kernel.request("pkg.repo.refs", { packageId }),
-    kernel.request("pkg.repo.log", { packageId, limit: 20, offset: 0 }) as Promise<PkgRepoLogResult>,
+    kernel.request("repo.refs", { repo: pkg.source.repo }),
+    kernel.request("repo.log", {
+      repo: pkg.source.repo,
+      ref: pkg.source.ref,
+      limit: 20,
+      offset: 0,
+    }) as Promise<RepoLogResult>,
   ]);
   const refsRecord = asRecord(refs);
   return {
     refs: {
-      activeRef: asString(refsRecord?.activeRef),
+      activeRef: pkg.source.ref,
       heads: asRecord(refsRecord?.heads) ?? {},
       tags: asRecord(refsRecord?.tags) ?? {},
     },
@@ -343,7 +364,7 @@ export async function loadState(
     const target = packages.find((pkg) => pkg.packageId === packageId);
     if (target) {
       try {
-        packageDetail = await loadPackageDetail(kernel, packageId);
+        packageDetail = await loadPackageDetail(kernel, target);
       } catch {
         packageDetail = null;
       }
@@ -510,35 +531,141 @@ export async function startReview(kernel: KernelClientLike, args: { packageId: s
 export async function readRepo(
   kernel: KernelClientLike,
   args: { packageId: string; ref?: string; path?: string; root?: "package" | "repo" },
-): Promise<PkgRepoReadResult> {
-  return kernel.request("pkg.repo.read", {
-    packageId: asString(args.packageId),
-    ref: asString(args.ref) || undefined,
-    path: asString(args.path) || undefined,
-    root: args.root === "repo" ? "repo" : "package",
-  }) as Promise<PkgRepoReadResult>;
+): Promise<PackageRepoReadResult> {
+  const target = await resolvePackageForRepo(kernel, args.packageId);
+  const rootKind = args.root === "repo" ? "repo" : "package";
+  const root = sourceRoot(target, rootKind);
+  const path = normalizeRepoPath(args.path);
+  const result = await kernel.request("repo.read", {
+    repo: target.source.repo,
+    ref: asString(args.ref) || target.source.ref,
+    path: joinRepoPath(root, path) || undefined,
+  }) as RepoReadResult;
+
+  if (result.kind === "tree") {
+    return {
+      packageId: target.packageId,
+      repo: result.repo,
+      ref: result.ref,
+      path,
+      kind: "tree",
+      entries: result.entries.map((entry) => ({
+        ...entry,
+        path: root ? trimRepoRoot(entry.path, root) : entry.path,
+      })),
+    };
+  }
+
+  return {
+    packageId: target.packageId,
+    repo: result.repo,
+    ref: result.ref,
+    path,
+    kind: "file",
+    size: result.size,
+    isBinary: result.isBinary,
+    content: result.content,
+  };
 }
 
 export async function searchRepo(
   kernel: KernelClientLike,
   args: { packageId: string; ref?: string; query: string; prefix?: string; root?: "package" | "repo" },
-): Promise<PkgRepoSearchResult> {
-  return kernel.request("pkg.repo.search", {
-    packageId: asString(args.packageId),
-    ref: asString(args.ref) || undefined,
+): Promise<PackageRepoSearchResult> {
+  const target = await resolvePackageForRepo(kernel, args.packageId);
+  const rootKind = args.root === "repo" ? "repo" : "package";
+  const root = sourceRoot(target, rootKind);
+  const prefix = normalizeRepoPath(args.prefix);
+  const result = await kernel.request("repo.search", {
+    repo: target.source.repo,
+    ref: asString(args.ref) || target.source.ref,
     query: asString(args.query),
-    prefix: asString(args.prefix) || undefined,
-    root: args.root === "repo" ? "repo" : "package",
-  }) as Promise<PkgRepoSearchResult>;
+    prefix: joinRepoPath(root, prefix) || undefined,
+  }) as RepoSearchResult;
+
+  return {
+    packageId: target.packageId,
+    repo: result.repo,
+    ref: result.ref,
+    query: result.query,
+    prefix: prefix || undefined,
+    root: rootKind,
+    truncated: result.truncated,
+    matches: result.matches.map((match) => ({
+      ...match,
+      path: root ? trimRepoRoot(match.path, root) : match.path,
+    })),
+  };
 }
 
 export async function diffRepo(
   kernel: KernelClientLike,
   args: { packageId: string; commit: string; context?: number },
-): Promise<PkgRepoDiffResult> {
-  return kernel.request("pkg.repo.diff", {
-    packageId: asString(args.packageId),
+): Promise<PackageRepoDiffResult> {
+  const target = await resolvePackageForRepo(kernel, args.packageId);
+  const result = await kernel.request("repo.diff", {
+    repo: target.source.repo,
     commit: asString(args.commit),
     context: typeof args.context === "number" ? args.context : 3,
-  }) as Promise<PkgRepoDiffResult>;
+  }) as RepoDiffResult;
+
+  return {
+    packageId: target.packageId,
+    repo: result.repo,
+    ref: target.source.ref,
+    commitHash: result.commitHash,
+    parentHash: result.parentHash ?? null,
+    stats: result.stats,
+    files: result.files,
+  };
+}
+
+async function resolvePackageForRepo(kernel: KernelClientLike, packageId: string): Promise<PackageLike> {
+  const normalizedPackageId = asString(packageId).trim();
+  if (!normalizedPackageId) {
+    throw new Error("packageId is required");
+  }
+  const packages = await listPackages(kernel);
+  const target = packages.find((pkg) => pkg.packageId === normalizedPackageId);
+  if (!target) {
+    throw new Error(`Unknown package: ${normalizedPackageId}`);
+  }
+  return target;
+}
+
+function sourceRoot(pkg: PackageLike, root: "package" | "repo"): string {
+  return root === "repo" ? "" : normalizeRepoPath(pkg.source.subdir);
+}
+
+function normalizeRepoPath(path: string | undefined): string {
+  const raw = typeof path === "string" ? path.trim() : "";
+  const parts: string[] = [];
+  for (const segment of raw.split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === ".." || segment.includes("\0")) {
+      throw new Error(`Invalid repo path: ${path}`);
+    }
+    parts.push(segment);
+  }
+  return parts.join("/");
+}
+
+function joinRepoPath(base: string, child: string): string {
+  if (!base) return child;
+  if (!child) return base;
+  return `${base}/${child}`;
+}
+
+function trimRepoRoot(path: string, root: string): string {
+  if (!root) {
+    return path;
+  }
+  const normalizedPath = normalizeRepoPath(path);
+  if (!normalizedPath || normalizedPath === root) {
+    return "";
+  }
+  const prefix = `${root}/`;
+  return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : normalizedPath;
 }

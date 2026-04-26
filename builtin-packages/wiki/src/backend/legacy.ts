@@ -1,4 +1,9 @@
-import type { WikiMutationResult, WikiPreviewPayload, WikiState } from "./types";
+import type {
+  WikiMutationResult,
+  WikiPreviewPayload,
+  WikiWorkspaceState as WikiState,
+} from "../app/types";
+import { WikiKnowledgeStore } from "./knowledge-store";
 
 function normalizePath(value: unknown): string {
   return String(value ?? "").trim().replace(/^\/+/, "").replace(/\/+$/g, "").replace(/\/{2,}/g, "/");
@@ -97,8 +102,8 @@ function inferPreviewMode(path: string, text: string): "markdown" | "text" {
   return "text";
 }
 
-async function loadSelectedNote(kernel: any, path: string) {
-  const readResult = await kernel.request("knowledge.read", { path });
+async function loadSelectedNote(knowledge: WikiKnowledgeStore, path: string) {
+  const readResult = await knowledge.read({ path });
   if (!readResult?.exists) {
     return null;
   }
@@ -110,6 +115,7 @@ async function loadSelectedNote(kernel: any, path: string) {
 }
 
 export async function loadState(kernel: any, args: any): Promise<WikiState> {
+  const knowledge = new WikiKnowledgeStore(kernel);
   let errorText = "";
   let selectedDb = String(args?.db ?? "").trim();
   let selectedPath = normalizeDbScopedPath(args?.path ?? "", selectedDb);
@@ -124,7 +130,7 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
   let queryResult: WikiState["queryResult"] = null;
 
   try {
-    const listResult = await kernel.request("knowledge.db.list", { limit: 200 });
+    const listResult = await knowledge.listDbs({ limit: 200 });
     dbs = Array.isArray(listResult?.dbs) ? listResult.dbs : [];
     if (!selectedDb && dbs.length > 0) {
       selectedDb = dbs[0].id;
@@ -135,7 +141,7 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
 
   if (selectedDb) {
     try {
-      const pageList = await kernel.request("knowledge.list", {
+      const pageList = await knowledge.list({
         prefix: `${selectedDb}/pages`,
         recursive: true,
         limit: 200,
@@ -146,7 +152,7 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
     }
 
     try {
-      const inboxList = await kernel.request("knowledge.list", {
+      const inboxList = await knowledge.list({
         prefix: `${selectedDb}/inbox`,
         recursive: true,
         limit: 200,
@@ -163,10 +169,10 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
 
   if (selectedPath) {
     try {
-      selectedNote = await loadSelectedNote(kernel, selectedPath);
+      selectedNote = await loadSelectedNote(knowledge, selectedPath);
       if (!selectedNote && !args?.path && pages.length > 0) {
         selectedPath = pages[0].path;
-        selectedNote = await loadSelectedNote(kernel, selectedPath);
+        selectedNote = await loadSelectedNote(knowledge, selectedPath);
       }
     } catch (error) {
       errorText ||= error instanceof Error ? error.message : String(error);
@@ -175,7 +181,7 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
 
   if (searchQuery && selectedDb) {
     try {
-      const result = await kernel.request("knowledge.search", {
+      const result = await knowledge.search({
         query: searchQuery,
         prefix: selectedDb,
         limit: 30,
@@ -188,7 +194,7 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
 
   if (queryText && selectedDb) {
     try {
-      queryResult = await kernel.request("knowledge.query", {
+      queryResult = await knowledge.query({
         query: queryText,
         prefixes: [`${selectedDb}/pages`],
         limit: 8,
@@ -215,6 +221,7 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
 }
 
 export async function getPreview(kernel: any, args: any): Promise<WikiPreviewPayload> {
+  const knowledge = new WikiKnowledgeStore(kernel);
   try {
     const kind = String(args?.kind ?? "").trim();
     if (kind === "page") {
@@ -223,7 +230,7 @@ export async function getPreview(kernel: any, args: any): Promise<WikiPreviewPay
       if (!path) {
         return { ok: false, error: "Preview path is required." };
       }
-      const note = await kernel.request("knowledge.read", { path });
+      const note = await knowledge.read({ path });
       if (!note?.exists) {
         return { ok: false, error: `Page '${path}' does not exist.` };
       }
@@ -307,17 +314,18 @@ export async function getPreview(kernel: any, args: any): Promise<WikiPreviewPay
 }
 
 export async function createDatabase(kernel: any, args: any): Promise<WikiMutationResult> {
+  const knowledge = new WikiKnowledgeStore(kernel);
   const dbId = String(args?.dbId ?? "").trim();
   const dbTitle = String(args?.dbTitle ?? "").trim();
   if (!dbId) {
     throw new Error("A database id is required.");
   }
-  const result = await kernel.request("knowledge.db.init", {
+  const result = await knowledge.initDb({
     id: dbId,
     title: dbTitle || undefined,
   });
   if (!result?.ok) {
-    throw new Error(result?.error || "Failed to create database");
+    throw new Error("Failed to create database");
   }
   return {
     db: result.id,
@@ -327,29 +335,31 @@ export async function createDatabase(kernel: any, args: any): Promise<WikiMutati
 }
 
 export async function writePage(kernel: any, args: any): Promise<WikiMutationResult> {
+  const knowledge = new WikiKnowledgeStore(kernel);
   const selectedDb = String(args?.db ?? "").trim();
   const path = normalizeDbScopedPath(args?.path ?? "", selectedDb);
   const markdown = String(args?.markdown ?? "");
   if (!path) {
     throw new Error("A knowledge path is required.");
   }
-  const result = await kernel.request("knowledge.write", {
+  const result = await knowledge.write({
     path,
     markdown,
-    mode: "replace",
     create: true,
   });
   if (!result?.ok) {
     throw new Error(result?.error || "Failed to save note");
   }
+  const resultPath = result.path ?? path;
   return {
-    db: result.path.includes("/") ? String(result.path).split("/")[0] : selectedDb,
-    openPath: result.path,
-    statusText: result.created ? `Created ${result.path}` : `Saved ${result.path}`,
+    db: resultPath.includes("/") ? resultPath.split("/")[0] : selectedDb,
+    openPath: resultPath,
+    statusText: result.created ? `Created ${resultPath}` : `Saved ${resultPath}`,
   };
 }
 
 export async function ingestSourcesToInbox(kernel: any, args: any): Promise<WikiMutationResult> {
+  const knowledge = new WikiKnowledgeStore(kernel);
   const selectedDb = String(args?.db ?? "").trim();
   const title = String(args?.title ?? "").trim();
   const summary = String(args?.summary ?? "").trim();
@@ -357,7 +367,7 @@ export async function ingestSourcesToInbox(kernel: any, args: any): Promise<Wiki
   if (!selectedDb) {
     throw new Error("Select a database before ingesting sources.");
   }
-  const result = await kernel.request("knowledge.ingest", {
+  const result = await knowledge.ingest({
     db: selectedDb,
     sources,
     title: title || undefined,
@@ -367,14 +377,16 @@ export async function ingestSourcesToInbox(kernel: any, args: any): Promise<Wiki
   if (!result?.ok) {
     throw new Error(result?.error || "Failed to ingest sources");
   }
+  const resultPath = result.path ?? `${selectedDb}/inbox`;
   return {
     db: selectedDb,
-    openPath: result.path,
-    statusText: `Staged ${result.path}`,
+    openPath: resultPath,
+    statusText: `Staged ${resultPath}`,
   };
 }
 
 export async function compileInboxNote(kernel: any, args: any): Promise<WikiMutationResult> {
+  const knowledge = new WikiKnowledgeStore(kernel);
   const selectedDb = String(args?.db ?? "").trim();
   const sourcePath = normalizeDbScopedPath(args?.sourcePath ?? "", selectedDb);
   const targetPath = normalizeDbScopedPath(args?.targetPath ?? "", selectedDb);
@@ -384,7 +396,7 @@ export async function compileInboxNote(kernel: any, args: any): Promise<WikiMuta
   if (!sourcePath.startsWith(`${selectedDb}/inbox/`)) {
     throw new Error("Only inbox notes can be compiled.");
   }
-  const result = await kernel.request("knowledge.compile", {
+  const result = await knowledge.compile({
     db: selectedDb,
     sourcePath,
     targetPath: targetPath || undefined,
@@ -392,10 +404,12 @@ export async function compileInboxNote(kernel: any, args: any): Promise<WikiMuta
   if (!result?.ok) {
     throw new Error(result?.error || "Failed to compile inbox note");
   }
+  const resultPath = result.path ?? targetPath;
+  const resultSourcePath = result.sourcePath ?? sourcePath;
   return {
     db: selectedDb,
-    openPath: result.path,
-    statusText: `Compiled ${result.sourcePath} into ${result.path}`,
+    openPath: resultPath,
+    statusText: `Compiled ${resultSourcePath} into ${resultPath}`,
   };
 }
 

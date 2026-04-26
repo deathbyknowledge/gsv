@@ -14,19 +14,12 @@ export default definePackage({
     capabilities: {
       kernel: [
         "fs.read",
-        "knowledge.db.list",
-        "knowledge.db.init",
-        "knowledge.list",
-        "knowledge.read",
-        "knowledge.write",
-        "knowledge.search",
-        "knowledge.query",
-        "knowledge.ingest",
-        "knowledge.compile",
-        "knowledge.merge",
         "notification.create",
         "proc.spawn",
         "proc.send",
+        "repo.apply",
+        "repo.list",
+        "repo.read",
         "signal.watch",
         "signal.unwatch",
       ],
@@ -38,5 +31,10 @@ export default definePackage({
   },
   backend: {
     entry: "./src/backend.ts",
+  },
+  cli: {
+    commands: {
+      wiki: "./src/cli/wiki.ts",
+    },
   },
 });

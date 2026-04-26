@@ -40,6 +40,18 @@ export default definePackage({
 `browser.entry` is a JS/TS module, not an HTML document. Backend and CLI paths
 point to modules with default exports.
 
+Declare repository access with `repo.*` syscalls when the app needs source or
+workspace repository content:
+
+```ts
+capabilities: {
+  kernel: ["repo.read", "repo.search", "repo.log"],
+},
+```
+
+Use `pkg.*` only for package lifecycle actions such as install, sync, checkout,
+review approval, or public visibility.
+
 ## Add a Backend
 
 Backends extend `PackageBackendEntrypoint`. Public methods are exposed over the

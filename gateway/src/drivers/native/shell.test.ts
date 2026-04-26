@@ -123,7 +123,7 @@ function makeContext(options?: {
     identity: {
       role: "user",
       process: IDENTITY,
-      capabilities: options?.capabilities ?? ["pkg.list", "pkg.repo.refs", "pkg.repo.log"],
+      capabilities: options?.capabilities ?? ["pkg.list", "repo.refs", "repo.log"],
     },
     processId: "task:pkg",
     serverVersion: "0.1.0",
@@ -223,6 +223,62 @@ describe("pkg shell command", () => {
       value: {
         commandName: "hello-world",
         args: ["alpha", "beta"],
+        cwd: "/home/sam",
+        uid: 1000,
+        gid: 1000,
+        username: "sam",
+      },
+    });
+  });
+
+  it("allows packages to provide the wiki command", async () => {
+    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const runner = {
+      async ensureRuntime(input: unknown) {
+        calls.push({ kind: "ensure", value: input });
+      },
+      async runCommand(input: unknown) {
+        calls.push({ kind: "run", value: input });
+        return {
+          stdout: "wiki package command\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    };
+
+    const result = await handleShellExec(
+      { command: "wiki search auth" },
+      makeContext({
+        pkg: makePackage({
+          enabled: true,
+          reviewRequired: false,
+          manifest: {
+            ...makePackage().manifest,
+            entrypoints: [
+              {
+                name: "wiki",
+                kind: "command",
+                module: "index.js",
+                exportName: "GsvCommandEntrypoint",
+                command: "wiki",
+              },
+            ],
+          },
+        }),
+        getAppRunner() {
+          return runner;
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("wiki package command");
+    expect(calls[1]).toEqual({
+      kind: "run",
+      value: {
+        commandName: "wiki",
+        args: ["search", "auth"],
         cwd: "/home/sam",
         uid: 1000,
         gid: 1000,

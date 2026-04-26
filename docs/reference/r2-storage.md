@@ -88,7 +88,7 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 |---|---|---|---|
 | `uid-{uid}/home` | `homeKnowledgeRepoRef(uid)` | `~/CONSTITUTION.md`, `~/context.d`, `~/knowledge` | Home context and knowledge databases. |
 | `uid-{uid}/{workspaceId}` | `workspaceRepoRef(workspaceId, uid)` | `/workspaces/{workspaceId}` | Task workspace files and checkpoints. |
-| Package source repos, for example `system/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/package`, `/src/repo`, `pkg.repo.*` | Installed package source and review context. |
+| Package source repos, for example `system/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/package`, `/src/repo`, `repo.*` | Installed package source, review context, and generic repo operations. |
 
 Workspace repos contain platform metadata under `.gsv/`:
 
@@ -99,7 +99,7 @@ Workspace repos contain platform metadata under `.gsv/`:
 .gsv/processes/{pid}/chat.jsonl
 ```
 
-Package source mounts are read-only inside processes. Workspace and home knowledge repos are writable through the filesystem and knowledge syscalls.
+Package source mounts are read-only inside processes. Workspace and home knowledge repos are writable through the filesystem; generic repository operations use `repo.*`, and Wiki-specific behavior uses the higher-level knowledge interface.
 
 ## Package Runtime Storage
 

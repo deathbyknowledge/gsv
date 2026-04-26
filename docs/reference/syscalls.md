@@ -242,7 +242,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and custom commands such as `pkg`, `wiki`, and `notify`. Device targets run a real local shell through the CLI. Native defaults `workdir` to process `cwd`, `timeout` to `config/shell/timeout_ms` or 30000 ms, ignores `background` and `yieldMs`, truncates output by `config/shell/max_output_bytes`, and returns command failures as `ok: true` with non-zero `exitCode`. CLI supports background and yielded sessions. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env, core commands such as `pkg` and `notify`, and installed package CLI commands such as `wiki`. Device targets run a real local shell through the CLI. Native defaults `workdir` to process `cwd`, `timeout` to `config/shell/timeout_ms` or 30000 ms, ignores `background` and `yieldMs`, truncates output by `config/shell/max_output_bytes`, and returns command failures as `ok: true` with non-zero `exitCode`. CLI supports background and yielded sessions. |
 
 ```ts
 type ShellSyscalls = {
@@ -362,7 +362,7 @@ type ProcessSyscalls = {
 
 ## Packages: `pkg.*`
 
-`pkg.*` manages installed packages and their ripgit-backed source repositories.
+`pkg.*` manages installed packages, package catalogs, review state, and package visibility. Use `repo.*` for generic repository operations against package source repos.
 
 Runtime behavior:
 
@@ -375,11 +375,6 @@ Runtime behavior:
 | `pkg.install` | `handlePkgInstall` | Enables an installed package. Errors if review is required and not approved. Idempotent when already enabled. |
 | `pkg.review.approve` | `handlePkgReviewApprove` | Sets review approval metadata for review-required packages. If review is not required, returns unchanged. |
 | `pkg.remove` | `handlePkgRemove` | Disables the package; it does not delete the row. Cannot disable the package named `packages`. |
-| `pkg.repo.refs` | `handlePkgRepoRefs` | Reads ripgit heads and tags for the package source repository at the active ref. |
-| `pkg.repo.read` | `handlePkgRepoRead` | Reads a package repo tree or file. Defaults to the package subdir; `root: "repo"` reads repository root. Binary files return `content: null`; invalid UTF-8 falls back to lossy decode. |
-| `pkg.repo.log` | `handlePkgRepoLog` | Reads commit log. Defaults `limit` to 30, clamps to 1-100, and defaults `offset` to 0. |
-| `pkg.repo.search` | `handlePkgRepoSearch` | Searches ripgit text under the package subdir by default, or repo root with `root: "repo"`. Requires a non-empty query. |
-| `pkg.repo.diff` | `handlePkgRepoDiff` | Reads a commit diff. Requires non-empty `commit`; `context` defaults to 3 and clamps to 0-20. |
 | `pkg.remote.list` | `handlePkgRemoteList` | Lists current user package catalog remotes from config, sorted by name. Requires identity. |
 | `pkg.remote.add` | `handlePkgRemoteAdd` | Stores a current-user remote config key. Remote names must be alphanumeric with dashes; URLs must be HTTP or HTTPS and are normalized. |
 | `pkg.remote.remove` | `handlePkgRemoteRemove` | Deletes a current-user remote config key. Returns whether anything was removed. |
@@ -425,33 +420,6 @@ type PackageSyscalls = {
     result: { changed: boolean; package: PkgSummary };
   };
 
-  "pkg.repo.refs": {
-    args: { packageId: string };
-    result: { packageId: string; repo: string; activeRef: string; heads: Record<string, string>; tags: Record<string, string> };
-  };
-
-  "pkg.repo.read": {
-    args: { packageId: string; ref?: string; path?: string; root?: "package" | "repo" };
-    result:
-      | { packageId: string; repo: string; ref: string; path: string; kind: "tree"; entries: Array<{ name: string; path: string; mode: string; hash: string; type: "tree" | "blob" | "symlink" }> }
-      | { packageId: string; repo: string; ref: string; path: string; kind: "file"; size: number; isBinary: boolean; content: string | null };
-  };
-
-  "pkg.repo.log": {
-    args: { packageId: string; ref?: string; limit?: number; offset?: number };
-    result: { packageId: string; repo: string; ref: string; limit: number; offset: number; entries: Array<{ hash: string; treeHash: string; author: string; authorEmail: string; authorTime: number; committer: string; committerEmail: string; commitTime: number; message: string; parents: string[] }> };
-  };
-
-  "pkg.repo.search": {
-    args: { packageId: string; ref?: string; query: string; prefix?: string; root?: "package" | "repo" };
-    result: { packageId: string; repo: string; ref: string; query: string; prefix?: string; root: "package" | "repo"; truncated?: boolean; matches: Array<{ path: string; line: number; content: string }> };
-  };
-
-  "pkg.repo.diff": {
-    args: { packageId: string; commit: string; context?: number };
-    result: { packageId: string; repo: string; ref: string; commitHash: string; parentHash?: string | null; stats: { filesChanged: number; additions: number; deletions: number }; files: Array<{ path: string; status: "added" | "deleted" | "modified"; oldHash?: string; newHash?: string; hunks?: Array<{ oldStart: number; oldCount: number; newStart: number; newCount: number; lines: Array<{ tag: "context" | "add" | "delete" | "binary"; content: string }> }> }> };
-  };
-
   "pkg.remote.list": {
     args: Empty;
     result: { remotes: Array<{ name: string; baseUrl: string }> };
@@ -475,6 +443,97 @@ type PackageSyscalls = {
   "pkg.public.set": {
     args: { packageId?: string; repo?: string; public: boolean };
     result: { changed: boolean; repo: string; public: boolean };
+  };
+};
+```
+
+## Repositories: `repo.*`
+
+`repo.*` is the kernel-level interface to ripgit repositories. It exposes versioned content, history, diffs, imports, and atomic commits without modeling a Git index or separate `add` step.
+
+Runtime behavior:
+
+| Syscall | Handler | Behavior |
+|---|---|---|
+| `repo.list` | `handleRepoList` | Lists repositories visible to the caller. Results include home, workspace, visible package source, and registered user repos. Optional `owner` filters by repo owner. |
+| `repo.create` | `handleRepoCreate` | Creates a repository by writing an empty initial commit to `ref`, default `main`. Existing refs return `created: false`. Only root, wildcard, the username owner, or `uid-{uid}` owner can write. |
+| `repo.refs` | `handleRepoRefs` | Reads heads and tags. Allows owned repos, public repos, `system/*`, and visible package source repos. |
+| `repo.read` | `handleRepoRead` | Reads a tree or file at `repo`, `ref`, and `path`. Defaults `ref` to `main` and `path` to root. Binary files return `content: null`. |
+| `repo.search` | `handleRepoSearch` | Searches text in a repo, optionally under `prefix`. Requires a non-empty query. |
+| `repo.log` | `handleRepoLog` | Reads first-parent commit history. `limit` defaults to 30 and clamps to 1-100; `offset` defaults to 0. |
+| `repo.diff` | `handleRepoDiff` | Reads one commit diff. Requires `commit`; `context` defaults to 3 and clamps to 0-20. |
+| `repo.compare` | `handleRepoCompare` | Compares `base` and `head` refs or hashes. `stat: true` omits hunks from ripgit. |
+| `repo.apply` | `handleRepoApply` | Atomically commits `put`, `delete`, and `move` operations to one ref. `expectedHead` enables optimistic concurrency. `allowEmpty` permits an empty commit. |
+| `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo. |
+
+Write access is intentionally narrower than read access. Non-root users can write repos owned by their username or by `uid-{uid}`. Public repos and visible package source repos are readable but not writable unless ownership also matches.
+
+```ts
+type RepoDiffFile = {
+  path: string;
+  status: "added" | "deleted" | "modified";
+  oldHash?: string;
+  newHash?: string;
+  hunks?: Array<{
+    oldStart: number;
+    oldCount: number;
+    newStart: number;
+    newCount: number;
+    lines: Array<{ tag: "context" | "add" | "delete" | "binary"; content: string }>;
+  }>;
+};
+
+type RepoSyscalls = {
+  "repo.list": {
+    args: { owner?: string };
+    result: { repos: Array<{ repo: string; owner: string; name: string; kind: "home" | "workspace" | "package" | "user"; writable: boolean; public: boolean; description?: string; updatedAt?: number }> };
+  };
+
+  "repo.create": {
+    args: { repo: string; ref?: string; description?: string };
+    result: { repo: string; ref: string; head: string | null; created: boolean };
+  };
+
+  "repo.refs": {
+    args: { repo: string };
+    result: { repo: string; heads: Record<string, string>; tags: Record<string, string> };
+  };
+
+  "repo.read": {
+    args: { repo: string; ref?: string; path?: string };
+    result:
+      | { repo: string; ref: string; path: string; kind: "tree"; entries: Array<{ name: string; path: string; mode: string; hash: string; type: "tree" | "blob" | "symlink" }> }
+      | { repo: string; ref: string; path: string; kind: "file"; size: number; isBinary: boolean; content: string | null };
+  };
+
+  "repo.search": {
+    args: { repo: string; ref?: string; query: string; prefix?: string };
+    result: { repo: string; ref: string; query: string; prefix?: string; truncated?: boolean; matches: Array<{ path: string; line: number; content: string }> };
+  };
+
+  "repo.log": {
+    args: { repo: string; ref?: string; limit?: number; offset?: number };
+    result: { repo: string; ref: string; limit: number; offset: number; entries: Array<{ hash: string; treeHash: string; author: string; authorEmail: string; authorTime: number; committer: string; committerEmail: string; commitTime: number; message: string; parents: string[] }> };
+  };
+
+  "repo.diff": {
+    args: { repo: string; commit: string; context?: number };
+    result: { repo: string; commitHash: string; parentHash?: string | null; stats: { filesChanged: number; additions: number; deletions: number }; files: RepoDiffFile[] };
+  };
+
+  "repo.compare": {
+    args: { repo: string; base: string; head: string; context?: number; stat?: boolean };
+    result: { repo: string; base: string; head: string; stats: { filesChanged: number; additions: number; deletions: number }; files: RepoDiffFile[] };
+  };
+
+  "repo.apply": {
+    args: { repo: string; ref?: string; message: string; expectedHead?: string; allowEmpty?: boolean; ops: Array<{ type: "put"; path: string; content?: string; contentBase64?: string } | { type: "delete"; path: string; recursive?: boolean } | { type: "move"; from: string; to: string }> };
+    result: { ok: true; repo: string; ref: string; head: string | null };
+  };
+
+  "repo.import": {
+    args: { repo: string; ref?: string; remoteUrl: string; remoteRef?: string; message?: string };
+    result: { repo: string; ref: string; head: string | null; changed: boolean; remoteUrl: string; remoteRef: string };
   };
 };
 ```
@@ -666,95 +725,6 @@ type AdapterSyscalls = {
   "adapter.status": {
     args: { adapter: string; accountId?: string };
     result: { adapter: string; accounts: AdapterAccountStatus[] };
-  };
-};
-```
-
-## Knowledge: `knowledge.*`
-
-`knowledge.*` manages durable home knowledge rooted at `~/knowledge/`. It is for deliberate retrieval and updates, not always-loaded prompt context.
-
-Runtime behavior:
-
-| Syscall | Handler | Behavior |
-|---|---|---|
-| `knowledge.db.list` | `handleKnowledgeDbList` | Lists direct knowledge database directories under `knowledge/` that contain `index.md`, skipping `inbox` and `.dir`. Defaults limit to 100 and clamps to 500. |
-| `knowledge.db.init` | `handleKnowledgeDbInit` | Creates `knowledge/<db>/index.md`, `pages/.dir`, and `inbox/.dir` if needed. Default title derives from id. Commits only when changes are needed. |
-| `knowledge.db.delete` | `handleKnowledgeDbDelete` | Deletes `knowledge/<id>` recursively. Missing databases return `removed: false`; existing databases create a ripgit delete commit. |
-| `knowledge.list` | `handleKnowledgeList` | Lists files and directories under an optional prefix. Defaults `recursive` false, limit 100, max 500. Missing prefixes return an empty list. |
-| `knowledge.read` | `handleKnowledgeRead` | Reads one Markdown file, parsing frontmatter, title, sections, and sources. Missing files return `exists: false`; non-file paths throw. |
-| `knowledge.write` | `handleKnowledgeWrite` | Replaces, appends, or structurally merges Markdown. Page writes under `<db>/pages/` auto-init the db and update its index. `create: false` errors on missing files. |
-| `knowledge.search` | `handleKnowledgeSearch` | Tokenizes a lowercase whitespace query and scores title, aliases, tags, path, and body. Empty query returns no matches. Candidate files are searchable like other files. |
-| `knowledge.merge` | `handleKnowledgeMerge` | Merges source into target. Default mode is `union`; default `keepSource` is false, so the source is deleted. Errors if source equals target or either path is not a file. |
-| `knowledge.promote` | `handleKnowledgePromote` | Promotes text or candidate material into inbox or direct knowledge. Defaults to direct when `targetPath` exists, otherwise inbox. Process-source promotion is typed but currently returns an operation error. |
-| `knowledge.query` | `handleKnowledgeQuery` | Searches one or more prefixes, dedupes refs, and returns a compact Markdown brief. Defaults limit to 5 and max bytes to 4096 with a 256-byte minimum. |
-| `knowledge.ingest` | `handleKnowledgeIngest` | Creates a source-backed note in a db. Requires at least one source, auto-inits db, defaults mode to inbox, and overwrites an existing explicit path. |
-| `knowledge.compile` | `handleKnowledgeCompile` | Converts a staged source note into a canonical db page. Defaults target path from title, removes `candidate` tag, updates db index, and deletes source unless `keepSource` is true or source equals target. |
-
-All knowledge handlers require process identity and `RIPGIT`. Paths are normalized under the home knowledge repo and reject empty, `.`, and `..` segments.
-
-```ts
-type KnowledgeSourceRef = { target: string; path: string; title?: string };
-
-type KnowledgeSyscalls = {
-  "knowledge.db.list": {
-    args: { limit?: number };
-    result: { dbs: Array<{ id: string; title?: string }> };
-  };
-
-  "knowledge.db.init": {
-    args: { id: string; title?: string; description?: string };
-    result: { ok: true; id: string; created: boolean } | OperationError;
-  };
-
-  "knowledge.db.delete": {
-    args: { id: string };
-    result: { ok: true; id: string; removed: boolean } | OperationError;
-  };
-
-  "knowledge.list": {
-    args: { prefix?: string; recursive?: boolean; limit?: number };
-    result: { entries: Array<{ path: string; kind: "file" | "dir"; title?: string; updatedAt?: string }> };
-  };
-
-  "knowledge.read": {
-    args: { path: string };
-    result: { path: string; exists: boolean; title?: string; frontmatter?: Record<string, unknown>; markdown?: string; sources?: KnowledgeSourceRef[] };
-  };
-
-  "knowledge.write": {
-    args: { path: string; mode?: "replace" | "merge" | "append"; markdown?: string; patch?: { title?: string; summary?: string; addFacts?: string[]; addPreferences?: string[]; addEvidence?: string[]; addAliases?: string[]; addTags?: string[]; addLinks?: string[]; addSources?: KnowledgeSourceRef[]; sections?: Array<{ heading: string; mode?: "replace" | "append" | "delete"; content?: string | string[] }> }; create?: boolean };
-    result: { ok: true; path: string; created: boolean; updated: boolean } | OperationError;
-  };
-
-  "knowledge.search": {
-    args: { query: string; prefix?: string; limit?: number };
-    result: { matches: Array<{ path: string; title?: string; snippet: string; score?: number }> };
-  };
-
-  "knowledge.merge": {
-    args: { sourcePath: string; targetPath: string; mode?: "prefer-target" | "prefer-source" | "union"; keepSource?: boolean };
-    result: { ok: true; targetPath: string; sourcePath: string; removedSource: boolean } | OperationError;
-  };
-
-  "knowledge.promote": {
-    args: { source: { kind: "text"; text: string } | { kind: "candidate"; path: string } | { kind: "process"; pid: string; runId?: string; messageIds?: number[] }; targetPath?: string; mode?: "inbox" | "direct" };
-    result: { ok: true; path: string; created: boolean; requiresReview: boolean } | OperationError;
-  };
-
-  "knowledge.query": {
-    args: { query: string; prefixes?: string[]; limit?: number; maxBytes?: number };
-    result: { brief: string; refs: Array<{ path: string; title?: string }> };
-  };
-
-  "knowledge.ingest": {
-    args: { db: string; sources: KnowledgeSourceRef[]; title?: string; summary?: string; path?: string; mode?: "inbox" | "page" };
-    result: { ok: true; db: string; path: string; created: boolean; requiresReview: boolean } | OperationError;
-  };
-
-  "knowledge.compile": {
-    args: { db: string; sourcePath: string; targetPath?: string; title?: string; keepSource?: boolean };
-    result: { ok: true; db: string; path: string; sourcePath: string; removedSource: boolean } | OperationError;
   };
 };
 ```

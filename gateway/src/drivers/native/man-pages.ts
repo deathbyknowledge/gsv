@@ -64,7 +64,7 @@ export function renderManualPage(topic?: string): string | null {
         "  wiki - manage durable knowledge databases",
         "",
         "OVERVIEW",
-        "  `wiki` manages named knowledge databases made of markdown pages and live source references.",
+        "  `wiki` is provided by the Wiki package. It manages named knowledge databases made of markdown pages and live source references.",
         "  Use it for broader domain knowledge, research notes, product docs, and the conventional `personal` database.",
         "",
         "SEARCH VS QUERY",

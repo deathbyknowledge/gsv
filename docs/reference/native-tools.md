@@ -106,7 +106,7 @@ For `fs.*` and `shell.exec`, the Gateway reads `target` at dispatch time.
 - `target: "<deviceId>"` verifies access, online state, and `implements`, then forwards the same syscall to the device.
 - `target` is removed before native execution or device forwarding, so implementations receive the same syscall-specific arguments.
 
-Other syscall domains such as `proc.*`, `pkg.*`, `knowledge.*`, `sys.*`, `notification.*`, `signal.*`, and `adapter.*` are kernel/control-plane interfaces and are not hardware-routed.
+Other syscall domains such as `proc.*`, `pkg.*`, `repo.*`, `sys.*`, `notification.*`, `signal.*`, and `adapter.*` are kernel/control-plane interfaces and are not hardware-routed.
 
 ## Implementation References
 

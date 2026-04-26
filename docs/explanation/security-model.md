@@ -70,8 +70,8 @@ Default groups are intentionally OS-like:
 
 - `root` (`gid 0`) receives `*`.
 - `users` (`gid 100`) receives broad user capabilities, including filesystem,
-  shell, process, package, adapter status/connect, token, workspace, and config
-  syscalls.
+  shell, process, package, repository, adapter status/connect, token,
+  workspace, and config syscalls.
 - `drivers` (`gid 101`) receives `fs.*` and `shell.*` for device execution.
 - `services` (`gid 102`) receives `adapter.*`.
 
