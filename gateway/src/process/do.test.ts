@@ -583,6 +583,28 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("CodeMode tool calls", () => {
+    it("runs codemode.run as a process command", async () => {
+      const pid = "mech-codemode-run";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const res = (await stub.recvFrame(
+        makeReq("codemode.run", {
+          code: "return { argv, args };",
+          argv: ["alpha"],
+          args: { mode: "manual" },
+        }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toEqual({
+        status: "completed",
+        result: {
+          argv: ["alpha"],
+          args: { mode: "manual" },
+        },
+      });
+    });
+
     it("dispatches CodeMode through the process-local executor path", async () => {
       const pid = "mech-codemode-basic";
       const stub = await initProcess(pid, ROOT_IDENTITY);

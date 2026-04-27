@@ -19,7 +19,7 @@ import type {
   SignalFrame,
 } from "../protocol/frames";
 import type { ResultOf, SyscallName, ToolDefinition } from "../syscalls";
-import type { CodeModeExecArgs } from "../syscalls/codemode";
+import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type {
   AiConfigResult,
@@ -102,7 +102,7 @@ type RunState = {
 type ActiveRunPhase = "toolDispatch" | "toolResults" | "generation";
 
 type CodeModeResponseWaiter = {
-  runId: string;
+  runId: string | null;
   resolve: (frame: ResponseFrame) => void;
   reject: (error: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
@@ -122,6 +122,18 @@ const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 
 function isNonInteractiveProfile(profile: AiContextProfile): boolean {
   return profile === "cron" || profile === "archivist" || profile === "curator";
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item))
+    : [];
 }
 
 function isWatchedSignalPayload(
@@ -329,6 +341,11 @@ export class Process extends Host<Env> {
         case "proc.hil":
           data = await this.handleProcHil(
             frame.args as ProcHilArgs,
+          );
+          break;
+        case "codemode.run":
+          data = await this.handleCodeModeRun(
+            frame.args as CodeModeRunArgs,
           );
           break;
         case "proc.history":
@@ -1447,6 +1464,37 @@ export class Process extends Host<Env> {
     }
   }
 
+  private async handleCodeModeRun(rawArgs: CodeModeRunArgs): Promise<CodeModeRunResult> {
+    const args = rawArgs && typeof rawArgs === "object"
+      ? rawArgs as Partial<CodeModeRunArgs>
+      : {};
+    if (typeof args.code !== "string" || args.code.trim().length === 0) {
+      return {
+        status: "failed",
+        error: "codemode requires a non-empty code string",
+      };
+    }
+
+    try {
+      return await executeCodeMode(
+        this.env,
+        args.code,
+        (call, toolArgs) => this.executeCodeModeCommandSyscall(call, toolArgs),
+        {
+          defaultTarget: normalizeOptionalString(args.target),
+          defaultCwd: normalizeOptionalString(args.cwd),
+          argv: normalizeStringArray(args.argv),
+          args: args.args ?? null,
+        },
+      );
+    } catch (error) {
+      return {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   private async executeCodeModeTool(
     runId: string,
     toolCallId: string,
@@ -1594,6 +1642,25 @@ export class Process extends Host<Env> {
     throw new Error(error);
   }
 
+  private async executeCodeModeCommandSyscall(
+    call: SyscallName,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const id = `codemode-${crypto.randomUUID()}`;
+    const response = await this.dispatchCodeModeSyscall(
+      null,
+      id,
+      call,
+      args,
+    );
+
+    if (response.ok) {
+      return response.data ?? null;
+    }
+
+    throw new Error(response.error.message);
+  }
+
   private async waitForCodeModeApproval(
     runId: string,
     toolCallId: string,
@@ -1629,7 +1696,7 @@ export class Process extends Host<Env> {
   }
 
   private async dispatchCodeModeSyscall(
-    runId: string,
+    runId: string | null,
     id: string,
     call: SyscallName,
     args: Record<string, unknown>,

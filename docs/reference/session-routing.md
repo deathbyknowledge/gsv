@@ -54,11 +54,13 @@ preventing long-running commands from depending on one in-flight route.
 
 `codemode.exec` is different: the Kernel exposes it as an agent tool, but the
 Process DO executes it locally with the Worker Loader instead of routing it
-through the Kernel dispatcher. CodeMode's in-block `shell(...)` and `fs.*(...)`
-helpers call back into the Process, which then dispatches normal `shell.exec`
-and `fs.*` request frames through the Kernel. That means nested CodeMode calls
-still use the same device routing, approval policy, async response, and shell
-session behavior as direct model tool calls.
+through the Kernel dispatcher. The manual `codemode.run` syscall is public and
+kernel-forwarded to a Process DO, which uses the same executor. CodeMode's
+in-block `shell(...)` and `fs.*(...)` helpers call back into the Process, which
+then dispatches normal `shell.exec` and `fs.*` request frames through the
+Kernel. That means nested CodeMode calls still use the same device routing,
+approval policy for agent tool calls, async response, and shell session behavior
+as direct model tool calls.
 
 ## Process Routing
 
@@ -75,6 +77,7 @@ proc.hil
 proc.kill
 proc.history
 proc.reset
+codemode.run
 ```
 
 When no PID is supplied, process syscalls default to the caller's `init:{uid}` process. Non-root callers cannot access another user's process.

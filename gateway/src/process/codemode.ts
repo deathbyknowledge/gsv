@@ -21,24 +21,68 @@ export type CodeModeToolRequest = (
   args: Record<string, unknown>,
 ) => Promise<unknown>;
 
-export function buildCodeModeSource(code: string): string {
+export type CodeModeExecutionOptions = {
+  defaultTarget?: string;
+  defaultCwd?: string;
+  argv?: string[];
+  args?: unknown;
+};
+
+export function buildCodeModeSource(
+  code: string,
+  options?: CodeModeExecutionOptions,
+): string {
   const userMain = normalizeCode(code);
+  const defaultTarget = JSON.stringify(options?.defaultTarget ?? null);
+  const defaultCwd = JSON.stringify(options?.defaultCwd ?? null);
+  const argv = JSON.stringify(options?.argv ?? []);
+  const args = JSON.stringify(options && "args" in options ? options.args : null);
   return `async () => {
+  const argv = Object.freeze(${argv});
+  const args = ${args};
+  const __defaultTarget = ${defaultTarget};
+  const __defaultCwd = ${defaultCwd};
+  const __isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const __isAbsolutePath = (path) => path.startsWith("/") || /^[A-Za-z]:[\\\\/]/.test(path);
+  const __joinPath = (base, path) => {
+    if (!base || __isAbsolutePath(path)) return path;
+    if (base.endsWith("/")) return base + path.replace(/^\\.\\//, "");
+    return base + "/" + path.replace(/^\\.\\//, "");
+  };
+  const __withShellDefaults = (options) => {
+    const request = { ...options };
+    if (!request.sessionId) {
+      if (__defaultTarget !== null && request.target === undefined) request.target = __defaultTarget;
+      if (__defaultCwd !== null && request.cwd === undefined) request.cwd = __defaultCwd;
+    }
+    return request;
+  };
+  const __withFsDefaults = (name, value) => {
+    if (!__isObject(value)) {
+      throw new Error(name + " requires an object argument");
+    }
+    const request = { ...value };
+    if (__defaultTarget !== null && request.target === undefined) request.target = __defaultTarget;
+    if (__defaultCwd !== null && typeof request.path === "string") {
+      request.path = __joinPath(__defaultCwd, request.path);
+    }
+    return request;
+  };
   const shell = async (input, options = {}) => {
     if (typeof input !== "string") {
       throw new Error("shell(input, options) requires a string input");
     }
-    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    if (!__isObject(options)) {
       throw new Error("shell(input, options) requires options to be an object when provided");
     }
-    return await codemode.shell({ ...options, input });
+    return await codemode.shell({ ...__withShellDefaults(options), input });
   };
   const fs = Object.freeze({
-    read: (args) => codemode.read(args),
-    write: (args) => codemode.write(args),
-    edit: (args) => codemode.edit(args),
-    delete: (args) => codemode.delete(args),
-    search: (args) => codemode.search(args),
+    read: (args) => codemode.read(__withFsDefaults("fs.read", args)),
+    write: (args) => codemode.write(__withFsDefaults("fs.write", args)),
+    edit: (args) => codemode.edit(__withFsDefaults("fs.edit", args)),
+    delete: (args) => codemode.delete(__withFsDefaults("fs.delete", args)),
+    search: (args) => codemode.search(__withFsDefaults("fs.search", args)),
   });
   const __userMain = ${userMain};
   return await __userMain();
@@ -49,6 +93,7 @@ export async function executeCodeMode(
   env: Env,
   code: string,
   requestTool: CodeModeToolRequest,
+  options?: CodeModeExecutionOptions,
 ): Promise<CodeModeExecResult> {
   const executor = new DynamicWorkerExecutor({
     loader: env.LOADER,
@@ -70,7 +115,7 @@ export async function executeCodeMode(
     },
   ];
 
-  const response = await executor.execute(buildCodeModeSource(code), providers);
+  const response = await executor.execute(buildCodeModeSource(code, options), providers);
   const logs = response.logs && response.logs.length > 0 ? response.logs : undefined;
   if (response.error) {
     return { status: "failed", error: response.error, logs };

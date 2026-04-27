@@ -294,16 +294,22 @@ while (res.status === "running") {
 return output;
 ```
 
-## CodeMode: `codemode.exec`
+## CodeMode: `codemode.exec`, `codemode.run`
 
 `codemode.exec` runs one sandboxed async JavaScript block in the Process DO
 using Cloudflare Worker Loader. It is exposed to models as the `CodeMode` tool
 for multi-step workflows that are easier to express as code than as repeated
 direct tool calls.
 
-The CodeMode syscall is process-local and internal-only. It is not handled by
-the Kernel dispatcher and is not itself device-routed. Instead, the sandboxed
-block receives wrappers for the existing filesystem and shell tools:
+`codemode.run` is the manual/user-facing execution path used by the native
+`codemode` shell command. It forwards to the target Process DO and runs the same
+Worker Loader executor, but is not exposed as a model tool.
+
+`codemode.exec` is process-local and internal-only. It is not handled by the
+Kernel dispatcher and is not itself device-routed. `codemode.run` is public and
+kernel-forwarded to a process, defaulting to the caller's init process. In both
+cases, the sandboxed block receives wrappers for the existing filesystem and
+shell tools:
 
 ```ts
 const res = await shell("npm test", { target: "macbook", cwd: "~/projects/gsv" });
@@ -320,6 +326,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)` plus `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, and `fs.search`. Returns a structured `completed` or `failed` CodeMode result. |
+| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec` and `fs.*` syscalls. |
 
 ```ts
 type CodeModeSyscalls = {
@@ -331,8 +338,31 @@ type CodeModeSyscalls = {
       | { status: "completed"; result: unknown; logs?: string[] }
       | { status: "failed"; error: string; logs?: string[] };
   };
+  "codemode.run": {
+    args: {
+      pid?: string;
+      code: string;
+      target?: string;
+      cwd?: string;
+      argv?: string[];
+      args?: unknown;
+    };
+    result:
+      | { status: "completed"; result: unknown; logs?: string[] }
+      | { status: "failed"; error: string; logs?: string[] };
+  };
 };
 ```
+
+Native shell usage:
+
+```bash
+codemode ./script.js --target macbook --cwd ~/projects/gsv -- arg1 arg2
+codemode -e 'return await shell("pwd")'
+```
+
+Inside manual CodeMode runs, `argv` contains positional arguments after `--` and
+`args` contains values from `--arg key=value` or `--args-json`.
 
 Shell calls inside CodeMode expose the direct `shell.exec` result shape. Code
 that wants completion must handle `status: "running"` by polling the returned

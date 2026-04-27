@@ -132,6 +132,17 @@ function makeContext(options?: {
 }
 
 describe("pkg shell command", () => {
+  it("shows codemode command usage", async () => {
+    const result = await handleShellExec(
+      { input: "codemode --help" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("codemode <script.js>");
+    expect(result.stderr).toBe("");
+  });
+
   it("defaults to the mounted package for manifest inspection", async () => {
     const result = await handleShellExec(
       { input: "pkg manifest", cwd: "/src/package" },

@@ -197,6 +197,10 @@ async function dispatchNative(
         data = await handleShellExec(frame.args, ctx);
         break;
 
+      case "codemode.run":
+        data = await forwardToProcess(frame, ctx);
+        break;
+
       case "proc.list":
         data = handleProcList(frame.args, ctx);
         break;

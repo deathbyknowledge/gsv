@@ -96,6 +96,25 @@ Important native paths:
 
 Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, package commands, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.
 
+The native shell also includes a `codemode` command for reusable GSV tool
+scripts:
+
+```bash
+codemode ./check.js --target macbook --cwd ~/projects/gsv --json
+codemode -e 'return await shell("pwd")'
+```
+
+Scripts use the same CodeMode shape exposed to agents:
+
+```js
+const file = await fs.read({ path: "package.json" });
+return { argv, args, bytes: file.content.length };
+```
+
+`--target` and `--cwd` become defaults for in-script `shell(...)` and `fs.*`
+calls. Positional values after `--` are available as `argv`; `--arg key=value`
+and `--args-json` populate `args`.
+
 ## CLI Device Targets
 
 CLI devices run on user machines through `gsv device run` or the managed device service. They implement the same `fs.*` and `shell.exec` interface over WebSocket.

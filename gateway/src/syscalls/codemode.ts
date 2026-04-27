@@ -33,3 +33,14 @@ export type CodeModeExecResult =
       error: string;
       logs?: string[];
     };
+
+export type CodeModeRunArgs = {
+  pid?: string;
+  code: string;
+  target?: string;
+  cwd?: string;
+  argv?: string[];
+  args?: unknown;
+};
+
+export type CodeModeRunResult = CodeModeExecResult;

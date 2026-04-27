@@ -10,6 +10,7 @@ export const SHELL_EXEC = "shell.exec";
 
 // CodeMode (process-local programmable tool use)
 export const CODEMODE_EXEC = "codemode.exec";
+export const CODEMODE_RUN = "codemode.run";
 
 // Process management (OS-level agent processes)
 export const PROC_SPAWN = "proc.spawn";

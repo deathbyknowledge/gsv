@@ -10,6 +10,8 @@ import type {
 import type {
   CodeModeExecArgs,
   CodeModeExecResult,
+  CodeModeRunArgs,
+  CodeModeRunResult,
 } from "./codemode";
 import type {
   ProcSpawnArgs,
@@ -192,6 +194,7 @@ export type SyscallDomains = {
 
   // CodeMode (process-local programmable tool use)
   "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
+  "codemode.run": { args: CodeModeRunArgs; result: CodeModeRunResult };
 
   // Process management (OS-level agent processes)
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
@@ -293,6 +296,7 @@ export type ResultOf<S extends SyscallName> = SyscallDomains[S]["result"];
 export type SyscallDomain =
   | "fs"
   | "shell"
+  | "codemode"
   | "proc"
   | "pkg"
   | "sys"
