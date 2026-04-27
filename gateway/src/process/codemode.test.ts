@@ -156,6 +156,19 @@ describe("CodeMode executor", () => {
     });
   });
 
+  it("strips pasted terminal cursor controls from script source", async () => {
+    const result = await executeCodeMode(
+      env,
+      "const value = 1;\u001b[D\u001b[C\nreturn { value };",
+      async () => null,
+    );
+
+    expect(result).toEqual({
+      status: "completed",
+      result: { value: 1 },
+    });
+  });
+
   it("returns failed status for source syntax errors before dispatching tools", async () => {
     const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
     const result = await executeCodeMode(

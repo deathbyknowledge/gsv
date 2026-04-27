@@ -96,6 +96,7 @@ export function buildCodeModeSource(
 function sanitizeCodeModeSource(code: string): string {
   return code
     .replace(/\u0000/g, "")
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "");
 }
 
