@@ -156,6 +156,25 @@ describe("CodeMode executor", () => {
     });
   });
 
+  it("returns failed status for source syntax errors before dispatching tools", async () => {
+    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const result = await executeCodeMode(
+      env,
+      "const res = await shell(\"pwd);",
+      async (call, args) => {
+        calls.push({ call, args });
+        return null;
+      },
+    );
+
+    expect(calls).toEqual([]);
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.error).toContain("SyntaxError");
+      expect(result.error).toContain("Invalid or unexpected token");
+    }
+  });
+
   it("returns failed status when sandboxed code throws", async () => {
     const result = await executeCodeMode(
       env,

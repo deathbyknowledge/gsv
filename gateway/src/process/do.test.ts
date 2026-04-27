@@ -638,6 +638,27 @@ describe("Process DO — mechanical", () => {
       expect(result.result.file.content).toContain("\"ok\":true");
     });
 
+    it("returns failed json for malformed codemode eval source", async () => {
+      const pid = "mech-codemode-shell-syntax-error";
+      await initProcess(pid, ROOT_IDENTITY);
+      const kernel = await getKernelPtr();
+
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(pid, makeReq("shell.exec", {
+          input: "codemode -e 'const res = await shell(\"pwd);' --json",
+        })),
+      ) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      const data = response.data as any;
+      expect(data.status, JSON.stringify(data, null, 2)).toBe("failed");
+      expect(data.exitCode).toBe(1);
+      const result = JSON.parse(data.stdout);
+      expect(result.status).toBe("failed");
+      expect(result.error).toContain("SyntaxError");
+      expect(result.error).toContain("Invalid or unexpected token");
+    });
+
     it("runs codemode.run as a process command", async () => {
       const pid = "mech-codemode-run";
       const stub = await initProcess(pid, ROOT_IDENTITY);

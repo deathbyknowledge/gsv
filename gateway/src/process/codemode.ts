@@ -151,7 +151,15 @@ export async function executeCodeMode(
     },
   ];
 
-  const response = await executor.execute(buildCodeModeSource(code, options), providers);
+  let response;
+  try {
+    response = await executor.execute(buildCodeModeSource(code, options), providers);
+  } catch (error) {
+    return {
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
   const logs = response.logs && response.logs.length > 0 ? response.logs : undefined;
   if (response.error) {
     return { status: "failed", error: response.error, logs };
