@@ -236,31 +236,62 @@ type FilesystemSyscalls = {
 
 ## Shell: `shell.exec`
 
-`shell.exec` runs a command on the selected target. Use `gsv` for the Worker sandbox shell, or a device id for local source trees, private networks, OS packages, credentials, or hardware.
+`shell.exec` starts, polls, or writes to a shell command on the selected target. Use `gsv` for the Worker sandbox shell, or a device id for local source trees, private networks, OS packages, credentials, or hardware.
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and custom commands such as `pkg`, `wiki`, and `notify`. Device targets run a real local shell through the CLI. Native defaults `workdir` to process `cwd`, `timeout` to `config/shell/timeout_ms` or 30000 ms, ignores `background` and `yieldMs`, truncates output by `config/shell/max_output_bytes`, and returns command failures as `ok: true` with non-zero `exitCode`. CLI supports background and yielded sessions. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and custom commands such as `pkg`, `wiki`, and `notify`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
 
 ```ts
 type ShellSyscalls = {
   "shell.exec": {
     args: {
       target?: string;
-      command: string;
-      workdir?: string;
-      timeout?: number;
-      background?: boolean;
-      yieldMs?: number;
+      cwd?: string;
+      input: string;
+      sessionId?: string;
     };
     result:
-      | { ok: true; pid: number; exitCode: number; stdout: string; stderr: string }
-      | { ok: true; pid: number; backgrounded: true }
+      | { status: "completed"; output: string; exitCode: number; sessionId?: string; truncated?: boolean }
+      | { status: "running"; output: string; sessionId: string; truncated?: boolean }
+      | { status: "failed"; output: string; error: string; exitCode?: number; sessionId?: string; truncated?: boolean }
       | OperationError;
   };
 };
+```
+
+Start a command:
+
+```json
+{ "target": "macbook", "cwd": "~/projects/gsv", "input": "npm test" }
+```
+
+Poll a running command:
+
+```json
+{ "sessionId": "sh_01JZTEST", "input": "" }
+```
+
+Write stdin to a running command:
+
+```json
+{ "sessionId": "sh_01JZTEST", "input": "y\n" }
+```
+
+CodeMode wrappers expose the same result shape:
+
+```ts
+let res = await shell("npm run test", { cwd: "/workspace/gsv/gateway" });
+let output = res.output;
+
+while (res.status === "running") {
+  res = await shell("", { sessionId: res.sessionId });
+  output += res.output;
+}
+
+return output;
 ```
 
 ## Processes: `proc.*`

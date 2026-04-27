@@ -53,7 +53,7 @@ describe("tool approval policy", () => {
           when: {
             anyTag: ["network"],
             target: "device",
-            argPrefix: { command: "curl" },
+            argPrefix: { input: "curl" },
           },
           action: "ask",
         },
@@ -61,7 +61,7 @@ describe("tool approval policy", () => {
     }));
 
     const resolution = resolveToolApproval(policy, "shell.exec", {
-      command: "curl https://example.com",
+      input: "curl https://example.com",
       target: "macbook",
     }, IDENTITY);
 

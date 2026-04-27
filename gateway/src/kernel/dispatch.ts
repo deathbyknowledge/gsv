@@ -15,6 +15,7 @@ import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RoutingTable, RouteOrigin } from "./routing";
+import type { ShellSessionStore } from "./shell-sessions";
 import {
   handleFsRead,
   handleFsWrite,
@@ -97,6 +98,7 @@ import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 
 export type DispatchDeps = {
   routingTable: RoutingTable;
+  shellSessions: ShellSessionStore;
   connections: Map<string, Connection>;
   scheduleExpiry: (id: string, ttlMs: number) => Promise<string>;
 };
@@ -127,6 +129,27 @@ export async function dispatch(
 ): Promise<DispatchResult> {
   const raw = frame.args as Record<string, unknown>;
   const target = raw.target as string | undefined;
+  const sessionId = frame.call === "shell.exec" && typeof raw.sessionId === "string"
+    ? raw.sessionId.trim()
+    : "";
+
+  if (sessionId) {
+    const session = deps.shellSessions.get(sessionId);
+    if (!session) {
+      return {
+        handled: true,
+        response: errFrame(frame.id, 404, `Unknown shell session: ${sessionId}`),
+      };
+    }
+    if (target && target !== session.deviceId) {
+      return {
+        handled: true,
+        response: errFrame(frame.id, 400, "Shell session target does not match the requested target"),
+      };
+    }
+    delete raw.target;
+    return routeToDevice(frame, session.deviceId, origin, ctx, deps);
+  }
 
   if (target && target !== "gsv" && isRoutable(frame.call)) {
     delete raw.target;

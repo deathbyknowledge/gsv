@@ -3198,7 +3198,7 @@ async fn run_shell(url: &str, auth: GatewayAuth) -> Result<(), Box<dyn std::erro
 
         let res = client
             .connection()
-            .request("shell.exec", Some(json!({ "command": trimmed })))
+            .request("shell.exec", Some(json!({ "input": trimmed })))
             .await?;
 
         if res.ok {
@@ -3429,7 +3429,7 @@ async fn run_node(
                             conn.request(
                                 "shell.exec",
                                 Some(json!({
-                                    "command": "echo gsv-keepalive",
+                                    "input": "echo gsv-keepalive",
                                 })),
                             ),
                         )

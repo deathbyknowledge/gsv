@@ -3,30 +3,33 @@ use crate::tools::Tool;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::process::Command;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{ChildStdin, Command};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 use uuid::Uuid;
 
 const DEFAULT_TIMEOUT_MS: u64 = 5 * 60 * 1000;
-const MIN_YIELD_MS: u64 = 10;
-const MAX_YIELD_MS: u64 = 120_000;
+const DEFAULT_YIELD_MS: u64 = 5_000;
+const MIN_YIELD_MS: u64 = 250;
+const MAX_YIELD_MS: u64 = 30_000;
 const MAX_OUTPUT_CHARS: usize = 200_000;
 const TAIL_CHARS: usize = 4_000;
 
 #[derive(Clone)]
 struct ProcessHandle {
     state: Arc<AsyncMutex<ProcessState>>,
+    stdin: Arc<AsyncMutex<Option<ChildStdin>>>,
 }
 
 #[derive(Clone)]
 struct ProcessSnapshot {
     session_id: String,
-    workdir: String,
+    cwd: String,
     pid: Option<u32>,
     started_at: i64,
     ended_at: Option<i64>,
@@ -43,7 +46,7 @@ struct ProcessSnapshot {
 
 struct ProcessState {
     session_id: String,
-    workdir: String,
+    cwd: String,
     pid: Option<u32>,
     started_at: i64,
     ended_at: Option<i64>,
@@ -55,12 +58,15 @@ struct ProcessState {
     stdout: String,
     stderr: String,
     output: String,
+    pending_output: String,
     tail: String,
     truncated: bool,
     started_notified: bool,
 }
 
 static EXEC_EVENT_BUS: OnceLock<broadcast::Sender<NodeExecEventParams>> = OnceLock::new();
+static PROCESS_REGISTRY: OnceLock<Arc<AsyncMutex<HashMap<String, ProcessHandle>>>> =
+    OnceLock::new();
 
 fn exec_event_bus() -> &'static broadcast::Sender<NodeExecEventParams> {
     EXEC_EVENT_BUS.get_or_init(|| {
@@ -75,6 +81,24 @@ pub fn subscribe_exec_events() -> broadcast::Receiver<NodeExecEventParams> {
 
 fn emit_exec_event(event: NodeExecEventParams) {
     let _ = exec_event_bus().send(event);
+}
+
+fn process_registry() -> &'static Arc<AsyncMutex<HashMap<String, ProcessHandle>>> {
+    PROCESS_REGISTRY.get_or_init(|| Arc::new(AsyncMutex::new(HashMap::new())))
+}
+
+async fn store_process(handle: ProcessHandle) {
+    let session_id = {
+        let state = handle.state.lock().await;
+        state.session_id.clone()
+    };
+    let mut registry = process_registry().lock().await;
+    registry.insert(session_id, handle);
+}
+
+async fn get_process(session_id: &str) -> Option<ProcessHandle> {
+    let registry = process_registry().lock().await;
+    registry.get(session_id).cloned()
 }
 
 fn now_ms() -> i64 {
@@ -124,14 +148,15 @@ fn append_output(state: &mut ProcessState, chunk: &str, stream: OutputStream) {
         OutputStream::Stderr => append_capped(&mut state.stderr, chunk),
     };
     let output_truncated = append_capped(&mut state.output, chunk);
+    let pending_truncated = append_capped(&mut state.pending_output, chunk);
     state.tail = truncate_to_last_chars(&state.output, TAIL_CHARS);
-    state.truncated = state.truncated || stream_truncated || output_truncated;
+    state.truncated = state.truncated || stream_truncated || output_truncated || pending_truncated;
 }
 
 fn snapshot_from_state(state: &ProcessState) -> ProcessSnapshot {
     ProcessSnapshot {
         session_id: state.session_id.clone(),
-        workdir: state.workdir.clone(),
+        cwd: state.cwd.clone(),
         pid: state.pid,
         started_at: state.started_at,
         ended_at: state.ended_at,
@@ -147,35 +172,71 @@ fn snapshot_from_state(state: &ProcessState) -> ProcessSnapshot {
     }
 }
 
+fn snapshot_and_drain_from_state(state: &mut ProcessState) -> ProcessSnapshot {
+    let output = std::mem::take(&mut state.pending_output);
+    ProcessSnapshot {
+        session_id: state.session_id.clone(),
+        cwd: state.cwd.clone(),
+        pid: state.pid,
+        started_at: state.started_at,
+        ended_at: state.ended_at,
+        status: state.status.clone(),
+        exit_code: state.exit_code,
+        signal: state.signal.clone(),
+        timed_out: state.timed_out,
+        stdout: state.stdout.clone(),
+        stderr: state.stderr.clone(),
+        output,
+        tail: state.tail.clone(),
+        truncated: state.truncated,
+    }
+}
+
+async fn snapshot_and_drain(handle: &ProcessHandle) -> ProcessSnapshot {
+    let mut state = handle.state.lock().await;
+    snapshot_and_drain_from_state(&mut state)
+}
+
 fn running_result(snapshot: &ProcessSnapshot) -> Value {
     json!({
-      "status": "running",
-      "sessionId": snapshot.session_id,
-      "pid": snapshot.pid,
-      "startedAt": snapshot.started_at,
-      "tail": snapshot.tail,
-      "workdir": snapshot.workdir,
+        "status": "running",
+        "sessionId": snapshot.session_id,
+        "output": snapshot.output,
+        "pid": snapshot.pid,
+        "startedAt": snapshot.started_at,
+        "tail": snapshot.tail,
+        "cwd": snapshot.cwd,
+        "truncated": snapshot.truncated,
     })
 }
 
 fn completed_result(snapshot: &ProcessSnapshot) -> Value {
     json!({
-      "ok": true,
+        "ok": true,
       "pid": snapshot.pid.unwrap_or_default(),
-      "stdout": snapshot.stdout,
-      "stderr": snapshot.stderr,
-      "status": if snapshot.status == "completed" { "completed" } else { "failed" },
-      "sessionId": snapshot.session_id,
-      "exitCode": snapshot.exit_code,
-      "signal": snapshot.signal,
-      "timedOut": snapshot.timed_out,
+        "stdout": snapshot.stdout,
+        "stderr": snapshot.stderr,
+        "status": if snapshot.status == "completed" { "completed" } else { "failed" },
+        "sessionId": snapshot.session_id,
+        "exitCode": snapshot.exit_code,
+        "error": if snapshot.status == "completed" {
+            Value::Null
+        } else if snapshot.timed_out {
+            json!("Command timed out")
+        } else if let Some(signal) = &snapshot.signal {
+            json!(format!("Command failed: {}", signal))
+        } else {
+            json!(format!("Command exited with code {}", snapshot.exit_code.unwrap_or(-1)))
+        },
+        "signal": snapshot.signal,
+        "timedOut": snapshot.timed_out,
       "startedAt": snapshot.started_at,
       "endedAt": snapshot.ended_at,
       "durationMs": snapshot.ended_at.map(|ended| ended.saturating_sub(snapshot.started_at)),
       "output": snapshot.output,
       "tail": snapshot.tail,
       "truncated": snapshot.truncated,
-      "workdir": snapshot.workdir,
+      "cwd": snapshot.cwd,
     })
 }
 
@@ -332,19 +393,19 @@ async fn mark_backgrounded(handle: &ProcessHandle, call_id: Option<String>) -> P
             ended_at: None,
         });
     }
-    snapshot_from_state(&state)
+    snapshot_and_drain_from_state(&mut state)
 }
 
 async fn launch_managed_process(
     command: String,
-    workdir: PathBuf,
+    cwd: PathBuf,
     timeout_ms: u64,
 ) -> Result<ProcessHandle, String> {
     let shell = resolve_shell_program();
     let mut cmd = Command::new(&shell.executable);
     cmd.args(&shell.launch_args).arg(&command);
-    cmd.current_dir(&workdir);
-    cmd.stdin(Stdio::null());
+    cmd.current_dir(&cwd);
+    cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -353,6 +414,7 @@ async fn launch_managed_process(
         .map_err(|e| format_shell_spawn_error(&shell.executable, &e))?;
 
     let pid = child.id();
+    let stdin = child.stdin.take();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let session_id = Uuid::new_v4().to_string();
@@ -360,7 +422,7 @@ async fn launch_managed_process(
 
     let state = Arc::new(AsyncMutex::new(ProcessState {
         session_id: session_id.clone(),
-        workdir: workdir.display().to_string(),
+        cwd: cwd.display().to_string(),
         pid,
         started_at,
         ended_at: None,
@@ -372,12 +434,14 @@ async fn launch_managed_process(
         stdout: String::new(),
         stderr: String::new(),
         output: String::new(),
+        pending_output: String::new(),
         tail: String::new(),
         truncated: false,
         started_notified: false,
     }));
     let handle = ProcessHandle {
         state: state.clone(),
+        stdin: Arc::new(AsyncMutex::new(stdin)),
     };
 
     if let Some(stdout) = stdout {
@@ -468,11 +532,42 @@ async fn launch_managed_process(
         }
     });
 
+    store_process(handle.clone()).await;
+
     Ok(handle)
 }
 
 pub struct BashTool {
     workspace: PathBuf,
+}
+
+async fn wait_for_shell_result(handle: &ProcessHandle, yield_ms: u64) -> Value {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(yield_ms);
+    loop {
+        let snapshot = {
+            let lock = handle.state.lock().await;
+            snapshot_from_state(&lock)
+        };
+
+        if snapshot.ended_at.is_some() {
+            let drained = snapshot_and_drain(handle).await;
+            return completed_result(&drained);
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            let running = mark_backgrounded(handle, None).await;
+            return running_result(&running);
+        }
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+fn normalize_yield_ms(yield_ms: Option<u64>) -> u64 {
+    yield_ms
+        .unwrap_or(DEFAULT_YIELD_MS)
+        .max(MIN_YIELD_MS)
+        .min(MAX_YIELD_MS)
 }
 
 impl BashTool {
@@ -493,9 +588,12 @@ impl BashTool {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BashArgs {
-    command: String,
     #[serde(default)]
-    workdir: Option<String>,
+    input: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
     #[serde(default)]
     timeout: Option<u64>,
     #[serde(default)]
@@ -513,28 +611,20 @@ impl Tool for BashTool {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "command": {
+                    "input": {
                         "type": "string",
-                        "description": "The command to execute"
+                        "description": "Command to start, stdin for an existing session, or empty string to poll an existing session"
                     },
-                    "workdir": {
+                    "cwd": {
                         "type": "string",
-                        "description": "Working directory (default: workspace)"
+                        "description": "Working directory for a new command (default: workspace)"
                     },
-                    "timeout": {
-                        "type": "number",
-                        "description": "Timeout in milliseconds (optional)"
-                    },
-                    "background": {
-                        "type": "boolean",
-                        "description": "Run in background immediately and return a sessionId"
-                    },
-                    "yieldMs": {
-                        "type": "number",
-                        "description": "Wait this many milliseconds, then background if still running"
+                    "sessionId": {
+                        "type": "string",
+                        "description": "Existing session to poll or write stdin to"
                     }
                 },
-                "required": ["command"]
+                "required": ["input"]
             }),
         }
     }
@@ -543,58 +633,52 @@ impl Tool for BashTool {
         let args: BashArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
-        if args.command.trim().is_empty() {
-            return Err("command must not be empty".to_string());
+        if let Some(session_id) = args
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            let handle = get_process(session_id)
+                .await
+                .ok_or_else(|| format!("Unknown shell session: {}", session_id))?;
+            let input = args.input.unwrap_or_default();
+            if !input.is_empty() {
+                let mut stdin = handle.stdin.lock().await;
+                let Some(writer) = stdin.as_mut() else {
+                    return Err(format!("stdin is closed for shell session: {}", session_id));
+                };
+                writer
+                    .write_all(input.as_bytes())
+                    .await
+                    .map_err(|e| format!("Failed to write stdin: {}", e))?;
+                writer
+                    .flush()
+                    .await
+                    .map_err(|e| format!("Failed to flush stdin: {}", e))?;
+            }
+            return Ok(wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await);
         }
 
-        let workdir = args
-            .workdir
+        let command = args.input.unwrap_or_default();
+        if command.trim().is_empty() {
+            return Err("input must not be empty".to_string());
+        }
+
+        let cwd = args
+            .cwd
             .as_deref()
             .map(|w| self.resolve_path(w))
             .unwrap_or_else(|| self.workspace.clone());
 
         let timeout_ms = args.timeout.unwrap_or(DEFAULT_TIMEOUT_MS);
-        let handle = launch_managed_process(args.command, workdir, timeout_ms).await?;
+        let handle = launch_managed_process(command, cwd, timeout_ms).await?;
 
         if args.background == Some(true) {
             let snapshot = mark_backgrounded(&handle, None).await;
             return Ok(running_result(&snapshot));
         }
 
-        let yield_ms = args
-            .yield_ms
-            .map(|requested| requested.max(MIN_YIELD_MS).min(MAX_YIELD_MS));
-
-        if let Some(window_ms) = yield_ms {
-            let deadline = tokio::time::Instant::now() + Duration::from_millis(window_ms);
-            loop {
-                let snapshot = {
-                    let lock = handle.state.lock().await;
-                    snapshot_from_state(&lock)
-                };
-
-                if snapshot.ended_at.is_some() {
-                    return Ok(completed_result(&snapshot));
-                }
-
-                if tokio::time::Instant::now() >= deadline {
-                    let running = mark_backgrounded(&handle, None).await;
-                    return Ok(running_result(&running));
-                }
-
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-        }
-
-        loop {
-            let snapshot = {
-                let lock = handle.state.lock().await;
-                snapshot_from_state(&lock)
-            };
-            if snapshot.ended_at.is_some() {
-                return Ok(completed_result(&snapshot));
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
+        Ok(wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await)
     }
 }

@@ -125,8 +125,8 @@ export function buildToolApprovalFacts(
   const path = typeof record?.path === "string"
     ? resolvePath(identity.cwd, record.path)
     : undefined;
-  const command = typeof record?.command === "string"
-    ? record.command
+  const command = typeof record?.input === "string"
+    ? record.input
     : undefined;
 
   const tags = new Set<string>();

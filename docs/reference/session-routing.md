@@ -34,7 +34,7 @@ Only `fs.*` and `shell.exec` support device routing. Other domains such as `sys.
 ```
 
 ```json
-{ "command": "git status --short", "target": "laptop" }
+{ "input": "git status --short", "cwd": "~/projects/gsv", "target": "laptop" }
 ```
 
 Before forwarding to a device, the Kernel checks:
@@ -45,6 +45,12 @@ Before forwarding to a device, the Kernel checks:
 - A live driver WebSocket exists for the device id.
 
 Forwarded calls are stored in the Kernel SQLite `routing_table` with the call id, syscall, origin, target device, and timeout schedule. When the device responds, the Kernel consumes the route and returns the response to the original origin. If the route expires first, the origin receives a `504` timeout response.
+
+Shell continuations use a second durable session mapping. A routed shell start
+that returns `status: "running"` records its `sessionId` and owning device.
+Later `shell.exec` requests with that `sessionId` route to the same device even
+when `target` is omitted. This keeps the model-facing Shell tool small while
+preventing long-running commands from depending on one in-flight route.
 
 ## Process Routing
 
@@ -110,7 +116,7 @@ Devices are persistent records in Kernel SQLite. A driver connection registers a
 - The owner uid can use the device.
 - Members of granted groups can use the device.
 
-Device routing does not rename syscalls. Agents and clients always see the same syscall names, such as `fs.read` and `shell.exec`; `target` selects whether the call runs on `gsv` or a device.
+Device routing does not rename syscalls. Agents and clients always see the same syscall names, such as `fs.read` and `shell.exec`; `target` selects whether the initial call runs on `gsv` or a device. For shell continuations, `sessionId` selects the previously started shell session.
 
 ## Failure Behavior
 
@@ -129,6 +135,7 @@ Device routing does not rename syscalls. Agents and clients always see the same 
 | Store | Purpose |
 |---|---|
 | `routing_table` | In-flight device-routed syscalls. |
+| `shell_sessions` | Device ownership and lifecycle for resumable shell sessions. |
 | `run_routes` | Routes process chat signals back to connections or adapter surfaces. |
 | `processes` | Kernel process registry and process ownership. |
 | `devices`, `device_access` | Device catalog and group ACLs. |

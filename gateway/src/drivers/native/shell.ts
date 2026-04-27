@@ -57,8 +57,22 @@ export async function handleShellExec(
   ctx: KernelContext,
 ): Promise<ShellExecResult> {
   const identity = ctx.identity!.process;
-  const cwd = args.workdir
-    ? resolveUserPath(args.workdir, identity.home, identity.cwd)
+  if (args.sessionId) {
+    return {
+      status: "failed",
+      output: "",
+      error: "Native shell session continuation is not supported yet",
+      sessionId: args.sessionId,
+    };
+  }
+
+  const command = args.input;
+  if (command.trim().length === 0) {
+    return { status: "failed", output: "", error: "input must not be empty" };
+  }
+
+  const cwd = args.cwd
+    ? resolveUserPath(args.cwd, identity.home, identity.cwd)
     : identity.cwd;
   const bash = createBash(ctx, identity, cwd);
 
@@ -78,7 +92,7 @@ export async function handleShellExec(
 
     let result: BashExecResult;
     try {
-      result = await bash.exec(args.command, {
+      result = await bash.exec(command, {
         cwd,
         signal: controller.signal,
       });
@@ -88,19 +102,38 @@ export async function handleShellExec(
 
     const stdout = truncate(result.stdout, maxOutput);
     const stderr = truncate(result.stderr, maxOutput);
+    const output = stdout + stderr;
+
+    const truncated = stdout.length < result.stdout.length || stderr.length < result.stderr.length;
+    if (result.exitCode === 0) {
+      return {
+        status: "completed",
+        output,
+        exitCode: result.exitCode,
+        truncated,
+        ok: true,
+        pid: 0,
+        stdout,
+        stderr,
+      };
+    }
 
     return {
+      status: "failed",
+      output,
+      exitCode: result.exitCode,
+      error: `Command exited with code ${result.exitCode}`,
+      truncated,
       ok: true,
       pid: 0,
-      exitCode: result.exitCode,
       stdout,
       stderr,
     };
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      return { ok: false, error: `Command timed out after ${timeout}ms` };
+      return { status: "failed", output: "", error: `Command timed out after ${timeout}ms` };
     }
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { status: "failed", output: "", error: err instanceof Error ? err.message : String(err) };
   }
 }
 
