@@ -12,17 +12,18 @@
     "test:run": "vitest run"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.8.34",
+    "@cloudflare/vitest-pool-workers": "^0.12.21",
     "alchemy": "^0.83.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.2",
-    "vitest": "^3.1.4",
-    "wrangler": "^4.83.0"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.84.1"
   },
   "dependencies": {
+    "@cloudflare/codemode": "^0.3.4",
     "@gsv/protocol": "file:../shared/protocol",
     "@mariozechner/pi-ai": "^0.64.0",
-    "agents": "^0.7.5",
+    "agents": "^0.10.2",
     "capnweb": "^0.6.1",
     "just-bash": "^2.12.6"
   }

@@ -23,6 +23,7 @@ The Gateway includes accessible online devices in `ai.tools` context and in `sys
 | `Delete` | `fs.delete` | Delete a file or directory. |
 | `Search` | `fs.search` | Search file contents. |
 | `Shell` | `shell.exec` | Execute a shell command. |
+| `CodeMode` | `codemode.exec` | Run a sandboxed JavaScript block that can call filesystem and shell tools programmatically. |
 
 Each tool receives the same public argument shape regardless of target. For example:
 
@@ -128,11 +129,17 @@ For `fs.*` and `shell.exec`, the Gateway reads `target` at dispatch time.
 
 Other syscall domains such as `proc.*`, `pkg.*`, `knowledge.*`, `sys.*`, `notification.*`, `signal.*`, and `adapter.*` are kernel/control-plane interfaces and are not hardware-routed.
 
+`CodeMode` is process-local. It is not device-routed itself; code running inside
+the sandbox calls `shell(...)` and `fs.*(...)`, and those nested calls use the
+same `target` and `sessionId` routing rules as the direct `Shell`, `Read`,
+`Write`, `Edit`, `Delete`, and `Search` tools.
+
 ## Implementation References
 
 - Tool schemas: `gateway/src/kernel/ai.ts`
 - Target injection: `gateway/src/syscalls/index.ts`
 - Routing: `gateway/src/kernel/dispatch.ts`
+- CodeMode runtime: `gateway/src/process/codemode.ts`
 - Native filesystem: `gateway/src/drivers/native/fs.ts`
 - Native shell: `gateway/src/drivers/native/shell.ts`
 - Device registry: `gateway/src/kernel/devices.ts`

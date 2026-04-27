@@ -8,6 +8,9 @@ export const FS_SEARCH = "fs.search";
 // Shell (device commands)
 export const SHELL_EXEC = "shell.exec";
 
+// CodeMode (process-local programmable tool use)
+export const CODEMODE_EXEC = "codemode.exec";
+
 // Process management (OS-level agent processes)
 export const PROC_SPAWN = "proc.spawn";
 export const PROC_KILL = "proc.kill";
@@ -93,6 +96,7 @@ export const SYSCALL_TOOL_NAMES: Record<string, string> = {
   [FS_DELETE]: "Delete",
   [FS_SEARCH]: "Search",
   [SHELL_EXEC]: "Shell",
+  [CODEMODE_EXEC]: "CodeMode",
 };
 
 // LLM tool name -> syscall. Reverse mapping of the above

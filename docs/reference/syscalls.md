@@ -294,6 +294,66 @@ while (res.status === "running") {
 return output;
 ```
 
+## CodeMode: `codemode.exec`
+
+`codemode.exec` runs one sandboxed async JavaScript block in the Process DO
+using Cloudflare Worker Loader. It is exposed to models as the `CodeMode` tool
+for multi-step workflows that are easier to express as code than as repeated
+direct tool calls.
+
+The CodeMode syscall is process-local and internal-only. It is not handled by
+the Kernel dispatcher and is not itself device-routed. Instead, the sandboxed
+block receives wrappers for the existing filesystem and shell tools:
+
+```ts
+const res = await shell("npm test", { target: "macbook", cwd: "~/projects/gsv" });
+const file = await fs.read({ target: "macbook", path: "package.json" });
+```
+
+Nested tool calls are dispatched back through the Process DO and Kernel as
+ordinary `shell.exec` and `fs.*` request frames. They keep the same capability,
+approval, target routing, async device response, and shell session behavior as
+direct model tool calls.
+
+Runtime behavior:
+
+| Syscall | Handler | Behavior |
+|---|---|---|
+| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)` plus `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, and `fs.search`. Returns a structured `completed` or `failed` CodeMode result. |
+
+```ts
+type CodeModeSyscalls = {
+  "codemode.exec": {
+    args: {
+      code: string;
+    };
+    result:
+      | { status: "completed"; result: unknown; logs?: string[] }
+      | { status: "failed"; error: string; logs?: string[] };
+  };
+};
+```
+
+Shell calls inside CodeMode expose the direct `shell.exec` result shape. Code
+that wants completion must handle `status: "running"` by polling the returned
+session:
+
+```ts
+let res = await shell("npm run test", { target: "macbook", cwd: "~/projects/gsv" });
+let output = res.output;
+
+while (res.status === "running") {
+  res = await shell("", { sessionId: res.sessionId });
+  output += res.output;
+}
+
+if (res.status === "failed") {
+  throw new Error(`${res.error}\n${output}`);
+}
+
+return { exitCode: res.exitCode, output };
+```
+
 ## Processes: `proc.*`
 
 `proc.*` controls GSV AI processes. These are long-lived agent processes, not shell commands.
@@ -629,7 +689,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`. |
+| `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. |
 | `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
 
 External callers cannot normally invoke `ai.*`; these syscalls are exposed to process-originated calls.

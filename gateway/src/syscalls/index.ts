@@ -8,6 +8,10 @@ import type {
   ShellExecResult,
 } from "./shell";
 import type {
+  CodeModeExecArgs,
+  CodeModeExecResult,
+} from "./codemode";
+import type {
   ProcSpawnArgs,
   ProcSpawnResult,
   ProcKillArgs,
@@ -185,6 +189,9 @@ export type SyscallDomains = {
 
   // Shell (device commands)
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
+
+  // CodeMode (process-local programmable tool use)
+  "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
 
   // Process management (OS-level agent processes)
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };

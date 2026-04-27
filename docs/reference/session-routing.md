@@ -52,6 +52,14 @@ Later `shell.exec` requests with that `sessionId` route to the same device even
 when `target` is omitted. This keeps the model-facing Shell tool small while
 preventing long-running commands from depending on one in-flight route.
 
+`codemode.exec` is different: the Kernel exposes it as an agent tool, but the
+Process DO executes it locally with the Worker Loader instead of routing it
+through the Kernel dispatcher. CodeMode's in-block `shell(...)` and `fs.*(...)`
+helpers call back into the Process, which then dispatches normal `shell.exec`
+and `fs.*` request frames through the Kernel. That means nested CodeMode calls
+still use the same device routing, approval policy, async response, and shell
+session behavior as direct model tool calls.
+
 ## Process Routing
 
 Agent conversations are durable processes, identified by PIDs. The long-lived home process for a user is `init:{uid}`. Other processes are spawned with `proc.spawn` and usually receive UUID PIDs.
