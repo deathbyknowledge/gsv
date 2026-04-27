@@ -362,8 +362,22 @@ codemode run ./script.js --target macbook --cwd ~/projects/gsv -- arg1 arg2
 codemode -e 'return await shell("pwd")'
 ```
 
+Script files and `-e` code are treated as async function bodies. Top-level
+`await` is valid, but the returned value should use an explicit `return`
+statement:
+
+```js
+const pwd = await shell("pwd");
+const packageJson = await fs.read({ path: "package.json" });
+return { pwd: pwd.output, packageJson: packageJson.content };
+```
+
 Inside manual CodeMode runs, `argv` contains positional arguments after `--` and
 `args` contains values from `--arg key=value` or `--args-json`.
+
+Without `--json`, the native shell command prints only the completed result.
+With `--json`, it prints the full CodeMode envelope. Failed runs exit with code
+`1` and, with `--json`, still print `{ status: "failed", error, logs? }`.
 
 Shell calls inside CodeMode expose the direct `shell.exec` result shape. Code
 that wants completion must handle `status: "running"` by polling the returned

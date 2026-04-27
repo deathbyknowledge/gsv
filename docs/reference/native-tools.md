@@ -105,7 +105,9 @@ codemode run ./check.js --target macbook --cwd ~/projects/gsv --json
 codemode -e 'return await shell("pwd")'
 ```
 
-Scripts use the same CodeMode shape exposed to agents:
+Scripts use the same CodeMode shape exposed to agents. A script is treated as
+the body of an async function: top-level `await` works, and the final value must
+be returned explicitly.
 
 ```js
 const file = await fs.read({ path: "package.json" });
@@ -115,6 +117,29 @@ return { argv, args, bytes: file.content.length };
 `--target` and `--cwd` become defaults for in-script `shell(...)` and `fs.*`
 calls. Positional values after `--` are available as `argv`; `--arg key=value`
 and `--args-json` populate `args`.
+
+Without `--json`, `codemode` prints only the returned value. With `--json`, it
+prints the full `{ status, result?, error?, logs? }` envelope. Failed runs exit
+with code `1`.
+
+Shell calls inside CodeMode return the same result shape as direct `Shell` tool
+calls. Long-running commands must be resumed with `sessionId`:
+
+```js
+let res = await shell("npm run test", { target: "macbook", cwd: "~/projects/gsv" });
+let output = res.output;
+
+while (res.status === "running") {
+  res = await shell("", { sessionId: res.sessionId });
+  output += res.output;
+}
+
+if (res.status === "failed") {
+  throw new Error(`${res.error}\n${output}`);
+}
+
+return { exitCode: res.exitCode, output };
+```
 
 ## CLI Device Targets
 
