@@ -73,9 +73,8 @@ export async function mirrorCliChannel(
   bucket: R2Bucket,
   channel: CliReleaseChannel,
 ): Promise<{ channel: CliReleaseChannel; assets: CliBinaryAsset[] }> {
-  const tag = await resolveCliGithubReleaseTag(channel);
   for (const asset of CLI_BINARY_ASSETS) {
-    const response = await fetch(cliGithubReleaseUrl(tag, asset));
+    const response = await fetch(cliGithubReleaseAssetUrl(channel, asset));
     if (!response.ok) {
       throw new Error(`Failed to mirror ${asset} from ${channel}: ${response.status}`);
     }
@@ -116,6 +115,14 @@ export function cliChecksumKey(channel: CliReleaseChannel, asset: string): strin
 
 export function isSupportedCliChannel(value: string): value is CliReleaseChannel {
   return value === "stable" || value === "dev";
+}
+
+export function cliGithubReleaseAssetUrl(channel: CliReleaseChannel, asset: string): string {
+  if (channel === "stable") {
+    return `https://github.com/${CLI_RELEASE_REPO}/releases/latest/download/${asset}`;
+  }
+
+  return `https://github.com/${CLI_RELEASE_REPO}/releases/download/dev/${asset}?ts=${Date.now()}`;
 }
 
 export function isSupportedCliAsset(value: string): value is CliBinaryAsset {
@@ -242,41 +249,6 @@ export function buildCliInstallPowerShell(origin: string): string {
     "  Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue",
     "}",
   ].join("\r\n");
-}
-
-async function resolveCliGithubReleaseTag(channel: CliReleaseChannel): Promise<string> {
-  if (channel === "stable") {
-    const release = await fetchCliGitHubJson<GitHubRelease>("/releases/latest");
-    const tag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
-    if (!tag || !isSemverCliReleaseTag(tag) || isSemverCliPrereleaseTag(tag)) {
-      throw new Error(`Invalid latest stable CLI release tag: ${tag || "<missing>"}`);
-    }
-    return tag;
-  }
-
-  const releases = await fetchCliGitHubJson<GitHubRelease[]>("/releases?per_page=20");
-  const tag = selectLatestCliPrereleaseTag(releases);
-  if (!tag) {
-    throw new Error("No dev prerelease found for CLI downloads");
-  }
-  return tag;
-}
-
-async function fetchCliGitHubJson<T>(path: string): Promise<T> {
-  const response = await fetch(`https://api.github.com/repos/${CLI_RELEASE_REPO}${path}`, {
-    headers: {
-      accept: "application/vnd.github+json",
-      "user-agent": "gsv-gateway",
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`GitHub release lookup failed: ${response.status}`);
-  }
-  return await response.json() as T;
-}
-
-function cliGithubReleaseUrl(tag: string, asset: string): string {
-  return `https://github.com/${CLI_RELEASE_REPO}/releases/download/${tag}/${asset}`;
 }
 
 async function sha256Hex(input: ArrayBuffer): Promise<string> {

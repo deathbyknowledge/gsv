@@ -981,9 +981,7 @@ mod tests {
         spec.exe_path = PathBuf::from(r"C:\Program Files\GSV\gsv.exe");
         let script = windows_task_registration_script("gsvd", r"ACME\hank", &spec);
 
-        assert!(script.contains(
-            "$trigger = New-ScheduledTaskTrigger -AtLogOn -User 'ACME\\hank'"
-        ));
+        assert!(script.contains("$trigger = New-ScheduledTaskTrigger -AtLogOn -User 'ACME\\hank'"));
         assert!(script.contains(
             "$principal = New-ScheduledTaskPrincipal -UserId 'ACME\\hank' -LogonType Interactive -RunLevel Limited"
         ));

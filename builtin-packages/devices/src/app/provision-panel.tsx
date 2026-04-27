@@ -160,7 +160,7 @@ function buildBootstrapCommand(
   const escapedViewerUsername = escapeCliValue(viewerUsername);
   const escapedDeviceId = escapeCliValue(deviceId);
   const escapedToken = escapeCliValue(token);
-  const workspace = platform === "windows" ? "\"$HOME\\projects\"" : "~/projects";
+  const workspace = platform === "windows" ? "\"$HOME\"" : "~/";
 
   return [
     `gsv config --local set gateway.url "${gatewayWs}"`,
