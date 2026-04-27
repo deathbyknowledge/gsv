@@ -1,6 +1,5 @@
 import {
   DynamicWorkerExecutor,
-  normalizeCode,
   type ResolvedProvider,
 } from "@cloudflare/codemode";
 import type { SyscallName } from "../syscalls";
@@ -32,7 +31,7 @@ export function buildCodeModeSource(
   code: string,
   options?: CodeModeExecutionOptions,
 ): string {
-  const userMain = normalizeCode(sanitizeCodeModeSource(code));
+  const userMain = buildUserMain(code);
   const defaultTarget = JSON.stringify(options?.defaultTarget ?? null);
   const defaultCwd = JSON.stringify(options?.defaultCwd ?? null);
   const argv = JSON.stringify(options?.argv ?? []);
@@ -95,7 +94,35 @@ export function buildCodeModeSource(
 }
 
 function sanitizeCodeModeSource(code: string): string {
-  return code.replace(/^\uFEFF/, "").replace(/\u0000/g, "");
+  return code
+    .replace(/\u0000/g, "")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "");
+}
+
+function buildUserMain(code: string): string {
+  const source = stripCodeFences(sanitizeCodeModeSource(code)).trim();
+  if (!source) {
+    return "async () => {}";
+  }
+  if (source.startsWith("export default ")) {
+    return buildUserMain(source.slice("export default ".length));
+  }
+  if (looksLikeFunctionExpression(source)) {
+    return source;
+  }
+  return `async () => {\n${source}\n}`;
+}
+
+function stripCodeFences(code: string): string {
+  const match = code.match(/^```(?:js|javascript|typescript|ts|tsx|jsx)?\s*\n([\s\S]*?)```\s*$/);
+  return match ? match[1] : code;
+}
+
+function looksLikeFunctionExpression(source: string): boolean {
+  return /^(?:async\s+)?function(?:\s+|\()/.test(source)
+    || /^(?:async\s*)?\([^)]*\)\s*=>/.test(source)
+    || /^async\s+[A-Za-z_$][\w$]*\s*=>/.test(source)
+    || /^[A-Za-z_$][\w$]*\s*=>/.test(source);
 }
 
 export async function executeCodeMode(
