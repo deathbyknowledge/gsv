@@ -1044,6 +1044,7 @@ async function resolvePackageFromRipgitNativeBuild(
       exportName: "GsvCommandEntrypoint",
       command: command.name,
       description: analysis.definition?.meta.description ?? undefined,
+      syscalls: kernelSyscalls,
     })),
     ...(hasBrowserEntrypoint ? [{
       name: analysis.definition.meta.display_name,
