@@ -135,7 +135,7 @@ function cliInstallCommand(origin: string, platform: InstallPlatform): string {
 }
 
 function defaultWorkspacePath(platform: InstallPlatform): string {
-  return platform === "windows" ? "\"$HOME\\projects\"" : "~/projects";
+  return platform === "windows" ? "\"$HOME\"" : "~/";
 }
 
 function buildNodeBootstrapCommand(
