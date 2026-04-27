@@ -96,6 +96,38 @@ describe("CodeMode executor", () => {
     });
   });
 
+  it("does not prepend default cwd to Windows absolute fs paths", async () => {
+    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const result = await executeCodeMode(
+      env,
+      `
+        const readResult = await fs.read({ path: "C:\\\\tmp\\\\package.json" });
+        return readResult;
+      `,
+      async (call, args) => {
+        calls.push({ call, args });
+        if (call === "fs.read") {
+          return { ok: true, path: String(args.path), content: "{}" };
+        }
+        throw new Error(`unexpected call: ${call}`);
+      },
+      {
+        defaultCwd: "C:\\workspace",
+      },
+    );
+
+    expect(calls).toEqual([
+      {
+        call: "fs.read",
+        args: { path: "C:\\tmp\\package.json" },
+      },
+    ]);
+    expect(result).toEqual({
+      status: "completed",
+      result: { ok: true, path: "C:\\tmp\\package.json", content: "{}" },
+    });
+  });
+
   it("runs script bodies without relying on the package normalizer", async () => {
     const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
     const result = await executeCodeMode(

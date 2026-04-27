@@ -66,6 +66,12 @@ function createMockSql() {
       return { toArray: () => [] as T[] };
     }
 
+    if (q.startsWith("DELETE FROM shell_sessions WHERE session_id = ?")) {
+      const [sessionId] = bindings as [string];
+      table.delete(sessionId);
+      return { toArray: () => [] as T[] };
+    }
+
     if (q.startsWith("DELETE FROM shell_sessions WHERE expires_at")) {
       const [now] = bindings as [number];
       for (const [sessionId, row] of table.entries()) {
@@ -99,6 +105,18 @@ describe("ShellSessionStore", () => {
       deviceId: "macbook",
       status: "running",
     });
+  });
+
+  it("rejects expired sessions during lookup", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const store = new ShellSessionStore(createMockSql() as unknown as SqlStorage);
+    store.init();
+    store.rememberDeviceSession("sh_1", "macbook", "running", { ttlMs: 10 });
+
+    now.mockReturnValue(1_010);
+
+    expect(store.get("sh_1")).toBeNull();
+    expect(store.get("sh_1")).toBeNull();
   });
 
   it("marks active sessions failed when a device disconnects", () => {

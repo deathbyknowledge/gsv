@@ -78,6 +78,14 @@ export class ShellSessionStore {
 
     if (rows.length === 0) return null;
     const row = rows[0];
+    if (row.expires_at !== null && row.expires_at <= Date.now()) {
+      this.sql.exec(
+        `DELETE FROM shell_sessions WHERE session_id = ?`,
+        sessionId,
+      );
+      return null;
+    }
+
     return {
       sessionId: row.session_id,
       deviceId: row.device_id,
