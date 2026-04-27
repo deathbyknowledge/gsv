@@ -101,6 +101,7 @@ scripts:
 
 ```bash
 codemode ./check.js --target macbook --cwd ~/projects/gsv --json
+codemode run ./check.js --target macbook --cwd ~/projects/gsv --json
 codemode -e 'return await shell("pwd")'
 ```
 

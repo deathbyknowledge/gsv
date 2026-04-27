@@ -358,6 +358,7 @@ Native shell usage:
 
 ```bash
 codemode ./script.js --target macbook --cwd ~/projects/gsv -- arg1 arg2
+codemode run ./script.js --target macbook --cwd ~/projects/gsv -- arg1 arg2
 codemode -e 'return await shell("pwd")'
 ```
 

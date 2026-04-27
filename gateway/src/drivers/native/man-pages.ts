@@ -30,6 +30,7 @@ export function renderManualPage(topic?: string): string | null {
         "",
         "SYNOPSIS",
         "  codemode <script.js> [options] [-- argv...]",
+        "  codemode run <script.js> [options] [-- argv...]",
         "  codemode -e <code> [options] [-- argv...]",
         "",
         "OVERVIEW",

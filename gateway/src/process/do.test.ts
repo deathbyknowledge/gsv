@@ -583,6 +583,61 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("CodeMode tool calls", () => {
+    it("runs codemode from the native shell command", async () => {
+      const pid = "mech-codemode-shell";
+      await initProcess(pid, ROOT_IDENTITY);
+      const kernel = await getKernelPtr();
+
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(pid, makeReq("shell.exec", {
+          input: "codemode -e 'return { argv, args };' --json --arg mode=check -- alpha",
+        })),
+      ) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      const data = response.data as any;
+      expect(data.status, JSON.stringify(data, null, 2)).toBe("completed");
+      expect(data.exitCode).toBe(0);
+      expect(JSON.parse(data.stdout)).toEqual({
+        status: "completed",
+        result: {
+          argv: ["alpha"],
+          args: { mode: "check" },
+        },
+      });
+    });
+
+    it("runs codemode script files from the native shell command", async () => {
+      const pid = "mech-codemode-shell-file";
+      await initProcess(pid, ROOT_IDENTITY);
+      const kernel = await getKernelPtr();
+
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(pid, makeReq("shell.exec", {
+          input: [
+            "echo '{\"ok\":true}' > test.json",
+            "cat > test.js <<'EOF'",
+            "const res = await shell(\"pwd\");",
+            "const file = await fs.read({ path: \"test.json\" });",
+            "return { res, file, argv, args};",
+            "EOF",
+            "codemode run test.js --json --arg mode=file -- beta",
+          ].join("\n"),
+        })),
+      ) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      const data = response.data as any;
+      expect(data.status, JSON.stringify(data, null, 2)).toBe("completed");
+      expect(data.exitCode).toBe(0);
+      const result = JSON.parse(data.stdout);
+      expect(result.status).toBe("completed");
+      expect(result.result.argv).toEqual(["beta"]);
+      expect(result.result.args).toEqual({ mode: "file" });
+      expect(result.result.res.output).toContain("/root");
+      expect(result.result.file.content).toContain("\"ok\":true");
+    });
+
     it("runs codemode.run as a process command", async () => {
       const pid = "mech-codemode-run";
       const stub = await initProcess(pid, ROOT_IDENTITY);

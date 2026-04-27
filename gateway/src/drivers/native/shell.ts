@@ -659,10 +659,11 @@ function parseCodeModeCommandArgs(args: string[]): CodeModeCommandOptions {
     args: null,
     argv: [],
   };
+  const commandArgs = args[0] === "run" ? args.slice(1) : args;
   let passthrough = false;
 
-  for (let index = 0; index < args.length; index += 1) {
-    const current = args[index];
+  for (let index = 0; index < commandArgs.length; index += 1) {
+    const current = commandArgs[index];
     if (passthrough) {
       parsed.argv.push(current);
       continue;
@@ -682,27 +683,27 @@ function parseCodeModeCommandArgs(args: string[]): CodeModeCommandOptions {
     }
     if (current === "-e" || current === "--eval") {
       index += 1;
-      parsed.code = requireCodeModeOptionValue(args[index], current);
+      parsed.code = requireCodeModeOptionValue(commandArgs[index], current);
       continue;
     }
     if (current === "--target") {
       index += 1;
-      parsed.target = requireCodeModeOptionValue(args[index], current);
+      parsed.target = requireCodeModeOptionValue(commandArgs[index], current);
       continue;
     }
     if (current === "--cwd") {
       index += 1;
-      parsed.cwd = requireCodeModeOptionValue(args[index], current);
+      parsed.cwd = requireCodeModeOptionValue(commandArgs[index], current);
       continue;
     }
     if (current === "--arg") {
       index += 1;
-      parsed.args = mergeCodeModeArg(parsed.args, requireCodeModeOptionValue(args[index], current));
+      parsed.args = mergeCodeModeArg(parsed.args, requireCodeModeOptionValue(commandArgs[index], current));
       continue;
     }
     if (current === "--args-json") {
       index += 1;
-      parsed.args = JSON.parse(requireCodeModeOptionValue(args[index], current));
+      parsed.args = JSON.parse(requireCodeModeOptionValue(commandArgs[index], current));
       continue;
     }
     if (!parsed.file && parsed.code === undefined) {
@@ -819,6 +820,7 @@ function formatCodeModeValue(value: unknown): string {
 function codeModeUsage(): string {
   return [
     "codemode <script.js> [options] [-- argv...]",
+    "codemode run <script.js> [options] [-- argv...]",
     "codemode -e <code> [options] [-- argv...]",
     "",
     "Options:",

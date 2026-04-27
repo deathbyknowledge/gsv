@@ -32,7 +32,7 @@ export function buildCodeModeSource(
   code: string,
   options?: CodeModeExecutionOptions,
 ): string {
-  const userMain = normalizeCode(code);
+  const userMain = normalizeCode(sanitizeCodeModeSource(code));
   const defaultTarget = JSON.stringify(options?.defaultTarget ?? null);
   const defaultCwd = JSON.stringify(options?.defaultCwd ?? null);
   const argv = JSON.stringify(options?.argv ?? []);
@@ -43,7 +43,12 @@ export function buildCodeModeSource(
   const __defaultTarget = ${defaultTarget};
   const __defaultCwd = ${defaultCwd};
   const __isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-  const __isAbsolutePath = (path) => path.startsWith("/") || /^[A-Za-z]:[\\\\/]/.test(path);
+  const __isAbsolutePath = (path) => path.startsWith("/") || (
+    path.length >= 3 &&
+    ((path.charCodeAt(0) >= 65 && path.charCodeAt(0) <= 90) || (path.charCodeAt(0) >= 97 && path.charCodeAt(0) <= 122)) &&
+    path[1] === ":" &&
+    (path[2] === "/" || path[2] === "\\\\")
+  );
   const __joinPath = (base, path) => {
     if (!base || __isAbsolutePath(path)) return path;
     if (base.endsWith("/")) return base + path.replace(/^\\.\\//, "");
@@ -87,6 +92,10 @@ export function buildCodeModeSource(
   const __userMain = ${userMain};
   return await __userMain();
 }`;
+}
+
+function sanitizeCodeModeSource(code: string): string {
+  return code.replace(/^\uFEFF/, "").replace(/\u0000/g, "");
 }
 
 export async function executeCodeMode(
