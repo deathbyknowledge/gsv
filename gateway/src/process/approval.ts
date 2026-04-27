@@ -117,8 +117,11 @@ export function buildToolApprovalFacts(
   const record = asRecord(args);
   const domain = syscall.split(".")[0] ?? syscall;
   const rawTarget = typeof record?.target === "string" ? record.target.trim() : "";
+  const hasShellSession = syscall === "shell.exec"
+    && typeof record?.sessionId === "string"
+    && record.sessionId.trim().length > 0;
   const target: "gsv" | "device" =
-    rawTarget && rawTarget !== "gsv" && rawTarget !== "gateway" && rawTarget !== "local"
+    hasShellSession || (rawTarget && rawTarget !== "gsv" && rawTarget !== "gateway" && rawTarget !== "local")
       ? "device"
       : "gsv";
 

@@ -19,6 +19,7 @@ const MIN_YIELD_MS: u64 = 250;
 const MAX_YIELD_MS: u64 = 30_000;
 const MAX_OUTPUT_CHARS: usize = 200_000;
 const TAIL_CHARS: usize = 4_000;
+const COMPLETED_SESSION_RETENTION_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Clone)]
 struct ProcessHandle {
@@ -99,6 +100,18 @@ async fn store_process(handle: ProcessHandle) {
 async fn get_process(session_id: &str) -> Option<ProcessHandle> {
     let registry = process_registry().lock().await;
     registry.get(session_id).cloned()
+}
+
+async fn remove_process(session_id: &str) {
+    let mut registry = process_registry().lock().await;
+    registry.remove(session_id);
+}
+
+fn schedule_process_removal(session_id: String, delay: Duration) {
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        remove_process(&session_id).await;
+    });
 }
 
 fn now_ms() -> i64 {
@@ -513,10 +526,12 @@ async fn launch_managed_process(
             (snapshot, lock.backgrounded, event_name.to_string())
         };
 
+        let session_id = snapshot.session_id.clone();
+
         if should_emit_event {
             emit_exec_event(NodeExecEventParams {
                 event_id: Uuid::new_v4().to_string(),
-                session_id: snapshot.session_id,
+                session_id: session_id.clone(),
                 event: event_name,
                 call_id: None,
                 exit_code: snapshot.exit_code,
@@ -530,6 +545,11 @@ async fn launch_managed_process(
                 ended_at: snapshot.ended_at,
             });
         }
+
+        schedule_process_removal(
+            session_id,
+            Duration::from_millis(COMPLETED_SESSION_RETENTION_MS),
+        );
     });
 
     store_process(handle.clone()).await;
@@ -551,6 +571,7 @@ async fn wait_for_shell_result(handle: &ProcessHandle, yield_ms: u64) -> Value {
 
         if snapshot.ended_at.is_some() {
             let drained = snapshot_and_drain(handle).await;
+            remove_process(&drained.session_id).await;
             return completed_result(&drained);
         }
 

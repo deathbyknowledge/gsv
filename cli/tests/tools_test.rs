@@ -183,6 +183,45 @@ async fn test_bash_session_poll_returns_new_output() {
 }
 
 #[tokio::test]
+async fn test_bash_session_is_removed_after_final_poll() {
+    use gsv::tools::{BashTool, Tool};
+    use serde_json::json;
+
+    let workspace = std::env::temp_dir();
+    let bash = BashTool::new(workspace.clone());
+
+    let start = bash
+        .execute(json!({
+            "input": shell_background_finish_command(),
+            "background": true
+        }))
+        .await
+        .unwrap();
+
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+    let poll = bash
+        .execute(json!({
+            "sessionId": session_id,
+            "input": ""
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(poll["status"], "completed");
+    let err = bash
+        .execute(json!({
+            "sessionId": poll["sessionId"].as_str().unwrap(),
+            "input": ""
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(err.contains("Unknown shell session"));
+}
+
+#[tokio::test]
 async fn test_read_tool() {
     use gsv::tools::{ReadTool, Tool};
     use serde_json::json;

@@ -70,6 +70,29 @@ describe("tool approval policy", () => {
     expect(resolution.facts.target).toBe("device");
   });
 
+  it("classifies shell session continuations as device-targeted", () => {
+    const policy = parseToolApprovalPolicy(JSON.stringify({
+      default: "auto",
+      rules: [
+        {
+          match: "shell.exec",
+          when: { target: "device" },
+          action: "ask",
+        },
+      ],
+    }));
+
+    const resolution = resolveToolApproval(policy, "shell.exec", {
+      sessionId: "sh_123",
+      input: "rm -rf build",
+    }, IDENTITY);
+
+    expect(resolution.action).toBe("ask");
+    expect(resolution.facts.target).toBe("device");
+    expect(resolution.facts.tags).toContain("remote");
+    expect(resolution.facts.tags).toContain("destructive");
+  });
+
   it("builds path tags for filesystem syscalls", () => {
     const facts = buildToolApprovalFacts("fs.delete", { path: "../.env" }, IDENTITY);
     expect(facts.tags).toContain("destructive");
