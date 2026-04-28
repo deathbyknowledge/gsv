@@ -9,7 +9,7 @@ export function createHomeContextProvider(): PromptContextProvider {
     name: "home.context",
     async collect(input) {
       const sections: PromptSection[] = [];
-      const repo = homeKnowledgeRepoRef(input.identity.uid);
+      const repo = homeKnowledgeRepoRef(input.identity.username);
 
       if (input.ripgit) {
         const contextTree = await input.ripgit.readPath(repo, "context.d");

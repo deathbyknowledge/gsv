@@ -35,6 +35,19 @@ type PackageDefinition = {
 
 Import the manifest helper from `@gsv/package/manifest`.
 
+`meta.capabilities.kernel` is the package's syscall grant list. Declare only the
+calls the backend or CLI entrypoints actually need. Use `repo.*` when a package
+needs to inspect or edit ripgit repositories, and `pkg.*` only for package
+lifecycle operations such as install, checkout, review, and public visibility.
+
+Example:
+
+```ts
+capabilities: {
+  kernel: ["repo.read", "repo.search", "fs.read"],
+},
+```
+
 ## Backend
 
 Import the backend base class from `@gsv/package/backend`.
@@ -155,6 +168,11 @@ type PackageCommandContext = {
 ```
 
 Use `defineCommand(handler)` and default-export the handler module.
+
+Installed package commands are exposed in the native GSV shell by command name.
+For example, a package manifest with `cli.commands.wiki` makes `wiki ...`
+available through `shell.exec` on `target: "gsv"`, subject to the package's
+declared kernel grants.
 
 ## Public routes
 

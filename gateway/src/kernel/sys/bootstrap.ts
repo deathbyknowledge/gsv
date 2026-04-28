@@ -16,8 +16,8 @@ import {
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";
-const SYSTEM_GSV_REPO: RipgitRepoRef = {
-  owner: "system",
+const ROOT_GSV_REPO: RipgitRepoRef = {
+  owner: "root",
   repo: "gsv",
   branch: "main",
 };
@@ -76,10 +76,10 @@ export async function handleSysBootstrap(
 
   try {
     const imported = await timeBootstrapStep(timings, "import-upstream", () => ripgit.importFromUpstream(
-      SYSTEM_GSV_REPO,
+      ROOT_GSV_REPO,
       actorName,
       `${actorName}@gsv.local`,
-      `bootstrap system/gsv from ${remoteUrl}#${ref}`,
+      `bootstrap root/gsv from ${remoteUrl}#${ref}`,
       remoteUrl,
       ref,
     ));
@@ -114,7 +114,7 @@ export async function handleSysBootstrap(
     );
 
     return {
-      repo: "system/gsv",
+      repo: "root/gsv",
       remoteUrl: imported.remoteUrl,
       ref: imported.remoteRef,
       head: imported.head ?? null,

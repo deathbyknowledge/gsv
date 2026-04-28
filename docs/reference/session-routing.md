@@ -27,7 +27,7 @@ All requests use the same frame shape:
 
 The dispatcher first checks `args.target`. If `target` is omitted or set to `gsv`, the syscall is handled natively by the Kernel. If `target` names a connected device and the syscall is routable, the Kernel forwards it to that device.
 
-Only `fs.*` and `shell.exec` support device routing. Other domains such as `sys.*`, `proc.*`, `pkg.*`, `adapter.*`, `knowledge.*`, and `notification.*` are kernel-internal.
+Only `fs.*` and `shell.exec` support device routing. Other domains such as `sys.*`, `proc.*`, `pkg.*`, `repo.*`, `adapter.*`, and `notification.*` are kernel-internal.
 
 ```json
 { "path": "/etc/passwd", "target": "gsv" }

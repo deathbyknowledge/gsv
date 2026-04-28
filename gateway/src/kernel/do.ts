@@ -370,7 +370,7 @@ export class Kernel extends Host<Env> {
       return errFrame(frame.id, 404, "Package app not found");
     }
 
-    const entrypoint = findUiEntrypoint(record.manifest.entrypoints, appFrame.entrypointName, appFrame.routeBase);
+    const entrypoint = findAppFrameEntrypoint(record.manifest.entrypoints, appFrame.entrypointName, appFrame.routeBase);
     if (!entrypoint) {
       return errFrame(frame.id, 404, "Package app entrypoint not found");
     }
@@ -2197,6 +2197,22 @@ export class Kernel extends Host<Env> {
       }),
     );
   }
+}
+
+export function findAppFrameEntrypoint(
+  entrypoints: readonly PackageEntrypoint[],
+  entrypointName: string,
+  routeBase: string,
+): PackageEntrypoint | null {
+  return entrypoints.find((entrypoint) => {
+    if (entrypoint.kind === "ui") {
+      return entrypoint.name === entrypointName && entrypoint.route === routeBase;
+    }
+    if (entrypoint.kind === "command") {
+      return (entrypoint.command?.trim() || entrypoint.name) === entrypointName;
+    }
+    return false;
+  }) ?? null;
 }
 
 function findUiEntrypoint(

@@ -16,6 +16,7 @@ import { normalizePath } from "../utils";
 type WorkspaceRepoRef = {
   workspaceId: string;
   ownerUid: number;
+  ownerUsername: string;
   repo: ReturnType<typeof workspaceRepoRef>;
   relativePath: string;
   absolutePath: string;
@@ -371,7 +372,8 @@ class WorkspaceMountBackend implements MountBackend {
     return {
       workspaceId,
       ownerUid: workspace.ownerUid,
-      repo: workspaceRepoRef(workspaceId, workspace.ownerUid),
+      ownerUsername: workspace.ownerUsername,
+      repo: workspaceRepoRef(workspaceId, workspace.ownerUsername),
       relativePath,
       absolutePath: normalized,
     };

@@ -5,6 +5,7 @@ export type WorkspaceState = "active" | "archived";
 export type WorkspaceRecord = {
   workspaceId: string;
   ownerUid: number;
+  ownerUsername: string;
   label: string | null;
   kind: ProcWorkspaceKind;
   state: WorkspaceState;
@@ -23,6 +24,7 @@ export class WorkspaceStore {
       CREATE TABLE IF NOT EXISTS workspaces (
         workspace_id TEXT PRIMARY KEY,
         owner_uid INTEGER NOT NULL,
+        owner_username TEXT NOT NULL,
         label TEXT,
         kind TEXT NOT NULL,
         state TEXT NOT NULL DEFAULT 'active',
@@ -40,14 +42,15 @@ export class WorkspaceStore {
   }
 
   create(
-    ownerUid: number,
+    owner: { uid: number; username: string },
     opts?: { label?: string; kind?: ProcWorkspaceKind; metaJson?: string | null },
   ): WorkspaceRecord {
     const workspaceId = `ws_${crypto.randomUUID()}`;
     const now = Date.now();
     const record: WorkspaceRecord = {
       workspaceId,
-      ownerUid,
+      ownerUid: owner.uid,
+      ownerUsername: owner.username,
       label: opts?.label ?? null,
       kind: opts?.kind ?? "thread",
       state: "active",
@@ -60,10 +63,11 @@ export class WorkspaceStore {
 
     this.sql.exec(
       `INSERT INTO workspaces
-        (workspace_id, owner_uid, label, kind, state, created_at, updated_at, default_branch, head_commit, meta_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (workspace_id, owner_uid, owner_username, label, kind, state, created_at, updated_at, default_branch, head_commit, meta_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.workspaceId,
       record.ownerUid,
+      record.ownerUsername,
       record.label,
       record.kind,
       record.state,
@@ -125,6 +129,7 @@ export class WorkspaceStore {
 type RowShape = {
   workspace_id: string;
   owner_uid: number;
+  owner_username: string;
   label: string | null;
   kind: ProcWorkspaceKind;
   state: WorkspaceState;
@@ -139,6 +144,7 @@ function toRecord(row: RowShape): WorkspaceRecord {
   return {
     workspaceId: row.workspace_id,
     ownerUid: row.owner_uid,
+    ownerUsername: row.owner_username,
     label: row.label,
     kind: row.kind,
     state: row.state,

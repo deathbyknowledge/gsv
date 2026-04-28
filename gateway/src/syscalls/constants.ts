@@ -23,12 +23,17 @@ export const PROC_HISTORY = "proc.history";
 export const PROC_RESET = "proc.reset";
 export const PROC_SETIDENTITY = "proc.setidentity";
 
-// Packages
-export const PKG_REPO_REFS = "pkg.repo.refs";
-export const PKG_REPO_READ = "pkg.repo.read";
-export const PKG_REPO_LOG = "pkg.repo.log";
-export const PKG_REPO_SEARCH = "pkg.repo.search";
-export const PKG_REPO_DIFF = "pkg.repo.diff";
+// Repositories
+export const REPO_LIST = "repo.list";
+export const REPO_CREATE = "repo.create";
+export const REPO_REFS = "repo.refs";
+export const REPO_READ = "repo.read";
+export const REPO_SEARCH = "repo.search";
+export const REPO_LOG = "repo.log";
+export const REPO_DIFF = "repo.diff";
+export const REPO_COMPARE = "repo.compare";
+export const REPO_APPLY = "repo.apply";
+export const REPO_IMPORT = "repo.import";
 
 // System
 export const SYS_CONNECT = "sys.connect";
@@ -64,20 +69,6 @@ export const ADAPTER_CONNECT = "adapter.connect";
 export const ADAPTER_DISCONNECT = "adapter.disconnect";
 export const ADAPTER_SEND = "adapter.send";
 export const ADAPTER_STATUS = "adapter.status";
-
-// Knowledge substrate (home durable knowledge)
-export const KNOWLEDGE_DB_LIST = "knowledge.db.list";
-export const KNOWLEDGE_DB_INIT = "knowledge.db.init";
-export const KNOWLEDGE_DB_DELETE = "knowledge.db.delete";
-export const KNOWLEDGE_LIST = "knowledge.list";
-export const KNOWLEDGE_READ = "knowledge.read";
-export const KNOWLEDGE_WRITE = "knowledge.write";
-export const KNOWLEDGE_SEARCH = "knowledge.search";
-export const KNOWLEDGE_MERGE = "knowledge.merge";
-export const KNOWLEDGE_PROMOTE = "knowledge.promote";
-export const KNOWLEDGE_QUERY = "knowledge.query";
-export const KNOWLEDGE_INGEST = "knowledge.ingest";
-export const KNOWLEDGE_COMPILE = "knowledge.compile";
 
 // Notifications
 export const NOTIFICATION_CREATE = "notification.create";

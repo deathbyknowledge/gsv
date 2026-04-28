@@ -48,16 +48,6 @@ import type {
   PkgListResult,
   PkgSyncArgs,
   PkgSyncResult,
-  PkgRepoLogArgs,
-  PkgRepoLogResult,
-  PkgRepoReadArgs,
-  PkgRepoReadResult,
-  PkgRepoRefsArgs,
-  PkgRepoRefsResult,
-  PkgRepoSearchArgs,
-  PkgRepoSearchResult,
-  PkgRepoDiffArgs,
-  PkgRepoDiffResult,
   PkgRemoteAddArgs,
   PkgRemoteAddResult,
   PkgRemoteListArgs,
@@ -71,6 +61,28 @@ import type {
   PkgPublicSetArgs,
   PkgPublicSetResult,
 } from "@gsv/protocol/syscalls/packages";
+import type {
+  RepoApplyArgs,
+  RepoApplyResult,
+  RepoCompareArgs,
+  RepoCompareResult,
+  RepoCreateArgs,
+  RepoCreateResult,
+  RepoDiffArgs,
+  RepoDiffResult,
+  RepoImportArgs,
+  RepoImportResult,
+  RepoListArgs,
+  RepoListResult,
+  RepoLogArgs,
+  RepoLogResult,
+  RepoReadArgs,
+  RepoReadResult,
+  RepoRefsArgs,
+  RepoRefsResult,
+  RepoSearchArgs,
+  RepoSearchResult,
+} from "@gsv/protocol/syscalls/repositories";
 import type {
   ConnectArgs,
   ConnectResult,
@@ -134,32 +146,6 @@ import type {
   AdapterStatusResult,
 } from "./adapter";
 import type {
-  KnowledgeDbInitArgs,
-  KnowledgeDbInitResult,
-  KnowledgeDbDeleteArgs,
-  KnowledgeDbDeleteResult,
-  KnowledgeDbListArgs,
-  KnowledgeDbListResult,
-  KnowledgeCompileArgs,
-  KnowledgeCompileResult,
-  KnowledgeIngestArgs,
-  KnowledgeIngestResult,
-  KnowledgeListArgs,
-  KnowledgeListResult,
-  KnowledgeReadArgs,
-  KnowledgeReadResult,
-  KnowledgeWriteArgs,
-  KnowledgeWriteResult,
-  KnowledgeSearchArgs,
-  KnowledgeSearchResult,
-  KnowledgeMergeArgs,
-  KnowledgeMergeResult,
-  KnowledgePromoteArgs,
-  KnowledgePromoteResult,
-  KnowledgeQueryArgs,
-  KnowledgeQueryResult,
-} from "./knowledge";
-import type {
   SignalWatchArgs,
   SignalWatchResult,
   SignalUnwatchArgs,
@@ -216,16 +202,23 @@ export type SyscallDomains = {
   "pkg.install": { args: PkgInstallArgs; result: PkgInstallResult };
   "pkg.review.approve": { args: PkgReviewApproveArgs; result: PkgReviewApproveResult };
   "pkg.remove": { args: PkgRemoveArgs; result: PkgRemoveResult };
-  "pkg.repo.refs": { args: PkgRepoRefsArgs; result: PkgRepoRefsResult };
-  "pkg.repo.read": { args: PkgRepoReadArgs; result: PkgRepoReadResult };
-  "pkg.repo.log": { args: PkgRepoLogArgs; result: PkgRepoLogResult };
-  "pkg.repo.search": { args: PkgRepoSearchArgs; result: PkgRepoSearchResult };
-  "pkg.repo.diff": { args: PkgRepoDiffArgs; result: PkgRepoDiffResult };
   "pkg.remote.list": { args: PkgRemoteListArgs; result: PkgRemoteListResult };
   "pkg.remote.add": { args: PkgRemoteAddArgs; result: PkgRemoteAddResult };
   "pkg.remote.remove": { args: PkgRemoteRemoveArgs; result: PkgRemoteRemoveResult };
   "pkg.public.list": { args: PkgPublicListArgs; result: PkgPublicListResult };
   "pkg.public.set": { args: PkgPublicSetArgs; result: PkgPublicSetResult };
+
+  // Repositories
+  "repo.list": { args: RepoListArgs; result: RepoListResult };
+  "repo.create": { args: RepoCreateArgs; result: RepoCreateResult };
+  "repo.refs": { args: RepoRefsArgs; result: RepoRefsResult };
+  "repo.read": { args: RepoReadArgs; result: RepoReadResult };
+  "repo.search": { args: RepoSearchArgs; result: RepoSearchResult };
+  "repo.log": { args: RepoLogArgs; result: RepoLogResult };
+  "repo.diff": { args: RepoDiffArgs; result: RepoDiffResult };
+  "repo.compare": { args: RepoCompareArgs; result: RepoCompareResult };
+  "repo.apply": { args: RepoApplyArgs; result: RepoApplyResult };
+  "repo.import": { args: RepoImportArgs; result: RepoImportResult };
 
   // System
   "sys.connect": { args: ConnectArgs; result: ConnectResult };
@@ -264,20 +257,6 @@ export type SyscallDomains = {
   "adapter.send": { args: AdapterSendArgs; result: AdapterSendResult };
   "adapter.status": { args: AdapterStatusArgs; result: AdapterStatusResult };
 
-  // Knowledge substrate (home durable knowledge)
-  "knowledge.db.list": { args: KnowledgeDbListArgs; result: KnowledgeDbListResult };
-  "knowledge.db.init": { args: KnowledgeDbInitArgs; result: KnowledgeDbInitResult };
-  "knowledge.db.delete": { args: KnowledgeDbDeleteArgs; result: KnowledgeDbDeleteResult };
-  "knowledge.list": { args: KnowledgeListArgs; result: KnowledgeListResult };
-  "knowledge.read": { args: KnowledgeReadArgs; result: KnowledgeReadResult };
-  "knowledge.write": { args: KnowledgeWriteArgs; result: KnowledgeWriteResult };
-  "knowledge.search": { args: KnowledgeSearchArgs; result: KnowledgeSearchResult };
-  "knowledge.merge": { args: KnowledgeMergeArgs; result: KnowledgeMergeResult };
-  "knowledge.promote": { args: KnowledgePromoteArgs; result: KnowledgePromoteResult };
-  "knowledge.query": { args: KnowledgeQueryArgs; result: KnowledgeQueryResult };
-  "knowledge.ingest": { args: KnowledgeIngestArgs; result: KnowledgeIngestResult };
-  "knowledge.compile": { args: KnowledgeCompileArgs; result: KnowledgeCompileResult };
-
   // Notifications
   "notification.create": { args: NotificationCreateArgs; result: NotificationCreateResult };
   "notification.list": { args: NotificationListArgs; result: NotificationListResult };
@@ -299,11 +278,13 @@ export type SyscallDomain =
   | "codemode"
   | "proc"
   | "pkg"
+  | "repo"
   | "sys"
   | "ai"
   | "sched"
   | "notification"
-  | "adapter";
+  | "adapter"
+  | "signal";
 
 export function domainOf(syscall: SyscallName): SyscallDomain {
   return syscall.split(".")[0] as SyscallDomain;

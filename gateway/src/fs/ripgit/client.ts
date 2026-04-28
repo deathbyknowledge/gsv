@@ -72,6 +72,17 @@ export type RipgitCommitDiffResponse = {
   };
 };
 
+export type RipgitCompareResponse = {
+  base_hash: string;
+  head_hash: string;
+  files: RipgitDiffFile[];
+  stats: {
+    files_changed: number;
+    additions: number;
+    deletions: number;
+  };
+};
+
 export type RipgitRefsResponse = {
   heads: Record<string, string>;
   tags: Record<string, string>;
@@ -173,6 +184,7 @@ type RipgitApplyResponse = {
 
 export type RipgitApplyResult = {
   head?: string | null;
+  conflict?: boolean;
 };
 
 type RipgitImportResponse = {
@@ -234,6 +246,10 @@ export class RipgitClient {
     email: string,
     message: string,
     ops: RipgitApplyOp[],
+    options?: {
+      expectedHead?: string;
+      allowEmpty?: boolean;
+    },
   ): Promise<RipgitApplyResult> {
     const response = await this.binding.fetch(this.makeApplyUrl(repo), {
       method: "POST",
@@ -247,6 +263,8 @@ export class RipgitClient {
         email,
         message,
         ops,
+        ...(options?.expectedHead ? { expectedHead: options.expectedHead } : {}),
+        ...(options?.allowEmpty ? { allowEmpty: true } : {}),
       }),
     });
 
@@ -260,6 +278,7 @@ export class RipgitClient {
     }
     return {
       head: payload.head ?? null,
+      conflict: payload.conflict,
     };
   }
 
@@ -375,6 +394,27 @@ export class RipgitClient {
     return response.json<RipgitCommitDiffResponse>();
   }
 
+  async compare(
+    repo: RipgitRepoRef,
+    base: string,
+    head: string,
+    options?: {
+      context?: number;
+      stat?: boolean;
+    },
+  ): Promise<RipgitCompareResponse> {
+    const response = await this.binding.fetch(
+      this.makeCompareUrl(repo, base, head, options?.context, options?.stat),
+      {
+        headers: this.makeInternalHeaders(),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `compare '${repo.owner}/${repo.repo}:${base}...${head}'`));
+    }
+    return response.json<RipgitCompareResponse>();
+  }
+
   async analyzePackage(
     repo: RipgitRepoRef,
     subdir: string,
@@ -455,6 +495,25 @@ export class RipgitClient {
     );
     if (typeof context === "number" && Number.isFinite(context)) {
       url.searchParams.set("context", String(context));
+    }
+    return url;
+  }
+
+  private makeCompareUrl(
+    repo: RipgitRepoRef,
+    base: string,
+    head: string,
+    context?: number,
+    stat?: boolean,
+  ): URL {
+    const url = this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/compare?base=${encodeURIComponent(base)}&head=${encodeURIComponent(head)}`,
+    );
+    if (typeof context === "number" && Number.isFinite(context)) {
+      url.searchParams.set("context", String(context));
+    }
+    if (stat) {
+      url.searchParams.set("stat", "1");
     }
     return url;
   }

@@ -268,7 +268,7 @@ enum InfraAction {
 
 #[derive(Subcommand, Clone)]
 enum PackagesAction {
-    /// Re-seed builtin packages from the mirrored system/gsv repo
+    /// Re-seed builtin packages from the mirrored root/gsv repo
     Sync,
 }
 

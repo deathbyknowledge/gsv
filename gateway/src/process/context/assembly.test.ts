@@ -103,7 +103,7 @@ describe("selection", () => {
 describe("createHomeContextProvider", () => {
   it("loads sorted context files within budget", async () => {
     const provider = createHomeContextProvider();
-    const homeRepo = homeKnowledgeRepoRef(IDENTITY.uid);
+    const homeRepo = homeKnowledgeRepoRef(IDENTITY.username);
     const sections = await provider.collect(
       makeInput({
         config: { ...CONFIG, maxContextBytes: 20 },
@@ -153,7 +153,7 @@ describe("createHomeContextProvider", () => {
 describe("createWorkspaceContextProvider", () => {
   it("loads workspace context from ripgit when available", async () => {
     const provider = createWorkspaceContextProvider();
-    const workspaceRepo = workspaceRepoRef("ws_test", IDENTITY.uid);
+    const workspaceRepo = workspaceRepoRef("ws_test", IDENTITY.username);
     const sections = await provider.collect(
       makeInput({
         ripgit: {

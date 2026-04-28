@@ -245,15 +245,15 @@ Processes produce output; the kernel routes it to the right place based on conte
 ## Conversation archival
 
 Active conversation is process RAM (SQLite in DO). Archived conversations should move to a
-versioned/searchable KnowledgeStore (likely ripgit-backed via Service Binding). The current
-raw R2 blob archive is an interim implementation, not the target architecture.
+versioned/searchable repo-backed archive. The current raw R2 blob archive is an interim
+implementation, not the target architecture.
 
-- [ ] Archive path convention inside KnowledgeStore: `/var/sessions/{username}/{processId}/{sessionId}.jsonl.gz`
-- [ ] `proc.reset` archives current conversation to KnowledgeStore, starts fresh in the same process
+- [ ] Archive path convention: `/var/sessions/{username}/{processId}/{sessionId}.jsonl.gz`
+- [ ] `proc.reset` archives current conversation to the archive repo, starts fresh in the same process
 - [ ] `proc.kill` archives before destroying the Process DO
 - [ ] Ephemeral processes (task/cron) auto-archive on completion, then kernel destroys the DO
-- [ ] Init process periodically compacts: summarize old messages, flush full transcript to KnowledgeStore
-- [ ] Any process can load archived conversations through KnowledgeStore-backed retrieval
+- [ ] Init process periodically compacts: summarize old messages, flush full transcript to the archive repo
+- [ ] Any process can load archived conversations through repo-backed retrieval
 - [ ] Create `/var/sessions/` directory structure on first boot / user creation
 
 ## Context assembly / process profiles
@@ -287,30 +287,29 @@ types need different awareness, tools, and retrieval behavior.
 - [ ] Design CLI spawn surface for explicit process/profile creation
   - e.g. `spawn mcp "<msg>" --context cwd --systemprompt ...`
 
-## KnowledgeStore (versioned + searchable knowledge backend)
+## Repo-backed archives and retrieval
 
-Knowledge-like data should not live as raw, unindexed R2 blobs when we care about search,
-history, diffs, and efficient retrieval. Introduce a separate KnowledgeStore abstraction,
-likely backed by ripgit via Service Binding, while keeping `GsvFs` as the operational
-filesystem for live files.
+Durable context and archive data should not live as raw, unindexed R2 blobs when we care
+about search, history, diffs, and efficient retrieval. Use ripgit-backed repositories for
+those records while keeping `GsvFs` as the operational filesystem for live files.
 
-- [ ] Define `KnowledgeStore` API:
+- [ ] Define archive/retrieval helpers over `repo.*`:
   - `read(path, ref?)`
   - `write(path, content, { message, authorUid })`
   - `list(prefix, ref?)`
   - `search(query, { scope, prefix, limit })`
   - `history(path, limit?)`
   - `archiveSession(processId, sessionId, messages, summary?)`
-- [ ] Explicit boundary: KnowledgeStore is NOT a replacement for `GsvFs`
+- [ ] Explicit boundary: repo-backed archives are NOT a replacement for `GsvFs`
   - good fits: `CONSTITUTION.md`, `context.d/*`, memory notes, archived sessions, skills/app packages later
   - bad fits: `/sys`, `/proc`, `/dev`, auth/config runtime truth, active process state, scratch files
 - [ ] Repo granularity decision:
   - one repo per user for home knowledge (`CONSTITUTION.md`, `context.d/`, memory notes)
   - separate repo per user for session archives if transcript volume/search churn warrants it
-- [ ] Kernel wrapper over ripgit Service Binding — hide git semantics from most of the OS
-- [ ] Migrate prompt assembly from raw R2 `CONSTITUTION.md` + `context.d/*.md` reads to KnowledgeStore retrieval
-- [ ] Migrate conversation archival from raw R2 gzip blobs to KnowledgeStore
-- [ ] Expose KnowledgeStore as a context provider for long-context / recursive process retrieval
+- [ ] Keep semantic helpers above kernel primitives; do not add app-shaped syscall domains
+- [ ] Migrate prompt assembly from raw R2 `CONSTITUTION.md` + `context.d/*.md` reads to repo-backed retrieval
+- [ ] Migrate conversation archival from raw R2 gzip blobs to repo-backed archives
+- [ ] Expose archive retrieval as a context provider for long-context / recursive process retrieval
 - [ ] Optional later: read-only history mount for browsing archived knowledge (not write-through FS)
 - [ ] Optional later: pass narrow `KNOWLEDGE` capability bindings into Dynamic Worker sandboxes
 

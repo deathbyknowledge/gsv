@@ -48,13 +48,20 @@ import {
   handlePkgRemoteRemove,
   handlePkgRemove,
   handlePkgReviewApprove,
-  handlePkgRepoLog,
-  handlePkgRepoRead,
-  handlePkgRepoRefs,
-  handlePkgRepoSearch,
-  handlePkgRepoDiff,
   handlePkgSync,
 } from "./pkg";
+import {
+  handleRepoApply,
+  handleRepoCompare,
+  handleRepoCreate,
+  handleRepoDiff,
+  handleRepoImport,
+  handleRepoList,
+  handleRepoLog,
+  handleRepoRead,
+  handleRepoRefs,
+  handleRepoSearch,
+} from "./repo";
 import {
   handleSysTokenCreate,
   handleSysTokenList,
@@ -74,20 +81,6 @@ import {
   handleAdapterStateUpdate,
   handleAdapterStatus,
 } from "./adapter-handlers";
-import {
-  handleKnowledgeCompile,
-  handleKnowledgeDbDelete,
-  handleKnowledgeDbInit,
-  handleKnowledgeDbList,
-  handleKnowledgeIngest,
-  handleKnowledgeList,
-  handleKnowledgeMerge,
-  handleKnowledgePromote,
-  handleKnowledgeQuery,
-  handleKnowledgeRead,
-  handleKnowledgeSearch,
-  handleKnowledgeWrite,
-} from "./knowledge";
 import {
   handleNotificationCreate,
   handleNotificationDismiss,
@@ -256,21 +249,6 @@ async function dispatchNative(
       case "pkg.remove":
         data = handlePkgRemove(frame.args, ctx);
         break;
-      case "pkg.repo.refs":
-        data = await handlePkgRepoRefs(frame.args, ctx);
-        break;
-      case "pkg.repo.read":
-        data = await handlePkgRepoRead(frame.args, ctx);
-        break;
-      case "pkg.repo.log":
-        data = await handlePkgRepoLog(frame.args, ctx);
-        break;
-      case "pkg.repo.search":
-        data = await handlePkgRepoSearch(frame.args, ctx);
-        break;
-      case "pkg.repo.diff":
-        data = await handlePkgRepoDiff(frame.args, ctx);
-        break;
       case "pkg.remote.list":
         data = handlePkgRemoteList(frame.args, ctx);
         break;
@@ -285,6 +263,38 @@ async function dispatchNative(
         break;
       case "pkg.public.set":
         data = handlePkgPublicSet(frame.args, ctx);
+        break;
+
+      // --- repo.* ---
+      case "repo.list":
+        data = handleRepoList(frame.args, ctx);
+        break;
+      case "repo.create":
+        data = await handleRepoCreate(frame.args, ctx);
+        break;
+      case "repo.refs":
+        data = await handleRepoRefs(frame.args, ctx);
+        break;
+      case "repo.read":
+        data = await handleRepoRead(frame.args, ctx);
+        break;
+      case "repo.search":
+        data = await handleRepoSearch(frame.args, ctx);
+        break;
+      case "repo.log":
+        data = await handleRepoLog(frame.args, ctx);
+        break;
+      case "repo.diff":
+        data = await handleRepoDiff(frame.args, ctx);
+        break;
+      case "repo.compare":
+        data = await handleRepoCompare(frame.args, ctx);
+        break;
+      case "repo.apply":
+        data = await handleRepoApply(frame.args, ctx);
+        break;
+      case "repo.import":
+        data = await handleRepoImport(frame.args, ctx);
         break;
 
       // --- ai.* ---
@@ -369,44 +379,6 @@ async function dispatchNative(
         break;
       case "adapter.status":
         data = await handleAdapterStatus(frame.args, ctx);
-        break;
-
-      // --- knowledge.* ---
-      case "knowledge.list":
-        data = await handleKnowledgeList(ctx, frame.args);
-        break;
-      case "knowledge.db.list":
-        data = await handleKnowledgeDbList(ctx, frame.args);
-        break;
-      case "knowledge.db.init":
-        data = await handleKnowledgeDbInit(ctx, frame.args);
-        break;
-      case "knowledge.db.delete":
-        data = await handleKnowledgeDbDelete(ctx, frame.args);
-        break;
-      case "knowledge.read":
-        data = await handleKnowledgeRead(ctx, frame.args);
-        break;
-      case "knowledge.write":
-        data = await handleKnowledgeWrite(ctx, frame.args);
-        break;
-      case "knowledge.search":
-        data = await handleKnowledgeSearch(ctx, frame.args);
-        break;
-      case "knowledge.merge":
-        data = await handleKnowledgeMerge(ctx, frame.args);
-        break;
-      case "knowledge.promote":
-        data = await handleKnowledgePromote(ctx, frame.args);
-        break;
-      case "knowledge.query":
-        data = await handleKnowledgeQuery(ctx, frame.args);
-        break;
-      case "knowledge.ingest":
-        data = await handleKnowledgeIngest(ctx, frame.args);
-        break;
-      case "knowledge.compile":
-        data = await handleKnowledgeCompile(ctx, frame.args);
         break;
 
       case "notification.create":

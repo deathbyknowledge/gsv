@@ -1031,7 +1031,7 @@ export class Process extends Host<Env> {
       return;
     }
 
-    const repo = workspaceRepoRef(workspaceId, this.identity.uid);
+    const repo = workspaceRepoRef(workspaceId, this.identity.username);
     const existingSummary = await this.readWorkspaceSummary(repo);
     const config = await this.resolveCheckpointConfig();
     const transcript = buildCheckpointTranscript(messages);

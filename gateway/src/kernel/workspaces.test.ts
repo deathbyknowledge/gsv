@@ -20,6 +20,7 @@ function createMockSql() {
       const [
         workspace_id,
         owner_uid,
+        owner_username,
         label,
         kind,
         state,
@@ -31,6 +32,7 @@ function createMockSql() {
       ] = bindings as [
         string,
         number,
+        string,
         string | null,
         string,
         string,
@@ -44,6 +46,7 @@ function createMockSql() {
       table.set(workspace_id, {
         workspace_id,
         owner_uid,
+        owner_username,
         label,
         kind,
         state,
@@ -104,10 +107,11 @@ describe("WorkspaceStore", () => {
     const store = new WorkspaceStore(sql as unknown as SqlStorage);
     store.init();
 
-    const record = store.create(1000, { label: "landing page" });
+    const record = store.create({ uid: 1000, username: "sam" }, { label: "landing page" });
 
     expect(record.workspaceId).toMatch(/^ws_/);
     expect(record.ownerUid).toBe(1000);
+    expect(record.ownerUsername).toBe("sam");
     expect(record.label).toBe("landing page");
     expect(record.kind).toBe("thread");
     expect(record.state).toBe("active");
@@ -120,10 +124,10 @@ describe("WorkspaceStore", () => {
     store.init();
 
     vi.spyOn(Date, "now").mockReturnValue(10);
-    const first = store.create(1000, { label: "first" });
+    const first = store.create({ uid: 1000, username: "sam" }, { label: "first" });
 
     vi.spyOn(Date, "now").mockReturnValue(20);
-    const second = store.create(1000, { label: "second" });
+    const second = store.create({ uid: 1000, username: "sam" }, { label: "second" });
 
     vi.spyOn(Date, "now").mockReturnValue(30);
     expect(store.touch(first.workspaceId)).toBe(true);
@@ -138,7 +142,7 @@ describe("WorkspaceStore", () => {
     const store = new WorkspaceStore(sql as unknown as SqlStorage);
     store.init();
 
-    const record = store.create(1000, { label: "temp" });
+    const record = store.create({ uid: 1000, username: "sam" }, { label: "temp" });
     expect(store.delete(record.workspaceId)).toBe(true);
     expect(store.get(record.workspaceId)).toBeNull();
   });

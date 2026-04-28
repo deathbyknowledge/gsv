@@ -156,6 +156,9 @@ impl DurableObject for Repository {
                     "search" if req.method() == Method::Get => {
                         hyperspace::handle_search(&self.sql, &req).await
                     }
+                    "compare" if req.method() == Method::Get => {
+                        hyperspace::handle_compare(&self.sql, &req).await
+                    }
                     "apply" if req.method() == Method::Post => {
                         hyperspace::handle_apply(&self.sql, &mut req).await
                     }

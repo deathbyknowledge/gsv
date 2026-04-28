@@ -8,6 +8,7 @@
     "./package-assembly": "./src/package-assembly.ts",
     "./syscalls/system": "./src/syscalls/system.ts",
     "./syscalls/packages": "./src/syscalls/packages.ts",
+    "./syscalls/repositories": "./src/syscalls/repositories.ts",
     "./syscalls/proc": "./src/syscalls/proc.ts",
     "./syscalls/notification": "./src/syscalls/notification.ts"
   }

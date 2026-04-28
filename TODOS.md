@@ -21,7 +21,7 @@ This branch has the package review architecture replacement in progress:
   - Devices
   - Processes
   - Packages
-- Added upstream bootstrap flow for `system/gsv`.
+- Added upstream bootstrap flow for `root/gsv`.
 - Fixed CI after the `gateway-os -> gateway` rename.
 - Added third-party package review gating:
   - imported third-party packages default disabled
@@ -68,7 +68,6 @@ Still to verify/fix:
   - `pkg refs`
   - `pkg log`
 - Verify approval flow still works from Packages after review
-- Decide whether to delete old `pkg.repo.*` syscalls entirely or keep them for app-internal use
 
 ### 2. Add tests for the new package review architecture
 
@@ -132,4 +131,3 @@ Likely first command sequence when resuming:
 2. run gateway typecheck/tests if needed
 3. push + sync builtins to exercise review flow
 4. test a real third-party review end to end in Packages/Chat
-

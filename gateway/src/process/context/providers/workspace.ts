@@ -14,7 +14,7 @@ export function createWorkspaceContextProvider(): PromptContextProvider {
 
       const repo = workspaceRepoRef(
         input.identity.workspaceId,
-        input.identity.uid,
+        input.identity.username,
       );
       const contextTree = await input.ripgit.readPath(repo, ".gsv/context.d");
       if (contextTree.kind === "tree") {

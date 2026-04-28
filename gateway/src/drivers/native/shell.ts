@@ -34,12 +34,14 @@ import {
   handlePkgRemoteList,
   handlePkgRemoteRemove,
   handlePkgRemove,
-  handlePkgRepoLog,
-  handlePkgRepoRefs,
   handlePkgReviewApprove,
   isRepoPublic,
   resolveInstalledPackage,
 } from "../../kernel/pkg";
+import {
+  handleRepoLog,
+  handleRepoRefs,
+} from "../../kernel/repo";
 import {
   packageRouteBase,
   visiblePackageScopesForActor,
@@ -48,7 +50,6 @@ import {
 } from "../../kernel/packages";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import { buildKnowledgeCommands } from "./knowledge-shell";
 import { renderManualPage } from "./man-pages";
 import { buildNotifyCommands } from "./notify-shell";
 import { sendFrameToProcess } from "../../shared/utils";
@@ -958,7 +959,6 @@ function buildCustomCommands(
   const stat = buildStatCommand(fs, identity, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx);
   const pkg = buildPkgCommand(ctx);
-  const knowledgeCommands = buildKnowledgeCommands(ctx);
   const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
 
@@ -975,7 +975,6 @@ function buildCustomCommands(
     stat,
     codemode,
     pkg,
-    ...knowledgeCommands,
     ...notifyCommands,
     ...packageCommands,
   ];
@@ -985,7 +984,6 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
   const commands = [];
   const reserved = new Set([
     "pkg",
-    "wiki",
     "mem",
     "notify",
     "whoami",
@@ -998,39 +996,66 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
     "man",
     "ls",
     "stat",
+    "wiki",
     "codemode",
   ]);
-
-  for (const record of ctx.packages.list({
+  const packageRecords = ctx.packages.list({
     enabled: true,
     scopes: visiblePackageScopesForActor(identity),
-  })) {
+  });
+
+  for (const record of packageRecords) {
+    if (!isBuiltinWikiPackage(record)) continue;
+    const wikiEntrypoint = record.manifest.entrypoints.find((entrypoint) =>
+      entrypoint.kind === "command" && entrypoint.command?.trim() === "wiki"
+    );
+    if (wikiEntrypoint) {
+      commands.push(buildPackageCommand("wiki", record, wikiEntrypoint, identity, ctx));
+    }
+    break;
+  }
+
+  for (const record of packageRecords) {
     for (const entrypoint of record.manifest.entrypoints) {
       if (entrypoint.kind !== "command") continue;
       const commandName = entrypoint.command?.trim();
       if (!commandName || reserved.has(commandName)) continue;
       reserved.add(commandName);
-      commands.push(defineCommand(commandName, async (args, bashCtx): Promise<ExecResult> => {
-        try {
-          const result = await runPackageCommand(record, entrypoint, args, bashCtx.cwd, identity, ctx);
-          return {
-            stdout: result.stdout ?? "",
-            stderr: result.stderr ?? "",
-            exitCode: result.exitCode ?? 0,
-          };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          return {
-            stdout: "",
-            stderr: `${commandName}: ${message}\n`,
-            exitCode: 1,
-          };
-        }
-      }));
+      commands.push(buildPackageCommand(commandName, record, entrypoint, identity, ctx));
     }
   }
 
   return commands;
+}
+
+function buildPackageCommand(
+  commandName: string,
+  record: InstalledPackageRecord,
+  entrypoint: PackageEntrypoint,
+  identity: ProcessIdentity,
+  ctx: KernelContext,
+) {
+  return defineCommand(commandName, async (args, bashCtx): Promise<ExecResult> => {
+    try {
+      const result = await runPackageCommand(record, entrypoint, args, bashCtx.cwd, identity, ctx);
+      return {
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        exitCode: result.exitCode ?? 0,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        stdout: "",
+        stderr: `${commandName}: ${message}\n`,
+        exitCode: 1,
+      };
+    }
+  });
+}
+
+function isBuiltinWikiPackage(record: InstalledPackageRecord): boolean {
+  return record.packageId.startsWith("builtin:wiki@") && record.manifest.name === "wiki";
 }
 
 function buildPkgCommand(ctx: KernelContext) {
@@ -1083,21 +1108,22 @@ async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecRe
       return { stdout: formatPkgCapabilities(target), stderr: "", exitCode: 0 };
     }
     case "refs": {
-      requireCommandCapability(ctx, "pkg.repo.refs");
+      requireCommandCapability(ctx, "repo.refs");
       const target = resolvePkgTarget(rest[0], ctx);
-      const result = await handlePkgRepoRefs({ packageId: target.packageId }, ctx);
-      return { stdout: formatPkgRefs(result), stderr: "", exitCode: 0 };
+      const result = await handleRepoRefs({ repo: target.manifest.source.repo }, ctx);
+      return { stdout: formatPkgRefs(target, result), stderr: "", exitCode: 0 };
     }
     case "log": {
-      requireCommandCapability(ctx, "pkg.repo.log");
+      requireCommandCapability(ctx, "repo.log");
       const parsed = parsePkgLogArgs(rest);
       const target = resolvePkgTarget(parsed.packageId, ctx);
-      const result = await handlePkgRepoLog({
-        packageId: target.packageId,
+      const result = await handleRepoLog({
+        repo: target.manifest.source.repo,
+        ref: target.manifest.source.ref,
         limit: parsed.limit,
         offset: parsed.offset,
       }, ctx);
-      return { stdout: formatPkgLog(result), stderr: "", exitCode: 0 };
+      return { stdout: formatPkgLog(target, result), stderr: "", exitCode: 0 };
     }
     case "add": {
       requireCommandCapability(ctx, "pkg.add");
@@ -1321,8 +1347,14 @@ function formatPkgEgress(mode?: string, allow?: string[]): string {
     : "allowlist";
 }
 
-function formatPkgRefs(result: Awaited<ReturnType<typeof handlePkgRepoRefs>>): string {
-  const lines = [`packageId: ${result.packageId}`, `activeRef: ${result.activeRef}`, "", "heads:"];
+function formatPkgRefs(target: InstalledPackageRecord, result: Awaited<ReturnType<typeof handleRepoRefs>>): string {
+  const lines = [
+    `packageId: ${target.packageId}`,
+    `repo: ${result.repo}`,
+    `activeRef: ${target.manifest.source.ref}`,
+    "",
+    "heads:",
+  ];
   for (const [name, hash] of Object.entries(result.heads).sort(([left], [right]) => left.localeCompare(right))) {
     lines.push(`- ${name}\t${hash}`);
   }
@@ -1334,8 +1366,8 @@ function formatPkgRefs(result: Awaited<ReturnType<typeof handlePkgRepoRefs>>): s
   return lines.join("\n");
 }
 
-function formatPkgLog(result: Awaited<ReturnType<typeof handlePkgRepoLog>>): string {
-  const lines = [`packageId: ${result.packageId}`, `repo: ${result.repo}`, `ref: ${result.ref}`, ""];
+function formatPkgLog(target: InstalledPackageRecord, result: Awaited<ReturnType<typeof handleRepoLog>>): string {
+  const lines = [`packageId: ${target.packageId}`, `repo: ${result.repo}`, `ref: ${result.ref}`, ""];
   for (const entry of result.entries) {
     lines.push(`${entry.hash.slice(0, 7)} ${entry.message.split("\n")[0] || "No message"}`);
     lines.push(`  author: ${entry.author} <${entry.authorEmail}>`);

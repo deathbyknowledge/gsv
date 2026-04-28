@@ -13,7 +13,7 @@ export async function ensureHomeStorageLayout(
   }
 
   const client = new RipgitClient(env.RIPGIT);
-  const repo = homeKnowledgeRepoRef(identity.uid);
+  const repo = homeKnowledgeRepoRef(identity.username);
   const [
     constitution,
     contextDir,

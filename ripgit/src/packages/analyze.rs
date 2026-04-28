@@ -1206,7 +1206,7 @@ mod tests {
 
     fn sample_source() -> ResolvedPackageSource {
         ResolvedPackageSource {
-            repo: "system/gsv".to_string(),
+            repo: "root/gsv".to_string(),
             requested_ref: "main".to_string(),
             resolved_commit: "abc123".to_string(),
             subdir: "builtin-packages/doctor".to_string(),

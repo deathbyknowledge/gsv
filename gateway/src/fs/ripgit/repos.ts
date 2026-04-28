@@ -1,20 +1,20 @@
 import type { RipgitRepoRef } from "./client";
 
 export function homeKnowledgeRepoRef(
-  ownerUid: number,
+  ownerUsername: string,
 ): RipgitRepoRef {
   return {
-    owner: `uid-${ownerUid}`,
+    owner: ownerUsername,
     repo: "home",
   };
 }
 
 export function workspaceRepoRef(
   workspaceId: string,
-  ownerUid: number,
+  ownerUsername: string,
 ): RipgitRepoRef {
   return {
-    owner: `uid-${ownerUid}`,
+    owner: ownerUsername,
     repo: workspaceId,
   };
 }
