@@ -15,7 +15,7 @@ import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RoutingTable, RouteOrigin } from "./routing";
-import type { ShellSessionStore } from "./shell-sessions";
+import type { ShellSessionRecord, ShellSessionStore } from "./shell-sessions";
 import {
   handleFsRead,
   handleFsWrite,
@@ -145,6 +145,19 @@ export async function dispatch(
       return {
         handled: true,
         response: errFrame(frame.id, 400, "Shell session target does not match the requested target"),
+      };
+    }
+    if (session.status === "failed" && session.error) {
+      const identity = ctx.identity!;
+      if (!ctx.devices.canAccess(session.deviceId, identity.process.uid, identity.process.gids)) {
+        return {
+          handled: true,
+          response: errFrame(frame.id, 403, `Access denied to device: ${session.deviceId}`),
+        };
+      }
+      return {
+        handled: true,
+        response: failedShellSessionFrame(frame.id, session),
       };
     }
     delete raw.target;
@@ -501,4 +514,19 @@ function findDeviceConnection(
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
+}
+
+function failedShellSessionFrame(id: string, session: ShellSessionRecord): ResponseFrame {
+  return {
+    type: "res",
+    id,
+    ok: true,
+    data: {
+      status: "failed",
+      output: "",
+      error: session.error ?? "Shell session failed",
+      ...(session.exitCode !== null ? { exitCode: session.exitCode } : {}),
+      sessionId: session.sessionId,
+    },
+  };
 }
