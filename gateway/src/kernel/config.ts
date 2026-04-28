@@ -236,7 +236,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // Timezone used for cron scheduling and log timestamps (IANA format).
   "config/server/timezone": "UTC",
   // The current server version (set at boot, read-only for users).
-  "config/server/version": "0.1.0",
+  "config/server/version": "0.1.1",
 
   // -- Shell ------------------------------------------------------------------
   // Default shell timeout in ms for native shell.exec.
