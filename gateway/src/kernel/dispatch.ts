@@ -27,6 +27,7 @@ import { handleShellExec } from "../drivers/native/shell";
 import { handleAiTools, handleAiConfig } from "./ai";
 import {
   handleProcList,
+  handleProcIpcCall,
   handleProcIpcSend,
   handleProcProfileList,
   handleProcSpawn,
@@ -219,6 +220,9 @@ async function dispatchNative(
         break;
       case "proc.ipc.send":
         data = await handleProcIpcSend(frame.args, ctx);
+        break;
+      case "proc.ipc.call":
+        data = await handleProcIpcCall(frame.args, ctx);
         break;
       case "proc.send":
       case "proc.abort":

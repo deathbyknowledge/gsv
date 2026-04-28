@@ -500,21 +500,25 @@ transcript archives and visible summary markers.
 
 ### 6. Add same-owner IPC
 
-Partially completed. `proc.ipc.send` now provides asynchronous same-owner
-process-to-process delivery. The public syscall only works from a registered
-source process, validates that source and target processes have the same uid,
-and then asks the target Process DO to handle a kernel-only
-`proc.ipc.deliver` request. The target appends a visible message envelope into
-the requested conversation and starts a run, or queues the message if another
-run is active.
+Partially completed. `proc.ipc.send` provides asynchronous same-owner
+process-to-process delivery. `proc.ipc.call` adds a bounded call request: the
+kernel records a call id and deadline, delivers the request to the target
+process, and later sends `ipc.reply` or `ipc.timeout` back to the source
+process. Both public syscalls only work from a registered source process,
+validate that source and target processes have the same uid, and deliver through
+kernel-only `proc.ipc.deliver`.
+
+The process-facing userland shape is the shell `proc` command (`proc send` and
+`proc call`) rather than a direct model tool. `proc.ipc.*` remains the syscall
+ABI and enforcement point.
 
 Implemented:
 
 - async mail
+- bounded call
 
 Still pending:
 
-- bounded call
 - delegation helper
 
 Defer cross-user IPC until ACLs are in place.

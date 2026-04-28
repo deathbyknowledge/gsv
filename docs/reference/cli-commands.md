@@ -39,6 +39,18 @@ matching.
 Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
+Inside the gateway shell, `proc` is the process IPC userland command:
+
+```bash
+proc list
+proc send <pid> [--conversation id] [--metadata-json json] <message>
+proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
+```
+
+`proc send` is asynchronous same-owner process mail. `proc call` is bounded:
+the source process receives either `ipc.reply` or `ipc.timeout` in its default
+conversation.
+
 ## Process Commands
 
 ```bash

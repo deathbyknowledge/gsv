@@ -189,6 +189,19 @@ function isProcessIdentity(value: unknown): value is ProcessIdentity {
     && (identity.workspaceId === null || typeof identity.workspaceId === "string");
 }
 
+function isIpcCallEnvelope(value: unknown): value is NonNullable<ProcIpcDeliverArgs["call"]> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const call = value as Partial<NonNullable<ProcIpcDeliverArgs["call"]>>;
+  return typeof call.callId === "string"
+    && call.callId.trim().length > 0
+    && typeof call.replyToPid === "string"
+    && call.replyToPid.trim().length > 0
+    && typeof call.deadlineAt === "number"
+    && Number.isFinite(call.deadlineAt);
+}
+
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
@@ -254,6 +267,47 @@ function formatIpcMessage(args: ProcIpcDeliverArgs): string {
   const renderedMetadata = renderJsonBlock(args.metadata);
   if (renderedMetadata) {
     lines.push("", "Metadata:", "```json", renderedMetadata, "```");
+  }
+  if (args.call) {
+    lines.push(
+      "",
+      "IPC call:",
+      `Call id: \`${args.call.callId}\``,
+      `Deadline: ${new Date(args.call.deadlineAt).toISOString()}`,
+      `Reply target: process \`${args.call.replyToPid}\``,
+      "",
+      "Complete this run before the deadline. The kernel will deliver the final response to the caller.",
+    );
+  }
+  return lines.join("\n");
+}
+
+function formatIpcReplyMessage(signal: string, payload: unknown): string {
+  const record = payload && typeof payload === "object"
+    ? payload as Record<string, unknown>
+    : {};
+  const callId = typeof record.callId === "string" ? record.callId : "unknown";
+  const targetPid = typeof record.targetPid === "string" ? record.targetPid : "unknown";
+  const runId = typeof record.runId === "string" ? record.runId : null;
+  const error = typeof record.error === "string" && record.error.trim().length > 0
+    ? record.error.trim()
+    : null;
+  const response = "response" in record ? record.response : undefined;
+  const renderedResponse = renderJsonBlock(response);
+
+  const lines = [
+    signal === "ipc.timeout"
+      ? `IPC call \`${callId}\` to process \`${targetPid}\` timed out.`
+      : `IPC call \`${callId}\` completed from process \`${targetPid}\`.`,
+  ];
+  if (runId) {
+    lines.push(`Run id: \`${runId}\`.`);
+  }
+  if (error) {
+    lines.push("", "Error:", error);
+  }
+  if (renderedResponse) {
+    lines.push("", "Response:", "```json", renderedResponse, "```");
   }
   return lines.join("\n");
 }
@@ -607,6 +661,10 @@ export class Process extends Host<Env> {
       return { ok: false, error: "proc.ipc.deliver metadata must be an object" };
     }
 
+    if (args.call !== undefined && !isIpcCallEnvelope(args.call)) {
+      return { ok: false, error: "proc.ipc.deliver call must be a valid call envelope" };
+    }
+
     const runId = crypto.randomUUID();
     const conversationId = normalizeConversationId(args.conversationId);
     const conversation = this.store.ensureConversation(conversationId);
@@ -621,6 +679,7 @@ export class Process extends Host<Env> {
       message,
       metadata: args.metadata,
       sentAt: Number.isFinite(args.sentAt) ? args.sentAt : Date.now(),
+      ...(args.call ? { call: args.call } : {}),
     };
     const renderedMessage = formatIpcMessage(deliveredArgs);
 
@@ -1214,7 +1273,7 @@ export class Process extends Host<Env> {
     }
 
     switch (frame.signal) {
-      case "identity.changed": {
+        case "identity.changed": {
         const identity = (frame.payload as { identity: ProcessIdentity })
           ?.identity;
         if (identity) {
@@ -1222,6 +1281,10 @@ export class Process extends Host<Env> {
         }
         break;
       }
+      case "ipc.reply":
+      case "ipc.timeout":
+        await this.handleIpcSignal(frame.signal, frame.payload);
+        break;
       default:
         console.log(`[Process] Unknown signal: ${frame.signal}`);
         break;
@@ -1238,6 +1301,21 @@ export class Process extends Host<Env> {
 
   private async handleWatchedSignalTriggered(signal: string, payload: unknown): Promise<void> {
     this.store.appendMessage("system", formatWatchedSignalMessage(signal, payload), {
+      conversationId: DEFAULT_CONVERSATION_ID,
+    });
+    if (!this.currentRun) {
+      const runId = crypto.randomUUID();
+      this.currentRun = {
+        runId,
+        queued: false,
+        conversationId: DEFAULT_CONVERSATION_ID,
+      };
+      this.scheduleTick(runId);
+    }
+  }
+
+  private async handleIpcSignal(signal: string, payload: unknown): Promise<void> {
+    this.store.appendMessage("system", formatIpcReplyMessage(signal, payload), {
       conversationId: DEFAULT_CONVERSATION_ID,
     });
     if (!this.currentRun) {

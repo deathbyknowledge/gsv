@@ -412,6 +412,7 @@ Runtime behavior:
 | `proc.spawn` | `handleProcSpawn` | Validates the AI profile, resolves package profiles, materializes workspace and mounts, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. `init` is singleton; other profiles get UUID pids. |
 | `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. Stores media, appends a user message, starts a run if idle, or queues the message if a run is active. Touches workspace activity before forwarding. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
+| `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Logical cancellation of the active run. Clears pending HIL and current run, emits `chat.complete` with `aborted: true`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. |
 | `proc.kill` | Process DO | Checkpoints workspace, optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. Does not remove the kernel process registry entry in normal syscall use. |
@@ -494,10 +495,23 @@ type ProcIpcDeliverArgs = {
   message: string;
   metadata?: Record<string, unknown>;
   sentAt: number;
+  call?: {
+    callId: string;
+    replyToPid: string;
+    deadlineAt: number;
+  };
 };
 
 type ProcIpcSendResult =
   | { ok: true; status: "started"; pid: string; sourcePid: string; conversationId: string; runId: string; queued?: boolean }
+  | OperationError;
+
+type ProcIpcCallArgs = ProcIpcSendArgs & {
+  timeoutMs?: number;
+};
+
+type ProcIpcCallResult =
+  | { ok: true; status: "started"; callId: string; pid: string; sourcePid: string; conversationId: string; runId: string; deadlineAt: number; queued?: boolean }
   | OperationError;
 
 type ProcessSyscalls = {
@@ -524,6 +538,11 @@ type ProcessSyscalls = {
   "proc.ipc.send": {
     args: ProcIpcSendArgs;
     result: ProcIpcSendResult;
+  };
+
+  "proc.ipc.call": {
+    args: ProcIpcCallArgs;
+    result: ProcIpcCallResult;
   };
 
   "proc.ipc.deliver": {

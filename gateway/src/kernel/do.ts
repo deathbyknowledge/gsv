@@ -27,6 +27,7 @@ import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes
 import { WorkspaceStore } from "./workspaces";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
 import { NotificationStore } from "./notifications";
+import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
 import { AppSessionStore } from "./app-sessions";
 import {
   ensureKernelBootstrapped,
@@ -166,6 +167,7 @@ export class Kernel extends Host<Env> {
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly signalWatches: SignalWatchStore;
+  private readonly ipcCalls: IpcCallStore;
   private readonly notifications: NotificationStore;
   private readonly appSessions: AppSessionStore;
   private readonly packages: PackageStore;
@@ -212,6 +214,9 @@ export class Kernel extends Host<Env> {
 
     this.signalWatches = new SignalWatchStore(sql);
     this.signalWatches.init();
+
+    this.ipcCalls = new IpcCallStore(sql);
+    this.ipcCalls.init();
 
     this.notifications = new NotificationStore(sql);
     this.notifications.init();
@@ -601,6 +606,7 @@ export class Kernel extends Host<Env> {
     const runId = this.extractRunId(frame.payload);
 
     await this.dispatchSignalWatches(identity.uid, processId, frame);
+    await this.completeIpcCallsFromSignal(identity.uid, processId, frame, runId);
 
     if (!frame.signal.startsWith("chat.")) return;
 
@@ -649,6 +655,61 @@ export class Kernel extends Host<Env> {
         }
       });
     this.pendingProcessSignals.set(processId, queued);
+  }
+
+  private async completeIpcCallsFromSignal(
+    uid: number,
+    processId: string,
+    frame: SignalFrame,
+    runId: string | null,
+  ): Promise<void> {
+    if (frame.signal !== "chat.complete" || !runId) {
+      return;
+    }
+
+    const payload = frame.payload && typeof frame.payload === "object"
+      ? frame.payload as Record<string, unknown>
+      : {};
+    const response = {
+      text: typeof payload.text === "string" ? payload.text : null,
+      usage: payload.usage ?? null,
+    };
+    const error = typeof payload.error === "string" ? payload.error : null;
+    const completed = this.ipcCalls.completeByRun({
+      uid,
+      targetPid: processId,
+      runId,
+      response,
+      error,
+    });
+
+    for (const call of completed) {
+      await this.deliverIpcCallSignal("ipc.reply", call, {
+        response,
+        error,
+      });
+    }
+  }
+
+  private async deliverIpcCallSignal(
+    signal: "ipc.reply" | "ipc.timeout",
+    call: IpcCallRecord,
+    extra?: { response?: unknown; error?: string | null },
+  ): Promise<void> {
+    await sendFrameToProcess(call.sourcePid, {
+      type: "sig",
+      signal,
+      payload: {
+        callId: call.callId,
+        sourcePid: call.sourcePid,
+        targetPid: call.targetPid,
+        ...(call.targetRunId ? { runId: call.targetRunId } : {}),
+        deadlineAt: call.deadlineAt,
+        status: call.status,
+        ...(extra?.response !== undefined ? { response: extra.response } : {}),
+        ...(extra?.error ? { error: extra.error } : {}),
+      },
+    });
   }
 
   private deliverSignalToConnection(
@@ -860,6 +921,7 @@ export class Kernel extends Host<Env> {
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
       signalWatches: this.signalWatches,
+      ipcCalls: this.ipcCalls,
       notifications: this.notifications,
       connection: null as unknown as Connection,
       identity: connIdentity,
@@ -868,6 +930,7 @@ export class Kernel extends Host<Env> {
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
+      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
     };
 
     const origin: RouteOrigin = { type: "process", id: processId };
@@ -923,6 +986,7 @@ export class Kernel extends Host<Env> {
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
       signalWatches: this.signalWatches,
+      ipcCalls: this.ipcCalls,
       notifications: this.notifications,
       connection,
       identity: state.identity as ConnectionIdentity,
@@ -931,6 +995,7 @@ export class Kernel extends Host<Env> {
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
+      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
     };
   }
 
@@ -948,6 +1013,7 @@ export class Kernel extends Host<Env> {
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
       signalWatches: this.signalWatches,
+      ipcCalls: this.ipcCalls,
       notifications: this.notifications,
       connection: null as unknown as Connection,
       identity,
@@ -956,6 +1022,7 @@ export class Kernel extends Host<Env> {
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
+      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
     };
   }
 
@@ -977,6 +1044,15 @@ export class Kernel extends Host<Env> {
         return sched.id;
       },
     };
+  }
+
+  private async scheduleIpcCallTimeout(callId: string, delayMs: number): Promise<string> {
+    const sched = await this.schedule(
+      Math.max(1, delayMs / 1000),
+      "onIpcCallTimeout",
+      callId,
+    );
+    return sched.id;
   }
 
   private async handleReq(connection: Connection<ConnectionState>, frame: RequestFrame): Promise<void> {
@@ -1519,6 +1595,16 @@ export class Kernel extends Host<Env> {
     };
 
     this.deliverToOrigin(expired.origin, timeoutFrame);
+  }
+
+  async onIpcCallTimeout(callId: string): Promise<void> {
+    await this.ready;
+    const timedOut = this.ipcCalls.timeout(callId);
+    if (!timedOut) return;
+
+    await this.deliverIpcCallSignal("ipc.timeout", timedOut, {
+      error: timedOut.error,
+    });
   }
 
   private deliverToOrigin(origin: RouteOrigin, frame: ResponseFrame): void {

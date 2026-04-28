@@ -143,6 +143,18 @@ describe("pkg shell command", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("shows proc command usage", async () => {
+    const result = await handleShellExec(
+      { input: "proc --help" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("proc send <pid>");
+    expect(result.stdout).toContain("proc call <pid>");
+    expect(result.stderr).toBe("");
+  });
+
   it("defaults to the mounted package for manifest inspection", async () => {
     const result = await handleShellExec(
       { input: "pkg manifest", cwd: "/src/package" },

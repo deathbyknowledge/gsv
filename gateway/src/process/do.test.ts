@@ -123,9 +123,7 @@ describe("Process DO — mechanical", () => {
       const codeMode = data.tools.find((tool) => tool.name === "CodeMode");
       expect(codeMode).toBeDefined();
       expect(codeMode?.inputSchema.required).toEqual(["code"]);
-      const processMessage = data.tools.find((tool) => tool.name === "ProcessMessage");
-      expect(processMessage).toBeDefined();
-      expect(processMessage?.inputSchema.required).toEqual(["pid", "message"]);
+      expect(data.tools.find((tool) => tool.name === "ProcessMessage")).toBeUndefined();
     });
   });
 
@@ -384,6 +382,137 @@ describe("Process DO — mechanical", () => {
       expect(response.data).toEqual({
         ok: false,
         error: "Permission denied: target process belongs to another user",
+      });
+    });
+
+    it("registers bounded calls and delivers replies back to the source process", async () => {
+      const sourcePid = "mech-ipc-call-source";
+      const targetPid = "mech-ipc-call-target";
+      const identity: ProcessIdentity = {
+        uid: 1000,
+        gid: 1000,
+        gids: [1000, 100],
+        username: "sam",
+        home: "/home/sam",
+        cwd: "/home/sam",
+        workspaceId: null,
+      };
+
+      const source = await initProcess(sourcePid, identity);
+      const target = await initProcess(targetPid, identity);
+      await runInDurableObject(source, (instance: Process) => {
+        (instance as any).scheduleTick = () => {};
+      });
+      await runInDurableObject(target, (instance: Process) => {
+        (instance as any).currentRun = {
+          runId: "existing-target-run",
+          queued: false,
+          conversationId: "default",
+        };
+      });
+
+      const kernel = await getKernelPtr();
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(
+          sourcePid,
+          makeReq("proc.ipc.call", {
+            pid: targetPid,
+            conversationId: "mail",
+            message: "Please reply with the status.",
+            timeoutMs: 30_000,
+          }),
+        ),
+      ) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      const data = response.data as any;
+      expect(data).toMatchObject({
+        ok: true,
+        status: "started",
+        pid: targetPid,
+        sourcePid,
+        conversationId: "mail",
+        queued: true,
+      });
+      expect(data.callId).toBeTruthy();
+      expect(data.deadlineAt).toBeGreaterThan(Date.now());
+
+      await runInDurableObject(target, (instance: Process) => {
+        const store = (instance as any).store;
+        const queued = store.drainQueue("mail");
+        expect(queued).toHaveLength(1);
+        expect(queued[0].message).toContain(`Call id: \`${data.callId}\``);
+        expect(queued[0].message).toContain("Complete this run before the deadline.");
+        store.enqueue(data.runId, queued[0].message, undefined, undefined, "mail");
+      });
+
+      await runInDurableObject(kernel, async (instance: Kernel) => {
+        await (instance as any).handleProcessSignal(targetPid, {
+          type: "sig",
+          signal: "chat.complete",
+          payload: {
+            pid: targetPid,
+            runId: data.runId,
+            text: "status is green",
+          },
+        });
+      });
+
+      await runInDurableObject(source, (instance: Process) => {
+        const process = instance as any;
+        const store = process.store;
+        const messages = store.getMessages();
+        expect(messages).toHaveLength(1);
+        expect(messages[0].role).toBe("system");
+        expect(messages[0].content).toContain(`IPC call \`${data.callId}\` completed`);
+        expect(messages[0].content).toContain("status is green");
+        expect(process.currentRun).toMatchObject({
+          conversationId: "default",
+        });
+        process.currentRun = null;
+      });
+    });
+
+    it("delivers bounded call timeouts to the source process", async () => {
+      const sourcePid = "mech-ipc-timeout-source";
+      const targetPid = "mech-ipc-timeout-target";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+      await initProcess(targetPid, ROOT_IDENTITY);
+      await runInDurableObject(source, (instance: Process) => {
+        (instance as any).scheduleTick = () => {};
+      });
+
+      const kernel = await getKernelPtr();
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(
+          sourcePid,
+          makeReq("proc.ipc.call", {
+            pid: targetPid,
+            message: "This call will timeout in the test.",
+            timeoutMs: 10_000,
+          }),
+        ),
+      ) as ResponseOkFrame;
+
+      const data = response.data as any;
+      expect(data.ok).toBe(true);
+
+      await runInDurableObject(kernel, async (instance: Kernel) => {
+        const k = instance as any;
+        const timedOut = k.ipcCalls.timeout(data.callId, data.deadlineAt + 1);
+        expect(timedOut).toBeTruthy();
+        await k.deliverIpcCallSignal("ipc.timeout", timedOut, {
+          error: timedOut.error,
+        });
+      });
+
+      await runInDurableObject(source, (instance: Process) => {
+        const process = instance as any;
+        const messages = process.store.getMessages();
+        expect(messages).toHaveLength(1);
+        expect(messages[0].role).toBe("system");
+        expect(messages[0].content).toContain(`IPC call \`${data.callId}\` to process \`${targetPid}\` timed out.`);
+        process.currentRun = null;
       });
     });
 

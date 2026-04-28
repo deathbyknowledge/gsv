@@ -19,6 +19,7 @@ import type { WorkspaceStore } from "./workspaces";
 import type { PackageStore } from "./packages";
 import type { SignalWatchStore } from "./signal-watches";
 import type { NotificationStore } from "./notifications";
+import type { IpcCallStore } from "./ipc-calls";
 import type { AppFrameContext } from "../protocol/app-frame";
 
 export type KernelContext = {
@@ -34,6 +35,7 @@ export type KernelContext = {
   runRoutes: RunRouteStore;
   shellSessions: ShellSessionStore;
   signalWatches: SignalWatchStore;
+  ipcCalls?: IpcCallStore;
   notifications?: NotificationStore;
   connection: Connection;
   identity?: ConnectionIdentity;
@@ -42,4 +44,5 @@ export type KernelContext = {
   serverVersion: string;
   broadcastToUid?: (uid: number, signal: string, payload?: unknown) => void;
   getAppRunner?: (uid: number, packageId: string) => unknown;
+  scheduleIpcCallTimeout?: (callId: string, delayMs: number) => Promise<string>;
 };

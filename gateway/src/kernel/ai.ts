@@ -36,7 +36,6 @@ import { FS_WRITE_DEFINITION as FS_DELETE_DEFINITION } from "../syscalls/delete"
 import { FS_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
-import { PROC_IPC_SEND_DEFINITION } from "../syscalls/proc";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -46,7 +45,6 @@ const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.search": FS_SEARCH_DEFINITION,
   "shell.exec": SHELL_EXEC_DEFINITION,
   "codemode.exec": CODEMODE_EXEC_DEFINITION,
-  "proc.ipc.send": PROC_IPC_SEND_DEFINITION,
 };
 
 export async function handleAiTools(

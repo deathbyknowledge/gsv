@@ -43,6 +43,10 @@ import {
   handleRepoRefs,
 } from "../../kernel/repo";
 import {
+  handleProcIpcCall,
+  handleProcIpcSend,
+} from "../../kernel/proc-handlers";
+import {
   packageRouteBase,
   visiblePackageScopesForActor,
   type InstalledPackageRecord,
@@ -959,6 +963,7 @@ function buildCustomCommands(
   const stat = buildStatCommand(fs, identity, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx);
   const pkg = buildPkgCommand(ctx);
+  const proc = buildProcCommand(ctx);
   const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
 
@@ -974,6 +979,7 @@ function buildCustomCommands(
     ls,
     stat,
     codemode,
+    proc,
     pkg,
     ...notifyCommands,
     ...packageCommands,
@@ -984,6 +990,7 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
   const commands = [];
   const reserved = new Set([
     "pkg",
+    "proc",
     "mem",
     "notify",
     "whoami",
@@ -1071,6 +1078,162 @@ function buildPkgCommand(ctx: KernelContext) {
       };
     }
   });
+}
+
+function buildProcCommand(ctx: KernelContext) {
+  return defineCommand("proc", async (args): Promise<ExecResult> => {
+    try {
+      return await runProcCommand(args, ctx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        stdout: "",
+        stderr: `proc: ${message}\n`,
+        exitCode: 1,
+      };
+    }
+  });
+}
+
+async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecResult> {
+  const [subcommand = "help", ...rest] = args;
+
+  switch (subcommand) {
+    case "help":
+    case "--help":
+    case "-h":
+      return { stdout: procUsage(), stderr: "", exitCode: 0 };
+    case "list": {
+      requireCommandCapability(ctx, "proc.list");
+      const list = ctx.procs.list(ctx.identity!.process.uid);
+      const lines = ["PID\tSTATE\tPROFILE\tLABEL"];
+      for (const proc of list) {
+        lines.push(`${proc.processId}\t${proc.state}\t${proc.profile}\t${proc.label ?? ""}`);
+      }
+      return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
+    }
+    case "send": {
+      requireCommandCapability(ctx, "proc.ipc.send");
+      const parsed = parseProcMessageCommand(rest, false);
+      const result = await handleProcIpcSend(parsed, ctx);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc send: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: `accepted run_id=${result.runId} queued=${result.queued === true}\n`,
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "call": {
+      requireCommandCapability(ctx, "proc.ipc.call");
+      const parsed = parseProcMessageCommand(rest, true);
+      const result = await handleProcIpcCall(parsed, ctx);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc call: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: [
+          `call_id=${result.callId}`,
+          `run_id=${result.runId}`,
+          `queued=${result.queued === true}`,
+          `deadline=${new Date(result.deadlineAt).toISOString()}`,
+        ].join(" ") + "\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    default:
+      return { stdout: "", stderr: `proc: unknown command: ${subcommand}\n${procUsage()}`, exitCode: 1 };
+  }
+}
+
+function parseProcMessageCommand(args: string[], allowTimeout: boolean): {
+  pid: string;
+  conversationId?: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+  timeoutMs?: number;
+} {
+  let conversationId: string | undefined;
+  let metadata: Record<string, unknown> | undefined;
+  let timeoutMs: number | undefined;
+  const positional: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--metadata-json") {
+      index += 1;
+      const parsed = JSON.parse(requireProcOptionValue(args[index], current));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("--metadata-json must be a JSON object");
+      }
+      metadata = parsed as Record<string, unknown>;
+      continue;
+    }
+    if (current === "--timeout") {
+      if (!allowTimeout) {
+        throw new Error("--timeout is only valid for proc call");
+      }
+      index += 1;
+      timeoutMs = parseDurationMs(requireProcOptionValue(args[index], current));
+      continue;
+    }
+    positional.push(current);
+  }
+
+  const pid = positional.shift();
+  if (!pid) {
+    throw new Error("missing pid");
+  }
+  const message = positional.join(" ").trim();
+  if (!message) {
+    throw new Error("missing message");
+  }
+  return {
+    pid,
+    message,
+    ...(conversationId ? { conversationId } : {}),
+    ...(metadata ? { metadata } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  };
+}
+
+function requireProcOptionValue(value: string | undefined, option: string): string {
+  if (value === undefined || value.length === 0) {
+    throw new Error(`${option} requires a value`);
+  }
+  return value;
+}
+
+function parseDurationMs(value: string): number {
+  const match = value.match(/^(\d+)(ms|s|m)?$/);
+  if (!match) {
+    throw new Error(`invalid timeout: ${value}`);
+  }
+  const amount = Number.parseInt(match[1], 10);
+  const unit = match[2] ?? "ms";
+  if (unit === "m") return amount * 60_000;
+  if (unit === "s") return amount * 1_000;
+  return amount;
+}
+
+function procUsage(): string {
+  return [
+    "Usage:",
+    "  proc list",
+    "  proc send <pid> [--conversation id] [--metadata-json json] <message>",
+    "  proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>",
+    "",
+    "proc send is asynchronous mail. proc call is bounded: the caller receives",
+    "an ipc.reply or ipc.timeout message in its default conversation.",
+    "",
+  ].join("\n");
 }
 
 async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecResult> {
