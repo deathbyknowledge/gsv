@@ -991,7 +991,7 @@ export class ProcessStore {
         case "system": {
           messages.push({
             role: "user",
-            content: `Process event:\n${r.content}`,
+            content: `[Process Event]:\n${r.content}`,
             timestamp: r.createdAt,
           } satisfies UserMessage);
           break;

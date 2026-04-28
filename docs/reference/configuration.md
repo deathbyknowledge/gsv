@@ -1,6 +1,6 @@
 # Configuration Reference
 
-GSV configuration is a SQLite-backed key/value store owned by the Kernel Durable Object. Keys are slash-separated strings and values are stored as strings. System-wide configuration lives under `config/`; per-user overrides live under `users/{uid}/`.
+GSV configuration is a SQLite-backed key/value store owned by the Kernel Durable Object. Keys are slash-separated strings and explicit overrides are stored as strings. System-wide configuration lives under `config/`; per-user overrides live under `users/{uid}/`.
 
 The same store is exposed through:
 
@@ -8,7 +8,7 @@ The same store is exposed through:
 - `/sys/users/{uid}/*` for user-scoped configuration.
 - `sys.config.get` and `sys.config.set` for syscall clients.
 
-Defaults are seeded when the Kernel starts, but only when a key is missing. Existing values are preserved.
+Code defaults are overlaid at read time. An explicit SQLite value wins; deleting that explicit value reveals the code default again. Prefix reads include both explicit values and matching defaults, with explicit values overriding default entries of the same key.
 
 ## Access Model
 

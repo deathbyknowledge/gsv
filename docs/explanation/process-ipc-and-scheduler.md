@@ -134,6 +134,12 @@ Some events may be rendered into conversation history. Others may be handled as
 structured input. The runtime should not have to pretend that every inbound
 thing is a user message.
 
+When a runtime event is rendered into model context, it should be visibly marked
+as such. The current convention is a conversation message that starts with
+`[Process Event]:`. Profile context teaches agents that these entries are GSV
+runtime events such as IPC replies, IPC timeouts, watched signals, compaction
+summaries, resets, or other process lifecycle changes.
+
 ## IPC Primitives
 
 The process syscall surface should grow in layers.

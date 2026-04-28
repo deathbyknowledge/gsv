@@ -17,7 +17,7 @@ import type {
 } from "../adapter-interface";
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
-import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
+import { ConfigStore } from "./config";
 import { DeviceRegistry } from "./devices";
 import { RoutingTable, type RouteOrigin } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
@@ -189,7 +189,6 @@ export class Kernel extends Host<Env> {
 
     this.config = new ConfigStore(sql);
     this.config.init();
-    this.config.seed(SYSTEM_CONFIG_DEFAULTS);
 
     this.devices = new DeviceRegistry(sql);
     this.devices.init();

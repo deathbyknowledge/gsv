@@ -193,7 +193,7 @@ describe("Process DO — mechanical", () => {
         const messages = await process.buildContextMessages("default");
         expect(messages).toHaveLength(2);
         expect(messages[0]).toMatchObject({ role: "user" });
-        expect((messages[0] as any).content).toContain("Process event:");
+        expect((messages[0] as any).content).toContain("[Process Event]:");
         expect((messages[0] as any).content).toContain("IPC call completed with result GREEN.");
         expect(messages[1]).toMatchObject({
           role: "user",
@@ -2073,6 +2073,15 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
 
     expect(replyMessage).toBeTruthy();
     expect(replyMessage.content).toContain(token);
+
+    await driveProcessUntilIdle(source, 60_000);
+
+    const followup = (await source.recvFrame(
+      makeReq("proc.send", {
+        message: "What exact token appeared in the most recent IPC reply response text? Reply with the token only.",
+      }),
+    )) as ResponseOkFrame;
+    expect(followup.ok).toBe(true);
 
     await driveProcessUntilIdle(source, 60_000);
 

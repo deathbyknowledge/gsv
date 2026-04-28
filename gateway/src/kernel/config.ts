@@ -8,8 +8,8 @@
  *   "config/ai/provider"   → /sys/config/ai/provider
  *   "users/0/ai/model"     → /sys/users/0/ai/model
  *
- * System config is the runtime truth. R2 dotfiles (/etc/gsv/config,
- * ~/.config/gsv/config) are seed files loaded on first connect.
+ * SQLite stores explicit overrides. SYSTEM_CONFIG_DEFAULTS is overlaid at
+ * read time so code defaults remain live unless a key is explicitly set.
  */
 
 // =============================================================================
@@ -18,6 +18,13 @@
 // Keys live under "config/" and are exposed at /sys/config/*.
 // Per-user overrides go under "users/{uid}/" at /sys/users/{uid}/*.
 // =============================================================================
+
+const GSV_PROCESS_CONTEXT = [
+  "GSV is a Linux-shaped distributed AI operating environment.",
+  "A process is a persistent agent execution unit with an owner, identity, current working directory, optional workspace, conversation history, and command/syscall tools.",
+  "Treat `/home`, `/workspaces`, `/proc`, `/sys`, `/etc`, `/var`, and `/dev` as system surfaces rather than ordinary project folders.",
+  "Messages beginning with `[Process Event]:` are runtime events injected by GSV, not ordinary user messages. They may report IPC replies, IPC timeouts, watched signals, conversation compaction, resets, or other process lifecycle changes. Use them as authoritative context for the process state, and do not quote the prefix back unless it is directly relevant.",
+].join("\n");
 
 export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // -- AI / LLM ---------------------------------------------------------------
@@ -39,6 +46,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are the persistent init process for {{identity.username}}.",
       "Coordinate long-lived context, keep durable state coherent, and stage uncertain knowledge for review instead of silently rewriting canonical memory.",
     ].join("\n"),
+  "config/ai/profile/init/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/init/context.d/10-runtime.md":
     [
       "Current working directory: {{identity.cwd}}",
@@ -66,6 +74,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are the active task process for {{identity.username}}.",
       "Work directly in the current workspace, use durable knowledge deliberately, and leave artifacts where the user can inspect them.",
     ].join("\n"),
+  "config/ai/profile/task/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/task/context.d/10-runtime.md":
     [
       "Current working directory: {{identity.cwd}}",
@@ -96,6 +105,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "Call out privileged integrations explicitly, including host bridge access, parent-window messaging, process spawning, network access, filesystem writes, shell execution, eval, and destructive actions.",
       "End with a clear verdict: approve or do not approve.",
     ].join("\n"),
+  "config/ai/profile/review/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/review/context.d/10-runtime.md":
     [
       "",
@@ -120,6 +130,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are a scheduled background process for {{identity.username}}.",
       "Act predictably, avoid interactive assumptions, and leave concise durable summaries or staged knowledge candidates when that helps future runs.",
     ].join("\n"),
+  "config/ai/profile/cron/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/cron/context.d/10-runtime.md":
     [
       "",
@@ -144,6 +155,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are the master control process for {{identity.username}}.",
       "Focus on live diagnosis, deployment state, kernel state, and precise operational changes.",
     ].join("\n"),
+  "config/ai/profile/mcp/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/mcp/context.d/10-runtime.md":
     [
       "",
@@ -170,6 +182,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are an app-owned runtime process for {{identity.username}}.",
       "Follow the app's configuration, respect the user's standing context, and produce durable artifacts the user can inspect.",
     ].join("\n"),
+  "config/ai/profile/app/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/app/context.d/10-runtime.md":
     [
       "",
@@ -229,6 +242,10 @@ export class ConfigStore {
   }
 
   get(key: string): string | null {
+    return this.getExplicit(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
+  }
+
+  getExplicit(key: string): string | null {
     const rows = this.sql.exec<{ value: string }>(
       "SELECT value FROM config_kv WHERE key = ?",
       key,
@@ -245,7 +262,7 @@ export class ConfigStore {
   }
 
   delete(key: string): boolean {
-    const existing = this.get(key);
+    const existing = this.getExplicit(key);
     if (existing === null) return false;
     this.sql.exec("DELETE FROM config_kv WHERE key = ?", key);
     return true;
@@ -256,6 +273,22 @@ export class ConfigStore {
    * e.g. list("config/ai") returns all /sys/config/ai/* entries.
    */
   list(prefix: string): { key: string; value: string }[] {
+    const merged = new Map<string, string>();
+    for (const [key, value] of Object.entries(SYSTEM_CONFIG_DEFAULTS)) {
+      if (matchesConfigPrefix(key, prefix)) {
+        merged.set(key, value);
+      }
+    }
+    for (const { key, value } of this.listExplicit(prefix)) {
+      merged.set(key, value);
+    }
+
+    return [...merged.entries()]
+      .map(([key, value]) => ({ key, value }))
+      .sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  listExplicit(prefix: string): { key: string; value: string }[] {
     const normalized = prefix.trim();
     if (normalized.length === 0) {
       return this.sql.exec<{ key: string; value: string }>(
@@ -269,17 +302,13 @@ export class ConfigStore {
       pattern + "%",
     ).toArray();
   }
+}
 
-  /**
-   * Seed defaults — only inserts keys that don't already exist.
-   */
-  seed(defaults: Record<string, string>): void {
-    for (const [key, value] of Object.entries(defaults)) {
-      this.sql.exec(
-        "INSERT OR IGNORE INTO config_kv (key, value) VALUES (?, ?)",
-        key,
-        value,
-      );
-    }
+function matchesConfigPrefix(key: string, prefix: string): boolean {
+  const normalized = prefix.trim();
+  if (normalized.length === 0) {
+    return true;
   }
+  const pattern = normalized.endsWith("/") ? normalized : normalized + "/";
+  return key.startsWith(pattern);
 }

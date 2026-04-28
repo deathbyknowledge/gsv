@@ -7,8 +7,7 @@
  * Config resolution order:
  *   /sys/config/ai/* (system defaults) → /sys/users/{uid}/ai/* (user overrides)
  *
- * System config is seeded from R2 dotfiles (/etc/gsv/config, ~/.config/gsv/config)
- * on first connect (reconciliation), then runtime reads are pure SQLite.
+ * Runtime reads are explicit SQLite overrides over code defaults.
  */
 
 import type { KernelContext } from "./context";
