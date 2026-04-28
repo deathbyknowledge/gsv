@@ -189,7 +189,7 @@ export function App({ backend }: AppProps) {
               type="button"
               title="Open Shell"
               aria-label="Open Shell"
-              onClick={() => openCompanion("shell", { device: selectedDevice.deviceId, workdir: "." })}
+              onClick={() => openCompanion("shell", { device: selectedDevice.deviceId, cwd: "." })}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z" /><path d="m7 10 3 2.5L7 15" /><path d="M12.5 15H17" /></svg>
             </button>

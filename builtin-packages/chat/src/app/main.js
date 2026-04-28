@@ -322,11 +322,11 @@ function describeToolCard(toolName, args, syscall) {
   const target = resolveToolTarget(args);
 
   if (toolName === "Shell" || syscall === "shell.exec") {
-    const command = asString(record?.command);
-    const workdir = asString(record?.workdir);
+    const command = asString(record?.input);
+    const cwd = asString(record?.cwd);
     return {
-      title: command ? "Run " + truncateInline(command) : "Run command",
-      subtitle: workdir ? "workdir " + truncateInline(workdir, 36) : "",
+      title: record?.sessionId ? "Continue shell session" : command ? "Run " + truncateInline(command) : "Run command",
+      subtitle: cwd ? "cwd " + truncateInline(cwd, 36) : "",
       target,
     };
   }
@@ -435,7 +435,7 @@ function renderToolDetails(toolName, syscall, output, ok, error, args, callId) {
   const rows = [];
 
   if (toolName === "Shell" || syscall === "shell.exec") {
-    rows.push(["pid", record?.pid], ["exit", record?.exitCode], ["backgrounded", record?.backgrounded === true ? "true" : null]);
+    rows.push(["session", record?.sessionId], ["status", record?.status], ["pid", record?.pid], ["exit", record?.exitCode], ["backgrounded", record?.backgrounded === true ? "true" : null]);
   } else if (toolName === "Read" || syscall === "fs.read") {
     rows.push(["path", record?.path ?? asRecord(args)?.path], ["size", record?.size], ["dirs", Array.isArray(record?.directories) ? record.directories.length : null], ["files", Array.isArray(record?.files) ? record.files.length : null]);
   } else if (toolName === "Search" || syscall === "fs.search") {
@@ -560,7 +560,7 @@ function renderHilRow(request) {
 function describeHilSummary(request, syscall) {
   const args = asRecord(request.args) || {};
   const path = asString(args.path);
-  const command = asString(args.command);
+  const command = asString(args.input);
   if (request.toolName === "Shell" || syscall === "shell.exec") {
     return command
       ? 'Run "' + truncateInline(command, 96) + '".'
@@ -1781,7 +1781,7 @@ function openCompanion(appId) {
     openApp({
       target: "shell",
       payload: {
-        workdir: activeThreadContext.cwd,
+        cwd: activeThreadContext.cwd,
         context: activeThreadContext,
       },
     });

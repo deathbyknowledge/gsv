@@ -16,6 +16,7 @@ const CAPABILITY_PATTERN = /^(\*|[a-z][a-z0-9]*\.\*|[a-z][a-z0-9]*\.[a-z][a-z0-9
 const DEFAULT_CAPABILITIES: [number, string[]][] = [
   [0,   ["*"]],                                           // root
   [100, [
+    "codemode.*",
     "fs.*",
     "shell.*",
     "knowledge.*",

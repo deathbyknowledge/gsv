@@ -181,6 +181,7 @@ describe("CapabilityStore", () => {
       "adapter.connect",
       "adapter.disconnect",
       "adapter.status",
+      "codemode.*",
       "fs.*",
       "knowledge.*",
       "notification.*",

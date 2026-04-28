@@ -141,7 +141,7 @@ export class RoutingTable {
 
     return rows.map((row) => ({
       id: row.id,
-      origin: { type: row.origin_type as "connection" | "process", id: row.origin_id },
+      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       call: row.call as SyscallName,
       scheduleId: row.schedule_id,
     }));

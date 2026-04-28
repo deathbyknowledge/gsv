@@ -135,20 +135,20 @@ export async function execCommand(
   rawArgs: unknown,
 ) {
   const args = asRecord(rawArgs) ?? {};
-  const command = String(args.command ?? "").trim();
-  if (!command) {
+  const input = String(args.input ?? "").trim();
+  if (!input) {
     throw new Error("Command is required.");
   }
 
   const target = normalizeTarget(args.target);
-  const requestArgs: Record<string, unknown> = { command };
+  const requestArgs: Record<string, unknown> = { input };
   if (target !== "gsv") {
     requestArgs.target = target;
   }
 
-  const workdir = String(args.workdir ?? "").trim();
-  if (workdir) {
-    requestArgs.workdir = workdir;
+  const cwd = String(args.cwd ?? "").trim();
+  if (cwd) {
+    requestArgs.cwd = cwd;
   }
 
   const timeout = parseOptionalPositiveInt(args.timeoutMs ?? args.timeout);
@@ -168,6 +168,6 @@ export async function execCommand(
   const startedAt = Date.now();
   const payload = await kernel.request("shell.exec", requestArgs);
   return {
-    entry: normalizeTranscriptEntry(payload, startedAt, target, command),
+    entry: normalizeTranscriptEntry(payload, startedAt, target, input),
   };
 }

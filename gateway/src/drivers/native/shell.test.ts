@@ -132,9 +132,20 @@ function makeContext(options?: {
 }
 
 describe("pkg shell command", () => {
+  it("shows codemode command usage", async () => {
+    const result = await handleShellExec(
+      { input: "codemode --help" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("codemode <script.js>");
+    expect(result.stderr).toBe("");
+  });
+
   it("defaults to the mounted package for manifest inspection", async () => {
     const result = await handleShellExec(
-      { command: "pkg manifest", workdir: "/src/package" },
+      { input: "pkg manifest", cwd: "/src/package" },
       makeContext({ mounts: [{ mountPath: "/src/package", packageId: "import:root/pkg-test:." }] }),
     );
 
@@ -145,7 +156,7 @@ describe("pkg shell command", () => {
 
   it("shows review status in pkg list output", async () => {
     const result = await handleShellExec(
-      { command: "pkg list" },
+      { input: "pkg list" },
       makeContext(),
     );
 
@@ -156,7 +167,7 @@ describe("pkg shell command", () => {
 
   it("enables an approved package through pkg enable", async () => {
     const result = await handleShellExec(
-      { command: "pkg enable" },
+      { input: "pkg enable" },
       makeContext({
         capabilities: ["pkg.install"],
         mounts: [{ mountPath: "/src/package", packageId: "import:root/pkg-test:." }],
@@ -190,7 +201,7 @@ describe("pkg shell command", () => {
     };
 
     const result = await handleShellExec(
-      { command: "hello-world alpha beta" },
+      { input: "hello-world alpha beta" },
       makeContext({
         pkg: makePackage({
           enabled: true,

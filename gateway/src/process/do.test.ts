@@ -96,6 +96,34 @@ describe("Process DO — mechanical", () => {
       expect(response).not.toBeNull();
       expect((response as ResponseFrame).ok).toBe(true);
     });
+
+    it("includes CodeMode in ai.tools for default user capabilities", async () => {
+      const pid = "mech-kernel-ai-tools-codemode";
+      const identity: ProcessIdentity = {
+        uid: 1000,
+        gid: 1000,
+        gids: [1000, 100],
+        username: "sam",
+        home: "/home/sam",
+        cwd: "/home/sam",
+        workspaceId: null,
+      };
+
+      await registerInKernel(pid, identity);
+      const kernel = await getKernelPtr();
+
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(pid, makeReq("ai.tools", {})),
+      ) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      const data = response.data as {
+        tools: Array<{ name: string; inputSchema: { required?: string[] } }>;
+      };
+      const codeMode = data.tools.find((tool) => tool.name === "CodeMode");
+      expect(codeMode).toBeDefined();
+      expect(codeMode?.inputSchema.required).toEqual(["code"]);
+    });
   });
 
   describe("proc.setidentity", () => {
@@ -550,6 +578,162 @@ describe("Process DO — mechanical", () => {
         toolCalls: [
           { type: "toolCall", id: "call-1", name: "Read", arguments: { path: "package.json" } },
         ],
+      });
+    });
+  });
+
+  describe("CodeMode tool calls", () => {
+    it("runs codemode from the native shell command", async () => {
+      const pid = "mech-codemode-shell";
+      await initProcess(pid, ROOT_IDENTITY);
+      const kernel = await getKernelPtr();
+
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(pid, makeReq("shell.exec", {
+          input: "codemode -e 'return { argv, args };' --json --arg mode=check -- alpha",
+        })),
+      ) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      const data = response.data as any;
+      expect(data.status, JSON.stringify(data, null, 2)).toBe("completed");
+      expect(data.exitCode).toBe(0);
+      expect(JSON.parse(data.stdout)).toEqual({
+        status: "completed",
+        result: {
+          argv: ["alpha"],
+          args: { mode: "check" },
+        },
+      });
+    });
+
+    it("runs codemode script files from the native shell command", async () => {
+      const pid = "mech-codemode-shell-file";
+      await initProcess(pid, ROOT_IDENTITY);
+      const kernel = await getKernelPtr();
+
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(pid, makeReq("shell.exec", {
+          input: [
+            "echo '{\"ok\":true}' > test.json",
+            "cat > test.js <<'EOF'",
+            "const res = await shell(\"pwd\");",
+            "const file = await fs.read({ path: \"test.json\" });",
+            "return { res, file, argv, args};",
+            "EOF",
+            "codemode run test.js --json --arg mode=file -- beta",
+          ].join("\n"),
+        })),
+      ) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      const data = response.data as any;
+      expect(data.status, JSON.stringify(data, null, 2)).toBe("completed");
+      expect(data.exitCode).toBe(0);
+      const result = JSON.parse(data.stdout);
+      expect(result.status).toBe("completed");
+      expect(result.result.argv).toEqual(["beta"]);
+      expect(result.result.args).toEqual({ mode: "file" });
+      expect(result.result.res.output).toContain("/root");
+      expect(result.result.file.content).toContain("\"ok\":true");
+    });
+
+    it("returns failed json for malformed codemode eval source", async () => {
+      const pid = "mech-codemode-shell-syntax-error";
+      await initProcess(pid, ROOT_IDENTITY);
+      const kernel = await getKernelPtr();
+
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(pid, makeReq("shell.exec", {
+          input: "codemode -e 'const res = await shell(\"pwd);' --json",
+        })),
+      ) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      const data = response.data as any;
+      expect(data.status, JSON.stringify(data, null, 2)).toBe("failed");
+      expect(data.exitCode).toBe(1);
+      const result = JSON.parse(data.stdout);
+      expect(result.status).toBe("failed");
+      expect(result.error).toContain("SyntaxError");
+      expect(result.error).toContain("Invalid or unexpected token");
+    });
+
+    it("runs codemode.run as a process command", async () => {
+      const pid = "mech-codemode-run";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const res = (await stub.recvFrame(
+        makeReq("codemode.run", {
+          code: "return { argv, args };",
+          argv: ["alpha"],
+          args: { mode: "manual" },
+        }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toEqual({
+        status: "completed",
+        result: {
+          argv: ["alpha"],
+          args: { mode: "manual" },
+        },
+      });
+    });
+
+    it("dispatches CodeMode through the process-local executor path", async () => {
+      const pid = "mech-codemode-basic";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+
+        process.currentRun = {
+          runId: "run-codemode-basic",
+          queued: false,
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        process.sendSignal = async () => {};
+        process.executeCodeModeTool = async (
+          runId: string,
+          toolCallId: string,
+          args: { code: string },
+        ) => {
+          expect(runId).toBe("run-codemode-basic");
+          expect(toolCallId).toBe("call-codemode-1");
+          expect(args.code).toContain("fs.read");
+          process.store.register(toolCallId, runId, "codemode.exec", args);
+          process.store.resolve(toolCallId, {
+            status: "completed",
+            result: "from codemode",
+          });
+        };
+
+        await process.processToolCalls("run-codemode-basic", [
+          {
+            type: "toolCall",
+            id: "call-codemode-1",
+            name: "CodeMode",
+            arguments: {
+              code: `
+                const file = await fs.read({ target: "gsv", path: "/tmp/example.txt" });
+                return file.content;
+              `,
+            },
+          },
+        ]);
+
+        expect(process.store.getResults("run-codemode-basic")).toEqual([
+          expect.objectContaining({
+            id: "call-codemode-1",
+            call: "codemode.exec",
+            status: "completed",
+            result: {
+              status: "completed",
+              result: "from codemode",
+            },
+          }),
+        ]);
       });
     });
   });

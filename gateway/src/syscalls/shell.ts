@@ -4,39 +4,33 @@ import { SHELL_EXEC, SYSCALL_TOOL_NAMES } from "./constants";
 export const SHELL_EXEC_DEFINITION: ToolDefinition = {
   name: SYSCALL_TOOL_NAMES[SHELL_EXEC],
   description:
-    "Execute shell commands on a device. Supports async background mode with session tracking.",
+    "Run a shell command or continue a running shell session. New commands use input as the command; calls with sessionId use input as stdin, with an empty string polling for more output.",
   inputSchema: {
     type: "object",
     properties: {
-      command: {
+      input: {
         type: "string",
-        description: "The command to execute",
-      },
-      workdir: {
-        type: "string",
-        description: "Working directory",
-      },
-      timeout: {
-        type: "number",
-        description: "Timeout in milliseconds (optional)",
-      },
-      background: {
-        type: "boolean",
-        description: "Run in background immediately and return a pid",
-      },
-      yieldMs: {
-        type: "number",
         description:
-          "Wait this many milliseconds, then background if still running",
+          "Command to start when sessionId is absent. Stdin to send when sessionId is present. Use an empty string with sessionId to poll for more output.",
+      },
+      cwd: {
+        type: "string",
+        description: "Working directory for a new command.",
+      },
+      sessionId: {
+        type: "string",
+        description:
+          "Existing shell session to poll or write stdin to. Omit for a new command.",
       },
     },
-    required: ["command"],
+    required: ["input"],
   },
 };
 
 export type ShellExecArgs = {
-  command: string;
-  workdir?: string;
+  input: string;
+  cwd?: string;
+  sessionId?: string;
   timeout?: number;
   background?: boolean;
   yieldMs?: number;
@@ -44,15 +38,31 @@ export type ShellExecArgs = {
 
 export type ShellExecResult =
   | {
-      ok: true;
-      pid: number;
+      status: "completed";
+      output: string;
       exitCode: number;
-      stdout: string;
-      stderr: string;
+      sessionId?: string;
+      truncated?: boolean;
+      ok?: true;
+      pid?: number;
+      stdout?: string;
+      stderr?: string;
     }
   | {
-      ok: true;
-      pid: number;
-      backgrounded: true;
+      status: "running";
+      output: string;
+      sessionId: string;
+      truncated?: boolean;
     }
-  | { ok: false; error: string };
+  | {
+      status: "failed";
+      output: string;
+      error: string;
+      exitCode?: number;
+      sessionId?: string;
+      truncated?: boolean;
+      ok?: boolean;
+      pid?: number;
+      stdout?: string;
+      stderr?: string;
+    };

@@ -52,7 +52,7 @@ fn normalize_shell_path(value: &str) -> String {
     }
 }
 
-fn output_matches_workdir(output: &str, expected: &Path) -> bool {
+fn output_matches_cwd(output: &str, expected: &Path) -> bool {
     #[cfg(windows)]
     {
         let actual = std::path::PathBuf::from(output.trim().replace('/', "\\"));
@@ -88,7 +88,7 @@ async fn test_bash_tool_execution() {
     // Test simple command
     let result = tool
         .execute(json!({
-            "command": shell_echo_command()
+            "input": shell_echo_command()
         }))
         .await
         .unwrap();
@@ -99,21 +99,21 @@ async fn test_bash_tool_execution() {
 }
 
 #[tokio::test]
-async fn test_bash_tool_workdir() {
+async fn test_bash_tool_cwd() {
     use gsv::tools::{BashTool, Tool};
     use serde_json::json;
     use std::fs;
 
-    let workspace = std::env::temp_dir().join("gsv_test_bash_tool_workdir_workspace");
-    let custom_workdir = workspace.join("nested");
-    fs::create_dir_all(&custom_workdir).unwrap();
+    let workspace = std::env::temp_dir().join("gsv_test_bash_tool_cwd_workspace");
+    let custom_cwd = workspace.join("nested");
+    fs::create_dir_all(&custom_cwd).unwrap();
     let tool = BashTool::new(workspace.clone());
 
-    // Test with custom workdir
+    // Test with custom cwd
     let result = tool
         .execute(json!({
-            "command": shell_pwd_command(),
-            "workdir": custom_workdir.to_string_lossy().to_string()
+            "input": shell_pwd_command(),
+            "cwd": custom_cwd.to_string_lossy().to_string()
         }))
         .await
         .unwrap();
@@ -121,10 +121,10 @@ async fn test_bash_tool_workdir() {
     assert_eq!(result["status"], "completed");
     assert_eq!(result["exitCode"], 0);
     assert!(
-        output_matches_workdir(result["output"].as_str().unwrap(), &custom_workdir),
+        output_matches_cwd(result["output"].as_str().unwrap(), &custom_cwd),
         "expected `{}` to resolve to `{}`",
         result["output"].as_str().unwrap().trim(),
-        custom_workdir.display()
+        custom_cwd.display()
     );
 
     fs::remove_dir_all(&workspace).ok();
@@ -140,7 +140,7 @@ async fn test_bash_background_returns_session_id() {
 
     let start = bash
         .execute(json!({
-            "command": shell_background_finish_command(),
+            "input": shell_background_finish_command(),
             "background": true
         }))
         .await
@@ -149,6 +149,76 @@ async fn test_bash_background_returns_session_id() {
     assert_eq!(start["status"], "running");
     let session_id = start["sessionId"].as_str().unwrap().to_string();
     assert!(!session_id.is_empty());
+}
+
+#[tokio::test]
+async fn test_bash_session_poll_returns_new_output() {
+    use gsv::tools::{BashTool, Tool};
+    use serde_json::json;
+
+    let workspace = std::env::temp_dir();
+    let bash = BashTool::new(workspace.clone());
+
+    let start = bash
+        .execute(json!({
+            "input": shell_background_finish_command(),
+            "background": true
+        }))
+        .await
+        .unwrap();
+
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+    let poll = bash
+        .execute(json!({
+            "sessionId": session_id,
+            "input": ""
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(poll["status"], "completed");
+    assert!(poll["output"].as_str().unwrap().contains("async-finished"));
+}
+
+#[tokio::test]
+async fn test_bash_session_is_removed_after_final_poll() {
+    use gsv::tools::{BashTool, Tool};
+    use serde_json::json;
+
+    let workspace = std::env::temp_dir();
+    let bash = BashTool::new(workspace.clone());
+
+    let start = bash
+        .execute(json!({
+            "input": shell_background_finish_command(),
+            "background": true
+        }))
+        .await
+        .unwrap();
+
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+    let poll = bash
+        .execute(json!({
+            "sessionId": session_id,
+            "input": ""
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(poll["status"], "completed");
+    let err = bash
+        .execute(json!({
+            "sessionId": poll["sessionId"].as_str().unwrap(),
+            "input": ""
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(err.contains("Unknown shell session"));
 }
 
 #[tokio::test]

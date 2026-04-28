@@ -236,31 +236,167 @@ type FilesystemSyscalls = {
 
 ## Shell: `shell.exec`
 
-`shell.exec` runs a command on the selected target. Use `gsv` for the Worker sandbox shell, or a device id for local source trees, private networks, OS packages, credentials, or hardware.
+`shell.exec` starts, polls, or writes to a shell command on the selected target. Use `gsv` for the Worker sandbox shell, or a device id for local source trees, private networks, OS packages, credentials, or hardware.
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and custom commands such as `pkg`, `wiki`, and `notify`. Device targets run a real local shell through the CLI. Native defaults `workdir` to process `cwd`, `timeout` to `config/shell/timeout_ms` or 30000 ms, ignores `background` and `yieldMs`, truncates output by `config/shell/max_output_bytes`, and returns command failures as `ok: true` with non-zero `exitCode`. CLI supports background and yielded sessions. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and custom commands such as `pkg`, `wiki`, and `notify`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
 
 ```ts
 type ShellSyscalls = {
   "shell.exec": {
     args: {
       target?: string;
-      command: string;
-      workdir?: string;
-      timeout?: number;
-      background?: boolean;
-      yieldMs?: number;
+      cwd?: string;
+      input: string;
+      sessionId?: string;
     };
     result:
-      | { ok: true; pid: number; exitCode: number; stdout: string; stderr: string }
-      | { ok: true; pid: number; backgrounded: true }
+      | { status: "completed"; output: string; exitCode: number; sessionId?: string; truncated?: boolean }
+      | { status: "running"; output: string; sessionId: string; truncated?: boolean }
+      | { status: "failed"; output: string; error: string; exitCode?: number; sessionId?: string; truncated?: boolean }
       | OperationError;
   };
 };
+```
+
+Start a command:
+
+```json
+{ "target": "macbook", "cwd": "~/projects/gsv", "input": "npm test" }
+```
+
+Poll a running command:
+
+```json
+{ "sessionId": "sh_01JZTEST", "input": "" }
+```
+
+Write stdin to a running command:
+
+```json
+{ "sessionId": "sh_01JZTEST", "input": "y\n" }
+```
+
+CodeMode wrappers expose the same result shape:
+
+```ts
+let res = await shell("npm run test", { cwd: "/workspace/gsv/gateway" });
+let output = res.output;
+
+while (res.status === "running") {
+  res = await shell("", { sessionId: res.sessionId });
+  output += res.output;
+}
+
+return output;
+```
+
+## CodeMode: `codemode.exec`, `codemode.run`
+
+`codemode.exec` runs one sandboxed async JavaScript block in the Process DO
+using Cloudflare Worker Loader. It is exposed to models as the `CodeMode` tool
+for multi-step workflows that are easier to express as code than as repeated
+direct tool calls.
+
+`codemode.run` is the manual/user-facing execution path used by the native
+`codemode` shell command. It forwards to the target Process DO and runs the same
+Worker Loader executor, but is not exposed as a model tool.
+
+`codemode.exec` is process-local and internal-only. It is not handled by the
+Kernel dispatcher and is not itself device-routed. `codemode.run` is public and
+kernel-forwarded to a process, defaulting to the caller's init process. In both
+cases, the sandboxed block receives wrappers for the existing filesystem and
+shell tools:
+
+```ts
+const res = await shell("npm test", { target: "macbook", cwd: "~/projects/gsv" });
+const file = await fs.read({ target: "macbook", path: "package.json" });
+```
+
+Nested tool calls are dispatched back through the Process DO and Kernel as
+ordinary `shell.exec` and `fs.*` request frames. They keep the same capability,
+approval, target routing, async device response, and shell session behavior as
+direct model tool calls.
+
+Runtime behavior:
+
+| Syscall | Handler | Behavior |
+|---|---|---|
+| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)` plus `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, and `fs.search`. Returns a structured `completed` or `failed` CodeMode result. |
+| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec` and `fs.*` syscalls. |
+
+```ts
+type CodeModeSyscalls = {
+  "codemode.exec": {
+    args: {
+      code: string;
+    };
+    result:
+      | { status: "completed"; result: unknown; logs?: string[] }
+      | { status: "failed"; error: string; logs?: string[] };
+  };
+  "codemode.run": {
+    args: {
+      pid?: string;
+      code: string;
+      target?: string;
+      cwd?: string;
+      argv?: string[];
+      args?: unknown;
+    };
+    result:
+      | { status: "completed"; result: unknown; logs?: string[] }
+      | { status: "failed"; error: string; logs?: string[] };
+  };
+};
+```
+
+Native shell usage:
+
+```bash
+codemode ./script.js --target macbook --cwd ~/projects/gsv -- arg1 arg2
+codemode run ./script.js --target macbook --cwd ~/projects/gsv -- arg1 arg2
+codemode -e 'return await shell("pwd")'
+```
+
+Script files and `-e` code are treated as async function bodies. Top-level
+`await` is valid, but the returned value should use an explicit `return`
+statement:
+
+```js
+const pwd = await shell("pwd");
+const packageJson = await fs.read({ path: "package.json" });
+return { pwd: pwd.output, packageJson: packageJson.content };
+```
+
+Inside manual CodeMode runs, `argv` contains positional arguments after `--` and
+`args` contains values from `--arg key=value` or `--args-json`.
+
+Without `--json`, the native shell command prints only the completed result.
+With `--json`, it prints the full CodeMode envelope. Failed runs exit with code
+`1` and, with `--json`, still print `{ status: "failed", error, logs? }`.
+
+Shell calls inside CodeMode expose the direct `shell.exec` result shape. Code
+that wants completion must handle `status: "running"` by polling the returned
+session:
+
+```ts
+let res = await shell("npm run test", { target: "macbook", cwd: "~/projects/gsv" });
+let output = res.output;
+
+while (res.status === "running") {
+  res = await shell("", { sessionId: res.sessionId });
+  output += res.output;
+}
+
+if (res.status === "failed") {
+  throw new Error(`${res.error}\n${output}`);
+}
+
+return { exitCode: res.exitCode, output };
 ```
 
 ## Processes: `proc.*`
@@ -598,7 +734,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`. |
+| `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. |
 | `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
 
 External callers cannot normally invoke `ai.*`; these syscalls are exposed to process-originated calls.

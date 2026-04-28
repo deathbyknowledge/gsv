@@ -27,7 +27,7 @@ describe("contextToWorkersAiMessages", () => {
               type: "toolCall",
               id: "call_1",
               name: "shell.exec",
-              arguments: { command: "git status --short" },
+              arguments: { input: "git status --short" },
             },
           ],
           api: "test",
@@ -69,7 +69,7 @@ describe("contextToWorkersAiMessages", () => {
           type: "function",
           function: {
             name: "shell.exec",
-            arguments: JSON.stringify({ command: "git status --short" }),
+            arguments: JSON.stringify({ input: "git status --short" }),
           },
         },
       ],
@@ -201,7 +201,7 @@ describe("normalizeWorkersAiResponse", () => {
         tool_calls: [
           {
             name: "shell.exec",
-            arguments: { command: "pwd" },
+            arguments: { input: "pwd" },
           },
         ],
       },
@@ -214,7 +214,7 @@ describe("normalizeWorkersAiResponse", () => {
         type: "toolCall",
         id: "workers-ai-tool-1",
         name: "shell.exec",
-        arguments: { command: "pwd" },
+        arguments: { input: "pwd" },
       },
     ]);
   });

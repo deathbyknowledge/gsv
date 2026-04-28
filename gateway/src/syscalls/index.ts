@@ -8,6 +8,12 @@ import type {
   ShellExecResult,
 } from "./shell";
 import type {
+  CodeModeExecArgs,
+  CodeModeExecResult,
+  CodeModeRunArgs,
+  CodeModeRunResult,
+} from "./codemode";
+import type {
   ProcSpawnArgs,
   ProcSpawnResult,
   ProcKillArgs,
@@ -186,6 +192,10 @@ export type SyscallDomains = {
   // Shell (device commands)
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };
 
+  // CodeMode (process-local programmable tool use)
+  "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
+  "codemode.run": { args: CodeModeRunArgs; result: CodeModeRunResult };
+
   // Process management (OS-level agent processes)
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
   "proc.kill": { args: ProcKillArgs; result: ProcKillResult };
@@ -286,6 +296,7 @@ export type ResultOf<S extends SyscallName> = SyscallDomains[S]["result"];
 export type SyscallDomain =
   | "fs"
   | "shell"
+  | "codemode"
   | "proc"
   | "pkg"
   | "sys"
@@ -329,6 +340,8 @@ export function intoSyscallTool(
 
   const deviceList = devices.length > 0 ? devices.join(", ") : "none";
 
+  const targetRequired = tool.name !== "Shell";
+
   return {
     name: tool.name,
     description: tool.description,
@@ -341,7 +354,7 @@ export function intoSyscallTool(
           description: `Target device to execute on. Use "gsv" to execute on the cloud or use one of the accessible online devices: ${deviceList}`,
         },
       },
-      required: [...required, "target"],
+      required: targetRequired ? [...required, "target"] : required,
     },
   };
 }
