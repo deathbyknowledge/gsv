@@ -19,6 +19,7 @@ import type {
   SignalFrame,
 } from "../protocol/frames";
 import type { ResultOf, SyscallName, ToolDefinition } from "../syscalls";
+import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type {
   AiConfigResult,
@@ -78,10 +79,15 @@ import {
 } from "./media";
 import { assembleSystemPrompt } from "./context";
 import { sendFrameToKernel } from "../shared/utils";
-import { TOOL_TO_SYSCALL, SYSCALL_TOOL_NAMES } from "../syscalls/constants";
+import {
+  CODEMODE_EXEC,
+  TOOL_TO_SYSCALL,
+  SYSCALL_TOOL_NAMES,
+} from "../syscalls/constants";
 import { RipgitClient } from "../fs/ripgit/client";
 import { workspaceRepoRef } from "../fs/ripgit/repos";
 import type { ProcSendArgs } from "../syscalls/proc";
+import { executeCodeMode } from "./codemode";
 
 type RunState = {
   runId: string;
@@ -95,12 +101,39 @@ type RunState = {
 
 type ActiveRunPhase = "toolDispatch" | "toolResults" | "generation";
 
+type CodeModeResponseWaiter = {
+  runId: string | null;
+  resolve: (frame: ResponseFrame) => void;
+  reject: (error: Error) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
+
+type CodeModeApprovalWaiter = {
+  runId: string;
+  resolve: (approved: boolean) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
+
 const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TEXT_ENCODER = new TextEncoder();
 const PROCESS_MEDIA_CACHE_LIMIT = 32;
+const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
+const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 
 function isNonInteractiveProfile(profile: AiContextProfile): boolean {
   return profile === "cron" || profile === "archivist" || profile === "curator";
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item))
+    : [];
 }
 
 function isWatchedSignalPayload(
@@ -162,6 +195,8 @@ export class Process extends Host<Env> {
   private readonly generation = createGenerationService();
   private readonly ripgit: RipgitClient | null;
   private readonly mediaCache = new Map<string, string>();
+  private readonly codeModeResponses = new Map<string, CodeModeResponseWaiter>();
+  private readonly codeModeApprovals = new Map<string, CodeModeApprovalWaiter>();
   private activeRunPhase: { runId: string; phase: ActiveRunPhase } | null = null;
   private deferredAbortContinuationRunId: string | null = null;
 
@@ -228,6 +263,14 @@ export class Process extends Host<Env> {
   }
 
   private async handleRes(frame: ResponseFrame): Promise<void> {
+    const codeModeWaiter = this.codeModeResponses.get(frame.id);
+    if (codeModeWaiter) {
+      this.codeModeResponses.delete(frame.id);
+      clearTimeout(codeModeWaiter.timeoutId);
+      codeModeWaiter.resolve(frame);
+      return;
+    }
+
     const pending = this.store.getPending(frame.id);
     if (!pending) {
       console.warn(
@@ -298,6 +341,11 @@ export class Process extends Host<Env> {
         case "proc.hil":
           data = await this.handleProcHil(
             frame.args as ProcHilArgs,
+          );
+          break;
+        case "codemode.run":
+          data = await this.handleCodeModeRun(
+            frame.args as CodeModeRunArgs,
           );
           break;
         case "proc.history":
@@ -378,15 +426,23 @@ export class Process extends Host<Env> {
     }
 
     if (pendingHil) {
-      this.store.clearPendingHil();
-      await this.appendSyntheticToolResult(
-        runId,
-        pendingHil.toolCallId,
-        pendingHil.syscall,
-        "User interrupted tool execution",
-      );
+      const codeModeApproval = this.codeModeApprovals.get(pendingHil.requestId);
+      if (codeModeApproval) {
+        this.resolveCodeModeApproval(pendingHil.requestId, false);
+        this.store.clearPendingHil();
+      } else {
+        this.store.clearPendingHil();
+        await this.appendSyntheticToolResult(
+          runId,
+          pendingHil.toolCallId,
+          pendingHil.syscall,
+          "User interrupted tool execution",
+        );
+      }
       interruptedToolCalls += 1;
     }
+
+    this.rejectCodeModeWaiters(runId, "User interrupted CodeMode execution");
 
     this.currentRun = null;
     await this.sendSignal("chat.complete", {
@@ -425,9 +481,25 @@ export class Process extends Host<Env> {
       return { ok: false, error: `Pending tool confirmation not found: ${args.requestId}` };
     }
 
-    if (this.currentRun?.runId !== pendingHil.runId) {
+    const run = this.currentRun;
+    if (!run || run.runId !== pendingHil.runId) {
       this.store.clearPendingHil();
+      this.resolveCodeModeApproval(args.requestId, false);
       return { ok: false, error: `Run is no longer active for confirmation: ${args.requestId}` };
+    }
+
+    const codeModeApproval = this.codeModeApprovals.get(args.requestId);
+    if (codeModeApproval) {
+      this.store.clearPendingHil();
+      this.resolveCodeModeApproval(args.requestId, args.decision === "approve");
+      return {
+        ok: true,
+        pid,
+        requestId: args.requestId,
+        decision: args.decision,
+        resumed: true,
+        pendingHil: null,
+      };
     }
 
     this.store.clearPendingHil();
@@ -451,12 +523,21 @@ export class Process extends Host<Env> {
           pendingHil: null,
         };
       }
-      await this.dispatchSyscall(
-        pendingHil.runId,
-        pendingHil.toolCallId,
-        pendingHil.syscall as SyscallName,
-        pendingHil.args,
-      );
+      if (pendingHil.syscall === CODEMODE_EXEC) {
+        await this.executeCodeModeTool(
+          pendingHil.runId,
+          pendingHil.toolCallId,
+          pendingHil.args,
+          await this.resolveToolApprovalPolicy(run),
+        );
+      } else {
+        await this.dispatchSyscall(
+          pendingHil.runId,
+          pendingHil.toolCallId,
+          pendingHil.syscall as SyscallName,
+          pendingHil.args,
+        );
+      }
     } else {
       await this.appendSyntheticToolResult(
         pendingHil.runId,
@@ -637,6 +718,7 @@ export class Process extends Host<Env> {
   }
 
   private resetExecutionState(): void {
+    this.rejectCodeModeWaiters(null, "Process execution state was reset");
     this.currentRun = null;
     this.store.clearPendingToolCalls();
     this.store.clearPendingHil();
@@ -1354,12 +1436,21 @@ export class Process extends Host<Env> {
           return null;
         }
 
-        await this.dispatchSyscall(
-          runId,
-          tc.id,
-          syscall as SyscallName,
-          tc.arguments,
-        );
+        if (syscall === CODEMODE_EXEC) {
+          await this.executeCodeModeTool(
+            runId,
+            tc.id,
+            tc.arguments,
+            approvalPolicy,
+          );
+        } else {
+          await this.dispatchSyscall(
+            runId,
+            tc.id,
+            syscall as SyscallName,
+            tc.arguments,
+          );
+        }
         if (this.handleRunStopped(runId)) {
           return null;
         }
@@ -1370,6 +1461,312 @@ export class Process extends Host<Env> {
       if (this.activeRunPhase?.runId === runId && this.activeRunPhase.phase === "toolDispatch") {
         this.activeRunPhase = null;
       }
+    }
+  }
+
+  private async handleCodeModeRun(rawArgs: CodeModeRunArgs): Promise<CodeModeRunResult> {
+    const args = rawArgs && typeof rawArgs === "object"
+      ? rawArgs as Partial<CodeModeRunArgs>
+      : {};
+    if (typeof args.code !== "string" || args.code.trim().length === 0) {
+      return {
+        status: "failed",
+        error: "codemode requires a non-empty code string",
+      };
+    }
+
+    try {
+      return await executeCodeMode(
+        this.env,
+        args.code,
+        (call, toolArgs) => this.executeCodeModeCommandSyscall(call, toolArgs),
+        {
+          defaultTarget: normalizeOptionalString(args.target),
+          defaultCwd: normalizeOptionalString(args.cwd),
+          argv: normalizeStringArray(args.argv),
+          args: args.args ?? null,
+        },
+      );
+    } catch (error) {
+      return {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async executeCodeModeTool(
+    runId: string,
+    toolCallId: string,
+    rawArgs: unknown,
+    approvalPolicy: ToolApprovalPolicy,
+  ): Promise<void> {
+    const args = rawArgs && typeof rawArgs === "object"
+      ? rawArgs as Partial<CodeModeExecArgs>
+      : {};
+    this.store.register(
+      toolCallId,
+      runId,
+      CODEMODE_EXEC as SyscallName,
+      args,
+    );
+
+    if (typeof args.code !== "string" || args.code.trim().length === 0) {
+      this.store.resolve(toolCallId, {
+        status: "failed",
+        error: "CodeMode requires a non-empty code string",
+      });
+      return;
+    }
+
+    try {
+      const result = await executeCodeMode(
+        this.env,
+        args.code,
+        (call, toolArgs) => this.executeCodeModeSyscall(
+          runId,
+          call,
+          toolArgs,
+          approvalPolicy,
+        ),
+      );
+      this.store.resolve(toolCallId, result);
+    } catch (error) {
+      this.store.resolve(toolCallId, {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async executeCodeModeSyscall(
+    runId: string,
+    call: SyscallName,
+    args: Record<string, unknown>,
+    approvalPolicy: ToolApprovalPolicy,
+  ): Promise<unknown> {
+    if (this.handleRunStopped(runId)) {
+      throw new Error("Run stopped before CodeMode tool execution completed");
+    }
+
+    const toolCallId = `codemode-${crypto.randomUUID()}`;
+    const toolName = SYSCALL_TOOL_NAMES[call] ?? call;
+    const approval = resolveToolApproval(
+      approvalPolicy,
+      call,
+      args,
+      this.identity,
+      this.profile,
+    );
+
+    if (approval.action === "deny") {
+      throw new Error(`Tool execution denied by policy: ${call}`);
+    }
+
+    if (approval.action === "ask") {
+      if (isNonInteractiveProfile(this.profile)) {
+        throw new Error(
+          `Tool execution requires interactive approval, which is unavailable for this profile: ${call}`,
+        );
+      }
+      const approved = await this.waitForCodeModeApproval(
+        runId,
+        toolCallId,
+        toolName,
+        call,
+        args,
+      );
+      if (!approved) {
+        throw new Error(`Tool execution was not approved: ${call}`);
+      }
+    }
+
+    await this.sendSignal("chat.tool_call", {
+      name: toolName,
+      syscall: call,
+      args,
+      callId: toolCallId,
+      pid: this.pid,
+      runId,
+    });
+    if (this.handleRunStopped(runId)) {
+      throw new Error("Run stopped before CodeMode tool execution completed");
+    }
+
+    let response: ResponseFrame;
+    try {
+      response = await this.dispatchCodeModeSyscall(
+        runId,
+        toolCallId,
+        call,
+        args,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.sendSignal("chat.tool_result", {
+        name: toolName,
+        syscall: call,
+        callId: toolCallId,
+        ok: false,
+        error: message,
+        pid: this.pid,
+        runId,
+      });
+      throw error;
+    }
+
+    if (response.ok) {
+      const output = response.data ?? null;
+      await this.sendSignal("chat.tool_result", {
+        name: toolName,
+        syscall: call,
+        callId: toolCallId,
+        ok: true,
+        output,
+        pid: this.pid,
+        runId,
+      });
+      return output;
+    }
+
+    const error = response.error.message;
+    await this.sendSignal("chat.tool_result", {
+      name: toolName,
+      syscall: call,
+      callId: toolCallId,
+      ok: false,
+      error,
+      pid: this.pid,
+      runId,
+    });
+    throw new Error(error);
+  }
+
+  private async executeCodeModeCommandSyscall(
+    call: SyscallName,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const id = `codemode-${crypto.randomUUID()}`;
+    const response = await this.dispatchCodeModeSyscall(
+      null,
+      id,
+      call,
+      args,
+    );
+
+    if (response.ok) {
+      return response.data ?? null;
+    }
+
+    throw new Error(response.error.message);
+  }
+
+  private async waitForCodeModeApproval(
+    runId: string,
+    toolCallId: string,
+    toolName: string,
+    call: SyscallName,
+    args: Record<string, unknown>,
+  ): Promise<boolean> {
+    const requestId = crypto.randomUUID();
+    const approved = new Promise<boolean>((resolve) => {
+      const timeoutId = setTimeout(() => {
+        this.codeModeApprovals.delete(requestId);
+        if (this.store.getPendingHil(requestId)) {
+          this.store.clearPendingHil();
+        }
+        resolve(false);
+      }, CODE_MODE_APPROVAL_TIMEOUT_MS);
+      this.codeModeApprovals.set(requestId, { runId, resolve, timeoutId });
+    });
+
+    const pendingHil: PendingHilRecord = {
+      requestId,
+      runId,
+      toolCallId,
+      toolName,
+      syscall: call,
+      args,
+      remainingToolCalls: [],
+      createdAt: Date.now(),
+    };
+    this.store.setPendingHil(pendingHil);
+    await this.sendSignal("chat.hil", this.toProcHilRequest(pendingHil));
+    return approved;
+  }
+
+  private async dispatchCodeModeSyscall(
+    runId: string | null,
+    id: string,
+    call: SyscallName,
+    args: Record<string, unknown>,
+  ): Promise<ResponseFrame> {
+    const reqFrame: RequestFrame = {
+      type: "req",
+      id,
+      call,
+      args,
+    } as RequestFrame;
+
+    const pending = new Promise<ResponseFrame>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.codeModeResponses.delete(id);
+        reject(new Error(`Timed out waiting for ${call}`));
+      }, CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS);
+      this.codeModeResponses.set(id, { runId, resolve, reject, timeoutId });
+    });
+
+    try {
+      const response = await sendFrameToKernel(this.pid, reqFrame);
+      if (response && response.type === "res") {
+        const waiter = this.codeModeResponses.get(id);
+        if (waiter) {
+          this.codeModeResponses.delete(id);
+          clearTimeout(waiter.timeoutId);
+        }
+        return response;
+      }
+      if (response) {
+        throw new Error(`Unexpected response frame for ${call}: ${response.type}`);
+      }
+      return await pending;
+    } catch (error) {
+      const waiter = this.codeModeResponses.get(id);
+      if (waiter) {
+        this.codeModeResponses.delete(id);
+        clearTimeout(waiter.timeoutId);
+      }
+      throw error;
+    }
+  }
+
+  private resolveCodeModeApproval(requestId: string, approved: boolean): void {
+    const waiter = this.codeModeApprovals.get(requestId);
+    if (!waiter) {
+      return;
+    }
+    this.codeModeApprovals.delete(requestId);
+    clearTimeout(waiter.timeoutId);
+    waiter.resolve(approved);
+  }
+
+  private rejectCodeModeWaiters(runId: string | null, message: string): void {
+    for (const [id, waiter] of this.codeModeResponses.entries()) {
+      if (runId !== null && waiter.runId !== runId) {
+        continue;
+      }
+      this.codeModeResponses.delete(id);
+      clearTimeout(waiter.timeoutId);
+      waiter.reject(new Error(message));
+    }
+
+    for (const [requestId, waiter] of this.codeModeApprovals.entries()) {
+      if (runId !== null && waiter.runId !== runId) {
+        continue;
+      }
+      this.codeModeApprovals.delete(requestId);
+      clearTimeout(waiter.timeoutId);
+      waiter.resolve(false);
     }
   }
 

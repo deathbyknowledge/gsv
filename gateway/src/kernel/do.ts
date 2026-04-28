@@ -20,6 +20,7 @@ import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
 import { DeviceRegistry } from "./devices";
 import { RoutingTable, type RouteOrigin } from "./routing";
+import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry } from "./processes";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
@@ -177,6 +178,7 @@ export class Kernel extends Host<Env> {
   private readonly config: ConfigStore;
   private readonly devices: DeviceRegistry;
   private readonly routes: RoutingTable;
+  private readonly shellSessions: ShellSessionStore;
   private readonly procs: ProcessRegistry;
   private readonly workspaces: WorkspaceStore;
   private readonly adapters: AdapterStore;
@@ -211,6 +213,9 @@ export class Kernel extends Host<Env> {
 
     this.routes = new RoutingTable(sql);
     this.routes.init();
+
+    this.shellSessions = new ShellSessionStore(sql);
+    this.shellSessions.init();
 
     this.procs = new ProcessRegistry(sql);
     this.procs.init();
@@ -302,7 +307,7 @@ export class Kernel extends Host<Env> {
         this.handleRes(connection, frame);
         break;
       case "sig":
-        // TODO: inbound signals
+        this.handleSig(connection, frame);
         break;
     }
   }
@@ -1197,7 +1202,7 @@ export class Kernel extends Host<Env> {
   private summarizeHilRequest(request: ProcHilRequest): string {
     const args = request.args;
     const path = typeof args.path === "string" ? args.path : "";
-    const command = typeof args.command === "string" ? args.command : "";
+    const command = typeof args.input === "string" ? args.input : "";
 
     if (request.syscall === "shell.exec") {
       return command
@@ -1257,6 +1262,7 @@ export class Kernel extends Host<Env> {
       packages: this.packages,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      shellSessions: this.shellSessions,
       automation: this.automation,
       signalWatches: this.signalWatches,
       notifications: this.notifications,
@@ -1320,6 +1326,7 @@ export class Kernel extends Host<Env> {
       packages: this.packages,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      shellSessions: this.shellSessions,
       automation: this.automation,
       signalWatches: this.signalWatches,
       notifications: this.notifications,
@@ -1345,6 +1352,7 @@ export class Kernel extends Host<Env> {
       packages: this.packages,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      shellSessions: this.shellSessions,
       automation: this.automation,
       signalWatches: this.signalWatches,
       notifications: this.notifications,
@@ -1365,6 +1373,7 @@ export class Kernel extends Host<Env> {
   private buildDispatchDeps(): DispatchDeps {
     return {
       routingTable: this.routes,
+      shellSessions: this.shellSessions,
       connections: this.connections,
       scheduleExpiry: async (id: string, ttlMs: number) => {
         const sched = await this.schedule(
@@ -1854,7 +1863,52 @@ export class Kernel extends Host<Env> {
       this.cancelSchedule(consumed.scheduleId).catch(() => {});
     }
 
+    if (consumed.call === "shell.exec") {
+      this.recordShellSessionFromResponse(consumed.deviceId, frame);
+    }
+
     this.deliverToOrigin(consumed.origin, frame);
+  }
+
+  private handleSig(connection: Connection<ConnectionState>, frame: SignalFrame): void {
+    if (frame.signal !== "exec.status") {
+      return;
+    }
+
+    const state = connection.state as ConnectionState | undefined;
+    if (state?.identity?.role !== "driver" || !state.identity.device) {
+      return;
+    }
+
+    const payload = asRecord(frame.payload);
+    const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
+    if (!sessionId) {
+      return;
+    }
+
+    const status = shellStatusFromEvent(typeof payload?.event === "string" ? payload.event : "");
+    this.shellSessions.rememberDeviceSession(sessionId, state.identity.device, status, {
+      exitCode: typeof payload?.exitCode === "number" ? payload.exitCode : null,
+      error: typeof payload?.signal === "string" ? payload.signal : null,
+    });
+  }
+
+  private recordShellSessionFromResponse(deviceId: string, frame: ResponseFrame): void {
+    if (!frame.ok) {
+      return;
+    }
+
+    const data = asRecord(frame.data);
+    const sessionId = typeof data?.sessionId === "string" ? data.sessionId.trim() : "";
+    if (!sessionId) {
+      return;
+    }
+
+    const status = shellStatusFromResult(typeof data?.status === "string" ? data.status : "");
+    this.shellSessions.rememberDeviceSession(sessionId, deviceId, status, {
+      exitCode: typeof data?.exitCode === "number" ? data.exitCode : null,
+      error: typeof data?.error === "string" ? data.error : null,
+    });
   }
 
   /**
@@ -1923,6 +1977,7 @@ export class Kernel extends Host<Env> {
   }
 
   private failRoutesForDevice(deviceId: string): void {
+    this.shellSessions.failForDevice(deviceId, "Device disconnected");
     const failed = this.routes.failForDevice(deviceId);
     for (const entry of failed) {
       if (entry.scheduleId) {
@@ -2172,6 +2227,27 @@ function findUiEntrypoint(
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function shellStatusFromResult(status: string): ShellSessionStatus {
+  if (status === "completed" || status === "failed") {
+    return status;
+  }
+  return "running";
+}
+
+function shellStatusFromEvent(event: string): ShellSessionStatus {
+  if (event === "finished") {
+    return "completed";
+  }
+  if (event === "failed" || event === "timed_out") {
+    return "failed";
+  }
+  return "running";
 }
 
 function formatHistoryMessage(message: ProcHistoryMessage): string {

@@ -14,6 +14,7 @@ import type { DeviceRegistry } from "./devices";
 import type { ProcessRegistry } from "./processes";
 import type { AdapterStore } from "./adapter-store";
 import type { RunRouteStore } from "./run-routes";
+import type { ShellSessionStore } from "./shell-sessions";
 import type { WorkspaceStore } from "./workspaces";
 import type { PackageStore } from "./packages";
 import type { AutomationStore } from "./automation";
@@ -32,6 +33,7 @@ export type KernelContext = {
   packages: PackageStore;
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
+  shellSessions: ShellSessionStore;
   automation: AutomationStore;
   signalWatches: SignalWatchStore;
   notifications?: NotificationStore;

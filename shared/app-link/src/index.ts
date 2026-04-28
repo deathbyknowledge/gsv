@@ -20,7 +20,7 @@ export type ShellOpenPayload = {
   device?: string;
   deviceId?: string;
   target?: string;
-  workdir?: string;
+  cwd?: string;
   context?: ThreadContext | null;
 };
 
@@ -119,7 +119,7 @@ export function buildOpenAppRoute(request: OpenAppRequest, locationHref: string)
     const context = normalizeThreadContext(payload.context);
     const url = new URL("/apps/shell/", locationHref);
     writeParam(url, "target", readRequestedTarget(payload) ?? undefined);
-    writeParam(url, "workdir", asString(payload.workdir) ?? context?.cwd ?? undefined);
+    writeParam(url, "cwd", asString(payload.cwd) ?? context?.cwd ?? undefined);
     return `${url.pathname}${url.search}`;
   }
   if (target === "wiki") {

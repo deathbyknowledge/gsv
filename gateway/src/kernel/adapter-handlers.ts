@@ -624,7 +624,7 @@ function renderAdapterHilReminder(
 
 function summarizePendingHil(pendingHil: PendingHilSummary): string {
   const path = typeof pendingHil.args.path === "string" ? pendingHil.args.path : "";
-  const command = typeof pendingHil.args.command === "string" ? pendingHil.args.command : "";
+  const command = typeof pendingHil.args.input === "string" ? pendingHil.args.input : "";
 
   if (pendingHil.syscall === "shell.exec") {
     return command

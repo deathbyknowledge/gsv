@@ -41,9 +41,9 @@ type TranscriptEntry = {
 type ShellBackend = {
   loadState(args: Record<string, never>): Promise<ShellState>;
   execCommand(args: {
-    command: string;
+    input: string;
     target: string;
-    workdir?: string;
+    cwd?: string;
     timeoutMs?: string;
     yieldMs?: string;
     background?: boolean;
@@ -63,9 +63,9 @@ const SHELL_LAYOUT = `
         <span>Target</span>
         <select data-shell-target></select>
       </label>
-      <label class="shell-field shell-field-workdir">
+      <label class="shell-field shell-field-cwd">
         <span>Working directory</span>
-        <input data-shell-workdir type="text" value="" placeholder="Optional" spellcheck="false" />
+        <input data-shell-cwd type="text" value="" placeholder="Optional" spellcheck="false" />
       </label>
       <div class="shell-toolbar-actions">
         <div class="shell-status-indicator" data-shell-status data-kind="booting" aria-label="Shell status" title="Shell loading">
@@ -133,13 +133,13 @@ function readLaunchUrl(): URL {
   }
 
   const currentHasWindowId = current.searchParams.has("windowId");
-  const currentHasExplicitState = current.searchParams.has("target") || current.searchParams.has("path") || current.searchParams.has("workdir");
+  const currentHasExplicitState = current.searchParams.has("target") || current.searchParams.has("path") || current.searchParams.has("cwd");
   if (currentHasWindowId && currentHasExplicitState) {
     return current;
   }
 
   const frameHasWindowId = frame.searchParams.has("windowId");
-  const frameHasExplicitState = frame.searchParams.has("target") || frame.searchParams.has("path") || frame.searchParams.has("workdir");
+  const frameHasExplicitState = frame.searchParams.has("target") || frame.searchParams.has("path") || frame.searchParams.has("cwd");
   if (!frameHasWindowId && !frameHasExplicitState) {
     return current;
   }
@@ -148,7 +148,7 @@ function readLaunchUrl(): URL {
 }
 
 const WINDOW_ID = readLaunchUrl().searchParams.get("windowId")?.trim() || "";
-const workdirInput = document.querySelector<HTMLInputElement>("[data-shell-workdir]");
+const cwdInput = document.querySelector<HTMLInputElement>("[data-shell-cwd]");
 const timeoutInput = document.querySelector<HTMLInputElement>("[data-shell-timeout]");
 const yieldInput = document.querySelector<HTMLInputElement>("[data-shell-yield]");
 const backgroundInput = document.querySelector<HTMLInputElement>("[data-shell-background]");
@@ -186,11 +186,11 @@ function readActiveThreadContext(): { cwd: string; workspaceId: string } | null 
   }
 }
 
-function readRouteParams(): { target: string | null; workdir: string | null } {
+function readRouteParams(): { target: string | null; cwd: string | null } {
   const url = readLaunchUrl();
   const routeFromUrl = {
     target: url.searchParams.get("target")?.trim() || null,
-    workdir: url.searchParams.get("path")?.trim() || url.searchParams.get("workdir")?.trim() || null,
+    cwd: url.searchParams.get("path")?.trim() || url.searchParams.get("cwd")?.trim() || null,
   };
 
   const pending = consumePendingAppOpen(WINDOW_ID);
@@ -203,10 +203,10 @@ function readRouteParams(): { target: string | null; workdir: string | null } {
       ?? (typeof payload?.target === "string" && payload.target.trim() ? payload.target.trim() : null)
       ?? routeFromUrl.target
     );
-    const workdir = typeof payload?.workdir === "string" && payload.workdir.trim()
-      ? payload.workdir.trim()
-      : (typeof context?.cwd === "string" && context.cwd.trim() ? context.cwd.trim() : routeFromUrl.workdir);
-    const nextRoute = { target, workdir };
+    const cwd = typeof payload?.cwd === "string" && payload.cwd.trim()
+      ? payload.cwd.trim()
+      : (typeof context?.cwd === "string" && context.cwd.trim() ? context.cwd.trim() : routeFromUrl.cwd);
+    const nextRoute = { target, cwd };
     console.debug("[shell] consumed pending app open", {
       windowId: WINDOW_ID,
       pending,
@@ -217,7 +217,7 @@ function readRouteParams(): { target: string | null; workdir: string | null } {
 
   const nextRoute = {
     target: routeFromUrl.target,
-    workdir: routeFromUrl.workdir,
+    cwd: routeFromUrl.cwd,
   };
   console.debug("[shell] using url route", {
     windowId: WINDOW_ID,
@@ -233,7 +233,7 @@ function currentTarget(): string {
 }
 
 function currentPath(): string {
-  const value = workdirInput && workdirInput.value ? workdirInput.value.trim() : "";
+  const value = cwdInput && cwdInput.value ? cwdInput.value.trim() : "";
   return value || "~";
 }
 
@@ -340,9 +340,9 @@ async function runCommand(backend: ShellBackend, command: string): Promise<void>
 
   try {
     const response = await backend.execCommand({
-      command: trimmed,
+      input: trimmed,
       target: currentTarget(),
-      workdir: workdirInput?.value ?? "",
+      cwd: cwdInput?.value ?? "",
       timeoutMs: timeoutInput?.value ?? "",
       yieldMs: yieldInput?.value ?? "",
       background: backgroundInput?.checked ?? false,
@@ -377,7 +377,7 @@ async function boot(): Promise<void> {
   if (!root) {
     throw new Error("shell root missing");
   }
-  if (!streamNode || !statusNode || !targetSelect || !workdirInput || !timeoutInput || !yieldInput || !backgroundInput) {
+  if (!streamNode || !statusNode || !targetSelect || !cwdInput || !timeoutInput || !yieldInput || !backgroundInput) {
     throw new Error("Shell UI is incomplete.");
   }
 
@@ -395,12 +395,12 @@ async function boot(): Promise<void> {
     route,
     devices: state.devices.map((device) => device.deviceId),
   });
-  if (route.workdir) {
-    workdirInput.value = route.workdir;
+  if (route.cwd) {
+    cwdInput.value = route.cwd;
   } else {
     const activeThread = readActiveThreadContext();
-    if (activeThread && !workdirInput.value.trim()) {
-      workdirInput.value = activeThread.cwd;
+    if (activeThread && !cwdInput.value.trim()) {
+      cwdInput.value = activeThread.cwd;
     }
   }
 
@@ -490,7 +490,7 @@ async function boot(): Promise<void> {
     terminal?.write(data);
   });
 
-  for (const node of [targetSelect, workdirInput, timeoutInput, yieldInput, backgroundInput]) {
+  for (const node of [targetSelect, cwdInput, timeoutInput, yieldInput, backgroundInput]) {
     node.addEventListener("change", () => {
       if (!running && currentLine.length === 0) {
         syncCurrentLine();

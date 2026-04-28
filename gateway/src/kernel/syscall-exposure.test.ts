@@ -5,6 +5,7 @@ describe("internal syscall exposure", () => {
   it("marks ai bootstrap syscalls as internal-only", () => {
     expect(isInternalOnlySyscall("ai.config")).toBe(true);
     expect(isInternalOnlySyscall("ai.tools")).toBe(true);
+    expect(isInternalOnlySyscall("codemode.exec")).toBe(true);
   });
 
   it("keeps user-facing syscalls public", () => {

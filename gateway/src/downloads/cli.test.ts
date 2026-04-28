@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCliInstallPowerShell,
+  cliGithubReleaseAssetUrl,
   inferDefaultCliChannel,
   isSupportedCliAsset,
   isSemverCliPrereleaseTag,
@@ -48,6 +49,15 @@ describe("CLI release helpers", () => {
 
   it("recognizes the mirrored windows asset", () => {
     expect(isSupportedCliAsset("gsv-windows-x64.exe")).toBe(true);
+  });
+
+  it("builds direct GitHub release asset URLs without the releases API", () => {
+    expect(cliGithubReleaseAssetUrl("stable", "gsv-linux-x64")).toBe(
+      "https://github.com/deathbyknowledge/gsv/releases/latest/download/gsv-linux-x64",
+    );
+    expect(cliGithubReleaseAssetUrl("dev", "gsv-linux-x64")).toMatch(
+      /^https:\/\/github\.com\/deathbyknowledge\/gsv\/releases\/download\/dev\/gsv-linux-x64\?ts=\d+$/,
+    );
   });
 
   it("builds a windows installer script for the mirrored x64 asset", () => {

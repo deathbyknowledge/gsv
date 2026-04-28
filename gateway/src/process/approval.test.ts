@@ -53,7 +53,7 @@ describe("tool approval policy", () => {
           when: {
             anyTag: ["network"],
             target: "device",
-            argPrefix: { command: "curl" },
+            argPrefix: { input: "curl" },
           },
           action: "ask",
         },
@@ -61,13 +61,36 @@ describe("tool approval policy", () => {
     }));
 
     const resolution = resolveToolApproval(policy, "shell.exec", {
-      command: "curl https://example.com",
+      input: "curl https://example.com",
       target: "macbook",
     }, IDENTITY);
 
     expect(resolution.action).toBe("ask");
     expect(resolution.facts.tags).toContain("network");
     expect(resolution.facts.target).toBe("device");
+  });
+
+  it("classifies shell session continuations as device-targeted", () => {
+    const policy = parseToolApprovalPolicy(JSON.stringify({
+      default: "auto",
+      rules: [
+        {
+          match: "shell.exec",
+          when: { target: "device" },
+          action: "ask",
+        },
+      ],
+    }));
+
+    const resolution = resolveToolApproval(policy, "shell.exec", {
+      sessionId: "sh_123",
+      input: "rm -rf build",
+    }, IDENTITY);
+
+    expect(resolution.action).toBe("ask");
+    expect(resolution.facts.target).toBe("device");
+    expect(resolution.facts.tags).toContain("remote");
+    expect(resolution.facts.tags).toContain("destructive");
   });
 
   it("builds path tags for filesystem syscalls", () => {
