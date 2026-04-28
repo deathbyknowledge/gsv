@@ -29,7 +29,7 @@ from non-root system config reads.
 ## Edit Profile Context
 
 Profiles define role-level behavior for process types such as `init`, `task`,
-`review`, `cron`, `mcp`, `app`, `archivist`, and `curator`. Profile context is
+`review`, `cron`, `mcp`, and `app`. Profile context is
 stored as Markdown fragments:
 
 ```text
@@ -84,7 +84,7 @@ gsv config set config/ai/profile/task/tools/approval \
 Rules match exact syscalls or domain wildcards such as `fs.*`. Conditions can
 filter by profile, tags, argument prefixes, and target type (`gsv` or `device`).
 Interactive profiles can pause for approval; non-interactive profiles such as
-`cron`, `archivist`, and `curator` turn `ask` decisions into tool errors.
+`cron` turn `ask` decisions into tool errors.
 
 ## Expose Devices Deliberately
 

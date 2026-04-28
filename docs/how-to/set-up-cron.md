@@ -1,35 +1,12 @@
 # How to Configure Automation
 
-GSV has two current scheduling surfaces:
+GSV currently has one implemented scheduling surface:
 
-- Built-in Kernel automation for archivist and curator workers.
 - Package daemon schedules for package-owned backend RPC methods.
 
 The typed `sched.*` syscalls exist in the protocol, but the dispatcher currently
 returns `501 not yet implemented`. Do not build user cron workflows on
 `sched.add` yet.
-
-## Configure Built-in Automation
-
-Built-in automation is stored in Kernel SQLite and controlled by config keys.
-Root can tune the intervals:
-
-```bash
-gsv config get config/automation
-gsv config set config/automation/archivist/min_interval_ms 300000
-gsv config set config/automation/curator/interval_ms 3600000
-gsv config set config/automation/curator/batch_size 5
-```
-
-Set `config/automation/curator/interval_ms` to `0` to disable the periodic
-curator sweep:
-
-```bash
-gsv config set config/automation/curator/interval_ms 0
-```
-
-Archivist jobs are scheduled from process activity and workspace checkpointing.
-Curator jobs periodically review staged durable knowledge candidates.
 
 ## Add a Package Daemon Schedule
 
@@ -98,7 +75,6 @@ named backend RPC method with the stored payload and sets
 
 ## Choose the Right Mechanism
 
-- Use built-in automation for GSV's own archivist and curator behavior.
 - Use package daemon schedules for app-specific recurring backend work.
 - Use an external scheduler plus `gsv chat` or `gsv proc send` if you need
   operator-level cron today.

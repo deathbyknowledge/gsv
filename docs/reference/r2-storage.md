@@ -47,7 +47,6 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `packages` | Installed package manifests, scopes, grants, and artifact hashes. |
 | `identity_links`, `surface_routes`, `link_challenges` | Adapter actor links and inbound surface routing. |
 | `run_routes` | Routes process chat signals back to clients or adapter surfaces. |
-| `automation_kv`, `automation_jobs` | Archivist and curator scheduling state. |
 | `notifications`, `signal_watches`, `app_client_sessions` | Notifications, watches, and package UI sessions. |
 
 ## Process SQLite

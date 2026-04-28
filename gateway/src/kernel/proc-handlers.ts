@@ -102,26 +102,6 @@ const SYSTEM_PROFILE_ENTRIES: ProcProfileListEntry[] = [
     background: true,
     spawnMode: "new",
   },
-  {
-    id: "archivist",
-    kind: "system",
-    displayName: "Archivist",
-    description: "Background compaction and continuity worker.",
-    interactive: false,
-    startable: false,
-    background: true,
-    spawnMode: "new",
-  },
-  {
-    id: "curator",
-    kind: "system",
-    displayName: "Curator",
-    description: "Background inbox review and promotion worker.",
-    interactive: false,
-    startable: false,
-    background: true,
-    spawnMode: "new",
-  },
 ];
 
 export function handleProcList(

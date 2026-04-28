@@ -33,7 +33,7 @@ These aliases are used below to keep each syscall signature readable.
 type Empty = Record<string, never>;
 type OperationError = { ok: false; error: string };
 type AiContextProfile =
-  | "init" | "task" | "review" | "cron" | "mcp" | "app" | "archivist" | "curator"
+  | "init" | "task" | "review" | "cron" | "mcp" | "app"
   | `${string}#${string}`;
 
 type ProcessIdentity = {

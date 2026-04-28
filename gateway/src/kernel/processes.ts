@@ -96,8 +96,6 @@ export class ProcessRegistry {
     this.sql.exec("UPDATE processes SET profile = 'cron' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'cron:%'");
     this.sql.exec("UPDATE processes SET profile = 'mcp' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'mcp:%'");
     this.sql.exec("UPDATE processes SET profile = 'app' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'app:%'");
-    this.sql.exec("UPDATE processes SET profile = 'archivist' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'archivist:%'");
-    this.sql.exec("UPDATE processes SET profile = 'curator' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'curator:%'");
     this.sql.exec("UPDATE processes SET profile = 'task' WHERE profile IS NULL OR profile = ''");
   }
 

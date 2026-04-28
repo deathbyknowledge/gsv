@@ -14,9 +14,7 @@ export type SystemAiContextProfile =
   | "review"
   | "cron"
   | "mcp"
-  | "app"
-  | "archivist"
-  | "curator";
+  | "app";
 
 export type PackageAiContextProfile = `${string}#${string}`;
 
@@ -28,9 +26,7 @@ export function isSystemAiContextProfile(value: unknown): value is SystemAiConte
     || value === "review"
     || value === "cron"
     || value === "mcp"
-    || value === "app"
-    || value === "archivist"
-    || value === "curator";
+    || value === "app";
 }
 
 export function isPackageAiContextProfile(value: unknown): value is PackageAiContextProfile {

@@ -121,7 +121,7 @@ const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
 const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 
 function isNonInteractiveProfile(profile: AiContextProfile): boolean {
-  return profile === "cron" || profile === "archivist" || profile === "curator";
+  return profile === "cron";
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

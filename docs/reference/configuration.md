@@ -61,7 +61,7 @@ Built-in AI profiles load prompt context from:
 config/ai/profile/{profile}/context.d/*.md
 ```
 
-Supported built-in profiles are `init`, `task`, `review`, `cron`, `mcp`, `app`, `archivist`, and `curator`. Files are sorted lexically, empty files are skipped, and Markdown content is concatenated into the profile context.
+Supported built-in profiles are `init`, `task`, `review`, `cron`, `mcp`, and `app`. Files are sorted lexically, empty files are skipped, and Markdown content is concatenated into the profile context.
 
 Use numeric prefixes to make ordering explicit:
 
@@ -101,7 +101,7 @@ Default policies:
 | Profiles | Default | Rules |
 |---|---|---|
 | `init`, `task`, `review`, `app`, `mcp` | `auto` | Ask for `shell.exec` and `fs.delete`. |
-| `cron`, `archivist`, `curator` | `auto` | Deny `fs.delete`; allow `shell.exec`. |
+| `cron` | `auto` | Deny `fs.delete`; allow `shell.exec`. |
 
 ## Runtime Config Keys
 
@@ -115,9 +115,6 @@ Default policies:
 | `config/shell/max_output_bytes` | `524288` | Maximum captured shell output. |
 | `config/process/init_label` | `init ({username})` | Default init process label template. |
 | `config/process/max_per_user` | `0` | Maximum processes per user. `0` means unlimited. |
-| `config/automation/archivist/min_interval_ms` | `300000` | Minimum archivist interval. |
-| `config/automation/curator/interval_ms` | `3600000` | Curator interval. `0` disables periodic curator runs. |
-| `config/automation/curator/batch_size` | `5` | Maximum curator batch size. |
 
 ## Package Config
 
