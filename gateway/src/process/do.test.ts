@@ -982,7 +982,7 @@ describe("Process DO — mechanical", () => {
       expect(checkpointReasons).toEqual(["proc.reset"]);
     });
 
-    it("archives messages and clears conversation", async () => {
+    it("archives all conversations and clears process history", async () => {
       const pid = "mech-reset-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -990,6 +990,8 @@ describe("Process DO — mechanical", () => {
         const store = (instance as any).store;
         store.appendMessage("user", "hello");
         store.appendMessage("assistant", "hi");
+        store.openConversation({ conversationId: "side", title: "Side" });
+        store.appendMessage("user", "side hello", { conversationId: "side" });
       });
 
       const res = (await stub.recvFrame(
@@ -998,17 +1000,41 @@ describe("Process DO — mechanical", () => {
 
       const data = res.data as any;
       expect(data.ok).toBe(true);
-      expect(data.archivedMessages).toBe(2);
+      expect(data.archivedMessages).toBe(3);
       expect(data.archivedTo).toContain("/var/sessions/root/");
+      expect(data.archivedTo).toMatch(/\/$/);
+      expect(data.archives).toEqual([
+        expect.objectContaining({
+          conversationId: "default",
+          generation: 1,
+          messages: 2,
+          path: expect.stringMatching(/\/default\.gen-1\.jsonl\.gz$/),
+        }),
+        expect.objectContaining({
+          conversationId: "side",
+          generation: 1,
+          messages: 1,
+          path: expect.stringMatching(/\/side\.gen-1\.jsonl\.gz$/),
+        }),
+      ]);
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         expect(store.messageCount()).toBe(0);
+        expect(store.messageCount("side")).toBe(0);
+        expect(store.getConversation("default").generation).toBe(2);
+        expect(store.getConversation("side")).toMatchObject({
+          generation: 2,
+          status: "open",
+          title: "Side",
+        });
       });
 
-      const archiveKey = data.archivedTo!.replace(/^\//, "");
-      const obj = await env.STORAGE.get(archiveKey);
-      expect(obj).not.toBeNull();
+      for (const archive of data.archives) {
+        const archiveKey = archive.path.replace(/^\//, "");
+        const obj = await env.STORAGE.get(archiveKey);
+        expect(obj).not.toBeNull();
+      }
     });
 
     it("returns zero when no messages to archive", async () => {
@@ -1023,6 +1049,7 @@ describe("Process DO — mechanical", () => {
       expect(data.ok).toBe(true);
       expect(data.archivedMessages).toBe(0);
       expect(data.archivedTo).toBeUndefined();
+      expect(data.archives).toEqual([]);
     });
 
     it("clears active run state and queued messages", async () => {
@@ -1076,6 +1103,12 @@ describe("Process DO — mechanical", () => {
         makeReq("proc.kill", { archive: false }),
       )) as ResponseOkFrame;
       expect(killRes.ok).toBe(true);
+      expect(killRes.data).toMatchObject({
+        ok: true,
+        pid,
+        archivedMessages: 0,
+        archives: [],
+      });
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
@@ -1090,6 +1123,47 @@ describe("Process DO — mechanical", () => {
       )) as ResponseOkFrame;
       const sendData = sendRes.data as { queued?: boolean };
       expect(sendData.queued).toBeUndefined();
+    });
+
+    it("archives all conversations before clearing killed process history", async () => {
+      const pid = "mech-kill-archive-all";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "default before kill");
+        store.openConversation({ conversationId: "build" });
+        store.appendMessage("user", "build before kill", { conversationId: "build" });
+      });
+
+      const killRes = (await stub.recvFrame(
+        makeReq("proc.kill", {}),
+      )) as ResponseOkFrame;
+      const data = killRes.data as any;
+
+      expect(data).toMatchObject({
+        ok: true,
+        pid,
+        archivedMessages: 2,
+      });
+      expect(data.archivedTo).toMatch(/\/var\/sessions\/root\/mech-kill-archive-all\/.+\/$/);
+      expect(data.archives.map((archive: any) => archive.conversationId)).toEqual([
+        "build",
+        "default",
+      ]);
+
+      for (const archive of data.archives) {
+        const archiveKey = archive.path.replace(/^\//, "");
+        const obj = await env.STORAGE.get(archiveKey);
+        expect(obj).not.toBeNull();
+      }
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        expect(store.totalMessageCount()).toBe(0);
+        expect(store.getConversation("default").generation).toBe(2);
+        expect(store.getConversation("build").generation).toBe(2);
+      });
     });
   });
 

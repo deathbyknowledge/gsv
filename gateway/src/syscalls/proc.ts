@@ -52,8 +52,21 @@ export type ProcKillArgs = {
   archive?: boolean;
 };
 
+export type ProcArchiveEntry = {
+  conversationId: string;
+  generation: number;
+  messages: number;
+  path: string;
+};
+
 export type ProcKillResult =
-  | { ok: true; pid: string; archivedTo?: string }
+  | {
+      ok: true;
+      pid: string;
+      archivedMessages: number;
+      archivedTo?: string;
+      archives: ProcArchiveEntry[];
+    }
   | { ok: false; error: string };
 
 export type ProcSendArgs = {
@@ -231,6 +244,7 @@ export type ProcResetResult =
       pid: string;
       archivedMessages: number;
       archivedTo?: string;
+      archives: ProcArchiveEntry[];
     }
   | { ok: false; error: string };
 

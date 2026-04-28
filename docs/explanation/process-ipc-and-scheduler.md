@@ -280,6 +280,15 @@ The default should preserve the exact transcript in archive storage. Carrying a
 summary forward should be explicit, because a reset often means "forget the
 working conversation."
 
+Process-wide reset archives each non-empty conversation as its own generation
+file under one archive directory:
+
+```text
+/var/sessions/<username>/<pid>/<archiveId>/
+  default.gen-1.jsonl.gz
+  build.gen-3.jsonl.gz
+```
+
 ### Checkpoint
 
 Checkpointing should be distinct from compaction and reset.
@@ -478,7 +487,10 @@ conversation lifecycle state.
 
 Partially completed. `proc.conversation.reset` archives a selected conversation
 by default, clears its active messages and queued/runtime state, increments its
-generation, and leaves other conversations intact.
+generation, and leaves other conversations intact. Process-wide `proc.reset`
+and `proc.kill` now archive every non-empty conversation into a directory with
+one generation file per conversation before clearing all conversation messages
+and runtime state.
 
 Still pending: explicit compaction, checkpoint, and segmented history APIs.
 Preserve raw transcript archives and visible summary markers.

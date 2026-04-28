@@ -48,6 +48,7 @@ import type {
   ProcConversationCloseResult,
   ProcConversationResetArgs,
   ProcConversationResetResult,
+  ProcArchiveEntry,
   ProcResetResult,
   ProcKillResult,
   ProcSpawnAssignment,
@@ -132,6 +133,12 @@ type CodeModeApprovalWaiter = {
   timeoutId: ReturnType<typeof setTimeout>;
 };
 
+type ProcessArchiveResult = {
+  archivedMessages: number;
+  archivedTo?: string;
+  archives: ProcArchiveEntry[];
+};
+
 const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TEXT_ENCODER = new TextEncoder();
 const PROCESS_MEDIA_CACHE_LIMIT = 32;
@@ -206,6 +213,17 @@ function renderJsonBlock(value: unknown): string | null {
   } catch {
     return JSON.stringify(String(value));
   }
+}
+
+function emptyProcessArchive(): ProcessArchiveResult {
+  return {
+    archivedMessages: 0,
+    archives: [],
+  };
+}
+
+function conversationArchiveFilename(conversationId: string, generation: number): string {
+  return `${encodeURIComponent(conversationId)}.gen-${generation}.jsonl.gz`;
 }
 
 export class Process extends Host<Env> {
@@ -859,28 +877,26 @@ export class Process extends Host<Env> {
 
   private async handleProcReset(): Promise<ProcResetResult> {
     const pid = this.pid;
-    const count = this.store.messageCount();
+    const totalMessages = this.store.totalMessageCount();
     await this.checkpointWorkspace("proc.reset");
+
+    const archive = totalMessages > 0
+      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
+      : emptyProcessArchive();
+
     this.resetExecutionState();
     this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
-
-    if (count > 0) {
-      const archiveId = crypto.randomUUID();
-      await this.archiveMessages(pid, archiveId);
-      this.store.clearMessages();
-      await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
-
-      return {
-        ok: true,
-        pid,
-        archivedMessages: count,
-        archivedTo: `/var/sessions/${this.identity.username}/${pid}/${archiveId}.jsonl.gz`,
-      };
-    }
+    this.store.resetAllConversations();
 
     await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
 
-    return { ok: true, pid, archivedMessages: 0 };
+    return {
+      ok: true,
+      pid,
+      archivedMessages: archive.archivedMessages,
+      archivedTo: archive.archivedTo,
+      archives: archive.archives,
+    };
   }
 
   private async handleProcKill(args: {
@@ -888,25 +904,27 @@ export class Process extends Host<Env> {
     archive?: boolean;
   }): Promise<ProcKillResult> {
     const pid = this.pid;
+    const shouldArchive = args.archive !== false;
+    const totalMessages = this.store.totalMessageCount();
     await this.checkpointWorkspace("proc.kill");
+
+    const archive = shouldArchive && totalMessages > 0
+      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
+      : emptyProcessArchive();
+
     this.resetExecutionState();
     this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
 
-    let archivedTo: string | null = null;
-
-    if (args.archive !== false) {
-      const archiveId = crypto.randomUUID();
-      archivedTo = await this.archiveMessages(pid, archiveId);
-    }
-
     // A killed process should restart with a clean conversation and no queued work.
-    this.store.clearMessages();
+    this.store.resetAllConversations();
     await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
 
     return {
       ok: true,
       pid,
-      archivedTo: archivedTo ?? undefined,
+      archivedMessages: archive.archivedMessages,
+      archivedTo: archive.archivedTo,
+      archives: archive.archives,
     };
   }
 
@@ -1351,29 +1369,6 @@ export class Process extends Host<Env> {
     return normalizedReason ? `checkpoint ${normalizedReason}` : "checkpoint thread state";
   }
 
-  private async archiveMessages(
-    pid: string,
-    archiveId: string,
-  ): Promise<string | null> {
-    const messages = this.store.allMessagesForArchive();
-    if (messages.length === 0) return null;
-
-    const jsonl = messages
-      .map((m) =>
-        JSON.stringify(serializeArchivedMessage(m)),
-      )
-      .join("\n");
-
-    const key = `var/sessions/${this.identity.username}/${pid}/${archiveId}.jsonl.gz`;
-
-    const compressed = await gzip(jsonl);
-    const bucket = this.env.STORAGE;
-    await bucket.put(key, compressed, {
-      httpMetadata: { contentType: "application/gzip" },
-    });
-    return key;
-  }
-
   private async archiveConversationMessages(
     pid: string,
     conversationId: string,
@@ -1399,12 +1394,61 @@ export class Process extends Host<Env> {
       `${archiveId}.jsonl.gz`,
     ].join("/");
 
+    await this.writeMessageArchive(key, jsonl);
+    return key;
+  }
+
+  private async archiveAllConversationMessages(
+    pid: string,
+    archiveId: string,
+  ): Promise<ProcessArchiveResult> {
+    const archiveDir = `var/sessions/${this.identity.username}/${pid}/${archiveId}/`;
+    const archives: ProcArchiveEntry[] = [];
+    let archivedMessages = 0;
+
+    const conversations = this.store
+      .listConversations({ includeClosed: true })
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    for (const conversation of conversations) {
+      const messages = this.store.allMessagesForArchive(conversation.id);
+      if (messages.length === 0) {
+        continue;
+      }
+
+      const key = `${archiveDir}${conversationArchiveFilename(
+        conversation.id,
+        conversation.generation,
+      )}`;
+      const jsonl = messages
+        .map((m) =>
+          JSON.stringify(serializeArchivedMessage(m)),
+        )
+        .join("\n");
+
+      await this.writeMessageArchive(key, jsonl);
+      archivedMessages += messages.length;
+      archives.push({
+        conversationId: conversation.id,
+        generation: conversation.generation,
+        messages: messages.length,
+        path: `/${key}`,
+      });
+    }
+
+    return {
+      archivedMessages,
+      archivedTo: archivedMessages > 0 ? `/${archiveDir}` : undefined,
+      archives,
+    };
+  }
+
+  private async writeMessageArchive(key: string, jsonl: string): Promise<void> {
     const compressed = await gzip(jsonl);
     const bucket = this.env.STORAGE;
     await bucket.put(key, compressed, {
       httpMetadata: { contentType: "application/gzip" },
     });
-    return key;
   }
 
   async dispatchSyscall(

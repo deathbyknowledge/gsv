@@ -88,6 +88,25 @@ describe("ProcessStore", () => {
         expect(store.getConversation("thread").generation).toBe(2);
       });
     });
+
+    it("resets all conversations by clearing messages and incrementing generations", async () => {
+      const stub = await getProcessByPid("conversation-reset-all");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "default message");
+        store.openConversation({ conversationId: "side", title: "Side" });
+        store.appendMessage("user", "side message", { conversationId: "side" });
+        store.closeConversation("side");
+
+        expect(store.totalMessageCount()).toBe(2);
+        const conversations = store.resetAllConversations();
+        const byId = new Map(conversations.map((conversation: any) => [conversation.id, conversation]));
+
+        expect(store.totalMessageCount()).toBe(0);
+        expect(byId.get("default")).toMatchObject({ generation: 2, status: "open" });
+        expect(byId.get("side")).toMatchObject({ generation: 2, status: "open", title: "Side" });
+      });
+    });
   });
 
   // ---------- Message CRUD ----------

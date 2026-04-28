@@ -399,6 +399,32 @@ export class ProcessStore {
     };
   }
 
+  totalMessageCount(): number {
+    const rows = [...this.sql.exec<{ cnt: number }>(
+      "SELECT COUNT(*) as cnt FROM messages",
+    )];
+    return rows[0]?.cnt ?? 0;
+  }
+
+  clearAllMessages(): number {
+    const count = this.totalMessageCount();
+    this.sql.exec("DELETE FROM messages");
+    return count;
+  }
+
+  resetAllConversations(): ProcessConversationRecord[] {
+    const now = Date.now();
+    this.clearAllMessages();
+    this.sql.exec(
+      `UPDATE conversations
+          SET generation = generation + 1,
+              status = 'open',
+              updated_at = ?`,
+      now,
+    );
+    return this.listConversations({ includeClosed: true });
+  }
+
   // --- Tool calls ---
 
   register(
