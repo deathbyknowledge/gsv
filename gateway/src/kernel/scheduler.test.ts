@@ -99,6 +99,29 @@ describe("scheduler", () => {
       .toBe("2026-03-29T07:00:00.000Z");
   });
 
+  it("treats full-range cron day fields as wildcards", () => {
+    expect(new Date(computeNextRunAt({
+      kind: "cron",
+      expr: "0 9 */1 * 1",
+      timezone: "UTC",
+    }, Date.parse("2026-05-03T08:59:00.000Z"))!).toISOString())
+      .toBe("2026-05-04T09:00:00.000Z");
+
+    expect(new Date(computeNextRunAt({
+      kind: "cron",
+      expr: "0 9 1-31 * 1",
+      timezone: "UTC",
+    }, Date.parse("2026-05-03T08:59:00.000Z"))!).toISOString())
+      .toBe("2026-05-04T09:00:00.000Z");
+
+    expect(new Date(computeNextRunAt({
+      kind: "cron",
+      expr: "0 9 15 * 0-6",
+      timezone: "UTC",
+    }, Date.parse("2026-05-03T08:59:00.000Z"))!).toISOString())
+      .toBe("2026-05-15T09:00:00.000Z");
+  });
+
   it("computes recurring next-runs from the completion boundary", () => {
     const anchorMs = Date.parse("2026-04-28T10:00:00.000Z");
 
@@ -304,6 +327,35 @@ describe("scheduler", () => {
     expect(cancel).toHaveBeenCalledWith("wake-old");
     expect(wake).toHaveBeenCalledWith(existing.id, updated.state.nextRunAtMs);
     expect(setWakeScheduleId).toHaveBeenCalledWith(existing.id, "wake-new");
+  });
+
+  it("does not cancel the existing wake when update patch validation fails", async () => {
+    const existing = makeScheduleRecord();
+    const stored = { ...existing, wakeScheduleId: "wake-old" };
+    const cancel = vi.fn(async () => {});
+    const update = vi.fn();
+    const ctx = makeSchedulerContext({
+      schedules: {
+        getStored: vi.fn(() => stored),
+        update,
+      } as unknown as ScheduleStore,
+      cancelScheduleWake: cancel,
+      scheduleScheduleWake: vi.fn(async () => "wake-new"),
+    });
+
+    await expect(handleSchedulerUpdate({
+      id: existing.id,
+      patch: {
+        expression: {
+          kind: "cron",
+          expr: "0 9 * *",
+          timezone: "UTC",
+        },
+      },
+    }, ctx)).rejects.toThrow("cron expression must use five fields");
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("removes schedules by cancelling their pending wake", async () => {

@@ -441,12 +441,7 @@ export async function handleSchedulerUpdate(
     : normalizeScheduleTarget(args.patch.target);
   validateScheduleTargetAccess(nextTarget, ctx);
 
-  const previousWakeId = existing.wakeScheduleId;
-  if (previousWakeId && ctx.cancelScheduleWake) {
-    await ctx.cancelScheduleWake(previousWakeId);
-  }
-
-  const schedule = store.update(existing.id, {
+  const patch = {
     name: args.patch.name === undefined
       ? undefined
       : normalizeRequiredText(args.patch.name, "schedule name"),
@@ -459,7 +454,14 @@ export async function handleSchedulerUpdate(
       : normalizeScheduleExpression(args.patch.expression, ctx),
     target: nextTarget,
     now: Date.now(),
-  });
+  };
+
+  const previousWakeId = existing.wakeScheduleId;
+  if (previousWakeId && ctx.cancelScheduleWake) {
+    await ctx.cancelScheduleWake(previousWakeId);
+  }
+
+  const schedule = store.update(existing.id, patch);
 
   await armSchedule(ctx, schedule);
   return { schedule };
@@ -723,8 +725,8 @@ function parseCronFields(expr: string): CronFields {
     dayOfMonth,
     month: parseCronField(parts[3], 1, 12, "month"),
     dayOfWeek: normalizeDayOfWeek(dayOfWeek),
-    anyDayOfMonth: parts[2] === "*",
-    anyDayOfWeek: parts[4] === "*",
+    anyDayOfMonth: isFullCronRange(dayOfMonth, 1, 31),
+    anyDayOfWeek: isFullCronRange(normalizeDayOfWeek(dayOfWeek), 0, 6),
   };
 }
 
@@ -799,6 +801,18 @@ function normalizeDayOfWeek(values: Set<number>): Set<number> {
     out.add(value === 7 ? 0 : value);
   }
   return out;
+}
+
+function isFullCronRange(values: Set<number>, min: number, max: number): boolean {
+  if (values.size !== max - min + 1) {
+    return false;
+  }
+  for (let value = min; value <= max; value += 1) {
+    if (!values.has(value)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function cronFieldsMatch(fields: CronFields, local: ZonedDateParts): boolean {
