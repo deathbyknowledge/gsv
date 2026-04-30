@@ -390,34 +390,43 @@ export async function handleProcIpcCall(
     ctx.workspaces.touch(resolved.target.workspaceId);
   }
 
-  const response = await sendFrameToProcess(resolved.args.pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.ipc.deliver",
-    args: {
-      sourcePid: resolved.sourcePid,
-      source: ctx.identity!.process,
-      conversationId: resolved.args.conversationId,
-      message: resolved.args.message,
-      metadata: resolved.args.metadata,
-      sentAt: Date.now(),
-      call: {
-        callId,
-        replyToPid: resolved.sourcePid,
-        deadlineAt,
+  let response: ResponseFrame | null;
+  try {
+    response = await sendFrameToProcess(resolved.args.pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.ipc.deliver",
+      args: {
+        sourcePid: resolved.sourcePid,
+        source: ctx.identity!.process,
+        conversationId: resolved.args.conversationId,
+        message: resolved.args.message,
+        metadata: resolved.args.metadata,
+        sentAt: Date.now(),
+        call: {
+          callId,
+          replyToPid: resolved.sourcePid,
+          deadlineAt,
+        },
       },
-    },
-  });
+    }) as ResponseFrame | null;
+  } catch (error) {
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: formatError(error) };
+  }
 
   if (!response || response.type !== "res") {
+    ctx.ipcCalls.remove(callId);
     return { ok: false, error: "proc.ipc.deliver did not return a response" };
   }
   if (!response.ok) {
+    ctx.ipcCalls.remove(callId);
     return { ok: false, error: response.error.message };
   }
 
   const delivered = response.data as ProcIpcSendResult;
   if (!delivered.ok) {
+    ctx.ipcCalls.remove(callId);
     return delivered;
   }
 
@@ -594,6 +603,10 @@ function normalizeRequiredString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 type SpawnIdentityOutcome =

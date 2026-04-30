@@ -110,6 +110,14 @@ export class IpcCallStore {
     return this.get(callId);
   }
 
+  remove(callId: string): boolean {
+    const cursor = this.sql.exec(
+      "DELETE FROM ipc_calls WHERE call_id = ?",
+      callId,
+    );
+    return cursor.rowsWritten > 0;
+  }
+
   completeByRun(input: {
     uid: number;
     targetPid: string;
