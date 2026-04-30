@@ -30,6 +30,7 @@ import {
   BranchIcon,
   CompactIcon,
   FolderIcon,
+  MoreIcon,
   TerminalIcon,
 } from "./icons";
 import {
@@ -779,7 +780,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         conversationTitle: nextTitle,
       });
       setWorkspaceView("chat");
-      setNotice("Created " + nextTitle + ".");
+      setNotice("Created and opened " + nextTitle + " from message " + messageId + ".");
       await loadConversations(target.pid);
     } catch (error) {
       appendSystem("branch failed: " + formatError(error));
@@ -865,25 +866,36 @@ export function App({ backend }: { backend: ChatBackend }) {
             />
           </div>
           <div class="chat-stage-actions">
-            <span class={"run-state-chip " + runStateClass} title={statusText}>
-              <span />
-              {runStateLabel}
-            </span>
-            <button class="icon-button" type="button" title="Open Files" aria-label="Open Files" disabled={!active} onClick={() => openCompanion("files")}>
-              <FolderIcon />
-            </button>
-            <button class="icon-button" type="button" title="Open Shell" aria-label="Open Shell" disabled={!active} onClick={() => openCompanion("shell")}>
-              <TerminalIcon />
-            </button>
-            <button class="icon-button" type="button" title="Compact conversation" aria-label="Compact conversation" disabled={!canActOnConversation || compactBusy} onClick={openCompactDialog}>
-              <CompactIcon />
-            </button>
+            {workspaceView === "archive" ? (
+              <span class={"run-state-chip " + runStateClass} title={statusText}>
+                <span />
+                {runStateLabel}
+              </span>
+            ) : null}
             <span class="connection-dot is-connected" title="connected" aria-label="connected" />
+            <details class="process-menu">
+              <summary class="icon-button" title="Process actions" aria-label="Process actions">
+                <MoreIcon />
+              </summary>
+              <div class="process-menu-popover">
+                <button type="button" class="menu-action" disabled={!active} onClick={() => openCompanion("files")}>
+                  <FolderIcon />
+                  <span>Files</span>
+                </button>
+                <button type="button" class="menu-action" disabled={!active} onClick={() => openCompanion("shell")}>
+                  <TerminalIcon />
+                  <span>Shell</span>
+                </button>
+                <button type="button" class="menu-action" disabled={!canActOnConversation || compactBusy} onClick={openCompactDialog}>
+                  <CompactIcon />
+                  <span>{compactBusy ? "Compacting..." : "Compact"}</span>
+                </button>
+              </div>
+            </details>
           </div>
         </header>
 
-        <div class="chat-notice-row">
-          <span>{statusText}</span>
+        <div class={"chat-notice-row" + (!notice ? " is-empty" : "")}>
           {notice ? <span class="chat-notice">{notice}</span> : null}
         </div>
 
@@ -913,6 +925,9 @@ export function App({ backend }: { backend: ChatBackend }) {
               canSend={canSend}
               canStop={canStop}
               stopBusy={abortBusy}
+              runStateClass={runStateClass}
+              runStateLabel={runStateLabel}
+              statusText={statusText}
               onValueChange={setComposeText}
               onSubmit={() => void sendMessage()}
               onStop={() => void abortActiveRun()}
