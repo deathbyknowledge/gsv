@@ -18,20 +18,20 @@ import type {
   WorkspaceEntry,
 } from "./types";
 import {
+  ArchiveWorkspace,
+  ChatNavigator,
   CompactDialog,
   Composer,
   ContextMeter,
-  ProcessPanel,
-  ThreadRail,
   Transcript,
 } from "./components";
 import {
+  BranchIcon,
   CompactIcon,
   FolderIcon,
   TerminalIcon,
 } from "./icons";
 import {
-  activeMeta,
   applyAssistantSignal,
   applyProcessMessageSignal,
   applyToolCallSignal,
@@ -60,6 +60,7 @@ import {
   readAttachmentFile,
   safeText,
   setStoredThreadContext,
+  shortId,
   sortConversations,
   systemRow,
   systemRows,
@@ -92,7 +93,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [conversationError, setConversationError] = useState("");
-  const [sideView, setSideView] = useState<SideView>("conversations");
+  const [sideView, setSideView] = useState<SideView>("threads");
   const [rows, setRows] = useState<LogRow[]>(() => systemRows("Connecting chat backend."));
   const [messageCount, setMessageCount] = useState(0);
   const [contextState, setContextState] = useState<ContextState | null>(null);
@@ -148,6 +149,8 @@ export function App({ backend }: { backend: ChatBackend }) {
   const interactive = !hostError;
   const hasDraft = composeText.trim().length > 0 || attachments.length > 0;
   const runActive = pendingAssistant !== null || pendingHil !== null;
+  const runStateClass = hostError ? "is-error" : pendingHil ? "is-waiting" : runActive ? "is-running" : "is-ready";
+  const runStateLabel = hostError ? "Error" : pendingHil ? "Approval" : runActive ? "Running" : "Ready";
   const canSend = interactive && !messageBusy && hasDraft;
   const canStop = interactive && Boolean(active?.pid) && !abortBusy && runActive && !hasDraft;
   const canActOnConversation = interactive && Boolean(active?.pid) && !messageBusy && pendingAssistant === null;
@@ -810,48 +813,61 @@ export function App({ backend }: { backend: ChatBackend }) {
 
   return (
     <main class="chat-app">
-      <ThreadRail
+      <ChatNavigator
+        mode={sideView}
         active={active}
         threads={threads}
-        loading={threadsLoading}
-        error={threadsError}
+        threadsLoading={threadsLoading}
+        threadsError={threadsError}
         profiles={newConversationProfiles}
         draftProfileId={draftProfile.id}
-        onDraftProfileChange={setDraftProfileId}
-        onHome={() => void openHome()}
-        onNew={resetToNewThread}
-        onRefresh={() => void loadThreads()}
-        onOpenThread={(workspaceId) => void openThread(workspaceId)}
-      />
-
-      <ProcessPanel
-        active={active}
-        activeConversationId={activeConversationId}
         conversations={conversations}
-        loading={conversationsLoading}
-        error={conversationError}
-        sideView={sideView}
+        conversationsLoading={conversationsLoading}
+        conversationError={conversationError}
+        activeConversationId={activeConversationId}
         archive={archive}
-        onSideViewChange={(view) => {
+        onModeChange={(view) => {
           setSideView(view);
+          if (view === "conversations" && active?.pid) {
+            void loadConversations(active.pid);
+          }
           if (view === "archive") {
             void loadArchiveSegments(true);
           }
         }}
+        onDraftProfileChange={setDraftProfileId}
+        onHome={() => void openHome()}
+        onNew={resetToNewThread}
+        onRefreshThreads={() => void loadThreads()}
+        onOpenThread={(workspaceId) => void openThread(workspaceId)}
         onConversationSelect={(conversation) => void switchConversation(conversation)}
         onRefreshConversations={() => active?.pid ? void loadConversations(active.pid) : undefined}
         onArchiveRefresh={() => void loadArchiveSegments(true)}
         onArchiveSegmentSelect={(segmentId) => void readArchiveSegment(segmentId)}
       />
 
-      <section class="chat-stage">
+      <section class={"chat-stage" + (sideView === "archive" ? " is-archive" : "")}>
         <header class="chat-stage-head">
           <div class="chat-stage-title">
             <h1>{activeTitle}</h1>
-            <p>{active ? activeMeta(active, activeConversation) : draftConversationMeta(draftProfile)}</p>
+            <div class="identity-chips">
+              {active ? (
+                <>
+                  <span title={active.pid}><TerminalIcon />{shortId(active.pid)}</span>
+                  <span><FolderIcon />{active.cwd}</span>
+                  <span><BranchIcon />{activeConversation?.title || active.conversationTitle || activeConversationId}</span>
+                </>
+              ) : (
+                <span>{draftConversationMeta(draftProfile)}</span>
+              )}
+            </div>
             <ContextMeter state={active ? contextState : null} />
           </div>
           <div class="chat-stage-actions">
+            <span class={"run-state-chip " + runStateClass} title={statusText}>
+              <span />
+              {runStateLabel}
+            </span>
             <button class="icon-button" type="button" title="Open Files" aria-label="Open Files" disabled={!active} onClick={() => openCompanion("files")}>
               <FolderIcon />
             </button>
@@ -870,30 +886,36 @@ export function App({ backend }: { backend: ChatBackend }) {
           {notice ? <span class="chat-notice">{notice}</span> : null}
         </div>
 
-        <Transcript
-          rows={rows}
-          pendingAssistant={pendingAssistant}
-          pendingHil={pendingHil}
-          hilBusy={hilBusy}
-          branchBusy={branchBusy}
-          refNode={transcriptRef}
-          onBranch={(messageId) => void branchFromMessage(messageId)}
-          onHilDecision={(requestId, decision) => void decidePendingHil(requestId, decision)}
-        />
+        {sideView === "archive" ? (
+          <ArchiveWorkspace archive={archive} />
+        ) : (
+          <>
+            <Transcript
+              rows={rows}
+              pendingAssistant={pendingAssistant}
+              pendingHil={pendingHil}
+              hilBusy={hilBusy}
+              branchBusy={branchBusy}
+              refNode={transcriptRef}
+              onBranch={(messageId) => void branchFromMessage(messageId)}
+              onHilDecision={(requestId, decision) => void decidePendingHil(requestId, decision)}
+            />
 
-        <Composer
-          value={composeText}
-          attachments={attachments}
-          disabled={!interactive || messageBusy}
-          canSend={canSend}
-          canStop={canStop}
-          stopBusy={abortBusy}
-          onValueChange={setComposeText}
-          onSubmit={() => void sendMessage()}
-          onStop={() => void abortActiveRun()}
-          onFiles={(files) => void readAttachments(files)}
-          onRemoveAttachment={(index) => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-        />
+            <Composer
+              value={composeText}
+              attachments={attachments}
+              disabled={!interactive || messageBusy}
+              canSend={canSend}
+              canStop={canStop}
+              stopBusy={abortBusy}
+              onValueChange={setComposeText}
+              onSubmit={() => void sendMessage()}
+              onStop={() => void abortActiveRun()}
+              onFiles={(files) => void readAttachments(files)}
+              onRemoveAttachment={(index) => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+            />
+          </>
+        )}
       </section>
 
       {compactDialog ? (

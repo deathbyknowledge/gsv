@@ -129,7 +129,7 @@ export type ConversationSegment = {
   createdAt: number;
 };
 
-export type SideView = "conversations" | "archive";
+export type SideView = "threads" | "conversations" | "archive";
 
 export type PendingAssistantState = "thinking" | "tool" | null;
 

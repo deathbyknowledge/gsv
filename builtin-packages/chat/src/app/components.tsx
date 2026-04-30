@@ -14,12 +14,16 @@ import type {
   WorkspaceEntry,
 } from "./types";
 import {
+  ArchiveIcon,
   BranchIcon,
   CheckIcon,
+  GaugeIcon,
   HomeIcon,
+  MessageIcon,
   PaperclipIcon,
   PlusIcon,
   RefreshIcon,
+  ThreadsIcon,
   XIcon,
 } from "./icons";
 import {
@@ -45,7 +49,91 @@ import {
   truncateBlock,
 } from "./view-helpers";
 
-export function ThreadRail(props: {
+export function ChatNavigator(props: {
+  mode: SideView;
+  active: ThreadContext | null;
+  threads: WorkspaceEntry[];
+  threadsLoading: boolean;
+  threadsError: string;
+  profiles: Profile[];
+  draftProfileId: string;
+  conversations: ConversationRecord[];
+  conversationsLoading: boolean;
+  conversationError: string;
+  activeConversationId: string;
+  archive: ArchiveState;
+  onModeChange(mode: SideView): void;
+  onDraftProfileChange(profileId: string): void;
+  onHome(): void;
+  onNew(): void;
+  onRefreshThreads(): void;
+  onOpenThread(workspaceId: string): void;
+  onConversationSelect(conversation: ConversationRecord): void;
+  onRefreshConversations(): void;
+  onArchiveRefresh(): void;
+  onArchiveSegmentSelect(segmentId: string): void;
+}) {
+  const counts = {
+    threads: props.threads.length + 1,
+    conversations: props.conversations.length,
+    archive: props.archive.segments.length,
+  };
+
+  return (
+    <aside class="chat-nav">
+      <div class="nav-mode-strip" aria-label="Chat sections">
+        <button type="button" class={modeButtonClass(props.mode, "threads")} title="Threads" aria-label="Threads" onClick={() => props.onModeChange("threads")}>
+          <ThreadsIcon />
+          <span>{counts.threads}</span>
+        </button>
+        <button type="button" class={modeButtonClass(props.mode, "conversations")} title="Branches" aria-label="Branches" disabled={!props.active} onClick={() => props.onModeChange("conversations")}>
+          <BranchIcon />
+          <span>{counts.conversations}</span>
+        </button>
+        <button type="button" class={modeButtonClass(props.mode, "archive")} title="Archive" aria-label="Archive" disabled={!props.active} onClick={() => props.onModeChange("archive")}>
+          <ArchiveIcon />
+          <span>{counts.archive}</span>
+        </button>
+      </div>
+      <div class="nav-content">
+        {props.mode === "threads" ? (
+          <ThreadsPane
+            active={props.active}
+            threads={props.threads}
+            loading={props.threadsLoading}
+            error={props.threadsError}
+            profiles={props.profiles}
+            draftProfileId={props.draftProfileId}
+            onDraftProfileChange={props.onDraftProfileChange}
+            onHome={props.onHome}
+            onNew={props.onNew}
+            onRefresh={props.onRefreshThreads}
+            onOpenThread={props.onOpenThread}
+          />
+        ) : props.mode === "conversations" ? (
+          <BranchesPane
+            active={props.active}
+            activeConversationId={props.activeConversationId}
+            conversations={props.conversations}
+            loading={props.conversationsLoading}
+            error={props.conversationError}
+            onSelect={props.onConversationSelect}
+            onRefresh={props.onRefreshConversations}
+          />
+        ) : (
+          <ArchiveNavPane
+            active={props.active}
+            archive={props.archive}
+            onRefresh={props.onArchiveRefresh}
+            onSelect={props.onArchiveSegmentSelect}
+          />
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function ThreadsPane(props: {
   active: ThreadContext | null;
   threads: WorkspaceEntry[];
   loading: boolean;
@@ -61,24 +149,21 @@ export function ThreadRail(props: {
   const activeWorkspaceId = props.active?.workspaceId ?? null;
   const activePid = props.active?.pid ?? "";
   const status = props.loading
-    ? "Refreshing threads..."
-    : props.error || (props.threads.length === 0 ? "No task threads yet." : "");
+    ? "Refreshing..."
+    : props.error || (props.threads.length === 0 ? "No task threads yet." : "Task workspaces");
 
   return (
-    <aside class="chat-rail">
-      <header class="rail-header">
+    <section class="nav-pane">
+      <header class="nav-pane-header">
         <div>
-          <h1>Chat</h1>
-          <p>{status || "Processes and task workspaces"}</p>
+          <h1>Threads</h1>
+          <p>{status}</p>
         </div>
-        <div class="rail-actions">
-          <button class="icon-button" type="button" title="Home" aria-label="Home" onClick={props.onHome}>
-            <HomeIcon />
-          </button>
-          <button class="icon-button" type="button" title="New conversation" aria-label="New conversation" onClick={props.onNew}>
+        <div class="nav-pane-actions">
+          <button class="icon-button small" type="button" title="New thread" aria-label="New thread" onClick={props.onNew}>
             <PlusIcon />
           </button>
-          <button class="icon-button" type="button" title="Refresh threads" aria-label="Refresh threads" onClick={props.onRefresh}>
+          <button class="icon-button small" type="button" title="Refresh threads" aria-label="Refresh threads" onClick={props.onRefresh}>
             <RefreshIcon />
           </button>
         </div>
@@ -86,7 +171,7 @@ export function ThreadRail(props: {
 
       <div class="new-thread-strip">
         <label>
-          <span>New profile</span>
+          <span>Profile</span>
           <select value={props.draftProfileId} onChange={(event) => props.onDraftProfileChange((event.currentTarget as HTMLSelectElement).value)}>
             {props.profiles.map((profile) => (
               <option key={profile.id} value={profile.id}>{profile.displayName}</option>
@@ -97,6 +182,7 @@ export function ThreadRail(props: {
 
       <nav class="thread-list" aria-label="Chat threads">
         <button type="button" class={"thread-row" + (activePid.startsWith("init:") ? " is-active" : "")} onClick={props.onHome}>
+          <span class="row-icon"><HomeIcon /></span>
           <span class="thread-row-title">Home</span>
           <span class="thread-row-meta">Persistent init conversation</span>
         </button>
@@ -107,6 +193,7 @@ export function ThreadRail(props: {
             class={"thread-row" + (activeWorkspaceId === thread.workspaceId ? " is-active" : "")}
             onClick={() => props.onOpenThread(thread.workspaceId)}
           >
+            <span class="row-icon"><MessageIcon /></span>
             <span class="thread-row-title">{displayThreadLabel(thread)}</span>
             <span class="thread-row-meta">
               {thread.activeProcess ? "Live" : "Stored"}
@@ -117,62 +204,11 @@ export function ThreadRail(props: {
           </button>
         ))}
       </nav>
-    </aside>
+    </section>
   );
 }
 
-export function ProcessPanel(props: {
-  active: ThreadContext | null;
-  activeConversationId: string;
-  conversations: ConversationRecord[];
-  loading: boolean;
-  error: string;
-  sideView: SideView;
-  archive: ArchiveState;
-  onSideViewChange(view: SideView): void;
-  onConversationSelect(conversation: ConversationRecord): void;
-  onRefreshConversations(): void;
-  onArchiveRefresh(): void;
-  onArchiveSegmentSelect(segmentId: string): void;
-}) {
-  return (
-    <aside class="process-panel">
-      <header class="process-header">
-        <div>
-          <h2>{props.active ? shortId(props.active.pid) : "No process"}</h2>
-          <p>{props.active ? props.active.cwd : "Start or open a thread"}</p>
-        </div>
-      </header>
-      <div class="panel-tabs">
-        <button type="button" class={props.sideView === "conversations" ? "is-active" : ""} onClick={() => props.onSideViewChange("conversations")}>
-          Conversations
-        </button>
-        <button type="button" class={props.sideView === "archive" ? "is-active" : ""} onClick={() => props.onSideViewChange("archive")} disabled={!props.active}>
-          Archive
-        </button>
-      </div>
-      {props.sideView === "conversations" ? (
-        <ConversationList
-          active={props.active}
-          activeConversationId={props.activeConversationId}
-          conversations={props.conversations}
-          loading={props.loading}
-          error={props.error}
-          onSelect={props.onConversationSelect}
-          onRefresh={props.onRefreshConversations}
-        />
-      ) : (
-        <ArchivePanel
-          archive={props.archive}
-          onRefresh={props.onArchiveRefresh}
-          onSelect={props.onArchiveSegmentSelect}
-        />
-      )}
-    </aside>
-  );
-}
-
-function ConversationList(props: {
+function BranchesPane(props: {
   active: ThreadContext | null;
   activeConversationId: string;
   conversations: ConversationRecord[];
@@ -185,13 +221,16 @@ function ConversationList(props: {
     return <div class="panel-empty">Open a process to see its conversations and branches.</div>;
   }
   return (
-    <section class="panel-section">
-      <div class="section-toolbar">
-        <span>{props.loading ? "Loading..." : props.error || `${props.conversations.length} conversations`}</span>
+    <section class="nav-pane">
+      <header class="nav-pane-header">
+        <div>
+          <h1>Branches</h1>
+          <p>{props.loading ? "Loading..." : props.error || `${props.conversations.length} conversations`}</p>
+        </div>
         <button class="icon-button small" type="button" title="Refresh conversations" aria-label="Refresh conversations" onClick={props.onRefresh}>
           <RefreshIcon />
         </button>
-      </div>
+      </header>
       <div class="conversation-list">
         {props.conversations.map((conversation) => (
           <button
@@ -200,6 +239,7 @@ function ConversationList(props: {
             class={"conversation-row" + (conversation.id === props.activeConversationId ? " is-active" : "")}
             onClick={() => props.onSelect(conversation)}
           >
+            <span class="row-icon"><BranchIcon /></span>
             <span class="conversation-title">{conversation.title || (conversation.id === "default" ? "Default" : conversation.id)}</span>
             <span class="conversation-meta">
               {conversation.id === "default" ? "main" : shortId(conversation.id)}
@@ -213,56 +253,82 @@ function ConversationList(props: {
   );
 }
 
-function ArchivePanel(props: {
+function ArchiveNavPane(props: {
+  active: ThreadContext | null;
   archive: ArchiveState;
   onRefresh(): void;
   onSelect(segmentId: string): void;
 }) {
-  const selected = props.archive.segments.find((segment) => segment.id === props.archive.selectedSegmentId) ?? null;
+  if (!props.active) {
+    return <div class="panel-empty">Open a process to inspect archived segments.</div>;
+  }
   return (
-    <section class="panel-section archive-shell">
-      <div class="section-toolbar">
-        <span>{props.archive.loading ? "Loading..." : props.archive.error || `${props.archive.segments.length} segments`}</span>
+    <section class="nav-pane">
+      <header class="nav-pane-header">
+        <div>
+          <h1>Archive</h1>
+          <p>{props.archive.loading ? "Loading..." : props.archive.error || `${props.archive.segments.length} segments`}</p>
+        </div>
         <button class="icon-button small" type="button" title="Refresh archive" aria-label="Refresh archive" onClick={props.onRefresh}>
           <RefreshIcon />
         </button>
-      </div>
+      </header>
       {props.archive.segments.length === 0 ? (
         <div class="panel-empty">No compacted segments.</div>
       ) : (
-        <div class="archive-layout">
-          <div class="archive-segments">
-            {props.archive.segments.map((segment) => (
-              <button
-                key={segment.id}
-                type="button"
-                class={"archive-row" + (segment.id === props.archive.selectedSegmentId ? " is-active" : "")}
-                onClick={() => props.onSelect(segment.id)}
-              >
-                <span>{shortId(segment.id)}</span>
-                <span>{segment.fromMessageId}-{segment.toMessageId}</span>
-              </button>
-            ))}
-          </div>
-          <div class="archive-preview">
-            {selected ? (
-              <>
-                <div class="archive-preview-head">
-                  <span>{shortId(selected.id)}</span>
-                  <span>{props.archive.messages.length}/{props.archive.messageCount}{props.archive.truncated ? " shown" : ""}</span>
-                </div>
-                {props.archive.messages.map((message, index) => (
-                  <ArchiveMessage key={index} entry={message} />
-                ))}
-              </>
-            ) : (
-              <div class="panel-empty">Select a segment.</div>
-            )}
-          </div>
+        <div class="archive-segments">
+          {props.archive.segments.map((segment) => (
+            <button
+              key={segment.id}
+              type="button"
+              class={"archive-row" + (segment.id === props.archive.selectedSegmentId ? " is-active" : "")}
+              onClick={() => props.onSelect(segment.id)}
+            >
+              <span class="row-icon"><ArchiveIcon /></span>
+              <span>{segment.fromMessageId}-{segment.toMessageId}</span>
+              <span>{formatRelativeTime(segment.createdAt)}</span>
+            </button>
+          ))}
         </div>
       )}
     </section>
   );
+}
+
+export function ArchiveWorkspace({ archive }: { archive: ArchiveState }) {
+  const selected = archive.segments.find((segment) => segment.id === archive.selectedSegmentId) ?? null;
+  if (!selected) {
+    return (
+      <section class="archive-workspace">
+        <div class="archive-empty">
+          <ArchiveIcon />
+          <h2>No archived segment selected</h2>
+          <p>Select a segment from the Archive navigator to read compacted history.</p>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section class="archive-workspace">
+      <header class="archive-workspace-head">
+        <div>
+          <span class="archive-eyebrow"><ArchiveIcon /> Read-only segment</span>
+          <h2>Messages {selected.fromMessageId}-{selected.toMessageId}</h2>
+          <p>{shortId(selected.id)} - {formatTimestamp(selected.createdAt)}</p>
+        </div>
+        <span class="archive-count">{archive.messages.length}/{archive.messageCount}{archive.truncated ? " shown" : ""}</span>
+      </header>
+      <div class="archive-message-list">
+        {archive.messages.map((message, index) => (
+          <ArchiveMessage key={index} entry={message} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function modeButtonClass(active: SideView, mode: SideView): string {
+  return "nav-mode-button" + (active === mode ? " is-active" : "");
 }
 
 export function Transcript(props: {
@@ -540,6 +606,7 @@ export function ContextMeter({ state }: { state: ContextState | null }) {
   const text = formatContextPressure(state);
   return (
     <div class={`context-meter is-${state.level}`} title={`${text} - ${state.source === "provider" ? "provider usage" : "estimated"}`}>
+      <GaugeIcon />
       <span class="context-track"><span style={{ width: `${Math.round(pressure * 100)}%` }} /></span>
       <span>{text}</span>
     </div>

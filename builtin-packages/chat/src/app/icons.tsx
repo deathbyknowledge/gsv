@@ -7,6 +7,18 @@ export function PlusIcon() {
 export function RefreshIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0 2 5.5" /><path d="M20 4v7h-7" /></svg>;
 }
+export function MessageIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" /></svg>;
+}
+export function ArchiveIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16" /><path d="M6 7v12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7" /><path d="M8 4h8l2 3H6z" /><path d="M9 11h6" /></svg>;
+}
+export function ThreadsIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12" /><path d="M6 12h12" /><path d="M6 18h8" /><path d="M3 6h.01" /><path d="M3 12h.01" /><path d="M3 18h.01" /></svg>;
+}
+export function GaugeIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14a8 8 0 0 1 16 0" /><path d="M12 14l4-4" /><path d="M7 17h10" /></svg>;
+}
 export function FolderIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>;
 }
