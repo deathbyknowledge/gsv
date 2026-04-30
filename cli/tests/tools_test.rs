@@ -74,16 +74,16 @@ fn output_matches_cwd(output: &str, expected: &Path) -> bool {
 }
 
 #[tokio::test]
-async fn test_bash_tool_execution() {
-    use gsv::tools::{BashTool, Tool};
+async fn test_shell_tool_execution() {
+    use gsv::tools::{ShellTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
-    let tool = BashTool::new(workspace.clone());
+    let tool = ShellTool::new(workspace.clone());
 
     // Test definition
     let def = tool.definition();
-    assert_eq!(def.name, "Bash");
+    assert_eq!(def.name, "Shell");
 
     // Test simple command
     let result = tool
@@ -99,15 +99,15 @@ async fn test_bash_tool_execution() {
 }
 
 #[tokio::test]
-async fn test_bash_tool_cwd() {
-    use gsv::tools::{BashTool, Tool};
+async fn test_shell_tool_cwd() {
+    use gsv::tools::{ShellTool, Tool};
     use serde_json::json;
     use std::fs;
 
-    let workspace = std::env::temp_dir().join("gsv_test_bash_tool_cwd_workspace");
+    let workspace = std::env::temp_dir().join("gsv_test_shell_tool_cwd_workspace");
     let custom_cwd = workspace.join("nested");
     fs::create_dir_all(&custom_cwd).unwrap();
-    let tool = BashTool::new(workspace.clone());
+    let tool = ShellTool::new(workspace.clone());
 
     // Test with custom cwd
     let result = tool
@@ -131,14 +131,14 @@ async fn test_bash_tool_cwd() {
 }
 
 #[tokio::test]
-async fn test_bash_background_returns_session_id() {
-    use gsv::tools::{BashTool, Tool};
+async fn test_shell_background_returns_session_id() {
+    use gsv::tools::{ShellTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
-    let bash = BashTool::new(workspace.clone());
+    let shell = ShellTool::new(workspace.clone());
 
-    let start = bash
+    let start = shell
         .execute(json!({
             "input": shell_background_finish_command(),
             "background": true
@@ -152,14 +152,14 @@ async fn test_bash_background_returns_session_id() {
 }
 
 #[tokio::test]
-async fn test_bash_session_poll_returns_new_output() {
-    use gsv::tools::{BashTool, Tool};
+async fn test_shell_session_poll_returns_new_output() {
+    use gsv::tools::{ShellTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
-    let bash = BashTool::new(workspace.clone());
+    let shell = ShellTool::new(workspace.clone());
 
-    let start = bash
+    let start = shell
         .execute(json!({
             "input": shell_background_finish_command(),
             "background": true
@@ -170,7 +170,7 @@ async fn test_bash_session_poll_returns_new_output() {
     let session_id = start["sessionId"].as_str().unwrap().to_string();
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
 
-    let poll = bash
+    let poll = shell
         .execute(json!({
             "sessionId": session_id,
             "input": ""
@@ -183,14 +183,14 @@ async fn test_bash_session_poll_returns_new_output() {
 }
 
 #[tokio::test]
-async fn test_bash_session_is_removed_after_final_poll() {
-    use gsv::tools::{BashTool, Tool};
+async fn test_shell_session_is_removed_after_final_poll() {
+    use gsv::tools::{ShellTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
-    let bash = BashTool::new(workspace.clone());
+    let shell = ShellTool::new(workspace.clone());
 
-    let start = bash
+    let start = shell
         .execute(json!({
             "input": shell_background_finish_command(),
             "background": true
@@ -201,7 +201,7 @@ async fn test_bash_session_is_removed_after_final_poll() {
     let session_id = start["sessionId"].as_str().unwrap().to_string();
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
 
-    let poll = bash
+    let poll = shell
         .execute(json!({
             "sessionId": session_id,
             "input": ""
@@ -210,7 +210,7 @@ async fn test_bash_session_is_removed_after_final_poll() {
         .unwrap();
 
     assert_eq!(poll["status"], "completed");
-    let err = bash
+    let err = shell
         .execute(json!({
             "sessionId": poll["sessionId"].as_str().unwrap(),
             "input": ""
@@ -390,46 +390,15 @@ async fn test_edit_tool() {
 }
 
 #[tokio::test]
-async fn test_glob_tool() {
-    use gsv::tools::{GlobTool, Tool};
-    use serde_json::json;
-
-    let workspace = std::env::temp_dir().join("gsv_glob_test");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let tool = GlobTool::new(workspace.clone());
-
-    // Create test files
-    std::fs::File::create(workspace.join("test1.txt")).unwrap();
-    std::fs::File::create(workspace.join("test2.txt")).unwrap();
-    std::fs::File::create(workspace.join("other.md")).unwrap();
-
-    // Test globbing
-    let result = tool
-        .execute(json!({
-            "pattern": "*.txt",
-            "path": workspace.to_str().unwrap()
-        }))
-        .await
-        .unwrap();
-
-    let matches = result["matches"].as_array().unwrap();
-    assert_eq!(matches.len(), 2);
-
-    // Cleanup
-    std::fs::remove_dir_all(&workspace).ok();
-}
-
-#[tokio::test]
-async fn test_grep_tool() {
-    use gsv::tools::{GrepTool, Tool};
+async fn test_search_tool() {
+    use gsv::tools::{SearchTool, Tool};
     use serde_json::json;
     use std::io::Write;
 
-    let workspace = std::env::temp_dir().join("gsv_grep_test");
+    let workspace = std::env::temp_dir().join("gsv_search_test");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    let tool = GrepTool::new(workspace.clone());
+    let tool = SearchTool::new(workspace.clone());
 
     // Create test files
     {
@@ -441,12 +410,14 @@ async fn test_grep_tool() {
         let mut f = std::fs::File::create(workspace.join("file2.txt")).unwrap();
         writeln!(f, "hello again").unwrap();
         writeln!(f, "baz qux").unwrap();
+        writeln!(f, "a.c").unwrap();
+        writeln!(f, "abc").unwrap();
     }
 
-    // Test grepping
+    // Test searching
     let result = tool
         .execute(json!({
-            "pattern": "hello",
+            "query": "hello",
             "path": workspace.to_str().unwrap()
         }))
         .await
@@ -454,6 +425,18 @@ async fn test_grep_tool() {
 
     let matches = result["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 2); // Found in both files
+
+    let literal_result = tool
+        .execute(json!({
+            "query": "a.c",
+            "path": workspace.to_str().unwrap()
+        }))
+        .await
+        .unwrap();
+
+    let literal_matches = literal_result["matches"].as_array().unwrap();
+    assert_eq!(literal_matches.len(), 1);
+    assert_eq!(literal_matches[0]["content"], "a.c");
 
     // Cleanup
     std::fs::remove_dir_all(&workspace).ok();
@@ -466,17 +449,16 @@ fn test_all_tools_with_workspace() {
     let workspace = std::env::temp_dir();
     let tools = all_tools_with_workspace(workspace);
 
-    // Should have 7 tools: Bash, Read, Write, Delete, Edit, Glob, Grep
-    assert_eq!(tools.len(), 7);
+    // Should have 6 tools: Shell, Read, Write, Delete, Edit, Search
+    assert_eq!(tools.len(), 6);
 
     let names: Vec<_> = tools.iter().map(|t| t.definition().name).collect();
-    assert!(names.contains(&"Bash".to_string()));
+    assert!(names.contains(&"Shell".to_string()));
     assert!(names.contains(&"Read".to_string()));
     assert!(names.contains(&"Write".to_string()));
     assert!(names.contains(&"Delete".to_string()));
     assert!(names.contains(&"Edit".to_string()));
-    assert!(names.contains(&"Glob".to_string()));
-    assert!(names.contains(&"Grep".to_string()));
+    assert!(names.contains(&"Search".to_string()));
 }
 
 #[test]

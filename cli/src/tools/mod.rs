@@ -1,17 +1,15 @@
-mod bash;
 mod delete;
 mod edit;
-mod glob;
-mod grep;
 mod read;
+mod search;
+mod shell;
 mod write;
 
-pub use bash::{subscribe_exec_events, BashTool};
 pub use delete::DeleteTool;
 pub use edit::EditTool;
-pub use glob::GlobTool;
-pub use grep::GrepTool;
 pub use read::ReadTool;
+pub use search::SearchTool;
+pub use shell::{subscribe_exec_events, ShellTool};
 pub use write::WriteTool;
 
 use crate::protocol::ToolDefinition;
@@ -28,12 +26,11 @@ pub trait Tool: Send + Sync {
 /// Create all tools with the given workspace
 pub fn all_tools_with_workspace(workspace: PathBuf) -> Vec<Box<dyn Tool>> {
     vec![
-        Box::new(BashTool::new(workspace.clone())),
+        Box::new(ShellTool::new(workspace.clone())),
         Box::new(ReadTool::new(workspace.clone())),
         Box::new(WriteTool::new(workspace.clone())),
         Box::new(DeleteTool::new(workspace.clone())),
         Box::new(EditTool::new(workspace.clone())),
-        Box::new(GlobTool::new(workspace.clone())),
-        Box::new(GrepTool::new(workspace)),
+        Box::new(SearchTool::new(workspace)),
     ]
 }

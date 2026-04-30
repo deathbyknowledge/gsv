@@ -352,9 +352,9 @@ fn syscall_to_tool_name(call: &str) -> Option<&'static str> {
         "fs.read" => Some("Read"),
         "fs.write" => Some("Write"),
         "fs.edit" => Some("Edit"),
-        "fs.search" => Some("Grep"),
+        "fs.search" => Some("Search"),
         "fs.delete" => Some("Delete"),
-        "shell.exec" => Some("Bash"),
+        "shell.exec" => Some("Shell"),
         _ => None,
     }
 }
@@ -365,10 +365,7 @@ async fn handle_driver_request(
     req: &RequestFrame,
     logger: &NodeLogger,
 ) {
-    let args = adapt_driver_args(
-        &req.call,
-        req.args.clone().unwrap_or(serde_json::Value::Null),
-    );
+    let args = req.args.clone().unwrap_or(serde_json::Value::Null);
 
     let result: Result<serde_json::Value, String> = match req.call.as_str() {
         call => {
@@ -438,23 +435,6 @@ async fn handle_driver_request(
             );
         }
     }
-}
-
-fn adapt_driver_args(call: &str, mut args: serde_json::Value) -> serde_json::Value {
-    if call == "fs.search" {
-        if let Some(obj) = args.as_object_mut() {
-            if !obj.contains_key("pattern") {
-                if let Some(query) = obj.get("query").and_then(|value| value.as_str()) {
-                    obj.insert(
-                        "pattern".to_string(),
-                        serde_json::Value::String(regex::escape(query)),
-                    );
-                }
-            }
-        }
-    }
-
-    args
 }
 
 async fn execute_tool_by_name(
@@ -841,26 +821,6 @@ mod tests {
         assert_eq!(
             queue.back().map(|event| event.event_id.as_str()),
             Some(expected_last.as_str())
-        );
-    }
-
-    #[test]
-    fn test_adapt_driver_search_args_maps_query_to_pattern() {
-        let args = adapt_driver_args(
-            "fs.search",
-            serde_json::json!({
-                "query": "literal.value",
-                "path": ".",
-            }),
-        );
-
-        assert_eq!(
-            args.get("query").and_then(|v| v.as_str()),
-            Some("literal.value")
-        );
-        assert_eq!(
-            args.get("pattern").and_then(|v| v.as_str()),
-            Some("literal\\.value")
         );
     }
 

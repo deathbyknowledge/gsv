@@ -1,18 +1,17 @@
 use crate::protocol::ToolDefinition;
 use crate::tools::Tool;
 use async_trait::async_trait;
-use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
-pub struct GrepTool {
+pub struct SearchTool {
     workspace: PathBuf,
 }
 
-impl GrepTool {
+impl SearchTool {
     pub fn new(workspace: PathBuf) -> Self {
         Self { workspace }
     }
@@ -28,8 +27,11 @@ impl GrepTool {
 }
 
 #[derive(Deserialize)]
-struct GrepArgs {
-    pattern: String,
+struct SearchArgs {
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    pattern: Option<String>,
     #[serde(default)]
     path: Option<String>,
     #[serde(default)]
@@ -37,24 +39,24 @@ struct GrepArgs {
 }
 
 #[derive(serde::Serialize)]
-struct GrepMatch {
+struct SearchMatch {
     path: String,
     line: usize,
     content: String,
 }
 
 #[async_trait]
-impl Tool for GrepTool {
+impl Tool for SearchTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "Grep".to_string(),
-            description: "Search file contents using regex. Paths are relative to the workspace unless absolute.".to_string(),
+            name: "Search".to_string(),
+            description: "Search file contents using plain text. Paths are relative to the workspace unless absolute.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pattern": {
+                    "query": {
                         "type": "string",
-                        "description": "Regex pattern to search for"
+                        "description": "Plain text to search for"
                     },
                     "path": {
                         "type": "string",
@@ -65,17 +67,21 @@ impl Tool for GrepTool {
                         "description": "File pattern to include (e.g., '*.md', '*.{rs,ts}')"
                     }
                 },
-                "required": ["pattern"]
+                "required": ["query"]
             }),
         }
     }
 
     async fn execute(&self, args: Value) -> Result<Value, String> {
-        let args: GrepArgs =
+        let args: SearchArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
-        let regex =
-            Regex::new(&args.pattern).map_err(|e| format!("Invalid regex pattern: {}", e))?;
+        let query = args
+            .query
+            .or(args.pattern)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Search query is required.".to_string())?;
 
         let base_path = args
             .path
@@ -86,10 +92,9 @@ impl Tool for GrepTool {
         let include_glob = args
             .include
             .as_ref()
-            .map(|inc| glob::Pattern::new(inc).ok())
-            .flatten();
+            .and_then(|inc| glob::Pattern::new(inc).ok());
 
-        let mut matches: Vec<GrepMatch> = Vec::new();
+        let mut matches: Vec<SearchMatch> = Vec::new();
 
         for entry in WalkDir::new(&base_path)
             .follow_links(true)
@@ -110,8 +115,8 @@ impl Tool for GrepTool {
             // Skip binary files (simple heuristic)
             if let Ok(content) = fs::read_to_string(path) {
                 for (line_num, line) in content.lines().enumerate() {
-                    if regex.is_match(line) {
-                        matches.push(GrepMatch {
+                    if line.contains(&query) {
+                        matches.push(SearchMatch {
                             path: path.display().to_string(),
                             line: line_num + 1,
                             content: line.chars().take(200).collect(), // Truncate long lines
