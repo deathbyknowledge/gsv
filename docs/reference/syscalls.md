@@ -33,7 +33,7 @@ These aliases are used below to keep each syscall signature readable.
 type Empty = Record<string, never>;
 type OperationError = { ok: false; error: string };
 type AiContextProfile =
-  | "init" | "task" | "review" | "cron" | "mcp" | "app" | "archivist" | "curator"
+  | "init" | "task" | "review" | "cron" | "mcp" | "app"
   | `${string}#${string}`;
 
 type ProcessIdentity = {
@@ -124,9 +124,10 @@ type OnboardingDraft = {
   lane: "quick" | "customize" | "advanced";
   mode: "manual" | "guided";
   stage: "welcome" | "details" | "review";
-  detailStep: "account" | "admin" | "ai" | "source" | "device";
+  detailStep: "account" | "admin" | "system" | "ai" | "source" | "device";
   account: { username: string; password: string; passwordConfirm: string };
   admin: { mode: "same" | "custom"; password: string };
+  system: { timezone: string };
   ai: { enabled: boolean; provider: string; model: string; apiKey: string };
   source: { enabled: boolean; value: string; ref: string };
   device: { enabled: boolean; deviceId: string; label: string; expiryDays: string };
@@ -135,7 +136,7 @@ type OnboardingDraft = {
 type OnboardingAssistPatch = {
   op: "set" | "clear";
   path:
-    | "account.username" | "admin.mode" | "ai.enabled" | "ai.provider" | "ai.model"
+    | "account.username" | "admin.mode" | "system.timezone" | "ai.enabled" | "ai.provider" | "ai.model"
     | "source.enabled" | "source.value" | "source.ref"
     | "device.enabled" | "device.deviceId" | "device.label" | "device.expiryDays";
   value?: string | boolean;
@@ -410,12 +411,26 @@ Runtime behavior:
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
 | `proc.spawn` | `handleProcSpawn` | Validates the AI profile, resolves package profiles, materializes workspace and mounts, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. `init` is singleton; other profiles get UUID pids. |
-| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded. Stores media, appends a user message, starts a run if idle, or queues the message if a run is active. Touches workspace activity before forwarding. |
+| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. Stores media, appends a user message, starts a run if idle, or queues the message if a run is active. Touches workspace activity before forwarding. |
+| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
+| `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Logical cancellation of the active run. Clears pending HIL and current run, emits `chat.complete` with `aborted: true`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. |
-| `proc.kill` | Process DO | Checkpoints workspace, clears active run, tool state, HIL, queue, media, and messages. Archives messages unless `archive: false`. Does not remove the kernel process registry entry in normal syscall use. |
-| `proc.history` | Process DO | Returns paged stored messages plus message count, truncation status, timestamps, and pending HIL. Tool results and assistant metadata are expanded into structured content. |
-| `proc.reset` | Process DO | Checkpoints workspace, clears active execution state and process media, archives existing messages to `/var/sessions/<username>/<pid>/...jsonl.gz`, then clears history. |
+| `proc.kill` | Process DO | Checkpoints workspace, optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. Does not remove the kernel process registry entry in normal syscall use. |
+| `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Tool results and assistant metadata are expanded into structured content. |
+| `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
+| `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
+| `proc.conversation.get` | Process DO | Returns one conversation record for `conversationId` or `default`; unknown conversations return `conversation: null`. |
+| `proc.conversation.close` | Process DO | Marks a conversation closed without deleting history. Future `proc.send` calls to that conversation fail until it is reopened. |
+| `proc.conversation.reset` | Process DO | Archives the selected conversation by default, clears its active messages and queued/runtime state, increments its generation, and reopens it. Other conversations are left intact. |
+| `proc.conversation.policy.get` | Process DO | Returns the visible context-overflow policy for `conversationId` or `default`. Default policy is manual compaction at 90% pressure with 80 live messages retained if auto-compaction is later enabled. |
+| `proc.conversation.policy.set` | Process DO | Sets the visible context-overflow policy. Supported `overflow` values are `manual`, `auto-compact`, and `fail`; automatic execution happens only during the normal process run preflight. |
+| `proc.conversation.compact` | Process DO | Explicitly archives an old prefix of a conversation, inserts a visible system summary marker at the prefix boundary, and records a `compaction` segment. Requires either caller-provided `summary` or `generateSummary: true`, plus exactly one selector: `keepLast` or `throughMessageId`. |
+| `proc.conversation.fork` | Process DO | Branches a live conversation through `throughMessageId`, or restores a compacted `segmentId` into a new process-local conversation. Segment restore includes the live suffix that existed at the compaction boundary unless `includeLiveSuffix: false`. |
+| `proc.conversation.segment.read` | Process DO | Reads paged messages from a compacted segment archive without restoring those messages into the live conversation. |
+| `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
+| `proc.reset` | Process DO | Checkpoints workspace, archives every non-empty conversation under `/var/sessions/<username>/<pid>/<archiveId>/`, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
+| `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
 | `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, profile, and assignment context; `assignment.autoStart` can create a run immediately. |
 
 ```ts
@@ -434,12 +449,75 @@ type ProcSpawnMountSpec =
 type ProcHilRequest = {
   requestId: string;
   runId: string;
+  conversationId?: string;
   callId: string;
   toolName: string;
   syscall: string;
   args: Record<string, unknown>;
   createdAt: number;
 };
+
+type ProcConversation = {
+  id: string;
+  generation: number;
+  status: "open" | "closed";
+  title: string | null;
+  messageCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type ProcArchiveEntry = {
+  conversationId: string;
+  generation: number;
+  messages: number;
+  path: string;
+};
+
+type ProcConversationSegment = {
+  id: string;
+  conversationId: string;
+  generation: number;
+  kind: "compaction";
+  fromMessageId: number;
+  toMessageId: number;
+  archivePath: string;
+  summaryMessageId: number | null;
+  createdAt: number;
+};
+
+type ProcIpcSendArgs = {
+  pid: string;
+  conversationId?: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+};
+
+type ProcIpcDeliverArgs = {
+  sourcePid: string;
+  source: ProcessIdentity;
+  conversationId?: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+  sentAt: number;
+  call?: {
+    callId: string;
+    replyToPid: string;
+    deadlineAt: number;
+  };
+};
+
+type ProcIpcSendResult =
+  | { ok: true; status: "started"; pid: string; sourcePid: string; conversationId: string; runId: string; queued?: boolean }
+  | OperationError;
+
+type ProcIpcCallArgs = ProcIpcSendArgs & {
+  timeoutMs?: number;
+};
+
+type ProcIpcCallResult =
+  | { ok: true; status: "started"; callId: string; pid: string; sourcePid: string; conversationId: string; runId: string; deadlineAt: number; queued?: boolean }
+  | OperationError;
 
 type ProcessSyscalls = {
   "proc.list": {
@@ -458,8 +536,23 @@ type ProcessSyscalls = {
   };
 
   "proc.send": {
-    args: { pid?: string; message: string; media?: MediaInput[] };
+    args: { pid?: string; conversationId?: string; message: string; media?: MediaInput[] };
     result: { ok: true; status: "started"; runId: string; queued?: boolean } | OperationError;
+  };
+
+  "proc.ipc.send": {
+    args: ProcIpcSendArgs;
+    result: ProcIpcSendResult;
+  };
+
+  "proc.ipc.call": {
+    args: ProcIpcCallArgs;
+    result: ProcIpcCallResult;
+  };
+
+  "proc.ipc.deliver": {
+    args: ProcIpcDeliverArgs;
+    result: ProcIpcSendResult;
   };
 
   "proc.abort": {
@@ -474,17 +567,72 @@ type ProcessSyscalls = {
 
   "proc.kill": {
     args: { pid: string; archive?: boolean };
-    result: { ok: true; pid: string; archivedTo?: string } | OperationError;
+    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[] } | OperationError;
   };
 
   "proc.history": {
-    args: { pid?: string; limit?: number; offset?: number };
-    result: { ok: true; pid: string; messages: Array<{ role: "user" | "assistant" | "system" | "toolResult"; content: unknown; timestamp?: number }>; messageCount: number; truncated?: boolean; pendingHil?: ProcHilRequest | null } | OperationError;
+    args: { pid?: string; conversationId?: string; limit?: number; offset?: number };
+    result: { ok: true; pid: string; conversationId?: string; messages: Array<{ role: "user" | "assistant" | "system" | "toolResult"; content: unknown; timestamp?: number }>; messageCount: number; truncated?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
+  };
+
+  "proc.conversation.open": {
+    args: { pid?: string; conversationId?: string; title?: string };
+    result: { ok: true; pid: string; conversation: ProcConversation; created: boolean } | OperationError;
+  };
+
+  "proc.conversation.list": {
+    args: { pid?: string; includeClosed?: boolean };
+    result: { ok: true; pid: string; conversations: ProcConversation[] } | OperationError;
+  };
+
+  "proc.conversation.get": {
+    args: { pid?: string; conversationId?: string };
+    result: { ok: true; pid: string; conversation: ProcConversation | null } | OperationError;
+  };
+
+  "proc.conversation.close": {
+    args: { pid?: string; conversationId: string };
+    result: { ok: true; pid: string; conversationId: string; closed: boolean } | OperationError;
+  };
+
+  "proc.conversation.reset": {
+    args: { pid?: string; conversationId?: string; archive?: boolean };
+    result: { ok: true; pid: string; conversationId: string; generation: number; archivedMessages: number; archivedTo?: string } | OperationError;
+  };
+
+  "proc.conversation.policy.get": {
+    args: { pid?: string; conversationId?: string };
+    result: { ok: true; pid: string; policy: ProcConversationContextPolicy } | OperationError;
+  };
+
+  "proc.conversation.policy.set": {
+    args: { pid?: string; conversationId?: string; overflow?: "manual" | "auto-compact" | "fail"; compactAtPressure?: number; keepLast?: number };
+    result: { ok: true; pid: string; policy: ProcConversationContextPolicy } | OperationError;
+  };
+
+  "proc.conversation.compact": {
+    args: { pid?: string; conversationId?: string; summary?: string; generateSummary?: boolean; keepLast?: number; throughMessageId?: number };
+    result: { ok: true; pid: string; conversationId: string; segment: ProcConversationSegment; archivedMessages: number; archivedTo: string; summaryMessageId: number } | OperationError;
+  };
+
+  "proc.conversation.fork": {
+    args: { pid?: string; conversationId?: string; segmentId?: string; throughMessageId?: number; targetConversationId?: string; title?: string; includeLiveSuffix?: boolean };
+    result: { ok: true; pid: string; sourceConversationId: string; targetConversation: ProcConversation; segment?: ProcConversationSegment; throughMessageId?: number; restoredMessages: number; includedLiveSuffix: boolean } | OperationError;
+  };
+
+  "proc.conversation.segment.read": {
+    args: { pid?: string; conversationId?: string; segmentId: string; limit?: number; offset?: number };
+    result: { ok: true; pid: string; conversationId: string; segment: ProcConversationSegment; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean } | OperationError;
+  };
+
+  "proc.conversation.segments": {
+    args: { pid?: string; conversationId?: string };
+    result: { ok: true; pid: string; conversationId: string; segments: ProcConversationSegment[] } | OperationError;
   };
 
   "proc.reset": {
     args: { pid?: string };
-    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string } | OperationError;
+    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[] } | OperationError;
   };
 
   "proc.setidentity": {
@@ -494,7 +642,7 @@ type ProcessSyscalls = {
 };
 ```
 
-`proc.setidentity` is kernel-only. User and device callers receive a forbidden response.
+`proc.ipc.deliver` and `proc.setidentity` are kernel-only. User and device callers receive a forbidden response.
 
 ## Packages: `pkg.*`
 
@@ -684,7 +832,7 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional AI config, optional node token, home layout, and optional system bootstrap. Username and password are validated. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv`, seeds builtin packages, mirrors stable/dev CLI assets, stores default CLI channel, and broadcasts `pkg.changed`. Defaults repo to `deathbyknowledge/gsv` and ref to `main`. Requires `RIPGIT` and storage. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
@@ -714,7 +862,7 @@ type SystemSyscalls = {
   };
 
   "sys.setup": {
-    args: { username: string; password: string; rootPassword?: string; bootstrap?: { remoteUrl?: string; repo?: string; ref?: string }; ai?: { provider?: string; model?: string; apiKey?: string }; node?: { deviceId: string; label?: string; expiresAt?: number } };
+    args: { username: string; password: string; rootPassword?: string; timezone?: string; bootstrap?: { remoteUrl?: string; repo?: string; ref?: string }; ai?: { provider?: string; model?: string; apiKey?: string }; node?: { deviceId: string; label?: string; expiresAt?: number } };
     result: { user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
   };
 
@@ -794,7 +942,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. |
-| `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
+| `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
 
 External callers cannot normally invoke `ai.*`; these syscalls are exposed to process-originated calls.
 
@@ -807,7 +955,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; profileContextFiles?: Array<{ name: string; text: string }>; profileApprovalPolicy?: string | null; maxContextBytes: number };
+    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; profileContextFiles?: Array<{ name: string; text: string }>; profileApprovalPolicy?: string | null; maxContextBytes: number };
   };
 };
 ```
@@ -918,69 +1066,67 @@ Signal frames themselves are described in [WebSocket Protocol Reference](/refere
 
 ## Scheduler: `sched.*`
 
-Scheduler syscalls are typed but currently return `501 not yet implemented` from the dispatcher.
+Scheduler syscalls are Kernel-owned. Schedule records live in Kernel SQLite,
+GSV computes timezone-aware next fire times, and Cloudflare Agent schedules are
+used only as concrete wake-ups.
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `sched.list` | none | Dispatch returns `501 sched.list not yet implemented`. |
-| `sched.add` | none | Dispatch returns `501 sched.add not yet implemented`. |
-| `sched.update` | none | Dispatch returns `501 sched.update not yet implemented`. |
-| `sched.remove` | none | Dispatch returns `501 sched.remove not yet implemented`. |
-| `sched.run` | none | Dispatch returns `501 sched.run not yet implemented`. |
+| `sched.list` | `handleSchedulerList` | Lists schedules visible to the caller. Non-root callers see their own schedules; root may pass `ownerUid`. |
+| `sched.add` | `handleSchedulerAdd` | Creates a user-owned schedule, validates the expression and target, computes the next run, and arms a Kernel wake. |
+| `sched.update` | `handleSchedulerUpdate` | Updates schedule metadata, expression, enabled state, or target, then re-arms the wake. |
+| `sched.remove` | `handleSchedulerRemove` | Removes a schedule and cancels its pending wake when present. |
+| `sched.run` | `handleSchedulerRun` | Runs due schedules or force-runs one schedule. `force` requires `id`. |
 
 ```ts
-type CronSchedule =
-  | { kind: "every"; everyMs: number; anchorMs?: number }
+type ScheduleExpression =
   | { kind: "at"; atMs: number }
-  | { kind: "cron"; expr: string; tz?: string };
+  | { kind: "after"; afterMs: number }
+  | { kind: "every"; everyMs: number; anchorMs?: number }
+  | { kind: "cron"; expr: string; timezone: string };
 
-type CronMode = {
-  sessionKey?: string;
-  message?: string;
-  model?: string;
-  thinking?: string;
-  timeoutSeconds?: number;
-  deliver?: boolean;
-  channel?: string;
-  to?: string;
-};
+type ScheduleTarget =
+  | { kind: "process.spawn"; profile?: string; label?: string; prompt: string; parentPid?: string; workspace?: unknown; mounts?: unknown[]; assignment?: unknown }
+  | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown> };
 
-type CronJob = {
+type ScheduleRecord = {
   id: string;
+  ownerUid: number;
   name: string;
   description?: string;
   enabled: boolean;
-  deleteAfterRun?: boolean;
+  expression: ScheduleExpression;
+  target: ScheduleTarget;
+  overlapPolicy: "skip";
   createdAtMs: number;
   updatedAtMs: number;
-  schedule: CronSchedule;
-  spec: CronMode;
   state: {
-    nextRunAtMs?: number;
-    runningAtMs?: number;
-    lastRunAtMs?: number;
-    lastStatus?: "ok" | "error" | "skipped";
-    lastError?: string;
-    lastDurationMs?: number;
+    nextRunAtMs: number | null;
+    runningAtMs: number | null;
+    lastRunAtMs: number | null;
+    lastStatus: "ok" | "error" | "skipped" | null;
+    lastError: string | null;
+    lastDurationMs: number | null;
+    runCount: number;
   };
 };
 
 type SchedulerSyscalls = {
   "sched.list": {
-    args: { includeDisabled?: boolean; limit?: number; offset?: number };
-    result: { jobs: CronJob[]; count: number };
+    args: { ownerUid?: number; includeDisabled?: boolean; limit?: number; offset?: number };
+    result: { schedules: ScheduleRecord[]; count: number };
   };
 
   "sched.add": {
-    args: { name: string; description?: string; enabled?: boolean; deleteAfterRun?: boolean; schedule: CronSchedule; spec: CronMode };
-    result: { job: CronJob };
+    args: { name: string; description?: string; enabled?: boolean; expression: ScheduleExpression; target: ScheduleTarget };
+    result: { schedule: ScheduleRecord };
   };
 
   "sched.update": {
-    args: { id: string; patch: { name?: string; description?: string; enabled?: boolean; deleteAfterRun?: boolean; schedule?: CronSchedule; spec?: Partial<CronMode> } };
-    result: { job: CronJob };
+    args: { id: string; patch: { name?: string; description?: string | null; enabled?: boolean; expression?: ScheduleExpression; target?: ScheduleTarget } };
+    result: { schedule: ScheduleRecord };
   };
 
   "sched.remove": {
@@ -990,7 +1136,7 @@ type SchedulerSyscalls = {
 
   "sched.run": {
     args: { id?: string; mode?: "due" | "force" };
-    result: { ran: number; results: Array<{ jobId: string; status: "ok" | "error" | "skipped"; error?: string; summary?: string; durationMs: number; nextRunAtMs?: number }> };
+    result: { ran: number; results: Array<{ scheduleId: string; status: "ok" | "error" | "skipped"; error?: string; summary?: string; durationMs: number; nextRunAtMs?: number | null }> };
   };
 };
 ```

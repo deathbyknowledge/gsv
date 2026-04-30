@@ -19,6 +19,12 @@ import type {
   ProcKillArgs,
   ProcKillResult,
   ProcSendArgs,
+  ProcIpcDeliverArgs,
+  ProcIpcDeliverResult,
+  ProcIpcCallArgs,
+  ProcIpcCallResult,
+  ProcIpcSendArgs,
+  ProcIpcSendResult,
   ProcAbortArgs,
   ProcAbortResult,
   ProcHilArgs,
@@ -26,6 +32,28 @@ import type {
   ProcSendResult,
   ProcHistoryArgs,
   ProcHistoryResult,
+  ProcConversationOpenArgs,
+  ProcConversationOpenResult,
+  ProcConversationListArgs,
+  ProcConversationListResult,
+  ProcConversationGetArgs,
+  ProcConversationGetResult,
+  ProcConversationCloseArgs,
+  ProcConversationCloseResult,
+  ProcConversationResetArgs,
+  ProcConversationResetResult,
+  ProcConversationPolicyGetArgs,
+  ProcConversationPolicyGetResult,
+  ProcConversationPolicySetArgs,
+  ProcConversationPolicySetResult,
+  ProcConversationCompactArgs,
+  ProcConversationCompactResult,
+  ProcConversationForkArgs,
+  ProcConversationForkResult,
+  ProcConversationSegmentReadArgs,
+  ProcConversationSegmentReadResult,
+  ProcConversationSegmentsArgs,
+  ProcConversationSegmentsResult,
   ProcResetArgs,
   ProcResetResult,
   ProcListArgs,
@@ -121,9 +149,13 @@ import type {
   SchedulerListArgs,
   SchedulerListResult,
   SchedulerAddArgs,
+  SchedulerAddResult,
+  SchedulerUpdateArgs,
+  SchedulerUpdateResult,
+  SchedulerRemoveArgs,
+  SchedulerRemoveResult,
+  SchedulerRunArgs,
   SchedulerRunResult,
-  CronJob,
-  CronJobPatch,
 } from "./scheduler";
 import type {
   AiToolsArgs,
@@ -188,9 +220,23 @@ export type SyscallDomains = {
   "proc.list": { args: ProcListArgs; result: ProcListResult };
   "proc.profile.list": { args: ProcProfileListArgs; result: ProcProfileListResult };
   "proc.send": { args: ProcSendArgs; result: ProcSendResult };
+  "proc.ipc.send": { args: ProcIpcSendArgs; result: ProcIpcSendResult };
+  "proc.ipc.call": { args: ProcIpcCallArgs; result: ProcIpcCallResult };
+  "proc.ipc.deliver": { args: ProcIpcDeliverArgs; result: ProcIpcDeliverResult };
   "proc.abort": { args: ProcAbortArgs; result: ProcAbortResult };
   "proc.hil": { args: ProcHilArgs; result: ProcHilResult };
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
+  "proc.conversation.open": { args: ProcConversationOpenArgs; result: ProcConversationOpenResult };
+  "proc.conversation.list": { args: ProcConversationListArgs; result: ProcConversationListResult };
+  "proc.conversation.get": { args: ProcConversationGetArgs; result: ProcConversationGetResult };
+  "proc.conversation.close": { args: ProcConversationCloseArgs; result: ProcConversationCloseResult };
+  "proc.conversation.reset": { args: ProcConversationResetArgs; result: ProcConversationResetResult };
+  "proc.conversation.policy.get": { args: ProcConversationPolicyGetArgs; result: ProcConversationPolicyGetResult };
+  "proc.conversation.policy.set": { args: ProcConversationPolicySetArgs; result: ProcConversationPolicySetResult };
+  "proc.conversation.compact": { args: ProcConversationCompactArgs; result: ProcConversationCompactResult };
+  "proc.conversation.fork": { args: ProcConversationForkArgs; result: ProcConversationForkResult };
+  "proc.conversation.segment.read": { args: ProcConversationSegmentReadArgs; result: ProcConversationSegmentReadResult };
+  "proc.conversation.segments": { args: ProcConversationSegmentsArgs; result: ProcConversationSegmentsResult };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
 
@@ -240,10 +286,10 @@ export type SyscallDomains = {
 
   // Scheduler (cron)
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
-  "sched.add": { args: SchedulerAddArgs; result: { job: CronJob } };
-  "sched.update": { args: { id: string; patch: CronJobPatch }; result: { job: CronJob } };
-  "sched.remove": { args: { id: string }; result: { removed: boolean } };
-  "sched.run": { args: { id?: string; mode?: "due" | "force" }; result: SchedulerRunResult };
+  "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };
+  "sched.update": { args: SchedulerUpdateArgs; result: SchedulerUpdateResult };
+  "sched.remove": { args: SchedulerRemoveArgs; result: SchedulerRemoveResult };
+  "sched.run": { args: SchedulerRunArgs; result: SchedulerRunResult };
 
   // AI (process bootstrap)
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };

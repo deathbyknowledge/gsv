@@ -1,41 +1,126 @@
-# How to Configure Automation
+# How to Configure Scheduled Work
 
-GSV has two current scheduling surfaces:
+GSV has two scheduling surfaces:
 
-- Built-in Kernel automation for archivist and curator workers.
+- Kernel schedules through `sched.*` for user/process-owned work.
 - Package daemon schedules for package-owned backend RPC methods.
 
-The typed `sched.*` syscalls exist in the protocol, but the dispatcher currently
-returns `501 not yet implemented`. Do not build user cron workflows on
-`sched.add` yet.
+Use Kernel schedules when scheduled work should create or notify a process.
+Use package daemon schedules when a package backend needs to call one of its
+own RPC methods.
 
-## Configure Built-in Automation
+## Add a Kernel Schedule
 
-Built-in automation is stored in Kernel SQLite and controlled by config keys.
-Root can tune the intervals:
+Kernel schedules have an expression and a typed target.
 
-```bash
-gsv config get config/automation
-gsv config set config/automation/archivist/min_interval_ms 300000
-gsv config set config/automation/curator/interval_ms 3600000
-gsv config set config/automation/curator/batch_size 5
-```
-
-Set `config/automation/curator/interval_ms` to `0` to disable the periodic
-curator sweep:
+From a GSV shell:
 
 ```bash
-gsv config set config/automation/curator/interval_ms 0
+sched add --name "daily ops check" --cron "0 9 * * *" --timezone Europe/Amsterdam \
+  --profile cron --label "daily ops check" \
+  "Check system health and summarize anything that needs attention."
 ```
 
-Archivist jobs are scheduled from process activity and workspace checkpointing.
-Curator jobs periodically review staged durable knowledge candidates.
+Programmatically:
+
+```ts
+await kernel.request("sched.add", {
+  name: "daily ops check",
+  expression: {
+    kind: "cron",
+    expr: "0 9 * * *",
+    timezone: "Europe/Amsterdam",
+  },
+  target: {
+    kind: "process.spawn",
+    profile: "cron",
+    label: "daily ops check",
+    prompt: "Check system health and summarize anything that needs attention.",
+  },
+});
+```
+
+Supported expression shapes:
+
+```ts
+{ kind: "at", atMs: Date.now() + 60_000 }
+{ kind: "after", afterMs: 60_000 }
+{ kind: "every", everyMs: 3_600_000, anchorMs: Date.now() }
+{ kind: "cron", expr: "0 9 * * *", timezone: "Europe/Amsterdam" }
+```
+
+Cron expressions use five Linux-style fields:
+
+```text
+minute hour day-of-month month day-of-week
+```
+
+The timezone must be an IANA timezone. If the system was initialized through
+onboarding, the selected system timezone is available as
+`config/server/timezone`.
+
+## Notify an Existing Process
+
+Use `process.event` when the schedule should wake an existing process
+conversation instead of spawning a new process.
+
+From a GSV shell:
+
+```bash
+sched add --name "ops pulse" --every 15m --pid "$GSV_PID" --conversation ops \
+  --message "Run the scheduled ops pulse."
+```
+
+Inside a process shell, `$GSV_PID` and `proc self` both identify the current
+process.
+
+Programmatically:
+
+```ts
+await kernel.request("sched.add", {
+  name: "ops pulse",
+  expression: { kind: "every", everyMs: 15 * 60 * 1000 },
+  target: {
+    kind: "process.event",
+    pid: "init:1000",
+    conversationId: "ops",
+    message: "Run the scheduled ops pulse.",
+    data: { source: "cron" },
+  },
+});
+```
+
+The target process sees this as a runtime event. In model context it is rendered
+with the normal `[Process Event]:` prefix.
+
+## Manage Kernel Schedules
+
+```ts
+await kernel.request("sched.list", { includeDisabled: true });
+await kernel.request("sched.update", {
+  id: "schedule-id",
+  patch: { enabled: false },
+});
+await kernel.request("sched.remove", { id: "schedule-id" });
+```
+
+To run a schedule manually:
+
+```ts
+await kernel.request("sched.run", { id: "schedule-id", mode: "force" });
+```
+
+To sweep currently due schedules:
+
+```ts
+await kernel.request("sched.run", { mode: "due" });
+```
 
 ## Add a Package Daemon Schedule
 
 Package backends can schedule their own RPC methods through `this.daemon`.
-Schedules live in the package AppRunner Durable Object, not in the Kernel cron
-table.
+Schedules live in the package AppRunner Durable Object, not in the Kernel
+scheduler table.
 
 ```ts
 import { PackageBackendEntrypoint } from "@gsv/package/backend";
@@ -69,38 +154,3 @@ export default class ReportsBackend extends PackageBackendEntrypoint {
   }
 }
 ```
-
-Supported schedule shapes:
-
-```ts
-{ kind: "at", atMs: Date.now() + 60_000 }
-{ kind: "after", afterMs: 60_000 }
-{ kind: "every", everyMs: 3_600_000, anchorMs: Date.now() }
-```
-
-## List or Remove Package Schedules
-
-Expose backend RPC methods for schedule management:
-
-```ts
-async listSchedules() {
-  return this.daemon?.listRpcSchedules() ?? [];
-}
-
-async disableDailyReport() {
-  return this.daemon?.removeRpcSchedule("daily-report") ?? { removed: false };
-}
-```
-
-Call those methods from the package UI or CLI command. The schedule invokes the
-named backend RPC method with the stored payload and sets
-`this.daemon.trigger` while the scheduled method is running.
-
-## Choose the Right Mechanism
-
-- Use built-in automation for GSV's own archivist and curator behavior.
-- Use package daemon schedules for app-specific recurring backend work.
-- Use an external scheduler plus `gsv chat` or `gsv proc send` if you need
-  operator-level cron today.
-- Wait for `sched.*` implementation before documenting user-managed Kernel cron
-  jobs.

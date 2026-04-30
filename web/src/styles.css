@@ -757,7 +757,8 @@ button:disabled {
   display: none;
 }
 
-.session-field-grid input {
+.session-field-grid input,
+.session-field-grid select {
   width: 100%;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -773,7 +774,8 @@ button:disabled {
   color: rgba(24, 49, 79, 0.42);
 }
 
-.session-field-grid input:focus-visible {
+.session-field-grid input:focus-visible,
+.session-field-grid select:focus-visible {
   outline: none;
   background: rgba(255, 255, 255, 0.88);
   border-color: rgba(0, 52, 102, 0.22);

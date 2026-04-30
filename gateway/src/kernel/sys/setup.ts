@@ -97,6 +97,20 @@ function parseAiConfig(args: SysSetupArgs): { provider?: string; model?: string;
   };
 }
 
+function parseTimezone(args: SysSetupArgs): string | undefined {
+  const raw = args as Record<string, unknown>;
+  const timezone = readOptionalString(raw.timezone);
+  if (!timezone) {
+    return undefined;
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
+  } catch {
+    throw new Error("timezone must be a valid IANA timezone");
+  }
+  return timezone;
+}
+
 function parseNodeConfig(args: SysSetupArgs): {
   deviceId: string;
   label?: string;
@@ -133,6 +147,7 @@ export async function handleSysSetup(
 
   const { username, password } = parseSetupIdentity(args);
   const ai = parseAiConfig(args);
+  const timezone = parseTimezone(args);
   const node = parseNodeConfig(args);
   const rootPassword = readOptionalString((args as Record<string, unknown>).rootPassword);
   if (rootPassword && rootPassword.length < 8) {
@@ -202,6 +217,12 @@ export async function handleSysSetup(
         await auth.setPassword("root", hashedPassword);
       }
 
+    });
+
+    await timeSetupStep(timings, "write-system-config", () => {
+      if (timezone !== undefined) {
+        config.set("config/server/timezone", timezone);
+      }
     });
 
     await timeSetupStep(timings, "write-ai-config", () => {

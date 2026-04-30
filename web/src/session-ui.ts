@@ -85,6 +85,40 @@ function isPositiveNumber(value: string): boolean {
   return Number.isFinite(parsed) && parsed > 0;
 }
 
+function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: value }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function timeZoneOptions(): string[] {
+  const supported = (Intl as typeof Intl & {
+    supportedValuesOf?: (key: "timeZone") => string[];
+  }).supportedValuesOf?.("timeZone") ?? [];
+  const preferred = [
+    browserTimeZone(),
+    "UTC",
+    "Europe/Amsterdam",
+    "Europe/London",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+  ];
+  return [...new Set([...preferred, ...supported])]
+    .filter((zone) => zone && isValidTimeZone(zone))
+    .sort((left, right) => left.localeCompare(right));
+}
+
 function sourceLooksLikeRemote(value: string): boolean {
   return value.includes("://") || value.startsWith("git@");
 }
@@ -197,6 +231,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupAdminCustomNode = rootNode.querySelector<HTMLInputElement>("[data-setup-admin-custom]");
   const setupRootRowNode = rootNode.querySelector<HTMLElement>("[data-setup-root-row]");
   const setupRootPasswordNode = rootNode.querySelector<HTMLInputElement>("[data-setup-root-password]");
+  const setupTimeZoneNode = rootNode.querySelector<HTMLSelectElement>("[data-setup-timezone]");
   const setupAiSectionNode = rootNode.querySelector<HTMLElement>("[data-setup-ai-section]");
   const setupAiEnabledNode = rootNode.querySelector<HTMLInputElement>("[data-setup-ai-enabled]");
   const setupAiProviderRowNode = rootNode.querySelector<HTMLElement>("[data-setup-ai-provider-row]");
@@ -232,6 +267,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const setupSummaryLaneCopyNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-lane-copy]");
   const setupSummaryAccountNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-account]");
   const setupSummaryAdminNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-admin]");
+  const setupSummaryTimeZoneNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-timezone]");
   const setupSummaryAiNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-ai]");
   const setupSummarySourceNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-source]");
   const setupSummaryDeviceNode = rootNode.querySelector<HTMLElement>("[data-setup-summary-device]");
@@ -291,6 +327,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupAdminCustomNode ||
     !setupRootRowNode ||
     !setupRootPasswordNode ||
+    !setupTimeZoneNode ||
     !setupAiSectionNode ||
     !setupAiEnabledNode ||
     !setupAiProviderRowNode ||
@@ -326,6 +363,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     !setupSummaryLaneCopyNode ||
     !setupSummaryAccountNode ||
     !setupSummaryAdminNode ||
+    !setupSummaryTimeZoneNode ||
     !setupSummaryAiNode ||
     !setupSummarySourceNode ||
     !setupSummaryDeviceNode ||
@@ -368,13 +406,33 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     node.textContent = "";
   };
 
+  const populateTimeZoneOptions = (): void => {
+    setupTimeZoneNode.replaceChildren();
+    for (const zone of timeZoneOptions()) {
+      const option = document.createElement("option");
+      option.value = zone;
+      option.textContent = zone;
+      setupTimeZoneNode.appendChild(option);
+    }
+  };
+
+  const ensureTimeZoneOption = (zone: string): void => {
+    if (!zone || setupTimeZoneNode.querySelector(`option[value="${CSS.escape(zone)}"]`)) {
+      return;
+    }
+    const option = document.createElement("option");
+    option.value = zone;
+    option.textContent = zone;
+    setupTimeZoneNode.appendChild(option);
+  };
+
   const activeLaneMeta = (): SetupLaneMeta => {
     return SETUP_LANE_META[onboardingSnapshot.draft.lane];
   };
 
   const detailStepsForLane = (lane = onboardingSnapshot.draft.lane): OnboardingDetailStep[] => {
-    if (lane === "quick") return ["account", "admin"];
-    return ["account", "admin", "ai", "source", "device"];
+    if (lane === "quick") return ["account", "admin", "system"];
+    return ["account", "admin", "system", "ai", "source", "device"];
   };
 
   const currentDetailStep = (): OnboardingDetailStep => {
@@ -413,6 +471,8 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupAdminSameNode.checked = draft.admin.mode === "same";
     setupAdminCustomNode.checked = draft.admin.mode === "custom";
     if (setupRootPasswordNode.value !== draft.admin.password) setupRootPasswordNode.value = draft.admin.password;
+    ensureTimeZoneOption(draft.system.timezone);
+    if (setupTimeZoneNode.value !== draft.system.timezone) setupTimeZoneNode.value = draft.system.timezone;
 
     setupAiEnabledNode.checked = draft.ai.enabled;
     if (setupAiProviderNode.value !== draft.ai.provider) setupAiProviderNode.value = draft.ai.provider;
@@ -464,6 +524,9 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       } else if (detailStep === "ai") {
         setupLaneTitleNode.textContent = "Configure AI defaults";
         setupLaneDescriptionNode.textContent = "Keep the default provider path or customize the initial AI provider, model, and API key.";
+      } else if (detailStep === "system") {
+        setupLaneTitleNode.textContent = "Set system timezone";
+        setupLaneDescriptionNode.textContent = "Choose the timezone used for calendar schedules and timestamp displays.";
       } else if (detailStep === "source") {
         setupLaneTitleNode.textContent = "Choose the system source";
         setupLaneDescriptionNode.textContent = "The system source is bootstrapped during first setup. Leave it on the default upstream or point at a custom repository and ref.";
@@ -627,8 +690,8 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       return;
     }
     const activeSection = setupDetailSections.find((section) => !section.hidden);
-    const firstVisible = activeSection?.querySelector<HTMLInputElement>("input:not([disabled]):not([type='hidden'])");
-    firstVisible?.focus();
+      const firstVisible = activeSection?.querySelector<HTMLElement>("input:not([disabled]):not([type='hidden']), select:not([disabled])");
+      firstVisible?.focus();
   };
 
   const validateSetupDetails = (validateAll = false): ValidationResult => {
@@ -655,6 +718,15 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       if (step === "admin") {
         if (draft.admin.mode === "custom" && draft.admin.password.trim().length < 8) {
           return { message: "Admin password must be at least 8 characters.", step };
+        }
+      }
+
+      if (step === "system") {
+        if (!draft.system.timezone.trim()) {
+          return { message: "Timezone is required.", step };
+        }
+        if (!isValidTimeZone(draft.system.timezone.trim())) {
+          return { message: "Timezone must be a valid IANA timezone.", step };
         }
       }
 
@@ -727,6 +799,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     setupSummaryAdminNode.textContent = draft.admin.mode === "custom"
       ? "Separate admin password"
       : "Same as account password";
+    setupSummaryTimeZoneNode.textContent = draft.system.timezone.trim() || browserTimeZone();
     setupSummaryAiNode.textContent = buildAiSummary();
     setupSummarySourceNode.textContent = buildSourceSummary();
     setupSummaryDeviceNode.textContent = buildDeviceSummary();
@@ -737,6 +810,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     const payload: SessionSetupInput = {
       username: draft.account.username.trim(),
       password: draft.account.password,
+      timezone: draft.system.timezone.trim(),
     };
 
     if (draft.admin.mode === "custom" && draft.admin.password.trim()) {
@@ -1191,6 +1265,15 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       },
     }));
   });
+  setupTimeZoneNode.addEventListener("change", () => {
+    updateDraft((draft) => ({
+      ...draft,
+      system: {
+        ...draft.system,
+        timezone: setupTimeZoneNode.value,
+      },
+    }));
+  });
   setupAiEnabledNode.addEventListener("change", () => {
     updateDraft((draft) => ({
       ...draft,
@@ -1313,6 +1396,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
     render();
   });
 
+  populateTimeZoneOptions();
   render();
 
   return {

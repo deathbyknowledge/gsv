@@ -4,6 +4,7 @@ export type AppRuntimeContext = {
   windowId: string;
   manifest: AppManifest;
   route: string;
+  requestFocus: () => void;
 };
 
 export type AppInstance = {

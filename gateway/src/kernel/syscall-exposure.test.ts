@@ -6,10 +6,13 @@ describe("internal syscall exposure", () => {
     expect(isInternalOnlySyscall("ai.config")).toBe(true);
     expect(isInternalOnlySyscall("ai.tools")).toBe(true);
     expect(isInternalOnlySyscall("codemode.exec")).toBe(true);
+    expect(isInternalOnlySyscall("proc.ipc.deliver")).toBe(true);
   });
 
   it("keeps user-facing syscalls public", () => {
     expect(isInternalOnlySyscall("proc.send")).toBe(false);
+    expect(isInternalOnlySyscall("proc.ipc.send")).toBe(false);
     expect(isInternalOnlySyscall("sys.config.get")).toBe(false);
+    expect(isInternalOnlySyscall("proc.ipc.call")).toBe(false);
   });
 });

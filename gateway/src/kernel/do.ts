@@ -10,14 +10,14 @@ import type {
   ProcessIdentity,
   SysSetupResult,
 } from "@gsv/protocol/syscalls/system";
-import type { ProcContextFile, ProcHilRequest, ProcHistoryMessage, ProcHistoryResult } from "../syscalls/proc";
+import type { ProcHilRequest } from "../syscalls/proc";
 import type { PkgPublicListResult } from "@gsv/protocol/syscalls/packages";
 import type {
   AdapterOutboundMessage,
 } from "../adapter-interface";
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
-import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
+import { ConfigStore } from "./config";
 import { DeviceRegistry } from "./devices";
 import { RoutingTable, type RouteOrigin } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
@@ -25,9 +25,15 @@ import { ProcessRegistry } from "./processes";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { WorkspaceStore } from "./workspaces";
-import { AutomationStore, type AutomationJobRecord } from "./automation";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
 import { NotificationStore } from "./notifications";
+import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
+import {
+  assertCanManageSchedule,
+  computeNextRunAfterFinish,
+  ScheduleStore,
+  skippedScheduleResult,
+} from "./scheduler";
 import { AppSessionStore } from "./app-sessions";
 import {
   ensureKernelBootstrapped,
@@ -61,7 +67,13 @@ import {
 } from "../protocol/app-frame";
 import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
-import { workspaceRootPath } from "../fs";
+import { handleProcSpawn } from "./proc-handlers";
+import type {
+  ScheduleRecord,
+  ScheduleRunResult,
+  SchedulerRunArgs,
+  SchedulerRunResult,
+} from "../syscalls/scheduler";
 
 const SERVER_VERSION = "0.1.1";
 
@@ -156,22 +168,6 @@ type AuthorizeGitHttpResult =
       message: string;
     };
 
-type ProcessHistorySnapshot = {
-  messages: ProcHistoryMessage[];
-  messageCount: number;
-};
-
-const ARCHIVIST_MIN_INPUT_TOKENS = 12_000;
-const ARCHIVIST_MIN_ESTIMATED_TOKENS = 9_000;
-const ARCHIVIST_MIN_MESSAGE_COUNT = 16;
-const ARCHIVIST_MIN_MESSAGE_DELTA = 8;
-const ARCHIVIST_MIN_TOKEN_DELTA = 4_000;
-const ARCHIVIST_MIN_INPUT_TOKEN_DELTA = 4_000;
-const DEFAULT_ARCHIVIST_MIN_INTERVAL_MS = 5 * 60 * 1000;
-const DEFAULT_CURATOR_INTERVAL_MS = 60 * 60 * 1000;
-const DEFAULT_CURATOR_BATCH_SIZE = 5;
-const AUTOMATION_CURATOR_SWEEP_AT_KEY = "curatorSweepAt";
-
 export class Kernel extends Host<Env> {
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
@@ -183,9 +179,10 @@ export class Kernel extends Host<Env> {
   private readonly workspaces: WorkspaceStore;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
-  private readonly automation: AutomationStore;
   private readonly signalWatches: SignalWatchStore;
+  private readonly ipcCalls: IpcCallStore;
   private readonly notifications: NotificationStore;
+  private readonly schedules: ScheduleStore;
   private readonly appSessions: AppSessionStore;
   private readonly packages: PackageStore;
   private readonly ready: Promise<void>;
@@ -206,7 +203,6 @@ export class Kernel extends Host<Env> {
 
     this.config = new ConfigStore(sql);
     this.config.init();
-    this.config.seed(SYSTEM_CONFIG_DEFAULTS);
 
     this.devices = new DeviceRegistry(sql);
     this.devices.init();
@@ -229,14 +225,17 @@ export class Kernel extends Host<Env> {
     this.runRoutes = new RunRouteStore(sql);
     this.runRoutes.init();
 
-    this.automation = new AutomationStore(sql);
-    this.automation.init();
-
     this.signalWatches = new SignalWatchStore(sql);
     this.signalWatches.init();
 
+    this.ipcCalls = new IpcCallStore(sql);
+    this.ipcCalls.init();
+
     this.notifications = new NotificationStore(sql);
     this.notifications.init();
+
+    this.schedules = new ScheduleStore(sql);
+    this.schedules.init();
 
     this.appSessions = new AppSessionStore(sql);
     this.appSessions.init();
@@ -321,7 +320,6 @@ export class Kernel extends Host<Env> {
    */
   async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
     await this.ready;
-    await this.ensureCuratorSweepScheduled();
     if (frame.type === "req") {
       return this.handleProcessReq(processId, frame);
     }
@@ -622,24 +620,11 @@ export class Kernel extends Host<Env> {
     }
 
     const runId = this.extractRunId(frame.payload);
-    let automationJob: AutomationJobRecord | null = null;
-    if (runId) {
-      automationJob = this.automation.getByRunId(runId);
-      if (automationJob) {
-        await this.handleAutomationSignal(automationJob, frame);
-      }
-    }
 
     await this.dispatchSignalWatches(identity.uid, processId, frame);
+    await this.completeIpcCallsFromSignal(identity.uid, processId, frame, runId);
 
     if (!frame.signal.startsWith("chat.")) return;
-    if (automationJob) {
-      return;
-    }
-
-    if (frame.signal === "chat.complete") {
-      await this.maybeScheduleAutomation(processId, frame);
-    }
 
     if (!runId) {
       this.broadcastToUid(identity.uid, frame.signal, frame.payload);
@@ -686,6 +671,61 @@ export class Kernel extends Host<Env> {
         }
       });
     this.pendingProcessSignals.set(processId, queued);
+  }
+
+  private async completeIpcCallsFromSignal(
+    uid: number,
+    processId: string,
+    frame: SignalFrame,
+    runId: string | null,
+  ): Promise<void> {
+    if (frame.signal !== "chat.complete" || !runId) {
+      return;
+    }
+
+    const payload = frame.payload && typeof frame.payload === "object"
+      ? frame.payload as Record<string, unknown>
+      : {};
+    const response = {
+      text: typeof payload.text === "string" ? payload.text : null,
+      usage: payload.usage ?? null,
+    };
+    const error = typeof payload.error === "string" ? payload.error : null;
+    const completed = this.ipcCalls.completeByRun({
+      uid,
+      targetPid: processId,
+      runId,
+      response,
+      error,
+    });
+
+    for (const call of completed) {
+      await this.deliverIpcCallSignal("ipc.reply", call, {
+        response,
+        error,
+      });
+    }
+  }
+
+  private async deliverIpcCallSignal(
+    signal: "ipc.reply" | "ipc.timeout",
+    call: IpcCallRecord,
+    extra?: { response?: unknown; error?: string | null },
+  ): Promise<void> {
+    await sendFrameToProcess(call.sourcePid, {
+      type: "sig",
+      signal,
+      payload: {
+        callId: call.callId,
+        sourcePid: call.sourcePid,
+        targetPid: call.targetPid,
+        ...(call.targetRunId ? { runId: call.targetRunId } : {}),
+        deadlineAt: call.deadlineAt,
+        status: call.status,
+        ...(extra?.response !== undefined ? { response: extra.response } : {}),
+        ...(extra?.error ? { error: extra.error } : {}),
+      },
+    });
   }
 
   private deliverSignalToConnection(
@@ -765,373 +805,6 @@ export class Kernel extends Host<Env> {
       surface,
       { kind: "typing", active: false },
     );
-  }
-
-  private async handleAutomationSignal(job: AutomationJobRecord, frame: SignalFrame): Promise<void> {
-    if (frame.signal === "chat.hil") {
-      if (job.runId) {
-        this.automation.failForRun(
-          job.runId,
-          "Automation worker requested interactive confirmation",
-        );
-      } else {
-        this.automation.markFailed(
-          job.jobId,
-          "Automation worker requested interactive confirmation",
-        );
-      }
-      if (job.workerPid) {
-        await this.stopAutomationWorker(job.workerPid);
-      }
-      return;
-    }
-
-    if (frame.signal === "chat.complete") {
-      const payload =
-        frame.payload && typeof frame.payload === "object"
-          ? frame.payload as Record<string, unknown>
-          : {};
-      const error =
-        typeof payload.error === "string" && payload.error.trim().length > 0
-          ? payload.error
-          : payload.aborted === true
-            ? "Automation run aborted"
-            : null;
-      if (error) {
-        if (job.runId) {
-          this.automation.failForRun(job.runId, error);
-        } else {
-          this.automation.markFailed(job.jobId, error);
-        }
-      } else if (job.runId) {
-        this.automation.completeForRun(job.runId);
-      }
-
-      if (job.workerPid) {
-        await this.stopAutomationWorker(job.workerPid);
-      }
-    }
-  }
-
-  private async maybeScheduleAutomation(processId: string, frame: SignalFrame): Promise<void> {
-    const proc = this.procs.get(processId);
-    if (!proc) {
-      return;
-    }
-    if (proc.profile === "archivist" || proc.profile === "curator") {
-      return;
-    }
-    if (proc.profile !== "task" && proc.profile !== "init") {
-      return;
-    }
-    if (!proc.workspaceId) {
-      return;
-    }
-
-    const payload =
-      frame.payload && typeof frame.payload === "object"
-        ? frame.payload as Record<string, unknown>
-        : {};
-    if (payload.aborted === true) {
-      return;
-    }
-    if (typeof payload.error === "string" && payload.error.trim().length > 0) {
-      return;
-    }
-
-    const history = await this.fetchProcessHistory(processId, 40);
-    const inputTokens = parseInputTokens(frame.payload);
-    const estimatedTokens = estimateHistoryTokens(history.messages);
-    const dedupeKey = `archivist:compact:${proc.workspaceId}`;
-    const archivistMinIntervalMs = this.resolveAutomationIntervalMs(
-      "config/automation/archivist/min_interval_ms",
-      DEFAULT_ARCHIVIST_MIN_INTERVAL_MS,
-    );
-
-    if (!shouldScheduleArchivistJob(
-      this.automation.getLatestCompletedByDedupe(dedupeKey),
-      history.messageCount,
-      estimatedTokens,
-      inputTokens,
-      archivistMinIntervalMs,
-    )) {
-      return;
-    }
-
-    const assignmentContextFiles = this.buildArchivistAssignment(
-      proc.processId,
-      proc.workspaceId,
-      history.messages,
-    );
-    const { created } = this.automation.enqueue({
-      uid: proc.uid,
-      profile: "archivist",
-      triggerSignal: frame.signal,
-      dedupeKey,
-      sourcePid: proc.processId,
-      workspaceId: proc.workspaceId,
-      label: `archivist (${proc.workspaceId})`,
-      sourceMessageCount: history.messageCount,
-      sourceEstimatedTokens: estimatedTokens,
-      sourceInputTokens: inputTokens,
-      assignmentContextFiles,
-    });
-    if (created) {
-      await this.dispatchQueuedAutomationJobs();
-    }
-  }
-
-  private async fetchProcessHistory(
-    pid: string,
-    limit: number,
-  ): Promise<ProcessHistorySnapshot> {
-    const response = await sendFrameToProcess(pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.history",
-      args: { pid, limit },
-    });
-    if (!response || response.type !== "res" || !response.ok) {
-      return { messages: [], messageCount: 0 };
-    }
-    const data = (response.data ?? null) as ProcHistoryResult | null;
-    if (!data || !("messages" in data) || !Array.isArray(data.messages)) {
-      return { messages: [], messageCount: 0 };
-    }
-    return {
-      messages: data.messages,
-      messageCount: typeof data.messageCount === "number" ? data.messageCount : data.messages.length,
-    };
-  }
-
-  private buildArchivistAssignment(
-    sourcePid: string,
-    workspaceId: string,
-    history: ProcHistoryMessage[],
-  ): ProcContextFile[] {
-    const recentHistory = history
-      .slice(-40)
-      .map((message) => formatHistoryMessage(message))
-      .filter((line) => line.length > 0)
-      .join("\n\n");
-
-    const files: ProcContextFile[] = [
-      {
-        name: "00-assignment.md",
-        text: [
-          "You are running a background archival pass.",
-          `Source process: ${sourcePid}`,
-          `Workspace: ${workspaceRootPath(workspaceId)}`,
-          "",
-          "Goals:",
-          "- Rewrite workspace continuity files under `.gsv/context.d/`.",
-          "- Preserve a concise current summary, unresolved open loops, and durable recent decisions.",
-          "- Stage durable knowledge candidates under `~/knowledge/personal/inbox/` only when they are likely to matter beyond this workspace run.",
-          "",
-          "Preferred outputs:",
-          "- `.gsv/context.d/10-summary.md`",
-          "- `.gsv/context.d/20-open-loops.md`",
-          "- `.gsv/context.d/30-decisions.md`",
-          "",
-          "Restrictions:",
-          "- Do not modify canonical knowledge pages under `~/knowledge/*/pages/`.",
-          "- Do not address the user directly.",
-          "- It is valid to emit no inbox notes if there are no durable candidates worth staging.",
-          "- Prefer filesystem tools over shell commands unless shell is clearly required.",
-          "- Rewrite context files cleanly instead of appending logs or stale bullet lists.",
-        ].join("\n"),
-      },
-    ];
-
-    if (recentHistory.trim().length > 0) {
-      files.push({
-        name: "10-recent-history.md",
-        text: [
-          "Recent source history:",
-          "",
-          recentHistory,
-        ].join("\n"),
-      });
-    }
-
-    return files;
-  }
-
-  private buildCuratorAssignment(
-    db: string,
-    batchSize: number,
-  ): ProcContextFile[] {
-    return [
-      {
-        name: "00-assignment.md",
-        text: [
-          "You are running a background curation pass.",
-          `Knowledge database: ${db}`,
-          `Inbox scope: ~/knowledge/${db}/inbox/`,
-          `Batch size: ${batchSize}`,
-          "",
-          "Goals:",
-          "- Review staged inbox notes conservatively.",
-          "- Promote, merge, defer, or discard candidates based on the inbox note and the current canonical pages.",
-          "- If the inbox is empty or nothing is clear enough to promote, make no changes and exit.",
-          "",
-          "Restrictions:",
-          "- Do not address the user directly.",
-          "- Prefer precise, minimal edits over broad rewrites.",
-          "- Preserve readable markdown history and keep ambiguous notes deferred.",
-          "- Only touch canonical pages that are clearly relevant to the candidate under review.",
-        ].join("\n"),
-      },
-    ];
-  }
-
-  private async ensureCuratorSweepScheduled(): Promise<void> {
-    const intervalMs = this.resolveAutomationIntervalMs(
-      "config/automation/curator/interval_ms",
-      DEFAULT_CURATOR_INTERVAL_MS,
-    );
-    if (intervalMs <= 0) {
-      this.automation.deleteMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY);
-      return;
-    }
-
-    const existing = Number.parseInt(
-      this.automation.getMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY) ?? "",
-      10,
-    );
-    if (Number.isFinite(existing) && existing > Date.now()) {
-      return;
-    }
-
-    const dueAt = Date.now() + intervalMs;
-    await this.schedule(
-      Math.max(1, intervalMs / 1000),
-      "onAutomationSweep",
-      dueAt,
-    );
-    this.automation.setMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY, String(dueAt));
-  }
-
-  async onAutomationSweep(dueAt: number): Promise<void> {
-    await this.ready;
-    const expected = Number.parseInt(
-      this.automation.getMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY) ?? "",
-      10,
-    );
-    if (!Number.isFinite(expected) || expected !== dueAt) {
-      return;
-    }
-
-    this.automation.deleteMeta(AUTOMATION_CURATOR_SWEEP_AT_KEY);
-    await this.maybeScheduleCuratorJobs();
-    await this.dispatchQueuedAutomationJobs();
-    await this.ensureCuratorSweepScheduled();
-  }
-
-  private async maybeScheduleCuratorJobs(): Promise<void> {
-    const batchSize = this.resolveAutomationIntervalMs(
-      "config/automation/curator/batch_size",
-      DEFAULT_CURATOR_BATCH_SIZE,
-      1,
-    );
-
-    const initProcesses = this.procs.listByProfile("init");
-    for (const initProc of initProcesses) {
-      this.automation.enqueue({
-        uid: initProc.uid,
-        profile: "curator",
-        triggerSignal: "automation.sweep",
-        dedupeKey: `curator:${initProc.uid}:personal`,
-        sourcePid: initProc.processId,
-        workspaceId: null,
-        label: `curator (${initProc.username})`,
-        assignmentContextFiles: this.buildCuratorAssignment("personal", batchSize),
-      });
-    }
-  }
-
-  private resolveAutomationIntervalMs(
-    key: string,
-    fallback: number,
-    minValue = 0,
-  ): number {
-    const raw = this.config.get(key);
-    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-    if (!Number.isFinite(parsed)) {
-      return fallback;
-    }
-    return Math.max(minValue, parsed);
-  }
-
-  private async dispatchQueuedAutomationJobs(): Promise<void> {
-    const jobs = this.automation.listQueued();
-    for (const job of jobs) {
-      const sourceProc = job.sourcePid ? this.procs.get(job.sourcePid) : null;
-      if (!sourceProc) {
-        this.automation.markFailed(job.jobId, "Source process not found");
-        continue;
-      }
-
-      const workerPid = crypto.randomUUID();
-      const identity: ProcessIdentity = {
-        uid: sourceProc.uid,
-        gid: sourceProc.gid,
-        gids: sourceProc.gids,
-        username: sourceProc.username,
-        home: sourceProc.home,
-        cwd: job.workspaceId ? workspaceRootPath(job.workspaceId) : sourceProc.home,
-        workspaceId: job.workspaceId,
-      };
-
-      this.procs.spawn(workerPid, identity, {
-        parentPid: job.sourcePid ?? `init:${job.uid}`,
-        profile: job.profile,
-        label: job.label ?? job.profile,
-        cwd: identity.cwd,
-        workspaceId: identity.workspaceId,
-        contextFiles: job.assignmentContextFiles,
-      });
-
-      const response = await sendFrameToProcess(workerPid, {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.setidentity",
-        args: {
-          pid: workerPid,
-          identity,
-          profile: job.profile,
-          assignment: {
-            contextFiles: job.assignmentContextFiles,
-            autoStart: true,
-          },
-        },
-      });
-
-      if (!response || response.type !== "res" || !response.ok) {
-        this.procs.kill(workerPid);
-        this.automation.markFailed(job.jobId, "Failed to initialize automation worker");
-        continue;
-      }
-
-      const data = response.data as { ok?: boolean; startedRunId?: string } | undefined;
-      if (!data?.startedRunId) {
-        this.procs.kill(workerPid);
-        this.automation.markFailed(job.jobId, "Automation worker did not start a run");
-        continue;
-      }
-
-      this.automation.markRunning(job.jobId, workerPid, data.startedRunId);
-    }
-  }
-
-  private async stopAutomationWorker(pid: string): Promise<void> {
-    await sendFrameToProcess(pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.kill",
-      args: { pid, archive: false },
-    });
-    this.procs.kill(pid);
   }
 
   private async sendAdapterMessage(
@@ -1263,9 +936,10 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
-      automation: this.automation,
       signalWatches: this.signalWatches,
+      ipcCalls: this.ipcCalls,
       notifications: this.notifications,
+      schedules: this.schedules,
       connection: null as unknown as Connection,
       identity: connIdentity,
       processId,
@@ -1273,6 +947,10 @@ export class Kernel extends Host<Env> {
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
+      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
+      scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
+      cancelScheduleWake: this.cancelScheduleWake.bind(this),
+      runSchedules: this.runSchedules.bind(this),
     };
 
     const origin: RouteOrigin = { type: "process", id: processId };
@@ -1327,9 +1005,10 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
-      automation: this.automation,
       signalWatches: this.signalWatches,
+      ipcCalls: this.ipcCalls,
       notifications: this.notifications,
+      schedules: this.schedules,
       connection,
       identity: state.identity as ConnectionIdentity,
       processId: undefined,
@@ -1337,6 +1016,10 @@ export class Kernel extends Host<Env> {
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
+      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
+      scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
+      cancelScheduleWake: this.cancelScheduleWake.bind(this),
+      runSchedules: this.runSchedules.bind(this),
     };
   }
 
@@ -1353,9 +1036,10 @@ export class Kernel extends Host<Env> {
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
-      automation: this.automation,
       signalWatches: this.signalWatches,
+      ipcCalls: this.ipcCalls,
       notifications: this.notifications,
+      schedules: this.schedules,
       connection: null as unknown as Connection,
       identity,
       processId: undefined,
@@ -1363,6 +1047,10 @@ export class Kernel extends Host<Env> {
       serverVersion: SERVER_VERSION,
       broadcastToUid: this.broadcastToUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
+      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
+      scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
+      cancelScheduleWake: this.cancelScheduleWake.bind(this),
+      runSchedules: this.runSchedules.bind(this),
     };
   }
 
@@ -1386,8 +1074,30 @@ export class Kernel extends Host<Env> {
     };
   }
 
+  private async scheduleIpcCallTimeout(callId: string, delayMs: number): Promise<string> {
+    const sched = await this.schedule(
+      Math.max(1, delayMs / 1000),
+      "onIpcCallTimeout",
+      callId,
+    );
+    return sched.id;
+  }
+
+  private async scheduleScheduleWake(scheduleId: string, dueAtMs: number): Promise<string> {
+    const wakeAt = new Date(ceilToSecondMs(Math.max(Date.now() + 1_000, dueAtMs)));
+    const sched = await this.schedule(
+      wakeAt,
+      "onScheduleDue",
+      scheduleId,
+    );
+    return sched.id;
+  }
+
+  private async cancelScheduleWake(wakeScheduleId: string): Promise<void> {
+    await this.cancelSchedule(wakeScheduleId);
+  }
+
   private async handleReq(connection: Connection<ConnectionState>, frame: RequestFrame): Promise<void> {
-    await this.ensureCuratorSweepScheduled();
     const state = connection.state as ConnectionState | undefined;
 
     if (frame.call === "sys.connect") {
@@ -1929,6 +1639,254 @@ export class Kernel extends Host<Env> {
     this.deliverToOrigin(expired.origin, timeoutFrame);
   }
 
+  async onIpcCallTimeout(callId: string): Promise<void> {
+    await this.ready;
+    const timedOut = this.ipcCalls.timeout(callId);
+    if (!timedOut) return;
+
+    await this.deliverIpcCallSignal("ipc.timeout", timedOut, {
+      error: timedOut.error,
+    });
+  }
+
+  async onScheduleDue(scheduleId: string, wake?: { id?: unknown }): Promise<void> {
+    await this.ready;
+    const record = this.schedules.getStored(scheduleId);
+    const wakeId = typeof wake?.id === "string" ? wake.id : null;
+    if (wakeId && record?.wakeScheduleId !== wakeId) {
+      return;
+    }
+
+    const result = await this.runSchedules({ id: scheduleId, mode: "due" });
+    if (result.ran !== 0) {
+      return;
+    }
+
+    const current = this.schedules.getStored(scheduleId);
+    if (current?.enabled && current.state.nextRunAtMs !== null && current.state.nextRunAtMs > Date.now()) {
+      const nextWakeId = await this.scheduleScheduleWake(current.id, current.state.nextRunAtMs);
+      this.schedules.setWakeScheduleId(current.id, nextWakeId);
+    }
+  }
+
+  private async runSchedules(
+    args: SchedulerRunArgs,
+    identity?: ConnectionIdentity,
+  ): Promise<SchedulerRunResult> {
+    const mode = args.mode ?? "due";
+    if (mode === "force" && !args.id) {
+      throw new Error("sched.run force requires an id");
+    }
+
+    const now = Date.now();
+    const records = args.id
+      ? [this.schedules.get(args.id)].filter((record): record is ScheduleRecord => record !== null)
+      : this.schedules.listDue(now, identity && identity.process.uid !== 0 ? identity.process.uid : undefined);
+
+    const results: ScheduleRunResult[] = [];
+    for (const record of records) {
+      if (identity) {
+        assertCanManageSchedule(identity, record);
+      }
+      results.push(await this.runScheduleRecord(record, mode));
+    }
+
+    return {
+      ran: results.filter((result) => result.status !== "skipped").length,
+      results,
+    };
+  }
+
+  private async runScheduleRecord(
+    record: ScheduleRecord,
+    mode: "due" | "force",
+  ): Promise<ScheduleRunResult> {
+    const now = Date.now();
+    const scheduledAtMs = record.state.nextRunAtMs;
+
+    if (mode === "due") {
+      if (!record.enabled) {
+        return skippedScheduleResult(record.id, "schedule is disabled");
+      }
+      if (scheduledAtMs === null || scheduledAtMs > now) {
+        return skippedScheduleResult(record.id, "schedule is not due");
+      }
+    }
+
+    if (record.state.runningAtMs !== null) {
+      return skippedScheduleResult(record.id, "schedule is already running");
+    }
+
+    const startedAtMs = Date.now();
+    const running = this.schedules.markRunning(record.id, startedAtMs);
+    if (!running) {
+      return skippedScheduleResult(record.id, "schedule is already running");
+    }
+
+    let status: "ok" | "error" = "ok";
+    let error: string | undefined;
+    let result: unknown;
+
+    try {
+      result = await this.dispatchScheduleTarget(record, scheduledAtMs, startedAtMs);
+    } catch (err) {
+      status = "error";
+      error = err instanceof Error ? err.message : String(err);
+      result = { error };
+    }
+
+    const finishedAtMs = Date.now();
+    const next = mode === "force"
+      ? { enabled: record.enabled, nextRunAtMs: record.state.nextRunAtMs }
+      : computeNextRunAfterFinish(record.expression, Math.max(finishedAtMs, scheduledAtMs ?? finishedAtMs));
+    const updated = this.schedules.finishRun({
+      scheduleId: record.id,
+      ownerUid: record.ownerUid,
+      scheduledAtMs: mode === "force" ? null : scheduledAtMs,
+      startedAtMs,
+      finishedAtMs,
+      status,
+      error,
+      result,
+      nextRunAtMs: next.nextRunAtMs,
+      enabled: next.enabled,
+    });
+
+    if (updated?.enabled && updated.state.nextRunAtMs !== null && mode !== "force") {
+      const wakeId = await this.scheduleScheduleWake(updated.id, updated.state.nextRunAtMs);
+      this.schedules.setWakeScheduleId(updated.id, wakeId);
+    } else if (updated && !updated.enabled) {
+      this.schedules.setWakeScheduleId(updated.id, null);
+    }
+
+    return {
+      scheduleId: record.id,
+      status,
+      ...(error ? { error } : {}),
+      summary: scheduleResultSummary(record, result),
+      durationMs: Math.max(0, finishedAtMs - startedAtMs),
+      nextRunAtMs: updated?.state.nextRunAtMs ?? null,
+    };
+  }
+
+  private async dispatchScheduleTarget(
+    record: ScheduleRecord,
+    scheduledAtMs: number | null,
+    firedAtMs: number,
+  ): Promise<unknown> {
+    const target = record.target;
+    if (target.kind === "process.spawn") {
+      const ctx = this.buildScheduleContext(record);
+      const result = await handleProcSpawn({
+        profile: target.profile ?? "cron",
+        label: target.label ?? record.name,
+        prompt: target.prompt,
+        parentPid: target.parentPid,
+        workspace: target.workspace,
+        mounts: target.mounts,
+        assignment: target.assignment,
+      }, ctx);
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
+      return {
+        kind: "process.spawn",
+        pid: result.pid,
+        profile: result.profile,
+      };
+    }
+
+    if (target.kind === "process.event") {
+      const proc = this.procs.get(target.pid);
+      if (!proc) {
+        throw new Error(`Process not found: ${target.pid}`);
+      }
+      if (proc.uid !== record.ownerUid && record.ownerUid !== 0) {
+        throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
+      }
+
+      await sendFrameToProcess(target.pid, {
+        type: "sig",
+        signal: "schedule.event",
+        payload: {
+          scheduleId: record.id,
+          scheduleName: record.name,
+          conversationId: target.conversationId,
+          message: target.message,
+          data: target.data,
+          scheduledAtMs,
+          firedAtMs,
+        },
+      });
+      return {
+        kind: "process.event",
+        pid: target.pid,
+        conversationId: target.conversationId ?? "default",
+      };
+    }
+
+    return { kind: "unknown" };
+  }
+
+  private buildScheduleContext(record: ScheduleRecord): KernelContext {
+    const process = this.resolveScheduleIdentity(record.ownerUid);
+    const identity: ConnectionIdentity = {
+      role: "user",
+      process,
+      capabilities: this.caps.resolve(process.gids),
+    };
+
+    return {
+      env: this.env,
+      auth: this.auth,
+      caps: this.caps,
+      config: this.config,
+      devices: this.devices,
+      procs: this.procs,
+      workspaces: this.workspaces,
+      packages: this.packages,
+      adapters: this.adapters,
+      runRoutes: this.runRoutes,
+      shellSessions: this.shellSessions,
+      signalWatches: this.signalWatches,
+      ipcCalls: this.ipcCalls,
+      notifications: this.notifications,
+      schedules: this.schedules,
+      connection: null as unknown as Connection,
+      identity,
+      processId: record.runAs.kind === "process" ? record.runAs.pid : undefined,
+      appFrame: undefined,
+      serverVersion: SERVER_VERSION,
+      broadcastToUid: this.broadcastToUid.bind(this),
+      getAppRunner: this.getAppRunner.bind(this),
+      scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
+      scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
+      cancelScheduleWake: this.cancelScheduleWake.bind(this),
+      runSchedules: this.runSchedules.bind(this),
+    };
+  }
+
+  private resolveScheduleIdentity(uid: number): ProcessIdentity {
+    const initIdentity = this.procs.getIdentity(`init:${uid}`);
+    if (initIdentity) {
+      return initIdentity;
+    }
+
+    const user = this.auth.getPasswdByUid(uid);
+    if (!user) {
+      throw new Error(`Cannot resolve schedule owner uid ${uid}`);
+    }
+    return {
+      uid: user.uid,
+      gid: user.gid,
+      gids: this.auth.resolveGids(user.username, user.gid),
+      username: user.username,
+      home: user.home,
+      cwd: user.home,
+      workspaceId: null,
+    };
+  }
+
   private deliverToOrigin(origin: RouteOrigin, frame: ResponseFrame): void {
     if (origin.type === "connection") {
       const conn = this.connections.get(origin.id);
@@ -2233,6 +2191,21 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
 }
 
+function ceilToSecondMs(value: number): number {
+  return Math.ceil(value / 1_000) * 1_000;
+}
+
+function scheduleResultSummary(record: ScheduleRecord, result: unknown): string {
+  const value = asRecord(result);
+  if (record.target.kind === "process.spawn" && typeof value?.pid === "string") {
+    return `spawned process ${value.pid}`;
+  }
+  if (record.target.kind === "process.event") {
+    return `delivered event to process ${record.target.pid}`;
+  }
+  return "schedule ran";
+}
+
 function shellStatusFromResult(status: string): ShellSessionStatus {
   if (status === "completed" || status === "failed") {
     return status;
@@ -2248,83 +2221,4 @@ function shellStatusFromEvent(event: string): ShellSessionStatus {
     return "failed";
   }
   return "running";
-}
-
-function formatHistoryMessage(message: ProcHistoryMessage): string {
-  const timestamp = typeof message.timestamp === "number"
-    ? new Date(message.timestamp).toISOString()
-    : "";
-  const prefix = timestamp ? `[${timestamp}] ${message.role}` : message.role;
-  const content = typeof message.content === "string"
-    ? message.content
-    : JSON.stringify(message.content, null, 2);
-  return `${prefix}\n${content}`.trim();
-}
-
-function parseInputTokens(payload: unknown): number | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const usage = (payload as { usage?: unknown }).usage;
-  if (!usage || typeof usage !== "object") {
-    return null;
-  }
-  const input = (usage as { input?: unknown }).input;
-  return typeof input === "number" && Number.isFinite(input) && input > 0
-    ? Math.floor(input)
-    : null;
-}
-
-function estimateHistoryTokens(messages: ProcHistoryMessage[]): number {
-  let chars = 0;
-  for (const message of messages) {
-    chars += message.role.length + 4;
-    if (typeof message.content === "string") {
-      chars += message.content.length;
-      continue;
-    }
-    try {
-      chars += JSON.stringify(message.content).length;
-    } catch {
-      chars += 64;
-    }
-  }
-  return Math.ceil(chars / 4);
-}
-
-function shouldScheduleArchivistJob(
-  lastCompleted: AutomationJobRecord | null,
-  messageCount: number,
-  estimatedTokens: number,
-  inputTokens: number | null,
-  minIntervalMs: number,
-): boolean {
-  const hasPressure =
-    messageCount >= ARCHIVIST_MIN_MESSAGE_COUNT
-    || estimatedTokens >= ARCHIVIST_MIN_ESTIMATED_TOKENS
-    || (inputTokens !== null && inputTokens >= ARCHIVIST_MIN_INPUT_TOKENS);
-
-  if (!hasPressure) {
-    return false;
-  }
-
-  if (!lastCompleted) {
-    return true;
-  }
-
-  const withinCooldown = Date.now() - lastCompleted.updatedAt < minIntervalMs;
-  if (!withinCooldown) {
-    return true;
-  }
-
-  const messageDelta = messageCount - lastCompleted.sourceMessageCount;
-  const estimatedTokenDelta = estimatedTokens - lastCompleted.sourceEstimatedTokens;
-  const inputTokenDelta =
-    inputTokens !== null && lastCompleted.sourceInputTokens !== null
-      ? inputTokens - lastCompleted.sourceInputTokens
-      : null;
-
-  return messageDelta >= ARCHIVIST_MIN_MESSAGE_DELTA
-    || estimatedTokenDelta >= ARCHIVIST_MIN_TOKEN_DELTA
-    || (inputTokenDelta !== null && inputTokenDelta >= ARCHIVIST_MIN_INPUT_TOKEN_DELTA);
 }

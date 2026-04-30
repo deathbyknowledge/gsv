@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
 import type { KernelContext } from "../../kernel/context";
@@ -58,7 +58,10 @@ function makeContext(options?: {
   capabilities?: string[];
   mounts?: Array<{ mountPath: string; packageId: string }>;
   pkg?: InstalledPackageRecord;
+  procs?: Partial<KernelContext["procs"]>;
+  schedules?: KernelContext["schedules"];
   getAppRunner?: KernelContext["getAppRunner"];
+  scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
 }): KernelContext {
   const pkg = options?.pkg ?? makePackage();
   const records = new Map([[pkg.packageId, pkg]]);
@@ -90,6 +93,7 @@ function makeContext(options?: {
           subdir: mount.mountPath === "/src/package" ? pkg.manifest.source.subdir : ".",
         }));
       },
+      ...(options?.procs ?? {}),
     } as never,
     workspaces: null as never,
     packages: {
@@ -119,6 +123,7 @@ function makeContext(options?: {
     } as never,
     adapters: null as never,
     runRoutes: null as never,
+    schedules: options?.schedules,
     connection: null as never,
     identity: {
       role: "user",
@@ -128,6 +133,7 @@ function makeContext(options?: {
     processId: "task:pkg",
     serverVersion: "0.1.1",
     getAppRunner: options?.getAppRunner,
+    scheduleScheduleWake: options?.scheduleScheduleWake,
   } as KernelContext;
 }
 
@@ -141,6 +147,195 @@ describe("pkg shell command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("codemode <script.js>");
     expect(result.stderr).toBe("");
+  });
+
+  it("shows proc command usage", async () => {
+    const result = await handleShellExec(
+      { input: "proc --help" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("proc self");
+    expect(result.stdout).toContain("proc send <pid>");
+    expect(result.stdout).toContain("proc call <pid>");
+    expect(result.stderr).toBe("");
+  });
+
+  it("exposes the current GSV process id to shell commands", async () => {
+    const result = await handleShellExec(
+      { input: "printf \"$GSV_PID\\n\" && proc self" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("task:pkg\ntask:pkg\n");
+    expect(result.stderr).toBe("");
+  });
+
+  it("shows sched command usage", async () => {
+    const result = await handleShellExec(
+      { input: "sched --help" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("sched add --name NAME");
+    expect(result.stdout).toContain("sched run <id>");
+    expect(result.stderr).toBe("");
+  });
+
+  it("creates a process-spawn schedule from the sched command", async () => {
+    const wake = vi.fn(async () => "wake-1");
+    const setWakeScheduleId = vi.fn();
+    const create = vi.fn((input) => ({
+      id: "sched-1",
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      overlapPolicy: "skip",
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+      state: {
+        nextRunAtMs: input.now + input.expression.afterMs,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    }));
+
+    const result = await handleShellExec(
+      { input: "sched add --name \"quick check\" --after 30s --profile cron \"Run the quick check.\"" },
+      makeContext({
+        capabilities: ["sched.add"],
+        schedules: {
+          create,
+          setWakeScheduleId,
+        } as unknown as KernelContext["schedules"],
+        scheduleScheduleWake: wake,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("schedule_id=sched-1");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: IDENTITY.uid,
+      name: "quick check",
+      expression: { kind: "after", afterMs: 30_000 },
+      target: {
+        kind: "process.spawn",
+        profile: "cron",
+        prompt: "Run the quick check.",
+      },
+    }));
+    expect(wake).toHaveBeenCalledWith("sched-1", expect.any(Number));
+    expect(setWakeScheduleId).toHaveBeenCalledWith("sched-1", "wake-1");
+  });
+
+  it("creates a process-event schedule from the sched command", async () => {
+    const wake = vi.fn(async () => "wake-1");
+    const setWakeScheduleId = vi.fn();
+    const create = vi.fn((input) => ({
+      id: "sched-2",
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      overlapPolicy: "skip",
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+      state: {
+        nextRunAtMs: input.now + input.expression.everyMs,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    }));
+
+    const result = await handleShellExec(
+      { input: "sched add --name \"ops pulse\" --every 15m --pid init:1000 --conversation ops --message \"Run pulse.\"" },
+      makeContext({
+        capabilities: ["sched.add"],
+        procs: {
+          get: vi.fn(() => ({
+            uid: IDENTITY.uid,
+            workspaceId: null,
+          })),
+        } as Partial<KernelContext["procs"]>,
+        schedules: {
+          create,
+          setWakeScheduleId,
+        } as unknown as KernelContext["schedules"],
+        scheduleScheduleWake: wake,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("schedule_id=sched-2");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ops pulse",
+      expression: { kind: "every", everyMs: 900_000 },
+      target: {
+        kind: "process.event",
+        pid: "init:1000",
+        conversationId: "ops",
+        message: "Run pulse.",
+      },
+    }));
+    expect(setWakeScheduleId).toHaveBeenCalledWith("sched-2", "wake-1");
+  });
+
+  it("shows schedule last status and error in sched list", async () => {
+    const result = await handleShellExec(
+      { input: "sched list --all" },
+      makeContext({
+        capabilities: ["sched.list"],
+        schedules: {
+          list: vi.fn(() => ({
+            count: 1,
+            records: [{
+              id: "sched-err",
+              ownerUid: IDENTITY.uid,
+              creator: { kind: "process", uid: IDENTITY.uid, username: IDENTITY.username, pid: "task:pkg" },
+              runAs: { kind: "process", uid: IDENTITY.uid, username: IDENTITY.username, pid: "task:pkg" },
+              name: "broken target",
+              enabled: false,
+              expression: { kind: "after", afterMs: 30_000 },
+              target: { kind: "process.event", pid: "missing", message: "Run." },
+              overlapPolicy: "skip",
+              createdAtMs: 1,
+              updatedAtMs: 2,
+              state: {
+                nextRunAtMs: null,
+                runningAtMs: null,
+                lastRunAtMs: 3,
+                lastStatus: "error",
+                lastError: "Process not found: missing",
+                lastDurationMs: 4,
+                runCount: 1,
+              },
+            }],
+          })),
+        } as unknown as KernelContext["schedules"],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("LAST\tERROR");
+    expect(result.stdout).toContain("error\tProcess not found: missing");
   });
 
   it("defaults to the mounted package for manifest inspection", async () => {

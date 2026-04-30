@@ -1,0 +1,1035 @@
+import { describe, expect, it, vi } from "vitest";
+import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { getAgentByName } from "agents";
+import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import { getProcessByPid } from "../shared/utils";
+import type { RequestFrame } from "../protocol/frames";
+import { Kernel } from "./do";
+import {
+  computeNextRunAfterFinish,
+  computeNextRunAt,
+  handleSchedulerAdd,
+  handleSchedulerList,
+  handleSchedulerRemove,
+  handleSchedulerUpdate,
+  normalizeScheduleExpression,
+  ScheduleStore,
+} from "./scheduler";
+import type { KernelContext } from "./context";
+import type { SchedulePrincipal, ScheduleRecord } from "../syscalls/scheduler";
+import type { Process } from "../process/do";
+
+const USER_IDENTITY: ProcessIdentity = {
+  uid: 1000,
+  gid: 1000,
+  gids: [1000, 100],
+  username: "sam",
+  home: "/home/sam",
+  cwd: "/home/sam",
+  workspaceId: null,
+};
+
+function makeReq(call: string, args: unknown): RequestFrame {
+  return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
+}
+
+function schedulePrincipal(pid?: string): SchedulePrincipal {
+  return {
+    kind: pid ? "process" : "user",
+    uid: USER_IDENTITY.uid,
+    username: USER_IDENTITY.username,
+    ...(pid ? { pid } : {}),
+  };
+}
+
+function makeScheduleRecord(partial: Partial<ScheduleRecord> = {}): ScheduleRecord {
+  return {
+    id: "sched-1",
+    ownerUid: USER_IDENTITY.uid,
+    creator: schedulePrincipal(),
+    runAs: schedulePrincipal(),
+    name: "test schedule",
+    enabled: true,
+    expression: { kind: "every", everyMs: 60_000 },
+    target: { kind: "process.spawn", prompt: "Run the scheduled task." },
+    overlapPolicy: "skip",
+    createdAtMs: 1,
+    updatedAtMs: 1,
+    state: {
+      nextRunAtMs: Date.now() + 60_000,
+      runningAtMs: null,
+      lastRunAtMs: null,
+      lastStatus: null,
+      lastError: null,
+      lastDurationMs: null,
+      runCount: 0,
+    },
+    ...partial,
+  };
+}
+
+function makeSchedulerContext(overrides: Partial<KernelContext> = {}): KernelContext {
+  return {
+    identity: {
+      role: "user",
+      process: USER_IDENTITY,
+      capabilities: ["*"],
+    },
+    config: {
+      get: vi.fn(() => "UTC"),
+    },
+    procs: {
+      get: vi.fn(),
+    },
+    ...overrides,
+  } as unknown as KernelContext;
+}
+
+describe("scheduler", () => {
+  it("computes cron next-runs in the schedule timezone", () => {
+    const expression = {
+      kind: "cron" as const,
+      expr: "0 9 * * *",
+      timezone: "Europe/Amsterdam",
+    };
+
+    expect(new Date(computeNextRunAt(expression, Date.parse("2026-03-28T07:59:00.000Z"))!).toISOString())
+      .toBe("2026-03-28T08:00:00.000Z");
+    expect(new Date(computeNextRunAt(expression, Date.parse("2026-03-29T06:59:00.000Z"))!).toISOString())
+      .toBe("2026-03-29T07:00:00.000Z");
+  });
+
+  it("treats full-range cron day fields as wildcards", () => {
+    expect(new Date(computeNextRunAt({
+      kind: "cron",
+      expr: "0 9 */1 * 1",
+      timezone: "UTC",
+    }, Date.parse("2026-05-03T08:59:00.000Z"))!).toISOString())
+      .toBe("2026-05-04T09:00:00.000Z");
+
+    expect(new Date(computeNextRunAt({
+      kind: "cron",
+      expr: "0 9 1-31 * 1",
+      timezone: "UTC",
+    }, Date.parse("2026-05-03T08:59:00.000Z"))!).toISOString())
+      .toBe("2026-05-04T09:00:00.000Z");
+
+    expect(new Date(computeNextRunAt({
+      kind: "cron",
+      expr: "0 9 15 * 0-6",
+      timezone: "UTC",
+    }, Date.parse("2026-05-03T08:59:00.000Z"))!).toISOString())
+      .toBe("2026-05-15T09:00:00.000Z");
+  });
+
+  it("computes recurring next-runs from the completion boundary", () => {
+    const anchorMs = Date.parse("2026-04-28T10:00:00.000Z");
+
+    expect(computeNextRunAfterFinish({
+      kind: "every",
+      everyMs: 15 * 60_000,
+      anchorMs,
+    }, Date.parse("2026-04-28T10:14:59.000Z"))).toEqual({
+      enabled: true,
+      nextRunAtMs: Date.parse("2026-04-28T10:15:00.000Z"),
+    });
+
+    expect(computeNextRunAfterFinish({
+      kind: "every",
+      everyMs: 15 * 60_000,
+      anchorMs,
+    }, Date.parse("2026-04-28T10:15:00.000Z"))).toEqual({
+      enabled: true,
+      nextRunAtMs: Date.parse("2026-04-28T10:30:00.000Z"),
+    });
+  });
+
+  it("disables one-shot expressions after completion", () => {
+    expect(computeNextRunAfterFinish({
+      kind: "after",
+      afterMs: 30_000,
+    }, Date.now())).toEqual({ enabled: false, nextRunAtMs: null });
+
+    expect(computeNextRunAfterFinish({
+      kind: "at",
+      atMs: Date.now() + 30_000,
+    }, Date.now())).toEqual({ enabled: false, nextRunAtMs: null });
+  });
+
+  it("rejects invalid cron and timezone expressions", () => {
+    expect(() => normalizeScheduleExpression({
+      kind: "cron",
+      expr: "0 9 * *",
+      timezone: "UTC",
+    })).toThrow("cron expression must use five fields");
+
+    expect(() => normalizeScheduleExpression({
+      kind: "cron",
+      expr: "0 9 * * *",
+      timezone: "No/Such_Zone",
+    })).toThrow("timezone must be a valid IANA timezone");
+
+    expect(() => normalizeScheduleExpression({
+      kind: "every",
+      everyMs: 999,
+    })).toThrow("schedule everyMs must be at least 1000");
+  });
+
+  it("defaults cron schedules to the system timezone and arms a wake", async () => {
+    const wake = vi.fn(async () => "wake-1");
+    const store = {
+      create: vi.fn((input) => ({
+        id: "sched-1",
+        ownerUid: input.ownerUid,
+        creator: input.creator,
+        runAs: input.runAs,
+        name: input.name,
+        enabled: input.enabled,
+        expression: input.expression,
+        target: input.target,
+        overlapPolicy: "skip",
+        createdAtMs: input.now,
+        updatedAtMs: input.now,
+        state: {
+          nextRunAtMs: Date.now() + 60_000,
+          runningAtMs: null,
+          lastRunAtMs: null,
+          lastStatus: null,
+          lastError: null,
+          lastDurationMs: null,
+          runCount: 0,
+        },
+      })),
+      setWakeScheduleId: vi.fn(),
+    };
+    const ctx = {
+      identity: {
+        role: "user",
+        process: USER_IDENTITY,
+        capabilities: ["*"],
+      },
+      config: {
+        get: vi.fn(() => "Europe/Amsterdam"),
+      },
+      procs: {
+        get: vi.fn(),
+      },
+      schedules: store,
+      scheduleScheduleWake: wake,
+    } as unknown as KernelContext;
+
+    const result = await handleSchedulerAdd({
+      name: "morning check",
+      expression: { kind: "cron", expr: "0 9 * * *", timezone: "" },
+      target: {
+        kind: "process.spawn",
+        prompt: "Check the system state.",
+      },
+    }, ctx);
+
+    expect(result.schedule.expression).toEqual({
+      kind: "cron",
+      expr: "0 9 * * *",
+      timezone: "Europe/Amsterdam",
+    });
+    expect(wake).toHaveBeenCalledWith("sched-1", expect.any(Number));
+    expect(store.setWakeScheduleId).toHaveBeenCalledWith("sched-1", "wake-1");
+  });
+
+  it("lists only the caller owner for non-root, even when ownerUid is supplied", () => {
+    const list = vi.fn(() => ({ records: [], count: 0 }));
+    const ctx = makeSchedulerContext({
+      schedules: { list } as unknown as ScheduleStore,
+    });
+
+    const result = handleSchedulerList({ ownerUid: 2000, includeDisabled: true }, ctx);
+
+    expect(result).toEqual({ schedules: [], count: 0 });
+    expect(list).toHaveBeenCalledWith({
+      ownerUid: USER_IDENTITY.uid,
+      includeDisabled: true,
+      limit: undefined,
+      offset: undefined,
+    });
+  });
+
+  it("lets root list another owner's schedules", () => {
+    const list = vi.fn(() => ({ records: [], count: 0 }));
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: {
+          ...USER_IDENTITY,
+          uid: 0,
+          gid: 0,
+          gids: [0],
+          username: "root",
+          home: "/root",
+          cwd: "/root",
+        },
+        capabilities: ["*"],
+      },
+      schedules: { list } as unknown as ScheduleStore,
+    });
+
+    handleSchedulerList({ ownerUid: 2000 }, ctx);
+
+    expect(list).toHaveBeenCalledWith({
+      ownerUid: 2000,
+      includeDisabled: undefined,
+      limit: undefined,
+      offset: undefined,
+    });
+  });
+
+  it("rejects update and remove of another owner's schedule", async () => {
+    const foreign = makeScheduleRecord({ ownerUid: 2000 });
+    const ctx = makeSchedulerContext({
+      schedules: {
+        getStored: vi.fn(() => foreign),
+      } as unknown as ScheduleStore,
+    });
+
+    await expect(handleSchedulerUpdate({
+      id: foreign.id,
+      patch: { enabled: false },
+    }, ctx)).rejects.toThrow("Permission denied");
+
+    await expect(handleSchedulerRemove({ id: foreign.id }, ctx)).rejects.toThrow("Permission denied");
+  });
+
+  it("updates schedules by cancelling the old wake and arming the new one", async () => {
+    const existing = makeScheduleRecord();
+    const stored = { ...existing, wakeScheduleId: "wake-old" };
+    const updated = makeScheduleRecord({
+      name: "renamed",
+      state: { ...existing.state, nextRunAtMs: Date.now() + 120_000 },
+    });
+    const cancel = vi.fn(async () => {});
+    const wake = vi.fn(async () => "wake-new");
+    const setWakeScheduleId = vi.fn();
+    const ctx = makeSchedulerContext({
+      schedules: {
+        getStored: vi.fn(() => stored),
+        update: vi.fn(() => updated),
+        setWakeScheduleId,
+      } as unknown as ScheduleStore,
+      cancelScheduleWake: cancel,
+      scheduleScheduleWake: wake,
+    });
+
+    const result = await handleSchedulerUpdate({
+      id: existing.id,
+      patch: { name: "renamed" },
+    }, ctx);
+
+    expect(result.schedule.name).toBe("renamed");
+    expect(cancel).toHaveBeenCalledWith("wake-old");
+    expect(wake).toHaveBeenCalledWith(existing.id, updated.state.nextRunAtMs);
+    expect(setWakeScheduleId).toHaveBeenCalledWith(existing.id, "wake-new");
+  });
+
+  it("does not cancel the existing wake when update patch validation fails", async () => {
+    const existing = makeScheduleRecord();
+    const stored = { ...existing, wakeScheduleId: "wake-old" };
+    const cancel = vi.fn(async () => {});
+    const update = vi.fn();
+    const ctx = makeSchedulerContext({
+      schedules: {
+        getStored: vi.fn(() => stored),
+        update,
+      } as unknown as ScheduleStore,
+      cancelScheduleWake: cancel,
+      scheduleScheduleWake: vi.fn(async () => "wake-new"),
+    });
+
+    await expect(handleSchedulerUpdate({
+      id: existing.id,
+      patch: {
+        expression: {
+          kind: "cron",
+          expr: "0 9 * *",
+          timezone: "UTC",
+        },
+      },
+    }, ctx)).rejects.toThrow("cron expression must use five fields");
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("removes schedules by cancelling their pending wake", async () => {
+    const existing = makeScheduleRecord();
+    const stored = { ...existing, wakeScheduleId: "wake-old" };
+    const cancel = vi.fn(async () => {});
+    const ctx = makeSchedulerContext({
+      schedules: {
+        getStored: vi.fn(() => stored),
+        remove: vi.fn(() => stored),
+      } as unknown as ScheduleStore,
+      cancelScheduleWake: cancel,
+    });
+
+    const result = await handleSchedulerRemove({ id: existing.id }, ctx);
+
+    expect(result).toEqual({ removed: true });
+    expect(cancel).toHaveBeenCalledWith("wake-old");
+  });
+
+  it("runs a due schedule through the Kernel and delivers a process event", async () => {
+    const pid = `sched-event-${crypto.randomUUID()}`;
+    const conversationId = "ops";
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-test-${crypto.randomUUID()}`,
+    );
+    const process = await getProcessByPid(pid);
+
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        caps: { seed: () => void };
+        procs: {
+          spawn: typeof instance["procs"]["spawn"];
+        };
+      };
+      k.caps.seed();
+      k.procs.spawn(pid, USER_IDENTITY, {
+        profile: "task",
+        label: "scheduled target",
+      });
+    });
+
+    const setIdentity = await process.recvFrame(makeReq("proc.setidentity", {
+      pid,
+      identity: USER_IDENTITY,
+      profile: "task",
+    }));
+    expect(setIdentity?.type).toBe("res");
+    expect(setIdentity && "ok" in setIdentity ? setIdentity.ok : false).toBe(true);
+
+    await runInDurableObject(process, (instance: Process) => {
+      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
+    });
+
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "ops pulse",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "process.event",
+          pid,
+          conversationId,
+          message: "Run the scheduled ops pulse.",
+          data: { source: "test" },
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+
+    const messages = await runInDurableObject(process, (instance: Process) => {
+      return (instance as unknown as {
+        store: { getMessages: (opts: { conversationId: string }) => Array<{ role: string; content: string }> };
+      }).store.getMessages({ conversationId });
+    });
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe("system");
+    expect(messages[0].content).toContain("Scheduled event `ops pulse` fired.");
+    expect(messages[0].content).toContain("Run the scheduled ops pulse.");
+
+    const schedule = await runInDurableObject(kernel, (instance: Kernel) => {
+      return (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId);
+    });
+    expect(schedule?.state.lastStatus).toBe("ok");
+    expect(schedule?.state.runCount).toBe(1);
+    expect(schedule?.state.nextRunAtMs).toEqual(expect.any(Number));
+  });
+
+  it("fires an armed one-shot schedule through the Agent alarm", async () => {
+    const pid = `sched-alarm-${crypto.randomUUID()}`;
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-alarm-test-${crypto.randomUUID()}`,
+    );
+    const process = await getProcessByPid(pid);
+
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        caps: { seed: () => void };
+        procs: { spawn: typeof instance["procs"]["spawn"] };
+      };
+      k.caps.seed();
+      k.procs.spawn(pid, USER_IDENTITY, {
+        profile: "task",
+        label: "alarm target",
+      });
+    });
+
+    await process.recvFrame(makeReq("proc.setidentity", {
+      pid,
+      identity: USER_IDENTITY,
+      profile: "task",
+    }));
+    await runInDurableObject(process, (instance: Process) => {
+      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
+    });
+
+    const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+        scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+      };
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "one-shot alarm",
+        enabled: true,
+        expression: { kind: "after", afterMs: 30_000 },
+        target: {
+          kind: "process.event",
+          pid,
+          message: "Run from the Agent alarm path.",
+        },
+        now,
+      });
+      const wakeId = await k.scheduleScheduleWake(schedule.id, schedule.state.nextRunAtMs!);
+      k.schedules.setWakeScheduleId(schedule.id, wakeId);
+
+      const dueAtMs = now - 1_000;
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        dueAtMs,
+        schedule.id,
+      );
+      k.ctx.storage.sql.exec(
+        "UPDATE cf_agents_schedules SET time = ? WHERE id = ?",
+        Math.floor(dueAtMs / 1_000),
+        wakeId,
+      );
+      return schedule.id;
+    });
+
+    await runDurableObjectAlarm(kernel);
+
+    const messages = await runInDurableObject(process, (instance: Process) =>
+      (instance as unknown as {
+        store: { getMessages: () => Array<{ role: string; content: string }> };
+      }).store.getMessages(),
+    );
+    expect(messages).toEqual([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Run from the Agent alarm path."),
+      }),
+    ]);
+
+    const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId),
+    );
+    expect(schedule?.enabled).toBe(false);
+    expect(schedule?.state.lastStatus).toBe("ok");
+    expect(schedule?.state.runCount).toBe(1);
+  });
+
+  it("rounds Kernel wake rows up to avoid firing before millisecond-precision due times", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-wake-rounding-test-${crypto.randomUUID()}`,
+    );
+    const dueAtMs = (Math.floor(Date.now() / 1_000) * 1_000) + 30_123;
+
+    const row = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        ctx: DurableObjectState;
+        scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+      };
+      const wakeId = await k.scheduleScheduleWake("sched-rounding", dueAtMs);
+      return k.ctx.storage.sql.exec<{ time: number }>(
+        "SELECT time FROM cf_agents_schedules WHERE id = ?",
+        wakeId,
+      ).toArray()[0];
+    });
+
+    expect(row.time * 1_000).toBeGreaterThanOrEqual(dueAtMs);
+    expect(row.time * 1_000).toBeLessThan(dueAtMs + 1_000);
+  });
+
+  it("re-arms when an existing wake fires before the GSV schedule is due", async () => {
+    const pid = `sched-early-${crypto.randomUUID()}`;
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-early-wake-test-${crypto.randomUUID()}`,
+    );
+    const process = await getProcessByPid(pid);
+
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        caps: { seed: () => void };
+        procs: { spawn: typeof instance["procs"]["spawn"] };
+      };
+      k.caps.seed();
+      k.procs.spawn(pid, USER_IDENTITY, {
+        profile: "task",
+        label: "early wake target",
+      });
+    });
+
+    await process.recvFrame(makeReq("proc.setidentity", {
+      pid,
+      identity: USER_IDENTITY,
+      profile: "task",
+    }));
+    await runInDurableObject(process, (instance: Process) => {
+      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
+    });
+
+    const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+        scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+      };
+      const now = Date.now();
+      const nextRunAtMs = now + 30_000;
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "early wake",
+        enabled: true,
+        expression: { kind: "after", afterMs: 30_000 },
+        target: {
+          kind: "process.event",
+          pid,
+          message: "This should wait until the schedule is actually due.",
+        },
+        now,
+      });
+      const oldWakeId = await k.scheduleScheduleWake(schedule.id, nextRunAtMs);
+      k.schedules.setWakeScheduleId(schedule.id, oldWakeId);
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        nextRunAtMs,
+        schedule.id,
+      );
+      k.ctx.storage.sql.exec(
+        "UPDATE cf_agents_schedules SET time = ? WHERE id = ?",
+        Math.floor(now / 1_000),
+        oldWakeId,
+      );
+      return schedule.id;
+    });
+
+    await runDurableObjectAlarm(kernel);
+
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      const schedule = k.schedules.getStored(scheduleId);
+      const wakeRows = k.ctx.storage.sql.exec<{ id: string; time: number }>(
+        "SELECT id, time FROM cf_agents_schedules WHERE callback = 'onScheduleDue'",
+      ).toArray();
+      return { schedule, wakeRows };
+    });
+    const messages = await runInDurableObject(process, (instance: Process) =>
+      (instance as unknown as {
+        store: { getMessages: () => Array<{ role: string; content: string }> };
+      }).store.getMessages(),
+    );
+
+    expect(messages).toHaveLength(0);
+    expect(state.schedule?.enabled).toBe(true);
+    expect(state.schedule?.state.lastStatus).toBeNull();
+    expect(state.schedule?.wakeScheduleId).toBeTruthy();
+    expect(state.wakeRows).toEqual([
+      expect.objectContaining({ id: state.schedule?.wakeScheduleId }),
+    ]);
+    expect(state.wakeRows[0].time * 1_000).toBeGreaterThanOrEqual(state.schedule!.state.nextRunAtMs!);
+  });
+
+  it("ignores stale wake rows before checking due state", async () => {
+    const pid = `sched-stale-${crypto.randomUUID()}`;
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-stale-wake-test-${crypto.randomUUID()}`,
+    );
+    const process = await getProcessByPid(pid);
+
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        caps: { seed: () => void };
+        procs: { spawn: typeof instance["procs"]["spawn"] };
+      };
+      k.caps.seed();
+      k.procs.spawn(pid, USER_IDENTITY, {
+        profile: "task",
+        label: "stale wake target",
+      });
+    });
+
+    await process.recvFrame(makeReq("proc.setidentity", {
+      pid,
+      identity: USER_IDENTITY,
+      profile: "task",
+    }));
+    await runInDurableObject(process, (instance: Process) => {
+      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
+    });
+
+    const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+        scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+      };
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "stale wake",
+        enabled: true,
+        expression: { kind: "after", afterMs: 30_000 },
+        target: {
+          kind: "process.event",
+          pid,
+          message: "A stale wake must not deliver this message.",
+        },
+        now,
+      });
+      const oldWakeId = await k.scheduleScheduleWake(schedule.id, now + 1_000);
+      const newWakeId = await k.scheduleScheduleWake(schedule.id, now + 60_000);
+      k.schedules.setWakeScheduleId(schedule.id, newWakeId);
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      k.ctx.storage.sql.exec(
+        "UPDATE cf_agents_schedules SET time = ? WHERE id = ?",
+        Math.floor((now - 1_000) / 1_000),
+        oldWakeId,
+      );
+      return schedule.id;
+    });
+
+    await runDurableObjectAlarm(kernel);
+
+    const messages = await runInDurableObject(process, (instance: Process) =>
+      (instance as unknown as {
+        store: { getMessages: () => Array<{ role: string; content: string }> };
+      }).store.getMessages(),
+    );
+    expect(messages).toHaveLength(0);
+
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      const schedule = k.schedules.getStored(scheduleId);
+      const wakeRows = k.ctx.storage.sql.exec<{ id: string }>(
+        "SELECT id FROM cf_agents_schedules WHERE callback = 'onScheduleDue'",
+      ).toArray();
+      return { schedule, wakeRows };
+    });
+    expect(state.schedule?.enabled).toBe(true);
+    expect(state.schedule?.state.lastStatus).toBeNull();
+    expect(state.wakeRows).toEqual([
+      expect.objectContaining({ id: state.schedule?.wakeScheduleId }),
+    ]);
+  });
+
+  it("force-runs a process event schedule before it is due", async () => {
+    const pid = `sched-force-${crypto.randomUUID()}`;
+    const conversationId = "ops";
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-force-test-${crypto.randomUUID()}`,
+    );
+    const process = await getProcessByPid(pid);
+
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        caps: { seed: () => void };
+        procs: { spawn: typeof instance["procs"]["spawn"] };
+      };
+      k.caps.seed();
+      k.procs.spawn(pid, USER_IDENTITY, {
+        profile: "task",
+        label: "scheduled target",
+      });
+    });
+
+    await process.recvFrame(makeReq("proc.setidentity", {
+      pid,
+      identity: USER_IDENTITY,
+      profile: "task",
+    }));
+    await runInDurableObject(process, (instance: Process) => {
+      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
+    });
+
+    const { scheduleId, nextRunAtMs } = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as { schedules: ScheduleStore };
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "manual pulse",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now + 60_000 },
+        target: {
+          kind: "process.event",
+          pid,
+          conversationId,
+          message: "Run early.",
+        },
+        now,
+      });
+      return { scheduleId: schedule.id, nextRunAtMs: schedule.state.nextRunAtMs };
+    });
+
+    const runResult = await runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as {
+        runSchedules: (args: { id: string; mode: "force" }) => Promise<unknown>;
+      }).runSchedules({ id: scheduleId, mode: "force" }),
+    );
+
+    expect(runResult).toMatchObject({
+      ran: 1,
+      results: [{ scheduleId, status: "ok" }],
+    });
+    const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId),
+    );
+    expect(schedule?.state.nextRunAtMs).toBe(nextRunAtMs);
+    expect(schedule?.enabled).toBe(true);
+
+    const messages = await runInDurableObject(process, (instance: Process) =>
+      (instance as unknown as {
+        store: { getMessages: (opts: { conversationId: string }) => Array<{ content: string }> };
+      }).store.getMessages({ conversationId }),
+    );
+    expect(messages[0].content).toContain("Run early.");
+  });
+
+  it("skips a due schedule that is already running", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-overlap-test-${crypto.randomUUID()}`,
+    );
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        caps: { seed: () => void };
+        procs: { spawn: typeof instance["procs"]["spawn"] };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.caps.seed();
+      k.procs.spawn("init:1000", USER_IDENTITY, {
+        profile: "init",
+        label: "init",
+      });
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "overlap",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "process.spawn",
+          prompt: "This should not run twice.",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ?, running_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        now - 500,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    const result = await runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as {
+        runSchedules: (args: { id: string; mode: "due" }) => Promise<unknown>;
+      }).runSchedules({ id: scheduleId, mode: "due" }),
+    );
+
+    expect(result).toMatchObject({
+      ran: 0,
+      results: [{ scheduleId, status: "skipped", error: "schedule is already running" }],
+    });
+  });
+
+  it("disables an after schedule once it runs", async () => {
+    const pid = `sched-once-${crypto.randomUUID()}`;
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-once-test-${crypto.randomUUID()}`,
+    );
+    const process = await getProcessByPid(pid);
+
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        caps: { seed: () => void };
+        procs: { spawn: typeof instance["procs"]["spawn"] };
+      };
+      k.caps.seed();
+      k.procs.spawn(pid, USER_IDENTITY, {
+        profile: "task",
+        label: "one-shot target",
+      });
+    });
+
+    await process.recvFrame(makeReq("proc.setidentity", {
+      pid,
+      identity: USER_IDENTITY,
+      profile: "task",
+    }));
+    await runInDurableObject(process, (instance: Process) => {
+      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
+    });
+
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "one shot",
+        enabled: true,
+        expression: { kind: "after", afterMs: 1_000 },
+        target: {
+          kind: "process.event",
+          pid,
+          message: "Run once.",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+
+    const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId),
+    );
+    expect(schedule?.enabled).toBe(false);
+    expect(schedule?.state.nextRunAtMs).toBeNull();
+    expect(schedule?.state.lastStatus).toBe("ok");
+  });
+
+  it("runs a due process.spawn schedule and sends the prompt to the cron process", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-spawn-test-${crypto.randomUUID()}`,
+    );
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        caps: { seed: () => void };
+        procs: { spawn: typeof instance["procs"]["spawn"] };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.caps.seed();
+      k.procs.spawn("init:1000", USER_IDENTITY, {
+        profile: "init",
+        label: "init",
+      });
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "cron spawn",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "process.spawn",
+          profile: "cron",
+          label: "cron spawn",
+          prompt: "Run the scheduled cron task.",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+
+    const spawned = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        procs: { listByProfile: (profile: "cron") => Array<{ processId: string; label: string | null }> };
+      };
+      const history = k.schedules.history(scheduleId);
+      const result = history[0]?.result as { pid?: string } | null | undefined;
+      return {
+        pid: result?.pid,
+        cronProcesses: k.procs.listByProfile("cron"),
+        schedule: k.schedules.get(scheduleId),
+      };
+    });
+
+    expect(spawned.pid).toBeTruthy();
+    expect(spawned.cronProcesses).toEqual([
+      expect.objectContaining({
+        processId: spawned.pid,
+        label: "cron spawn",
+      }),
+    ]);
+    expect(spawned.schedule?.state.lastStatus).toBe("ok");
+
+    const cronProcess = await getProcessByPid(spawned.pid!);
+    const messages = await runInDurableObject(cronProcess, (instance: Process) =>
+      (instance as unknown as {
+        store: { getMessages: () => Array<{ role: string; content: string }> };
+      }).store.getMessages(),
+    );
+    expect(messages[0]).toEqual(expect.objectContaining({
+      role: "user",
+      content: "Run the scheduled cron task.",
+    }));
+  });
+});

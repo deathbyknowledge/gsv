@@ -8,8 +8,8 @@
  *   "config/ai/provider"   → /sys/config/ai/provider
  *   "users/0/ai/model"     → /sys/users/0/ai/model
  *
- * System config is the runtime truth. R2 dotfiles (/etc/gsv/config,
- * ~/.config/gsv/config) are seed files loaded on first connect.
+ * SQLite stores explicit overrides. SYSTEM_CONFIG_DEFAULTS is overlaid at
+ * read time so code defaults remain live unless a key is explicitly set.
  */
 
 // =============================================================================
@@ -18,6 +18,13 @@
 // Keys live under "config/" and are exposed at /sys/config/*.
 // Per-user overrides go under "users/{uid}/" at /sys/users/{uid}/*.
 // =============================================================================
+
+const GSV_PROCESS_CONTEXT = [
+  "GSV is a Linux-shaped distributed AI operating environment.",
+  "A process is a persistent agent execution unit with an owner, identity, current working directory, optional workspace, conversation history, and command/syscall tools.",
+  "Treat `/home`, `/workspaces`, `/proc`, `/sys`, `/etc`, `/var`, and `/dev` as system surfaces rather than ordinary project folders.",
+  "Messages beginning with `[Process Event]:` are runtime events injected by GSV, not ordinary user messages. They may report IPC replies, IPC timeouts, watched signals, scheduled events, conversation compaction, resets, or other process lifecycle changes. Use them as authoritative context for the process state, and do not quote the prefix back unless it is directly relevant.",
+].join("\n");
 
 export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // -- AI / LLM ---------------------------------------------------------------
@@ -32,6 +39,8 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/reasoning": "off",
   // Max tokens for LLM responses (model-dependent upper bound).
   "config/ai/max_tokens": "8192",
+  // Fallback context window for providers that are not in the local model registry.
+  "config/ai/context_window_tokens": "256000",
   // Profile-specific prompt context. These files are assembled in lexical
   // order and are the authoritative runtime instructions for each profile.
   "config/ai/profile/init/context.d/00-role.md":
@@ -39,6 +48,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are the persistent init process for {{identity.username}}.",
       "Coordinate long-lived context, keep durable state coherent, and stage uncertain knowledge for review instead of silently rewriting canonical memory.",
     ].join("\n"),
+  "config/ai/profile/init/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/init/context.d/10-runtime.md":
     [
       "Current working directory: {{identity.cwd}}",
@@ -66,6 +76,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are the active task process for {{identity.username}}.",
       "Work directly in the current workspace, use durable knowledge deliberately, and leave artifacts where the user can inspect them.",
     ].join("\n"),
+  "config/ai/profile/task/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/task/context.d/10-runtime.md":
     [
       "Current working directory: {{identity.cwd}}",
@@ -96,6 +107,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "Call out privileged integrations explicitly, including host bridge access, parent-window messaging, process spawning, network access, filesystem writes, shell execution, eval, and destructive actions.",
       "End with a clear verdict: approve or do not approve.",
     ].join("\n"),
+  "config/ai/profile/review/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/review/context.d/10-runtime.md":
     [
       "",
@@ -120,6 +132,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are a scheduled background process for {{identity.username}}.",
       "Act predictably, avoid interactive assumptions, and leave concise durable summaries or staged knowledge candidates when that helps future runs.",
     ].join("\n"),
+  "config/ai/profile/cron/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/cron/context.d/10-runtime.md":
     [
       "",
@@ -144,6 +157,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are the master control process for {{identity.username}}.",
       "Focus on live diagnosis, deployment state, kernel state, and precise operational changes.",
     ].join("\n"),
+  "config/ai/profile/mcp/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/mcp/context.d/10-runtime.md":
     [
       "",
@@ -170,62 +184,12 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "You are an app-owned runtime process for {{identity.username}}.",
       "Follow the app's configuration, respect the user's standing context, and produce durable artifacts the user can inspect.",
     ].join("\n"),
+  "config/ai/profile/app/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
   "config/ai/profile/app/context.d/10-runtime.md":
     [
       "",
       "Current working directory: {{identity.cwd}}",
       "Current workspace: {{workspace}}",
-    ].join("\n"),
-  "config/ai/profile/archivist/context.d/00-role.md":
-    [
-      "You are the background archivist process for {{identity.username}}.",
-      "Your job is to compress recent process/workspace activity into durable working context so future runs can continue cleanly.",
-      "Rewrite workspace continuity files conservatively, preserve what matters, and stage only high-signal durable knowledge candidates.",
-      "You are not a conversational assistant. Do not address the user directly.",
-      "Do not rewrite canonical knowledge pages under `~/knowledge/*/pages/`.",
-    ].join("\n"),
-  "config/ai/profile/archivist/context.d/10-runtime.md":
-    [
-      "Current working directory: {{identity.cwd}}",
-      "Current workspace: {{workspace}}",
-      "Home: {{identity.home}}",
-    ].join("\n"),
-  "config/ai/profile/archivist/context.d/20-tooling.md":
-    [
-      "Archivist operating rules:",
-      "- Your primary outputs are workspace continuity files under `.gsv/context.d/`.",
-      "- Rewrite summaries cleanly instead of appending logs or leaving stale bullets behind.",
-      "- Keep `10-summary.md` focused on current state, `20-open-loops.md` focused on unresolved items, and `30-decisions.md` focused on durable decisions or commitments.",
-      "- Stage durable candidates under `~/knowledge/*/inbox/` only when they are likely to matter beyond the current run.",
-      "- It is valid to stage nothing if the recent work contains no durable knowledge worth preserving.",
-      "- Prefer direct filesystem tools for workspace context files.",
-      "- Use `wiki` and `man` when they materially help you inspect or stage knowledge.",
-      "- Avoid shell unless direct tools are insufficient.",
-    ].join("\n"),
-  "config/ai/profile/curator/context.d/00-role.md":
-    [
-      "You are the background curator process for {{identity.username}}.",
-      "Your job is to review staged inbox candidates and decide whether they should become durable canonical knowledge.",
-      "Act conservatively: promote, merge, defer, or discard based on clear evidence in the inbox note and current canonical pages.",
-      "You are not a conversational assistant. Do not address the user directly.",
-      "Prefer precise edits over broad rewrites and preserve inspectable markdown history.",
-    ].join("\n"),
-  "config/ai/profile/curator/context.d/10-runtime.md":
-    [
-      "Current working directory: {{identity.cwd}}",
-      "Current workspace: {{workspace}}",
-      "Home: {{identity.home}}",
-    ].join("\n"),
-  "config/ai/profile/curator/context.d/20-tooling.md":
-    [
-      "Curator operating rules:",
-      "- Inspect inbox notes and canonical pages before changing anything.",
-      "- Valid outcomes are: promote, merge, defer, or discard.",
-      "- Promote or merge only when the target page is clear and the candidate is durable.",
-      "- Leave uncertain candidates in inbox rather than guessing.",
-      "- It is valid to make no changes if the inbox is empty or nothing is clear enough to promote.",
-      "- Prefer `wiki` and direct filesystem inspection over broad shell usage.",
-      "- Keep edits minimal and local to the candidate being reviewed.",
     ].join("\n"),
   // Max total bytes for ~/context.d/ files included in the prompt.
   "config/ai/max_context_bytes": "32768",
@@ -252,14 +216,6 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // Max concurrent processes per user (0 = unlimited).
   "config/process/max_per_user": "0",
 
-  // -- Automation -------------------------------------------------------------
-  // Minimum time between archivist compaction jobs for the same scope in ms.
-  "config/automation/archivist/min_interval_ms": "300000",
-  // Interval between curator sweeps in ms. 0 disables periodic curator runs.
-  "config/automation/curator/interval_ms": "3600000",
-  // Maximum number of inbox candidates the curator should review in one run.
-  "config/automation/curator/batch_size": "5",
-
   // Tool approval policy for agent tool execution. JSON object with a default
   // action and ordered rules matching exact syscalls or domain wildcards.
   "config/ai/profile/init/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
@@ -268,8 +224,6 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/profile/app/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
   "config/ai/profile/mcp/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
   "config/ai/profile/cron/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
-  "config/ai/profile/archivist/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
-  "config/ai/profile/curator/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
 };
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".
@@ -290,6 +244,10 @@ export class ConfigStore {
   }
 
   get(key: string): string | null {
+    return this.getExplicit(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
+  }
+
+  getExplicit(key: string): string | null {
     const rows = this.sql.exec<{ value: string }>(
       "SELECT value FROM config_kv WHERE key = ?",
       key,
@@ -306,7 +264,7 @@ export class ConfigStore {
   }
 
   delete(key: string): boolean {
-    const existing = this.get(key);
+    const existing = this.getExplicit(key);
     if (existing === null) return false;
     this.sql.exec("DELETE FROM config_kv WHERE key = ?", key);
     return true;
@@ -317,6 +275,22 @@ export class ConfigStore {
    * e.g. list("config/ai") returns all /sys/config/ai/* entries.
    */
   list(prefix: string): { key: string; value: string }[] {
+    const merged = new Map<string, string>();
+    for (const [key, value] of Object.entries(SYSTEM_CONFIG_DEFAULTS)) {
+      if (matchesConfigPrefix(key, prefix)) {
+        merged.set(key, value);
+      }
+    }
+    for (const { key, value } of this.listExplicit(prefix)) {
+      merged.set(key, value);
+    }
+
+    return [...merged.entries()]
+      .map(([key, value]) => ({ key, value }))
+      .sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  listExplicit(prefix: string): { key: string; value: string }[] {
     const normalized = prefix.trim();
     if (normalized.length === 0) {
       return this.sql.exec<{ key: string; value: string }>(
@@ -330,17 +304,13 @@ export class ConfigStore {
       pattern + "%",
     ).toArray();
   }
+}
 
-  /**
-   * Seed defaults — only inserts keys that don't already exist.
-   */
-  seed(defaults: Record<string, string>): void {
-    for (const [key, value] of Object.entries(defaults)) {
-      this.sql.exec(
-        "INSERT OR IGNORE INTO config_kv (key, value) VALUES (?, ?)",
-        key,
-        value,
-      );
-    }
+function matchesConfigPrefix(key: string, prefix: string): boolean {
+  const normalized = prefix.trim();
+  if (normalized.length === 0) {
+    return true;
   }
+  const pattern = normalized.endsWith("/") ? normalized : normalized + "/";
+  return key.startsWith(pattern);
 }

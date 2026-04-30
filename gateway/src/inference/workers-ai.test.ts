@@ -6,6 +6,7 @@ import {
   buildWorkersAiInput,
   buildWorkersAiRunOptions,
   contextToWorkersAiMessages,
+  extractWorkersAiContextWindow,
   normalizeWorkersAiResponse,
 } from "./workers-ai";
 
@@ -152,6 +153,36 @@ describe("buildWorkersAiInput", () => {
         "x-session-affinity": "proc-123",
       },
     });
+  });
+});
+
+describe("extractWorkersAiContextWindow", () => {
+  it("reads context window token metadata from model properties", () => {
+    expect(extractWorkersAiContextWindow({
+      id: "@cf/example/model",
+      properties: [
+        { property_id: "parameters", value: "120B" },
+        { property_id: "context_window_tokens", value: "262.1k" },
+      ],
+    })).toBe(262100);
+  });
+
+  it("falls back to parsing Workers AI model descriptions", () => {
+    expect(extractWorkersAiContextWindow({
+      id: "@cf/zai-org/glm-4.7-flash",
+      description: "GLM-4.7-Flash is a fast multilingual model with a 131,072 token context window.",
+    })).toBe(131072);
+    expect(extractWorkersAiContextWindow({
+      id: "@cf/mistralai/mistral-small-3.1-24b-instruct",
+      description: "Mistral Small 3.1 enhances long context capabilities up to 128k tokens.",
+    })).toBe(128000);
+  });
+
+  it("does not treat arbitrary model size numbers as context windows", () => {
+    expect(extractWorkersAiContextWindow({
+      id: "@cf/openai/gpt-oss-120b",
+      description: "OpenAI's open-weight model gpt-oss-120b is for production reasoning use-cases.",
+    })).toBeNull();
   });
 });
 

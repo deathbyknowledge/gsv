@@ -4,6 +4,163 @@ import type { Process } from "./do";
 import { getProcessByPid } from "../shared/utils";
 
 describe("ProcessStore", () => {
+  describe("conversations", () => {
+    it("opens and lists conversations", async () => {
+      const stub = await getProcessByPid("conversation-open-list");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        const opened = store.openConversation({
+          conversationId: "side",
+          title: "  Side channel  ",
+        });
+
+        expect(opened.created).toBe(true);
+        expect(opened.conversation).toMatchObject({
+          id: "side",
+          generation: 1,
+          status: "open",
+          title: "Side channel",
+        });
+
+        const conversationIds = store
+          .listConversations()
+          .map((conversation: any) => conversation.id)
+          .sort();
+        expect(conversationIds).toEqual(["default", "side"]);
+      });
+    });
+
+    it("reopens closed conversations without replacing history", async () => {
+      const stub = await getProcessByPid("conversation-reopen");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.openConversation({ conversationId: "thread", title: "First title" });
+        store.appendMessage("user", "hello", { conversationId: "thread" });
+
+        expect(store.closeConversation("thread")).toBe(true);
+        expect(store.getConversation("thread").status).toBe("closed");
+        expect(store.listConversations().map((conversation: any) => conversation.id)).not.toContain("thread");
+
+        const reopened = store.openConversation({ conversationId: "thread", title: "Second title" });
+        expect(reopened.created).toBe(false);
+        expect(reopened.conversation).toMatchObject({
+          id: "thread",
+          status: "open",
+          title: "Second title",
+        });
+        expect(store.messageCount("thread")).toBe(1);
+      });
+    });
+
+    it("returns closed conversations only when requested", async () => {
+      const stub = await getProcessByPid("conversation-closed-filter");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.openConversation({ conversationId: "done" });
+        expect(store.closeConversation("done")).toBe(true);
+
+        expect(store.listConversations().map((conversation: any) => conversation.id)).toEqual(["default"]);
+        const allConversationIds = store
+          .listConversations({ includeClosed: true })
+          .map((conversation: any) => conversation.id)
+          .sort();
+        expect(allConversationIds).toEqual(["default", "done"]);
+        expect(store.closeConversation("missing")).toBe(false);
+      });
+    });
+
+    it("resets a conversation by clearing messages and incrementing generation", async () => {
+      const stub = await getProcessByPid("conversation-reset");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.openConversation({ conversationId: "thread", title: "Work" });
+        store.appendMessage("user", "old thread message", { conversationId: "thread" });
+        store.closeConversation("thread");
+
+        const reset = store.resetConversation("thread");
+        expect(reset).toMatchObject({
+          id: "thread",
+          generation: 2,
+          status: "open",
+          title: "Work",
+        });
+        expect(store.messageCount("thread")).toBe(0);
+        expect(store.getConversation("thread").generation).toBe(2);
+      });
+    });
+
+    it("resets all conversations by clearing messages and incrementing generations", async () => {
+      const stub = await getProcessByPid("conversation-reset-all");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "default message");
+        store.openConversation({ conversationId: "side", title: "Side" });
+        store.appendMessage("user", "side message", { conversationId: "side" });
+        store.closeConversation("side");
+
+        expect(store.totalMessageCount()).toBe(2);
+        const conversations = store.resetAllConversations();
+        const byId = new Map(conversations.map((conversation: any) => [conversation.id, conversation]));
+
+        expect(store.totalMessageCount()).toBe(0);
+        expect(byId.get("default")).toMatchObject({ generation: 2, status: "open" });
+        expect(byId.get("side")).toMatchObject({ generation: 2, status: "open", title: "Side" });
+      });
+    });
+
+    it("compacts a conversation prefix and records a segment", async () => {
+      const stub = await getProcessByPid("conversation-compact-store");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.openConversation({ conversationId: "thread" });
+        const firstId = store.appendMessage("user", "old one", { conversationId: "thread" });
+        const secondId = store.appendMessage("assistant", "old two", { conversationId: "thread" });
+        const thirdId = store.appendMessage("user", "keep me", { conversationId: "thread" });
+
+        const prefix = store.getConversationPrefixMessages({
+          conversationId: "thread",
+          keepLast: 1,
+        });
+        expect(prefix.map((message: any) => message.id)).toEqual([firstId, secondId]);
+
+        const summaryId = store.compactConversationPrefix({
+          conversationId: "thread",
+          generation: 1,
+          fromMessageId: firstId,
+          toMessageId: secondId,
+          summary: "Conversation compacted.\n\nSummary:\nOld work.",
+        });
+        const segment = store.recordConversationSegment({
+          id: "segment-1",
+          conversationId: "thread",
+          generation: 1,
+          kind: "compaction",
+          fromMessageId: firstId,
+          toMessageId: secondId,
+          archivePath: "/var/sessions/root/pid/conversations/thread/segment-1.jsonl.gz",
+          summaryMessageId: summaryId,
+        });
+
+        expect(segment.summaryMessageId).toBe(firstId);
+        expect(store.listConversationSegments("thread")).toEqual([
+          expect.objectContaining({
+            id: "segment-1",
+            conversationId: "thread",
+            kind: "compaction",
+            fromMessageId: firstId,
+            toMessageId: secondId,
+            summaryMessageId: firstId,
+          }),
+        ]);
+        const messages = store.getMessages({ conversationId: "thread" });
+        expect(messages.map((message: any) => [message.id, message.role, message.content])).toEqual([
+          [firstId, "system", "Conversation compacted.\n\nSummary:\nOld work."],
+          [thirdId, "user", "keep me"],
+        ]);
+      });
+    });
+  });
+
   // ---------- Message CRUD ----------
 
   describe("messages", () => {
@@ -105,6 +262,20 @@ describe("ProcessStore", () => {
         expect(all).toHaveLength(3);
         expect(all[0].content).toBe("first");
         expect(all[2].content).toBe("third");
+      });
+    });
+
+    it("keeps messages scoped to a conversation", async () => {
+      const stub = await getProcessByPid("msg-conversation-scope");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "default message");
+        store.appendMessage("user", "side message", { conversationId: "side" });
+
+        expect(store.messageCount()).toBe(1);
+        expect(store.messageCount("side")).toBe(1);
+        expect(store.getMessages()[0].content).toBe("default message");
+        expect(store.getMessages({ conversationId: "side" })[0].content).toBe("side message");
       });
     });
   });
@@ -349,6 +520,25 @@ describe("ProcessStore", () => {
         const item = store.dequeue();
         expect(item!.media).toBe('["img.png"]');
         expect(item!.overrides).toBe('{"model":"gpt-4"}');
+      });
+    });
+
+    it("drains only the requested conversation", async () => {
+      const stub = await getProcessByPid("queue-conversation-scope");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.enqueue("run-default", "default queued");
+        store.enqueue("run-side", "side queued", undefined, undefined, "side");
+
+        const side = store.drainQueue("side");
+        expect(side).toHaveLength(1);
+        expect(side[0].conversationId).toBe("side");
+        expect(side[0].message).toBe("side queued");
+
+        expect(store.queueSize()).toBe(1);
+        const next = store.dequeue();
+        expect(next!.conversationId).toBe("default");
+        expect(next!.message).toBe("default queued");
       });
     });
   });

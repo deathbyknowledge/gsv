@@ -17,10 +17,12 @@ import type { RunRouteStore } from "./run-routes";
 import type { ShellSessionStore } from "./shell-sessions";
 import type { WorkspaceStore } from "./workspaces";
 import type { PackageStore } from "./packages";
-import type { AutomationStore } from "./automation";
 import type { SignalWatchStore } from "./signal-watches";
 import type { NotificationStore } from "./notifications";
+import type { IpcCallStore } from "./ipc-calls";
+import type { ScheduleStore } from "./scheduler";
 import type { AppFrameContext } from "../protocol/app-frame";
+import type { SchedulerRunArgs, SchedulerRunResult } from "../syscalls/scheduler";
 
 export type KernelContext = {
   env: Env;
@@ -34,9 +36,10 @@ export type KernelContext = {
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
   shellSessions: ShellSessionStore;
-  automation: AutomationStore;
   signalWatches: SignalWatchStore;
+  ipcCalls?: IpcCallStore;
   notifications?: NotificationStore;
+  schedules?: ScheduleStore;
   connection: Connection;
   identity?: ConnectionIdentity;
   processId?: string;
@@ -44,4 +47,8 @@ export type KernelContext = {
   serverVersion: string;
   broadcastToUid?: (uid: number, signal: string, payload?: unknown) => void;
   getAppRunner?: (uid: number, packageId: string) => unknown;
+  scheduleIpcCallTimeout?: (callId: string, delayMs: number) => Promise<string>;
+  scheduleScheduleWake?: (scheduleId: string, dueAtMs: number) => Promise<string>;
+  cancelScheduleWake?: (wakeScheduleId: string) => Promise<void>;
+  runSchedules?: (args: SchedulerRunArgs, identity?: ConnectionIdentity) => Promise<SchedulerRunResult>;
 };

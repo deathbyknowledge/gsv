@@ -4,6 +4,7 @@ const INTERNAL_ONLY_SYSCALLS = new Set<SyscallName>([
   "ai.config",
   "ai.tools",
   "codemode.exec",
+  "proc.ipc.deliver",
 ]);
 
 export function isInternalOnlySyscall(call: SyscallName): boolean {

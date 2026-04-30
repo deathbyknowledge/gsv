@@ -39,6 +39,10 @@ function deriveGatewayUrlFromOrigin(): string {
   return `${wsProtocol}//${host}/ws`;
 }
 
+function defaultTimezone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
 function defaultDraft(username = ""): OnboardingDraft {
   return {
     lane: "quick",
@@ -53,6 +57,9 @@ function defaultDraft(username = ""): OnboardingDraft {
     admin: {
       mode: "same",
       password: "",
+    },
+    system: {
+      timezone: defaultTimezone(),
     },
     ai: {
       enabled: false,
@@ -105,6 +112,10 @@ function mergeDraft(username: string, draft: Partial<OnboardingDraft> | null | u
     admin: {
       ...base.admin,
       ...draft?.admin,
+    },
+    system: {
+      ...base.system,
+      ...draft?.system,
     },
     ai: {
       ...base.ai,
@@ -179,6 +190,7 @@ function persist(snapshot: OnboardingSnapshot): void {
 function isDetailStep(value: string | null | undefined): value is OnboardingDetailStep {
   return value === "account" ||
     value === "admin" ||
+    value === "system" ||
     value === "ai" ||
     value === "source" ||
     value === "device";
@@ -187,6 +199,7 @@ function isDetailStep(value: string | null | undefined): value is OnboardingDeta
 function detailStepFromPatchPath(path: OnboardingAssistPatch["path"]): OnboardingDetailStep {
   if (path.startsWith("account.")) return "account";
   if (path.startsWith("admin.")) return "admin";
+  if (path.startsWith("system.")) return "system";
   if (path.startsWith("ai.")) return "ai";
   if (path.startsWith("source.")) return "source";
   return "device";
@@ -222,6 +235,8 @@ export function createOnboardingService(
         (next.admin as Record<string, unknown>)[key] = key === "mode" ? "same" : "";
       } else if (section === "account" && key === "username") {
         next.account.username = "";
+      } else if (section === "system" && key === "timezone") {
+        next.system.timezone = defaultTimezone();
       }
       return next;
     }

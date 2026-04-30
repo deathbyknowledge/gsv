@@ -155,6 +155,19 @@ export function renderDesktopShell(): string {
                   </div>
                 </section>
 
+                <section class="onboarding-section" data-setup-detail-step="system">
+                  <div class="onboarding-section-head">
+                    <h3>System timezone</h3>
+                    <p>Schedules and timestamp displays use this timezone. Existing schedules keep the timezone they were created with.</p>
+                  </div>
+                  <div class="session-field-grid">
+                    <label>
+                      Timezone
+                      <select data-setup-timezone></select>
+                    </label>
+                  </div>
+                </section>
+
                 <section class="onboarding-section" data-setup-detail-step="ai" data-setup-ai-section hidden>
                   <div class="onboarding-section-head">
                     <h3>AI defaults</h3>
@@ -248,6 +261,11 @@ export function renderDesktopShell(): string {
                     <span>Admin access</span>
                     <strong data-setup-summary-admin></strong>
                     <p>System-level recovery and administration path.</p>
+                  </article>
+                  <article class="onboarding-summary-card">
+                    <span>Timezone</span>
+                    <strong data-setup-summary-timezone></strong>
+                    <p>Calendar basis for schedules and timestamps.</p>
                   </article>
                   <article class="onboarding-summary-card">
                     <span>AI</span>

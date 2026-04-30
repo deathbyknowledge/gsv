@@ -91,6 +91,7 @@ describe("handleSysSetup", () => {
           model: "qwen/qwen3.5-35b-a3b",
           apiKey: "or-key",
         },
+        timezone: "Europe/Amsterdam",
         node: {
           deviceId: "macbook",
         },
@@ -110,6 +111,7 @@ describe("handleSysSetup", () => {
     expect(config.set).toHaveBeenCalledWith("config/ai/provider", "openrouter");
     expect(config.set).toHaveBeenCalledWith("config/ai/model", "qwen/qwen3.5-35b-a3b");
     expect(config.set).toHaveBeenCalledWith("config/ai/api_key", "or-key");
+    expect(config.set).toHaveBeenCalledWith("config/server/timezone", "Europe/Amsterdam");
     expect(storage.put).toHaveBeenCalledWith(
       "home/alice/.dir",
       expect.any(ArrayBuffer),
@@ -141,6 +143,19 @@ describe("handleSysSetup", () => {
       },
       ctx,
     )).rejects.toThrow("username must match");
+  });
+
+  it("rejects an invalid timezone", async () => {
+    const { ctx } = createCtx();
+
+    await expect(handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        timezone: "Not/AZone",
+      },
+      ctx,
+    )).rejects.toThrow("timezone must be a valid IANA timezone");
   });
 
   it("sets root password when provided", async () => {

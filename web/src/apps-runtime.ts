@@ -41,8 +41,56 @@ function canonicalizeAppRoute(route: string): string {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+function attachIframeInteractionFocus(iframe: HTMLIFrameElement, requestFocus: () => void): { destroy: () => void } {
+  let activeDocument: Document | null = null;
+
+  const onInteraction = (): void => {
+    requestFocus();
+  };
+
+  const detachDocument = (): void => {
+    if (!activeDocument) {
+      return;
+    }
+
+    activeDocument.removeEventListener("pointerdown", onInteraction, true);
+    activeDocument.removeEventListener("focusin", onInteraction, true);
+    activeDocument = null;
+  };
+
+  const attachDocument = (): void => {
+    detachDocument();
+
+    let frameDocument: Document | null = null;
+    try {
+      frameDocument = iframe.contentDocument;
+    } catch {
+      return;
+    }
+
+    if (!frameDocument) {
+      return;
+    }
+
+    activeDocument = frameDocument;
+    activeDocument.addEventListener("pointerdown", onInteraction, true);
+    activeDocument.addEventListener("focusin", onInteraction, true);
+  };
+
+  iframe.addEventListener("load", attachDocument);
+  attachDocument();
+
+  return {
+    destroy: () => {
+      iframe.removeEventListener("load", attachDocument);
+      detachDocument();
+    },
+  };
+}
+
 function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClientLike): AppInstance {
   let bridge: ReturnType<typeof attachHostBridge> | null = null;
+  let focusController: ReturnType<typeof attachIframeInteractionFocus> | null = null;
 
   return {
     mount: (container, context) => {
@@ -59,10 +107,14 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
       iframe.setAttribute("allow", "clipboard-read; clipboard-write");
 
       bridge?.destroy();
+      focusController?.destroy();
+      focusController = attachIframeInteractionFocus(iframe, context.requestFocus);
       bridge = attachHostBridge(iframe, gatewayClient);
       container.replaceChildren(iframe);
     },
     terminate: () => {
+      focusController?.destroy();
+      focusController = null;
       bridge?.destroy();
       bridge = null;
       void manifest;

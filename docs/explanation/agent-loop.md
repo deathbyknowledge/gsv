@@ -138,8 +138,7 @@ Approval outcomes are:
 
 The run pauses while a HIL request is pending. A user or adapter reply resumes it
 through `proc.hil` with `approve` or `deny`. Non-interactive profiles such as
-`cron`, `archivist`, and `curator` cannot ask; an `ask` decision becomes a tool
-error.
+`cron` cannot ask; an `ask` decision becomes a tool error.
 
 ## Queueing and Abort
 

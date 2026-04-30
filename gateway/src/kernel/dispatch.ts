@@ -27,6 +27,8 @@ import { handleShellExec } from "../drivers/native/shell";
 import { handleAiTools, handleAiConfig } from "./ai";
 import {
   handleProcList,
+  handleProcIpcCall,
+  handleProcIpcSend,
   handleProcProfileList,
   handleProcSpawn,
   forwardToProcess,
@@ -88,6 +90,13 @@ import {
   handleNotificationMarkRead,
 } from "./notifications";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
+import {
+  handleSchedulerAdd,
+  handleSchedulerList,
+  handleSchedulerRemove,
+  handleSchedulerRun,
+  handleSchedulerUpdate,
+} from "./scheduler";
 
 export type DispatchDeps = {
   routingTable: RoutingTable;
@@ -216,14 +225,33 @@ async function dispatchNative(
       case "proc.spawn":
         data = await handleProcSpawn(frame.args, ctx);
         break;
+      case "proc.ipc.send":
+        data = await handleProcIpcSend(frame.args, ctx);
+        break;
+      case "proc.ipc.call":
+        data = await handleProcIpcCall(frame.args, ctx);
+        break;
       case "proc.send":
       case "proc.abort":
       case "proc.hil":
       case "proc.kill":
       case "proc.history":
+      case "proc.conversation.open":
+      case "proc.conversation.list":
+      case "proc.conversation.get":
+      case "proc.conversation.close":
+      case "proc.conversation.reset":
+      case "proc.conversation.policy.get":
+      case "proc.conversation.policy.set":
+      case "proc.conversation.compact":
+      case "proc.conversation.fork":
+      case "proc.conversation.segment.read":
+      case "proc.conversation.segments":
       case "proc.reset":
         data = await forwardToProcess(frame, ctx);
         break;
+      case "proc.ipc.deliver":
+        return errFrame(frame.id, 403, "proc.ipc.deliver is kernel-only");
       case "proc.setidentity":
         return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
 
@@ -355,11 +383,20 @@ async function dispatchNative(
 
       // --- sched.* ---
       case "sched.list":
+        data = handleSchedulerList(frame.args, ctx);
+        break;
       case "sched.add":
+        data = await handleSchedulerAdd(frame.args, ctx);
+        break;
       case "sched.update":
+        data = await handleSchedulerUpdate(frame.args, ctx);
+        break;
       case "sched.remove":
+        data = await handleSchedulerRemove(frame.args, ctx);
+        break;
       case "sched.run":
-        return errFrame(frame.id, 501, `${frame.call} not yet implemented`);
+        data = await handleSchedulerRun(frame.args, ctx);
+        break;
 
       // --- adapter.* ---
       case "adapter.connect":

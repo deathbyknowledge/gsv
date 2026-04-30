@@ -11,11 +11,26 @@ export default definePackage({
       minHeight: 520,
     },
     capabilities: {
-      kernel: ["proc.spawn", "proc.send", "proc.abort", "proc.hil", "proc.history", "proc.profile.list", "sys.workspace.list", "signal.watch", "signal.unwatch"],
+      kernel: [
+        "proc.spawn",
+        "proc.send",
+        "proc.abort",
+        "proc.hil",
+        "proc.history",
+        "proc.conversation.compact",
+        "proc.conversation.fork",
+        "proc.conversation.list",
+        "proc.conversation.segment.read",
+        "proc.conversation.segments",
+        "proc.profile.list",
+        "sys.workspace.list",
+        "signal.watch",
+        "signal.unwatch",
+      ],
     },
   },
   browser: {
-    entry: "./src/app/main.js",
+    entry: "./src/app/main.tsx",
     assets: ["./src/styles.css"],
   },
   backend: {

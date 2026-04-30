@@ -15,6 +15,8 @@ const CONFIG: AiConfigResult = {
   apiKey: "test-key",
   reasoning: "off",
   maxTokens: 4096,
+  contextWindowTokens: 200000,
+  contextWindowSource: "model",
   profileContextFiles: [
     {
       name: "00-role.md",

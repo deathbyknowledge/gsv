@@ -12,6 +12,7 @@ export type GenerationPurpose =
   | "chat.reply"
   | "checkpoint.summary"
   | "checkpoint.commit_message"
+  | "compaction.summary"
   | "thread.title"
   | "mcp.analysis";
 
@@ -100,6 +101,7 @@ export function resolveGenerationOptions(
         maxTokens: Math.min(config.maxTokens, 64),
       };
     case "checkpoint.summary":
+    case "compaction.summary":
       return {
         modelProvider: config.provider,
         modelName: config.model,

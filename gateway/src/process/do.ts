@@ -28,13 +28,45 @@ import type {
 } from "../syscalls/ai";
 import { isAiContextProfile } from "../syscalls/ai";
 import type {
+  ProcSendArgs,
   ProcSendResult,
+  ProcIpcDeliverArgs,
+  ProcIpcDeliverResult,
   ProcAbortResult,
   ProcHilArgs,
   ProcHilResult,
   ProcHilRequest,
+  ProcHistoryArgs,
   ProcHistoryResult,
   ProcHistoryMessage,
+  ProcConversation,
+  ProcConversationOpenArgs,
+  ProcConversationOpenResult,
+  ProcConversationListArgs,
+  ProcConversationListResult,
+  ProcConversationGetArgs,
+  ProcConversationGetResult,
+  ProcConversationCloseArgs,
+  ProcConversationCloseResult,
+  ProcConversationResetArgs,
+  ProcConversationResetResult,
+  ProcConversationContextPolicy,
+  ProcConversationPolicyGetArgs,
+  ProcConversationPolicyGetResult,
+  ProcConversationPolicySetArgs,
+  ProcConversationPolicySetResult,
+  ProcConversationOverflowPolicy,
+  ProcConversationCompactArgs,
+  ProcConversationCompactResult,
+  ProcConversationForkArgs,
+  ProcConversationForkResult,
+  ProcConversationSegment,
+  ProcConversationSegmentReadArgs,
+  ProcConversationSegmentReadResult,
+  ProcConversationSegmentsArgs,
+  ProcConversationSegmentsResult,
+  ProcArchiveEntry,
+  ProcContextState,
   ProcResetResult,
   ProcKillResult,
   ProcSpawnAssignment,
@@ -61,6 +93,7 @@ import {
   ProcessStore,
   parseAssistantMessageMeta,
   stringifyAssistantMessageMeta,
+  type MessageRole,
   type MessageRecord,
   type PendingHilRecord,
 } from "./store";
@@ -77,6 +110,10 @@ import {
   parseStoredProcessMedia,
   storeIncomingProcessMedia,
 } from "./media";
+import {
+  buildProcContextState,
+  estimateContextInputTokens,
+} from "./context-pressure";
 import { assembleSystemPrompt } from "./context";
 import { sendFrameToKernel } from "../shared/utils";
 import {
@@ -86,12 +123,18 @@ import {
 } from "../syscalls/constants";
 import { RipgitClient } from "../fs/ripgit/client";
 import { workspaceRepoRef } from "../fs/ripgit/repos";
-import type { ProcSendArgs } from "../syscalls/proc";
 import { executeCodeMode } from "./codemode";
+import {
+  DEFAULT_CONVERSATION_ID,
+  normalizeConversationId,
+  type ProcessConversationRecord,
+  type ProcessConversationSegmentRecord,
+} from "./conversations";
 
 type RunState = {
   runId: string;
   queued: boolean;
+  conversationId: string;
   config?: AiConfigResult;
   tools?: ToolDefinition[];
   devices?: AiToolsDevice[];
@@ -114,14 +157,32 @@ type CodeModeApprovalWaiter = {
   timeoutId: ReturnType<typeof setTimeout>;
 };
 
+type ProcessArchiveResult = {
+  archivedMessages: number;
+  archivedTo?: string;
+  archives: ProcArchiveEntry[];
+};
+
+type ArchivedMessageRecord = {
+  id?: number;
+  role: MessageRole;
+  content: string;
+  toolCalls?: ToolCall[];
+  thinking?: ThinkingContent[];
+  toolCallId?: string;
+  media?: unknown;
+  createdAt?: number;
+};
+
 const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TEXT_ENCODER = new TextEncoder();
 const PROCESS_MEDIA_CACHE_LIMIT = 32;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
 const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
+const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
 
 function isNonInteractiveProfile(profile: AiContextProfile): boolean {
-  return profile === "cron" || profile === "archivist" || profile === "curator";
+  return profile === "cron";
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -130,10 +191,55 @@ function normalizeOptionalString(value: unknown): string | undefined {
     : undefined;
 }
 
+function normalizeRequiredText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
 function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map((item) => String(item))
     : [];
+}
+
+function isProcessIdentity(value: unknown): value is ProcessIdentity {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const identity = value as Partial<ProcessIdentity>;
+  return typeof identity.uid === "number"
+    && typeof identity.gid === "number"
+    && Array.isArray(identity.gids)
+    && typeof identity.username === "string"
+    && typeof identity.home === "string"
+    && typeof identity.cwd === "string"
+    && (identity.workspaceId === null || typeof identity.workspaceId === "string");
+}
+
+function isIpcCallEnvelope(value: unknown): value is NonNullable<ProcIpcDeliverArgs["call"]> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const call = value as Partial<NonNullable<ProcIpcDeliverArgs["call"]>>;
+  return typeof call.callId === "string"
+    && call.callId.trim().length > 0
+    && typeof call.replyToPid === "string"
+    && call.replyToPid.trim().length > 0
+    && typeof call.deadlineAt === "number"
+    && Number.isFinite(call.deadlineAt);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isConversationOverflowPolicy(value: unknown): value is ProcConversationOverflowPolicy {
+  return value === "manual" || value === "auto-compact" || value === "fail";
 }
 
 function isWatchedSignalPayload(
@@ -145,6 +251,60 @@ function isWatchedSignalPayload(
   payload?: unknown;
 } {
   return !!value && typeof value === "object" && (value as { watched?: unknown }).watched === true;
+}
+
+function isScheduleEventPayload(
+  value: unknown,
+): value is {
+  scheduleId?: unknown;
+  scheduleName?: unknown;
+  conversationId?: unknown;
+  message?: unknown;
+  data?: unknown;
+  scheduledAtMs?: unknown;
+  firedAtMs?: unknown;
+} {
+  return !!value && typeof value === "object";
+}
+
+function formatScheduleEventMessage(payload: unknown): string {
+  const value = payload && typeof payload === "object"
+    ? payload as Record<string, unknown>
+    : {};
+  const scheduleId = typeof value.scheduleId === "string" && value.scheduleId.trim().length > 0
+    ? value.scheduleId.trim()
+    : null;
+  const scheduleName = typeof value.scheduleName === "string" && value.scheduleName.trim().length > 0
+    ? value.scheduleName.trim()
+    : null;
+  const message = typeof value.message === "string" && value.message.trim().length > 0
+    ? value.message.trim()
+    : "Scheduled event fired.";
+  const scheduledAtMs = typeof value.scheduledAtMs === "number" && Number.isFinite(value.scheduledAtMs)
+    ? value.scheduledAtMs
+    : null;
+  const firedAtMs = typeof value.firedAtMs === "number" && Number.isFinite(value.firedAtMs)
+    ? value.firedAtMs
+    : Date.now();
+
+  const lines = [
+    scheduleName
+      ? `Scheduled event \`${scheduleName}\` fired.`
+      : "Scheduled event fired.",
+  ];
+  if (scheduleId) {
+    lines.push(`Schedule id: \`${scheduleId}\`.`);
+  }
+  if (scheduledAtMs !== null) {
+    lines.push(`Scheduled at: ${new Date(scheduledAtMs).toISOString()}.`);
+  }
+  lines.push(`Fired at: ${new Date(firedAtMs).toISOString()}.`, "", message);
+
+  const renderedData = renderJsonBlock(value.data);
+  if (renderedData) {
+    lines.push("", "Event data:", "```json", renderedData, "```");
+  }
+  return lines.join("\n");
 }
 
 function formatWatchedSignalMessage(signal: string, payload: unknown): string {
@@ -179,6 +339,65 @@ function formatWatchedSignalMessage(signal: string, payload: unknown): string {
   return lines.join("\n");
 }
 
+function formatIpcMessage(args: ProcIpcDeliverArgs): string {
+  const sentAt = Number.isFinite(args.sentAt)
+    ? new Date(args.sentAt).toISOString()
+    : new Date().toISOString();
+  const source = `${args.source.username} uid=${args.source.uid}`;
+  const lines = [
+    `Message from process \`${args.sourcePid}\` (${source}).`,
+    `Sent at: ${sentAt}.`,
+    "",
+    args.message,
+  ];
+  const renderedMetadata = renderJsonBlock(args.metadata);
+  if (renderedMetadata) {
+    lines.push("", "Metadata:", "```json", renderedMetadata, "```");
+  }
+  if (args.call) {
+    lines.push(
+      "",
+      "IPC call:",
+      `Call id: \`${args.call.callId}\``,
+      `Deadline: ${new Date(args.call.deadlineAt).toISOString()}`,
+      `Reply target: process \`${args.call.replyToPid}\``,
+      "",
+      "Complete this run before the deadline. The kernel will deliver the final response to the caller.",
+    );
+  }
+  return lines.join("\n");
+}
+
+function formatIpcReplyMessage(signal: string, payload: unknown): string {
+  const record = payload && typeof payload === "object"
+    ? payload as Record<string, unknown>
+    : {};
+  const callId = typeof record.callId === "string" ? record.callId : "unknown";
+  const targetPid = typeof record.targetPid === "string" ? record.targetPid : "unknown";
+  const runId = typeof record.runId === "string" ? record.runId : null;
+  const error = typeof record.error === "string" && record.error.trim().length > 0
+    ? record.error.trim()
+    : null;
+  const response = "response" in record ? record.response : undefined;
+  const renderedResponse = renderJsonBlock(response);
+
+  const lines = [
+    signal === "ipc.timeout"
+      ? `IPC call \`${callId}\` to process \`${targetPid}\` timed out.`
+      : `IPC call \`${callId}\` completed from process \`${targetPid}\`.`,
+  ];
+  if (runId) {
+    lines.push(`Run id: \`${runId}\`.`);
+  }
+  if (error) {
+    lines.push("", "Error:", error);
+  }
+  if (renderedResponse) {
+    lines.push("", "Response:", "```json", renderedResponse, "```");
+  }
+  return lines.join("\n");
+}
+
 function renderJsonBlock(value: unknown): string | null {
   if (value === undefined) {
     return null;
@@ -188,6 +407,84 @@ function renderJsonBlock(value: unknown): string | null {
   } catch {
     return JSON.stringify(String(value));
   }
+}
+
+function emptyProcessArchive(): ProcessArchiveResult {
+  return {
+    archivedMessages: 0,
+    archives: [],
+  };
+}
+
+function conversationArchiveFilename(conversationId: string, generation: number): string {
+  return `${encodeURIComponent(conversationId)}.gen-${generation}.jsonl.gz`;
+}
+
+function formatCompactionSummaryMessage(input: {
+  archivedMessages: number;
+  archivePath: string;
+  summary: string;
+}): string {
+  return [
+    "Conversation compacted.",
+    "",
+    `Archived messages: ${input.archivedMessages}`,
+    `Archive: ${input.archivePath}`,
+    "",
+    "Summary:",
+    input.summary,
+  ].join("\n");
+}
+
+function conversationPolicyKey(conversationId: string): string {
+  return `conversationPolicy:${normalizeConversationId(conversationId)}`;
+}
+
+function defaultConversationPolicy(conversationId: string): ProcConversationContextPolicy {
+  return {
+    conversationId: normalizeConversationId(conversationId),
+    overflow: "manual",
+    compactAtPressure: 0.9,
+    keepLast: 80,
+    updatedAt: 0,
+  };
+}
+
+function buildCompactionSummaryContext(messages: MessageRecord[]): Context {
+  const transcript = renderCompactionTranscriptWindow(messages, COMPACTION_SUMMARY_WINDOW_CHARS);
+  return {
+    systemPrompt: [
+      "Summarize a compacted GSV process conversation segment.",
+      "Return concise markdown only.",
+      "Preserve facts needed to continue the conversation: user goals, decisions, constraints, tool results, process events, files, ids, and unresolved next steps.",
+      "Do not mention that you are an AI or that you summarized the transcript.",
+    ].join(" "),
+    messages: [
+      {
+        role: "user",
+        content: [
+          "Conversation segment JSONL:",
+          transcript || "(no messages)",
+          "",
+          "Write the replacement summary that will remain visible in the live process conversation.",
+        ].join("\n"),
+        timestamp: Date.now(),
+      },
+    ],
+  };
+}
+
+function renderCompactionTranscriptWindow(messages: MessageRecord[], maxChars: number): string {
+  const lines = messages.map((message) => JSON.stringify(serializeArchivedMessage(message)));
+  const transcript = lines.join("\n");
+  if (transcript.length <= maxChars) {
+    return transcript;
+  }
+
+  const omitted = "\n... middle messages omitted for summary budget ...\n";
+  const headBudget = Math.floor((maxChars - omitted.length) * 0.35);
+  const tailBudget = Math.max(0, maxChars - omitted.length - headBudget);
+  return `${transcript.slice(0, headBudget).trimEnd()}${omitted}${transcript.slice(-tailBudget).trimStart()}`;
 }
 
 export class Process extends Host<Env> {
@@ -212,12 +509,29 @@ export class Process extends Host<Env> {
   private get currentRun(): RunState | null {
     const raw = this.store.getValue("currentRun");
     if (!raw) return null;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Partial<RunState>;
+    if (typeof parsed.runId !== "string") {
+      return null;
+    }
+    return {
+      ...parsed,
+      runId: parsed.runId,
+      queued: parsed.queued ?? false,
+      conversationId: normalizeConversationId(parsed.conversationId),
+    };
   }
 
   private set currentRun(state: RunState | null) {
-    if (state) this.store.setValue("currentRun", JSON.stringify(state));
-    else this.store.deleteValue("currentRun");
+    if (state) {
+      const conversationId = normalizeConversationId(state.conversationId);
+      this.store.ensureConversation(conversationId);
+      this.store.setValue("currentRun", JSON.stringify({
+        ...state,
+        conversationId,
+      }));
+    } else {
+      this.store.deleteValue("currentRun");
+    }
   }
 
   get pid(): string {
@@ -324,7 +638,11 @@ export class Process extends Host<Env> {
           let startedRunId: string | undefined;
           if (idArgs.assignment?.autoStart && !this.currentRun) {
             startedRunId = crypto.randomUUID();
-            this.currentRun = { runId: startedRunId, queued: false };
+            this.currentRun = {
+              runId: startedRunId,
+              queued: false,
+              conversationId: DEFAULT_CONVERSATION_ID,
+            };
             this.scheduleTick(startedRunId);
           }
           data = { ok: true, startedRunId };
@@ -333,6 +651,11 @@ export class Process extends Host<Env> {
         case "proc.send":
           data = await this.handleProcSend(
             frame.args as ProcSendArgs,
+          );
+          break;
+        case "proc.ipc.deliver":
+          data = this.handleProcIpcDeliver(
+            frame.args as ProcIpcDeliverArgs,
           );
           break;
         case "proc.abort":
@@ -349,8 +672,63 @@ export class Process extends Host<Env> {
           );
           break;
         case "proc.history":
-          data = this.handleProcHistory(
-            frame.args as { pid?: string; limit?: number; offset?: number },
+          data = await this.handleProcHistory(
+            frame.args as ProcHistoryArgs,
+          );
+          break;
+        case "proc.conversation.open":
+          data = this.handleConversationOpen(
+            (frame.args ?? {}) as ProcConversationOpenArgs,
+          );
+          break;
+        case "proc.conversation.list":
+          data = this.handleConversationList(
+            (frame.args ?? {}) as ProcConversationListArgs,
+          );
+          break;
+        case "proc.conversation.get":
+          data = this.handleConversationGet(
+            (frame.args ?? {}) as ProcConversationGetArgs,
+          );
+          break;
+        case "proc.conversation.close":
+          data = this.handleConversationClose(
+            (frame.args ?? {}) as ProcConversationCloseArgs,
+          );
+          break;
+        case "proc.conversation.reset":
+          data = await this.handleConversationReset(
+            (frame.args ?? {}) as ProcConversationResetArgs,
+          );
+          break;
+        case "proc.conversation.policy.get":
+          data = this.handleConversationPolicyGet(
+            (frame.args ?? {}) as ProcConversationPolicyGetArgs,
+          );
+          break;
+        case "proc.conversation.policy.set":
+          data = await this.handleConversationPolicySet(
+            (frame.args ?? {}) as ProcConversationPolicySetArgs,
+          );
+          break;
+        case "proc.conversation.compact":
+          data = await this.handleConversationCompact(
+            (frame.args ?? {}) as ProcConversationCompactArgs,
+          );
+          break;
+        case "proc.conversation.fork":
+          data = await this.handleConversationFork(
+            (frame.args ?? {}) as ProcConversationForkArgs,
+          );
+          break;
+        case "proc.conversation.segment.read":
+          data = await this.handleConversationSegmentRead(
+            (frame.args ?? {}) as ProcConversationSegmentReadArgs,
+          );
+          break;
+        case "proc.conversation.segments":
+          data = this.handleConversationSegments(
+            (frame.args ?? {}) as ProcConversationSegmentsArgs,
           );
           break;
         case "proc.reset":
@@ -387,6 +765,11 @@ export class Process extends Host<Env> {
 
   private async handleProcSend(args: ProcSendArgs): Promise<ProcSendResult> {
     const runId = crypto.randomUUID();
+    const conversationId = normalizeConversationId(args.conversationId);
+    const conversation = this.store.ensureConversation(conversationId);
+    if (conversation.status === "closed") {
+      return { ok: false, error: `Conversation is closed: ${conversationId}` };
+    }
     const media = await storeIncomingProcessMedia(
       this.env.STORAGE,
       this.identity.uid,
@@ -395,15 +778,93 @@ export class Process extends Host<Env> {
     );
 
     if (this.currentRun) {
-      this.store.enqueue(runId, args.message, media ?? undefined);
+      this.store.enqueue(runId, args.message, media ?? undefined, undefined, conversationId);
       return { ok: true, status: "started", runId, queued: true };
     }
 
-    this.store.appendMessage("user", args.message, { media: media ?? undefined });
-    this.currentRun = { runId, queued: false };
+    this.store.appendMessage("user", args.message, {
+      conversationId,
+      media: media ?? undefined,
+    });
+    this.currentRun = { runId, queued: false, conversationId };
     this.scheduleTick(runId);
 
     return { ok: true, status: "started", runId };
+  }
+
+  private handleProcIpcDeliver(args: ProcIpcDeliverArgs): ProcIpcDeliverResult {
+    if (!args || typeof args !== "object") {
+      return { ok: false, error: "proc.ipc.deliver requires arguments" };
+    }
+
+    const sourcePid = normalizeRequiredText(args.sourcePid);
+    if (!sourcePid) {
+      return { ok: false, error: "proc.ipc.deliver requires sourcePid" };
+    }
+
+    if (!isProcessIdentity(args.source)) {
+      return { ok: false, error: "proc.ipc.deliver requires source identity" };
+    }
+
+    const message = normalizeRequiredText(args.message);
+    if (!message) {
+      return { ok: false, error: "proc.ipc.deliver requires message" };
+    }
+
+    if (
+      args.metadata !== undefined
+      && (!args.metadata || typeof args.metadata !== "object" || Array.isArray(args.metadata))
+    ) {
+      return { ok: false, error: "proc.ipc.deliver metadata must be an object" };
+    }
+
+    if (args.call !== undefined && !isIpcCallEnvelope(args.call)) {
+      return { ok: false, error: "proc.ipc.deliver call must be a valid call envelope" };
+    }
+
+    const runId = crypto.randomUUID();
+    const conversationId = normalizeConversationId(args.conversationId);
+    const conversation = this.store.ensureConversation(conversationId);
+    if (conversation.status === "closed") {
+      return { ok: false, error: `Conversation is closed: ${conversationId}` };
+    }
+
+    const deliveredArgs: ProcIpcDeliverArgs = {
+      sourcePid,
+      source: args.source,
+      conversationId,
+      message,
+      metadata: args.metadata,
+      sentAt: Number.isFinite(args.sentAt) ? args.sentAt : Date.now(),
+      ...(args.call ? { call: args.call } : {}),
+    };
+    const renderedMessage = formatIpcMessage(deliveredArgs);
+
+    if (this.currentRun) {
+      this.store.enqueue(runId, renderedMessage, undefined, undefined, conversationId);
+      return {
+        ok: true,
+        status: "started",
+        pid: this.pid,
+        sourcePid,
+        conversationId,
+        runId,
+        queued: true,
+      };
+    }
+
+    this.store.appendMessage("user", renderedMessage, { conversationId });
+    this.currentRun = { runId, queued: false, conversationId };
+    this.scheduleTick(runId);
+
+    return {
+      ok: true,
+      status: "started",
+      pid: this.pid,
+      sourcePid,
+      conversationId,
+      runId,
+    };
   }
 
   private async handleProcAbort(): Promise<ProcAbortResult> {
@@ -529,6 +990,7 @@ export class Process extends Host<Env> {
           pendingHil.toolCallId,
           pendingHil.args,
           await this.resolveToolApprovalPolicy(run),
+          pendingHil.conversationId,
         );
       } else {
         await this.dispatchSyscall(
@@ -587,14 +1049,13 @@ export class Process extends Host<Env> {
     };
   }
 
-  private handleProcHistory(args: {
-    pid?: string;
-    limit?: number;
-    offset?: number;
-  }): ProcHistoryResult {
+  private async handleProcHistory(args: ProcHistoryArgs): Promise<ProcHistoryResult> {
     const pid = this.pid;
-    const total = this.store.messageCount();
+    const conversationId = normalizeConversationId(args.conversationId);
+    this.store.ensureConversation(conversationId);
+    const total = this.store.messageCount(conversationId);
     const records = this.store.getMessages({
+      conversationId,
       limit: args.limit,
       offset: args.offset,
     });
@@ -611,6 +1072,7 @@ export class Process extends Host<Env> {
         }
 
         return {
+          id: r.id,
           role: r.role,
           content: {
             toolName: meta.toolName ?? "unknown",
@@ -625,6 +1087,7 @@ export class Process extends Host<Env> {
       if (r.role === "assistant" && r.toolCalls) {
         const meta = parseAssistantMessageMeta(r.toolCalls);
         return {
+          id: r.id,
           role: r.role,
           content: {
             text: r.content,
@@ -638,6 +1101,7 @@ export class Process extends Host<Env> {
       if (r.role === "user" && r.media) {
         const media = parseStoredProcessMedia(r.media);
         return {
+          id: r.id,
           role: r.role,
           content: {
             text: r.content,
@@ -648,6 +1112,7 @@ export class Process extends Host<Env> {
       }
 
       return {
+        id: r.id,
         role: r.role,
         content: r.content,
         timestamp: r.createdAt,
@@ -657,37 +1122,688 @@ export class Process extends Host<Env> {
     return {
       ok: true,
       pid,
+      conversationId,
       messages,
       messageCount: total,
       truncated: (args.offset ?? 0) + messages.length < total,
       pendingHil: this.toProcHilRequest(this.store.getPendingHil()),
+      context: await this.getContextStateForHistory(conversationId),
     };
+  }
+
+  private async getContextStateForHistory(conversationId: string): Promise<ProcContextState | null> {
+    const stored = this.store.getContextState(conversationId);
+    const records = this.store.getMessages({ conversationId });
+    const messageCount = records.length;
+    const lastMessageId = records[messageCount - 1]?.id ?? null;
+    if (
+      stored
+      && stored.messageCount === messageCount
+      && stored.lastMessageId === lastMessageId
+    ) {
+      return stored;
+    }
+
+    const config = stored ? null : await this.resolveCheckpointConfig();
+    const provider = stored?.provider ?? config?.provider;
+    const model = stored?.model ?? config?.model;
+    if (!provider || !model) {
+      return stored;
+    }
+
+    const context: Context = {
+      systemPrompt: "",
+      messages: this.store.toMessages({ conversationId }),
+    };
+    const state = buildProcContextState({
+      conversationId,
+      messageCount,
+      lastMessageId,
+      provider,
+      model,
+      contextWindowTokens: stored?.contextWindowTokens ?? config?.contextWindowTokens ?? null,
+      maxOutputTokens: stored?.maxOutputTokens ?? config?.maxTokens ?? 0,
+      estimatedInputTokens: estimateContextInputTokens(context),
+    });
+    this.store.setContextState(state);
+    return state;
+  }
+
+  private handleConversationOpen(args: ProcConversationOpenArgs): ProcConversationOpenResult {
+    const { conversation, created } = this.store.openConversation({
+      conversationId: args.conversationId,
+      title: args.title,
+    });
+    return {
+      ok: true,
+      pid: this.pid,
+      conversation: this.toProcConversation(conversation),
+      created,
+    };
+  }
+
+  private handleConversationList(args: ProcConversationListArgs): ProcConversationListResult {
+    return {
+      ok: true,
+      pid: this.pid,
+      conversations: this.store
+        .listConversations({ includeClosed: args.includeClosed })
+        .map((record) => this.toProcConversation(record)),
+    };
+  }
+
+  private handleConversationGet(args: ProcConversationGetArgs): ProcConversationGetResult {
+    const conversationId = normalizeConversationId(args.conversationId);
+    const conversation = this.store.getConversation(conversationId);
+    return {
+      ok: true,
+      pid: this.pid,
+      conversation: conversation ? this.toProcConversation(conversation) : null,
+    };
+  }
+
+  private handleConversationClose(args: ProcConversationCloseArgs): ProcConversationCloseResult {
+    if (typeof args.conversationId !== "string" || args.conversationId.trim().length === 0) {
+      return { ok: false, error: "proc.conversation.close requires conversationId" };
+    }
+    const conversationId = normalizeConversationId(args.conversationId);
+    const closed = this.store.closeConversation(conversationId);
+    return {
+      ok: true,
+      pid: this.pid,
+      conversationId,
+      closed,
+    };
+  }
+
+  private async handleConversationReset(
+    args: ProcConversationResetArgs,
+  ): Promise<ProcConversationResetResult> {
+    const pid = this.pid;
+    const conversationId = normalizeConversationId(args.conversationId);
+    this.store.ensureConversation(conversationId);
+    const archivedMessages = this.store.messageCount(conversationId);
+    let archivedTo: string | undefined;
+
+    if (args.archive !== false && archivedMessages > 0) {
+      const archiveId = crypto.randomUUID();
+      const key = await this.archiveConversationMessages(
+        pid,
+        conversationId,
+        archiveId,
+      );
+      archivedTo = key ? `/${key}` : undefined;
+    }
+
+    this.resetConversationExecutionState(conversationId);
+    const conversation = this.store.resetConversation(conversationId);
+
+    return {
+      ok: true,
+      pid,
+      conversationId,
+      generation: conversation.generation,
+      archivedMessages,
+      archivedTo,
+    };
+  }
+
+  private handleConversationPolicyGet(
+    args: ProcConversationPolicyGetArgs,
+  ): ProcConversationPolicyGetResult {
+    const conversationId = normalizeConversationId(args.conversationId);
+    this.store.ensureConversation(conversationId);
+    return {
+      ok: true,
+      pid: this.pid,
+      policy: this.getConversationContextPolicy(conversationId),
+    };
+  }
+
+  private async handleConversationPolicySet(
+    args: ProcConversationPolicySetArgs,
+  ): Promise<ProcConversationPolicySetResult> {
+    const conversationId = normalizeConversationId(args.conversationId);
+    this.store.ensureConversation(conversationId);
+    const existing = this.getConversationContextPolicy(conversationId);
+    const overflow = args.overflow ?? existing.overflow;
+    if (!isConversationOverflowPolicy(overflow)) {
+      return { ok: false, error: "proc.conversation.policy.set overflow must be manual, auto-compact, or fail" };
+    }
+    const compactAtPressure = args.compactAtPressure ?? existing.compactAtPressure;
+    if (
+      typeof compactAtPressure !== "number" ||
+      !Number.isFinite(compactAtPressure) ||
+      compactAtPressure <= 0 ||
+      compactAtPressure > 1
+    ) {
+      return { ok: false, error: "proc.conversation.policy.set compactAtPressure must be > 0 and <= 1" };
+    }
+    const keepLast = args.keepLast ?? existing.keepLast;
+    if (!isNonNegativeInteger(keepLast)) {
+      return { ok: false, error: "proc.conversation.policy.set keepLast must be a non-negative integer" };
+    }
+
+    const policy: ProcConversationContextPolicy = {
+      conversationId,
+      overflow,
+      compactAtPressure,
+      keepLast,
+      updatedAt: Date.now(),
+    };
+    this.store.setValue(conversationPolicyKey(conversationId), JSON.stringify(policy));
+    await this.emitProcessLifecycle({
+      event: "conversation.policy",
+      pid: this.pid,
+      conversationId,
+      policy,
+    });
+    return {
+      ok: true,
+      pid: this.pid,
+      policy,
+    };
+  }
+
+  private getConversationContextPolicy(conversationId: string): ProcConversationContextPolicy {
+    const normalizedConversationId = normalizeConversationId(conversationId);
+    const fallback = defaultConversationPolicy(normalizedConversationId);
+    const raw = this.store.getValue(conversationPolicyKey(normalizedConversationId));
+    if (!raw) {
+      return fallback;
+    }
+    try {
+      const parsed = JSON.parse(raw) as Partial<ProcConversationContextPolicy>;
+      const overflow = parsed.overflow;
+      const compactAtPressure = parsed.compactAtPressure;
+      const keepLast = parsed.keepLast;
+      return {
+        conversationId: normalizedConversationId,
+        overflow: isConversationOverflowPolicy(overflow) ? overflow : fallback.overflow,
+        compactAtPressure:
+          typeof compactAtPressure === "number" &&
+          Number.isFinite(compactAtPressure) &&
+          compactAtPressure > 0 &&
+          compactAtPressure <= 1
+            ? compactAtPressure
+            : fallback.compactAtPressure,
+        keepLast: isNonNegativeInteger(keepLast) ? keepLast : fallback.keepLast,
+        updatedAt: typeof parsed.updatedAt === "number" && Number.isFinite(parsed.updatedAt)
+          ? parsed.updatedAt
+          : fallback.updatedAt,
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async handleConversationCompact(
+    args: ProcConversationCompactArgs,
+    options: { allowActive?: boolean; reason?: string } = {},
+  ): Promise<ProcConversationCompactResult> {
+    const pid = this.pid;
+    const conversationId = normalizeConversationId(args.conversationId);
+    const explicitSummary = normalizeOptionalString(args.summary);
+    const generateSummary = args.generateSummary === true;
+    if (!explicitSummary && !generateSummary) {
+      return { ok: false, error: "proc.conversation.compact requires summary or generateSummary" };
+    }
+    if (explicitSummary && generateSummary) {
+      return { ok: false, error: "proc.conversation.compact accepts either summary or generateSummary, not both" };
+    }
+
+    const hasKeepLast = args.keepLast !== undefined;
+    const hasThroughMessageId = args.throughMessageId !== undefined;
+    if (hasKeepLast === hasThroughMessageId) {
+      return { ok: false, error: "proc.conversation.compact requires exactly one of keepLast or throughMessageId" };
+    }
+    if (hasKeepLast && !isNonNegativeInteger(args.keepLast)) {
+      return { ok: false, error: "proc.conversation.compact keepLast must be a non-negative integer" };
+    }
+    if (hasThroughMessageId && !isPositiveInteger(args.throughMessageId)) {
+      return { ok: false, error: "proc.conversation.compact throughMessageId must be a positive integer" };
+    }
+
+    if (!options.allowActive && this.currentRun?.conversationId === conversationId) {
+      return { ok: false, error: `Conversation is active: ${conversationId}` };
+    }
+
+    const conversation = this.store.ensureConversation(conversationId);
+    const selected = this.store.getConversationPrefixMessages({
+      conversationId,
+      keepLast: hasKeepLast ? args.keepLast : undefined,
+      throughMessageId: hasThroughMessageId ? args.throughMessageId : undefined,
+    });
+    if (selected.length === 0) {
+      return { ok: false, error: "No conversation messages selected for compaction" };
+    }
+    let summary = explicitSummary;
+    if (!summary) {
+      try {
+        summary = await this.generateConversationCompactionSummary(selected);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { ok: false, error: `Failed to generate compaction summary: ${message}` };
+      }
+    }
+
+    const fromMessageId = selected[0].id;
+    const toMessageId = selected[selected.length - 1].id;
+    const segmentId = crypto.randomUUID();
+    const archiveKey = [
+      "var",
+      "sessions",
+      this.identity.username,
+      pid,
+      "conversations",
+      encodeURIComponent(conversationId),
+      `${segmentId}.jsonl.gz`,
+    ].join("/");
+    await this.archiveMessageRecords(archiveKey, selected);
+
+    const archivedTo = `/${archiveKey}`;
+    const summaryMessageId = this.store.compactConversationPrefix({
+      conversationId,
+      generation: conversation.generation,
+      fromMessageId,
+      toMessageId,
+      summary: formatCompactionSummaryMessage({
+        archivedMessages: selected.length,
+        archivePath: archivedTo,
+        summary,
+      }),
+    });
+    const segment = this.store.recordConversationSegment({
+      id: segmentId,
+      conversationId,
+      generation: conversation.generation,
+      kind: "compaction",
+      fromMessageId,
+      toMessageId,
+      archivePath: archivedTo,
+      summaryMessageId,
+    });
+
+    await this.emitProcessLifecycle({
+      event: "conversation.compacted",
+      pid,
+      conversationId,
+      generation: conversation.generation,
+      segment: this.toProcConversationSegment(segment),
+      archivedMessages: selected.length,
+      archivedTo,
+      summaryMessageId,
+      ...(options.reason ? { reason: options.reason } : {}),
+    });
+
+    return {
+      ok: true,
+      pid,
+      conversationId,
+      segment: this.toProcConversationSegment(segment),
+      archivedMessages: selected.length,
+      archivedTo,
+      summaryMessageId,
+    };
+  }
+
+  private async generateConversationCompactionSummary(messages: MessageRecord[]): Promise<string> {
+    const config = await this.resolveCheckpointConfig();
+    if (!config) {
+      throw new Error("AI config unavailable");
+    }
+
+    const generated = await this.generation.generateText({
+      purpose: "compaction.summary",
+      config,
+      context: buildCompactionSummaryContext(messages),
+      sessionAffinityKey: `${this.pid}:compaction`,
+    });
+    const summary = generated.trim();
+    if (!summary) {
+      throw new Error("summary generation returned empty text");
+    }
+    return summary;
+  }
+
+  private async handleConversationFork(
+    args: ProcConversationForkArgs,
+  ): Promise<ProcConversationForkResult> {
+    const pid = this.pid;
+    const sourceConversationId = normalizeConversationId(args.conversationId);
+    const segmentId = normalizeOptionalString(args.segmentId);
+    const throughMessageId = args.throughMessageId;
+    const hasSegmentId = Boolean(segmentId);
+    const hasThroughMessageId = throughMessageId !== undefined;
+    if (hasSegmentId === hasThroughMessageId) {
+      return { ok: false, error: "proc.conversation.fork requires exactly one of segmentId or throughMessageId" };
+    }
+    if (hasThroughMessageId && !isPositiveInteger(throughMessageId)) {
+      return { ok: false, error: "proc.conversation.fork throughMessageId must be a positive integer" };
+    }
+
+    const targetConversationId = normalizeConversationId(
+      args.targetConversationId ?? crypto.randomUUID(),
+    );
+    const existingTarget = this.store.getConversation(targetConversationId);
+    if (existingTarget && this.store.messageCount(targetConversationId) > 0) {
+      return { ok: false, error: `Target conversation already has messages: ${targetConversationId}` };
+    }
+
+    const includeLiveSuffix = hasSegmentId ? args.includeLiveSuffix !== false : false;
+    let segment: ReturnType<ProcessStore["getConversationSegment"]> = null;
+    let archivedMessages: ArchivedMessageRecord[] = [];
+    let liveMessages: MessageRecord[] = [];
+
+    if (segmentId) {
+      segment = this.store.getConversationSegment(sourceConversationId, segmentId);
+      if (!segment) {
+        return { ok: false, error: `Conversation segment not found: ${segmentId}` };
+      }
+      try {
+        archivedMessages = await this.readArchivedMessageRecords(segment.archivePath);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { ok: false, error: `Failed to read segment archive: ${message}` };
+      }
+      liveMessages = includeLiveSuffix
+        ? this.store.getMessagesForGenerationAfter({
+            conversationId: sourceConversationId,
+            generation: segment.generation,
+            afterMessageId: segment.toMessageId,
+            throughCreatedAt: segment.createdAt,
+          })
+        : [];
+    } else {
+      liveMessages = this.store.getConversationPrefixMessages({
+        conversationId: sourceConversationId,
+        throughMessageId,
+      });
+      if (liveMessages.length === 0 || liveMessages[liveMessages.length - 1]?.id !== throughMessageId) {
+        return { ok: false, error: `Message not found in conversation: ${throughMessageId}` };
+      }
+    }
+
+    const { conversation } = this.store.openConversation({
+      conversationId: targetConversationId,
+      title: normalizeOptionalString(args.title) ??
+        `Fork of ${sourceConversationId} at ${
+          segment ? segment.id.slice(0, 8) : `message ${throughMessageId}`
+        }`,
+    });
+    const targetGeneration = conversation.generation;
+    let restoredMessages = 0;
+
+    for (const archived of archivedMessages) {
+      this.appendRestoredArchivedMessage(archived, targetConversationId, targetGeneration);
+      restoredMessages += 1;
+    }
+
+    for (const message of liveMessages) {
+      this.appendRestoredLiveMessage(message, targetConversationId, targetGeneration);
+      restoredMessages += 1;
+    }
+
+    await this.emitProcessLifecycle({
+      event: "conversation.forked",
+      pid,
+      sourceConversationId,
+      targetConversationId,
+      ...(segment ? { segment: this.toProcConversationSegment(segment) } : {}),
+      ...(throughMessageId !== undefined ? { throughMessageId } : {}),
+      restoredMessages,
+      includedLiveSuffix: includeLiveSuffix,
+    });
+
+    return {
+      ok: true,
+      pid,
+      sourceConversationId,
+      targetConversation: this.toProcConversation(this.store.getConversation(targetConversationId) ?? conversation),
+      ...(segment ? { segment: this.toProcConversationSegment(segment) } : {}),
+      ...(throughMessageId !== undefined ? { throughMessageId } : {}),
+      restoredMessages,
+      includedLiveSuffix: includeLiveSuffix,
+    };
+  }
+
+  private async emitProcessLifecycle(payload: Record<string, unknown>): Promise<void> {
+    await this.sendSignal("process.lifecycle", {
+      timestamp: Date.now(),
+      ...payload,
+    }).catch((error) => {
+      console.warn(
+        `[Process] Failed to emit process.lifecycle for ${this.pid}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  }
+
+  private appendRestoredArchivedMessage(
+    message: ArchivedMessageRecord,
+    conversationId: string,
+    generation: number,
+  ): number {
+    const toolCalls = message.role === "assistant"
+      ? stringifyAssistantMessageMeta({
+          toolCalls: message.toolCalls,
+          thinking: message.thinking,
+        })
+      : message.toolCalls
+        ? JSON.stringify(message.toolCalls)
+        : undefined;
+    return this.store.appendMessage(message.role, message.content, {
+      conversationId,
+      generation,
+      toolCalls,
+      toolCallId: message.toolCallId,
+      media: message.media === undefined ? undefined : JSON.stringify(message.media),
+      createdAt: message.createdAt,
+    });
+  }
+
+  private appendRestoredLiveMessage(
+    message: MessageRecord,
+    conversationId: string,
+    generation: number,
+  ): number {
+    return this.store.appendMessage(message.role, message.content, {
+      conversationId,
+      generation,
+      toolCalls: message.toolCalls ?? undefined,
+      toolCallId: message.toolCallId ?? undefined,
+      media: message.media ?? undefined,
+      createdAt: message.createdAt,
+    });
+  }
+
+  private async handleConversationSegmentRead(
+    args: ProcConversationSegmentReadArgs,
+  ): Promise<ProcConversationSegmentReadResult> {
+    const conversationId = normalizeConversationId(args.conversationId);
+    const segmentId = normalizeRequiredText(args.segmentId);
+    if (!segmentId) {
+      return { ok: false, error: "proc.conversation.segment.read requires segmentId" };
+    }
+    if (args.offset !== undefined && !isNonNegativeInteger(args.offset)) {
+      return { ok: false, error: "proc.conversation.segment.read offset must be a non-negative integer" };
+    }
+    if (args.limit !== undefined && !isPositiveInteger(args.limit)) {
+      return { ok: false, error: "proc.conversation.segment.read limit must be a positive integer" };
+    }
+
+    const segment = this.store.getConversationSegment(conversationId, segmentId);
+    if (!segment) {
+      return { ok: false, error: `Conversation segment not found: ${segmentId}` };
+    }
+
+    let archivedMessages: ArchivedMessageRecord[];
+    try {
+      archivedMessages = await this.readArchivedMessageRecords(segment.archivePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: `Failed to read segment archive: ${message}` };
+    }
+
+    const offset = args.offset ?? 0;
+    const limit = Math.min(args.limit ?? 200, 500);
+    const page = archivedMessages.slice(offset, offset + limit);
+    const messages = page.map((message) => this.toProcHistoryMessageFromArchive(message));
+
+    return {
+      ok: true,
+      pid: this.pid,
+      conversationId,
+      segment: this.toProcConversationSegment(segment),
+      messages,
+      messageCount: archivedMessages.length,
+      truncated: offset + messages.length < archivedMessages.length,
+    };
+  }
+
+  private toProcHistoryMessageFromArchive(message: ArchivedMessageRecord): ProcHistoryMessage {
+    if (message.role === "toolResult") {
+      return {
+        id: message.id,
+        role: message.role,
+        content: {
+          toolName: "unknown",
+          isError: false,
+          toolCallId: message.toolCallId ?? null,
+          output: message.content,
+        },
+        timestamp: message.createdAt,
+      };
+    }
+
+    if (message.role === "assistant") {
+      return {
+        id: message.id,
+        role: message.role,
+        content: {
+          text: message.content,
+          thinking: message.thinking ?? [],
+          toolCalls: message.toolCalls ?? [],
+        },
+        timestamp: message.createdAt,
+      };
+    }
+
+    if (message.role === "user" && message.media !== undefined) {
+      return {
+        id: message.id,
+        role: message.role,
+        content: {
+          text: message.content,
+          media: message.media,
+        },
+        timestamp: message.createdAt,
+      };
+    }
+
+    return {
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      timestamp: message.createdAt,
+    };
+  }
+
+  private handleConversationSegments(
+    args: ProcConversationSegmentsArgs,
+  ): ProcConversationSegmentsResult {
+    const conversationId = normalizeConversationId(args.conversationId);
+    this.store.ensureConversation(conversationId);
+    return {
+      ok: true,
+      pid: this.pid,
+      conversationId,
+      segments: this.store
+        .listConversationSegments(conversationId)
+        .map((segment) => this.toProcConversationSegment(segment)),
+    };
+  }
+
+  private toProcConversation(record: ProcessConversationRecord): ProcConversation {
+    return {
+      id: record.id,
+      generation: record.generation,
+      status: record.status,
+      title: record.title,
+      messageCount: this.store.messageCount(record.id),
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
+  }
+
+  private toProcConversationSegment(
+    record: ProcessConversationSegmentRecord,
+  ): ProcConversationSegment {
+    return {
+      id: record.id,
+      conversationId: record.conversationId,
+      generation: record.generation,
+      kind: record.kind,
+      fromMessageId: record.fromMessageId,
+      toMessageId: record.toMessageId,
+      archivePath: record.archivePath,
+      summaryMessageId: record.summaryMessageId,
+      createdAt: record.createdAt,
+    };
+  }
+
+  private resetConversationExecutionState(conversationId: string): void {
+    const normalizedConversationId = normalizeConversationId(conversationId);
+    const activeRun = this.currentRun;
+    const stoppedActiveRun = activeRun?.conversationId === normalizedConversationId;
+
+    if (stoppedActiveRun) {
+      this.rejectCodeModeWaiters(
+        activeRun.runId,
+        `Conversation was reset: ${normalizedConversationId}`,
+      );
+      if (this.activeRunPhase?.runId === activeRun.runId) {
+        this.activeRunPhase = null;
+      }
+      if (this.deferredAbortContinuationRunId === activeRun.runId) {
+        this.deferredAbortContinuationRunId = null;
+      }
+      this.currentRun = null;
+    }
+
+    this.store.clearPendingToolCalls(normalizedConversationId);
+    this.store.clearPendingHil(normalizedConversationId);
+    this.store.clearQueue(normalizedConversationId);
+    this.mediaCache.clear();
+
+    if (stoppedActiveRun) {
+      this.promoteNextQueuedRun();
+    }
   }
 
   private async handleProcReset(): Promise<ProcResetResult> {
     const pid = this.pid;
-    const count = this.store.messageCount();
+    const totalMessages = this.store.totalMessageCount();
     await this.checkpointWorkspace("proc.reset");
+
+    const archive = totalMessages > 0
+      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
+      : emptyProcessArchive();
+
     this.resetExecutionState();
     this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
-
-    if (count > 0) {
-      const archiveId = crypto.randomUUID();
-      await this.archiveMessages(pid, archiveId);
-      this.store.clearMessages();
-      await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
-
-      return {
-        ok: true,
-        pid,
-        archivedMessages: count,
-        archivedTo: `/var/sessions/${this.identity.username}/${pid}/${archiveId}.jsonl.gz`,
-      };
-    }
+    this.store.resetAllConversations();
 
     await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
 
-    return { ok: true, pid, archivedMessages: 0 };
+    return {
+      ok: true,
+      pid,
+      archivedMessages: archive.archivedMessages,
+      archivedTo: archive.archivedTo,
+      archives: archive.archives,
+    };
   }
 
   private async handleProcKill(args: {
@@ -695,25 +1811,27 @@ export class Process extends Host<Env> {
     archive?: boolean;
   }): Promise<ProcKillResult> {
     const pid = this.pid;
+    const shouldArchive = args.archive !== false;
+    const totalMessages = this.store.totalMessageCount();
     await this.checkpointWorkspace("proc.kill");
+
+    const archive = shouldArchive && totalMessages > 0
+      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
+      : emptyProcessArchive();
+
     this.resetExecutionState();
     this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
 
-    let archivedTo: string | null = null;
-
-    if (args.archive !== false) {
-      const archiveId = crypto.randomUUID();
-      archivedTo = await this.archiveMessages(pid, archiveId);
-    }
-
     // A killed process should restart with a clean conversation and no queued work.
-    this.store.clearMessages();
+    this.store.resetAllConversations();
     await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
 
     return {
       ok: true,
       pid,
-      archivedTo: archivedTo ?? undefined,
+      archivedMessages: archive.archivedMessages,
+      archivedTo: archive.archivedTo,
+      archives: archive.archives,
     };
   }
 
@@ -733,7 +1851,7 @@ export class Process extends Host<Env> {
     }
 
     switch (frame.signal) {
-      case "identity.changed": {
+        case "identity.changed": {
         const identity = (frame.payload as { identity: ProcessIdentity })
           ?.identity;
         if (identity) {
@@ -741,6 +1859,13 @@ export class Process extends Host<Env> {
         }
         break;
       }
+      case "ipc.reply":
+      case "ipc.timeout":
+        await this.handleIpcSignal(frame.signal, frame.payload);
+        break;
+      case "schedule.event":
+        await this.handleScheduleEventSignal(frame.payload);
+        break;
       default:
         console.log(`[Process] Unknown signal: ${frame.signal}`);
         break;
@@ -755,11 +1880,78 @@ export class Process extends Host<Env> {
     this.schedule(next, "tick", runId);
   }
 
+  private async appendRuntimeMessage(
+    role: Extract<MessageRole, "system">,
+    content: string,
+    opts?: { conversationId?: string },
+  ): Promise<number> {
+    const conversationId = normalizeConversationId(opts?.conversationId);
+    const timestamp = Date.now();
+    const messageId = this.store.appendMessage(role, content, {
+      conversationId,
+      createdAt: timestamp,
+    });
+    try {
+      await this.sendSignal("process.message", {
+        pid: this.pid,
+        conversationId,
+        messageId,
+        role,
+        content,
+        timestamp,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[Process] Failed to emit process.message for ${this.pid}: ${message}`);
+    }
+    return messageId;
+  }
+
   private async handleWatchedSignalTriggered(signal: string, payload: unknown): Promise<void> {
-    this.store.appendMessage("system", formatWatchedSignalMessage(signal, payload));
+    await this.appendRuntimeMessage("system", formatWatchedSignalMessage(signal, payload), {
+      conversationId: DEFAULT_CONVERSATION_ID,
+    });
     if (!this.currentRun) {
       const runId = crypto.randomUUID();
-      this.currentRun = { runId, queued: false };
+      this.currentRun = {
+        runId,
+        queued: false,
+        conversationId: DEFAULT_CONVERSATION_ID,
+      };
+      this.scheduleTick(runId);
+    }
+  }
+
+  private async handleIpcSignal(signal: string, payload: unknown): Promise<void> {
+    await this.appendRuntimeMessage("system", formatIpcReplyMessage(signal, payload), {
+      conversationId: DEFAULT_CONVERSATION_ID,
+    });
+    if (!this.currentRun) {
+      const runId = crypto.randomUUID();
+      this.currentRun = {
+        runId,
+        queued: false,
+        conversationId: DEFAULT_CONVERSATION_ID,
+      };
+      this.scheduleTick(runId);
+    }
+  }
+
+  private async handleScheduleEventSignal(payload: unknown): Promise<void> {
+    if (!isScheduleEventPayload(payload)) {
+      return;
+    }
+    const conversationId = normalizeConversationId(payload.conversationId);
+    await this.appendRuntimeMessage("system", formatScheduleEventMessage(payload), {
+      conversationId,
+    });
+    if (!this.currentRun) {
+      const runId = crypto.randomUUID();
+      this.currentRun = {
+        runId,
+        queued: false,
+        conversationId,
+      };
       this.scheduleTick(runId);
     }
   }
@@ -774,6 +1966,8 @@ export class Process extends Host<Env> {
       console.warn(`[Process] Stale tick for run ${runId}, ignoring`);
       return;
     }
+
+    const conversationId = normalizeConversationId(run.conversationId);
 
     // Step 1: Collect resolved tool results
     const toolResults = this.store.getResults(runId);
@@ -795,9 +1989,11 @@ export class Process extends Host<Env> {
 
     // Step 2: Inject queued messages at tool-result boundary
     if (hadPendingToolCalls) {
-      const queued = this.store.drainQueue();
+      const queued = this.store.drainQueue(conversationId);
       for (const qm of queued) {
         this.store.appendMessage("user", qm.message, {
+          conversationId: qm.conversationId,
+          generation: qm.generation,
           media: qm.media ?? undefined,
         });
       }
@@ -852,18 +2048,48 @@ export class Process extends Host<Env> {
     }
 
     // Step 5: Build pi-ai Context
-    const piMessages = await this.buildContextMessages();
+    let piMessages = await this.buildContextMessages(conversationId);
     const tools: Tool[] = (run.tools ?? []).map((t) => ({
       name: t.name,
       description: t.description,
       parameters: t.inputSchema as Tool["parameters"],
     }));
 
-    const context: Context = {
+    let context: Context = {
       systemPrompt: run.systemPrompt,
       messages: piMessages,
       tools: tools.length > 0 ? tools : undefined,
     };
+
+    const initialContextState = await this.updateContextState(runId, conversationId, run.config!, context);
+    if (this.handleRunStopped(runId)) {
+      return;
+    }
+
+    const contextPreflight = await this.applyConversationContextPolicy(
+      runId,
+      conversationId,
+      run.config!,
+      initialContextState,
+    );
+    if (contextPreflight === "stopped") {
+      return;
+    }
+    if (contextPreflight === "compacted") {
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
+      piMessages = await this.buildContextMessages(conversationId);
+      context = {
+        systemPrompt: run.systemPrompt,
+        messages: piMessages,
+        tools: tools.length > 0 ? tools : undefined,
+      };
+      await this.updateContextState(runId, conversationId, run.config!, context);
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
+    }
 
     // Step 6: Call LLM
     let response: AssistantMessage;
@@ -891,7 +2117,7 @@ export class Process extends Host<Env> {
       const errorMsg = e instanceof Error ? e.message : String(e);
       const displayError = formatGenerationFailure(errorMsg);
       console.error(`[Process] LLM call failed:`, e);
-      this.store.appendMessage("system", displayError);
+      this.store.appendMessage("system", displayError, { conversationId });
       await this.sendSignal("chat.complete", {
         text: null,
         error: displayError,
@@ -909,7 +2135,7 @@ export class Process extends Host<Env> {
       const errorMsg = response.errorMessage ?? "LLM returned empty response";
       const displayError = formatGenerationFailure(errorMsg);
       console.error(`[Process] ${errorMsg}`);
-      this.store.appendMessage("system", displayError);
+      this.store.appendMessage("system", displayError, { conversationId });
       await this.sendSignal("chat.complete", {
         text: null,
         error: displayError,
@@ -943,11 +2169,23 @@ export class Process extends Host<Env> {
     }
 
     this.store.appendMessage("assistant", text, {
+      conversationId,
       toolCalls: stringifyAssistantMessageMeta({
         thinking: thinkingBlocks,
         toolCalls,
       }),
     });
+
+    piMessages = await this.buildContextMessages(conversationId);
+    context = {
+      systemPrompt: run.systemPrompt,
+      messages: piMessages,
+      tools: tools.length > 0 ? tools : undefined,
+    };
+    await this.updateContextState(runId, conversationId, run.config!, context, response.usage);
+    if (this.handleRunStopped(runId)) {
+      return;
+    }
 
     if (toolCalls.length > 0) {
       const pendingHil = await this.processToolCalls(runId, toolCalls);
@@ -978,6 +2216,142 @@ export class Process extends Host<Env> {
     console.log(`[Process] Finished run ${runId}`);
 
     this.promoteNextQueuedRun();
+  }
+
+  private async applyConversationContextPolicy(
+    runId: string,
+    conversationId: string,
+    config: AiConfigResult,
+    state: ProcContextState,
+  ): Promise<"ready" | "compacted" | "stopped"> {
+    const pressure = state.pressure;
+    if (pressure === null || !Number.isFinite(pressure)) {
+      return "ready";
+    }
+
+    const policy = this.getConversationContextPolicy(conversationId);
+    if (pressure < policy.compactAtPressure) {
+      return "ready";
+    }
+
+    if (policy.overflow === "manual") {
+      return "ready";
+    }
+
+    if (policy.overflow === "fail") {
+      const message = [
+        "Context limit policy stopped this run.",
+        `Policy: fail at ${Math.round(policy.compactAtPressure * 100)}% context pressure.`,
+        `Current estimate: ${Math.round(pressure * 100)}%.`,
+        "Compact or reset the conversation before sending more work.",
+      ].join("\n");
+      this.store.appendMessage("system", message, { conversationId });
+      await this.sendSignal("chat.complete", {
+        text: null,
+        error: message,
+        pid: this.pid,
+        runId,
+      });
+      await this.finishRun("context.policy.fail");
+      return "stopped";
+    }
+
+    const selected = this.store.getConversationPrefixMessages({
+      conversationId,
+      keepLast: policy.keepLast,
+    });
+    if (selected.length === 0) {
+      if (pressure < 1) {
+        return "ready";
+      }
+      const message = [
+        "Context limit reached, but auto-compaction could not archive any older messages.",
+        `Policy keeps the newest ${policy.keepLast} messages live.`,
+        "Lower the keep-last value, compact manually, or reset this conversation.",
+      ].join("\n");
+      this.store.appendMessage("system", message, { conversationId });
+      await this.sendSignal("chat.complete", {
+        text: null,
+        error: message,
+        pid: this.pid,
+        runId,
+      });
+      await this.finishRun("context.auto_compact.empty");
+      return "stopped";
+    }
+
+    const result = await this.handleConversationCompact(
+      {
+        conversationId,
+        keepLast: policy.keepLast,
+        generateSummary: true,
+      },
+      {
+        allowActive: true,
+        reason: "auto-compact",
+      },
+    );
+    if (!result.ok) {
+      const message = `Auto-compaction failed before model call: ${result.error}`;
+      this.store.appendMessage("system", message, { conversationId });
+      await this.sendSignal("chat.complete", {
+        text: null,
+        error: message,
+        pid: this.pid,
+        runId,
+      });
+      await this.finishRun("context.auto_compact.failed");
+      return "stopped";
+    }
+
+    await this.emitProcessLifecycle({
+      event: "conversation.auto_compacted",
+      pid: this.pid,
+      conversationId,
+      provider: config.provider,
+      model: config.model,
+      pressure,
+      policy,
+      segment: result.segment,
+      archivedMessages: result.archivedMessages,
+    });
+    return "compacted";
+  }
+
+  private async updateContextState(
+    runId: string,
+    conversationId: string,
+    config: AiConfigResult,
+    context: Context,
+    usage?: AssistantMessage["usage"],
+  ): Promise<ProcContextState> {
+    const messages = this.store.getMessages({ conversationId });
+    const messageCount = messages.length;
+    const lastMessageId = messages[messageCount - 1]?.id ?? null;
+    const state = buildProcContextState({
+      conversationId,
+      runId,
+      messageCount,
+      lastMessageId,
+      provider: config.provider,
+      model: config.model,
+      contextWindowTokens: config.contextWindowTokens,
+      maxOutputTokens: config.maxTokens,
+      estimatedInputTokens: estimateContextInputTokens(context),
+      usage,
+    });
+    this.store.setContextState(state);
+    await this.sendSignal("process.context", {
+      pid: this.pid,
+      context: state,
+    }).catch((error) => {
+      console.warn(
+        `[Process] Failed to emit process.context for ${this.pid}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    return state;
   }
 
   /**
@@ -1147,27 +2521,99 @@ export class Process extends Host<Env> {
     return normalizedReason ? `checkpoint ${normalizedReason}` : "checkpoint thread state";
   }
 
-  private async archiveMessages(
+  private async archiveConversationMessages(
     pid: string,
+    conversationId: string,
     archiveId: string,
   ): Promise<string | null> {
-    const messages = this.store.allMessagesForArchive();
+    const normalizedConversationId = normalizeConversationId(conversationId);
+    const messages = this.store.allMessagesForArchive(normalizedConversationId);
     if (messages.length === 0) return null;
 
+    const key = [
+      "var",
+      "sessions",
+      this.identity.username,
+      pid,
+      "conversations",
+      encodeURIComponent(normalizedConversationId),
+      `${archiveId}.jsonl.gz`,
+    ].join("/");
+
+    await this.archiveMessageRecords(key, messages);
+    return key;
+  }
+
+  private async archiveAllConversationMessages(
+    pid: string,
+    archiveId: string,
+  ): Promise<ProcessArchiveResult> {
+    const archiveDir = `var/sessions/${this.identity.username}/${pid}/${archiveId}/`;
+    const archives: ProcArchiveEntry[] = [];
+    let archivedMessages = 0;
+
+    const conversations = this.store
+      .listConversations({ includeClosed: true })
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    for (const conversation of conversations) {
+      const messages = this.store.allMessagesForArchive(conversation.id);
+      if (messages.length === 0) {
+        continue;
+      }
+
+      const key = `${archiveDir}${conversationArchiveFilename(
+        conversation.id,
+        conversation.generation,
+      )}`;
+
+      await this.archiveMessageRecords(key, messages);
+      archivedMessages += messages.length;
+      archives.push({
+        conversationId: conversation.id,
+        generation: conversation.generation,
+        messages: messages.length,
+        path: `/${key}`,
+      });
+    }
+
+    return {
+      archivedMessages,
+      archivedTo: archivedMessages > 0 ? `/${archiveDir}` : undefined,
+      archives,
+    };
+  }
+
+  private async archiveMessageRecords(key: string, messages: MessageRecord[]): Promise<void> {
     const jsonl = messages
       .map((m) =>
         JSON.stringify(serializeArchivedMessage(m)),
       )
       .join("\n");
+    await this.writeMessageArchive(key, jsonl);
+  }
 
-    const key = `var/sessions/${this.identity.username}/${pid}/${archiveId}.jsonl.gz`;
-
+  private async writeMessageArchive(key: string, jsonl: string): Promise<void> {
     const compressed = await gzip(jsonl);
     const bucket = this.env.STORAGE;
     await bucket.put(key, compressed, {
       httpMetadata: { contentType: "application/gzip" },
     });
-    return key;
+  }
+
+  private async readArchivedMessageRecords(archivePath: string): Promise<ArchivedMessageRecord[]> {
+    const key = archivePath.replace(/^\/+/, "");
+    const object = await this.env.STORAGE.get(key);
+    if (!object) {
+      throw new Error(`archive not found: ${archivePath}`);
+    }
+
+    const jsonl = await gunzip(await object.arrayBuffer());
+    return jsonl
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => parseArchivedMessageRecord(JSON.parse(line)));
   }
 
   async dispatchSyscall(
@@ -1176,7 +2622,14 @@ export class Process extends Host<Env> {
     call: SyscallName,
     args: unknown,
   ): Promise<void> {
-    this.store.register(id, runId, call, args);
+    const run = this.currentRun;
+    this.store.register(
+      id,
+      runId,
+      call,
+      args,
+      run?.runId === runId ? run.conversationId : DEFAULT_CONVERSATION_ID,
+    );
 
     const reqFrame: RequestFrame = {
       type: "req",
@@ -1200,9 +2653,9 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async buildContextMessages(): Promise<Context["messages"]> {
-    const records = this.store.getMessages();
-    const messages = this.store.toMessages();
+  private async buildContextMessages(conversationId: string): Promise<Context["messages"]> {
+    const records = this.store.getMessages({ conversationId });
+    const messages = this.store.toMessages({ conversationId });
 
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
@@ -1292,6 +2745,12 @@ export class Process extends Host<Env> {
     toolResults: ReturnType<ProcessStore["getResults"]>,
     options?: { interruptPending?: boolean },
   ): Promise<number> {
+    const run = this.currentRun;
+    const conversationId = normalizeConversationId(
+      run?.runId === runId
+        ? run.conversationId
+        : toolResults[0]?.conversationId,
+    );
     this.store.clearRun(runId);
     let interrupted = 0;
 
@@ -1330,6 +2789,7 @@ export class Process extends Host<Env> {
         result.call,
         content,
         isError,
+        conversationId,
       );
 
       await this.sendSignal("chat.tool_result", {
@@ -1412,6 +2872,8 @@ export class Process extends Host<Env> {
           const pendingHil: PendingHilRecord = {
             requestId: crypto.randomUUID(),
             runId,
+            conversationId: run.conversationId,
+            generation: this.store.getConversationGeneration(run.conversationId),
             toolCallId: tc.id,
             toolName: tc.name,
             syscall,
@@ -1442,6 +2904,7 @@ export class Process extends Host<Env> {
             tc.id,
             tc.arguments,
             approvalPolicy,
+            run.conversationId,
           );
         } else {
           await this.dispatchSyscall(
@@ -1500,6 +2963,7 @@ export class Process extends Host<Env> {
     toolCallId: string,
     rawArgs: unknown,
     approvalPolicy: ToolApprovalPolicy,
+    conversationId: string,
   ): Promise<void> {
     const args = rawArgs && typeof rawArgs === "object"
       ? rawArgs as Partial<CodeModeExecArgs>
@@ -1509,6 +2973,7 @@ export class Process extends Host<Env> {
       runId,
       CODEMODE_EXEC as SyscallName,
       args,
+      conversationId,
     );
 
     if (typeof args.code !== "string" || args.code.trim().length === 0) {
@@ -1669,6 +3134,11 @@ export class Process extends Host<Env> {
     args: Record<string, unknown>,
   ): Promise<boolean> {
     const requestId = crypto.randomUUID();
+    const conversationId = normalizeConversationId(
+      this.currentRun?.runId === runId
+        ? this.currentRun.conversationId
+        : DEFAULT_CONVERSATION_ID,
+    );
     const approved = new Promise<boolean>((resolve) => {
       const timeoutId = setTimeout(() => {
         this.codeModeApprovals.delete(requestId);
@@ -1683,6 +3153,8 @@ export class Process extends Host<Env> {
     const pendingHil: PendingHilRecord = {
       requestId,
       runId,
+      conversationId,
+      generation: this.store.getConversationGeneration(conversationId),
       toolCallId,
       toolName,
       syscall: call,
@@ -1786,11 +3258,16 @@ export class Process extends Host<Env> {
     syscallName: string,
     errorMessage: string,
   ): Promise<void> {
+    const run = this.currentRun;
+    const conversationId = normalizeConversationId(
+      run?.runId === runId ? run.conversationId : DEFAULT_CONVERSATION_ID,
+    );
     this.store.appendToolResult(
       toolCallId,
       syscallName,
       `Error: ${errorMessage}`,
       true,
+      conversationId,
     );
     await this.sendSignal("chat.tool_result", {
       name: SYSCALL_TOOL_NAMES[syscallName] ?? syscallName,
@@ -1811,6 +3288,7 @@ export class Process extends Host<Env> {
     return {
       requestId: record.requestId,
       runId: record.runId,
+      conversationId: record.conversationId,
       callId: record.toolCallId,
       toolName: record.toolName,
       syscall: record.syscall,
@@ -1836,9 +3314,15 @@ export class Process extends Host<Env> {
       return null;
     }
     this.store.appendMessage("user", next.message, {
+      conversationId: next.conversationId,
+      generation: next.generation,
       media: next.media ?? undefined,
     });
-    this.currentRun = { runId: next.runId, queued: false };
+    this.currentRun = {
+      runId: next.runId,
+      queued: false,
+      conversationId: next.conversationId,
+    };
     this.scheduleTick(next.runId);
     return next.runId;
   }
@@ -1848,6 +3332,9 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
   if (message.role === "assistant") {
     const meta = parseAssistantMessageMeta(message.toolCalls);
     return {
+      id: message.id,
+      conversation_id: message.conversationId,
+      generation: message.generation,
       role: message.role,
       content: message.content,
       tool_calls: meta.toolCalls,
@@ -1858,6 +3345,9 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
   }
 
   return {
+    id: message.id,
+    conversation_id: message.conversationId,
+    generation: message.generation,
     role: message.role,
     content: message.content,
     media: message.media ? parseStoredProcessMedia(message.media) : undefined,
@@ -1865,6 +3355,51 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
     tool_call_id: message.toolCallId ?? undefined,
     ts: message.createdAt,
   };
+}
+
+function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
+  if (!value || typeof value !== "object") {
+    throw new Error("invalid archived message record");
+  }
+  const record = value as Record<string, unknown>;
+  const role = parseArchivedMessageRole(record.role);
+  const content = typeof record.content === "string" ? record.content : "";
+  const toolCallId = typeof record.tool_call_id === "string" && record.tool_call_id.trim().length > 0
+    ? record.tool_call_id
+    : undefined;
+  const createdAt = typeof record.ts === "number" && Number.isFinite(record.ts)
+    ? record.ts
+    : undefined;
+  const id = typeof record.id === "number" && Number.isInteger(record.id) && record.id > 0
+    ? record.id
+    : undefined;
+
+  return {
+    id,
+    role,
+    content,
+    toolCalls: Array.isArray(record.tool_calls)
+      ? record.tool_calls as ToolCall[]
+      : undefined,
+    thinking: Array.isArray(record.thinking)
+      ? record.thinking as ThinkingContent[]
+      : undefined,
+    toolCallId,
+    media: record.media,
+    createdAt,
+  };
+}
+
+function parseArchivedMessageRole(value: unknown): MessageRole {
+  if (
+    value === "user" ||
+    value === "assistant" ||
+    value === "system" ||
+    value === "toolResult"
+  ) {
+    return value;
+  }
+  throw new Error(`invalid archived message role: ${String(value)}`);
 }
 
 function formatGenerationFailure(message: string): string {
@@ -1880,6 +3415,13 @@ async function gzip(input: string): Promise<ArrayBuffer> {
     .stream()
     .pipeThrough(new CompressionStream("gzip"));
   return new Response(stream).arrayBuffer();
+}
+
+async function gunzip(input: ArrayBuffer): Promise<string> {
+  const stream = new Blob([input])
+    .stream()
+    .pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).text();
 }
 
 function uint8ArrayToBase64(data: Uint8Array): string {

@@ -12,6 +12,10 @@ import type {
   ProcListArgs,
   ProcListResult,
   ProcListEntry,
+  ProcIpcCallArgs,
+  ProcIpcCallResult,
+  ProcIpcSendArgs,
+  ProcIpcSendResult,
   ProcProfileListArgs,
   ProcProfileListEntry,
   ProcProfileListResult,
@@ -102,27 +106,11 @@ const SYSTEM_PROFILE_ENTRIES: ProcProfileListEntry[] = [
     background: true,
     spawnMode: "new",
   },
-  {
-    id: "archivist",
-    kind: "system",
-    displayName: "Archivist",
-    description: "Background compaction and continuity worker.",
-    interactive: false,
-    startable: false,
-    background: true,
-    spawnMode: "new",
-  },
-  {
-    id: "curator",
-    kind: "system",
-    displayName: "Curator",
-    description: "Background inbox review and promotion worker.",
-    interactive: false,
-    startable: false,
-    background: true,
-    spawnMode: "new",
-  },
 ];
+
+const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
+const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
+const MAX_IPC_CALL_TIMEOUT_MS = 10 * 60 * 1000;
 
 export function handleProcList(
   args: ProcListArgs,
@@ -337,6 +325,127 @@ export async function handleProcSpawn(
   };
 }
 
+export async function handleProcIpcSend(
+  args: ProcIpcSendArgs,
+  ctx: KernelContext,
+): Promise<ProcIpcSendResult> {
+  const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.send");
+  if (!resolved.ok) return resolved;
+
+  if (resolved.target.workspaceId) {
+    ctx.workspaces.touch(resolved.target.workspaceId);
+  }
+
+  const response = await sendFrameToProcess(resolved.args.pid, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.ipc.deliver",
+    args: {
+      sourcePid: resolved.sourcePid,
+      source: ctx.identity!.process,
+      conversationId: resolved.args.conversationId,
+      message: resolved.args.message,
+      metadata: resolved.args.metadata,
+      sentAt: Date.now(),
+    },
+  });
+
+  if (response && response.type === "res") {
+    const res = response as ResponseFrame;
+    if (res.ok) {
+      return (res as { data: ProcIpcSendResult }).data;
+    }
+    return { ok: false, error: (res as { error: { message: string } }).error.message };
+  }
+
+  return { ok: false, error: "proc.ipc.deliver did not return a response" };
+}
+
+export async function handleProcIpcCall(
+  args: ProcIpcCallArgs,
+  ctx: KernelContext,
+): Promise<ProcIpcCallResult> {
+  const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.call");
+  if (!resolved.ok) return resolved;
+  if (!ctx.ipcCalls) {
+    return { ok: false, error: "proc.ipc.call store is not configured" };
+  }
+  if (!ctx.scheduleIpcCallTimeout) {
+    return { ok: false, error: "proc.ipc.call scheduler is not configured" };
+  }
+
+  const timeoutMs = clampIpcCallTimeout(args.timeoutMs);
+  const deadlineAt = Date.now() + timeoutMs;
+  const callId = crypto.randomUUID();
+
+  ctx.ipcCalls.create({
+    callId,
+    uid: resolved.source.uid,
+    sourcePid: resolved.sourcePid,
+    targetPid: resolved.args.pid,
+    deadlineAt,
+  });
+
+  if (resolved.target.workspaceId) {
+    ctx.workspaces.touch(resolved.target.workspaceId);
+  }
+
+  let response: ResponseFrame | null;
+  try {
+    response = await sendFrameToProcess(resolved.args.pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.ipc.deliver",
+      args: {
+        sourcePid: resolved.sourcePid,
+        source: ctx.identity!.process,
+        conversationId: resolved.args.conversationId,
+        message: resolved.args.message,
+        metadata: resolved.args.metadata,
+        sentAt: Date.now(),
+        call: {
+          callId,
+          replyToPid: resolved.sourcePid,
+          deadlineAt,
+        },
+      },
+    }) as ResponseFrame | null;
+  } catch (error) {
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: formatError(error) };
+  }
+
+  if (!response || response.type !== "res") {
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: "proc.ipc.deliver did not return a response" };
+  }
+  if (!response.ok) {
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: response.error.message };
+  }
+
+  const delivered = response.data as ProcIpcSendResult;
+  if (!delivered.ok) {
+    ctx.ipcCalls.remove(callId);
+    return delivered;
+  }
+
+  ctx.ipcCalls.attachRun(callId, delivered.runId);
+  await ctx.scheduleIpcCallTimeout(callId, timeoutMs);
+
+  return {
+    ok: true,
+    status: "started",
+    callId,
+    pid: delivered.pid,
+    sourcePid: resolved.sourcePid,
+    conversationId: delivered.conversationId,
+    runId: delivered.runId,
+    deadlineAt,
+    ...(delivered.queued ? { queued: true } : {}),
+  };
+}
+
 /**
  * Forward a proc.* request to the target Process DO.
  *
@@ -375,6 +484,129 @@ export async function forwardToProcess(
   }
 
   return { ok: true, status: "delivered" };
+}
+
+type NormalizedIpcSendArgs =
+  | {
+      ok: true;
+      pid: string;
+      conversationId?: string;
+      message: string;
+      metadata?: Record<string, unknown>;
+    }
+  | { ok: false; error: string };
+
+type ResolvedSameOwnerIpc =
+  | {
+      ok: true;
+      sourcePid: string;
+      source: { uid: number };
+      target: { uid: number; workspaceId: string | null };
+      args: Extract<NormalizedIpcSendArgs, { ok: true }>;
+    }
+  | { ok: false; error: string };
+
+function resolveSameOwnerIpc(
+  args: ProcIpcSendArgs,
+  ctx: KernelContext,
+  syscall: "proc.ipc.send" | "proc.ipc.call",
+): ResolvedSameOwnerIpc {
+  const sourcePid = ctx.processId;
+  if (!sourcePid) {
+    return { ok: false, error: `${syscall} requires a process caller` };
+  }
+
+  const validated = normalizeIpcSendArgs(args, syscall);
+  if (!validated.ok) {
+    return validated;
+  }
+
+  const source = ctx.procs.get(sourcePid);
+  if (!source) {
+    return { ok: false, error: `Source process not found: ${sourcePid}` };
+  }
+
+  const target = ctx.procs.get(validated.pid);
+  if (!target) {
+    return { ok: false, error: `Process not found: ${validated.pid}` };
+  }
+
+  if (source.uid !== ctx.identity!.process.uid) {
+    return { ok: false, error: `Source process identity mismatch: ${sourcePid}` };
+  }
+
+  if (target.uid !== source.uid) {
+    return { ok: false, error: "Permission denied: target process belongs to another user" };
+  }
+
+  return {
+    ok: true,
+    sourcePid,
+    source,
+    target,
+    args: validated,
+  };
+}
+
+function normalizeIpcSendArgs(
+  args: ProcIpcSendArgs,
+  syscall: "proc.ipc.send" | "proc.ipc.call",
+): NormalizedIpcSendArgs {
+  if (!args || typeof args !== "object") {
+    return { ok: false, error: `${syscall} requires arguments` };
+  }
+  const record = args as Record<string, unknown>;
+  const pid = normalizeRequiredString(record.pid);
+  if (!pid) {
+    return { ok: false, error: `${syscall} requires pid` };
+  }
+
+  const message = normalizeRequiredString(record.message);
+  if (!message) {
+    return { ok: false, error: `${syscall} requires message` };
+  }
+
+  const conversationId = record.conversationId === undefined
+    ? undefined
+    : normalizeRequiredString(record.conversationId);
+  if (record.conversationId !== undefined && !conversationId) {
+    return { ok: false, error: `${syscall} conversationId must be a non-empty string` };
+  }
+
+  if (
+    record.metadata !== undefined
+    && (!record.metadata || typeof record.metadata !== "object" || Array.isArray(record.metadata))
+  ) {
+    return { ok: false, error: `${syscall} metadata must be an object` };
+  }
+
+  return {
+    ok: true,
+    pid,
+    message,
+    ...(conversationId ? { conversationId } : {}),
+    ...(record.metadata ? { metadata: record.metadata as Record<string, unknown> } : {}),
+  };
+}
+
+function clampIpcCallTimeout(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_IPC_CALL_TIMEOUT_MS;
+  }
+  return Math.max(
+    MIN_IPC_CALL_TIMEOUT_MS,
+    Math.min(MAX_IPC_CALL_TIMEOUT_MS, Math.trunc(value)),
+  );
+}
+
+function normalizeRequiredString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 type SpawnIdentityOutcome =

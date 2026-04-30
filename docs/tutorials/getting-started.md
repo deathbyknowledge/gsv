@@ -46,7 +46,7 @@ Open that URL in your browser.
 The first browser visit opens setup mode. Choose the setup path that matches
 what you need:
 
-- **Quick start** creates the first Desktop user with sensible defaults.
+- **Quick start** creates the first Desktop user, admin access, and system timezone with sensible defaults.
 - **Customize** lets you set the AI provider, model, API key, and initial device.
 - **Advanced** exposes the same controls plus lower-level system source options.
 

@@ -81,6 +81,7 @@ export type SysSetupArgs = {
     model?: string;
     apiKey?: string;
   };
+  timezone?: string;
   node?: {
     deviceId: string;
     label?: string;
@@ -91,7 +92,7 @@ export type SysSetupArgs = {
 export type OnboardingLane = "quick" | "customize" | "advanced";
 export type OnboardingMode = "manual" | "guided";
 export type OnboardingStage = "welcome" | "details" | "review";
-export type OnboardingDetailStep = "account" | "admin" | "ai" | "source" | "device";
+export type OnboardingDetailStep = "account" | "admin" | "system" | "ai" | "source" | "device";
 
 export type OnboardingDraft = {
   lane: OnboardingLane;
@@ -106,6 +107,9 @@ export type OnboardingDraft = {
   admin: {
     mode: "same" | "custom";
     password: string;
+  };
+  system: {
+    timezone: string;
   };
   ai: {
     enabled: boolean;
@@ -136,6 +140,7 @@ export type OnboardingAssistPatch = {
   path:
     | "account.username"
     | "admin.mode"
+    | "system.timezone"
     | "ai.enabled"
     | "ai.provider"
     | "ai.model"

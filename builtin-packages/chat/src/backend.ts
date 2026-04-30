@@ -1,10 +1,15 @@
 import { PackageBackendEntrypoint, type PackageSignalContext } from "@gsv/package/backend";
 import {
   abortRun,
+  compactConversation,
   decideHil,
+  forkConversation,
   getHistory,
+  listConversations,
+  listConversationSegments,
   listProfiles,
   listWorkspaces,
+  readConversationSegment,
   sendMessage,
   spawnProcess,
   unwatchProcessSignals,
@@ -30,6 +35,26 @@ export default class ChatBackend extends PackageBackendEntrypoint {
 
   async getHistory(args: unknown): Promise<unknown> {
     return getHistory(this.kernel, args);
+  }
+
+  async listConversations(args: unknown): Promise<unknown> {
+    return listConversations(this.kernel, args);
+  }
+
+  async compactConversation(args: unknown): Promise<unknown> {
+    return compactConversation(this.kernel, args);
+  }
+
+  async listConversationSegments(args: unknown): Promise<unknown> {
+    return listConversationSegments(this.kernel, args);
+  }
+
+  async readConversationSegment(args: unknown): Promise<unknown> {
+    return readConversationSegment(this.kernel, args);
+  }
+
+  async forkConversation(args: unknown): Promise<unknown> {
+    return forkConversation(this.kernel, args);
   }
 
   async abortRun(args: unknown): Promise<unknown> {

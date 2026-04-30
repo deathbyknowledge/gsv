@@ -1,58 +1,89 @@
-export type CronSchedule =
-  | { kind: "every"; everyMs: number; anchorMs?: number }
+import type { AiContextProfile } from "./ai";
+import type {
+  ProcSpawnAssignment,
+  ProcSpawnMountSpec,
+  ProcWorkspaceSpec,
+} from "./proc";
+
+export type ScheduleExpression =
   | { kind: "at"; atMs: number }
-  | { kind: "cron"; expr: string; tz?: string };
+  | { kind: "after"; afterMs: number }
+  | { kind: "every"; everyMs: number; anchorMs?: number }
+  | { kind: "cron"; expr: string; timezone: string };
 
-export type CronMode = {
-  sessionKey?: string;
-  message?: string;
-  model?: string;
-  thinking?: string;
-  timeoutSeconds?: number;
-  deliver?: boolean;
+export type ScheduleTarget =
+  | {
+      kind: "process.spawn";
+      profile?: AiContextProfile;
+      label?: string;
+      prompt: string;
+      parentPid?: string;
+      workspace?: ProcWorkspaceSpec;
+      mounts?: ProcSpawnMountSpec[];
+      assignment?: ProcSpawnAssignment;
+    }
+  | {
+      kind: "process.event";
+      pid: string;
+      conversationId?: string;
+      message: string;
+      data?: Record<string, unknown>;
+    };
+
+export type SchedulePrincipal = {
+  kind: "user" | "process" | "service";
+  uid: number;
+  username: string;
+  pid?: string;
   channel?: string;
-  to?: string;
 };
 
-export type CronJobState = {
-  nextRunAtMs?: number;
-  runningAtMs?: number;
-  lastRunAtMs?: number;
-  lastStatus?: "ok" | "error" | "skipped";
-  lastError?: string;
-  lastDurationMs?: number;
+export type ScheduleRunState = {
+  nextRunAtMs: number | null;
+  runningAtMs: number | null;
+  lastRunAtMs: number | null;
+  lastStatus: "ok" | "error" | "skipped" | null;
+  lastError: string | null;
+  lastDurationMs: number | null;
+  runCount: number;
 };
 
-export type CronJob = {
+export type ScheduleRecord = {
   id: string;
+  ownerUid: number;
+  creator: SchedulePrincipal;
+  runAs: SchedulePrincipal;
   name: string;
   description?: string;
   enabled: boolean;
-  deleteAfterRun?: boolean;
+  expression: ScheduleExpression;
+  target: ScheduleTarget;
+  overlapPolicy: "skip";
   createdAtMs: number;
   updatedAtMs: number;
-  schedule: CronSchedule;
-  spec: CronMode;
-  state: CronJobState;
+  state: ScheduleRunState;
 };
 
-export type CronJobPatch = {
-  name?: string;
-  description?: string;
-  enabled?: boolean;
-  deleteAfterRun?: boolean;
-  schedule?: CronSchedule;
-  spec?: Partial<CronMode>;
+export type ScheduleRunHistoryEntry = {
+  id: string;
+  scheduleId: string;
+  scheduledAtMs: number | null;
+  startedAtMs: number;
+  finishedAtMs: number;
+  status: "ok" | "error" | "skipped";
+  error?: string;
+  result?: unknown;
 };
 
 export type SchedulerListArgs = {
+  ownerUid?: number;
   includeDisabled?: boolean;
   limit?: number;
   offset?: number;
 };
 
 export type SchedulerListResult = {
-  jobs: CronJob[];
+  schedules: ScheduleRecord[];
   count: number;
 };
 
@@ -60,21 +91,52 @@ export type SchedulerAddArgs = {
   name: string;
   description?: string;
   enabled?: boolean;
-  deleteAfterRun?: boolean;
-  schedule: CronSchedule;
-  spec: CronMode;
+  expression: ScheduleExpression;
+  target: ScheduleTarget;
+};
+
+export type SchedulerAddResult = {
+  schedule: ScheduleRecord;
+};
+
+export type SchedulerUpdateArgs = {
+  id: string;
+  patch: {
+    name?: string;
+    description?: string | null;
+    enabled?: boolean;
+    expression?: ScheduleExpression;
+    target?: ScheduleTarget;
+  };
+};
+
+export type SchedulerUpdateResult = {
+  schedule: ScheduleRecord;
+};
+
+export type SchedulerRemoveArgs = {
+  id: string;
+};
+
+export type SchedulerRemoveResult = {
+  removed: boolean;
+};
+
+export type SchedulerRunArgs = {
+  id?: string;
+  mode?: "due" | "force";
 };
 
 export type SchedulerRunResult = {
   ran: number;
-  results: CronRunResult[];
+  results: ScheduleRunResult[];
 };
 
-export type CronRunResult = {
-  jobId: string;
+export type ScheduleRunResult = {
+  scheduleId: string;
   status: "ok" | "error" | "skipped";
   error?: string;
   summary?: string;
   durationMs: number;
-  nextRunAtMs?: number;
+  nextRunAtMs?: number | null;
 };

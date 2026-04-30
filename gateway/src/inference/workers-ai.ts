@@ -74,6 +74,32 @@ type DynamicWorkersAiBinding = Ai<Record<string, {
   postProcessedOutputs: WorkersAiRunOutput;
 }>>;
 
+type WorkersAiCatalogProperty = {
+  property_id: string;
+  value: string;
+};
+
+type WorkersAiCatalogModel = {
+  id: string;
+  name?: string;
+  description?: string;
+  properties?: WorkersAiCatalogProperty[];
+};
+
+type WorkersAiCatalogBinding = {
+  models(params?: {
+    author?: string;
+    hide_experimental?: boolean;
+    page?: number;
+    per_page?: number;
+    search?: string;
+    source?: number;
+    task?: string;
+  }): Promise<WorkersAiCatalogModel[]>;
+};
+
+const workersAiContextWindowCache = new Map<string, Promise<number | null>>();
+
 export type WorkersAiRequest = {
   modelName: string;
   context: Context;
@@ -89,6 +115,30 @@ type WorkersAiRunOptions = AiOptions & {
 export function isWorkersAiProvider(provider: string): boolean {
   const normalized = provider.trim().toLowerCase();
   return normalized === WORKERS_AI_PROVIDER || normalized === WORKERS_AI_PROVIDER_ALIAS;
+}
+
+export function extractWorkersAiContextWindow(model: WorkersAiCatalogModel): number | null {
+  for (const property of model.properties ?? []) {
+    if (!isContextWindowPropertyId(property.property_id)) continue;
+    const tokens = parseTokenQuantity(property.value);
+    if (tokens !== null) {
+      return tokens;
+    }
+  }
+
+  return parseContextWindowDescription(model.description ?? "");
+}
+
+export async function resolveWorkersAiModelContextWindow(modelName: string): Promise<number | null> {
+  const cacheKey = normalizeWorkersAiModelName(modelName);
+  const cached = workersAiContextWindowCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const lookup = lookupWorkersAiModelContextWindow(modelName);
+  workersAiContextWindowCache.set(cacheKey, lookup);
+  return lookup;
 }
 
 export async function completeWithWorkersAi(
@@ -117,6 +167,110 @@ export async function completeWithWorkersAi(
 
     throw error;
   }
+}
+
+async function lookupWorkersAiModelContextWindow(modelName: string): Promise<number | null> {
+  const ai = env.AI as unknown as WorkersAiCatalogBinding | undefined;
+  if (!ai || typeof ai.models !== "function") {
+    return null;
+  }
+
+  try {
+    for (const search of workersAiModelSearchTerms(modelName)) {
+      const models = await ai.models({
+        search,
+        per_page: 50,
+      });
+      const exact = models.find((candidate) => isWorkersAiModelMatch(candidate, modelName));
+      const contextWindow = exact ? extractWorkersAiContextWindow(exact) : null;
+      if (contextWindow !== null) {
+        return contextWindow;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function workersAiModelSearchTerms(modelName: string): string[] {
+  const lastSegment = modelName.split("/").filter(Boolean).at(-1);
+  return Array.from(new Set([
+    modelName,
+    lastSegment ?? modelName,
+  ].map((term) => term.trim()).filter((term) => term.length > 0)));
+}
+
+function isWorkersAiModelMatch(model: WorkersAiCatalogModel, modelName: string): boolean {
+  const requested = normalizeWorkersAiModelName(modelName);
+  return [
+    model.id,
+    model.name,
+  ].some((candidate) => candidate !== undefined && normalizeWorkersAiModelName(candidate) === requested);
+}
+
+function normalizeWorkersAiModelName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^@cf\//, "");
+}
+
+function isContextWindowPropertyId(propertyId: string): boolean {
+  const normalized = propertyId.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return (
+    normalized.includes("context") &&
+    (normalized.includes("window") ||
+      normalized.includes("token") ||
+      normalized.includes("length"))
+  ) || (
+    normalized.includes("max") &&
+    normalized.includes("input") &&
+    normalized.includes("token")
+  );
+}
+
+function parseContextWindowDescription(description: string): number | null {
+  const normalized = description.replace(/,/g, "");
+  const patterns = [
+    /(\d+(?:\.\d+)?)\s*k\s*(?:token\s*)?context window/i,
+    /(\d+(?:\.\d+)?)\s*(?:token|tokens)\s*context window/i,
+    /context window[^.]{0,80}?(\d+(?:\.\d+)?)\s*k/i,
+    /up to\s+(\d+(?:\.\d+)?)\s*k\s*tokens/i,
+    /up to\s+(\d+(?:\.\d+)?)\s*(?:token|tokens)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const tokens = match ? parseTokenQuantity(match[0]) : null;
+    if (tokens !== null) {
+      return tokens;
+    }
+  }
+
+  return null;
+}
+
+function parseTokenQuantity(value: string): number | null {
+  const normalized = value.toLowerCase().replace(/,/g, "");
+  const match = normalized.match(/(\d+(?:\.\d+)?)\s*([km])?\b/);
+  if (!match) {
+    return null;
+  }
+
+  const amount = Number.parseFloat(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  const multiplier = match[2] === "m"
+    ? 1_000_000
+    : match[2] === "k"
+      ? 1_000
+      : 1;
+  const tokens = Math.round(amount * multiplier);
+  return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : null;
 }
 
 export function buildWorkersAiInput(

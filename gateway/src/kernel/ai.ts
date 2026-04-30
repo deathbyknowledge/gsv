@@ -7,11 +7,11 @@
  * Config resolution order:
  *   /sys/config/ai/* (system defaults) → /sys/users/{uid}/ai/* (user overrides)
  *
- * System config is seeded from R2 dotfiles (/etc/gsv/config, ~/.config/gsv/config)
- * on first connect (reconciliation), then runtime reads are pure SQLite.
+ * Runtime reads are explicit SQLite overrides over code defaults.
  */
 
 import type { KernelContext } from "./context";
+import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
 import type {
   AiToolsResult,
   AiToolsDevice,
@@ -36,6 +36,10 @@ import { FS_WRITE_DEFINITION as FS_DELETE_DEFINITION } from "../syscalls/delete"
 import { FS_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
+import {
+  isWorkersAiProvider,
+  resolveWorkersAiModelContextWindow,
+} from "../inference/workers-ai";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -122,6 +126,22 @@ export async function handleAiConfig(
     "8192",
     10,
   );
+  const contextWindowOverride = parsePositiveInt(
+    config.get(`users/${uid}/ai/context_window_tokens`),
+  );
+  const modelContextWindow = await resolveModelContextWindow(provider, model);
+  const configuredContextWindow = parsePositiveInt(
+    config.get("config/ai/context_window_tokens"),
+  );
+  const contextWindowTokens =
+    contextWindowOverride ?? modelContextWindow ?? configuredContextWindow ?? null;
+  const contextWindowSource = contextWindowOverride !== null
+    ? "config"
+    : modelContextWindow !== null
+      ? "model"
+      : configuredContextWindow !== null
+        ? "config"
+        : "unknown";
 
   let profile = requestedProfile;
   let profileContextFiles: Array<{ name: string; text: string }> = [];
@@ -170,8 +190,42 @@ export async function handleAiConfig(
     apiKey,
     reasoning,
     maxTokens,
+    contextWindowTokens,
+    contextWindowSource,
     profileContextFiles,
     profileApprovalPolicy,
     maxContextBytes,
   };
+}
+
+function parsePositiveInt(value: string | null | undefined): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+async function resolveModelContextWindow(provider: string, model: string): Promise<number | null> {
+  if (isWorkersAiProvider(provider)) {
+    const workersAiContextWindow = await resolveWorkersAiModelContextWindow(model);
+    if (workersAiContextWindow !== null) {
+      return workersAiContextWindow;
+    }
+  }
+
+  if (!isKnownProvider(provider)) {
+    return null;
+  }
+  const resolved = getModels(provider).find((candidate) => candidate.id === model);
+  return Number.isSafeInteger(resolved?.contextWindow) && resolved!.contextWindow > 0
+    ? resolved!.contextWindow
+    : null;
+}
+
+function isKnownProvider(provider: string): provider is KnownProvider {
+  return getProviders().includes(provider as KnownProvider);
 }

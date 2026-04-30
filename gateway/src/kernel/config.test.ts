@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { ConfigStore } from "./config";
+import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
 
 type Row = Record<string, unknown>;
 
@@ -29,14 +29,6 @@ function createMockSql() {
       } else {
         table.push({ key, value });
       }
-      return { toArray: () => [] as T[] };
-    }
-
-    if (q.startsWith("INSERT OR IGNORE INTO config_kv")) {
-      const table = getTable("config_kv");
-      const [key, value] = bindings as [string, string];
-      const exists = table.some((row) => row.key === key);
-      if (!exists) table.push({ key, value });
       return { toArray: () => [] as T[] };
     }
 
@@ -99,29 +91,49 @@ describe("ConfigStore", () => {
     store.set("users/0/ai/model", "gpt-4.1");
   });
 
-  it("list(\"\") returns all keys", () => {
+  it("get overlays defaults unless an explicit value is set", () => {
+    expect(store.get("config/ai/api_key")).toBe("");
+    expect(store.getExplicit("config/ai/api_key")).toBeNull();
+    expect(store.get("config/ai/provider")).toBe("anthropic");
+    expect(store.getExplicit("config/ai/provider")).toBe("anthropic");
+  });
+
+  it("delete removes explicit values and reveals defaults", () => {
+    expect(store.delete("config/ai/provider")).toBe(true);
+    expect(store.getExplicit("config/ai/provider")).toBeNull();
+    expect(store.get("config/ai/provider")).toBe("workers-ai");
+    expect(store.delete("config/ai/provider")).toBe(false);
+  });
+
+  it("listExplicit(\"\") returns only stored override keys", () => {
     const all = store.list("");
-    expect(all.length).toBe(3);
-    expect(all.map((entry) => entry.key)).toEqual([
+    expect(store.listExplicit("").map((entry) => entry.key)).toEqual([
       "config/ai/model",
       "config/ai/provider",
       "users/0/ai/model",
     ]);
+    expect(all.length).toBeGreaterThan(3);
+    expect(new Set(all.map((entry) => entry.key)).size).toBe(all.length);
   });
 
-  it("list(prefix) returns only matching subtree", () => {
+  it("list(prefix) merges defaults and explicit overrides", () => {
     const ai = store.list("config/ai");
-    expect(ai.map((entry) => entry.key)).toEqual([
-      "config/ai/model",
-      "config/ai/provider",
-    ]);
+    const values = new Map(ai.map((entry) => [entry.key, entry.value]));
+    expect(values.get("config/ai/api_key")).toBe("");
+    expect(values.get("config/ai/provider")).toBe("anthropic");
+    expect(values.get("config/ai/model")).toBe("claude-sonnet-4-20250514");
+    expect(values.get("config/ai/profile/task/context.d/05-gsv.md")).toContain("[Process Event]:");
   });
 
   it("list(prefix with trailing slash) behaves the same", () => {
-    const ai = store.list("config/ai/");
-    expect(ai.map((entry) => entry.key)).toEqual([
-      "config/ai/model",
-      "config/ai/provider",
-    ]);
+    expect(store.list("config/ai/")).toEqual(store.list("config/ai"));
+  });
+
+  it("defines common process context for system profiles", () => {
+    for (const profile of ["init", "task", "review", "cron", "mcp", "app"]) {
+      const context = SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/05-gsv.md`];
+      expect(context).toContain("GSV is a Linux-shaped distributed AI operating environment.");
+      expect(context).toContain("[Process Event]:");
+    }
   });
 });

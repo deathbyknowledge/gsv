@@ -39,6 +39,25 @@ matching.
 Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
+Inside the gateway shell, `proc` is the process IPC userland command and
+`sched` manages Kernel schedules:
+
+```bash
+proc self
+proc list
+proc send <pid> [--conversation id] [--metadata-json json] <message>
+proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
+sched list [--all]
+sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) <prompt/message>
+sched remove <id>
+sched run <id> [--force]
+```
+
+`proc send` is asynchronous same-owner process mail. `proc call` is bounded:
+the source process receives either `ipc.reply` or `ipc.timeout` in its default
+conversation. `proc self` prints the current GSV process id; the shell also
+exports it as `GSV_PID`.
+
 ## Process Commands
 
 ```bash

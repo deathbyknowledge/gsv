@@ -43,18 +43,33 @@ import {
   handleRepoRefs,
 } from "../../kernel/repo";
 import {
+  handleProcIpcCall,
+  handleProcIpcSend,
+} from "../../kernel/proc-handlers";
+import {
+  handleSchedulerAdd,
+  handleSchedulerList,
+  handleSchedulerRemove,
+  handleSchedulerRun,
+  handleSchedulerUpdate,
+} from "../../kernel/scheduler";
+import {
   packageRouteBase,
   visiblePackageScopesForActor,
   type InstalledPackageRecord,
   type PackageEntrypoint,
 } from "../../kernel/packages";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
+import type { SyscallName } from "../../syscalls";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { Frame } from "../../protocol/frames";
 import { renderManualPage } from "./man-pages";
 import { buildNotifyCommands } from "./notify-shell";
 import { sendFrameToProcess } from "../../shared/utils";
 import { CODEMODE_RUN } from "../../syscalls/constants";
 import type { CodeModeRunResult } from "../../syscalls/codemode";
+import type { SchedulerAddArgs, ScheduleExpression, ScheduleTarget } from "../../syscalls/scheduler";
+import type { AiContextProfile } from "../../syscalls/ai";
 
 export async function handleShellExec(
   args: ShellExecArgs,
@@ -187,6 +202,7 @@ function createBash(ctx: KernelContext, identity: ProcessIdentity, cwd: string):
       TERM: "xterm-256color",
       LANG: "en_US.UTF-8",
       UID: String(identity.uid),
+      GSV_PID: ctx.processId ?? "",
       HOSTNAME: serverName,
       GSV_VERSION: serverVersion,
     },
@@ -959,6 +975,8 @@ function buildCustomCommands(
   const stat = buildStatCommand(fs, identity, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx);
   const pkg = buildPkgCommand(ctx);
+  const proc = buildProcCommand(ctx);
+  const sched = buildSchedCommand(ctx);
   const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
 
@@ -974,6 +992,8 @@ function buildCustomCommands(
     ls,
     stat,
     codemode,
+    proc,
+    sched,
     pkg,
     ...notifyCommands,
     ...packageCommands,
@@ -984,6 +1004,8 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
   const commands = [];
   const reserved = new Set([
     "pkg",
+    "proc",
+    "sched",
     "mem",
     "notify",
     "whoami",
@@ -1071,6 +1093,944 @@ function buildPkgCommand(ctx: KernelContext) {
       };
     }
   });
+}
+
+function buildProcCommand(ctx: KernelContext) {
+  return defineCommand("proc", async (args): Promise<ExecResult> => {
+    try {
+      return await runProcCommand(args, ctx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        stdout: "",
+        stderr: `proc: ${message}\n`,
+        exitCode: 1,
+      };
+    }
+  });
+}
+
+function buildSchedCommand(ctx: KernelContext) {
+  return defineCommand("sched", async (args): Promise<ExecResult> => {
+    try {
+      return await runSchedCommand(args, ctx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        stdout: "",
+        stderr: `sched: ${message}\n`,
+        exitCode: 1,
+      };
+    }
+  });
+}
+
+async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecResult> {
+  const [subcommand = "help", ...rest] = args;
+
+  switch (subcommand) {
+    case "help":
+    case "--help":
+    case "-h":
+      return { stdout: procUsage(), stderr: "", exitCode: 0 };
+    case "self": {
+      if (!ctx.processId) {
+        return { stdout: "", stderr: "proc self: no current process\n", exitCode: 1 };
+      }
+      return { stdout: `${ctx.processId}\n`, stderr: "", exitCode: 0 };
+    }
+    case "list": {
+      requireCommandCapability(ctx, "proc.list");
+      const list = ctx.procs.list(ctx.identity!.process.uid);
+      const lines = ["PID\tSTATE\tPROFILE\tLABEL"];
+      for (const proc of list) {
+        lines.push(`${proc.processId}\t${proc.state}\t${proc.profile}\t${proc.label ?? ""}`);
+      }
+      return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
+    }
+    case "segments": {
+      requireCommandCapability(ctx, "proc.conversation.segments");
+      const parsed = parseProcSegmentsCommand(rest, ctx);
+      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.conversation.segments", {
+        pid: parsed.pid,
+        conversationId: parsed.conversationId,
+      });
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc segments: ${result.error}\n`, exitCode: 1 };
+      }
+      const lines = ["ID\tGEN\tFROM\tTO\tSUMMARY\tARCHIVE"];
+      for (const segment of result.segments) {
+        lines.push([
+          segment.id,
+          String(segment.generation),
+          String(segment.fromMessageId),
+          String(segment.toMessageId),
+          segment.summaryMessageId === null ? "-" : String(segment.summaryMessageId),
+          segment.archivePath,
+        ].join("\t"));
+      }
+      return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
+    }
+    case "policy": {
+      const parsed = parseProcPolicyCommand(rest, ctx);
+      const call = parsed.set
+        ? "proc.conversation.policy.set"
+        : "proc.conversation.policy.get";
+      requireCommandCapability(ctx, call);
+      const result = await runProcConversationSyscall(ctx, parsed.pid, call, parsed);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc policy: ${result.error}\n`, exitCode: 1 };
+      }
+      const policy = result.policy;
+      return {
+        stdout: [
+          `conversation=${policy.conversationId}`,
+          `overflow=${policy.overflow}`,
+          `compact_at=${policy.compactAtPressure}`,
+          `keep_last=${policy.keepLast}`,
+        ].join(" ") + "\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "segment": {
+      requireCommandCapability(ctx, "proc.conversation.segment.read");
+      const parsed = parseProcSegmentReadCommand(rest, ctx);
+      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.conversation.segment.read", parsed);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc segment: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: formatProcSegmentReadResult(result, parsed.json),
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "compact": {
+      requireCommandCapability(ctx, "proc.conversation.compact");
+      const parsed = parseProcCompactCommand(rest, ctx);
+      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.conversation.compact", parsed);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc compact: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: [
+          `segment_id=${result.segment.id}`,
+          `archived=${result.archivedMessages}`,
+          `archive=${result.archivedTo}`,
+          `summary_message_id=${result.summaryMessageId}`,
+        ].join(" ") + "\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "fork": {
+      requireCommandCapability(ctx, "proc.conversation.fork");
+      const parsed = parseProcForkCommand(rest, ctx);
+      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.conversation.fork", parsed);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc fork: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: [
+          `conversation_id=${result.targetConversation.id}`,
+          `restored=${result.restoredMessages}`,
+          `segment_id=${result.segment.id}`,
+          `included_live_suffix=${result.includedLiveSuffix}`,
+        ].join(" ") + "\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "send": {
+      requireCommandCapability(ctx, "proc.ipc.send");
+      const parsed = parseProcMessageCommand(rest, false);
+      const result = await handleProcIpcSend(parsed, ctx);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc send: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: `accepted run_id=${result.runId} queued=${result.queued === true}\n`,
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "call": {
+      requireCommandCapability(ctx, "proc.ipc.call");
+      const parsed = parseProcMessageCommand(rest, true);
+      const result = await handleProcIpcCall(parsed, ctx);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc call: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: [
+          `call_id=${result.callId}`,
+          `run_id=${result.runId}`,
+          `queued=${result.queued === true}`,
+          `deadline=${new Date(result.deadlineAt).toISOString()}`,
+        ].join(" ") + "\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    default:
+      return { stdout: "", stderr: `proc: unknown command: ${subcommand}\n${procUsage()}`, exitCode: 1 };
+  }
+}
+
+async function runProcConversationSyscall(
+  ctx: KernelContext,
+  pid: string,
+  call: SyscallName,
+  args: Record<string, unknown>,
+): Promise<any> {
+  const identity = ctx.identity!;
+  const proc = ctx.procs.get(pid);
+  if (!proc) {
+    throw new Error(`Process not found: ${pid}`);
+  }
+  if (proc.uid !== identity.process.uid && identity.process.uid !== 0) {
+    throw new Error(`Permission denied: cannot access process ${pid}`);
+  }
+
+  const frame = {
+    type: "req",
+    id: crypto.randomUUID(),
+    call,
+    args,
+  } as Frame;
+  const response = await sendFrameToProcess(pid, frame);
+  if (!response || response.type !== "res") {
+    throw new Error("invalid process response");
+  }
+  if (!response.ok) {
+    throw new Error(response.error.message);
+  }
+  return response.data;
+}
+
+function parseProcSegmentsCommand(args: string[], ctx: KernelContext): {
+  pid: string;
+  conversationId?: string;
+} {
+  const parsed = parseProcConversationOptions(args, ctx);
+  if (parsed.positional.length > 0) {
+    throw new Error(`unexpected argument: ${parsed.positional[0]}`);
+  }
+  return {
+    pid: parsed.pid,
+    ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
+  };
+}
+
+function parseProcPolicyCommand(args: string[], ctx: KernelContext): {
+  pid: string;
+  conversationId?: string;
+  overflow?: string;
+  compactAtPressure?: number;
+  keepLast?: number;
+  set: boolean;
+} {
+  let pid: string | undefined;
+  let conversationId: string | undefined;
+  let overflow: string | undefined;
+  let compactAtPressure: number | undefined;
+  let keepLast: number | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--pid") {
+      index += 1;
+      pid = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--overflow") {
+      index += 1;
+      overflow = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--compact-at") {
+      index += 1;
+      compactAtPressure = parsePressureShellNumber(requireProcOptionValue(args[index], current), current);
+      continue;
+    }
+    if (current === "--keep-last") {
+      index += 1;
+      keepLast = parseNonNegativeShellInteger(requireProcOptionValue(args[index], current), current);
+      continue;
+    }
+    throw new Error(`unexpected argument: ${current}`);
+  }
+
+  return {
+    pid: pid ?? requireCurrentProcessId(ctx),
+    ...(conversationId ? { conversationId } : {}),
+    ...(overflow ? { overflow } : {}),
+    ...(compactAtPressure !== undefined ? { compactAtPressure } : {}),
+    ...(keepLast !== undefined ? { keepLast } : {}),
+    set: overflow !== undefined || compactAtPressure !== undefined || keepLast !== undefined,
+  };
+}
+
+function parseProcSegmentReadCommand(args: string[], ctx: KernelContext): {
+  pid: string;
+  conversationId?: string;
+  segmentId: string;
+  limit?: number;
+  offset?: number;
+  json?: boolean;
+} {
+  let pid: string | undefined;
+  let conversationId: string | undefined;
+  let limit: number | undefined;
+  let offset: number | undefined;
+  let json = false;
+  const positional: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--pid") {
+      index += 1;
+      pid = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--limit") {
+      index += 1;
+      limit = parsePositiveShellInteger(requireProcOptionValue(args[index], current), current);
+      continue;
+    }
+    if (current === "--offset") {
+      index += 1;
+      offset = parseNonNegativeShellInteger(requireProcOptionValue(args[index], current), current);
+      continue;
+    }
+    if (current === "--json") {
+      json = true;
+      continue;
+    }
+    positional.push(current);
+  }
+
+  const segmentId = positional.shift();
+  if (!segmentId) {
+    throw new Error("missing segment id");
+  }
+  if (positional.length > 0) {
+    throw new Error(`unexpected argument: ${positional[0]}`);
+  }
+
+  return {
+    pid: pid ?? requireCurrentProcessId(ctx),
+    segmentId,
+    ...(conversationId ? { conversationId } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(offset !== undefined ? { offset } : {}),
+    ...(json ? { json } : {}),
+  };
+}
+
+function parseProcCompactCommand(args: string[], ctx: KernelContext): {
+  pid: string;
+  conversationId?: string;
+  summary?: string;
+  generateSummary?: boolean;
+  keepLast?: number;
+  throughMessageId?: number;
+} {
+  let pid: string | undefined;
+  let conversationId: string | undefined;
+  let summary: string | undefined;
+  let generateSummary = false;
+  let keepLast: number | undefined;
+  let throughMessageId: number | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--pid") {
+      index += 1;
+      pid = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--summary") {
+      index += 1;
+      summary = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--generate-summary") {
+      generateSummary = true;
+      continue;
+    }
+    if (current === "--keep-last") {
+      index += 1;
+      keepLast = parseNonNegativeShellInteger(requireProcOptionValue(args[index], current), current);
+      continue;
+    }
+    if (current === "--through-message-id") {
+      index += 1;
+      throughMessageId = parsePositiveShellInteger(requireProcOptionValue(args[index], current), current);
+      continue;
+    }
+    throw new Error(`unexpected argument: ${current}`);
+  }
+
+  if (summary && generateSummary) {
+    throw new Error("use either --summary or --generate-summary, not both");
+  }
+  if ((keepLast === undefined) === (throughMessageId === undefined)) {
+    throw new Error("provide exactly one of --keep-last or --through-message-id");
+  }
+
+  return {
+    pid: pid ?? requireCurrentProcessId(ctx),
+    ...(conversationId ? { conversationId } : {}),
+    ...(summary ? { summary } : { generateSummary: true }),
+    ...(keepLast !== undefined ? { keepLast } : {}),
+    ...(throughMessageId !== undefined ? { throughMessageId } : {}),
+  };
+}
+
+function parseProcForkCommand(args: string[], ctx: KernelContext): {
+  pid: string;
+  conversationId?: string;
+  segmentId?: string;
+  throughMessageId?: number;
+  targetConversationId?: string;
+  title?: string;
+  includeLiveSuffix?: boolean;
+} {
+  let pid: string | undefined;
+  let conversationId: string | undefined;
+  let throughMessageId: number | undefined;
+  let targetConversationId: string | undefined;
+  let title: string | undefined;
+  let includeLiveSuffix = true;
+  const positional: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--pid") {
+      index += 1;
+      pid = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--message-id") {
+      index += 1;
+      throughMessageId = parsePositiveShellInteger(requireProcOptionValue(args[index], current), current);
+      continue;
+    }
+    if (current === "--target") {
+      index += 1;
+      targetConversationId = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--title") {
+      index += 1;
+      title = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--segment-only") {
+      includeLiveSuffix = false;
+      continue;
+    }
+    positional.push(current);
+  }
+
+  const segmentId = positional.shift();
+  if (Boolean(segmentId) === (throughMessageId !== undefined)) {
+    throw new Error("provide exactly one of segment id or --message-id");
+  }
+  if (positional.length > 0) {
+    throw new Error(`unexpected argument: ${positional[0]}`);
+  }
+
+  return {
+    pid: pid ?? requireCurrentProcessId(ctx),
+    ...(segmentId ? { segmentId } : {}),
+    ...(throughMessageId !== undefined ? { throughMessageId } : {}),
+    ...(conversationId ? { conversationId } : {}),
+    ...(targetConversationId ? { targetConversationId } : {}),
+    ...(title ? { title } : {}),
+    ...(includeLiveSuffix ? {} : { includeLiveSuffix: false }),
+  };
+}
+
+function parseProcConversationOptions(args: string[], ctx: KernelContext): {
+  pid: string;
+  conversationId?: string;
+  positional: string[];
+} {
+  let pid: string | undefined;
+  let conversationId: string | undefined;
+  const positional: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--pid") {
+      index += 1;
+      pid = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    positional.push(current);
+  }
+
+  return {
+    pid: pid ?? requireCurrentProcessId(ctx),
+    ...(conversationId ? { conversationId } : {}),
+    positional,
+  };
+}
+
+function requireCurrentProcessId(ctx: KernelContext): string {
+  if (!ctx.processId) {
+    throw new Error("missing --pid outside a process");
+  }
+  return ctx.processId;
+}
+
+function parseNonNegativeShellInteger(value: string, option: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || String(parsed) !== value.trim()) {
+    throw new Error(`${option} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parsePositiveShellInteger(value: string, option: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0 || String(parsed) !== value.trim()) {
+    throw new Error(`${option} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parsePressureShellNumber(value: string, option: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1) {
+    throw new Error(`${option} must be > 0 and <= 1`);
+  }
+  return parsed;
+}
+
+function parseProcMessageCommand(args: string[], allowTimeout: boolean): {
+  pid: string;
+  conversationId?: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+  timeoutMs?: number;
+} {
+  let conversationId: string | undefined;
+  let metadata: Record<string, unknown> | undefined;
+  let timeoutMs: number | undefined;
+  const positional: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--metadata-json") {
+      index += 1;
+      const parsed = JSON.parse(requireProcOptionValue(args[index], current));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("--metadata-json must be a JSON object");
+      }
+      metadata = parsed as Record<string, unknown>;
+      continue;
+    }
+    if (current === "--timeout") {
+      if (!allowTimeout) {
+        throw new Error("--timeout is only valid for proc call");
+      }
+      index += 1;
+      timeoutMs = parseDurationMs(requireProcOptionValue(args[index], current));
+      continue;
+    }
+    positional.push(current);
+  }
+
+  const pid = positional.shift();
+  if (!pid) {
+    throw new Error("missing pid");
+  }
+  const message = positional.join(" ").trim();
+  if (!message) {
+    throw new Error("missing message");
+  }
+  return {
+    pid,
+    message,
+    ...(conversationId ? { conversationId } : {}),
+    ...(metadata ? { metadata } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  };
+}
+
+function requireProcOptionValue(value: string | undefined, option: string): string {
+  if (value === undefined || value.length === 0) {
+    throw new Error(`${option} requires a value`);
+  }
+  return value;
+}
+
+function parseDurationMs(value: string): number {
+  const match = value.match(/^(\d+)(ms|s|m|h|d)?$/);
+  if (!match) {
+    throw new Error(`invalid duration: ${value}`);
+  }
+  const amount = Number.parseInt(match[1], 10);
+  const unit = match[2] ?? "ms";
+  if (unit === "d") return amount * 24 * 60 * 60_000;
+  if (unit === "h") return amount * 60 * 60_000;
+  if (unit === "m") return amount * 60_000;
+  if (unit === "s") return amount * 1_000;
+  return amount;
+}
+
+function formatProcSegmentReadResult(result: any, json: boolean | undefined): string {
+  if (json) {
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+
+  const lines = [
+    `Segment ${result.segment.id}`,
+    `Conversation: ${result.conversationId}`,
+    `Messages: ${result.messages.length}/${result.messageCount}${result.truncated ? " (truncated)" : ""}`,
+    "",
+  ];
+  for (let index = 0; index < result.messages.length; index += 1) {
+    const message = result.messages[index];
+    const timestamp = typeof message.timestamp === "number"
+      ? new Date(message.timestamp).toISOString()
+      : "-";
+    lines.push(`[${index + 1}] ${message.role} ${timestamp}`);
+    lines.push(formatProcHistoryContent(message.content));
+    lines.push("");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatProcHistoryContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (content && typeof content === "object") {
+    const record = content as Record<string, unknown>;
+    if (typeof record.text === "string") {
+      return record.text;
+    }
+    if (typeof record.output === "string") {
+      return record.output;
+    }
+  }
+  return JSON.stringify(content, null, 2);
+}
+
+function procUsage(): string {
+  return [
+    "Usage:",
+    "  proc self",
+    "  proc list",
+    "  proc segments [--pid PID] [--conversation id]",
+    "  proc policy [--pid PID] [--conversation id] [--overflow manual|auto-compact|fail] [--compact-at N] [--keep-last N]",
+    "  proc segment <segment-id> [--pid PID] [--conversation id] [--limit N] [--offset N] [--json]",
+    "  proc compact [--pid PID] [--conversation id] (--keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",
+    "  proc fork (<segment-id> | --message-id ID) [--pid PID] [--conversation id] [--target id] [--title TITLE] [--segment-only]",
+    "  proc send <pid> [--conversation id] [--metadata-json json] <message>",
+    "  proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>",
+    "",
+    "proc compact archives a conversation prefix and records a segment. Without",
+    "--summary, it asks the process model to generate the visible summary.",
+    "proc fork branches a conversation from a message or restores a compacted segment.",
+    "",
+    "proc send is asynchronous mail. proc call is bounded: the caller receives",
+    "an ipc.reply or ipc.timeout message in its default conversation.",
+    "",
+  ].join("\n");
+}
+
+async function runSchedCommand(args: string[], ctx: KernelContext): Promise<ExecResult> {
+  const [subcommand = "help", ...rest] = args;
+
+  switch (subcommand) {
+    case "help":
+    case "--help":
+    case "-h":
+      return { stdout: schedUsage(), stderr: "", exitCode: 0 };
+    case "list": {
+      requireCommandCapability(ctx, "sched.list");
+      const result = handleSchedulerList({ includeDisabled: rest.includes("--all") }, ctx);
+      const lines = ["ID\tENABLED\tNEXT\tLAST\tERROR\tNAME\tTARGET"];
+      for (const schedule of result.schedules) {
+        lines.push([
+          schedule.id,
+          schedule.enabled ? "yes" : "no",
+          schedule.state.nextRunAtMs === null ? "-" : new Date(schedule.state.nextRunAtMs).toISOString(),
+          schedule.state.lastStatus ?? "-",
+          formatScheduleListText(schedule.state.lastError),
+          schedule.name,
+          formatScheduleTarget(schedule.target),
+        ].join("\t"));
+      }
+      return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
+    }
+    case "add": {
+      requireCommandCapability(ctx, "sched.add");
+      const parsed = parseSchedAddCommand(rest);
+      const result = await handleSchedulerAdd(parsed, ctx);
+      return {
+        stdout: `schedule_id=${result.schedule.id} next=${result.schedule.state.nextRunAtMs === null ? "-" : new Date(result.schedule.state.nextRunAtMs).toISOString()}\n`,
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "remove": {
+      requireCommandCapability(ctx, "sched.remove");
+      const id = requireSchedId(rest[0]);
+      const result = await handleSchedulerRemove({ id }, ctx);
+      return { stdout: `removed=${result.removed}\n`, stderr: "", exitCode: result.removed ? 0 : 1 };
+    }
+    case "enable":
+    case "disable": {
+      requireCommandCapability(ctx, "sched.update");
+      const id = requireSchedId(rest[0]);
+      const result = await handleSchedulerUpdate({
+        id,
+        patch: { enabled: subcommand === "enable" },
+      }, ctx);
+      return {
+        stdout: `schedule_id=${result.schedule.id} enabled=${result.schedule.enabled}\n`,
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "run": {
+      requireCommandCapability(ctx, "sched.run");
+      const id = requireSchedId(rest[0]);
+      const force = rest.includes("--force");
+      const result = await handleSchedulerRun({ id, mode: force ? "force" : "due" }, ctx);
+      return {
+        stdout: JSON.stringify(result) + "\n",
+        stderr: "",
+        exitCode: result.results.some((item) => item.status === "error") ? 1 : 0,
+      };
+    }
+    default:
+      return { stdout: "", stderr: `sched: unknown command: ${subcommand}\n${schedUsage()}`, exitCode: 1 };
+  }
+}
+
+function parseSchedAddCommand(args: string[]): SchedulerAddArgs {
+  let name: string | undefined;
+  let description: string | undefined;
+  let label: string | undefined;
+  let profile: string | undefined;
+  let timezone: string | undefined;
+  let pid: string | undefined;
+  let conversationId: string | undefined;
+  let data: Record<string, unknown> | undefined;
+  let expression: ScheduleExpression | undefined;
+  let prompt: string | undefined;
+  let enabled = true;
+  const positional: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--json") {
+      return JSON.parse(requireProcOptionValue(args[index + 1], current)) as SchedulerAddArgs;
+    }
+    if (current === "--name") {
+      index += 1;
+      name = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--description") {
+      index += 1;
+      description = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--label") {
+      index += 1;
+      label = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--profile") {
+      index += 1;
+      profile = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--timezone") {
+      index += 1;
+      timezone = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--pid") {
+      index += 1;
+      pid = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--conversation") {
+      index += 1;
+      conversationId = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--data-json") {
+      index += 1;
+      const parsed = JSON.parse(requireProcOptionValue(args[index], current));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("--data-json must be a JSON object");
+      }
+      data = parsed as Record<string, unknown>;
+      continue;
+    }
+    if (current === "--prompt" || current === "--message") {
+      index += 1;
+      prompt = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--disabled") {
+      enabled = false;
+      continue;
+    }
+    if (current === "--every") {
+      index += 1;
+      expression = { kind: "every", everyMs: parseDurationMs(requireProcOptionValue(args[index], current)) };
+      continue;
+    }
+    if (current === "--after") {
+      index += 1;
+      expression = { kind: "after", afterMs: parseDurationMs(requireProcOptionValue(args[index], current)) };
+      continue;
+    }
+    if (current === "--at") {
+      index += 1;
+      expression = { kind: "at", atMs: parseScheduleAtMs(requireProcOptionValue(args[index], current)) };
+      continue;
+    }
+    if (current === "--cron") {
+      index += 1;
+      expression = {
+        kind: "cron",
+        expr: requireProcOptionValue(args[index], current),
+        timezone: timezone ?? "",
+      };
+      continue;
+    }
+    positional.push(current);
+  }
+
+  if (!name) {
+    throw new Error("missing --name");
+  }
+  if (!expression) {
+    throw new Error("missing schedule expression (--cron, --every, --after, or --at)");
+  }
+  if (expression.kind === "cron" && timezone !== undefined) {
+    expression = { ...expression, timezone };
+  }
+
+  const message = prompt ?? positional.join(" ").trim();
+  if (!message) {
+    throw new Error("missing prompt/message");
+  }
+
+  const target: ScheduleTarget = pid
+    ? {
+        kind: "process.event",
+        pid,
+        message,
+        ...(conversationId ? { conversationId } : {}),
+        ...(data ? { data } : {}),
+      }
+    : {
+        kind: "process.spawn",
+        prompt: message,
+        ...(profile ? { profile: profile as AiContextProfile } : {}),
+        ...(label ? { label } : {}),
+      };
+
+  return {
+    name,
+    ...(description ? { description } : {}),
+    enabled,
+    expression,
+    target,
+  };
+}
+
+function parseScheduleAtMs(value: string): number {
+  if (/^\d+$/.test(value)) {
+    return Number.parseInt(value, 10);
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`invalid --at value: ${value}`);
+  }
+  return parsed;
+}
+
+function requireSchedId(value: string | undefined): string {
+  if (!value || value.trim().length === 0 || value.startsWith("--")) {
+    throw new Error("missing schedule id");
+  }
+  return value.trim();
+}
+
+function formatScheduleTarget(target: ScheduleTarget): string {
+  if (target.kind === "process.spawn") {
+    return `spawn:${target.profile ?? "cron"}`;
+  }
+  return `event:${target.pid}`;
+}
+
+function formatScheduleListText(value: string | null | undefined): string {
+  if (!value) {
+    return "-";
+  }
+  return value.replace(/[\t\r\n]+/g, " ").slice(0, 120);
+}
+
+function schedUsage(): string {
+  return [
+    "Usage:",
+    "  sched list [--all]",
+    "  sched add --name NAME (--cron EXPR [--timezone TZ] | --every DURATION | --after DURATION | --at TIME) [--pid PID] [--conversation id] [--profile PROFILE] [--label LABEL] <prompt/message>",
+    "  sched add --json JSON",
+    "  sched enable <id>",
+    "  sched disable <id>",
+    "  sched remove <id>",
+    "  sched run <id> [--force]",
+    "",
+    "Without --pid, sched add spawns a process. With --pid, it delivers a",
+    "process event to that process conversation.",
+    "",
+  ].join("\n");
 }
 
 async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecResult> {

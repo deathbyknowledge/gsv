@@ -3,6 +3,7 @@
   "version": "0.1.1",
   "type": "module",
   "dependencies": {
-    "@gsv/package": "file:../../shared/package"
+    "@gsv/package": "file:../../shared/package",
+    "preact": "^10.27.2"
   }
 }
