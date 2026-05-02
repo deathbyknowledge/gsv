@@ -234,6 +234,7 @@ export class RipgitClient {
     email: string,
     message: string,
     ops: RipgitApplyOp[],
+    options?: { baseRef?: string; expectedHead?: string },
   ): Promise<RipgitApplyResult> {
     const response = await this.binding.fetch(this.makeApplyUrl(repo), {
       method: "POST",
@@ -247,6 +248,8 @@ export class RipgitClient {
         email,
         message,
         ops,
+        ...(options?.baseRef ? { baseRef: options.baseRef } : {}),
+        ...(options?.expectedHead ? { expectedHead: options.expectedHead } : {}),
       }),
     });
 

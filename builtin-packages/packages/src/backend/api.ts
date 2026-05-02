@@ -102,13 +102,14 @@ function buildReviewPrompt(pkg: PackageLike): string {
   const entrypoints = pkg.entrypoints.length > 0
     ? pkg.entrypoints.map((entry) => `${entry.name}:${entry.kind}`).join(", ")
     : "none";
+  const sourcePath = `/src/packages/${pkg.name}`;
 
   return [
     `Review the imported package \"${pkg.name}\".`,
     "",
-    "Current directory is already /src/package.",
-    "The package source is mounted read-only at /src/package.",
-    "The full repository is mounted read-only at /src/repo.",
+    `Current directory is already ${sourcePath}.`,
+    `The package source is available at ${sourcePath}.`,
+    "Source writes are staged in the review process. Use pkg source status/diff to inspect staged changes; do not commit unless explicitly asked.",
     "",
     `Source repo: ${pkg.source.repo}`,
     `Source ref: ${pkg.source.ref}`,
@@ -118,13 +119,13 @@ function buildReviewPrompt(pkg: PackageLike): string {
     "",
     "Review workflow:",
     "1. Start with pkg manifest, pkg capabilities, pkg refs, and pkg log.",
-    "2. Inspect /src/package, prioritizing manifest, entrypoints, and system integration points.",
+    `2. Inspect ${sourcePath}, prioritizing manifest, entrypoints, and system integration points.`,
     "3. Search for network access, parent-window messaging, host bridge use, process spawning, filesystem writes, shell execution, eval, and destructive actions.",
     "4. If a command fails, note it briefly and continue with other evidence. Do not guess.",
     "5. Keep tool use tight. Do not narrate trivial navigation or run placeholder commands.",
     "",
     "Use normal filesystem and shell exploration plus the pkg CLI.",
-    "Helpful commands: ls, find, grep, cat, pkg manifest, pkg capabilities, pkg refs, pkg log.",
+    "Helpful commands: ls, find, grep, cat, pkg manifest, pkg capabilities, pkg refs, pkg log, pkg source status, pkg source diff.",
     "Focus on requested capabilities, suspicious behavior, hidden network or shell access, destructive actions, and whether it should be enabled.",
     "Call out privileged integrations explicitly, including host bridge access, parent-window messaging, and process spawning if present.",
     "Conclude with a short verdict: approve or do not approve, followed by a concise evidence-based summary.",
@@ -491,8 +492,7 @@ export async function startReview(kernel: KernelClientLike, args: { packageId: s
     prompt: buildReviewPrompt(target),
     workspace: { mode: "none" },
     mounts: [
-      { kind: "package-source", packageId: target.packageId, mountPath: "/src/package" },
-      { kind: "package-repo", packageId: target.packageId, mountPath: "/src/repo" },
+      { kind: "package-source", packageId: target.packageId },
     ],
   }));
 

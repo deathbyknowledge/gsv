@@ -4,6 +4,9 @@ import type {
   PkgAddResult,
   PkgCheckoutArgs,
   PkgCheckoutResult,
+  PkgCreateArgs,
+  PkgCreateResult,
+  PkgCreateTemplate,
   PkgInstallArgs,
   PkgInstallResult,
   PkgReviewApproveArgs,
@@ -57,6 +60,8 @@ import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 
 const TEXT_DECODER = new TextDecoder();
 const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+const TEXT_ENCODER = new TextEncoder();
+const DEFAULT_PACKAGE_CREATE_REF = "main";
 
 export function handlePkgList(
   args: PkgListArgs | undefined,
@@ -275,6 +280,97 @@ export async function handlePkgAdd(
       ref: imported.remoteRef,
       head: imported.head ?? null,
     },
+    package: toPkgSummary(updated, ctx),
+  };
+}
+
+export async function handlePkgCreate(
+  args: PkgCreateArgs,
+  ctx: KernelContext,
+): Promise<PkgCreateResult> {
+  const identity = requireIdentity(ctx);
+  const repo = resolveCreateRepo(args.repo, identity.process.username);
+  assertRepoOwnerOrRoot(repoSlug(repo), identity);
+  const ref = normalizePackageCreateRef(args.ref);
+  const subdir = normalizeRepoPath(args.subdir) || ".";
+  const template = normalizePackageCreateTemplate(args.template);
+  const packageName = normalizePackageJsonName(args.name, repo);
+  const displayName = normalizePackageDisplayName(args.displayName, repo.repo);
+  const description = normalizePackageDescription(args.description, displayName);
+  const command = normalizePackageCommandName(args.command, repo.repo);
+  const files = buildPackageScaffold({
+    packageName,
+    displayName,
+    description,
+    template,
+    command,
+  });
+  const ops = Object.entries(files).map(([path, content]) => ({
+    type: "put" as const,
+    path: joinPackageSourcePath(subdir, path),
+    contentBytes: Array.from(TEXT_ENCODER.encode(content)),
+  }));
+
+  const ripgit = requireRipgitClient(ctx);
+  const existingPackageFile = await ripgit.readPath(
+    { ...repo, branch: ref },
+    joinPackageSourcePath(subdir, "package.json"),
+  );
+  const created = existingPackageFile.kind === "missing";
+  if (!created && args.overwrite !== true) {
+    throw new Error(
+      `Package source already exists at ${repoSlug(repo)}:${subdir}. Pass overwrite to replace the scaffold files.`,
+    );
+  }
+
+  const result = await ripgit.apply(
+    { ...repo, branch: ref },
+    identity.process.username,
+    `${identity.process.username}@gsv.local`,
+    created ? `pkg: create ${packageName}` : `pkg: update scaffold for ${packageName}`,
+    ops,
+  );
+  registerPackageRepo(ctx, repo, description);
+
+  const source = {
+    repo: repoSlug(repo),
+    ref,
+    subdir,
+  };
+  const resolved = await resolvePackageFromRipgitSource(ctx.env, source);
+  const packageId = packageIdForSource(resolved.manifest);
+  const scope = installScopeForActor(ctx);
+  const existing = ctx.packages.get(packageId, scope);
+  const enabled = typeof args.enable === "boolean"
+    ? args.enable
+    : existing?.enabled ?? false;
+  const reviewedAt = existing?.reviewedAt ?? Date.now();
+  const updated = await ctx.packages.install({
+    packageId,
+    scope,
+    manifest: resolved.manifest,
+    artifact: resolved.artifact,
+    grants: grantsForManifest(resolved.manifest, scope),
+    enabled,
+    reviewRequired: false,
+    reviewedAt,
+    installedAt: existing?.installedAt,
+    updatedAt: Date.now(),
+  });
+
+  return {
+    changed:
+      !existing ||
+      existing.enabled !== updated.enabled ||
+      existing.artifact.hash !== updated.artifact.hash ||
+      existing.manifest.source.ref !== updated.manifest.source.ref ||
+      (existing.manifest.source.resolvedCommit ?? null) !== (updated.manifest.source.resolvedCommit ?? null),
+    created,
+    repo: repoSlug(repo),
+    ref,
+    subdir,
+    head: result.head ?? null,
+    files: Object.keys(files).map((path) => joinPackageSourcePath(subdir, path)),
     package: toPkgSummary(updated, ctx),
   };
 }
@@ -620,6 +716,337 @@ function sanitizeRepoName(value: string): string {
   const trimmed = value.trim().replace(/\.git$/i, "").toLowerCase();
   const normalized = trimmed.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return /^[a-z0-9._-]+$/.test(normalized) ? normalized : "";
+}
+
+function resolveCreateRepo(repo: string, fallbackOwner: string): RipgitRepoRef {
+  const raw = typeof repo === "string" ? repo.trim().replace(/^\/+|\/+$/g, "") : "";
+  const parts = raw.split("/").filter(Boolean);
+  if (parts.length === 1) {
+    return {
+      owner: normalizeRepoOwner(fallbackOwner),
+      repo: normalizeRepoName(parts[0]),
+    };
+  }
+  if (parts.length === 2) {
+    return {
+      owner: normalizeRepoOwner(parts[0]),
+      repo: normalizeRepoName(parts[1]),
+    };
+  }
+  throw new Error("repo must be '<repo>' or '<owner>/<repo>'");
+}
+
+function normalizeRepoOwner(owner: string): string {
+  const value = String(owner ?? "").trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+    throw new Error(`Invalid repo owner: ${owner}`);
+  }
+  return value;
+}
+
+function normalizeRepoName(name: string): string {
+  const value = sanitizeRepoName(String(name ?? ""));
+  if (!value) {
+    throw new Error(`Invalid repo name: ${name}`);
+  }
+  return value;
+}
+
+function normalizePackageCreateRef(ref: string | undefined): string {
+  const value = typeof ref === "string" && ref.trim().length > 0
+    ? ref.trim()
+    : DEFAULT_PACKAGE_CREATE_REF;
+  if (!/^(refs\/heads\/)?[A-Za-z0-9._/-]+$/.test(value) || value.includes("..")) {
+    throw new Error(`Invalid branch ref: ${value}`);
+  }
+  return value.startsWith("refs/heads/") ? value.slice("refs/heads/".length) : value;
+}
+
+function normalizePackageCreateTemplate(template: PkgCreateTemplate | undefined): PkgCreateTemplate {
+  if (!template) {
+    return "web-ui";
+  }
+  if (template !== "web-ui" && template !== "command") {
+    throw new Error(`Unsupported package template: ${String(template)}`);
+  }
+  return template;
+}
+
+function normalizePackageJsonName(rawName: string | undefined, repo: RipgitRepoRef): string {
+  const fallback = `@${repo.owner.toLowerCase()}/${repo.repo.toLowerCase()}`;
+  const value = typeof rawName === "string" && rawName.trim().length > 0
+    ? rawName.trim().toLowerCase()
+    : fallback;
+  if (!/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/.test(value)) {
+    throw new Error(`Invalid package name: ${value}`);
+  }
+  return value;
+}
+
+function normalizePackageDisplayName(rawName: string | undefined, repoName: string): string {
+  const value = typeof rawName === "string" && rawName.trim().length > 0
+    ? rawName.trim()
+    : humanizeName(repoName);
+  if (value.length > 80) {
+    throw new Error("displayName must be 80 characters or fewer");
+  }
+  return value;
+}
+
+function normalizePackageDescription(rawDescription: string | undefined, displayName: string): string {
+  const value = typeof rawDescription === "string" && rawDescription.trim().length > 0
+    ? rawDescription.trim()
+    : `${displayName} package.`;
+  if (value.length > 240) {
+    throw new Error("description must be 240 characters or fewer");
+  }
+  return value;
+}
+
+function normalizePackageCommandName(rawCommand: string | undefined, repoName: string): string {
+  const value = typeof rawCommand === "string" && rawCommand.trim().length > 0
+    ? rawCommand.trim().toLowerCase()
+    : repoName.toLowerCase();
+  const normalized = value.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(normalized)) {
+    throw new Error(`Invalid command name: ${value}`);
+  }
+  return normalized;
+}
+
+function humanizeName(value: string): string {
+  const words = value
+    .split(/[-_.]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1));
+  return words.length > 0 ? words.join(" ") : "New Package";
+}
+
+function buildPackageScaffold(input: {
+  packageName: string;
+  displayName: string;
+  description: string;
+  template: PkgCreateTemplate;
+  command: string;
+}): Record<string, string> {
+  return input.template === "command"
+    ? buildCommandPackageScaffold(input)
+    : buildWebUiPackageScaffold(input);
+}
+
+function buildBasePackageJson(packageName: string): string {
+  return `${JSON.stringify({
+    name: packageName,
+    version: "0.1.0",
+    type: "module",
+    dependencies: {
+      "@gsv/package": "^0.1.0",
+    },
+  }, null, 2)}\n`;
+}
+
+function buildWebUiPackageScaffold(input: {
+  packageName: string;
+  displayName: string;
+  description: string;
+}): Record<string, string> {
+  return {
+    "package.json": buildBasePackageJson(input.packageName),
+    "src/package.ts": [
+      'import { definePackage } from "@gsv/package/manifest";',
+      "",
+      "export default definePackage({",
+      "  meta: {",
+      `    displayName: ${JSON.stringify(input.displayName)},`,
+      `    description: ${JSON.stringify(input.description)},`,
+      "    window: {",
+      "      width: 1040,",
+      "      height: 720,",
+      "      minWidth: 720,",
+      "      minHeight: 480,",
+      "    },",
+      "  },",
+      "  browser: {",
+      '    entry: "./src/main.ts",',
+      '    assets: ["./src/styles.css"],',
+      "  },",
+      "});",
+      "",
+    ].join("\n"),
+    "src/main.ts": [
+      'import { getAppBoot } from "@gsv/package/browser";',
+      "",
+      "const boot = getAppBoot();",
+      'const root = document.createElement("main");',
+      'root.className = "app-shell";',
+      "root.innerHTML = `",
+      '  <section class="app-panel">',
+      `    <h1>${escapeHtml(input.displayName)}</h1>`,
+      `    <p>${escapeHtml(input.description)}</p>`,
+      '    <dl>',
+      '      <div><dt>Package</dt><dd>${boot.packageName}</dd></div>',
+      '      <div><dt>Route</dt><dd>${boot.routeBase}</dd></div>',
+      '    </dl>',
+      "  </section>",
+      "`;",
+      "document.body.replaceChildren(root);",
+      "",
+    ].join("\n"),
+    "src/styles.css": [
+      ":root {",
+      "  color: #1f2933;",
+      "  background: #f7f9fb;",
+      '  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;',
+      "}",
+      "",
+      "body {",
+      "  margin: 0;",
+      "}",
+      "",
+      ".app-shell {",
+      "  min-height: 100vh;",
+      "  display: grid;",
+      "  place-items: center;",
+      "  padding: 32px;",
+      "}",
+      "",
+      ".app-panel {",
+      "  width: min(720px, 100%);",
+      "  border: 1px solid #d8e0e8;",
+      "  border-radius: 8px;",
+      "  background: #ffffff;",
+      "  padding: 24px;",
+      "  box-shadow: 0 12px 32px rgba(31, 41, 51, 0.08);",
+      "}",
+      "",
+      "h1 {",
+      "  margin: 0 0 8px;",
+      "  font-size: 24px;",
+      "  line-height: 1.2;",
+      "}",
+      "",
+      "p {",
+      "  margin: 0 0 20px;",
+      "  color: #52606d;",
+      "}",
+      "",
+      "dl {",
+      "  display: grid;",
+      "  gap: 8px;",
+      "  margin: 0;",
+      "}",
+      "",
+      "dl > div {",
+      "  display: flex;",
+      "  justify-content: space-between;",
+      "  gap: 16px;",
+      "}",
+      "",
+      "dt {",
+      "  color: #627d98;",
+      "}",
+      "",
+      "dd {",
+      "  margin: 0;",
+      "  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;",
+      "}",
+      "",
+    ].join("\n"),
+    "README.md": [
+      `# ${input.displayName}`,
+      "",
+      input.description,
+      "",
+      "This package was scaffolded by GSV. Edit `src/main.ts`, `src/styles.css`, and `src/package.ts`, then run `pkg source commit --message \"...\"` and `pkg checkout <branch>` when you want to install committed source changes.",
+      "",
+    ].join("\n"),
+  };
+}
+
+function buildCommandPackageScaffold(input: {
+  packageName: string;
+  displayName: string;
+  description: string;
+  command: string;
+}): Record<string, string> {
+  const commandPath = `src/cli/${input.command}.ts`;
+  return {
+    "package.json": buildBasePackageJson(input.packageName),
+    "src/package.ts": [
+      'import { definePackage } from "@gsv/package/manifest";',
+      "",
+      "export default definePackage({",
+      "  meta: {",
+      `    displayName: ${JSON.stringify(input.displayName)},`,
+      `    description: ${JSON.stringify(input.description)},`,
+      "  },",
+      "  cli: {",
+      "    commands: {",
+      `      ${JSON.stringify(input.command)}: ${JSON.stringify(`./${commandPath}`)},`,
+      "    },",
+      "  },",
+      "});",
+      "",
+    ].join("\n"),
+    [commandPath]: [
+      'import { defineCommand } from "@gsv/package/cli";',
+      "",
+      "export default defineCommand(async (ctx) => {",
+      '  const subject = ctx.argv.length > 0 ? ctx.argv.join(" ") : ctx.meta.packageName;',
+      `  await ctx.stdout.write(\`Hello from \${ctx.meta.packageName}: \${subject}\\n\`);`,
+      "});",
+      "",
+    ].join("\n"),
+    "README.md": [
+      `# ${input.displayName}`,
+      "",
+      input.description,
+      "",
+      `Run this package with \`${input.command} ...\` after enabling it.`,
+      "",
+    ].join("\n"),
+  };
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function joinPackageSourcePath(subdir: string, path: string): string {
+  const normalizedSubdir = normalizeRepoPath(subdir) || ".";
+  const normalizedPath = normalizeRepoPath(path);
+  if (!normalizedPath) {
+    throw new Error("path is required");
+  }
+  return normalizedSubdir === "." ? normalizedPath : `${normalizedSubdir}/${normalizedPath}`;
+}
+
+function repoSlug(repo: Pick<RipgitRepoRef, "owner" | "repo">): string {
+  return `${repo.owner}/${repo.repo}`;
+}
+
+function registerPackageRepo(
+  ctx: KernelContext,
+  repo: Pick<RipgitRepoRef, "owner" | "repo">,
+  description?: string,
+): void {
+  const now = String(Date.now());
+  const createdKey = packageRepoConfigKey(repo, "created_at");
+  if (ctx.config.get(createdKey) === null) {
+    ctx.config.set(createdKey, now);
+  }
+  ctx.config.set(packageRepoConfigKey(repo, "updated_at"), now);
+  if (typeof description === "string" && description.trim().length > 0) {
+    ctx.config.set(packageRepoConfigKey(repo, "description"), description.trim());
+  }
+}
+
+function packageRepoConfigKey(repo: Pick<RipgitRepoRef, "owner" | "repo">, field: string): string {
+  return `repos/${repo.owner}/${repo.repo}/${field}`;
 }
 
 function packageIdForSource(manifest: PackageManifest): string {

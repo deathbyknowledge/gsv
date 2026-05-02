@@ -6,6 +6,7 @@ use worker::*;
 #[serde(rename_all = "camelCase")]
 pub struct ApplyRequest {
     pub default_branch: Option<String>,
+    pub base_ref: Option<String>,
     pub author: String,
     pub email: String,
     pub message: String,
@@ -157,6 +158,14 @@ pub async fn handle_apply(sql: &SqlStorage, req: &mut Request) -> Result<Respons
 
     let ref_name = workspace_ref_name(apply.default_branch.as_deref().unwrap_or("main"));
     let current_head = api::resolve_ref(sql, &ref_name)?;
+    let base_head = if current_head.is_none() {
+        match apply.base_ref.as_deref() {
+            Some(base_ref) if !base_ref.trim().is_empty() => api::resolve_ref(sql, base_ref)?,
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     if let Some(expected) = apply.expected_head.as_deref() {
         if current_head.as_deref() != Some(expected) {
@@ -175,7 +184,7 @@ pub async fn handle_apply(sql: &SqlStorage, req: &mut Request) -> Result<Respons
         }
     }
 
-    let mut files = load_head_files(sql, current_head.as_deref())?;
+    let mut files = load_head_files(sql, current_head.as_deref().or(base_head.as_deref()))?;
     let mut changed_paths: Vec<String> = Vec::new();
 
     for op in &apply.ops {
@@ -217,7 +226,11 @@ pub async fn handle_apply(sql: &SqlStorage, req: &mut Request) -> Result<Respons
 
     let tree_hash = build_tree_from_files(sql, "", &files)?;
     let timestamp = now_secs();
-    let parents = current_head.clone().into_iter().collect::<Vec<_>>();
+    let parents = current_head
+        .clone()
+        .or(base_head)
+        .into_iter()
+        .collect::<Vec<_>>();
     let parent_refs = parents.iter().map(String::as_str).collect::<Vec<_>>();
     let raw_commit = serialize_commit_content(
         &tree_hash,

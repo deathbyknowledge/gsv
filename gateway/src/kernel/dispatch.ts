@@ -38,6 +38,7 @@ import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
   handlePkgAdd,
   handlePkgCheckout,
+  handlePkgCreate,
   handlePkgInstall,
   handlePkgList,
   handlePkgPublicList,
@@ -200,6 +201,9 @@ async function dispatchNative(
         break;
       case "pkg.add":
         data = await handlePkgAdd(frame.args, ctx);
+        break;
+      case "pkg.create":
+        data = await handlePkgCreate(frame.args, ctx);
         break;
       case "pkg.sync":
         data = await handlePkgSync(frame.args, ctx);

@@ -19,8 +19,8 @@ export type ProcWorkspaceSpec =
   | { mode: "attach"; workspaceId: string };
 
 export type ProcSpawnMountSpec =
-  | { kind: "package-source"; packageId: string; mountPath?: string }
-  | { kind: "package-repo"; packageId: string; mountPath?: string };
+  | { kind: "package-source"; packageId: string }
+  | { kind: "package-repo"; packageId: string };
 
 export type ProcContextFile = {
   name: string;

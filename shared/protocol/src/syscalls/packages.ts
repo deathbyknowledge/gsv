@@ -94,6 +94,32 @@ export type PkgAddResult = {
   package: PkgSummary;
 };
 
+export type PkgCreateTemplate = "web-ui" | "command";
+
+export type PkgCreateArgs = {
+  repo: string;
+  ref?: string;
+  subdir?: string;
+  name?: string;
+  displayName?: string;
+  description?: string;
+  template?: PkgCreateTemplate;
+  command?: string;
+  enable?: boolean;
+  overwrite?: boolean;
+};
+
+export type PkgCreateResult = {
+  changed: boolean;
+  created: boolean;
+  repo: string;
+  ref: string;
+  subdir: string;
+  head: string | null;
+  files: string[];
+  package: PkgSummary;
+};
+
 export type PkgSyncArgs = Record<string, never>;
 
 export type PkgSyncResult = {

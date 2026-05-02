@@ -34,6 +34,8 @@ import type {
   PkgAddResult,
   PkgCheckoutArgs,
   PkgCheckoutResult,
+  PkgCreateArgs,
+  PkgCreateResult,
   PkgInstallArgs,
   PkgInstallResult,
   PkgReviewApproveArgs,
@@ -201,6 +203,7 @@ export type SyscallDomains = {
   // Packages
   "pkg.list": { args: PkgListArgs; result: PkgListResult };
   "pkg.add": { args: PkgAddArgs; result: PkgAddResult };
+  "pkg.create": { args: PkgCreateArgs; result: PkgCreateResult };
   "pkg.sync": { args: PkgSyncArgs; result: PkgSyncResult };
   "pkg.checkout": { args: PkgCheckoutArgs; result: PkgCheckoutResult };
   "pkg.install": { args: PkgInstallArgs; result: PkgInstallResult };

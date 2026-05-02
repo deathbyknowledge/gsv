@@ -1527,6 +1527,7 @@ export class Kernel extends Host<Env> {
 
     if (
       frame.call === "pkg.add" ||
+      frame.call === "pkg.create" ||
       frame.call === "pkg.sync" ||
       frame.call === "pkg.install" ||
       frame.call === "pkg.remove" ||
@@ -1560,6 +1561,8 @@ export class Kernel extends Host<Env> {
 
       this.broadcastToRole("user", "pkg.changed", {
         action: frame.call === "pkg.install"
+          ? "install"
+          : frame.call === "pkg.create"
           ? "install"
           : frame.call === "pkg.add"
           ? "install"

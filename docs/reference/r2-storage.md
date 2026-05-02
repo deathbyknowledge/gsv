@@ -323,6 +323,23 @@ Media files (images, audio, video, documents) attached to inbound messages or ex
 
 **Lifecycle**: Media files are stored when an inbound message is processed or when a tool result contains image content. The base64 data is stripped from the in-memory message and replaced with an `r2Key` reference. During LLM calls, references are hydrated back to base64 via an in-memory LRU cache (50 MB budget). On session reset, all media under the `media/{sessionKey}/` prefix is deleted.
 
+## Process Package Source Overlays
+
+Package sources mounted at `/src/packages/{package}` are read from ripgit. When
+the current process writes to a package source owned by its user, the filesystem
+does not immediately commit to ripgit. It stages the change in R2 under:
+
+```text
+process-source-overlays/{processId}/{packageId}/manifest.json
+process-source-overlays/{processId}/{packageId}/files/{encodedPath}
+```
+
+The manifest records staged `put` and `delete` entries. File content for staged
+puts is stored under the `files/` prefix. `pkg source status` and
+`pkg source diff` inspect this overlay; `pkg source commit` converts it into an
+explicit ripgit commit on a process branch; `pkg source discard` removes the
+overlay without committing.
+
 ## Read/Write Summary
 
 | Path Pattern | Read By | Written By | Lifecycle |
@@ -341,3 +358,5 @@ Media files (images, audio, video, documents) attached to inbound messages or ex
 | `agents/{id}/skills/{name}/SKILL.md` | Skill lister + agent on-demand | User/agent/deploy | Persistent |
 | `skills/{name}/SKILL.md` | Skill lister + agent on-demand | Deploy tooling | Persistent |
 | `media/{sessionKey}/{uuid}.{ext}` | LLM call (hydration) | Inbound media processor, tool result image storage | Deleted on session reset |
+| `process-source-overlays/{pid}/{packageId}/manifest.json` | Package source mount, `pkg source` | Package source mount | Deleted on commit/discard when empty |
+| `process-source-overlays/{pid}/{packageId}/files/{path}` | Package source mount, `pkg source` | Package source mount | Deleted on commit/discard |

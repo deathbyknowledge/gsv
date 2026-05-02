@@ -33,10 +33,12 @@ import type { ProcessMount } from "./processes";
 import {
   createWorkspaceBackend,
   normalizePath,
+  packageSourcePathName,
   workspaceRootPath,
 } from "../fs";
 import { resolveInstalledPackage } from "./pkg";
 import {
+  type InstalledPackageRecord,
   resolvePackageProfileReference,
   visiblePackageScopesForActor,
 } from "./packages";
@@ -479,12 +481,12 @@ function materializeSpawnMounts(
 
   for (const spec of specs ?? []) {
     const record = resolveInstalledPackage(spec.packageId, ctx);
-    const mountPath = normalizePath(spec.mountPath ?? defaultMountPathForSpec(spec));
+    const mountPath = normalizePath(defaultMountPathForPackage(record));
     if (mountPath === "/" || !mountPath.startsWith("/src")) {
       return { ok: false, error: `Unsupported mount path: ${mountPath}` };
     }
     if (seen.has(mountPath)) {
-      return { ok: false, error: `Duplicate mount path: ${mountPath}` };
+      continue;
     }
     seen.add(mountPath);
 
@@ -502,14 +504,12 @@ function materializeSpawnMounts(
   return { ok: true, mounts };
 }
 
-function defaultMountPathForSpec(spec: ProcSpawnMountSpec): string {
-  return spec.kind === "package-source" ? "/src/package" : "/src/repo";
+function defaultMountPathForPackage(record: InstalledPackageRecord): string {
+  return `/src/packages/${packageSourcePathName(record)}`;
 }
 
 function defaultMountCwd(mounts: ProcessMount[]): string | null {
-  return mounts.find((mount) => mount.mountPath === "/src/package")?.mountPath
-    ?? mounts[0]?.mountPath
-    ?? null;
+  return mounts[0]?.mountPath ?? null;
 }
 
 function defaultWorkspaceSpec(identity: ProcessIdentity): ProcWorkspaceSpec {
