@@ -1341,7 +1341,7 @@ function SourceReadPanel(props: {
         {props.codeRead.isBinary ? (
           <div class="packages-empty-state">This file is binary and cannot be previewed inline.</div>
         ) : (
-          <pre class="packages-code-block">{props.codeRead.content ?? ""}</pre>
+          <SyntaxCodeBlock path={props.codeRead.path} content={props.codeRead.content ?? ""} />
         )}
       </article>
     );
@@ -1363,7 +1363,9 @@ function DiffFileView({ file }: { file: PackageRepoDiffFile }) {
             {hunk.lines.map((line, index) => (
               <code key={index} class={`packages-diff-line is-${line.tag}`}>
                 <span class="packages-diff-prefix">{prefixForDiffLine(line.tag)}</span>
-                <SyntaxLine path={file.path} content={line.content} />
+                <span class="packages-diff-content">
+                  <SyntaxLine path={file.path} content={line.content} />
+                </span>
               </code>
             ))}
           </div>
@@ -1808,6 +1810,24 @@ function TimeAgo({ timestamp }: { timestamp: number | null | undefined }) {
 
 function SyntaxLine({ path, content }: { path: string; content: string }) {
   return <>{highlightLine(path, content).map((token, index) => <span key={index} class={token.className}>{token.text}</span>)}</>;
+}
+
+function SyntaxCodeBlock({ path, content }: { path: string; content: string }) {
+  const lines = content.length > 0
+    ? (content.endsWith("\n") ? content.slice(0, -1) : content).split("\n")
+    : [""];
+  return (
+    <div class="packages-code-block" role="region" aria-label={path || "source file"}>
+      {lines.map((line, index) => (
+        <code key={index} class="packages-code-line">
+          <span class="packages-code-line-number">{index + 1}</span>
+          <span class="packages-code-line-content">
+            <SyntaxLine path={path} content={line} />
+          </span>
+        </code>
+      ))}
+    </div>
+  );
 }
 
 function readViewFromLocation(): PackagesView {

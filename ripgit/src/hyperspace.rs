@@ -133,8 +133,14 @@ pub async fn handle_packages_analyze(
     req: &Request,
     repo: &str,
 ) -> Result<Response> {
-    let locator = package_source_locator(req, repo)?;
-    let analysis = packages::analyze_package(sql, &locator)?;
+    let locator = match package_source_locator(req, repo) {
+        Ok(locator) => locator,
+        Err(err) => return package_error_response(err),
+    };
+    let analysis = match packages::analyze_package(sql, &locator) {
+        Ok(analysis) => analysis,
+        Err(err) => return package_error_response(err),
+    };
     Response::from_json(&analysis)
 }
 
@@ -143,9 +149,26 @@ pub async fn handle_packages_snapshot(
     req: &Request,
     repo: &str,
 ) -> Result<Response> {
-    let locator = package_source_locator(req, repo)?;
-    let snapshot = packages::snapshot_package(sql, &locator)?;
+    let locator = match package_source_locator(req, repo) {
+        Ok(locator) => locator,
+        Err(err) => return package_error_response(err),
+    };
+    let snapshot = match packages::snapshot_package(sql, &locator) {
+        Ok(snapshot) => snapshot,
+        Err(err) => return package_error_response(err),
+    };
     Response::from_json(&snapshot)
+}
+
+fn package_error_response(err: Error) -> Result<Response> {
+    Response::error(format_worker_error(err), 400)
+}
+
+fn format_worker_error(err: Error) -> String {
+    match err {
+        Error::RustError(message) => message,
+        other => other.to_string(),
+    }
 }
 
 fn package_source_locator(req: &Request, repo: &str) -> Result<packages::PackageSourceLocator> {

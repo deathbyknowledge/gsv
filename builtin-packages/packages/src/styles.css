@@ -904,8 +904,29 @@ textarea:focus {
 }
 
 .packages-code-block {
-  padding: 14px;
+  white-space: normal;
+}
+
+.packages-code-line {
+  display: grid;
+  grid-template-columns: minmax(42px, auto) minmax(0, 1fr);
+  min-height: 18px;
+}
+
+.packages-code-line-number {
+  padding: 0 10px;
+  border-right: 1px solid var(--packages-line);
+  background: var(--packages-surface-muted);
+  color: var(--packages-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.packages-code-line-content {
+  min-width: 0;
+  padding: 0 14px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .packages-source-history > header {
@@ -955,15 +976,21 @@ textarea:focus {
 .packages-diff-line {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
   min-height: 18px;
   padding: 0 10px 0 0;
-  white-space: pre-wrap;
 }
 
 .packages-diff-prefix {
   color: var(--packages-muted);
   text-align: center;
   user-select: none;
+}
+
+.packages-diff-content {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .tok-comment {
