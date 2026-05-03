@@ -60,12 +60,24 @@ this order:
    repository with R2 fallback.
 3. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`,
    or `.gsv/summary.md` when no context files exist.
-4. **Process context** supplied with the assignment or runtime.
+4. **Available skills** from layered `skills.d` directories. This is a compact
+   command-oriented index only; full `SKILL.md` bodies are read explicitly with
+   `skills show <skill>`.
+5. **Process context** supplied with the assignment or runtime.
 
 Each section is rendered as `[section.name]` and separated with `---`. Profile
 context can template values such as `identity.username`, `identity.cwd`,
 `workspace`, `devices`, and `known_paths`. Home and workspace context are loaded
 lexically and bounded by `config/ai/max_context_bytes`.
+
+Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,
+workspace `.gsv/skills.d`, and visible package `/src/packages/<package>/skills.d`.
+The prompt tells processes to use `skills list`, `skills search`, `skills show`,
+`skills files`, and `skills read` rather than embedding long source paths in the
+index.
+
+System-provided skills live in the root GSV source tree under `skills/` and are
+seeded into user home `skills.d` during bootstrap when missing.
 
 The assembled prompt, config, tool list, device list, and approval policy are
 cached in `currentRun` for the duration of that run.

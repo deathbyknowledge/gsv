@@ -4,6 +4,8 @@ import type { PasswdEntry } from "../../auth/passwd";
 import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "@gsv/protocol/syscalls/system";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureHomeStorageLayout } from "../home-knowledge";
+import { RipgitClient } from "../../fs";
+import { seedRepoSkillsToHome } from "./skills-seed";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -172,6 +174,15 @@ export async function handleSysSetup(
     cwd: home,
     workspaceId: null,
   };
+  const rootProcessIdentity: ProcessIdentity = {
+    uid: 0,
+    gid: 0,
+    gids: [0],
+    username: "root",
+    home: "/root",
+    cwd: "/root",
+    workspaceId: null,
+  };
   const bootstrapIdentity: UserIdentity = {
     role: "user",
     process: bootstrapProcessIdentity,
@@ -265,8 +276,28 @@ export async function handleSysSetup(
     await timeSetupStep(
       timings,
       "ensure-home-layout",
-      () => ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity),
+      async () => {
+        await ensureHomeStorageLayout(ctx.env, rootProcessIdentity);
+        await ensureHomeStorageLayout(ctx.env, bootstrapProcessIdentity);
+      },
     );
+
+    const bootstrapResult = bootstrap;
+    if (bootstrapResult && ctx.env.RIPGIT) {
+      await timeSetupStep(
+        timings,
+        "seed-root-skills",
+        () => seedRepoSkillsToHome(
+          new RipgitClient(ctx.env.RIPGIT!),
+          {
+            owner: "root",
+            repo: "gsv",
+            branch: bootstrapResult.head ?? bootstrapResult.ref,
+          },
+          rootProcessIdentity,
+        ),
+      );
+    }
 
     const processIdentity: ProcessIdentity = {
       uid,

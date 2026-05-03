@@ -40,6 +40,7 @@ import {
   isWorkersAiProvider,
   resolveWorkersAiModelContextWindow,
 } from "../inference/workers-ai";
+import { collectPromptSkillIndex } from "./skills";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -182,6 +183,12 @@ export async function handleAiConfig(
     "32768",
     10,
   );
+  const skillIndex = await collectPromptSkillIndex(ctx, requestedProfile).catch((error) => {
+    console.warn(
+      `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return [];
+  });
 
   return {
     profile,
@@ -193,6 +200,7 @@ export async function handleAiConfig(
     contextWindowTokens,
     contextWindowSource,
     profileContextFiles,
+    skillIndex,
     profileApprovalPolicy,
     maxContextBytes,
   };

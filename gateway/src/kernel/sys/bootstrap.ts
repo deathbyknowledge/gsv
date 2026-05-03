@@ -13,6 +13,7 @@ import {
   type PackageEntrypoint,
   type PackageRuntime,
 } from "../packages";
+import { seedRepoSkillsToHome } from "./skills-seed";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";
@@ -82,6 +83,14 @@ export async function handleSysBootstrap(
       `bootstrap root/gsv from ${remoteUrl}#${ref}`,
       remoteUrl,
       ref,
+    ));
+    await timeBootstrapStep(timings, "seed-skills", () => seedRepoSkillsToHome(
+      ripgit,
+      {
+        ...ROOT_GSV_REPO,
+        branch: imported.head ?? imported.remoteRef,
+      },
+      ctx.identity!.process,
     ));
 
     const builtinSeeds = await timeBootstrapStep(

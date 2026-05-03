@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import { handleSysBootstrap } from "./bootstrap";
 
-const { importFromUpstreamMock, buildBuiltinPackageSeedsMock } = vi.hoisted(() => ({
+const { importFromUpstreamMock, readPathMock, applyMock, buildBuiltinPackageSeedsMock } = vi.hoisted(() => ({
   importFromUpstreamMock: vi.fn(),
+  readPathMock: vi.fn(),
+  applyMock: vi.fn(),
   buildBuiltinPackageSeedsMock: vi.fn(),
 }));
 
@@ -20,6 +22,8 @@ const {
 vi.mock("../../fs/ripgit/client", () => ({
   RipgitClient: class {
     importFromUpstream = importFromUpstreamMock;
+    readPath = readPathMock;
+    apply = applyMock;
   },
 }));
 
@@ -104,6 +108,29 @@ describe("handleSysBootstrap", () => {
       head: "abc123",
       changed: true,
     });
+    readPathMock.mockImplementation((repo: { owner: string; repo: string }, path: string) => {
+      if (repo.owner === "root" && repo.repo === "gsv" && path === "skills") {
+        return {
+          kind: "tree",
+          entries: [{ name: "gsv-package-development", type: "tree", mode: "040000", hash: "a" }],
+        };
+      }
+      if (repo.owner === "root" && repo.repo === "gsv" && path === "skills/gsv-package-development") {
+        return {
+          kind: "tree",
+          entries: [{ name: "SKILL.md", type: "blob", mode: "100644", hash: "b" }],
+        };
+      }
+      if (repo.owner === "root" && repo.repo === "gsv" && path === "skills/gsv-package-development/SKILL.md") {
+        return {
+          kind: "file",
+          bytes: new TextEncoder().encode("---\nname: gsv-package-development\ndescription: Package work.\n---\n\n# Package Work\n"),
+          size: 80,
+        };
+      }
+      return { kind: "missing" };
+    });
+    applyMock.mockResolvedValue({ head: "home123" });
     buildBuiltinPackageSeedsMock.mockResolvedValue([{ name: "chat-seed" }]);
     inferDefaultCliChannelMock.mockReturnValue("dev");
     mirrorCliChannelMock.mockResolvedValue(undefined);
@@ -124,6 +151,24 @@ describe("handleSysBootstrap", () => {
       "main",
     );
     expect(buildBuiltinPackageSeedsMock).toHaveBeenCalledWith(ctx.env);
+    expect(applyMock).toHaveBeenCalledWith(
+      { owner: "root", repo: "home" },
+      "root",
+      "root@gsv.local",
+      "gsv: seed bootstrap skills",
+      [
+        {
+          type: "put",
+          path: "skills.d/.dir",
+          contentBytes: [],
+        },
+        {
+          type: "put",
+          path: "skills.d/gsv-package-development/SKILL.md",
+          contentBytes: Array.from(new TextEncoder().encode("---\nname: gsv-package-development\ndescription: Package work.\n---\n\n# Package Work\n")),
+        },
+      ],
+    );
     expect(ctx.packages.seedBuiltinPackages).toHaveBeenCalledWith([{ name: "chat-seed" }]);
     expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("main");
     expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);

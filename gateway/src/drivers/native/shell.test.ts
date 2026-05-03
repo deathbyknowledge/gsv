@@ -56,6 +56,7 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
 
 function makeContext(options?: {
   capabilities?: string[];
+  config?: Record<string, string>;
   pkg?: InstalledPackageRecord;
   procs?: Partial<KernelContext["procs"]>;
   schedules?: KernelContext["schedules"];
@@ -64,6 +65,7 @@ function makeContext(options?: {
 }): KernelContext {
   const pkg = options?.pkg ?? makePackage();
   const records = new Map([[pkg.packageId, pkg]]);
+  const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
   return {
     env: {
       STORAGE: env.STORAGE,
@@ -76,13 +78,27 @@ function makeContext(options?: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
         if (key === "config/server/version") return "0.1.2";
-        return null;
+        return configValues.get(key) ?? null;
+      },
+      list(prefix: string) {
+        const normalized = prefix.endsWith("/") ? prefix : `${prefix}/`;
+        return [...configValues.entries()]
+          .filter(([key]) => key.startsWith(normalized))
+          .map(([key, value]) => ({ key, value }))
+          .sort((left, right) => left.key.localeCompare(right.key));
       },
     } as never,
     devices: null as never,
     procs: {
       getMounts() {
         return [];
+      },
+      get() {
+        return {
+          profile: "task",
+          uid: IDENTITY.uid,
+          workspaceId: IDENTITY.workspaceId,
+        };
       },
       ...(options?.procs ?? {}),
     } as never,
@@ -173,6 +189,34 @@ describe("pkg shell command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("sched add --name NAME");
     expect(result.stdout).toContain("sched run <id>");
+    expect(result.stderr).toBe("");
+  });
+
+  it("lists and shows profile skills through the skills command", async () => {
+    const skill = [
+      "---",
+      "name: demo-workflow",
+      "description: Demonstrates the skills command.",
+      "---",
+      "",
+      "# Demo Workflow",
+      "",
+      "Use this for tests.",
+    ].join("\n");
+
+    const result = await handleShellExec(
+      { input: "skills list && skills show demo-workflow" },
+      makeContext({
+        config: {
+          "config/ai/profile/task/skills.d/demo-workflow/SKILL.md": skill,
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("demo-workflow\tprofile:task");
+    expect(result.stdout).toContain("path: /sys/config/ai/profile/task/skills.d/demo-workflow/SKILL.md");
+    expect(result.stdout).toContain("# Demo Workflow");
     expect(result.stderr).toBe("");
   });
 

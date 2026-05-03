@@ -96,6 +96,10 @@ Important native paths:
 
 Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, package commands, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.
 
+Use `skills list`, `skills search <query>`, and `skills show <skill>` in the
+native shell to inspect reusable process workflows populated from layered
+`skills.d` directories.
+
 The native shell also includes a `codemode` command for reusable GSV tool
 scripts:
 

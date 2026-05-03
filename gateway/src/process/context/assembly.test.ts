@@ -23,6 +23,18 @@ const CONFIG: AiConfigResult = {
       text: "Task for {{identity.username}} in {{identity.cwd}}\n\nTargets:\n{{devices}}\n\nPaths:\n{{known_paths}}",
     },
   ],
+  skillIndex: [
+    {
+      id: "package-development",
+      name: "package-development",
+      description: "Build and update packages.",
+      source: {
+        kind: "profile",
+        label: "profile:task",
+        writable: false,
+      },
+    },
+  ],
   maxContextBytes: 64,
 };
 
@@ -97,8 +109,21 @@ describe("selection", () => {
       "profile.context",
       "home.context",
       "workspace.context",
+      "available.skills",
       "process.context",
     ]);
+  });
+});
+
+describe("createSkillIndexProvider", () => {
+  it("renders command-oriented skill discovery without source paths", async () => {
+    const providers = resolvePromptProviders("task", "chat.reply");
+    const prompt = await assembleSystemPrompt(makeInput(), providers);
+
+    expect(prompt).toContain("[available.skills]");
+    expect(prompt).toContain("Use `skills list`");
+    expect(prompt).toContain("- package-development: Build and update packages.");
+    expect(prompt).not.toContain("/src/packages/");
   });
 });
 

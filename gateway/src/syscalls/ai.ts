@@ -57,6 +57,16 @@ export type AiToolsResult = {
   devices: AiToolsDevice[];
 };
 
+export type AiSkillIndexEntry = {
+  id: string;
+  name: string;
+  description: string;
+  source: {
+    kind: "profile" | "home" | "workspace" | "package";
+    label: string;
+    writable: boolean;
+  };
+};
 
 export type AiConfigArgs = {
   profile?: AiContextProfile;
@@ -75,6 +85,7 @@ export type AiConfigResult = {
     name: string;
     text: string;
   }>;
+  skillIndex?: AiSkillIndexEntry[];
   profileApprovalPolicy?: string | null;
   maxContextBytes: number;
 };

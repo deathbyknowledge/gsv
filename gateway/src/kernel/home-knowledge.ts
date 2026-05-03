@@ -17,11 +17,13 @@ export async function ensureHomeStorageLayout(
   const [
     constitution,
     contextDir,
+    skillsDir,
     knowledgeDir,
     inboxDir,
   ] = await Promise.all([
     client.readPath(repo, "CONSTITUTION.md"),
     client.readPath(repo, "context.d"),
+    client.readPath(repo, "skills.d"),
     client.readPath(repo, "knowledge"),
     client.readPath(repo, "knowledge/inbox"),
   ]);
@@ -38,6 +40,13 @@ export async function ensureHomeStorageLayout(
     ops.push({
       type: "put" as const,
       path: "context.d/.dir",
+      contentBytes: [],
+    });
+  }
+  if (skillsDir.kind === "missing") {
+    ops.push({
+      type: "put" as const,
+      path: "skills.d/.dir",
       contentBytes: [],
     });
   }

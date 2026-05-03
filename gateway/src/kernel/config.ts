@@ -26,6 +26,14 @@ const GSV_PROCESS_CONTEXT = [
   "Messages beginning with `[Process Event]:` are runtime events injected by GSV, not ordinary user messages. They may report IPC replies, IPC timeouts, watched signals, scheduled events, conversation compaction, resets, or other process lifecycle changes. Use them as authoritative context for the process state, and do not quote the prefix back unless it is directly relevant.",
 ].join("\n");
 
+const GSV_TOOLING_CONTEXT = [
+  "GSV command details live in skills and manuals rather than profile context.",
+  "- Use `skills list`, `skills search <query>`, and `skills show <skill>` before relying on reusable workflows.",
+  "- Use `skills show gsv-command-surface` when choosing between native shell commands, package commands, host CLI commands, and workflow-specific command surfaces.",
+  "- Use `man` and `man <topic>` for built-in native shell command reference.",
+  "- For tools that accept a target or device, use `gsv` for control-plane work and a device target only when data or execution must happen there.",
+].join("\n");
+
 export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // -- AI / LLM ---------------------------------------------------------------
   // The LLM provider to use (workers-ai, anthropic, openai, google, mistral, etc.)
@@ -58,21 +66,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "Available targets:",
       "{{devices}}",
     ].join("\n"),
-  "config/ai/profile/init/context.d/20-tooling.md":
-    [
-      "GSV command surfaces:",
-      "- `wiki`: durable knowledge databases and source-backed pages, including the conventional `personal` database for people, projects, and preferences",
-      "- `pkg`: inspect and manage installed packages, source refs, and staged package source edits",
-      "- `man`: reference manuals for GSV commands and workflows",
-      "",
-      "Tooling model:",
-      "- Use `pkg list`, `pkg refs`, `pkg log`, and `/src/packages/<package>` to discover installed packages and visible source",
-      "- Use `pkg create <repo>` to scaffold a user-owned package app or CLI when the task is to build a new reusable package",
-      "- Use `search` to locate notes and `query` to get a compact brief with references",
-      "- Write directly when a target page is clear and the information is durable",
-      "- Stage to inbox when information is tentative, uncertain, or needs review",
-      "- For tools that accept a target or device, use `gsv` for the control target and another target only when data or execution must happen there",
-    ].join("\n"),
+  "config/ai/profile/init/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/task/context.d/00-role.md":
     [
       "You are the active task process for {{identity.username}}.",
@@ -88,21 +82,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "Available targets:",
       "{{devices}}",
     ].join("\n"),
-  "config/ai/profile/task/context.d/20-tooling.md":
-    [
-      "GSV command surfaces:",
-      "- `wiki`: durable knowledge databases and source-backed pages, including the conventional `personal` database for people, projects, and preferences",
-      "- `pkg`: inspect and manage installed packages, source refs, and staged package source edits",
-      "- `man`: reference manuals for GSV commands and workflows",
-      "",
-      "Tooling model:",
-      "- Use `pkg list`, `pkg refs`, `pkg log`, and `/src/packages/<package>` to discover installed packages and visible source",
-      "- Use `pkg create <repo>` to scaffold a user-owned package app or CLI when the task is to build a new reusable package",
-      "- Use `search` to locate notes and `query` to get a compact brief with references",
-      "- Write directly when a target page is clear and the information is durable",
-      "- Stage to inbox when information is tentative, uncertain, or needs review",
-      "- For tools that accept a target or device, use `gsv` for the control target and another target only when data or execution must happen there",
-    ].join("\n"),
+  "config/ai/profile/task/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/review/context.d/00-role.md":
     [
       "You are a package review process for {{identity.username}}.",
@@ -120,18 +100,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "Available targets:",
       "{{devices}}",
     ].join("\n"),
-  "config/ai/profile/review/context.d/20-tooling.md":
-    [
-      "GSV command surfaces:",
-      "- `pkg`: inspect and manage installed packages",
-      "- `man`: reference manuals for GSV commands and workflows",
-      "- `wiki` is available when you need to inspect durable knowledge that affects review context, including the `personal` database",
-      "",
-      "Tooling model:",
-      "- Prefer direct inspection, package metadata, and mounted files over guesses",
-      "- Treat `/src/packages/<package>` as package source evidence; writes to owned package sources are staged until `pkg source commit`",
-      "- For tools that accept a target or device, use `gsv` for the control target unless review evidence lives elsewhere",
-    ].join("\n"),
+  "config/ai/profile/review/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/cron/context.d/00-role.md":
     [
       "You are a scheduled background process for {{identity.username}}.",
@@ -146,18 +115,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "Available targets:",
       "{{devices}}",
     ].join("\n"),
-  "config/ai/profile/cron/context.d/20-tooling.md":
-    [
-      "GSV command surfaces:",
-      "- `wiki`: durable knowledge databases and source-backed pages, including the conventional `personal` database for people, projects, and preferences",
-      "- `pkg`: inspect and manage installed packages, source refs, and staged package source edits",
-      "- `man`: reference manuals for GSV commands and workflows",
-      "",
-      "Tooling model:",
-      "- Use `pkg list`, `pkg refs`, `pkg log`, and `/src/packages/<package>` to discover installed packages and visible source",
-      "- Use durable summaries and inbox staging when you need to preserve future context",
-      "- For tools that accept a target or device, use `gsv` for the control target and another target only when scheduled work must happen there",
-    ].join("\n"),
+  "config/ai/profile/cron/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/mcp/context.d/00-role.md":
     [
       "You are the master control process for {{identity.username}}.",
@@ -174,18 +132,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "Known system paths:",
       "{{known_paths}}",
     ].join("\n"),
-  "config/ai/profile/mcp/context.d/20-tooling.md":
-    [
-      "GSV command surfaces:",
-      "- `pkg`: inspect and manage installed packages",
-      "- `wiki`: inspect or update durable knowledge databases, including the `personal` database, when operationally relevant",
-      "- `man`: reference manuals for GSV commands and workflows",
-      "",
-      "Tooling model:",
-      "- Use `pkg list`, `pkg refs`, `pkg log`, `pkg create`, and `pkg source status/diff/commit` for package-source diagnosis and package-building work",
-      "- Prefer precise inspection and direct operational changes over broad conversational behavior",
-      "- For tools that accept a target or device, use `gsv` for control-plane work and a device target only when you must operate there directly",
-    ].join("\n"),
+  "config/ai/profile/mcp/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/app/context.d/00-role.md":
     [
       "You are an app-owned runtime process for {{identity.username}}.",
