@@ -270,6 +270,93 @@ describe("createProcessSourceBackend", () => {
     ]);
   });
 
+  it("uses disambiguated source path names for default process branches", async () => {
+    const first = makePackage({
+      packageId: "import:sam/mono:packages/one",
+      manifest: {
+        ...makePackage().manifest,
+        name: "Demo Tool",
+        source: {
+          repo: "sam/mono",
+          ref: "main",
+          subdir: "packages/one",
+          resolvedCommit: "onebase123",
+        },
+      },
+    });
+    const second = makePackage({
+      packageId: "import:sam/mono:packages/two",
+      manifest: {
+        ...makePackage().manifest,
+        name: "Demo Tool",
+        source: {
+          repo: "sam/mono",
+          ref: "main",
+          subdir: "packages/two",
+          resolvedCommit: "twobase123",
+        },
+      },
+    });
+    const config = makeConfig();
+    const storage = makeBucket();
+    const applyCalls: any[] = [];
+    const ripgit = {
+      readPath: async () => ({ kind: "missing" }),
+      apply: async (...args: any[]) => {
+        applyCalls.push(args);
+        return { head: `head${applyCalls.length}` };
+      },
+    } as any;
+    const packages = [first, second];
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      packages,
+      processId: "task:source",
+      config,
+      ripgit,
+    });
+
+    await backend!.writeFile(
+      "/src/packages/demo-tool--sam-mono-packages-one/src/index.ts",
+      "export const one = true;\n",
+    );
+    await backend!.writeFile(
+      "/src/packages/demo-tool--sam-mono-packages-two/src/index.ts",
+      "export const two = true;\n",
+    );
+    await commitProcessSourceChanges({
+      identity: IDENTITY,
+      storage,
+      packages,
+      processId: "task:source",
+      config,
+      ripgit,
+    }, first, { message: "pkg: commit one" });
+    await commitProcessSourceChanges({
+      identity: IDENTITY,
+      storage,
+      packages,
+      processId: "task:source",
+      config,
+      ripgit,
+    }, second, { message: "pkg: commit two" });
+
+    expect(applyCalls).toHaveLength(2);
+    expect(applyCalls[0][0]).toEqual({
+      owner: "sam",
+      repo: "mono",
+      branch: "gsv/process/task-source/demo-tool--sam-mono-packages-one",
+    });
+    expect(applyCalls[1][0]).toEqual({
+      owner: "sam",
+      repo: "mono",
+      branch: "gsv/process/task-source/demo-tool--sam-mono-packages-two",
+    });
+    expect(applyCalls[0][4][0].path).toBe("packages/one/src/index.ts");
+    expect(applyCalls[1][4][0].path).toBe("packages/two/src/index.ts");
+  });
+
   it("does not reuse expectedHead when committing to a different branch", async () => {
     const config = makeConfig();
     const storage = makeBucket();

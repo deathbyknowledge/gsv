@@ -300,8 +300,11 @@ export async function handlePkgCreate(
   }));
 
   const ripgit = requireRipgitClient(ctx);
+  const refs = await ripgit.refs(repo);
+  const applyOptions = packageCreateApplyOptions(ref, refs.heads);
+  const existingRef = refs.heads?.[ref] ? ref : applyOptions?.baseRef ?? ref;
   const existingPackageFile = await ripgit.readPath(
-    { ...repo, branch: ref },
+    { ...repo, branch: existingRef },
     joinPackageSourcePath(subdir, "package.json"),
   );
   const created = existingPackageFile.kind === "missing";
@@ -317,6 +320,7 @@ export async function handlePkgCreate(
     `${identity.process.username}@gsv.local`,
     created ? `pkg: create ${packageName}` : `pkg: update scaffold for ${packageName}`,
     ops,
+    applyOptions,
   );
   registerPackageRepo(ctx, repo, description);
 
@@ -590,6 +594,22 @@ function normalizePackageCreateTemplate(template: PkgCreateTemplate | undefined)
     throw new Error(`Unsupported package template: ${String(template)}`);
   }
   return template;
+}
+
+function packageCreateApplyOptions(
+  ref: string,
+  heads: Record<string, string> | undefined,
+): { baseRef?: string } | undefined {
+  if (heads?.[ref] || ref === DEFAULT_PACKAGE_CREATE_REF) {
+    return undefined;
+  }
+
+  if (heads?.[DEFAULT_PACKAGE_CREATE_REF]) {
+    return { baseRef: DEFAULT_PACKAGE_CREATE_REF };
+  }
+
+  const fallback = Object.keys(heads ?? {}).sort()[0];
+  return fallback ? { baseRef: fallback } : undefined;
 }
 
 function normalizePackageJsonName(rawName: string | undefined, repo: RipgitRepoRef): string {

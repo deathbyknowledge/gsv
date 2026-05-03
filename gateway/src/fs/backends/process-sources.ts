@@ -578,7 +578,7 @@ export async function getProcessSourceStatus(
   options: ProcessSourceBackendOptions,
   record: InstalledPackageRecord,
 ): Promise<ProcessSourceStatus> {
-  const pkg = sourcePackageForRecord(record, options.identity);
+  const pkg = sourcePackageForOptions(options, record);
   const overlay = await readOverlayManifest(options.storage ?? null, options.processId ?? null, pkg);
   return sourceStatusForPackage(options, pkg, overlay);
 }
@@ -590,7 +590,7 @@ export async function diffProcessSourceChanges(
   if (!options.ripgit) {
     throw new Error("RIPGIT binding is required");
   }
-  const pkg = sourcePackageForRecord(record, options.identity);
+  const pkg = sourcePackageForOptions(options, record);
   const overlay = await readOverlayManifest(options.storage ?? null, options.processId ?? null, pkg);
   const changes = sortedOverlayChanges(overlay);
   if (changes.length === 0) {
@@ -652,7 +652,7 @@ export async function commitProcessSourceChanges(
     throw new Error("message is required");
   }
 
-  const pkg = sourcePackageForRecord(record, options.identity);
+  const pkg = sourcePackageForOptions(options, record);
   if (!pkg.writable) {
     throw new Error(`Package source is read-only: ${pkg.name}`);
   }
@@ -715,7 +715,7 @@ export async function discardProcessSourceChanges(
   if (!options.processId) {
     throw new Error("Source changes require a process context");
   }
-  const pkg = sourcePackageForRecord(record, options.identity);
+  const pkg = sourcePackageForOptions(options, record);
   const overlay = await readOverlayManifest(options.storage, options.processId, pkg);
   await discardOverlay(options.storage, options.processId, pkg, overlay);
   return sourceStatusForPackage(options, pkg, emptyOverlayManifest(pkg));
@@ -746,13 +746,25 @@ function canWritePackageSource(record: InstalledPackageRecord, identity: Process
   return identity.uid === 0 || repo.owner === identity.username;
 }
 
+function sourcePackageForOptions(
+  options: ProcessSourceBackendOptions,
+  record: InstalledPackageRecord,
+): SourcePackage {
+  return sourcePackageForRecord(
+    record,
+    options.identity,
+    packageSourcePathNameForRecord(record, options.packages),
+  );
+}
+
 function sourcePackageForRecord(
   record: InstalledPackageRecord,
   identity: ProcessIdentity,
+  name = packageSourcePathName(record),
 ): SourcePackage {
   return {
     record,
-    name: packageSourcePathName(record),
+    name,
     writable: canWritePackageSource(record, identity),
   };
 }
