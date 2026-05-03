@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commitProcessSourceChanges, createProcessSourceBackend } from "./index";
+import { commitProcessSourceChanges, createProcessSourceBackend, getProcessSourceStatus } from "./index";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { InstalledPackageRecord } from "../kernel/packages";
 
@@ -162,6 +162,7 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     });
 
+    await expect(backend!.mkdir("/src/packages/ascii-starfield")).resolves.toBeUndefined();
     await backend!.writeFile("/src/packages/ascii-starfield/src/index.ts", "export const changed = true;\n");
 
     expect(applyCalls).toHaveLength(0);
@@ -178,6 +179,7 @@ describe("createProcessSourceBackend", () => {
 
     expect(result).toMatchObject({
       committed: true,
+      baseRef: "base123",
       branch: "gsv/process/task-source/ascii-starfield",
       commitHead: "processhead123",
       ops: 1,
@@ -200,6 +202,17 @@ describe("createProcessSourceBackend", () => {
 
     const [state] = [...config.values.values()];
     expect(JSON.parse(state).branch).toBe("gsv/process/task-source/ascii-starfield");
+    await expect(getProcessSourceStatus({
+      identity: IDENTITY,
+      storage,
+      packages: [makePackage()],
+      processId: "task:source",
+      config,
+      ripgit,
+    }, makePackage())).resolves.toMatchObject({
+      baseRef: "base123",
+      head: "processhead123",
+    });
     expect(storage.objects.size).toBe(0);
   });
 

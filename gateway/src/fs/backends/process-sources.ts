@@ -272,10 +272,11 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   async mkdir(path: string, _options?: MkdirOptions): Promise<void> {
-    const resolved = this.resolveWritablePackagePath(path, "mkdir");
+    const resolved = this.resolvePackagePath(path);
     if (!resolved.relativePath) {
       return;
     }
+    this.assertWritablePackagePath(resolved, "mkdir");
     // ripgit tracks files, not empty directories. Directory creation is accepted
     // so normal shell workflows can create parents before writing files.
   }
@@ -428,6 +429,18 @@ class ProcessSourceMountBackend implements MountBackend {
     if (!resolved.relativePath) {
       throw new Error(`EISDIR: illegal operation on a directory, ${operation} '${resolved.normalizedPath}'`);
     }
+    this.assertWritablePackagePath(resolved, operation);
+    return resolved;
+  }
+
+  private assertWritablePackagePath(
+    resolved: {
+      pkg: SourcePackage;
+      relativePath: string;
+      normalizedPath: string;
+    },
+    _operation: string,
+  ): void {
     if (!resolved.pkg.writable) {
       throw new Error(`EPERM: package source is read-only '${resolved.normalizedPath}'`);
     }
@@ -437,7 +450,6 @@ class ProcessSourceMountBackend implements MountBackend {
     if (!this.storage) {
       throw new Error(`ENOSYS: source overlay storage is unavailable '${resolved.normalizedPath}'`);
     }
-    return resolved;
   }
 
   private repoRefForPackage(pkg: SourcePackage): RipgitRepoRef {
@@ -921,7 +933,7 @@ function sourceStatusForPackage(
     repo: pkg.repo,
     sourceRef: pkg.sourceRef,
     sourceSubdir: pkg.sourceSubdir,
-    baseRef: state?.head ?? pkg.resolvedCommit ?? pkg.sourceRef,
+    baseRef: state?.baseRef ?? pkg.resolvedCommit ?? pkg.sourceRef,
     branch: state?.branch ?? null,
     head: state?.head ?? null,
     changes: sortedOverlayChanges(overlay).map((change) => ({
