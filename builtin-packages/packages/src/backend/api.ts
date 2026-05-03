@@ -128,12 +128,102 @@ function packageSourcePathName(pkg: PackageLike): string {
   return pkg.name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function buildReviewPrompt(pkg: PackageLike): string {
+function packageSourcePathNameForPackage(pkg: PackageLike, packages: PackageLike[]): string {
+  const names = packageSourcePathNameMap(packages);
+  const targetKey = packageSourceRecordKey(pkg);
+  for (const [record, name] of names) {
+    if (packageSourceRecordKey(record) === targetKey) {
+      return name;
+    }
+  }
+  return packageSourcePathName(pkg);
+}
+
+function packageSourcePathNameMap(packages: PackageLike[]): Map<PackageLike, string> {
+  const entries = packages.map((pkg) => ({
+    pkg,
+    baseName: packageSourcePathName(pkg) || sanitizeSourcePathSegment(pkg.packageId) || "package",
+  }));
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    counts.set(entry.baseName, (counts.get(entry.baseName) ?? 0) + 1);
+  }
+
+  const used = new Set<string>();
+  const result = new Map<PackageLike, string>();
+  for (const entry of entries.sort(compareSourcePathEntries)) {
+    const collides = (counts.get(entry.baseName) ?? 0) > 1;
+    const preferred = collides
+      ? `${entry.baseName}--${packageSourcePathDisambiguator(entry.pkg)}`
+      : entry.baseName;
+    const name = uniqueSourcePathName(preferred, used);
+    used.add(name);
+    result.set(entry.pkg, name);
+  }
+  return result;
+}
+
+function compareSourcePathEntries(
+  left: { pkg: PackageLike; baseName: string },
+  right: { pkg: PackageLike; baseName: string },
+): number {
+  const name = left.baseName.localeCompare(right.baseName);
+  if (name !== 0) {
+    return name;
+  }
+  const source = sourcePathDisambiguationKey(left.pkg).localeCompare(sourcePathDisambiguationKey(right.pkg));
+  if (source !== 0) {
+    return source;
+  }
+  return packageSourceRecordKey(left.pkg).localeCompare(packageSourceRecordKey(right.pkg));
+}
+
+function packageSourcePathDisambiguator(pkg: PackageLike): string {
+  return sanitizeSourcePathSegment(sourcePathDisambiguationKey(pkg))
+    || sanitizeSourcePathSegment(pkg.packageId)
+    || "package";
+}
+
+function sourcePathDisambiguationKey(pkg: PackageLike): string {
+  const subdir = normalizeRepoPath(pkg.source.subdir);
+  return subdir && subdir !== "."
+    ? `${pkg.source.repo}-${subdir}`
+    : pkg.source.repo;
+}
+
+function sanitizeSourcePathSegment(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function uniqueSourcePathName(preferred: string, used: Set<string>): string {
+  let candidate = preferred || "package";
+  let index = 2;
+  while (used.has(candidate)) {
+    candidate = `${preferred || "package"}-${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function packageSourceRecordKey(pkg: PackageLike): string {
+  switch (pkg.scope.kind) {
+    case "user":
+      return `user:${pkg.scope.uid ?? ""}:${pkg.packageId}`;
+    case "workspace":
+      return `workspace:${pkg.scope.workspaceId ?? ""}:${pkg.packageId}`;
+    case "global":
+      return `global:${pkg.packageId}`;
+    default:
+      return `${pkg.scope.kind}:${pkg.packageId}`;
+  }
+}
+
+function buildReviewPrompt(pkg: PackageLike, packages: PackageLike[]): string {
   const bindings = pkg.bindingNames.length > 0 ? pkg.bindingNames.join(", ") : "none declared";
   const entrypoints = pkg.entrypoints.length > 0
     ? pkg.entrypoints.map((entry) => `${entry.name}:${entry.kind}`).join(", ")
     : "none";
-  const sourcePath = `/src/packages/${packageSourcePathName(pkg)}`;
+  const sourcePath = `/src/packages/${packageSourcePathNameForPackage(pkg, packages)}`;
 
   return [
     `Review the imported package \"${pkg.name}\".`,
@@ -599,7 +689,7 @@ export async function startReview(kernel: KernelClientLike, args: { packageId: s
   const spawned = asRecord(await kernel.request("proc.spawn", {
     profile: "review",
     label: `Review ${target.name}`,
-    prompt: buildReviewPrompt(target),
+    prompt: buildReviewPrompt(target, packages),
     workspace: { mode: "none" },
     mounts: [
       { kind: "package-source", packageId: target.packageId },
