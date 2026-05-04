@@ -20,6 +20,7 @@ import {
   inferContentType,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import { visiblePackageScopesForActor } from "../../kernel/packages";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
 import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";
@@ -30,12 +31,15 @@ const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
 function makeFs(ctx: KernelContext): GsvFs {
   const identity = ctx.identity!.process;
-  const mounts = ctx.processId ? ctx.procs.getMounts(ctx.processId) : [];
-  const sourceBackend = createProcessSourceBackend(
+  const sourceBackend = createProcessSourceBackend({
     identity,
-    mounts.length > 0 ? new RipgitClient(ctx.env.RIPGIT) : null,
-    mounts,
-  );
+    storage: ctx.env.STORAGE,
+    ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
+    packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(identity) }),
+    mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
+    processId: ctx.processId ?? null,
+    config: ctx.config,
+  });
   return new GsvFs(
     ctx.env.STORAGE,
     identity,

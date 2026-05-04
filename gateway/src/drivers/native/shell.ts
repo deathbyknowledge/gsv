@@ -14,11 +14,18 @@ import { GsvFs } from "../../fs/gsv-fs";
 import type { ExtendedStat } from "../../fs/gsv-fs";
 import type { AppRunnerCommandInput } from "../../app-runner";
 import {
+  commitProcessSourceChanges,
   createHomeKnowledgeBackend,
   createPackageBackend,
   createProcessSourceBackend,
   createWorkspaceBackend,
+  diffProcessSourceChanges,
+  discardProcessSourceChanges,
+  getProcessSourceStatus,
   RipgitClient,
+  packageSourcePathNameMap,
+  packageSourcePathName,
+  normalizePath,
   resolveUserPath,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
@@ -26,6 +33,7 @@ import { hasCapability } from "../../kernel/capabilities";
 import {
   handlePkgAdd,
   handlePkgCheckout,
+  handlePkgCreate,
   handlePkgInstall,
   handlePkgList,
   handlePkgPublicList,
@@ -55,10 +63,17 @@ import {
 } from "../../kernel/scheduler";
 import {
   packageRouteBase,
+  packageScopeEquals,
   visiblePackageScopesForActor,
   type InstalledPackageRecord,
   type PackageEntrypoint,
 } from "../../kernel/packages";
+import {
+  collectFilesystemSkillDocuments,
+  listSkillFiles,
+  resolveSkillDocument,
+  type SkillDocument,
+} from "../../kernel/skills";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
 import type { SyscallName } from "../../syscalls";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
@@ -157,12 +172,15 @@ export async function handleShellExec(
 }
 
 function createBash(ctx: KernelContext, identity: ProcessIdentity, cwd: string): Bash {
-  const mounts = ctx.processId ? ctx.procs.getMounts(ctx.processId) : [];
-  const sourceBackend = createProcessSourceBackend(
+  const sourceBackend = createProcessSourceBackend({
     identity,
-    mounts.length > 0 ? new RipgitClient(ctx.env.RIPGIT) : null,
-    mounts,
-  );
+    storage: ctx.env.STORAGE,
+    ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
+    packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(identity) }),
+    mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
+    processId: ctx.processId ?? null,
+    config: ctx.config,
+  });
   const fs = new GsvFs(
     ctx.env.STORAGE,
     identity,
@@ -975,6 +993,7 @@ function buildCustomCommands(
   const stat = buildStatCommand(fs, identity, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx);
   const pkg = buildPkgCommand(ctx);
+  const skills = buildSkillsCommand(fs, ctx, identity);
   const proc = buildProcCommand(ctx);
   const sched = buildSchedCommand(ctx);
   const notifyCommands = buildNotifyCommands(ctx);
@@ -995,6 +1014,7 @@ function buildCustomCommands(
     proc,
     sched,
     pkg,
+    skills,
     ...notifyCommands,
     ...packageCommands,
   ];
@@ -1019,6 +1039,7 @@ function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
     "ls",
     "stat",
     "wiki",
+    "skills",
     "codemode",
   ]);
   const packageRecords = ctx.packages.list({
@@ -1081,14 +1102,29 @@ function isBuiltinWikiPackage(record: InstalledPackageRecord): boolean {
 }
 
 function buildPkgCommand(ctx: KernelContext) {
-  return defineCommand("pkg", async (args): Promise<ExecResult> => {
+  return defineCommand("pkg", async (args, bashCtx): Promise<ExecResult> => {
     try {
-      return await runPkgCommand(args, ctx);
+      return await runPkgCommand(args, ctx, bashCtx.cwd);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
         stdout: "",
         stderr: `pkg: ${message}\n`,
+        exitCode: 1,
+      };
+    }
+  });
+}
+
+function buildSkillsCommand(fs: GsvFs, ctx: KernelContext, identity: ProcessIdentity) {
+  return defineCommand("skills", async (args): Promise<ExecResult> => {
+    try {
+      return await runSkillsCommand(args, fs, ctx, identity);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        stdout: "",
+        stderr: `skills: ${message}\n`,
         exitCode: 1,
       };
     }
@@ -2033,7 +2069,7 @@ function schedUsage(): string {
   ].join("\n");
 }
 
-async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecResult> {
+async function runPkgCommand(args: string[], ctx: KernelContext, cwd: string): Promise<ExecResult> {
   const [subcommand = "help", ...rest] = args;
 
   switch (subcommand) {
@@ -2054,29 +2090,29 @@ async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     case "show":
     case "status": {
       requireCommandCapability(ctx, "pkg.list");
-      const target = resolvePkgTarget(rest[0], ctx);
+      const target = resolvePkgTarget(rest[0], ctx, cwd);
       return { stdout: formatPkgStatus(target, ctx), stderr: "", exitCode: 0 };
     }
     case "manifest": {
       requireCommandCapability(ctx, "pkg.list");
-      const target = resolvePkgTarget(rest[0], ctx);
+      const target = resolvePkgTarget(rest[0], ctx, cwd);
       return { stdout: `${JSON.stringify(target.manifest, null, 2)}\n`, stderr: "", exitCode: 0 };
     }
     case "capabilities": {
       requireCommandCapability(ctx, "pkg.list");
-      const target = resolvePkgTarget(rest[0], ctx);
+      const target = resolvePkgTarget(rest[0], ctx, cwd);
       return { stdout: formatPkgCapabilities(target), stderr: "", exitCode: 0 };
     }
     case "refs": {
       requireCommandCapability(ctx, "repo.refs");
-      const target = resolvePkgTarget(rest[0], ctx);
+      const target = resolvePkgTarget(rest[0], ctx, cwd);
       const result = await handleRepoRefs({ repo: target.manifest.source.repo }, ctx);
       return { stdout: formatPkgRefs(target, result), stderr: "", exitCode: 0 };
     }
     case "log": {
       requireCommandCapability(ctx, "repo.log");
       const parsed = parsePkgLogArgs(rest);
-      const target = resolvePkgTarget(parsed.packageId, ctx);
+      const target = resolvePkgTarget(parsed.packageId, ctx, cwd);
       const result = await handleRepoLog({
         repo: target.manifest.source.repo,
         ref: target.manifest.source.ref,
@@ -2085,11 +2121,23 @@ async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecRe
       }, ctx);
       return { stdout: formatPkgLog(target, result), stderr: "", exitCode: 0 };
     }
+    case "source": {
+      return runPkgSourceCommand(rest, ctx, cwd);
+    }
     case "add": {
       requireCommandCapability(ctx, "pkg.add");
       const result = await handlePkgAdd(parsePkgAddArgs(rest), ctx);
       return {
         stdout: `${result.package.enabled ? "imported and enabled" : "imported"} ${result.package.name} from ${result.imported.repo} (${result.imported.ref})\n`,
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "create": {
+      requireCommandCapability(ctx, "pkg.create");
+      const result = await handlePkgCreate(parsePkgCreateArgs(rest), ctx);
+      return {
+        stdout: `${result.created ? "created" : "updated"} ${result.package.name} in ${result.repo}:${result.subdir} (${result.ref})\n`,
         stderr: "",
         exitCode: 0,
       };
@@ -2140,7 +2188,7 @@ async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecRe
       if (publicSubcommand === "on" || publicSubcommand === "off") {
         requireCommandCapability(ctx, "pkg.public.set");
         const result = handlePkgPublicSet({
-          ...resolvePkgPublicTarget(rest[1], ctx),
+          ...resolvePkgPublicTarget(rest[1], ctx, cwd),
           public: publicSubcommand === "on",
         }, ctx);
         return {
@@ -2153,19 +2201,19 @@ async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecRe
     }
     case "approve": {
       requireCommandCapability(ctx, "pkg.review.approve");
-      const target = resolvePkgTarget(rest[0], ctx);
+      const target = resolvePkgTarget(rest[0], ctx, cwd);
       const result = handlePkgReviewApprove({ packageId: target.packageId }, ctx);
       return { stdout: `${result.changed ? "approved" : "already approved"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     case "enable": {
       requireCommandCapability(ctx, "pkg.install");
-      const target = resolvePkgTarget(rest[0], ctx);
+      const target = resolvePkgTarget(rest[0], ctx, cwd);
       const result = handlePkgInstall({ packageId: target.packageId }, ctx);
       return { stdout: `${result.changed ? "enabled" : "already enabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     case "disable": {
       requireCommandCapability(ctx, "pkg.remove");
-      const target = resolvePkgTarget(rest[0], ctx);
+      const target = resolvePkgTarget(rest[0], ctx, cwd);
       const result = handlePkgRemove({ packageId: target.packageId }, ctx);
       return { stdout: `${result.changed ? "disabled" : "already disabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
@@ -2175,7 +2223,7 @@ async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecRe
       if (!ref) {
         throw new Error("Usage: pkg checkout <ref> [package]");
       }
-      const target = resolvePkgTarget(rest[1], ctx);
+      const target = resolvePkgTarget(rest[1], ctx, cwd);
       const result = await handlePkgCheckout({ packageId: target.packageId, ref }, ctx);
       return { stdout: `${result.changed ? "checked out" : "already on"} ${ref} for ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
@@ -2184,24 +2232,240 @@ async function runPkgCommand(args: string[], ctx: KernelContext): Promise<ExecRe
   }
 }
 
-function resolvePkgTarget(rawPackageId: string | undefined, ctx: KernelContext): InstalledPackageRecord {
+async function runSkillsCommand(
+  args: string[],
+  fs: GsvFs,
+  ctx: KernelContext,
+  identity: ProcessIdentity,
+): Promise<ExecResult> {
+  const [subcommand = "list", ...rest] = args;
+
+  switch (subcommand) {
+    case "help":
+    case "--help":
+    case "-h":
+      return { stdout: skillsUsage(), stderr: "", exitCode: 0 };
+    case "list":
+    case "ls": {
+      const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
+      return { stdout: formatSkillsList(docs), stderr: "", exitCode: 0 };
+    }
+    case "search": {
+      const query = rest.join(" ").trim();
+      if (!query) {
+        throw new Error("Usage: skills search <query>");
+      }
+      const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
+      return { stdout: formatSkillsList(searchSkills(docs, query)), stderr: "", exitCode: 0 };
+    }
+    case "show": {
+      const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
+      const resolved = resolveSkillDocument(docs, rest[0]);
+      if (!resolved.ok) {
+        throw new Error(resolved.error);
+      }
+      return { stdout: formatSkillDocument(resolved.doc), stderr: "", exitCode: 0 };
+    }
+    case "files": {
+      const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
+      const resolved = resolveSkillDocument(docs, rest[0]);
+      if (!resolved.ok) {
+        throw new Error(resolved.error);
+      }
+      const files = await listSkillFiles(fs, resolved.doc);
+      return { stdout: formatSkillFiles(resolved.doc, files), stderr: "", exitCode: 0 };
+    }
+    case "read": {
+      const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
+      const resolved = resolveSkillDocument(docs, rest[0]);
+      if (!resolved.ok) {
+        throw new Error(resolved.error);
+      }
+      const filePath = String(rest[1] ?? "").trim();
+      if (!filePath) {
+        throw new Error("Usage: skills read <skill> <file>");
+      }
+      if (filePath.startsWith("/") || filePath.split("/").includes("..")) {
+        throw new Error("supporting file path must be relative and must not contain '..'");
+      }
+      const root = skillDirectoryPath(resolved.doc);
+      if (!root) {
+        throw new Error(`skill '${resolved.doc.id}' does not have supporting files`);
+      }
+      const content = await fs.readFile(`${root}/${filePath}`);
+      return { stdout: content.endsWith("\n") ? content : `${content}\n`, stderr: "", exitCode: 0 };
+    }
+    default:
+      throw new Error(`Unknown skills subcommand: ${subcommand}`);
+  }
+}
+
+function formatSkillsList(docs: SkillDocument[]): string {
+  if (docs.length === 0) {
+    return "No skills available.\n";
+  }
+  const lines = ["NAME\tSOURCE\tWRITABLE\tDESCRIPTION"];
+  for (const doc of docs) {
+    lines.push(`${doc.id}\t${doc.source.label}\t${doc.source.writable ? "yes" : "no"}\t${doc.description}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function searchSkills(docs: SkillDocument[], query: string): SkillDocument[] {
+  const needle = query.toLowerCase();
+  return docs.filter((doc) =>
+    doc.id.toLowerCase().includes(needle)
+    || doc.name.toLowerCase().includes(needle)
+    || doc.description.toLowerCase().includes(needle)
+    || doc.content.toLowerCase().includes(needle)
+  );
+}
+
+function formatSkillDocument(doc: SkillDocument): string {
+  return [
+    `path: ${doc.path}`,
+    `writable: ${doc.source.writable ? "yes" : "no"}`,
+    "",
+    doc.content,
+    "",
+  ].join("\n");
+}
+
+function formatSkillFiles(doc: SkillDocument, files: string[]): string {
+  if (files.length === 0) {
+    return `No supporting files for ${doc.id}.\n`;
+  }
+  return `${files.map((file) => `${doc.id}\t${file}`).join("\n")}\n`;
+}
+
+function skillDirectoryPath(doc: SkillDocument): string | null {
+  if (doc.path.endsWith("/SKILL.md")) {
+    return doc.path.slice(0, -"/SKILL.md".length);
+  }
+  return null;
+}
+
+function resolvePkgTarget(rawPackageId: string | undefined, ctx: KernelContext, cwd: string): InstalledPackageRecord {
   const packageId = typeof rawPackageId === "string" ? rawPackageId.trim() : "";
   if (packageId) {
     return resolveInstalledPackage(packageId, ctx);
   }
-  const currentPackageId = currentMountedPackageId(ctx);
-  if (currentPackageId) {
-    return resolveInstalledPackage(currentPackageId, ctx);
+  const currentPackage = currentSourcePackage(ctx, cwd);
+  if (currentPackage) {
+    return currentPackage;
   }
-  throw new Error("packageId is required outside a mounted package context");
+  throw new Error("packageId is required outside a package source context");
 }
 
-function currentMountedPackageId(ctx: KernelContext): string | null {
-  if (!ctx.processId) {
+function currentSourcePackage(ctx: KernelContext, cwd: string): InstalledPackageRecord | null {
+  const normalizedCwd = normalizePath(cwd);
+  const packages = ctx.packages.list({ scopes: visiblePackageScopesForActor(ctx.identity?.process) });
+  const match = normalizedCwd.match(/^\/src\/packages\/([^/]+)(?:\/|$)/);
+  const packageName = match?.[1];
+  if (packageName) {
+    const pathNames = packageSourcePathNameMap(packages);
+    const found = packages.find((candidate) => pathNames.get(candidate) === packageName);
+    if (found) {
+      return found;
+    }
+  }
+  return currentMountedSourcePackage(ctx, normalizedCwd, packages);
+}
+
+function currentMountedSourcePackage(
+  ctx: KernelContext,
+  normalizedCwd: string,
+  packages: InstalledPackageRecord[],
+): InstalledPackageRecord | null {
+  const mounts = ctx.processId ? ctx.procs.getMounts(ctx.processId) : [];
+  let matchedMount: (typeof mounts)[number] | undefined;
+  let matchedLength = -1;
+  for (const mount of mounts) {
+    const mountPath = normalizePath(mount.mountPath);
+    if (
+      mount.kind !== "ripgit-source" ||
+      !mount.packageId ||
+      (normalizedCwd !== mountPath && !normalizedCwd.startsWith(`${mountPath}/`))
+    ) {
+      continue;
+    }
+    if (mountPath.length > matchedLength) {
+      matchedMount = mount;
+      matchedLength = mountPath.length;
+    }
+  }
+  if (!matchedMount?.packageId) {
     return null;
   }
-  const mount = ctx.procs.getMounts(ctx.processId).find((candidate) => candidate.mountPath === "/src/package" && candidate.packageId);
-  return mount?.packageId ?? null;
+  return packages.find((candidate) =>
+    candidate.packageId === matchedMount.packageId &&
+    (!matchedMount.scope || packageScopeEquals(candidate.scope, matchedMount.scope))
+  ) ?? null;
+}
+
+async function runPkgSourceCommand(args: string[], ctx: KernelContext, cwd: string): Promise<ExecResult> {
+  const [subcommand = "status", ...rest] = args;
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    return { stdout: pkgSourceUsage(), stderr: "", exitCode: 0 };
+  }
+
+  if (subcommand === "status") {
+    requireCommandCapability(ctx, "pkg.list");
+    const target = resolvePkgTarget(rest[0], ctx, cwd);
+    const status = await getProcessSourceStatus(processSourceOptions(ctx), target);
+    return { stdout: formatPkgSourceStatus(status), stderr: "", exitCode: 0 };
+  }
+
+  if (subcommand === "diff") {
+    requireCommandCapability(ctx, "pkg.list");
+    const target = resolvePkgTarget(rest[0], ctx, cwd);
+    const diff = await diffProcessSourceChanges(processSourceOptions(ctx), target);
+    return { stdout: diff, stderr: "", exitCode: 0 };
+  }
+
+  if (subcommand === "commit") {
+    requireCommandCapability(ctx, "repo.apply");
+    const parsed = parsePkgSourceCommitArgs(rest);
+    const target = resolvePkgTarget(parsed.packageId, ctx, cwd);
+    const result = await commitProcessSourceChanges(processSourceOptions(ctx), target, {
+      message: parsed.message,
+      ...(parsed.branch ? { branch: parsed.branch } : {}),
+    });
+    return {
+      stdout: result.committed
+        ? `committed ${result.packageName} to ${result.branch ?? "-"} ${result.commitHead ?? "-"} (${result.ops} ops)\n`
+        : `no staged source changes for ${result.packageName}\n`,
+      stderr: "",
+      exitCode: 0,
+    };
+  }
+
+  if (subcommand === "discard") {
+    requireCommandCapability(ctx, "fs.write");
+    const target = resolvePkgTarget(rest[0], ctx, cwd);
+    const before = await getProcessSourceStatus(processSourceOptions(ctx), target);
+    await discardProcessSourceChanges(processSourceOptions(ctx), target);
+    return {
+      stdout: `discarded ${before.changes.length} staged source change(s) for ${target.manifest.name}\n`,
+      stderr: "",
+      exitCode: 0,
+    };
+  }
+
+  throw new Error(`Unknown pkg source subcommand: ${subcommand}`);
+}
+
+function processSourceOptions(ctx: KernelContext) {
+  const identity = ctx.identity!.process;
+  return {
+    identity,
+    storage: ctx.env.STORAGE,
+    ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
+    packages: ctx.packages.list({ scopes: visiblePackageScopesForActor(identity) }),
+    mounts: ctx.processId ? ctx.procs.getMounts(ctx.processId) : null,
+    processId: ctx.processId ?? null,
+    config: ctx.config,
+  };
 }
 
 function requireCommandCapability(ctx: KernelContext, capability: string): void {
@@ -2340,6 +2604,25 @@ function formatPkgLog(target: InstalledPackageRecord, result: Awaited<ReturnType
   return lines.join("\n");
 }
 
+function formatPkgSourceStatus(result: Awaited<ReturnType<typeof getProcessSourceStatus>>): string {
+  const lines = [
+    `package: ${result.packageName}`,
+    `packageId: ${result.packageId}`,
+    `repo: ${result.repo}`,
+    `sourceRef: ${result.sourceRef}`,
+    `baseRef: ${result.baseRef}`,
+    `branch: ${result.branch ?? "-"}`,
+    `head: ${result.head ?? "-"}`,
+    `changes: ${result.changes.length}`,
+  ];
+  for (const change of result.changes) {
+    const suffix = change.type === "put" && typeof change.size === "number" ? ` ${change.size} bytes` : "";
+    lines.push(`- ${change.type}\t${change.path}${suffix}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 function formatPkgPublicCatalog(result: Awaited<ReturnType<typeof handlePkgPublicList>>): string {
   const lines = [
     `source: ${result.serverName}`,
@@ -2418,6 +2701,144 @@ function parsePkgAddArgs(args: string[]): {
   return parsed;
 }
 
+function parsePkgCreateArgs(args: string[]): {
+  repo: string;
+  name?: string;
+  displayName?: string;
+  description?: string;
+  ref?: string;
+  subdir?: string;
+  template?: "web-ui" | "command";
+  command?: string;
+  overwrite?: boolean;
+  enable?: boolean;
+} {
+  const parsed: {
+    repo?: string;
+    name?: string;
+    displayName?: string;
+    description?: string;
+    ref?: string;
+    subdir?: string;
+    template?: "web-ui" | "command";
+    command?: string;
+    overwrite?: boolean;
+    enable?: boolean;
+  } = {};
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--repo") {
+      parsed.repo = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--name") {
+      parsed.name = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--display-name") {
+      parsed.displayName = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--description") {
+      parsed.description = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--ref") {
+      parsed.ref = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--subdir") {
+      parsed.subdir = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--template") {
+      const template = String(args[index + 1] ?? "").trim();
+      if (template !== "web-ui" && template !== "command") {
+        throw new Error("template must be web-ui or command");
+      }
+      parsed.template = template;
+      index += 1;
+      continue;
+    }
+    if (current === "--command") {
+      parsed.command = String(args[index + 1] ?? "").trim();
+      index += 1;
+      continue;
+    }
+    if (current === "--overwrite") {
+      parsed.overwrite = true;
+      continue;
+    }
+    if (current === "--enable") {
+      parsed.enable = true;
+      continue;
+    }
+    if (!parsed.repo) {
+      parsed.repo = current;
+      continue;
+    }
+    throw new Error(`Unknown pkg create argument: ${current}`);
+  }
+
+  if (!parsed.repo) {
+    throw new Error("Usage: pkg create --repo owner/repo [--name @owner/pkg]");
+  }
+
+  return {
+    repo: parsed.repo,
+    ...(parsed.name ? { name: parsed.name } : {}),
+    ...(parsed.displayName ? { displayName: parsed.displayName } : {}),
+    ...(parsed.description ? { description: parsed.description } : {}),
+    ...(parsed.ref ? { ref: parsed.ref } : {}),
+    ...(parsed.subdir ? { subdir: parsed.subdir } : {}),
+    ...(parsed.template ? { template: parsed.template } : {}),
+    ...(parsed.command ? { command: parsed.command } : {}),
+    ...(typeof parsed.overwrite === "boolean" ? { overwrite: parsed.overwrite } : {}),
+    ...(typeof parsed.enable === "boolean" ? { enable: parsed.enable } : {}),
+  };
+}
+
+function parsePkgSourceCommitArgs(args: string[]): { packageId?: string; message: string; branch?: string } {
+  let packageId: string | undefined;
+  let message = "";
+  let branch: string | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--message" || current === "-m") {
+      index += 1;
+      message = String(args[index] ?? "").trim();
+      continue;
+    }
+    if (current === "--branch") {
+      index += 1;
+      branch = String(args[index] ?? "").trim();
+      continue;
+    }
+    if (!packageId) {
+      packageId = current;
+      continue;
+    }
+    throw new Error(`Unknown pkg source commit argument: ${current}`);
+  }
+
+  if (!message) {
+    throw new Error("Usage: pkg source commit [package] --message TEXT [--branch BRANCH]");
+  }
+  return {
+    ...(packageId ? { packageId } : {}),
+    message,
+    ...(branch ? { branch } : {}),
+  };
+}
+
 function parsePkgRemoteAddArgs(args: string[]): { name: string; baseUrl: string } {
   const name = String(args[0] ?? "").trim();
   const baseUrl = String(args[1] ?? "").trim();
@@ -2430,14 +2851,15 @@ function parsePkgRemoteAddArgs(args: string[]): { name: string; baseUrl: string 
 function resolvePkgPublicTarget(
   rawTarget: string | undefined,
   ctx: KernelContext,
+  cwd: string,
 ): { packageId?: string; repo?: string } {
   const target = String(rawTarget ?? "").trim();
   if (!target) {
-    const mounted = currentMountedPackageId(ctx);
-    if (!mounted) {
-      throw new Error("packageId or repo is required outside a mounted package context");
+    const currentPackage = currentSourcePackage(ctx, cwd);
+    if (!currentPackage) {
+      throw new Error("packageId or repo is required outside a package source context");
     }
-    return { packageId: mounted };
+    return { repo: currentPackage.manifest.source.repo };
   }
 
   const found = ctx.packages.resolve(target, visiblePackageScopesForActor(ctx.identity?.process));
@@ -2476,11 +2898,14 @@ function pkgUsage(): string {
     "  pkg capabilities [package]",
     "  pkg refs [package]",
     "  pkg log [package] [--limit N] [--offset N]",
+    "  pkg source status [package]",
+    "  pkg source diff [package]",
     "  pkg public list [remote]",
     "",
     "Mutating:",
     "  pkg add --repo owner/repo [--ref main] [--subdir .] [--enable]",
     "  pkg add --remote-url https://... [--ref main] [--subdir .] [--enable]",
+    "  pkg create --repo owner/repo [--template web-ui|command] [--enable]",
     "  pkg remote add <name> <baseUrl>",
     "  pkg remote remove <name>",
     "  pkg public on [package|owner/repo]",
@@ -2489,8 +2914,38 @@ function pkgUsage(): string {
     "  pkg enable [package]",
     "  pkg disable [package]",
     "  pkg checkout <ref> [package]",
+    "  pkg source commit [package] --message TEXT [--branch BRANCH]",
+    "  pkg source discard [package]",
     "",
-    "When running inside a package review process, [package] defaults to the mounted /src/package target.",
+    "When cwd is under /src/packages/<package>, [package] defaults to that source package.",
+    "",
+  ].join("\n");
+}
+
+function skillsUsage(): string {
+  return [
+    "Usage: skills <subcommand> [args]",
+    "",
+    "  skills list",
+    "  skills search <query>",
+    "  skills show <skill>",
+    "  skills files <skill>",
+    "  skills read <skill> <file>",
+    "",
+    "Skill names come from layered skills.d directories. Use `skills show`",
+    "to load the full SKILL.md and see the backing source path.",
+    "",
+  ].join("\n");
+}
+
+function pkgSourceUsage(): string {
+  return [
+    "Usage: pkg source <subcommand> [args]",
+    "",
+    "  pkg source status [package]",
+    "  pkg source diff [package]",
+    "  pkg source commit [package] --message TEXT [--branch BRANCH]",
+    "  pkg source discard [package]",
     "",
   ].join("\n");
 }

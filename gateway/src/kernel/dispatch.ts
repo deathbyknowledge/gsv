@@ -34,13 +34,14 @@ import {
   forwardToProcess,
 } from "./proc-handlers";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
-import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
+import { handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleSysWorkspaceList } from "./sys/workspaces";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
   handlePkgAdd,
   handlePkgCheckout,
+  handlePkgCreate,
   handlePkgInstall,
   handlePkgList,
   handlePkgPublicList,
@@ -262,6 +263,9 @@ async function dispatchNative(
       case "pkg.add":
         data = await handlePkgAdd(frame.args, ctx);
         break;
+      case "pkg.create":
+        data = await handlePkgCreate(frame.args, ctx);
+        break;
       case "pkg.sync":
         data = await handlePkgSync(frame.args, ctx);
         break;
@@ -355,6 +359,9 @@ async function dispatchNative(
         break;
       case "sys.device.get":
         data = handleSysDeviceGet(frame.args, ctx);
+        break;
+      case "sys.device.update":
+        data = handleSysDeviceUpdate(frame.args, ctx);
         break;
       case "sys.workspace.list":
         data = handleSysWorkspaceList(frame.args, ctx);

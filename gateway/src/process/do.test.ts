@@ -1681,6 +1681,54 @@ describe("Process DO — mechanical", () => {
         expect(last.content).toContain("Tool execution denied by user");
       });
     });
+
+    it("remembers approved tool confirmations for the process", async () => {
+      const pid = "mech-hil-remember";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const requestId = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = {
+          runId: "run-hil-remember",
+          queued: false,
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "fs.read", action: "ask" }],
+          },
+        };
+        await process.processToolCalls("run-hil-remember", [
+          { type: "toolCall", id: "call-hil-remember-1", name: "Read", arguments: { path: "/root/one.txt" } },
+          { type: "toolCall", id: "call-hil-remember-2", name: "Read", arguments: { path: "/root/two.txt" } },
+        ]);
+        return process.store.getPendingHilForRun("run-hil-remember").requestId;
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.hil", { requestId, decision: "approve", remember: true }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toMatchObject({
+        ok: true,
+        pid,
+        requestId,
+        decision: "approve",
+        remembered: true,
+        pendingHil: null,
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.getPendingHil()).toBeNull();
+        expect(JSON.parse(process.store.getValue("toolApprovalOverrides"))).toEqual([
+          {
+            match: "fs.read",
+            when: { target: "gsv" },
+            action: "auto",
+          },
+        ]);
+      });
+    });
   });
 
   describe("proc.history", () => {

@@ -1,27 +1,44 @@
 import type { PromptContextProvider } from "../types";
 
-export function createProfileInstructionsProvider(): PromptContextProvider {
+export function createSystemContextProvider(): PromptContextProvider {
   return {
-    name: "profile.context",
+    name: "system.context",
     async collect(input) {
-      return [...(input.config.profileContextFiles ?? [])]
-        .sort((left, right) => left.name.localeCompare(right.name))
-        .map((file) => {
-          const text = renderProfileTemplate(file.text, input).trim();
-          if (!text) {
-            return null;
-          }
-          return {
-            name: `profile.context:${file.name}`,
-            text,
-          };
-        })
-        .filter((section): section is { name: string; text: string } => section !== null);
+      return renderContextFiles("system.context", input.config.systemContextFiles, input);
     },
   };
 }
 
-function renderProfileTemplate(
+export function createProfileInstructionsProvider(): PromptContextProvider {
+  return {
+    name: "profile.context",
+    async collect(input) {
+      return renderContextFiles("profile.context", input.config.profileContextFiles, input);
+    },
+  };
+}
+
+function renderContextFiles(
+  sectionPrefix: string,
+  files: Array<{ name: string; text: string }> | undefined,
+  input: Parameters<typeof renderContextTemplate>[1],
+): Array<{ name: string; text: string }> {
+  return [...(files ?? [])]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((file) => {
+      const text = renderContextTemplate(file.text, input).trim();
+      if (!text) {
+        return null;
+      }
+      return {
+        name: `${sectionPrefix}:${file.name}`,
+        text,
+      };
+    })
+    .filter((section): section is { name: string; text: string } => section !== null);
+}
+
+function renderContextTemplate(
   template: string,
   input: {
     profile: string;
@@ -33,7 +50,7 @@ function renderProfileTemplate(
       cwd: string;
       workspaceId: string | null;
     };
-    devices: Array<{ id: string; implements: string[]; platform?: string }>;
+    devices: Array<{ id: string; implements: string[]; description?: string; platform?: string }>;
   },
 ): string {
   const values = new Map<string, string>([
@@ -55,24 +72,27 @@ function renderProfileTemplate(
 }
 
 function formatDevices(
-  devices: Array<{ id: string; implements: string[]; platform?: string }>,
+  devices: Array<{ id: string; implements: string[]; description?: string; platform?: string }>,
 ): string {
   if (devices.length === 0) {
-    return "- gsv: control plane and local execution target";
+    return "- gsv";
   }
   const lines = [
-    "- gsv: control plane and local execution target",
+    "- gsv",
     ...[...devices]
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((device) => {
-        const parts = [device.id];
-        if (device.platform) {
-          parts.push(device.platform);
+        const description = device.description?.trim();
+        if (description && device.platform) {
+          return `- ${device.id}: ${description} (${device.platform})`;
         }
-        // if (device.implements.length > 0) {
-        //   parts.push(`implements ${device.implements.join(", ")}`);
-        // }
-        return `- ${parts.join(" — ")}`;
+        if (description) {
+          return `- ${device.id}: ${description}`;
+        }
+        if (device.platform) {
+          return `- ${device.id}: ${device.platform}`;
+        }
+        return `- ${device.id}`;
       }),
   ];
   return lines.join("\n");

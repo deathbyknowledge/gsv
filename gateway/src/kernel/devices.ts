@@ -14,6 +14,7 @@ import { hasCapability, isValidCapability } from "./capabilities";
 export type DeviceRecord = {
   device_id: string;
   owner_uid: number;
+  description: string;
   implements: string[];
   platform: string;
   version: string;
@@ -24,6 +25,11 @@ export type DeviceRecord = {
   disconnected_at: number | null;
 };
 
+type RawDeviceRow = Omit<DeviceRecord, "implements" | "online"> & {
+  implements: string;
+  online: number;
+};
+
 export class DeviceRegistry {
   constructor(private sql: SqlStorage) { }
 
@@ -32,6 +38,7 @@ export class DeviceRegistry {
       CREATE TABLE IF NOT EXISTS devices (
         device_id        TEXT    PRIMARY KEY,
         owner_uid        INTEGER NOT NULL,
+        description      TEXT    NOT NULL DEFAULT '',
         implements       TEXT    NOT NULL DEFAULT '[]',
         platform         TEXT    NOT NULL DEFAULT '',
         version          TEXT    NOT NULL DEFAULT '',
@@ -42,6 +49,10 @@ export class DeviceRegistry {
         disconnected_at  INTEGER
       )
     `);
+
+    try {
+      this.sql.exec("ALTER TABLE devices ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+    } catch {}
 
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS device_access (
@@ -72,10 +83,11 @@ export class DeviceRegistry {
     if (existing) {
       this.sql.exec(
         `UPDATE devices SET
-          owner_uid = ?, implements = ?, platform = ?, version = ?,
+          owner_uid = ?, description = ?, implements = ?, platform = ?, version = ?,
           online = 1, last_seen_at = ?, connected_at = ?, disconnected_at = NULL
         WHERE device_id = ?`,
         ownerUid,
+        existing.owner_uid === ownerUid ? existing.description : "",
         JSON.stringify(impl),
         platform,
         version,
@@ -128,53 +140,22 @@ export class DeviceRegistry {
   }
 
   get(deviceId: string): DeviceRecord | null {
-    const rows = this.sql.exec<{
-      device_id: string;
-      owner_uid: number;
-      implements: string;
-      platform: string;
-      version: string;
-      online: number;
-      first_seen_at: number;
-      last_seen_at: number;
-      connected_at: number | null;
-      disconnected_at: number | null;
-    }>(
+    const rows = this.sql.exec<RawDeviceRow>(
       `SELECT * FROM devices WHERE device_id = ?`,
       deviceId,
     ).toArray();
 
     if (rows.length === 0) return null;
 
-    const row = rows[0];
-    return {
-      ...row,
-      implements: JSON.parse(row.implements),
-      online: row.online === 1,
-    };
+    return toDeviceRecord(rows[0]);
   }
 
   listOnline(): DeviceRecord[] {
-    const rows = this.sql.exec<{
-      device_id: string;
-      owner_uid: number;
-      implements: string;
-      platform: string;
-      version: string;
-      online: number;
-      first_seen_at: number;
-      last_seen_at: number;
-      connected_at: number | null;
-      disconnected_at: number | null;
-    }>(
+    const rows = this.sql.exec<RawDeviceRow>(
       `SELECT * FROM devices WHERE online = 1 ORDER BY device_id`,
     ).toArray();
 
-    return rows.map((row) => ({
-      ...row,
-      implements: JSON.parse(row.implements),
-      online: true,
-    }));
+    return rows.map(toDeviceRecord);
   }
 
   /**
@@ -182,28 +163,15 @@ export class DeviceRegistry {
    * uid 0 sees everything. Others see devices they own or have group access to.
    */
   listForUser(uid: number, gids: number[]): DeviceRecord[] {
-    type RawRow = {
-      device_id: string;
-      owner_uid: number;
-      implements: string;
-      platform: string;
-      version: string;
-      online: number;
-      first_seen_at: number;
-      last_seen_at: number;
-      connected_at: number | null;
-      disconnected_at: number | null;
-    };
-
-    let rows: RawRow[];
+    let rows: RawDeviceRow[];
 
     if (uid === 0) {
-      rows = this.sql.exec<RawRow>(
+      rows = this.sql.exec<RawDeviceRow>(
         `SELECT * FROM devices ORDER BY device_id`,
       ).toArray();
     } else if (gids.length > 0) {
       const placeholders = gids.map(() => "?").join(", ");
-      rows = this.sql.exec<RawRow>(
+      rows = this.sql.exec<RawDeviceRow>(
         `SELECT DISTINCT d.* FROM devices d
          LEFT JOIN device_access da ON d.device_id = da.device_id
          WHERE d.owner_uid = ? OR da.gid IN (${placeholders})
@@ -212,17 +180,27 @@ export class DeviceRegistry {
         ...gids,
       ).toArray();
     } else {
-      rows = this.sql.exec<RawRow>(
+      rows = this.sql.exec<RawDeviceRow>(
         `SELECT * FROM devices WHERE owner_uid = ? ORDER BY device_id`,
         uid,
       ).toArray();
     }
 
-    return rows.map((row) => ({
-      ...row,
-      implements: JSON.parse(row.implements),
-      online: row.online === 1,
-    }));
+    return rows.map(toDeviceRecord);
+  }
+
+  setDescription(deviceId: string, description: string): boolean {
+    const existing = this.get(deviceId);
+    if (!existing) {
+      return false;
+    }
+    this.sql.exec(
+      `UPDATE devices SET description = ?, last_seen_at = ? WHERE device_id = ?`,
+      normalizeDeviceDescription(description),
+      Date.now(),
+      deviceId,
+    );
+    return true;
   }
 
   /**
@@ -303,4 +281,17 @@ export class DeviceRegistry {
     ).toArray();
     return rows.map((r) => r.gid);
   }
+}
+
+function toDeviceRecord(row: RawDeviceRow): DeviceRecord {
+  return {
+    ...row,
+    description: row.description ?? "",
+    implements: JSON.parse(row.implements),
+    online: row.online === 1,
+  };
+}
+
+function normalizeDeviceDescription(value: string): string {
+  return value.trim().slice(0, 500);
 }

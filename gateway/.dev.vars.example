@@ -1,0 +1,10 @@
+# Optional local development override for the source imported into root/gsv
+# by sys.setup/sys.bootstrap. Wrangler loads the real values from .dev.vars.
+#
+# GSV_BOOTSTRAP_UPSTREAM accepts either a GitHub owner/repo slug or a git remote URL.
+# You can include the ref inline:
+# GSV_BOOTSTRAP_UPSTREAM=deathbyknowledge/gsv#my-dev-branch
+#
+# Or keep source and ref separate:
+# GSV_BOOTSTRAP_UPSTREAM=deathbyknowledge/gsv
+# GSV_BOOTSTRAP_REF=my-dev-branch

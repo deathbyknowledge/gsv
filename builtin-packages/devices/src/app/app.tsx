@@ -131,6 +131,19 @@ export function App({ backend }: AppProps) {
     }
   }
 
+  const handleUpdateDescription = useCallback(async (deviceId: string, description: string): Promise<void> => {
+    setPendingAction("update-description");
+    try {
+      const nextState = await backend.updateDeviceDescription({ deviceId, description });
+      setState(nextState);
+      setError(null);
+    } catch (cause) {
+      setError(formatError(cause));
+    } finally {
+      setPendingAction(null);
+    }
+  }, [backend]);
+
   const detailContent = useMemo(() => {
     if (!state) {
       return <section class="devices-detail-empty">Loading fleet…</section>;
@@ -218,7 +231,14 @@ export function App({ backend }: AppProps) {
           ))}
         </nav>
 
-        {activeTab === "overview" ? <DeviceOverview device={selectedDevice} /> : null}
+        {activeTab === "overview" ? (
+          <DeviceOverview
+            device={selectedDevice}
+            canEdit={state.viewer.uid === 0 || state.viewer.uid === selectedDevice.ownerUid}
+            pending={pendingAction === "update-description"}
+            onUpdateDescription={(description) => void handleUpdateDescription(selectedDevice.deviceId, description)}
+          />
+        ) : null}
         {activeTab === "capabilities" ? <DeviceCapabilities device={selectedDevice} /> : null}
         {activeTab === "access" ? (
           <DeviceAccess
@@ -236,7 +256,7 @@ export function App({ backend }: AppProps) {
         {activeTab === "health" ? <DeviceHealth device={selectedDevice} /> : null}
       </section>
     );
-  }, [activeTab, handleCreateToken, issuedToken, mode, openCompanion, pendingAction, selectedDevice, selectedId, state, updateRoute]);
+  }, [activeTab, handleCreateToken, handleUpdateDescription, issuedToken, mode, openCompanion, pendingAction, selectedDevice, selectedId, state, updateRoute]);
 
   return (
     <div class="devices-app">

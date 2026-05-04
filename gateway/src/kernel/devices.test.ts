@@ -51,11 +51,12 @@ function createMockSql() {
 
     if (q.startsWith("UPDATE devices SET\n          owner_uid")) {
       const table = getTable("devices");
-      const [owner_uid, implements_, platform, version, last_seen_at, connected_at, device_id] =
-        bindings as [number, string, string, string, number, number, string];
+      const [owner_uid, description, implements_, platform, version, last_seen_at, connected_at, device_id] =
+        bindings as [number, string, string, string, string, number, number, string];
       const row = table.find((r) => r.device_id === device_id);
       if (row) {
         row.owner_uid = owner_uid;
+        row.description = description;
         row.implements = implements_;
         row.platform = platform;
         row.version = version;
@@ -76,6 +77,17 @@ function createMockSql() {
         row.connected_at = connected_at;
         row.disconnected_at = null;
         row.last_seen_at = connected_at;
+      }
+      return { toArray: () => [] as T[] };
+    }
+
+    if (q.startsWith("UPDATE devices SET description")) {
+      const table = getTable("devices");
+      const [description, last_seen_at, device_id] = bindings as [string, number, string];
+      const row = table.find((r) => r.device_id === device_id);
+      if (row) {
+        row.description = description;
+        row.last_seen_at = last_seen_at;
       }
       return { toArray: () => [] as T[] };
     }
@@ -217,6 +229,7 @@ describe("DeviceRegistry", () => {
 
   it("re-registers an existing device (reconnect)", () => {
     registry.register("server", 1000, 1000, ["fs.*"], "linux", "0.1.0");
+    registry.setDescription("server", "Linux home server");
     registry.setOnline("server", false);
 
     const device = registry.get("server");
@@ -227,6 +240,25 @@ describe("DeviceRegistry", () => {
     expect(updated!.online).toBe(true);
     expect(updated!.version).toBe("0.2.0");
     expect(updated!.implements).toEqual(["fs.*", "proc.*"]);
+    expect(updated!.description).toBe("Linux home server");
+  });
+
+  it("clears descriptions when a device id changes owner", () => {
+    registry.register("server", 1000, 1000, ["fs.*"], "linux", "0.1.0");
+    registry.setDescription("server", "Old owner note");
+
+    registry.register("server", 2000, 2000, ["fs.*"], "linux", "0.2.0");
+    const updated = registry.get("server");
+    expect(updated!.owner_uid).toBe(2000);
+    expect(updated!.description).toBe("");
+  });
+
+  it("stores owner-authored device descriptions", () => {
+    registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
+
+    expect(registry.setDescription("macbook", "  Personal MacBook  ")).toBe(true);
+    expect(registry.get("macbook")!.description).toBe("Personal MacBook");
+    expect(registry.setDescription("missing", "nope")).toBe(false);
   });
 
   it("marks a device disconnected", () => {

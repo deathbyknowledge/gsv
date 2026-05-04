@@ -56,15 +56,22 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
 
 function makeContext(options?: {
   capabilities?: string[];
-  mounts?: Array<{ mountPath: string; packageId: string }>;
+  config?: Record<string, string>;
   pkg?: InstalledPackageRecord;
+  packages?: InstalledPackageRecord[];
   procs?: Partial<KernelContext["procs"]>;
   schedules?: KernelContext["schedules"];
   getAppRunner?: KernelContext["getAppRunner"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
 }): KernelContext {
-  const pkg = options?.pkg ?? makePackage();
-  const records = new Map([[pkg.packageId, pkg]]);
+  const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
+  const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
+  const findRecord = (packageId: string, scope?: InstalledPackageRecord["scope"]) => {
+    const index = records.findIndex((record) =>
+      record.packageId === packageId && (!scope || packageScopeKey(record.scope) === packageScopeKey(scope))
+    );
+    return index >= 0 ? { index, record: records[index] } : null;
+  };
   return {
     env: {
       STORAGE: env.STORAGE,
@@ -77,47 +84,63 @@ function makeContext(options?: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
         if (key === "config/server/version") return "0.1.2";
-        return null;
+        return configValues.get(key) ?? null;
+      },
+      list(prefix: string) {
+        const normalized = prefix.endsWith("/") ? prefix : `${prefix}/`;
+        return [...configValues.entries()]
+          .filter(([key]) => key.startsWith(normalized))
+          .map(([key, value]) => ({ key, value }))
+          .sort((left, right) => left.key.localeCompare(right.key));
       },
     } as never,
     devices: null as never,
     procs: {
       getMounts() {
-        return (options?.mounts ?? []).map((mount) => ({
-          kind: "ripgit-source",
-          mountPath: mount.mountPath,
-          packageId: mount.packageId,
-          repo: pkg.manifest.source.repo,
-          ref: pkg.manifest.source.ref,
-          resolvedCommit: pkg.manifest.source.resolvedCommit ?? null,
-          subdir: mount.mountPath === "/src/package" ? pkg.manifest.source.subdir : ".",
-        }));
+        return [];
+      },
+      get() {
+        return {
+          profile: "task",
+          uid: IDENTITY.uid,
+          workspaceId: IDENTITY.workspaceId,
+        };
       },
       ...(options?.procs ?? {}),
     } as never,
     workspaces: null as never,
     packages: {
-      list() {
-        return [...records.values()];
+      list(opts?: { scopes?: readonly InstalledPackageRecord["scope"][] }) {
+        if (!opts?.scopes) {
+          return [...records];
+        }
+        const scopeKeys = new Set(opts.scopes.map(packageScopeKey));
+        return records.filter((record) => scopeKeys.has(packageScopeKey(record.scope)));
       },
-      resolve(packageId: string) {
-        return records.get(packageId) ?? null;
+      resolve(packageId: string, scopes?: readonly InstalledPackageRecord["scope"][]) {
+        for (const scope of scopes ?? []) {
+          const found = findRecord(packageId, scope);
+          if (found) return found.record;
+        }
+        return records.find((record) => record.packageId === packageId) ?? null;
       },
-      get(packageId: string) {
-        return records.get(packageId) ?? null;
+      get(packageId: string, scope?: InstalledPackageRecord["scope"]) {
+        return findRecord(packageId, scope)?.record ?? null;
       },
-      setEnabled(packageId: string, enabled: boolean) {
-        const existing = records.get(packageId);
-        if (!existing) return null;
+      setEnabled(packageId: string, enabled: boolean, scope?: InstalledPackageRecord["scope"]) {
+        const found = findRecord(packageId, scope);
+        if (!found) return null;
+        const existing = found.record;
         const updated = { ...existing, enabled, updatedAt: existing.updatedAt + 1 };
-        records.set(packageId, updated);
+        records[found.index] = updated;
         return updated;
       },
-      setReviewed(packageId: string, reviewedAt: number) {
-        const existing = records.get(packageId);
-        if (!existing) return null;
+      setReviewed(packageId: string, reviewedAt: number, scope?: InstalledPackageRecord["scope"]) {
+        const found = findRecord(packageId, scope);
+        if (!found) return null;
+        const existing = found.record;
         const updated = { ...existing, reviewedAt, reviewRequired: true, updatedAt: existing.updatedAt + 1 };
-        records.set(packageId, updated);
+        records[found.index] = updated;
         return updated;
       },
     } as never,
@@ -135,6 +158,17 @@ function makeContext(options?: {
     getAppRunner: options?.getAppRunner,
     scheduleScheduleWake: options?.scheduleScheduleWake,
   } as KernelContext;
+}
+
+function packageScopeKey(scope: InstalledPackageRecord["scope"]): string {
+  switch (scope.kind) {
+    case "global":
+      return "global";
+    case "user":
+      return `user:${scope.uid}`;
+    case "workspace":
+      return `workspace:${scope.workspaceId}`;
+  }
 }
 
 describe("pkg shell command", () => {
@@ -182,6 +216,34 @@ describe("pkg shell command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("sched add --name NAME");
     expect(result.stdout).toContain("sched run <id>");
+    expect(result.stderr).toBe("");
+  });
+
+  it("lists and shows profile skills through the skills command", async () => {
+    const skill = [
+      "---",
+      "name: demo-workflow",
+      "description: Demonstrates the skills command.",
+      "---",
+      "",
+      "# Demo Workflow",
+      "",
+      "Use this for tests.",
+    ].join("\n");
+
+    const result = await handleShellExec(
+      { input: "skills list && skills show demo-workflow" },
+      makeContext({
+        config: {
+          "config/ai/profile/task/skills.d/demo-workflow/SKILL.md": skill,
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("demo-workflow\tprofile:task");
+    expect(result.stdout).toContain("path: /sys/config/ai/profile/task/skills.d/demo-workflow/SKILL.md");
+    expect(result.stdout).toContain("# Demo Workflow");
     expect(result.stderr).toBe("");
   });
 
@@ -338,10 +400,73 @@ describe("pkg shell command", () => {
     expect(result.stdout).toContain("error\tProcess not found: missing");
   });
 
-  it("defaults to the mounted package for manifest inspection", async () => {
+  it("defaults to the current package source for manifest inspection", async () => {
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/package" },
-      makeContext({ mounts: [{ mountPath: "/src/package", packageId: "import:root/pkg-test:." }] }),
+      { input: "pkg manifest", cwd: "/src/packages/ascii-starfield" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain('"name": "ascii-starfield"');
+    expect(result.stderr).toBe("");
+  });
+
+  it("preserves scoped package identity when defaulting from the source cwd", async () => {
+    const packageId = "import:root/pkg-test:.";
+    const globalPackage = makePackage({
+      packageId,
+      scope: { kind: "global" },
+      manifest: {
+        ...makePackage().manifest,
+        source: {
+          repo: "root/pkg-test",
+          ref: "stable",
+          subdir: ".",
+          resolvedCommit: "global123",
+        },
+      },
+    });
+    const userPackage = makePackage({
+      packageId,
+      scope: { kind: "user", uid: 1000 },
+      manifest: {
+        ...makePackage().manifest,
+        source: {
+          repo: "root/pkg-test",
+          ref: "dev",
+          subdir: ".",
+          resolvedCommit: "user123",
+        },
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "pkg manifest", cwd: "/src/packages/ascii-starfield--root-pkg-test" },
+      makeContext({ packages: [userPackage, globalPackage] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain('"ref": "stable"');
+    expect(result.stdout).not.toContain('"ref": "dev"');
+    expect(result.stderr).toBe("");
+  });
+
+  it("defaults to the current package from custom source mounts", async () => {
+    const result = await handleShellExec(
+      { input: "pkg manifest", cwd: "/src/package/src" },
+      makeContext({
+        procs: {
+          getMounts: vi.fn(() => [{
+            kind: "ripgit-source",
+            mountPath: "/src/package",
+            packageId: "import:root/pkg-test:.",
+            repo: "root/pkg-test",
+            ref: "main",
+            resolvedCommit: "abc123",
+            subdir: ".",
+          }]),
+        } as Partial<KernelContext["procs"]>,
+      }),
     );
 
     expect(result.ok).toBe(true);
@@ -362,10 +487,9 @@ describe("pkg shell command", () => {
 
   it("enables an approved package through pkg enable", async () => {
     const result = await handleShellExec(
-      { input: "pkg enable" },
+      { input: "pkg enable", cwd: "/src/packages/ascii-starfield" },
       makeContext({
         capabilities: ["pkg.install"],
-        mounts: [{ mountPath: "/src/package", packageId: "import:root/pkg-test:." }],
         pkg: makePackage({
           scope: { kind: "user", uid: 1000 },
           reviewedAt: 100,

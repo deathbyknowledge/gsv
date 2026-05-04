@@ -214,7 +214,7 @@ export type RepoApplyResult = {
 export type RepoImportArgs = {
   repo: string;
   ref?: string;
-  remoteUrl: string;
+  remoteUrl?: string;
   remoteRef?: string;
   message?: string;
 };

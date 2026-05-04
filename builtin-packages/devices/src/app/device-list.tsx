@@ -28,7 +28,7 @@ export function DeviceList({
     if (scope === "offline" && device.online) return false;
     const q = query.trim().toLowerCase();
     if (!q) return true;
-    return [device.deviceId, device.platform, device.version, String(device.ownerUid)]
+    return [device.deviceId, device.description, device.platform, device.version, String(device.ownerUid)]
       .some((part) => part.toLowerCase().includes(q));
   });
 
@@ -92,6 +92,9 @@ export function DeviceList({
               {device.version ? <span>{device.version}</span> : null}
               <span>uid {device.ownerUid}</span>
             </div>
+            {device.description ? (
+              <div class="devices-list-item-description">{device.description}</div>
+            ) : null}
             <div class="devices-list-item-foot">Last seen {formatRelativeTime(device.lastSeenAt)}</div>
           </button>
         ))}

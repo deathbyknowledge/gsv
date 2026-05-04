@@ -1,14 +1,23 @@
-export type PackagesView = "installed" | "updates" | "review" | "sources";
+export type PackagesView = "inventory" | "updates" | "review" | "sources" | "discover" | "remotes" | "create";
 export type PackageScopeFilter = "all" | "mine" | "system";
-export type PackageDetailTab = "overview" | "permissions" | "code" | "commits" | "changes" | "review";
+export type PackageDetailTab = "summary" | "source" | "permissions" | "review";
 export type PackageRepoRoot = "package" | "repo";
+export type PackageCreateTemplate = "web-ui" | "command";
 
 export type PackageEntrypoint = {
   name: string;
-  kind: string;
+  kind: "command" | "http" | "rpc" | "ui";
   description?: string;
+  command?: string;
   route?: string;
   syscalls?: string[];
+};
+
+export type PackageProfile = {
+  name: string;
+  displayName: string;
+  description?: string;
+  icon?: string;
 };
 
 export type PackageRecord = {
@@ -31,6 +40,7 @@ export type PackageRecord = {
     public: boolean;
   };
   entrypoints: PackageEntrypoint[];
+  profiles: PackageProfile[];
   bindingNames: string[];
   review: {
     required: boolean;
@@ -47,6 +57,7 @@ export type PackageRecord = {
   updateAvailable: boolean;
   canMutate: boolean;
   canChangeVisibility: boolean;
+  canPullSource: boolean;
 };
 
 export type SourceRecord = {
@@ -60,6 +71,7 @@ export type SourceRecord = {
   updateCount: number;
   latestUpdatedAt: number;
   refreshable: boolean;
+  pullable: boolean;
   canChangeVisibility: boolean;
 };
 
@@ -75,6 +87,7 @@ export type CatalogEntry = {
     resolvedCommit?: string | null;
   };
   entrypoints: PackageEntrypoint[];
+  profiles: PackageProfile[];
   bindingNames: string[];
 };
 
@@ -203,6 +216,18 @@ export type PackagesBackend = {
   loadState(args: { packageId?: string }): Promise<PackagesState>;
   syncSources(): Promise<{ ok: boolean }>;
   importPackage(args: { source: string; ref?: string; subdir?: string }): Promise<{ package: PackageRecord }>;
+  createPackage(args: {
+    repo: string;
+    ref?: string;
+    subdir?: string;
+    name?: string;
+    displayName?: string;
+    description?: string;
+    template?: PackageCreateTemplate;
+    command?: string;
+    enable?: boolean;
+    overwrite?: boolean;
+  }): Promise<{ package: PackageRecord; created: boolean; files: string[] }>;
   addRemote(args: { name: string; baseUrl: string }): Promise<unknown>;
   removeRemote(args: { name: string }): Promise<unknown>;
   enablePackage(args: { packageId: string }): Promise<unknown>;
@@ -210,6 +235,8 @@ export type PackagesBackend = {
   approveReview(args: { packageId: string }): Promise<unknown>;
   refreshPackage(args: { packageId: string }): Promise<unknown>;
   refreshSource(args: { repo: string }): Promise<unknown>;
+  pullPackage(args: { packageId: string }): Promise<unknown>;
+  pullSource(args: { repo: string }): Promise<unknown>;
   checkoutPackage(args: { packageId: string; ref: string }): Promise<unknown>;
   setPublic(args: { packageId?: string; repo?: string; public: boolean }): Promise<unknown>;
   startReview(args: { packageId: string }): Promise<{ pid: string; workspaceId: string | null; cwd: string | null }>;

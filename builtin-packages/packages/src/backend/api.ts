@@ -64,10 +64,17 @@ type PackageLike = Record<string, unknown> & {
   };
   entrypoints: Array<{
     name: string;
-    kind: string;
+    kind: "command" | "http" | "rpc" | "ui";
     description?: string;
+    command?: string;
     route?: string;
     syscalls?: string[];
+  }>;
+  profiles?: Array<{
+    name: string;
+    displayName: string;
+    description?: string;
+    icon?: string;
   }>;
   bindingNames: string[];
   review: {
@@ -113,18 +120,117 @@ function normalizeViewer(viewer: { uid: number; username: string }) {
   };
 }
 
-function buildReviewPrompt(pkg: PackageLike): string {
+function canMutatePackage(pkg: PackageLike, viewer: ReturnType<typeof normalizeViewer>): boolean {
+  return viewer.isRoot || (pkg.scope.kind === "user" && pkg.scope.uid === viewer.uid);
+}
+
+function packageSourcePathName(pkg: PackageLike): string {
+  return pkg.name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function packageSourcePathNameForPackage(pkg: PackageLike, packages: PackageLike[]): string {
+  const names = packageSourcePathNameMap(packages);
+  const targetKey = packageSourceRecordKey(pkg);
+  for (const [record, name] of names) {
+    if (packageSourceRecordKey(record) === targetKey) {
+      return name;
+    }
+  }
+  return packageSourcePathName(pkg);
+}
+
+function packageSourcePathNameMap(packages: PackageLike[]): Map<PackageLike, string> {
+  const entries = packages.map((pkg) => ({
+    pkg,
+    baseName: packageSourcePathName(pkg) || sanitizeSourcePathSegment(pkg.packageId) || "package",
+  }));
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    counts.set(entry.baseName, (counts.get(entry.baseName) ?? 0) + 1);
+  }
+
+  const used = new Set<string>();
+  const result = new Map<PackageLike, string>();
+  for (const entry of entries.sort(compareSourcePathEntries)) {
+    const collides = (counts.get(entry.baseName) ?? 0) > 1;
+    const preferred = collides
+      ? `${entry.baseName}--${packageSourcePathDisambiguator(entry.pkg)}`
+      : entry.baseName;
+    const name = uniqueSourcePathName(preferred, used);
+    used.add(name);
+    result.set(entry.pkg, name);
+  }
+  return result;
+}
+
+function compareSourcePathEntries(
+  left: { pkg: PackageLike; baseName: string },
+  right: { pkg: PackageLike; baseName: string },
+): number {
+  const name = left.baseName.localeCompare(right.baseName);
+  if (name !== 0) {
+    return name;
+  }
+  const source = sourcePathDisambiguationKey(left.pkg).localeCompare(sourcePathDisambiguationKey(right.pkg));
+  if (source !== 0) {
+    return source;
+  }
+  return packageSourceRecordKey(left.pkg).localeCompare(packageSourceRecordKey(right.pkg));
+}
+
+function packageSourcePathDisambiguator(pkg: PackageLike): string {
+  return sanitizeSourcePathSegment(sourcePathDisambiguationKey(pkg))
+    || sanitizeSourcePathSegment(pkg.packageId)
+    || "package";
+}
+
+function sourcePathDisambiguationKey(pkg: PackageLike): string {
+  const subdir = normalizeRepoPath(pkg.source.subdir);
+  return subdir && subdir !== "."
+    ? `${pkg.source.repo}-${subdir}`
+    : pkg.source.repo;
+}
+
+function sanitizeSourcePathSegment(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function uniqueSourcePathName(preferred: string, used: Set<string>): string {
+  let candidate = preferred || "package";
+  let index = 2;
+  while (used.has(candidate)) {
+    candidate = `${preferred || "package"}-${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function packageSourceRecordKey(pkg: PackageLike): string {
+  switch (pkg.scope.kind) {
+    case "user":
+      return `user:${pkg.scope.uid ?? ""}:${pkg.packageId}`;
+    case "workspace":
+      return `workspace:${pkg.scope.workspaceId ?? ""}:${pkg.packageId}`;
+    case "global":
+      return `global:${pkg.packageId}`;
+    default:
+      return `${pkg.scope.kind}:${pkg.packageId}`;
+  }
+}
+
+function buildReviewPrompt(pkg: PackageLike, packages: PackageLike[]): string {
   const bindings = pkg.bindingNames.length > 0 ? pkg.bindingNames.join(", ") : "none declared";
   const entrypoints = pkg.entrypoints.length > 0
     ? pkg.entrypoints.map((entry) => `${entry.name}:${entry.kind}`).join(", ")
     : "none";
+  const sourcePath = `/src/packages/${packageSourcePathNameForPackage(pkg, packages)}`;
 
   return [
     `Review the imported package \"${pkg.name}\".`,
     "",
-    "Current directory is already /src/package.",
-    "The package source is mounted read-only at /src/package.",
-    "The full repository is mounted read-only at /src/repo.",
+    `Current directory is already ${sourcePath}.`,
+    `The package source is available at ${sourcePath}.`,
+    "Source writes are staged in the review process. Use pkg source status/diff to inspect staged changes; do not commit unless explicitly asked.",
     "",
     `Source repo: ${pkg.source.repo}`,
     `Source ref: ${pkg.source.ref}`,
@@ -134,13 +240,13 @@ function buildReviewPrompt(pkg: PackageLike): string {
     "",
     "Review workflow:",
     "1. Start with pkg manifest, pkg capabilities, pkg refs, and pkg log.",
-    "2. Inspect /src/package, prioritizing manifest, entrypoints, and system integration points.",
+    `2. Inspect ${sourcePath}, prioritizing manifest, entrypoints, and system integration points.`,
     "3. Search for network access, parent-window messaging, host bridge use, process spawning, filesystem writes, shell execution, eval, and destructive actions.",
     "4. If a command fails, note it briefly and continue with other evidence. Do not guess.",
     "5. Keep tool use tight. Do not narrate trivial navigation or run placeholder commands.",
     "",
     "Use normal filesystem and shell exploration plus the pkg CLI.",
-    "Helpful commands: ls, find, grep, cat, pkg manifest, pkg capabilities, pkg refs, pkg log.",
+    "Helpful commands: ls, find, grep, cat, pkg manifest, pkg capabilities, pkg refs, pkg log, pkg source status, pkg source diff.",
     "Focus on requested capabilities, suspicious behavior, hidden network or shell access, destructive actions, and whether it should be enabled.",
     "Call out privileged integrations explicitly, including host bridge access, parent-window messaging, and process spawning if present.",
     "Conclude with a short verdict: approve or do not approve, followed by a concise evidence-based summary.",
@@ -197,10 +303,18 @@ function derivePackageView(
   const sourceHealth = describeSourceHealth(pkg, refsByRepo);
   const declaredSyscalls = unique(pkg.entrypoints.flatMap((entry) => asArray<string>(entry.syscalls)));
   const uiEntrypoints = pkg.entrypoints.filter((entry) => entry.kind === "ui" && asString(entry.route).length > 0);
-  const canMutate = viewer.isRoot || (pkg.scope.kind === "user" && pkg.scope.uid === viewer.uid);
+  const profiles = asArray<Record<string, unknown>>(pkg.profiles).map((profile) => ({
+    name: asString(profile.name),
+    displayName: asString(profile.displayName),
+    description: asString(profile.description) || undefined,
+    icon: asString(profile.icon) || undefined,
+  }));
+  const canMutate = canMutatePackage(pkg, viewer);
   const canChangeVisibility = viewer.isRoot || repoOwner(pkg.source.repo) === viewer.username;
+  const canPullSource = canChangeVisibility && (isBuiltinRepo(pkg.source.repo) || pkg.review.required);
   return {
     ...pkg,
+    profiles,
     reviewPending: pkg.review.required && !pkg.review.approvedAt,
     reviewed: pkg.review.required && Boolean(pkg.review.approvedAt),
     isBuiltin: isBuiltinRepo(pkg.source.repo),
@@ -210,6 +324,7 @@ function derivePackageView(
     updateAvailable: sourceHealth.updateAvailable,
     canMutate,
     canChangeVisibility,
+    canPullSource,
   };
 }
 
@@ -226,6 +341,7 @@ function aggregateSources(packages: ReturnType<typeof derivePackageView>[]) {
     latestUpdatedAt: number;
     canChangeVisibility: boolean;
     hasImmutablePackages: boolean;
+    pullable: boolean;
   }>();
 
   for (const pkg of packages) {
@@ -241,6 +357,7 @@ function aggregateSources(packages: ReturnType<typeof derivePackageView>[]) {
       latestUpdatedAt: 0,
       canChangeVisibility: pkg.canChangeVisibility,
       hasImmutablePackages: !pkg.canMutate,
+      pullable: pkg.canPullSource,
     };
     current.public = current.public || pkg.source.public;
     current.packageIds.push(pkg.packageId);
@@ -251,6 +368,7 @@ function aggregateSources(packages: ReturnType<typeof derivePackageView>[]) {
     current.latestUpdatedAt = Math.max(current.latestUpdatedAt, pkg.updatedAt);
     current.canChangeVisibility = current.canChangeVisibility || pkg.canChangeVisibility;
     current.hasImmutablePackages = current.hasImmutablePackages || !pkg.canMutate;
+    current.pullable = current.pullable || pkg.canPullSource;
     byRepo.set(pkg.source.repo, current);
   }
 
@@ -259,7 +377,7 @@ function aggregateSources(packages: ReturnType<typeof derivePackageView>[]) {
     .map((source) => ({
       ...source,
       packageNames: source.packageNames.sort((left, right) => left.localeCompare(right)),
-      refreshable: !source.isBuiltin && !source.hasImmutablePackages,
+      refreshable: !source.hasImmutablePackages,
     }));
 }
 
@@ -385,18 +503,22 @@ export async function loadState(
   };
 }
 
-export async function syncSources(kernel: KernelClientLike) {
-  const packages = await listPackages(kernel);
+export async function syncSources(kernel: KernelClientLike, ctx: ViewerRuntime) {
+  const viewer = normalizeViewer({
+    uid: ctx.viewer?.uid ?? 0,
+    username: ctx.viewer?.username ?? "",
+  });
   await kernel.request("pkg.sync", {});
-  const uniqueImports = unique(packages
-    .filter((pkg) => !isBuiltinRepo(pkg.source.repo))
-    .map((pkg) => `${pkg.source.repo}|${pkg.source.ref}|${pkg.source.subdir}`));
-
-  for (const entry of uniqueImports) {
-    const [repo, ref, subdir] = entry.split("|");
-    await kernel.request("pkg.add", { repo, ref, subdir });
+  const packages = await listPackages(kernel);
+  for (const pkg of packages) {
+    if (isBuiltinRepo(pkg.source.repo) || !canMutatePackage(pkg, viewer)) {
+      continue;
+    }
+    await kernel.request("pkg.checkout", {
+      packageId: pkg.packageId,
+      ref: pkg.source.ref,
+    });
   }
-
   return { ok: true };
 }
 
@@ -409,6 +531,35 @@ export async function importPackage(
     ...source,
     ref: asString(args.ref) || "main",
     subdir: asString(args.subdir) || ".",
+  });
+}
+
+export async function createPackage(
+  kernel: KernelClientLike,
+  args: {
+    repo: string;
+    ref?: string;
+    subdir?: string;
+    name?: string;
+    displayName?: string;
+    description?: string;
+    template?: "web-ui" | "command";
+    command?: string;
+    enable?: boolean;
+    overwrite?: boolean;
+  },
+) {
+  return kernel.request("pkg.create", {
+    repo: asString(args.repo),
+    ref: asString(args.ref) || undefined,
+    subdir: asString(args.subdir) || undefined,
+    name: asString(args.name) || undefined,
+    displayName: asString(args.displayName) || undefined,
+    description: asString(args.description) || undefined,
+    template: args.template === "command" ? "command" : "web-ui",
+    command: asString(args.command) || undefined,
+    enable: args.enable === true,
+    overwrite: args.overwrite === true,
   });
 }
 
@@ -460,10 +611,9 @@ export async function refreshPackage(kernel: KernelClientLike, args: { packageId
   if (isBuiltinRepo(target.source.repo)) {
     return kernel.request("pkg.sync", {});
   }
-  return kernel.request("pkg.add", {
-    repo: target.source.repo,
+  return kernel.request("pkg.checkout", {
+    packageId: target.packageId,
     ref: target.source.ref,
-    subdir: target.source.subdir,
   });
 }
 
@@ -480,10 +630,41 @@ export async function refreshSource(kernel: KernelClientLike, args: { repo: stri
   if (isBuiltinRepo(repo)) {
     return kernel.request("pkg.sync", {});
   }
-  const uniqueTargets = unique(sourcePackages.map((pkg) => `${pkg.source.ref}|${pkg.source.subdir}`));
-  for (const entry of uniqueTargets) {
-    const [ref, subdir] = entry.split("|");
-    await kernel.request("pkg.add", { repo, ref, subdir });
+  for (const pkg of sourcePackages) {
+    await kernel.request("pkg.checkout", {
+      packageId: pkg.packageId,
+      ref: pkg.source.ref,
+    });
+  }
+  return { ok: true };
+}
+
+export async function pullPackage(kernel: KernelClientLike, args: { packageId: string }) {
+  const packages = await listPackages(kernel);
+  const target = packages.find((pkg) => pkg.packageId === asString(args.packageId));
+  if (!target) {
+    throw new Error(`Unknown package: ${asString(args.packageId)}`);
+  }
+  return kernel.request("repo.import", {
+    repo: target.source.repo,
+    ref: target.source.ref,
+    remoteRef: target.source.ref,
+  });
+}
+
+export async function pullSource(kernel: KernelClientLike, args: { repo: string }) {
+  const repo = asString(args.repo);
+  if (!repo) {
+    throw new Error("repo is required");
+  }
+  const packages = await listPackages(kernel);
+  const sourcePackages = packages.filter((pkg) => pkg.source.repo === repo);
+  if (sourcePackages.length === 0) {
+    throw new Error(`Unknown source: ${repo}`);
+  }
+  const refs = unique(sourcePackages.map((pkg) => pkg.source.ref));
+  for (const ref of refs) {
+    await kernel.request("repo.import", { repo, ref, remoteRef: ref });
   }
   return { ok: true };
 }
@@ -509,11 +690,10 @@ export async function startReview(kernel: KernelClientLike, args: { packageId: s
   const spawned = asRecord(await kernel.request("proc.spawn", {
     profile: "review",
     label: `Review ${target.name}`,
-    prompt: buildReviewPrompt(target),
+    prompt: buildReviewPrompt(target, packages),
     workspace: { mode: "none" },
     mounts: [
-      { kind: "package-source", packageId: target.packageId, mountPath: "/src/package" },
-      { kind: "package-repo", packageId: target.packageId, mountPath: "/src/repo" },
+      { kind: "package-source", packageId: target.packageId },
     ],
   }));
 

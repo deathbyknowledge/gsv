@@ -11,7 +11,7 @@ This is the important rule for agents: choose `target: "gsv"` for Gateway-native
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
 | `<deviceId>` | A connected CLI device, such as `macbook` or `server`. |
 
-The Gateway includes accessible online devices in `ai.tools` context and in `sys.device.list`. Devices also appear in the native filesystem under `/sys/devices`.
+The Gateway includes accessible online devices in `ai.tools` context and in `sys.device.list`. Device notes are included there too, so processes can choose targets using the user's own description of what each machine is for. Devices also appear in the native filesystem under `/sys/devices`.
 
 ## Agent-Visible Tools
 
@@ -66,6 +66,7 @@ CLI devices register with the Gateway as driver connections. A device descriptor
 ```json
 {
   "deviceId": "macbook",
+  "description": "Personal MacBook I use for everything",
   "platform": "darwin",
   "version": "0.1.0",
   "online": true,
@@ -73,12 +74,13 @@ CLI devices register with the Gateway as driver connections. A device descriptor
 }
 ```
 
-The `implements` field is the hardware contract. The Gateway uses it to decide which devices can receive a given routed syscall.
+The `implements` field is the hardware contract. The Gateway uses it to decide which devices can receive a given routed syscall. The `description` field is owner-managed context for users and processes; it is not supplied by the driver connection.
 
 Inspect descriptors with:
 
 - `sys.device.list`
 - `sys.device.get`
+- `sys.device.update` to change the owner-managed `description`
 - `Read` with `target: "gsv"` and `path: "/sys/devices"`
 
 ## Native `gsv` Target
@@ -95,6 +97,10 @@ Important native paths:
 - `/dev` exposes device-like virtual endpoints.
 
 Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, package commands, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.
+
+Use `skills list`, `skills search <query>`, and `skills show <skill>` in the
+native shell to inspect reusable process workflows populated from layered
+`skills.d` directories.
 
 The native shell also includes a `codemode` command for reusable GSV tool
 scripts:

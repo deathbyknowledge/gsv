@@ -26,11 +26,17 @@ gsv config set users/1000/ai/max_context_bytes 65536
 Sensitive keys such as `api_key`, `token`, `secret`, and `password` are hidden
 from non-root system config reads.
 
-## Edit Profile Context
+## Edit System and Profile Context
+
+System context applies to every process profile:
+
+```text
+config/ai/context.d/*.md
+```
 
 Profiles define role-level behavior for process types such as `init`, `task`,
-`review`, `cron`, `mcp`, and `app`. Profile context is
-stored as Markdown fragments:
+`review`, `cron`, `mcp`, and `app`. Profile context is stored as Markdown
+fragments:
 
 ```text
 config/ai/profile/{profile}/context.d/*.md
@@ -39,11 +45,14 @@ config/ai/profile/{profile}/context.d/*.md
 Use numeric prefixes to control order:
 
 ```bash
+gsv config set config/ai/context.d/50-local-runtime.md \
+  "Use the native gsv target for files in the GSV cloud computer."
+
 gsv config set config/ai/profile/task/context.d/50-style.md \
   "Be direct, inspect files before editing, and explain risky changes first."
 ```
 
-Profile context can use runtime template variables such as
+System and profile context can use runtime template variables such as
 `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`,
 `workspace`, `devices`, and `known_paths`.
 
@@ -91,6 +100,10 @@ Interactive profiles can pause for approval; non-interactive profiles such as
 Connected devices appear in process context and tool schemas. Agents always see
 the same tool names (`Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`);
 `target` selects where the syscall runs.
+
+Give devices short notes in the Devices app so agents see why a target exists,
+not just its id and platform. For example, describe `rearden` as a Linux home
+server for GPU work or home automation if that is the routing intent.
 
 Use profile or workspace context to tell agents when a device should be used:
 

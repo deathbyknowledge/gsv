@@ -133,6 +133,11 @@ export default {
       return response;
     }
 
+    const appSessionRefreshMatch = matchPackageAppSessionRefreshPath(url.pathname);
+    if (appSessionRefreshMatch) {
+      return handlePackageAppSessionRefreshRequest(request, env, appSessionRefreshMatch);
+    }
+
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
@@ -179,6 +184,11 @@ type CliDownloadMatch =
   | { kind: "install-sh" }
   | { kind: "install-ps1" }
   | { kind: "asset"; channel: "latest" | "stable" | "dev"; asset: string; checksum: boolean };
+
+type PackageAppSessionRefreshMatch = {
+  packageName: string;
+  sessionId: string;
+};
 
 type ResolvedPackageRoute = {
   ok: true;
@@ -256,6 +266,27 @@ function matchPackageAppRpcPath(
 ): { packageName: string; sessionId: string } | null {
   const parts = pathname.split("/").filter(Boolean);
   if (parts.length !== 4 || parts[0] !== "app-rpc" || parts[2] !== "sessions") {
+    return null;
+  }
+
+  const packageName = parts[1]?.trim();
+  const sessionId = parts[3]?.trim();
+  if (!packageName || !sessionId) {
+    return null;
+  }
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(packageName)) {
+    return null;
+  }
+  if (!/^[a-f0-9-]+$/i.test(sessionId)) {
+    return null;
+  }
+
+  return { packageName, sessionId };
+}
+
+function matchPackageAppSessionRefreshPath(pathname: string): PackageAppSessionRefreshMatch | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length !== 5 || parts[0] !== "app-rpc" || parts[2] !== "sessions" || parts[4] !== "refresh") {
     return null;
   }
 
@@ -468,6 +499,66 @@ function buildPackageWorkerRequest(request: Request, resolved: ResolvedPackageRo
   return new Request(request, { headers });
 }
 
+async function handlePackageAppSessionRefreshRequest(
+  request: Request,
+  env: Env,
+  match: PackageAppSessionRefreshMatch,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { allow: "POST" },
+    });
+  }
+
+  const session = getPackageAppSession(request);
+  if (!session) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  let clientId: string | undefined;
+  try {
+    clientId = await readRefreshClientId(request);
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const kernel = await getAgentByName(env.KERNEL, "singleton");
+  const resolved = await kernel.resolvePackageHttpRoute({
+    packageName: match.packageName,
+    username: session.username,
+    token: session.token,
+    clientId,
+  });
+
+  if (!resolved.ok) {
+    return new Response(resolved.message, { status: resolved.status });
+  }
+
+  return Response.json(buildPackageAppBoot(resolved), {
+    headers: {
+      "cache-control": "no-store",
+    },
+  });
+}
+
+async function readRefreshClientId(request: Request): Promise<string | undefined> {
+  const text = await request.text();
+  if (!text.trim()) {
+    return undefined;
+  }
+
+  const parsed = JSON.parse(text) as unknown;
+  if (!parsed || typeof parsed !== "object") {
+    return undefined;
+  }
+
+  const clientId = (parsed as { clientId?: unknown }).clientId;
+  return typeof clientId === "string" && clientId.trim().length > 0
+    ? clientId.trim()
+    : undefined;
+}
+
 async function withPackageAppClientSession(
   response: Response,
   resolved: ResolvedPackageRoute,
@@ -497,17 +588,10 @@ function isHtmlResponse(response: Response): boolean {
 }
 
 function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): string {
-  const boot = JSON.stringify({
-    packageId: resolved.packageId,
-    packageName: resolved.packageName,
-    routeBase: resolved.routeBase,
-    rpcBase: resolved.clientSession.rpcBase,
-    sessionId: resolved.clientSession.sessionId,
-    sessionSecret: resolved.clientSession.secret,
-    clientId: resolved.clientSession.clientId,
-    expiresAt: resolved.clientSession.expiresAt,
-    hasBackend: resolved.hasRpc,
-  }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+  const boot = JSON.stringify(buildPackageAppBoot(resolved))
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
   const scriptLines = [
     `<script>window.__GSV_APP_BOOT__=${boot};</script>`,
   ];
@@ -528,6 +612,20 @@ function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): s
     return html.replace("</body>", `${script}</body>`);
   }
   return `${script}${html}`;
+}
+
+function buildPackageAppBoot(resolved: ResolvedPackageRoute) {
+  return {
+    packageId: resolved.packageId,
+    packageName: resolved.packageName,
+    routeBase: resolved.routeBase,
+    rpcBase: resolved.clientSession.rpcBase,
+    sessionId: resolved.clientSession.sessionId,
+    sessionSecret: resolved.clientSession.secret,
+    clientId: resolved.clientSession.clientId,
+    expiresAt: resolved.clientSession.expiresAt,
+    hasBackend: resolved.hasRpc,
+  };
 }
 
 class PackageAppSessionRpcTarget extends RpcTarget {

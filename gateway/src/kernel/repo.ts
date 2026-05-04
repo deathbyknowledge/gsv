@@ -332,19 +332,20 @@ export async function handleRepoImport(
   assertCanWriteRepo(repo, ctx);
   const ref = normalizeRef(args.ref);
   const remoteUrl = String(args.remoteUrl ?? "").trim();
-  if (!remoteUrl) {
-    throw new Error("remoteUrl is required");
-  }
   const remoteRef = typeof args.remoteRef === "string" && args.remoteRef.trim().length > 0
     ? args.remoteRef.trim()
-    : ref;
+    : remoteUrl
+      ? ref
+      : undefined;
   const actor = requireIdentity(ctx).process;
   const imported = await requireRipgitClient(ctx).importFromUpstream(
     { ...repo, branch: ref },
     actor.username,
     `${actor.username}@gsv.local`,
-    args.message?.trim() || `repo: import ${remoteUrl}#${remoteRef}`,
-    remoteUrl,
+    args.message?.trim() || (remoteUrl
+      ? `repo: import ${remoteUrl}#${remoteRef ?? ref}`
+      : `repo: pull upstream for ${repoSlug(repo)}#${ref}`),
+    remoteUrl || undefined,
     remoteRef,
   );
   registerRepo(ctx, repo);

@@ -13,9 +13,12 @@ import {
   type PackageEntrypoint,
   type PackageRuntime,
 } from "../packages";
+import { seedRepoSkillsToHome } from "./skills-seed";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";
+const GSV_BOOTSTRAP_UPSTREAM_ENV = "GSV_BOOTSTRAP_UPSTREAM";
+const GSV_BOOTSTRAP_REF_ENV = "GSV_BOOTSTRAP_REF";
 const ROOT_GSV_REPO: RipgitRepoRef = {
   owner: "root",
   repo: "gsv",
@@ -55,16 +58,7 @@ export async function handleSysBootstrap(
     throw new Error("RIPGIT binding is required for system bootstrap");
   }
 
-  const remoteUrl =
-    typeof args?.remoteUrl === "string" && args.remoteUrl.trim().length > 0
-      ? args.remoteUrl.trim()
-      : typeof args?.repo === "string" && args.repo.trim().length > 0
-        ? githubRepoUrl(args.repo.trim())
-      : DEFAULT_GSV_UPSTREAM_URL;
-  const ref =
-    typeof args?.ref === "string" && args.ref.trim().length > 0
-      ? args.ref.trim()
-      : DEFAULT_GSV_UPSTREAM_REF;
+  const { remoteUrl, ref } = resolveBootstrapUpstream(args, ctx.env);
 
   const ripgit = new RipgitClient(ctx.env.RIPGIT);
   if (!ctx.identity) {
@@ -82,6 +76,14 @@ export async function handleSysBootstrap(
       `bootstrap root/gsv from ${remoteUrl}#${ref}`,
       remoteUrl,
       ref,
+    ));
+    await timeBootstrapStep(timings, "seed-skills", () => seedRepoSkillsToHome(
+      ripgit,
+      {
+        ...ROOT_GSV_REPO,
+        branch: imported.head ?? imported.remoteRef,
+      },
+      ctx.identity!.process,
     ));
 
     const builtinSeeds = await timeBootstrapStep(
@@ -177,4 +179,68 @@ function githubRepoUrl(repo: string): string {
     throw new Error(`Invalid bootstrap repo: ${repo}`);
   }
   return `https://github.com/${trimmed}`;
+}
+
+function resolveBootstrapUpstream(
+  args: SysBootstrapArgs | undefined,
+  env: Env,
+): { remoteUrl: string; ref: string } {
+  const explicitRemoteUrl = readNonEmptyString(args?.remoteUrl);
+  const explicitRepo = readNonEmptyString(args?.repo);
+  const configuredUpstream = readEnvString(env, GSV_BOOTSTRAP_UPSTREAM_ENV);
+  const configured = configuredUpstream ? parseConfiguredUpstream(configuredUpstream) : undefined;
+  const remoteUrl = explicitRemoteUrl
+    ?? (explicitRepo ? githubRepoUrl(explicitRepo) : undefined)
+    ?? configured?.remoteUrl
+    ?? DEFAULT_GSV_UPSTREAM_URL;
+  const ref = readNonEmptyString(args?.ref)
+    ?? readEnvString(env, GSV_BOOTSTRAP_REF_ENV)
+    ?? configured?.ref
+    ?? DEFAULT_GSV_UPSTREAM_REF;
+
+  return { remoteUrl, ref };
+}
+
+function parseConfiguredUpstream(value: string): { remoteUrl: string; ref?: string } {
+  const split = splitUpstreamRef(value);
+  return {
+    remoteUrl: bootstrapUpstreamUrl(split.upstream),
+    ref: split.ref,
+  };
+}
+
+function splitUpstreamRef(value: string): { upstream: string; ref?: string } {
+  const hashIndex = value.lastIndexOf("#");
+  if (hashIndex <= 0 || hashIndex === value.length - 1) {
+    return { upstream: value };
+  }
+  const upstream = value.slice(0, hashIndex).trim();
+  const ref = value.slice(hashIndex + 1).trim();
+  if (!upstream || !ref) {
+    return { upstream: value };
+  }
+  return { upstream, ref };
+}
+
+function bootstrapUpstreamUrl(value: string): string {
+  if (looksLikeGitRemoteUrl(value)) {
+    return value;
+  }
+  return githubRepoUrl(value);
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function readEnvString(env: Env, name: string): string | undefined {
+  return readNonEmptyString((env as unknown as Record<string, unknown>)[name]);
+}
+
+function looksLikeGitRemoteUrl(value: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value) || /^[^@]+@[^:]+:.+$/.test(value);
 }

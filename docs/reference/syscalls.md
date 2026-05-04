@@ -415,7 +415,7 @@ Runtime behavior:
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Logical cancellation of the active run. Clears pending HIL and current run, emits `chat.complete` with `aborted: true`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. |
-| `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. |
+| `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Checkpoints workspace, optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. Does not remove the kernel process registry entry in normal syscall use. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Tool results and assistant metadata are expanded into structured content. |
 | `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
@@ -561,8 +561,8 @@ type ProcessSyscalls = {
   };
 
   "proc.hil": {
-    args: { pid?: string; requestId: string; decision: "approve" | "deny" };
-    result: { ok: true; pid: string; requestId: string; decision: "approve" | "deny"; resumed: boolean; pendingHil?: ProcHilRequest | null } | OperationError;
+    args: { pid?: string; requestId: string; decision: "approve" | "deny"; remember?: boolean };
+    result: { ok: true; pid: string; requestId: string; decision: "approve" | "deny"; resumed: boolean; remembered?: boolean; pendingHil?: ProcHilRequest | null } | OperationError;
   };
 
   "proc.kill": {
@@ -833,11 +833,12 @@ Runtime behavior:
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
 | `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
-| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv`, seeds builtin packages, mirrors stable/dev CLI assets, stores default CLI channel, and broadcasts `pkg.changed`. Defaults repo to `deathbyknowledge/gsv` and ref to `main`. Requires `RIPGIT` and storage. |
+| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv`, seeds builtin packages, mirrors stable/dev CLI assets, stores default CLI channel, and broadcasts `pkg.changed`. Explicit args win; otherwise `GSV_BOOTSTRAP_UPSTREAM` can override the default `deathbyknowledge/gsv#main`; it accepts `owner/repo`, a git URL, or either form with `#ref`. `GSV_BOOTSTRAP_REF` can set or override the env ref separately. Requires `RIPGIT` and storage. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
 | `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
 | `sys.device.get` | `handleSysDeviceGet` | Reads one device descriptor. Missing or inaccessible devices return `device: null` rather than a permission error. |
+| `sys.device.update` | `handleSysDeviceUpdate` | Updates owner-managed device metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible devices return `device: null`. |
 | `sys.workspace.list` | `handleSysWorkspaceList` | Lists workspaces for caller uid by default. Root may request any uid; non-root may only request self. Adds active process summary and process count. |
 | `sys.token.create` | `handleSysTokenCreate` | Creates a hashed node, service, or user token. Root may target any uid. Role defaults must match token kind; driver/node tokens may bind to `allowedDeviceId`. Raw token is returned only once. |
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
@@ -883,12 +884,17 @@ type SystemSyscalls = {
 
   "sys.device.list": {
     args: { includeOffline?: boolean };
-    result: { devices: Array<{ deviceId: string; ownerUid: number; platform: string; version: string; online: boolean; lastSeenAt: number }> };
+    result: { devices: Array<{ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number }> };
   };
 
   "sys.device.get": {
     args: { deviceId: string };
-    result: { device: ({ deviceId: string; ownerUid: number; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
+    result: { device: ({ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
+  };
+
+  "sys.device.update": {
+    args: { deviceId: string; description: string };
+    result: { device: ({ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
   };
 
   "sys.workspace.list": {
@@ -950,12 +956,12 @@ External callers cannot normally invoke `ai.*`; these syscalls are exposed to pr
 type AiSyscalls = {
   "ai.tools": {
     args: Empty;
-    result: { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; devices: Array<{ id: string; implements: string[]; platform?: string }> };
+    result: { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>; devices: Array<{ id: string; implements: string[]; description?: string; platform?: string }> };
   };
 
   "ai.config": {
     args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; profileContextFiles?: Array<{ name: string; text: string }>; profileApprovalPolicy?: string | null; maxContextBytes: number };
+    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "workspace" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number };
   };
 };
 ```

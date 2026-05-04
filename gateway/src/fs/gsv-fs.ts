@@ -3,6 +3,7 @@
  *
  * Explicit mount routing:
  *   /proc/*, /dev/*, /sys/*, /etc/{passwd,shadow,group} → KernelMountBackend
+ *   /src/packages/*                                     → Process package source backend
  *   /usr/local/bin/*                                      → Package backend
  *   /workspaces/*                                             → Workspace backend
  *   everything else                                           → R2 backend

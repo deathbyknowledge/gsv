@@ -1171,6 +1171,7 @@ textarea {
 
 .approval-actions {
   margin-top: 10px;
+  flex-wrap: wrap;
 }
 
 .approval-actions .approve {
@@ -1181,6 +1182,26 @@ textarea {
 .approval-actions .deny {
   color: var(--red);
   background: rgba(170, 68, 56, 0.1);
+}
+
+.approval-remember {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  color: var(--green);
+  background: rgba(45, 124, 85, 0.08);
+}
+
+.approval-remember svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .composer {

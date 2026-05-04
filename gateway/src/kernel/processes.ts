@@ -12,6 +12,7 @@
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { AiContextProfile } from "../syscalls/ai";
 import type { ProcContextFile } from "../syscalls/proc";
+import type { PackageInstallScope } from "./packages";
 
 export type ProcessState = "running" | "paused" | "killed";
 
@@ -19,6 +20,7 @@ export type ProcessMount = {
   kind: "ripgit-source";
   mountPath: string;
   packageId: string | null;
+  scope?: PackageInstallScope;
   repo: string;
   ref: string;
   resolvedCommit: string | null;

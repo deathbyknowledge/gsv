@@ -58,13 +58,16 @@ function getCapnweb(): CapnwebGlobal {
 let backendConnectionPromise: Promise<RemoteBackend> | null = null;
 let backendProxy: unknown = null;
 let appClientTarget: unknown = null;
+let appSessionRefreshPromise: Promise<PackageAppBoot> | null = null;
 const appEventListeners = new Set<AppEventListener>();
+const APP_SESSION_REFRESH_LEEWAY_MS = 60_000;
 
 function isReconnectableBackendError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
   return normalized.includes("websocket disconnected")
     || normalized.includes("websocket closed")
+    || normalized.includes("peer closed connection")
     || normalized.includes("connection closed")
     || normalized.includes("transport closed")
     || normalized.includes("socket closed")
@@ -77,6 +80,69 @@ function resetBackendConnection(): void {
   if (globalThis.window) {
     globalThis.window.__GSV_BACKEND_READY__ = undefined;
   }
+}
+
+function isPackageAppBoot(value: unknown): value is PackageAppBoot {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Partial<PackageAppBoot>;
+  return typeof candidate.packageId === "string"
+    && typeof candidate.packageName === "string"
+    && typeof candidate.routeBase === "string"
+    && typeof candidate.rpcBase === "string"
+    && typeof candidate.sessionId === "string"
+    && typeof candidate.sessionSecret === "string"
+    && typeof candidate.clientId === "string"
+    && typeof candidate.expiresAt === "number"
+    && typeof candidate.hasBackend === "boolean";
+}
+
+function shouldRefreshAppSession(boot: PackageAppBoot): boolean {
+  return boot.expiresAt <= Date.now() + APP_SESSION_REFRESH_LEEWAY_MS;
+}
+
+async function refreshAppSession(boot: PackageAppBoot): Promise<PackageAppBoot> {
+  if (appSessionRefreshPromise) {
+    return appSessionRefreshPromise;
+  }
+
+  const refresh = (async () => {
+    const response = await fetch(buildRpcSessionRefreshUrl(boot), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        "accept": "application/json",
+      },
+      body: JSON.stringify({ clientId: boot.clientId }),
+    });
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => "");
+      throw new Error(message || `package app session refresh failed (${response.status})`);
+    }
+
+    const nextBoot = await response.json();
+    if (!isPackageAppBoot(nextBoot)) {
+      throw new Error("package app session refresh returned an invalid bootstrap payload");
+    }
+    if (!nextBoot.hasBackend) {
+      throw new Error("package app has no backend rpc");
+    }
+
+    if (globalThis.window) {
+      globalThis.window.__GSV_APP_BOOT__ = nextBoot;
+    }
+    return nextBoot;
+  })().finally(() => {
+    if (appSessionRefreshPromise === refresh) {
+      appSessionRefreshPromise = null;
+    }
+  });
+
+  appSessionRefreshPromise = refresh;
+  return refresh;
 }
 
 function emitAppEvent(event: string, payload: unknown): void {
@@ -110,9 +176,12 @@ async function connectBackendTransport(): Promise<RemoteBackend> {
   if (backendConnectionPromise) {
     return backendConnectionPromise;
   }
-  const boot = getAppBoot();
+  let boot = getAppBoot();
   if (!boot.hasBackend) {
     throw new Error("package app has no backend rpc");
+  }
+  if (shouldRefreshAppSession(boot)) {
+    boot = await refreshAppSession(boot);
   }
   const capnweb = getCapnweb();
   const ready = (async () => {
@@ -190,6 +259,13 @@ function buildRpcWebSocketUrl(rpcBase: string): string {
   const url = new URL(rpcBase, globalThis.window?.location?.href ?? "http://localhost");
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
+}
+
+function buildRpcSessionRefreshUrl(boot: PackageAppBoot): string {
+  return new URL(
+    `/app-rpc/${encodeURIComponent(boot.packageName)}/sessions/${encodeURIComponent(boot.sessionId)}/refresh`,
+    globalThis.window?.location?.href ?? "http://localhost",
+  ).toString();
 }
 
 export async function connectBackend<T = unknown>(): Promise<T> {

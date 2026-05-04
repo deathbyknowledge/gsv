@@ -68,6 +68,8 @@ import type {
   PkgAddResult,
   PkgCheckoutArgs,
   PkgCheckoutResult,
+  PkgCreateArgs,
+  PkgCreateResult,
   PkgInstallArgs,
   PkgInstallResult,
   PkgReviewApproveArgs,
@@ -128,6 +130,8 @@ import type {
   SysDeviceListResult,
   SysDeviceGetArgs,
   SysDeviceGetResult,
+  SysDeviceUpdateArgs,
+  SysDeviceUpdateResult,
   SysWorkspaceListArgs,
   SysWorkspaceListResult,
   SysTokenCreateArgs,
@@ -243,6 +247,7 @@ export type SyscallDomains = {
   // Packages
   "pkg.list": { args: PkgListArgs; result: PkgListResult };
   "pkg.add": { args: PkgAddArgs; result: PkgAddResult };
+  "pkg.create": { args: PkgCreateArgs; result: PkgCreateResult };
   "pkg.sync": { args: PkgSyncArgs; result: PkgSyncResult };
   "pkg.checkout": { args: PkgCheckoutArgs; result: PkgCheckoutResult };
   "pkg.install": { args: PkgInstallArgs; result: PkgInstallResult };
@@ -275,6 +280,7 @@ export type SyscallDomains = {
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
   "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
   "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
+  "sys.device.update": { args: SysDeviceUpdateArgs; result: SysDeviceUpdateResult };
   "sys.workspace.list": { args: SysWorkspaceListArgs; result: SysWorkspaceListResult };
   "sys.token.create": { args: SysTokenCreateArgs; result: SysTokenCreateResult };
   "sys.token.list": { args: SysTokenListArgs; result: SysTokenListResult };

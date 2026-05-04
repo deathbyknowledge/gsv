@@ -77,6 +77,7 @@ textarea.devices-output,
 
 .devices-sidebar-head h1,
 .devices-detail-head h2,
+.devices-description-panel h3,
 .devices-command-block h3,
 .devices-capability-group h3,
 .devices-detail-empty h2 {
@@ -88,10 +89,12 @@ textarea.devices-output,
 .devices-sidebar-head p,
 .devices-detail-head p,
 .devices-detail-empty p,
+.devices-description-panel p,
 .devices-capability-group p,
 .devices-info-box span,
 .devices-field-block span,
 .devices-list-item-foot,
+.devices-list-item-description,
 .devices-list-summary,
 .devices-eyebrow,
 .devices-command-block p {
@@ -164,6 +167,12 @@ textarea.devices-output,
   gap: 8px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.devices-list-item-description {
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .devices-status-pill {
@@ -239,6 +248,28 @@ textarea.devices-output,
 .devices-detail-section {
   display: grid;
   gap: 18px;
+}
+
+.devices-description-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.devices-description-panel p {
+  margin-top: 2px;
+}
+
+.devices-description-input {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.devices-description-panel .devices-section-actions {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .devices-summary-grid {

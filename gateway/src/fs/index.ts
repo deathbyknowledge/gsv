@@ -13,7 +13,22 @@ export type {
 export { KernelMountBackend } from "./backends/kernel";
 export { createHomeKnowledgeBackend } from "./backends/home-knowledge";
 export { createPackageBackend, isPackageMountPath } from "./backends/packages";
-export { createProcessSourceBackend, isProcessSourceMountPath } from "./backends/process-sources";
+export {
+  commitProcessSourceChanges,
+  createProcessSourceBackend,
+  diffProcessSourceChanges,
+  discardProcessSourceChanges,
+  getProcessSourceStatus,
+  isProcessSourceMountPath,
+  packageSourcePathNameForRecord,
+  packageSourcePathNameMap,
+  packageSourcePathName,
+} from "./backends/process-sources";
+export type {
+  ProcessSourceChangeSummary,
+  ProcessSourceCommitResult,
+  ProcessSourceStatus,
+} from "./backends/process-sources";
 export { R2MountBackend } from "./backends/r2";
 export { RipgitClient } from "./ripgit/client";
 export type {

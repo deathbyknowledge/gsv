@@ -24,6 +24,13 @@ export type PkgEntrypointSummary = {
   };
 };
 
+export type PkgProfileSummary = {
+  name: string;
+  displayName: string;
+  description?: string;
+  icon?: string;
+};
+
 export type PkgSummary = {
   packageId: string;
   scope: {
@@ -44,6 +51,7 @@ export type PkgSummary = {
     public: boolean;
   };
   entrypoints: PkgEntrypointSummary[];
+  profiles: PkgProfileSummary[];
   bindingNames: string[];
   review: {
     required: boolean;
@@ -91,6 +99,32 @@ export type PkgAddResult = {
     ref: string;
     head: string | null;
   };
+  package: PkgSummary;
+};
+
+export type PkgCreateTemplate = "web-ui" | "command";
+
+export type PkgCreateArgs = {
+  repo: string;
+  ref?: string;
+  subdir?: string;
+  name?: string;
+  displayName?: string;
+  description?: string;
+  template?: PkgCreateTemplate;
+  command?: string;
+  enable?: boolean;
+  overwrite?: boolean;
+};
+
+export type PkgCreateResult = {
+  changed: boolean;
+  created: boolean;
+  repo: string;
+  ref: string;
+  subdir: string;
+  head: string | null;
+  files: string[];
   package: PkgSummary;
 };
 
@@ -162,6 +196,7 @@ export type PkgCatalogEntry = {
     resolvedCommit?: string | null;
   };
   entrypoints: PkgEntrypointSummary[];
+  profiles: PkgProfileSummary[];
   bindingNames: string[];
 };
 

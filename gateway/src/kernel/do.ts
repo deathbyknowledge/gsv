@@ -76,6 +76,7 @@ import type {
 } from "../syscalls/scheduler";
 
 const SERVER_VERSION = "0.1.2";
+const APP_CLIENT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 type ConnectionState = {
   step: "pending" | "connected";
@@ -451,7 +452,7 @@ export class Kernel extends Host<Env> {
       entrypointName: entrypoint.name,
       routeBase,
       clientId: input.clientId?.trim() || crypto.randomUUID(),
-      ttlMs: 30 * 60 * 1000,
+      ttlMs: APP_CLIENT_SESSION_TTL_MS,
     });
 
     return {
@@ -1246,6 +1247,7 @@ export class Kernel extends Host<Env> {
 
     if (
       frame.call === "pkg.add" ||
+      frame.call === "pkg.create" ||
       frame.call === "pkg.sync" ||
       frame.call === "pkg.install" ||
       frame.call === "pkg.remove" ||
@@ -1279,6 +1281,8 @@ export class Kernel extends Host<Env> {
 
       this.broadcastToRole("user", "pkg.changed", {
         action: frame.call === "pkg.install"
+          ? "install"
+          : frame.call === "pkg.create"
           ? "install"
           : frame.call === "pkg.add"
           ? "install"

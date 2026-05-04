@@ -9,7 +9,7 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import { sendFrameToProcess } from "../shared/utils";
-import { handleProcIpcCall } from "./proc-handlers";
+import { handleProcIpcCall, handleProcSpawn } from "./proc-handlers";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -71,6 +71,270 @@ describe("proc handlers", () => {
     expect(ipcCalls.attachRun).not.toHaveBeenCalled();
     expect(ctx.scheduleIpcCallTimeout).not.toHaveBeenCalled();
   });
+
+  it("uses disambiguated package source mount paths", async () => {
+    const pkgA = makePackage("pkg-a", "Demo Tool", "sam/demo-a");
+    const pkgB = makePackage("pkg-b", "demo-tool", "sam/demo-b");
+    const ctx = {
+      env: {},
+      identity: {
+        process: IDENTITY,
+        capabilities: ["*"],
+      },
+      procs: {
+        get: vi.fn(() => null),
+        spawn: vi.fn(),
+      },
+      workspaces: {
+        get: vi.fn(),
+        touch: vi.fn(),
+      },
+      packages: {
+        resolve: vi.fn((packageId: string) => {
+          if (packageId === "pkg-a") return pkgA;
+          if (packageId === "pkg-b") return pkgB;
+          return null;
+        }),
+        list: vi.fn(() => [pkgA, pkgB]),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({
+      profile: "task",
+      mounts: [
+        { kind: "package-source", packageId: "pkg-a" },
+        { kind: "package-source", packageId: "pkg-b" },
+      ],
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      cwd: "/src/packages/demo-tool--sam-demo-a",
+    });
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ cwd: "/src/packages/demo-tool--sam-demo-a" }),
+      expect.objectContaining({
+        mounts: [
+          expect.objectContaining({
+            packageId: "pkg-a",
+            mountPath: "/src/packages/demo-tool--sam-demo-a",
+          }),
+          expect.objectContaining({
+            packageId: "pkg-b",
+            mountPath: "/src/packages/demo-tool--sam-demo-b",
+          }),
+        ],
+      }),
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      call: "proc.setidentity",
+    }));
+  });
+
+  it("materializes visible package source mounts by default without changing cwd", async () => {
+    const pkgA = makePackage("pkg-a", "Demo Tool", "sam/demo-a");
+    const pkgB = makePackage("pkg-b", "Other Tool", "sam/other-b");
+    const ctx = {
+      env: {},
+      identity: {
+        process: IDENTITY,
+        capabilities: ["*"],
+      },
+      procs: {
+        get: vi.fn(() => null),
+        spawn: vi.fn(),
+      },
+      workspaces: {
+        get: vi.fn(),
+        touch: vi.fn(),
+      },
+      packages: {
+        resolve: vi.fn((packageId: string) => {
+          if (packageId === "pkg-a") return pkgA;
+          if (packageId === "pkg-b") return pkgB;
+          return null;
+        }),
+        list: vi.fn(() => [pkgA, pkgB]),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({ profile: "task" }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      cwd: "/home/sam",
+    });
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ cwd: "/home/sam" }),
+      expect.objectContaining({
+        mounts: [
+          expect.objectContaining({
+            packageId: "pkg-a",
+            scope: pkgA.scope,
+            mountPath: "/src/packages/demo-tool",
+          }),
+          expect.objectContaining({
+            packageId: "pkg-b",
+            scope: pkgB.scope,
+            mountPath: "/src/packages/other-tool",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("uses distinct default mount paths for package source and repo mounts", async () => {
+    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a", "packages/demo-tool");
+    const ctx = {
+      env: {},
+      identity: {
+        process: IDENTITY,
+        capabilities: ["*"],
+      },
+      procs: {
+        get: vi.fn(() => null),
+        spawn: vi.fn(),
+      },
+      workspaces: {
+        get: vi.fn(),
+        touch: vi.fn(),
+      },
+      packages: {
+        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
+        list: vi.fn(() => [pkg]),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({
+      profile: "task",
+      mounts: [
+        { kind: "package-source", packageId: "pkg-a" },
+        { kind: "package-repo", packageId: "pkg-a" },
+      ],
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      cwd: "/src/packages/demo-tool",
+    });
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ cwd: "/src/packages/demo-tool" }),
+      expect.objectContaining({
+        mounts: [
+          expect.objectContaining({
+            mountPath: "/src/packages/demo-tool",
+            subdir: "packages/demo-tool",
+          }),
+          expect.objectContaining({
+            mountPath: "/src/repos/sam-demo-a",
+            subdir: ".",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("prefers package source mounts for default spawn cwd", async () => {
+    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a", "packages/demo-tool");
+    const ctx = {
+      env: {},
+      identity: {
+        process: IDENTITY,
+        capabilities: ["*"],
+      },
+      procs: {
+        get: vi.fn(() => null),
+        spawn: vi.fn(),
+      },
+      workspaces: {
+        get: vi.fn(),
+        touch: vi.fn(),
+      },
+      packages: {
+        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
+        list: vi.fn(() => [pkg]),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({
+      profile: "task",
+      mounts: [
+        { kind: "package-repo", packageId: "pkg-a" },
+        { kind: "package-source", packageId: "pkg-a" },
+      ],
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      cwd: "/src/packages/demo-tool",
+    });
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ cwd: "/src/packages/demo-tool" }),
+      expect.objectContaining({
+        mounts: [
+          expect.objectContaining({
+            mountPath: "/src/repos/sam-demo-a",
+            subdir: ".",
+          }),
+          expect.objectContaining({
+            mountPath: "/src/packages/demo-tool",
+            subdir: "packages/demo-tool",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("preserves caller-supplied package source mount paths", async () => {
+    const pkg = makePackage("pkg-a", "Demo Tool", "sam/demo-a", "packages/demo-tool");
+    const ctx = {
+      env: {},
+      identity: {
+        process: IDENTITY,
+        capabilities: ["*"],
+      },
+      procs: {
+        get: vi.fn(() => null),
+        spawn: vi.fn(),
+      },
+      workspaces: {
+        get: vi.fn(),
+        touch: vi.fn(),
+      },
+      packages: {
+        resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
+        list: vi.fn(() => [pkg]),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({
+      profile: "task",
+      mounts: [
+        { kind: "package-source", packageId: "pkg-a", mountPath: "/src/custom/demo" },
+      ],
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      cwd: "/src/custom/demo",
+    });
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ cwd: "/src/custom/demo" }),
+      expect.objectContaining({
+        mounts: [
+          expect.objectContaining({
+            mountPath: "/src/custom/demo",
+            subdir: "packages/demo-tool",
+          }),
+        ],
+      }),
+    );
+  });
 });
 
 function makeIpcCallContext() {
@@ -97,4 +361,30 @@ function makeIpcCallContext() {
   } as unknown as KernelContext;
 
   return { ctx, ipcCalls };
+}
+
+function makePackage(packageId: string, name: string, repo: string, subdir = ".") {
+  return {
+    packageId,
+    scope: { kind: "user", uid: IDENTITY.uid },
+    manifest: {
+      name,
+      description: name,
+      version: "0.1.0",
+      runtime: "web-ui",
+      source: {
+        repo,
+        ref: "main",
+        subdir,
+        resolvedCommit: "base123",
+      },
+      entrypoints: [],
+    },
+    artifact: { hash: "hash", mainModule: "main.js", modulePaths: ["main.js"] },
+    enabled: true,
+    reviewRequired: false,
+    reviewedAt: 1,
+    installedAt: 1,
+    updatedAt: 1,
+  };
 }

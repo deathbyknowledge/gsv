@@ -4,6 +4,7 @@ import {
   handleRepoApply,
   handleRepoCompare,
   handleRepoCreate,
+  handleRepoImport,
   handleRepoRead,
 } from "./repo";
 
@@ -152,6 +153,78 @@ describe("repo syscalls", () => {
       allowEmpty: true,
     });
     expect(ctx.config.get("repos/alice/empty/description")).toBe("Empty repo");
+  });
+
+  it("imports an explicit upstream and records repo metadata", async () => {
+    const fetcher = makeFetcher((url, init) => {
+      expect(url.pathname).toBe("/hyperspace/repos/alice/demo/import");
+      expect(init?.method).toBe("POST");
+      return Response.json({
+        ok: true,
+        head: "imported123",
+        changed: true,
+        remote_url: "https://github.com/example/demo",
+        remote_ref: "main",
+      });
+    });
+    const ctx = makeContext(fetcher);
+
+    const result = await handleRepoImport({
+      repo: "alice/demo",
+      remoteUrl: "https://github.com/example/demo",
+    }, ctx);
+
+    expect(result).toEqual({
+      repo: "alice/demo",
+      ref: "main",
+      head: "imported123",
+      changed: true,
+      remoteUrl: "https://github.com/example/demo",
+      remoteRef: "main",
+    });
+    const body = JSON.parse(String(fetcher.calls[0].init?.body));
+    expect(body).toMatchObject({
+      defaultBranch: "main",
+      message: "repo: import https://github.com/example/demo#main",
+      remoteUrl: "https://github.com/example/demo",
+      remoteRef: "main",
+    });
+    expect(ctx.config.get("repos/alice/demo/created_at")).not.toBeNull();
+  });
+
+  it("pulls from the configured upstream when no remote url is supplied", async () => {
+    const fetcher = makeFetcher((url, init) => {
+      expect(url.pathname).toBe("/hyperspace/repos/alice/demo/import");
+      expect(init?.method).toBe("POST");
+      return Response.json({
+        ok: true,
+        head: "pulled123",
+        changed: true,
+        remote_url: "https://github.com/example/demo",
+        remote_ref: "main",
+      });
+    });
+    const ctx = makeContext(fetcher);
+
+    const result = await handleRepoImport({
+      repo: "alice/demo",
+      ref: "main",
+    }, ctx);
+
+    expect(result).toMatchObject({
+      repo: "alice/demo",
+      ref: "main",
+      head: "pulled123",
+      remoteUrl: "https://github.com/example/demo",
+      remoteRef: "main",
+    });
+    const body = JSON.parse(String(fetcher.calls[0].init?.body));
+    expect(body).toMatchObject({
+      defaultBranch: "main",
+      message: "repo: pull upstream for alice/demo#main",
+    });
+    expect(body.remoteUrl).toBeUndefined();
+    expect(body.remoteRef).toBeUndefined();
   });
 
   it("denies private repos owned by another user", async () => {

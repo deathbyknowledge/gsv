@@ -122,18 +122,20 @@ describe("ConfigStore", () => {
     expect(values.get("config/ai/api_key")).toBe("");
     expect(values.get("config/ai/provider")).toBe("anthropic");
     expect(values.get("config/ai/model")).toBe("claude-sonnet-4-20250514");
-    expect(values.get("config/ai/profile/task/context.d/05-gsv.md")).toContain("[Process Event]:");
+    expect(values.get("config/ai/context.d/00-gsv.md")).toContain("[Process Event]:");
   });
 
   it("list(prefix with trailing slash) behaves the same", () => {
     expect(store.list("config/ai/")).toEqual(store.list("config/ai"));
   });
 
-  it("defines common process context for system profiles", () => {
+  it("defines common process context once for all profiles", () => {
+    const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-gsv.md"];
+    expect(context).toContain("You are running inside GSV, a Linux-shaped cloud computer");
+    expect(context).toContain("[Process Event]:");
+
     for (const profile of ["init", "task", "review", "cron", "mcp", "app"]) {
-      const context = SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/05-gsv.md`];
-      expect(context).toContain("GSV is a Linux-shaped distributed AI operating environment.");
-      expect(context).toContain("[Process Event]:");
+      expect(SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/00-role.md`]).toBeTruthy();
     }
   });
 });

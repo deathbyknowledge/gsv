@@ -3,11 +3,14 @@ import {
   addRemote,
   approveReview,
   checkoutPackage,
+  createPackage,
   diffRepo,
   disablePackage,
   enablePackage,
   importPackage,
   loadState,
+  pullPackage,
+  pullSource,
   readRepo,
   refreshPackage,
   refreshSource,
@@ -24,11 +27,15 @@ export default class PackagesBackend extends PackageBackendEntrypoint {
   }
 
   async syncSources(): Promise<unknown> {
-    return syncSources(this.kernel);
+    return syncSources(this.kernel, this);
   }
 
   async importPackage(args: unknown): Promise<unknown> {
     return importPackage(this.kernel, args as never);
+  }
+
+  async createPackage(args: unknown): Promise<unknown> {
+    return createPackage(this.kernel, args as never);
   }
 
   async addRemote(args: unknown): Promise<unknown> {
@@ -57,6 +64,14 @@ export default class PackagesBackend extends PackageBackendEntrypoint {
 
   async refreshSource(args: unknown): Promise<unknown> {
     return refreshSource(this.kernel, args as never);
+  }
+
+  async pullPackage(args: unknown): Promise<unknown> {
+    return pullPackage(this.kernel, args as never);
+  }
+
+  async pullSource(args: unknown): Promise<unknown> {
+    return pullSource(this.kernel, args as never);
   }
 
   async checkoutPackage(args: unknown): Promise<unknown> {

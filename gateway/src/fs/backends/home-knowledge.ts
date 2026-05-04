@@ -22,6 +22,8 @@ type HomePathKind =
   | "constitution"
   | "context-root"
   | "context-path"
+  | "skills-root"
+  | "skills-path"
   | "knowledge-root"
   | "knowledge-path"
   | "other";
@@ -63,6 +65,10 @@ class HomeKnowledgeMountBackend implements MountBackend {
 
   private get contextRoot() {
     return normalizePath(`${this.identity.home}/context.d`);
+  }
+
+  private get skillsRoot() {
+    return normalizePath(`${this.identity.home}/skills.d`);
   }
 
   private get knowledgeRoot() {
@@ -111,7 +117,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       return;
     }
 
-    if (kind === "context-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "knowledge-root") {
       throw new Error(`EISDIR: illegal operation on a directory, write '${normalized}'`);
     }
 
@@ -131,7 +137,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       return;
     }
 
-    if (kind === "context-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "knowledge-root") {
       throw new Error(`EISDIR: illegal operation on a directory, append '${normalized}'`);
     }
 
@@ -154,7 +160,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (kind === "other") {
       return this.fallback.exists(normalized);
     }
-    if (kind === "context-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "knowledge-root") {
       return true;
     }
 
@@ -180,7 +186,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (kind === "other") {
       return this.fallback.stat(normalized);
     }
-    if (kind === "context-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "knowledge-root") {
       return this.makeDirectoryStat();
     }
 
@@ -212,7 +218,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     const normalized = normalizePath(path);
     const kind = this.classify(normalized);
 
-    if (kind === "home" || kind === "context-root" || kind === "knowledge-root") {
+    if (kind === "home" || kind === "context-root" || kind === "skills-root" || kind === "knowledge-root") {
       return;
     }
     if (kind === "other") {
@@ -240,6 +246,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
         entries.add(name);
       }
       entries.add("context.d");
+      entries.add("skills.d");
       entries.add("knowledge");
       if (await this.pathExistsInRepo("CONSTITUTION.md") || await this.fallback.exists(this.constitutionPath).catch(() => false)) {
         entries.add("CONSTITUTION.md");
@@ -266,7 +273,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
     }
 
     if (entries.size === 0) {
-      if (kind === "context-root" || kind === "knowledge-root") {
+      if (kind === "context-root" || kind === "skills-root" || kind === "knowledge-root") {
         return [];
       }
       throw new Error(`ENOENT: no such file or directory, scandir '${normalized}'`);
@@ -286,7 +293,7 @@ class HomeKnowledgeMountBackend implements MountBackend {
       await this.fallback.rm(normalized, options);
       return;
     }
-    if (kind === "context-root" || kind === "knowledge-root") {
+    if (kind === "context-root" || kind === "skills-root" || kind === "knowledge-root") {
       const entries = await this.readdir(normalized);
       if (entries.length > 0 && !options?.recursive) {
         throw new Error(`ENOTEMPTY: directory not empty, rmdir '${normalized}'`);
@@ -381,6 +388,12 @@ class HomeKnowledgeMountBackend implements MountBackend {
     if (path.startsWith(`${this.contextRoot}/`)) {
       return "context-path";
     }
+    if (path === this.skillsRoot) {
+      return "skills-root";
+    }
+    if (path.startsWith(`${this.skillsRoot}/`)) {
+      return "skills-path";
+    }
     if (path === this.knowledgeRoot) {
       return "knowledge-root";
     }
@@ -401,7 +414,11 @@ class HomeKnowledgeMountBackend implements MountBackend {
   }
 
   private canFallbackToR2(path: string): boolean {
-    return path === this.constitutionPath || path === this.contextRoot || path.startsWith(`${this.contextRoot}/`);
+    return path === this.constitutionPath
+      || path === this.contextRoot
+      || path.startsWith(`${this.contextRoot}/`)
+      || path === this.skillsRoot
+      || path.startsWith(`${this.skillsRoot}/`);
   }
 
   private async readOverlay(path: string): Promise<RipgitPathResult> {

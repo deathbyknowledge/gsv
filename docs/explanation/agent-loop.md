@@ -46,26 +46,39 @@ cleanly.
 
 On the first tick for a run, the process asks the Kernel for runtime inputs:
 
-- `ai.config` resolves provider, model, reasoning, output limit, profile context
+- `ai.config` resolves provider, model, reasoning, output limit, system/profile context
   files, approval policy, and context byte budget.
 - `ai.tools` returns the syscall tool schemas visible to this process and the
-  accessible online devices.
+  accessible online devices, including owner-authored device descriptions.
 
 The process then assembles a system prompt from explicit context providers in
 this order:
 
-1. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`, or
+1. **System context** from `config/ai/context.d/*.md`.
+2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`, or
    from a package profile when the profile is package-provided.
-2. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
+3. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
    repository with R2 fallback.
-3. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`,
+4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`,
    or `.gsv/summary.md` when no context files exist.
-4. **Process context** supplied with the assignment or runtime.
+5. **Available skills** from layered `skills.d` directories. This is a compact
+   command-oriented index only; full `SKILL.md` bodies are read explicitly with
+   `skills show <skill>`.
+6. **Process context** supplied with the assignment or runtime.
 
-Each section is rendered as `[section.name]` and separated with `---`. Profile
-context can template values such as `identity.username`, `identity.cwd`,
+Each section is rendered as `[section.name]` and separated with `---`. System
+and profile context can template values such as `identity.username`, `identity.cwd`,
 `workspace`, `devices`, and `known_paths`. Home and workspace context are loaded
 lexically and bounded by `config/ai/max_context_bytes`.
+
+Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,
+workspace `.gsv/skills.d`, and visible package `/src/packages/<package>/skills.d`.
+The prompt tells processes to use `skills list`, `skills search`, `skills show`,
+`skills files`, and `skills read` rather than embedding long source paths in the
+index.
+
+System-provided skills live in the root GSV source tree under `skills/` and are
+seeded into user home `skills.d` during bootstrap when missing.
 
 The assembled prompt, config, tool list, device list, and approval policy are
 cached in `currentRun` for the duration of that run.

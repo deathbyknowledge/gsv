@@ -179,6 +179,7 @@ export async function decideHil(kernel: KernelClient, input: unknown) {
     pid: normalizePid(args.pid),
     requestId: typeof args.requestId === "string" ? args.requestId : "",
     decision,
+    ...(args.remember === true ? { remember: true } : {}),
   });
 }
 

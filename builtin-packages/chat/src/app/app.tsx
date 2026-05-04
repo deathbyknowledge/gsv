@@ -686,14 +686,14 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
   }
 
-  async function decidePendingHil(requestId: string, decision: "approve" | "deny"): Promise<void> {
+  async function decidePendingHil(requestId: string, decision: "approve" | "deny", remember = false): Promise<void> {
     const target = activeRef.current;
     if (!target?.pid || !pendingHil || pendingHil.requestId !== requestId || hilBusy) {
       return;
     }
     setHilBusy(true);
     try {
-      const result = await backend.decideHil({ pid: target.pid, requestId, decision });
+      const result = await backend.decideHil({ pid: target.pid, requestId, decision, remember });
       const record = asRecord(result);
       if (!record?.ok) {
         appendSystem("tool confirmation failed");
@@ -944,7 +944,7 @@ export function App({ backend }: { backend: ChatBackend }) {
               refNode={transcriptRef}
               onCopy={(text) => void copyText("message", text)}
               onBranch={(messageId) => void branchFromMessage(messageId)}
-              onHilDecision={(requestId, decision) => void decidePendingHil(requestId, decision)}
+              onHilDecision={(requestId, decision, remember) => void decidePendingHil(requestId, decision, remember)}
             />
 
             <Composer

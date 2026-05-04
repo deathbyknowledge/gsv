@@ -98,8 +98,10 @@ import {
   type PendingHilRecord,
 } from "./store";
 import {
+  buildToolApprovalFacts,
   parseToolApprovalPolicy,
   resolveToolApproval,
+  type ToolApprovalRule,
   type ToolApprovalPolicy,
 } from "./approval";
 import {
@@ -175,6 +177,7 @@ type ArchivedMessageRecord = {
 };
 
 const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
+const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
 const TEXT_ENCODER = new TextEncoder();
 const PROCESS_MEDIA_CACHE_LIMIT = 32;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
@@ -949,6 +952,10 @@ export class Process extends Host<Env> {
       return { ok: false, error: `Run is no longer active for confirmation: ${args.requestId}` };
     }
 
+    const remembered = args.decision === "approve" && args.remember === true
+      ? this.rememberToolApproval(pendingHil, run)
+      : false;
+
     const codeModeApproval = this.codeModeApprovals.get(args.requestId);
     if (codeModeApproval) {
       this.store.clearPendingHil();
@@ -959,6 +966,7 @@ export class Process extends Host<Env> {
         requestId: args.requestId,
         decision: args.decision,
         resumed: true,
+        remembered,
         pendingHil: null,
       };
     }
@@ -981,6 +989,7 @@ export class Process extends Host<Env> {
           requestId: args.requestId,
           decision: args.decision,
           resumed: false,
+          remembered,
           pendingHil: null,
         };
       }
@@ -1016,6 +1025,7 @@ export class Process extends Host<Env> {
         requestId: args.requestId,
         decision: args.decision,
         resumed: false,
+        remembered,
         pendingHil: null,
       };
     }
@@ -1031,6 +1041,7 @@ export class Process extends Host<Env> {
         requestId: args.requestId,
         decision: args.decision,
         resumed: false,
+        remembered,
         pendingHil: nextPendingHil ? this.toProcHilRequest(nextPendingHil) : null,
       };
     }
@@ -1045,6 +1056,7 @@ export class Process extends Host<Env> {
       requestId: args.requestId,
       decision: args.decision,
       resumed: true,
+      remembered,
       pendingHil: nextPendingHil ? this.toProcHilRequest(nextPendingHil) : null,
     };
   }
@@ -3247,9 +3259,71 @@ export class Process extends Host<Env> {
       return run.approvalPolicy;
     }
 
-    run.approvalPolicy = parseToolApprovalPolicy(run.config?.profileApprovalPolicy ?? null);
+    const profilePolicy = parseToolApprovalPolicy(run.config?.profileApprovalPolicy ?? null);
+    const overrides = this.loadToolApprovalOverrides();
+    run.approvalPolicy = {
+      default: profilePolicy.default,
+      rules: [
+        ...overrides,
+        ...profilePolicy.rules,
+      ],
+    };
     this.currentRun = run;
     return run.approvalPolicy;
+  }
+
+  private rememberToolApproval(pendingHil: PendingHilRecord, run: RunState): boolean {
+    const rule = this.buildToolApprovalOverride(pendingHil);
+    const overrides = this.loadToolApprovalOverrides();
+    const key = approvalRuleKey(rule);
+    const alreadyStored = overrides.some((override) => approvalRuleKey(override) === key);
+
+    if (!alreadyStored) {
+      this.store.setValue(TOOL_APPROVAL_OVERRIDES_KEY, JSON.stringify([rule, ...overrides]));
+    }
+
+    if (run.approvalPolicy && !run.approvalPolicy.rules.some((override) => approvalRuleKey(override) === key)) {
+      run.approvalPolicy.rules.unshift(rule);
+      this.currentRun = run;
+    }
+
+    return true;
+  }
+
+  private buildToolApprovalOverride(pendingHil: PendingHilRecord): ToolApprovalRule {
+    const facts = buildToolApprovalFacts(
+      pendingHil.syscall,
+      pendingHil.args,
+      this.identity,
+      this.profile,
+    );
+    return {
+      match: pendingHil.syscall,
+      when: {
+        target: facts.target,
+      },
+      action: "auto",
+    };
+  }
+
+  private loadToolApprovalOverrides(): ToolApprovalRule[] {
+    const raw = this.store.getValue(TOOL_APPROVAL_OVERRIDES_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parseToolApprovalPolicy(JSON.stringify({
+        default: "auto",
+        rules: parsed,
+      })).rules;
+    } catch {
+      return [];
+    }
   }
 
   private async appendSyntheticToolResult(
@@ -3408,6 +3482,14 @@ function formatGenerationFailure(message: string): string {
     return "Generation failed.";
   }
   return `Generation failed: ${normalized}`;
+}
+
+function approvalRuleKey(rule: ToolApprovalRule): string {
+  return JSON.stringify({
+    match: rule.match,
+    when: rule.when ?? null,
+    action: rule.action,
+  });
 }
 
 async function gzip(input: string): Promise<ArrayBuffer> {

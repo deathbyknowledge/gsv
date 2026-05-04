@@ -247,6 +247,7 @@ export class RipgitClient {
     message: string,
     ops: RipgitApplyOp[],
     options?: {
+      baseRef?: string;
       expectedHead?: string;
       allowEmpty?: boolean;
     },
@@ -263,6 +264,7 @@ export class RipgitClient {
         email,
         message,
         ops,
+        ...(options?.baseRef ? { baseRef: options.baseRef } : {}),
         ...(options?.expectedHead ? { expectedHead: options.expectedHead } : {}),
         ...(options?.allowEmpty ? { allowEmpty: true } : {}),
       }),

@@ -40,6 +40,7 @@ import {
   isWorkersAiProvider,
   resolveWorkersAiModelContextWindow,
 } from "../inference/workers-ai";
+import { collectPromptSkillIndex } from "./skills";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -50,6 +51,8 @@ const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "shell.exec": SHELL_EXEC_DEFINITION,
   "codemode.exec": CODEMODE_EXEC_DEFINITION,
 };
+
+type ContextFile = { name: string; text: string };
 
 export async function handleAiTools(
   ctx: KernelContext,
@@ -68,6 +71,7 @@ export async function handleAiTools(
     onlineDevices.push({
       id: device.device_id,
       implements: device.implements,
+      ...(device.description ? { description: device.description } : {}),
       platform: device.platform || undefined,
     });
   }
@@ -143,8 +147,10 @@ export async function handleAiConfig(
         ? "config"
         : "unknown";
 
+  const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
+
   let profile = requestedProfile;
-  let profileContextFiles: Array<{ name: string; text: string }> = [];
+  let profileContextFiles: ContextFile[] = [];
   let profileApprovalPolicy: string | null = null;
 
   if (isPackageAiContextProfile(requestedProfile)) {
@@ -162,15 +168,7 @@ export async function handleAiConfig(
     profileApprovalPolicy = resolved.packageProfile.approvalPolicy ?? null;
   } else {
     profile = isSystemAiContextProfile(requestedProfile) ? requestedProfile : "task";
-    const profileContextPrefix = `config/ai/profile/${profile}/context.d`;
-    profileContextFiles = config
-      .list(profileContextPrefix)
-      .map(({ key, value }) => ({
-        name: key.slice(`${profileContextPrefix}/`.length),
-        text: value,
-      }))
-      .filter((file) => file.name.endsWith(".md") && file.text.trim().length > 0)
-      .sort((left, right) => left.name.localeCompare(right.name));
+    profileContextFiles = listConfigContextFiles(config, `config/ai/profile/${profile}/context.d`);
     profileApprovalPolicy =
       config.get(`config/ai/profile/${profile}/tools/approval`) ??
       null;
@@ -182,6 +180,12 @@ export async function handleAiConfig(
     "32768",
     10,
   );
+  const skillIndex = await collectPromptSkillIndex(ctx, requestedProfile).catch((error) => {
+    console.warn(
+      `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return [];
+  });
 
   return {
     profile,
@@ -192,10 +196,23 @@ export async function handleAiConfig(
     maxTokens,
     contextWindowTokens,
     contextWindowSource,
+    systemContextFiles,
     profileContextFiles,
+    skillIndex,
     profileApprovalPolicy,
     maxContextBytes,
   };
+}
+
+function listConfigContextFiles(config: KernelContext["config"], prefix: string): ContextFile[] {
+  return config
+    .list(prefix)
+    .map(({ key, value }) => ({
+      name: key.slice(`${prefix}/`.length),
+      text: value,
+    }))
+    .filter((file) => file.name.endsWith(".md") && file.text.trim().length > 0)
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function parsePositiveInt(value: string | null | undefined): number | null {

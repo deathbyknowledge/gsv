@@ -108,6 +108,7 @@ export type ProcHilArgs = {
   pid?: string;
   requestId: string;
   decision: ProcHilDecision;
+  remember?: boolean;
 };
 
 export type ProcHilResult =
@@ -117,6 +118,7 @@ export type ProcHilResult =
       requestId: string;
       decision: ProcHilDecision;
       resumed: boolean;
+      remembered?: boolean;
       pendingHil?: ProcHilRequest | null;
     }
   | { ok: false; error: string };

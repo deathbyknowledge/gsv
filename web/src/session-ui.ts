@@ -34,8 +34,8 @@ type ValidationResult = {
 
 type InstallPlatform = "macos" | "linux" | "windows";
 
-const DEFAULT_SOURCE_LABEL = "Default upstream (deathbyknowledge/gsv#main)";
-const DEFAULT_SOURCE_REF = "main";
+const DEFAULT_SOURCE_LABEL = "Configured default upstream";
+const DEFAULT_SOURCE_REF = "Configured default ref";
 
 const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
   quick: {

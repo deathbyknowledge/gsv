@@ -17,10 +17,28 @@ const CONFIG: AiConfigResult = {
   maxTokens: 4096,
   contextWindowTokens: 200000,
   contextWindowSource: "model",
+  systemContextFiles: [
+    {
+      name: "00-gsv.md",
+      text: "Running in GSV for {{identity.username}} at {{identity.cwd}}",
+    },
+  ],
   profileContextFiles: [
     {
       name: "00-role.md",
       text: "Task for {{identity.username}} in {{identity.cwd}}\n\nTargets:\n{{devices}}\n\nPaths:\n{{known_paths}}",
+    },
+  ],
+  skillIndex: [
+    {
+      id: "package-development",
+      name: "package-development",
+      description: "Build and update packages.",
+      source: {
+        kind: "profile",
+        label: "profile:task",
+        writable: false,
+      },
     },
   ],
   maxContextBytes: 64,
@@ -73,6 +91,7 @@ describe("createProfileInstructionsProvider", () => {
           {
             id: "macbook",
             platform: "darwin",
+            description: "Personal laptop",
             implements: ["shell.exec", "fs.read"],
           },
         ],
@@ -84,8 +103,8 @@ describe("createProfileInstructionsProvider", () => {
       }),
     ]);
     expect(sections[0]?.text).toContain("Task for root in /workspaces/ws_test");
-    expect(sections[0]?.text).toContain("- gsv: control plane and local execution target");
-    expect(sections[0]?.text).toContain("- macbook — darwin");
+    expect(sections[0]?.text).toContain("- gsv");
+    expect(sections[0]?.text).toContain("- macbook: Personal laptop (darwin)");
     expect(sections[0]?.text).toContain("- /sys: live kernel configuration and runtime control surfaces");
   });
 });
@@ -94,11 +113,25 @@ describe("selection", () => {
   it("includes profile instructions in the default task plan", () => {
     const providers = resolvePromptProviders("task", "chat.reply");
     expect(providers.map((provider) => provider.name)).toEqual([
+      "system.context",
       "profile.context",
       "home.context",
       "workspace.context",
+      "available.skills",
       "process.context",
     ]);
+  });
+});
+
+describe("createSkillIndexProvider", () => {
+  it("renders command-oriented skill discovery without source paths", async () => {
+    const providers = resolvePromptProviders("task", "chat.reply");
+    const prompt = await assembleSystemPrompt(makeInput(), providers);
+
+    expect(prompt).toContain("[available.skills]");
+    expect(prompt).toContain("Use `skills list`");
+    expect(prompt).toContain("- package-development: Build and update packages.");
+    expect(prompt).not.toContain("/src/packages/");
   });
 });
 

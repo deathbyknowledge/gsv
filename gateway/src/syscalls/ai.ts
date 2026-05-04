@@ -49,6 +49,7 @@ export type AiToolsArgs = Record<string, never>;
 export type AiToolsDevice = {
   id: string;
   implements: string[];
+  description?: string;
   platform?: string;
 };
 
@@ -57,6 +58,16 @@ export type AiToolsResult = {
   devices: AiToolsDevice[];
 };
 
+export type AiSkillIndexEntry = {
+  id: string;
+  name: string;
+  description: string;
+  source: {
+    kind: "profile" | "home" | "workspace" | "package";
+    label: string;
+    writable: boolean;
+  };
+};
 
 export type AiConfigArgs = {
   profile?: AiContextProfile;
@@ -71,10 +82,15 @@ export type AiConfigResult = {
   maxTokens: number;
   contextWindowTokens: number | null;
   contextWindowSource: "model" | "config" | "unknown";
+  systemContextFiles?: Array<{
+    name: string;
+    text: string;
+  }>;
   profileContextFiles?: Array<{
     name: string;
     text: string;
   }>;
+  skillIndex?: AiSkillIndexEntry[];
   profileApprovalPolicy?: string | null;
   maxContextBytes: number;
 };

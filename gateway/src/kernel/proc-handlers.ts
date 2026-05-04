@@ -37,10 +37,12 @@ import type { ProcessMount } from "./processes";
 import {
   createWorkspaceBackend,
   normalizePath,
+  packageSourcePathNameForRecord,
   workspaceRootPath,
 } from "../fs";
 import { resolveInstalledPackage } from "./pkg";
 import {
+  type InstalledPackageRecord,
   resolvePackageProfileReference,
   visiblePackageScopesForActor,
 } from "./packages";
@@ -268,6 +270,7 @@ export async function handleProcSpawn(
     return { ok: false, error: materialized.error };
   }
 
+  const hasRequestedMounts = args.mounts !== undefined;
   const materializedMounts = materializeSpawnMounts(args.mounts, ctx);
   if (!materializedMounts.ok) {
     return { ok: false, error: materializedMounts.error };
@@ -277,7 +280,7 @@ export async function handleProcSpawn(
     ...materialized.identity,
     cwd: materialized.workspaceId
       ? materialized.identity.cwd
-      : defaultMountCwd(materializedMounts.mounts) ?? materialized.identity.cwd,
+      : (hasRequestedMounts ? defaultMountCwd(materializedMounts.mounts) : null) ?? materialized.identity.cwd,
   };
 
   ctx.procs.spawn(pid, spawnIdentity, {
@@ -630,6 +633,11 @@ type SpawnMountOutcome =
       error: string;
     };
 
+type SpawnMountSpecWithRecord = {
+  spec: ProcSpawnMountSpec;
+  record: InstalledPackageRecord;
+};
+
 async function materializeSpawnIdentity(
   workspace: ProcWorkspaceSpec | undefined,
   baseIdentity: ProcessIdentity,
@@ -708,15 +716,24 @@ function materializeSpawnMounts(
 ): SpawnMountOutcome {
   const mounts: ProcessMount[] = [];
   const seen = new Set<string>();
+  const sourcePackages = ctx.packages.list({ scopes: visiblePackageScopesForActor(ctx.identity?.process) });
+  const specsToMount: SpawnMountSpecWithRecord[] = specs
+    ? specs.map((spec) => ({ spec, record: resolveInstalledPackage(spec.packageId, ctx) }))
+    : sourcePackages.map((record) => ({
+      spec: { kind: "package-source" as const, packageId: record.packageId },
+      record,
+    }));
 
-  for (const spec of specs ?? []) {
-    const record = resolveInstalledPackage(spec.packageId, ctx);
-    const mountPath = normalizePath(spec.mountPath ?? defaultMountPathForSpec(spec));
+  for (const { spec, record } of specsToMount) {
+    const requestedMountPath = typeof spec.mountPath === "string" && spec.mountPath.trim()
+      ? spec.mountPath
+      : defaultMountPathForPackage(spec, record, sourcePackages);
+    const mountPath = normalizePath(requestedMountPath);
     if (mountPath === "/" || !mountPath.startsWith("/src")) {
       return { ok: false, error: `Unsupported mount path: ${mountPath}` };
     }
     if (seen.has(mountPath)) {
-      return { ok: false, error: `Duplicate mount path: ${mountPath}` };
+      return { ok: false, error: `Conflicting package source mount path: ${mountPath}` };
     }
     seen.add(mountPath);
 
@@ -724,6 +741,7 @@ function materializeSpawnMounts(
       kind: "ripgit-source",
       mountPath,
       packageId: record.packageId,
+      scope: record.scope,
       repo: record.manifest.source.repo,
       ref: record.manifest.source.ref,
       resolvedCommit: record.manifest.source.resolvedCommit ?? null,
@@ -734,12 +752,27 @@ function materializeSpawnMounts(
   return { ok: true, mounts };
 }
 
-function defaultMountPathForSpec(spec: ProcSpawnMountSpec): string {
-  return spec.kind === "package-source" ? "/src/package" : "/src/repo";
+function defaultMountPathForPackage(
+  spec: ProcSpawnMountSpec,
+  record: InstalledPackageRecord,
+  sourcePackages: InstalledPackageRecord[],
+): string {
+  if (spec.kind === "package-repo") {
+    return `/src/repos/${packageSourceRepoPathName(record)}`;
+  }
+  return `/src/packages/${packageSourcePathNameForRecord(record, sourcePackages)}`;
+}
+
+function packageSourceRepoPathName(record: InstalledPackageRecord): string {
+  return sanitizeMountPathSegment(record.manifest.source.repo) || sanitizeMountPathSegment(record.packageId) || "repo";
+}
+
+function sanitizeMountPathSegment(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 function defaultMountCwd(mounts: ProcessMount[]): string | null {
-  return mounts.find((mount) => mount.mountPath === "/src/package")?.mountPath
+  return mounts.find((mount) => mount.mountPath.startsWith("/src/packages/"))?.mountPath
     ?? mounts[0]?.mountPath
     ?? null;
 }
