@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { InstalledPackageRecord } from "./packages";
 import type { KernelContext } from "./context";
-import { collectFilesystemSkillDocuments } from "./skills";
+import { collectFilesystemSkillDocuments, resolveSkillDocument } from "./skills";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -59,12 +59,69 @@ describe("collectFilesystemSkillDocuments", () => {
       writable: true,
     });
   });
+
+  it("generates unique package skill ids for duplicate package names", async () => {
+    const packageId = "pkg-tools";
+    const globalPackage = makePackage(packageId, "tools", "sam/tools", { kind: "global" });
+    const userPackage = makePackage(packageId, "tools", "sam/tools", { kind: "user", uid: IDENTITY.uid });
+    const ctx = {
+      packages: {
+        list: () => [userPackage, globalPackage],
+      },
+    } as unknown as KernelContext;
+    const fs = makeSkillFs({
+      "/src/packages/tools--sam-tools/skills.d": ["workflow.md"],
+      "/src/packages/tools--sam-tools/skills.d/workflow.md": [
+        "---",
+        "name: workflow",
+        "description: Global package workflow.",
+        "---",
+        "",
+        "# Global",
+        "",
+      ].join("\n"),
+      "/src/packages/tools--sam-tools-2/skills.d": ["workflow.md"],
+      "/src/packages/tools--sam-tools-2/skills.d/workflow.md": [
+        "---",
+        "name: workflow",
+        "description: User package workflow.",
+        "---",
+        "",
+        "# User",
+        "",
+      ].join("\n"),
+    });
+
+    const docs = await collectFilesystemSkillDocuments(fs, ctx, IDENTITY);
+
+    expect(docs.map((doc) => doc.id).sort()).toEqual([
+      "tools--sam-tools-2:workflow",
+      "tools--sam-tools:workflow",
+    ]);
+    expect(resolveSkillDocument(docs, "tools--sam-tools:workflow")).toMatchObject({
+      ok: true,
+      doc: {
+        path: "/src/packages/tools--sam-tools/skills.d/workflow.md",
+      },
+    });
+    expect(resolveSkillDocument(docs, "tools--sam-tools-2:workflow")).toMatchObject({
+      ok: true,
+      doc: {
+        path: "/src/packages/tools--sam-tools-2/skills.d/workflow.md",
+      },
+    });
+  });
 });
 
-function makePackage(packageId: string, name: string, repo: string): InstalledPackageRecord {
+function makePackage(
+  packageId: string,
+  name: string,
+  repo: string,
+  scope: InstalledPackageRecord["scope"] = { kind: "user", uid: IDENTITY.uid },
+): InstalledPackageRecord {
   return {
     packageId,
-    scope: { kind: "user", uid: IDENTITY.uid },
+    scope,
     manifest: {
       name,
       description: name,

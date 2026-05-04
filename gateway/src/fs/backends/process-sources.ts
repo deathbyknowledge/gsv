@@ -1342,11 +1342,24 @@ function mergeOverlayDirectoryEntries(
       continue;
     }
     if (change.type === "delete") {
-      entries.delete(child);
+      if (isDirectChild(change.path, normalizedDirectory)) {
+        entries.delete(child);
+      }
       continue;
     }
     entries.add(child);
   }
+}
+
+function isDirectChild(path: string, directoryPath: string): boolean {
+  const normalizedPath = normalizeRepoPath(path);
+  const normalizedDirectory = normalizeRepoPath(directoryPath);
+  const relativePath = normalizedDirectory
+    ? normalizedPath.startsWith(`${normalizedDirectory}/`)
+      ? normalizedPath.slice(normalizedDirectory.length + 1)
+      : ""
+    : normalizedPath;
+  return relativePath.length > 0 && !relativePath.includes("/");
 }
 
 function childNameWithin(path: string, directoryPath: string): string | null {

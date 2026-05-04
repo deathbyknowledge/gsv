@@ -44,11 +44,13 @@ type SkillFile = {
   content: string;
   path: string;
   source: SkillSource;
+  idPrefix?: string;
 };
 
 type SkillRoot = {
   rootPath: string;
   source: SkillSource;
+  idPrefix?: string;
 };
 
 type FsReader = {
@@ -89,7 +91,7 @@ export async function collectFilesystemSkillDocuments(
   const roots = filesystemSkillRoots(ctx, identity);
   const files: SkillFile[] = [];
   for (const root of roots) {
-    files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source));
+    files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source, root.idPrefix));
   }
   return buildSkillDocuments(files);
 }
@@ -274,7 +276,8 @@ async function collectRipgitRuntimeSkillFiles(
   });
   const packagePathNames = packageSourcePathNameMap(packageRecords);
   for (const record of packageRecords) {
-    const root = packageTopLevelSkillRoot(record, packagePathNames.get(record));
+    const sourcePathName = packagePathNames.get(record) ?? packageSourcePathName(record);
+    const root = packageTopLevelSkillRoot(record, sourcePathName);
     if (!root) {
       continue;
     }
@@ -282,7 +285,7 @@ async function collectRipgitRuntimeSkillFiles(
       kind: "package",
       label: `pkg:${record.manifest.name}`,
       writable: packageSourceWritable(record, identity),
-    }, root.virtualPath));
+    }, root.virtualPath, sourcePathName));
   }
 
   return files;
@@ -354,13 +357,15 @@ function filesystemSkillRoots(
   });
   const packagePathNames = packageSourcePathNameMap(packageRecords);
   for (const record of packageRecords) {
+    const sourcePathName = packagePathNames.get(record) ?? packageSourcePathName(record);
     roots.push({
-      rootPath: `/src/packages/${packagePathNames.get(record) ?? packageSourcePathName(record)}/skills.d`,
+      rootPath: `/src/packages/${sourcePathName}/skills.d`,
       source: {
         kind: "package",
         label: `pkg:${record.manifest.name}`,
         writable: packageSourceWritable(record, identity),
       },
+      idPrefix: sourcePathName,
     });
   }
 
@@ -371,9 +376,10 @@ async function collectFsSkillFiles(
   fs: FsReader,
   rootPath: string,
   source: SkillSource,
+  idPrefix?: string,
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
-  await walkFsSkillRoot(fs, rootPath.replace(/\/+$/, ""), "", source, files, 0);
+  await walkFsSkillRoot(fs, rootPath.replace(/\/+$/, ""), "", source, files, 0, idPrefix);
   return files;
 }
 
@@ -384,6 +390,7 @@ async function walkFsSkillRoot(
   source: SkillSource,
   files: SkillFile[],
   depth: number,
+  idPrefix?: string,
 ): Promise<void> {
   if (depth > MAX_SKILL_WALK_DEPTH) {
     return;
@@ -405,6 +412,7 @@ async function walkFsSkillRoot(
         content,
         path,
         source,
+        idPrefix,
       });
     }
     return;
@@ -427,12 +435,13 @@ async function walkFsSkillRoot(
           content,
           path,
           source,
+          idPrefix,
         });
       }
       continue;
     }
     if (stat.isDirectory) {
-      await walkFsSkillRoot(fs, path, rel, source, files, depth + 1);
+      await walkFsSkillRoot(fs, path, rel, source, files, depth + 1, idPrefix);
     }
   }
 }
@@ -443,9 +452,20 @@ async function collectRipgitSkillFiles(
   rootPath: string,
   source: SkillSource,
   virtualRoot: string,
+  idPrefix?: string,
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
-  await walkRipgitSkillRoot(ripgit, repo, trimSlashes(rootPath), "", source, trimTrailingSlash(virtualRoot), files, 0);
+  await walkRipgitSkillRoot(
+    ripgit,
+    repo,
+    trimSlashes(rootPath),
+    "",
+    source,
+    trimTrailingSlash(virtualRoot),
+    files,
+    0,
+    idPrefix,
+  );
   return files;
 }
 
@@ -458,6 +478,7 @@ async function walkRipgitSkillRoot(
   virtualRoot: string,
   files: SkillFile[],
   depth: number,
+  idPrefix?: string,
 ): Promise<void> {
   if (depth > MAX_SKILL_WALK_DEPTH) {
     return;
@@ -480,6 +501,7 @@ async function walkRipgitSkillRoot(
           content,
           path: `${virtualRoot}/${relativePath}/SKILL.md`,
           source,
+          idPrefix,
         });
       }
     }
@@ -499,13 +521,14 @@ async function walkRipgitSkillRoot(
             content,
             path: `${virtualRoot}/${entry.name}`,
             source,
+            idPrefix,
           });
         }
       }
       continue;
     }
     if (entry.type === "tree") {
-      await walkRipgitSkillRoot(ripgit, repo, path, rel, source, virtualRoot, files, depth + 1);
+      await walkRipgitSkillRoot(ripgit, repo, path, rel, source, virtualRoot, files, depth + 1, idPrefix);
     }
   }
 }
@@ -590,7 +613,7 @@ function buildSkillDocuments(files: SkillFile[]): SkillDocument[] {
   }
 
   return parsed.map((file) => ({
-    id: skillId(file.name, file.source, counts.get(normalizeLookup(file.name)) ?? 0),
+    id: skillId(file.name, file.source, counts.get(normalizeLookup(file.name)) ?? 0, file.idPrefix),
     name: file.name,
     description: file.description,
     content: file.content.trimEnd(),
@@ -599,12 +622,12 @@ function buildSkillDocuments(files: SkillFile[]): SkillDocument[] {
   }));
 }
 
-function skillId(name: string, source: SkillSource, count: number): string {
+function skillId(name: string, source: SkillSource, count: number, idPrefix?: string): string {
   if (count <= 1) {
     return name;
   }
   if (source.kind === "package") {
-    return `${source.label.slice("pkg:".length)}:${name}`;
+    return `${idPrefix ?? source.label.slice("pkg:".length)}:${name}`;
   }
   return `${source.kind}:${name}`;
 }

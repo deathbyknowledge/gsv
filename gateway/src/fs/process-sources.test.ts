@@ -907,6 +907,48 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.readdir("/src/packages/ascii-starfield")).resolves.toEqual([]);
   });
 
+  it("preserves parent directories when deleting nested source files", async () => {
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage: makeBucket(),
+      packages: [makePackage()],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async (_repo: unknown, path: string) => {
+          if (path === "packages/ascii-starfield") {
+            return {
+              kind: "tree",
+              entries: [{ name: "src", mode: "040000", hash: "tree1", type: "tree" }],
+            };
+          }
+          if (path === "packages/ascii-starfield/src") {
+            return {
+              kind: "tree",
+              entries: [
+                { name: "index.ts", mode: "100644", hash: "blob1", type: "blob" },
+                { name: "other.ts", mode: "100644", hash: "blob2", type: "blob" },
+              ],
+            };
+          }
+          if (path === "packages/ascii-starfield/src/index.ts") {
+            return {
+              kind: "file",
+              bytes: new TextEncoder().encode("export const index = true;\n"),
+              size: 27,
+            };
+          }
+          return { kind: "missing" };
+        },
+      } as any,
+    });
+
+    await backend!.rm("/src/packages/ascii-starfield/src/index.ts");
+
+    await expect(backend!.readdir("/src/packages/ascii-starfield")).resolves.toEqual(["src"]);
+    await expect(backend!.readdir("/src/packages/ascii-starfield/src")).resolves.toEqual(["other.ts"]);
+  });
+
   it("rejects source rm for missing paths unless forced", async () => {
     const storage = makeBucket();
     const backend = createProcessSourceBackend({
