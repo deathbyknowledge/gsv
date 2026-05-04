@@ -14,6 +14,7 @@ export default definePackage({
       kernel: [
         "sys.device.list",
         "sys.device.get",
+        "sys.device.update",
         "sys.token.create",
         "sys.token.list",
         "sys.token.revoke",

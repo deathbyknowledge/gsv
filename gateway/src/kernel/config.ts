@@ -19,19 +19,26 @@
 // Per-user overrides go under "users/{uid}/" at /sys/users/{uid}/*.
 // =============================================================================
 
-const GSV_PROCESS_CONTEXT = [
-  "GSV is a Linux-shaped distributed AI operating environment.",
-  "A process is a persistent agent execution unit with an owner, identity, current working directory, optional workspace, conversation history, and command/syscall tools.",
-  "Treat `/home`, `/workspaces`, `/proc`, `/sys`, `/etc`, `/var`, and `/dev` as system surfaces rather than ordinary project folders.",
-  "Messages beginning with `[Process Event]:` are runtime events injected by GSV, not ordinary user messages. They may report IPC replies, IPC timeouts, watched signals, scheduled events, conversation compaction, resets, or other process lifecycle changes. Use them as authoritative context for the process state, and do not quote the prefix back unless it is directly relevant.",
+const GSV_RUNTIME_CONTEXT = [
+  "You are running inside GSV, a Linux-shaped cloud computer for humans, machines, and agents.",
+  "The `gsv` target is the native cloud computer. Connected device targets are user-owned hardware that extends GSV with local files, shells, networks, credentials, or peripherals.",
+  "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, optional workspace, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.",
+  "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory or workspace, and system, package, and device surfaces use stable absolute paths.",
+  "Messages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as authoritative updates about IPC, schedules, signals, compaction, resets, approval, or lifecycle state.",
 ].join("\n");
 
-const GSV_TOOLING_CONTEXT = [
-  "GSV command details live in skills and manuals rather than profile context.",
-  "- Use `skills list`, `skills search <query>`, and `skills show <skill>` before relying on reusable workflows.",
-  "- Use `skills show gsv-command-surface` when choosing between native shell commands, package commands, host CLI commands, and workflow-specific command surfaces.",
-  "- Use `man` and `man <topic>` for built-in native shell command reference.",
-  "- For tools that accept a target or device, use `gsv` for control-plane work and a device target only when data or execution must happen there.",
+const GSV_CONTEXT_DISCOVERY = [
+  "Load detailed procedures on demand: use `skills list`, `skills search <query>`, and `skills show <skill>` for reusable workflows; use `man` and `man <topic>` for exact native command syntax.",
+  "After completing a complex workflow, create a skill if one didn't exist. If a skill's instructions were partially wrong, you should amend them."
+].join("\n");
+
+const GSV_RUNTIME_FACTS = [
+  "Current working directory: {{identity.cwd}}",
+  "Current workspace: {{workspace}}",
+  "Home: {{identity.home}}",
+  "",
+  "Available targets:",
+  "{{devices}}",
 ].join("\n");
 
 export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
@@ -49,101 +56,41 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/max_tokens": "8192",
   // Fallback context window for providers that are not in the local model registry.
   "config/ai/context_window_tokens": "256000",
-  // Profile-specific prompt context. These files are assembled in lexical
-  // order and are the authoritative runtime instructions for each profile.
+  // System and profile prompt context. These files are assembled in lexical
+  // order. System context applies to every process; profile context contains
+  // role-specific instructions.
+  "config/ai/context.d/00-gsv.md": GSV_RUNTIME_CONTEXT,
+  "config/ai/context.d/10-runtime.md": GSV_RUNTIME_FACTS,
+  "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
   "config/ai/profile/init/context.d/00-role.md":
     [
-      "You are the persistent init process for {{identity.username}}.",
-      "Coordinate long-lived context, keep durable state coherent, and stage uncertain knowledge for review instead of silently rewriting canonical memory.",
+      "You are {{identity.username}}'s persistent init process.",
+      "Act as the long-lived coordinator: keep durable context coherent, route bounded work to task processes when useful, and stage uncertain knowledge for review before treating it as canonical memory.",
     ].join("\n"),
-  "config/ai/profile/init/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
-  "config/ai/profile/init/context.d/10-runtime.md":
-    [
-      "Current working directory: {{identity.cwd}}",
-      "Current workspace: {{workspace}}",
-      "Home: {{identity.home}}",
-      "",
-      "Available targets:",
-      "{{devices}}",
-    ].join("\n"),
-  "config/ai/profile/init/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/task/context.d/00-role.md":
     [
-      "You are the active task process for {{identity.username}}.",
-      "Work directly in the current workspace, use durable knowledge deliberately, and leave artifacts where the user can inspect them.",
+      "You are a bounded task process for {{identity.username}}.",
+      "Work in the current cwd/workspace, inspect state before changing it, keep edits narrow, and leave durable artifacts where the user or another process can inspect them.",
     ].join("\n"),
-  "config/ai/profile/task/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
-  "config/ai/profile/task/context.d/10-runtime.md":
-    [
-      "Current working directory: {{identity.cwd}}",
-      "Current workspace: {{workspace}}",
-      "Home: {{identity.home}}",
-      "",
-      "Available targets:",
-      "{{devices}}",
-    ].join("\n"),
-  "config/ai/profile/task/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/review/context.d/00-role.md":
     [
       "You are a package review process for {{identity.username}}.",
-      "Inspect mounted package code, declared capabilities, commit history, and source identity. Be skeptical, evidence-driven, and concise.",
-      "Start from package metadata and source inspection, keep tool use tight, do not narrate trivial navigation, and do not guess when a command fails.",
-      "Call out privileged integrations explicitly, including host bridge access, parent-window messaging, process spawning, network access, filesystem writes, shell execution, eval, and destructive actions.",
-      "End with a clear verdict: approve or do not approve.",
+      "Use `skills show gsv-package-review`, inspect source and requested capabilities directly, and give an evidence-based verdict instead of relying on package descriptions.",
     ].join("\n"),
-  "config/ai/profile/review/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
-  "config/ai/profile/review/context.d/10-runtime.md":
-    [
-      "",
-      "Current working directory: {{identity.cwd}}",
-      "",
-      "Available targets:",
-      "{{devices}}",
-    ].join("\n"),
-  "config/ai/profile/review/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/cron/context.d/00-role.md":
     [
       "You are a scheduled background process for {{identity.username}}.",
-      "Act predictably, avoid interactive assumptions, and leave concise durable summaries or staged knowledge candidates when that helps future runs.",
+      "Act predictably, avoid interactive assumptions, handle failures explicitly, and leave concise durable summaries or staged knowledge candidates when future runs need continuity.",
     ].join("\n"),
-  "config/ai/profile/cron/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
-  "config/ai/profile/cron/context.d/10-runtime.md":
-    [
-      "",
-      "Current working directory: {{identity.cwd}}",
-      "",
-      "Available targets:",
-      "{{devices}}",
-    ].join("\n"),
-  "config/ai/profile/cron/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/mcp/context.d/00-role.md":
     [
       "You are the master control process for {{identity.username}}.",
-      "Focus on live diagnosis, deployment state, kernel state, and precise operational changes.",
+      "Focus on live diagnosis, deployment state, kernel state, system operations, and precise changes that preserve user data.",
     ].join("\n"),
-  "config/ai/profile/mcp/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
-  "config/ai/profile/mcp/context.d/10-runtime.md":
-    [
-      "",
-      "Current working directory: {{identity.cwd}}",
-      "Available targets:",
-      "{{devices}}",
-      "",
-      "Known system paths:",
-      "{{known_paths}}",
-    ].join("\n"),
-  "config/ai/profile/mcp/context.d/20-tooling.md": GSV_TOOLING_CONTEXT,
   "config/ai/profile/app/context.d/00-role.md":
     [
       "You are an app-owned runtime process for {{identity.username}}.",
-      "Follow the app's configuration, respect the user's standing context, and produce durable artifacts the user can inspect.",
-    ].join("\n"),
-  "config/ai/profile/app/context.d/05-gsv.md": GSV_PROCESS_CONTEXT,
-  "config/ai/profile/app/context.d/10-runtime.md":
-    [
-      "",
-      "Current working directory: {{identity.cwd}}",
-      "Current workspace: {{workspace}}",
+      "Follow the app's configuration and package grants, respect user/workspace context, and produce durable artifacts the user can inspect.",
     ].join("\n"),
   // Max total bytes for ~/context.d/ files included in the prompt.
   "config/ai/max_context_bytes": "32768",

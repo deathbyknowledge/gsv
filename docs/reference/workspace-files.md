@@ -6,16 +6,17 @@ GSV assembles process prompts from explicit context providers, not from hidden a
 
 Prompt context is collected in provider order:
 
-1. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`.
-2. **Home context** from `~/context.d/*.md`.
-3. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`, when the process has a workspace.
-4. **Process context** supplied by the current assignment or runtime.
+1. **System context** from `config/ai/context.d/*.md`.
+2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`.
+3. **Home context** from `~/context.d/*.md`.
+4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`, when the process has a workspace.
+5. **Process context** supplied by the current assignment or runtime.
 
 GSV also assembles a compact skill index from layered `skills.d` directories.
 The prompt lists skill ids and descriptions only. Use `skills list`,
 `skills search <query>`, and `skills show <skill>` to inspect full skill bodies.
 
-Profile files are operator-managed instructions for roles such as `task`, `review`, `cron`, `mcp`, and `app`. They may use template keys such as `identity.home`, `workspace`, `devices`, and `known_paths`.
+System context is operator-managed runtime guidance shared by every profile. Profile files are operator-managed instructions for roles such as `task`, `review`, `cron`, `mcp`, and `app`. They may use template keys such as `identity.home`, `workspace`, `devices`, and `known_paths`.
 
 Home and workspace context files are loaded lexically, include only non-empty `.md` files, and are bounded by `config/ai/max_context_bytes`.
 

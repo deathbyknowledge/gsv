@@ -49,6 +49,7 @@ export type AiToolsArgs = Record<string, never>;
 export type AiToolsDevice = {
   id: string;
   implements: string[];
+  description?: string;
   platform?: string;
 };
 
@@ -81,6 +82,10 @@ export type AiConfigResult = {
   maxTokens: number;
   contextWindowTokens: number | null;
   contextWindowSource: "model" | "config" | "unknown";
+  systemContextFiles?: Array<{
+    name: string;
+    text: string;
+  }>;
   profileContextFiles?: Array<{
     name: string;
     text: string;

@@ -11,6 +11,7 @@ export type DevicesViewer = {
 export type DeviceSummary = {
   deviceId: string;
   ownerUid: number;
+  description: string;
   platform: string;
   version: string;
   online: boolean;
@@ -77,8 +78,14 @@ export type RevokeTokenArgs = {
   deviceId?: string;
 };
 
+export type UpdateDeviceDescriptionArgs = {
+  deviceId: string;
+  description: string;
+};
+
 export interface DevicesBackend {
   loadState(args: LoadDevicesStateArgs): Promise<DevicesState>;
   createNodeToken(args: CreateNodeTokenArgs): Promise<CreateNodeTokenResult>;
   revokeToken(args: RevokeTokenArgs): Promise<DevicesState>;
+  updateDeviceDescription(args: UpdateDeviceDescriptionArgs): Promise<DevicesState>;
 }

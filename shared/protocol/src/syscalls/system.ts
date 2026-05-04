@@ -264,6 +264,7 @@ export type SysDeviceListArgs = {
 export type SysDeviceSummary = {
   deviceId: string;
   ownerUid: number;
+  description: string;
   platform: string;
   version: string;
   online: boolean;
@@ -286,6 +287,15 @@ export type SysDeviceDetail = SysDeviceSummary & {
 };
 
 export type SysDeviceGetResult = {
+  device: SysDeviceDetail | null;
+};
+
+export type SysDeviceUpdateArgs = {
+  deviceId: string;
+  description: string;
+};
+
+export type SysDeviceUpdateResult = {
   device: SysDeviceDetail | null;
 };
 

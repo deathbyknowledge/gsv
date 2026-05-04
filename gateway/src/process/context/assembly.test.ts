@@ -17,6 +17,12 @@ const CONFIG: AiConfigResult = {
   maxTokens: 4096,
   contextWindowTokens: 200000,
   contextWindowSource: "model",
+  systemContextFiles: [
+    {
+      name: "00-gsv.md",
+      text: "Running in GSV for {{identity.username}} at {{identity.cwd}}",
+    },
+  ],
   profileContextFiles: [
     {
       name: "00-role.md",
@@ -85,6 +91,7 @@ describe("createProfileInstructionsProvider", () => {
           {
             id: "macbook",
             platform: "darwin",
+            description: "Personal laptop",
             implements: ["shell.exec", "fs.read"],
           },
         ],
@@ -96,8 +103,8 @@ describe("createProfileInstructionsProvider", () => {
       }),
     ]);
     expect(sections[0]?.text).toContain("Task for root in /workspaces/ws_test");
-    expect(sections[0]?.text).toContain("- gsv: control plane and local execution target");
-    expect(sections[0]?.text).toContain("- macbook — darwin");
+    expect(sections[0]?.text).toContain("- gsv");
+    expect(sections[0]?.text).toContain("- macbook: Personal laptop (darwin)");
     expect(sections[0]?.text).toContain("- /sys: live kernel configuration and runtime control surfaces");
   });
 });
@@ -106,6 +113,7 @@ describe("selection", () => {
   it("includes profile instructions in the default task plan", () => {
     const providers = resolvePromptProviders("task", "chat.reply");
     expect(providers.map((provider) => provider.name)).toEqual([
+      "system.context",
       "profile.context",
       "home.context",
       "workspace.context",

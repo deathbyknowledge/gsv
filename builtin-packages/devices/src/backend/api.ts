@@ -15,6 +15,7 @@ import type {
   IssuedNodeToken,
   LoadDevicesStateArgs,
   RevokeTokenArgs,
+  UpdateDeviceDescriptionArgs,
 } from "../app/types";
 
 type ViewerRuntime = {
@@ -95,6 +96,19 @@ export async function revokeToken(
   return loadState(selectedDeviceId ? { deviceId: selectedDeviceId } : {}, kernel, runtime);
 }
 
+export async function updateDeviceDescription(
+  args: UpdateDeviceDescriptionArgs,
+  kernel: KernelClientLike,
+  runtime: ViewerRuntime,
+): Promise<DevicesState> {
+  const deviceId = normalizeRequired(args.deviceId, "deviceId");
+  await kernel.request("sys.device.update", {
+    deviceId,
+    description: args.description ?? "",
+  });
+  return loadState({ deviceId }, kernel, runtime);
+}
+
 function resolveViewer(runtime: ViewerRuntime): DevicesViewer {
   const uid = runtime.viewer?.uid ?? 0;
   const username = runtime.viewer?.username || (uid === 0 ? "root" : "user");
@@ -109,6 +123,7 @@ function normalizeDeviceSummary(device: DeviceSummary): DeviceSummary {
   return {
     deviceId: device.deviceId,
     ownerUid: device.ownerUid,
+    description: device.description ?? "",
     platform: device.platform,
     version: device.version,
     online: device.online,
@@ -120,6 +135,7 @@ function normalizeDeviceDetail(device: SysDeviceDetail): SysDeviceDetail {
   return {
     deviceId: device.deviceId,
     ownerUid: device.ownerUid,
+    description: device.description ?? "",
     platform: device.platform,
     version: device.version,
     online: device.online,

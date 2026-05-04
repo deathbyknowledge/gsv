@@ -34,7 +34,7 @@ import {
   forwardToProcess,
 } from "./proc-handlers";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
-import { handleSysDeviceGet, handleSysDeviceList } from "./sys/device";
+import { handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleSysWorkspaceList } from "./sys/workspaces";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
@@ -359,6 +359,9 @@ async function dispatchNative(
         break;
       case "sys.device.get":
         data = handleSysDeviceGet(frame.args, ctx);
+        break;
+      case "sys.device.update":
+        data = handleSysDeviceUpdate(frame.args, ctx);
         break;
       case "sys.workspace.list":
         data = handleSysWorkspaceList(frame.args, ctx);

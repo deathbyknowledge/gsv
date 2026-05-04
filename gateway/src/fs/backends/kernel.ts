@@ -303,6 +303,7 @@ export class KernelMountBackend implements MountBackend {
       return [
         `device_id=${device.device_id}`,
         `owner_uid=${device.owner_uid}`,
+        `description=${device.description}`,
         `platform=${device.platform}`,
         `version=${device.version}`,
         `online=${device.online ? "1" : "0"}`,
@@ -312,6 +313,7 @@ export class KernelMountBackend implements MountBackend {
 
     switch (attr) {
       case "status": return device.online ? "online\n" : "offline\n";
+      case "description": return device.description + "\n";
       case "platform": return device.platform + "\n";
       case "version": return device.version + "\n";
       case "implements": return device.implements.join("\n") + "\n";
@@ -550,7 +552,7 @@ export class KernelMountBackend implements MountBackend {
       const parts = path.slice("/sys/devices/".length).split("/");
       if (parts.length === 1 && parts[0]) {
         const device = this.kernel.devices.get(parts[0]);
-        if (device) return ["implements", "owner", "platform", "status", "version"];
+        if (device) return ["description", "implements", "owner", "platform", "status", "version"];
       }
     }
 
