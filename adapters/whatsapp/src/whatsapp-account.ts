@@ -391,10 +391,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
     try {
       const sent = await this.sock.sendMessage(jid, { text: message.text });
       console.log(`[WA] Sent to ${jid}: "${message.text.substring(0, 50)}..."`);
-      return Response.json({ messageId: sent?.key?.id });
+      return Response.json({ success: true, messageId: sent?.key?.id });
     } catch (e) {
       console.error(`[WA] Send failed:`, e);
-      return Response.json({ error: String(e) }, { status: 500 });
+      return Response.json({ success: false, error: String(e) }, { status: 500 });
     }
   }
 
@@ -491,9 +491,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
       this.sock = null;
       this.resolveWaiters({});
 
-      this.notifyGatewayStatus().catch(() => {});
-
       if (isLoggedOut) {
+        this.state.selfJid = undefined;
+        this.state.selfE164 = undefined;
         clearAuthState(this.ctx.storage);
         this.ctx.storage.delete("login_pending").catch(() => {});
       } else if (isConnectionReplaced) {
@@ -501,6 +501,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
       } else {
         this.ctx.storage.setAlarm(Date.now() + 5000);
       }
+
+      this.notifyGatewayStatus().catch(() => {});
     }
   }
 
