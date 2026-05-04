@@ -2352,14 +2352,14 @@ function resolvePkgTarget(rawPackageId: string | undefined, ctx: KernelContext, 
   if (packageId) {
     return resolveInstalledPackage(packageId, ctx);
   }
-  const currentPackageId = currentSourcePackageId(ctx, cwd);
-  if (currentPackageId) {
-    return resolveInstalledPackage(currentPackageId, ctx);
+  const currentPackage = currentSourcePackage(ctx, cwd);
+  if (currentPackage) {
+    return currentPackage;
   }
   throw new Error("packageId is required outside a package source context");
 }
 
-function currentSourcePackageId(ctx: KernelContext, cwd: string): string | null {
+function currentSourcePackage(ctx: KernelContext, cwd: string): InstalledPackageRecord | null {
   const normalizedCwd = cwd.replace(/\/+$/, "");
   const match = normalizedCwd.match(/^\/src\/packages\/([^/]+)(?:\/|$)/);
   const packageName = match?.[1];
@@ -2368,8 +2368,7 @@ function currentSourcePackageId(ctx: KernelContext, cwd: string): string | null 
   }
   const packages = ctx.packages.list({ scopes: visiblePackageScopesForActor(ctx.identity?.process) });
   const pathNames = packageSourcePathNameMap(packages);
-  const found = packages.find((candidate) => pathNames.get(candidate) === packageName);
-  return found?.packageId ?? null;
+  return packages.find((candidate) => pathNames.get(candidate) === packageName) ?? null;
 }
 
 async function runPkgSourceCommand(args: string[], ctx: KernelContext, cwd: string): Promise<ExecResult> {
@@ -2824,11 +2823,11 @@ function resolvePkgPublicTarget(
 ): { packageId?: string; repo?: string } {
   const target = String(rawTarget ?? "").trim();
   if (!target) {
-    const currentPackageId = currentSourcePackageId(ctx, cwd);
-    if (!currentPackageId) {
+    const currentPackage = currentSourcePackage(ctx, cwd);
+    if (!currentPackage) {
       throw new Error("packageId or repo is required outside a package source context");
     }
-    return { packageId: currentPackageId };
+    return { repo: currentPackage.manifest.source.repo };
   }
 
   const found = ctx.packages.resolve(target, visiblePackageScopesForActor(ctx.identity?.process));

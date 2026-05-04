@@ -429,6 +429,95 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[1][4][0].path).toBe("packages/two/src/index.ts");
   });
 
+  it("keeps process source state scoped by installed package record", async () => {
+    const packageId = "import:sam/pkg-test:packages/ascii-starfield";
+    const globalPackage = makePackage({
+      packageId,
+      scope: { kind: "global" },
+      manifest: {
+        ...makePackage().manifest,
+        source: {
+          repo: "sam/pkg-test",
+          ref: "main",
+          subdir: "packages/ascii-starfield",
+          resolvedCommit: "globalbase123",
+        },
+      },
+    });
+    const userPackage = makePackage({
+      packageId,
+      scope: { kind: "user", uid: 1000 },
+      manifest: {
+        ...makePackage().manifest,
+        source: {
+          repo: "sam/pkg-test",
+          ref: "main",
+          subdir: "packages/ascii-starfield",
+          resolvedCommit: "userbase123",
+        },
+      },
+    });
+    const packages = [userPackage, globalPackage];
+    const config = makeConfig();
+    const storage = makeBucket();
+    const applyCalls: any[] = [];
+    const ripgit = {
+      readPath: async () => ({ kind: "missing" }),
+      apply: async (...args: any[]) => {
+        applyCalls.push(args);
+        return { head: `head${applyCalls.length}` };
+      },
+    } as any;
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      packages,
+      processId: "task:source",
+      config,
+      ripgit,
+    });
+
+    await backend!.writeFile(
+      "/src/packages/ascii-starfield--sam-pkg-test-packages-ascii-starfield/src/index.ts",
+      "export const scope = 'global';\n",
+    );
+    await backend!.writeFile(
+      "/src/packages/ascii-starfield--sam-pkg-test-packages-ascii-starfield-2/src/index.ts",
+      "export const scope = 'user';\n",
+    );
+    await commitProcessSourceChanges({
+      identity: IDENTITY,
+      storage,
+      packages,
+      processId: "task:source",
+      config,
+      ripgit,
+    }, globalPackage, { message: "pkg: commit global" });
+    await commitProcessSourceChanges({
+      identity: IDENTITY,
+      storage,
+      packages,
+      processId: "task:source",
+      config,
+      ripgit,
+    }, userPackage, { message: "pkg: commit user" });
+
+    expect(applyCalls).toHaveLength(2);
+    expect(applyCalls[0][5]).toEqual({ baseRef: "globalbase123" });
+    expect(applyCalls[0][4][0].contentBytes).toEqual(
+      Array.from(new TextEncoder().encode("export const scope = 'global';\n")),
+    );
+    expect(applyCalls[1][5]).toEqual({ baseRef: "userbase123" });
+    expect(applyCalls[1][4][0].contentBytes).toEqual(
+      Array.from(new TextEncoder().encode("export const scope = 'user';\n")),
+    );
+    expect([...config.values.keys()].sort()).toEqual([
+      "process-source-branches/task%3Asource/global%3Aimport%3Asam%2Fpkg-test%3Apackages%2Fascii-starfield",
+      "process-source-branches/task%3Asource/user%3A1000%3Aimport%3Asam%2Fpkg-test%3Apackages%2Fascii-starfield",
+    ]);
+    expect(storage.objects.size).toBe(0);
+  });
+
   it("scopes source mounts and honors repo-root package mounts", async () => {
     const app = makePackage({
       packageId: "import:sam/mono:packages/app",

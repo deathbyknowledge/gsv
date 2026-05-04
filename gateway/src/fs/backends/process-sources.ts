@@ -69,6 +69,7 @@ type SourceOverlayChange =
 type SourceOverlayManifest = {
   version: 1;
   packageId: string;
+  packageKey: string;
   baseRef: string;
   createdAt: number;
   updatedAt: number;
@@ -556,7 +557,7 @@ class ProcessSourceMountBackend implements MountBackend {
   ): Promise<void> {
     const storage = this.storage!;
     const overlay = await this.readOverlay(pkg);
-    const contentKey = overlayContentKey(this.processId!, pkg.record.packageId, relativePath);
+    const contentKey = overlayContentKey(this.processId!, pkg.record, relativePath);
     await storage.put(contentKey, content);
     const now = Date.now();
     overlay.changes[relativePath] = {
@@ -630,7 +631,7 @@ class ProcessSourceMountBackend implements MountBackend {
     if (!this.config || !this.processId) {
       return null;
     }
-    const raw = this.config.get(sourceBranchStateKey(this.processId, pkg.record.packageId));
+    const raw = this.config.get(sourceBranchStateKey(this.processId, pkg.record));
     if (!raw) {
       return null;
     }
@@ -655,7 +656,7 @@ class ProcessSourceMountBackend implements MountBackend {
   }
 
   private writeBranchState(pkg: SourcePackage, state: SourceBranchState): void {
-    this.config!.set(sourceBranchStateKey(this.processId!, pkg.record.packageId), JSON.stringify(state));
+    this.config!.set(sourceBranchStateKey(this.processId!, pkg.record), JSON.stringify(state));
   }
 }
 
@@ -664,7 +665,7 @@ export async function getProcessSourceStatus(
   record: InstalledPackageRecord,
 ): Promise<ProcessSourceStatus> {
   const pkg = sourcePackageForOptions(options, record);
-  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, pkg.record.packageId);
+  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, pkg.record);
   const overlay = await readOverlayManifest(
     options.storage ?? null,
     options.processId ?? null,
@@ -682,7 +683,7 @@ export async function diffProcessSourceChanges(
     throw new Error("RIPGIT binding is required");
   }
   const pkg = sourcePackageForOptions(options, record);
-  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, pkg.record.packageId);
+  const state = readSourceBranchState(options.config ?? null, options.processId ?? null, pkg.record);
   const overlay = await readOverlayManifest(
     options.storage ?? null,
     options.processId ?? null,
@@ -752,7 +753,7 @@ export async function commitProcessSourceChanges(
   if (!pkg.writable) {
     throw new Error(`Package source is read-only: ${pkg.name}`);
   }
-  const state = readSourceBranchState(options.config, options.processId, pkg.record.packageId);
+  const state = readSourceBranchState(options.config, options.processId, pkg.record);
   const overlay = await readOverlayManifest(
     options.storage,
     options.processId,
@@ -794,7 +795,7 @@ export async function commitProcessSourceChanges(
     createdAt: state?.createdAt ?? now,
     updatedAt: now,
   };
-  writeSourceBranchState(options.config, options.processId, pkg.record.packageId, nextState);
+  writeSourceBranchState(options.config, options.processId, pkg.record, nextState);
   await discardOverlay(options.storage, options.processId, pkg, overlay);
 
   return {
@@ -816,7 +817,7 @@ export async function discardProcessSourceChanges(
     throw new Error("Source changes require a process context");
   }
   const pkg = sourcePackageForOptions(options, record);
-  const state = readSourceBranchState(options.config ?? null, options.processId, pkg.record.packageId);
+  const state = readSourceBranchState(options.config ?? null, options.processId, pkg.record);
   const overlay = await readOverlayManifest(
     options.storage,
     options.processId,
@@ -1013,7 +1014,7 @@ function sourceStatusForPackage(
   overlay: SourceOverlayManifest,
   explicitState?: SourceBranchState | null,
 ): ProcessSourceStatus {
-  const state = explicitState ?? readSourceBranchState(options.config ?? null, options.processId ?? null, pkg.record.packageId);
+  const state = explicitState ?? readSourceBranchState(options.config ?? null, options.processId ?? null, pkg.record);
   return {
     packageId: pkg.record.packageId,
     packageName: pkg.record.manifest.name,
@@ -1093,19 +1094,22 @@ async function resolveSourceCommitTarget(
   };
 }
 
-function sourceBranchStateKey(processId: string, packageId: string): string {
-  return `process-source-branches/${encodeURIComponent(processId)}/${encodeURIComponent(packageId)}`;
+function sourceBranchStateKey(
+  processId: string,
+  record: Pick<InstalledPackageRecord, "packageId" | "scope">,
+): string {
+  return `process-source-branches/${encodeURIComponent(processId)}/${encodeURIComponent(packageSourceRecordKey(record))}`;
 }
 
 function readSourceBranchState(
   config: SourceConfig | null,
   processId: string | null,
-  packageId: string,
+  record: Pick<InstalledPackageRecord, "packageId" | "scope">,
 ): SourceBranchState | null {
   if (!config || !processId) {
     return null;
   }
-  const raw = config.get(sourceBranchStateKey(processId, packageId));
+  const raw = config.get(sourceBranchStateKey(processId, record));
   if (!raw) {
     return null;
   }
@@ -1132,10 +1136,10 @@ function readSourceBranchState(
 function writeSourceBranchState(
   config: SourceConfig,
   processId: string,
-  packageId: string,
+  record: Pick<InstalledPackageRecord, "packageId" | "scope">,
   state: SourceBranchState,
 ): void {
-  config.set(sourceBranchStateKey(processId, packageId), JSON.stringify(state));
+  config.set(sourceBranchStateKey(processId, record), JSON.stringify(state));
 }
 
 function processBranchName(processId: string, packageName: string): string {
@@ -1160,13 +1164,18 @@ async function readOverlayManifest(
   if (!storage || !processId) {
     return empty;
   }
-  const obj = await storage.get(overlayManifestKey(processId, pkg.record.packageId));
+  const obj = await storage.get(overlayManifestKey(processId, pkg.record));
   if (!obj) {
     return empty;
   }
   try {
     const parsed = JSON.parse(await obj.text()) as Partial<SourceOverlayManifest>;
-    if (parsed.version !== 1 || parsed.packageId !== pkg.record.packageId || !parsed.changes) {
+    if (
+      parsed.version !== 1 ||
+      parsed.packageId !== pkg.record.packageId ||
+      parsed.packageKey !== packageSourceRecordKey(pkg.record) ||
+      !parsed.changes
+    ) {
       return empty;
     }
     const changes: Record<string, SourceOverlayChange> = {};
@@ -1196,6 +1205,7 @@ async function readOverlayManifest(
     return {
       version: 1,
       packageId: pkg.record.packageId,
+      packageKey: packageSourceRecordKey(pkg.record),
       baseRef: typeof parsed.baseRef === "string" && parsed.baseRef
         ? parsed.baseRef
         : empty.baseRef,
@@ -1213,6 +1223,7 @@ function emptyOverlayManifest(pkg: SourcePackage, baseRef = sourceBaseRefForPack
   return {
     version: 1,
     packageId: pkg.record.packageId,
+    packageKey: packageSourceRecordKey(pkg.record),
     baseRef,
     createdAt: now,
     updatedAt: now,
@@ -1226,7 +1237,7 @@ async function writeOverlayManifest(
   pkg: SourcePackage,
   overlay: SourceOverlayManifest,
 ): Promise<void> {
-  const key = overlayManifestKey(processId, pkg.record.packageId);
+  const key = overlayManifestKey(processId, pkg.record);
   if (Object.keys(overlay.changes).length === 0) {
     await storage.delete(key);
     return;
@@ -1247,15 +1258,22 @@ async function discardOverlay(
   if (keys.length > 0) {
     await storage.delete(keys);
   }
-  await storage.delete(overlayManifestKey(processId, pkg.record.packageId));
+  await storage.delete(overlayManifestKey(processId, pkg.record));
 }
 
-function overlayManifestKey(processId: string, packageId: string): string {
-  return `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(packageId)}/manifest.json`;
+function overlayManifestKey(
+  processId: string,
+  record: Pick<InstalledPackageRecord, "packageId" | "scope">,
+): string {
+  return `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(packageSourceRecordKey(record))}/manifest.json`;
 }
 
-function overlayContentKey(processId: string, packageId: string, relativePath: string): string {
-  return `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(packageId)}/files/${encodeURIComponent(relativePath)}`;
+function overlayContentKey(
+  processId: string,
+  record: Pick<InstalledPackageRecord, "packageId" | "scope">,
+  relativePath: string,
+): string {
+  return `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(packageSourceRecordKey(record))}/files/${encodeURIComponent(relativePath)}`;
 }
 
 function sortedOverlayChanges(overlay: SourceOverlayManifest): SourceOverlayChange[] {

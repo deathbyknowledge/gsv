@@ -58,14 +58,20 @@ function makeContext(options?: {
   capabilities?: string[];
   config?: Record<string, string>;
   pkg?: InstalledPackageRecord;
+  packages?: InstalledPackageRecord[];
   procs?: Partial<KernelContext["procs"]>;
   schedules?: KernelContext["schedules"];
   getAppRunner?: KernelContext["getAppRunner"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
 }): KernelContext {
-  const pkg = options?.pkg ?? makePackage();
-  const records = new Map([[pkg.packageId, pkg]]);
+  const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
+  const findRecord = (packageId: string, scope?: InstalledPackageRecord["scope"]) => {
+    const index = records.findIndex((record) =>
+      record.packageId === packageId && (!scope || packageScopeKey(record.scope) === packageScopeKey(scope))
+    );
+    return index >= 0 ? { index, record: records[index] } : null;
+  };
   return {
     env: {
       STORAGE: env.STORAGE,
@@ -104,27 +110,37 @@ function makeContext(options?: {
     } as never,
     workspaces: null as never,
     packages: {
-      list() {
-        return [...records.values()];
+      list(opts?: { scopes?: readonly InstalledPackageRecord["scope"][] }) {
+        if (!opts?.scopes) {
+          return [...records];
+        }
+        const scopeKeys = new Set(opts.scopes.map(packageScopeKey));
+        return records.filter((record) => scopeKeys.has(packageScopeKey(record.scope)));
       },
-      resolve(packageId: string) {
-        return records.get(packageId) ?? null;
+      resolve(packageId: string, scopes?: readonly InstalledPackageRecord["scope"][]) {
+        for (const scope of scopes ?? []) {
+          const found = findRecord(packageId, scope);
+          if (found) return found.record;
+        }
+        return records.find((record) => record.packageId === packageId) ?? null;
       },
-      get(packageId: string) {
-        return records.get(packageId) ?? null;
+      get(packageId: string, scope?: InstalledPackageRecord["scope"]) {
+        return findRecord(packageId, scope)?.record ?? null;
       },
-      setEnabled(packageId: string, enabled: boolean) {
-        const existing = records.get(packageId);
-        if (!existing) return null;
+      setEnabled(packageId: string, enabled: boolean, scope?: InstalledPackageRecord["scope"]) {
+        const found = findRecord(packageId, scope);
+        if (!found) return null;
+        const existing = found.record;
         const updated = { ...existing, enabled, updatedAt: existing.updatedAt + 1 };
-        records.set(packageId, updated);
+        records[found.index] = updated;
         return updated;
       },
-      setReviewed(packageId: string, reviewedAt: number) {
-        const existing = records.get(packageId);
-        if (!existing) return null;
+      setReviewed(packageId: string, reviewedAt: number, scope?: InstalledPackageRecord["scope"]) {
+        const found = findRecord(packageId, scope);
+        if (!found) return null;
+        const existing = found.record;
         const updated = { ...existing, reviewedAt, reviewRequired: true, updatedAt: existing.updatedAt + 1 };
-        records.set(packageId, updated);
+        records[found.index] = updated;
         return updated;
       },
     } as never,
@@ -142,6 +158,17 @@ function makeContext(options?: {
     getAppRunner: options?.getAppRunner,
     scheduleScheduleWake: options?.scheduleScheduleWake,
   } as KernelContext;
+}
+
+function packageScopeKey(scope: InstalledPackageRecord["scope"]): string {
+  switch (scope.kind) {
+    case "global":
+      return "global";
+    case "user":
+      return `user:${scope.uid}`;
+    case "workspace":
+      return `workspace:${scope.workspaceId}`;
+  }
 }
 
 describe("pkg shell command", () => {
@@ -381,6 +408,46 @@ describe("pkg shell command", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain('"name": "ascii-starfield"');
+    expect(result.stderr).toBe("");
+  });
+
+  it("preserves scoped package identity when defaulting from the source cwd", async () => {
+    const packageId = "import:root/pkg-test:.";
+    const globalPackage = makePackage({
+      packageId,
+      scope: { kind: "global" },
+      manifest: {
+        ...makePackage().manifest,
+        source: {
+          repo: "root/pkg-test",
+          ref: "stable",
+          subdir: ".",
+          resolvedCommit: "global123",
+        },
+      },
+    });
+    const userPackage = makePackage({
+      packageId,
+      scope: { kind: "user", uid: 1000 },
+      manifest: {
+        ...makePackage().manifest,
+        source: {
+          repo: "root/pkg-test",
+          ref: "dev",
+          subdir: ".",
+          resolvedCommit: "user123",
+        },
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "pkg manifest", cwd: "/src/packages/ascii-starfield--root-pkg-test" },
+      makeContext({ packages: [userPackage, globalPackage] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain('"ref": "stable"');
+    expect(result.stdout).not.toContain('"ref": "dev"');
     expect(result.stderr).toBe("");
   });
 
