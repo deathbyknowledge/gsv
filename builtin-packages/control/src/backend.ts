@@ -1,10 +1,13 @@
 import { PackageBackendEntrypoint } from "@gsv/package/backend";
 import {
+  addMcpServer,
   applyRawConfig,
   consumeLinkCode,
   createLink,
   createToken,
   loadState,
+  refreshMcpServer,
+  removeMcpServer,
   revokeToken,
   saveEntry,
   unlink,
@@ -42,5 +45,17 @@ export default class ControlBackend extends PackageBackendEntrypoint {
 
   async applyRawConfig(args: unknown): Promise<unknown> {
     return applyRawConfig(this.kernel, this, args as never);
+  }
+
+  async addMcpServer(args: unknown): Promise<unknown> {
+    return addMcpServer(this.kernel, this, args as never);
+  }
+
+  async refreshMcpServer(args: unknown): Promise<unknown> {
+    return refreshMcpServer(this.kernel, this, args as never);
+  }
+
+  async removeMcpServer(args: unknown): Promise<unknown> {
+    return removeMcpServer(this.kernel, this, args as never);
   }
 }

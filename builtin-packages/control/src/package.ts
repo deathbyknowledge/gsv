@@ -3,7 +3,7 @@ import { definePackage } from "@gsv/package/manifest";
 export default definePackage({
   meta: {
     displayName: "Control",
-    description: "System configuration, access tokens, and identity links.",
+    description: "System configuration, access tokens, identity links, and MCP servers.",
     window: {
       width: 1120,
       height: 820,
@@ -21,6 +21,10 @@ export default definePackage({
         "sys.unlink",
         "sys.link.list",
         "sys.link.consume",
+        "sys.mcp.add",
+        "sys.mcp.list",
+        "sys.mcp.refresh",
+        "sys.mcp.remove",
       ],
     },
   },
