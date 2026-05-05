@@ -381,6 +381,9 @@ export function Transcript(props: {
               />
             );
           }
+          if (isHiddenInternalToolRow(row, props.pendingHil)) {
+            return null;
+          }
           return <ToolCard key={`${row.callId}:${index}`} row={row} />;
         }
         const messageRow = row as MessageRow;
@@ -965,6 +968,11 @@ function isCodeModeTool(toolName: string, syscall: string | null): boolean {
   return toolName === "CodeMode" || syscall === "codemode.exec" || syscall === "codemode.run";
 }
 
+function isHiddenInternalToolRow(row: ToolRow, pendingHil: HilRequest | null): boolean {
+  const syscall = inferToolSyscall(row.toolName, row.syscall);
+  return syscall === "sys.mcp.call" && row.callId !== pendingHil?.callId;
+}
+
 function CodeModePreview({ row, output }: { row: ToolRow; output: unknown }) {
   if (row.kind === "toolCall") {
     return <p>Executing process-local script.</p>;
@@ -1344,6 +1352,9 @@ function ArchiveRow({
   onRetryMediaSource(media: unknown): void;
 }) {
   if (row.kind === "toolCall" || row.kind === "toolResult") {
+    if (isHiddenInternalToolRow(row, null)) {
+      return null;
+    }
     return <ToolCard row={row} />;
   }
   return (
