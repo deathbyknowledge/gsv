@@ -65,6 +65,7 @@ describe("handleAiTools", () => {
     const result = await handleAiTools(ctx);
 
     expect(result.tools.some((tool) => tool.name.startsWith("MCP_"))).toBe(false);
+    expect(result.mcpServers).toEqual(["Search"]);
     const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
     expect(codeModeTool?.description).toContain("declare function lookup");
     expect(codeModeTool?.description).toContain("type LookupOutput");
@@ -77,6 +78,7 @@ describe("handleAiTools", () => {
     const result = await handleAiTools(ctx);
 
     expect(result.tools.some((tool) => tool.name.startsWith("MCP_"))).toBe(false);
+    expect(result.mcpServers).toEqual([]);
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 });

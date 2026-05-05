@@ -54,7 +54,7 @@ gsv config set config/ai/profile/task/context.d/50-style.md \
 
 System and profile context can use runtime template variables such as
 `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`,
-`workspace`, `devices`, and `known_paths`.
+`workspace`, `devices`, `mcpServers`, and `known_paths`.
 
 ## Add Home and Workspace Context
 

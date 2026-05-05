@@ -12,6 +12,7 @@ export type PromptAssemblyInput = {
   purpose: "chat.reply" | "thread.resume";
   identity: ProcessIdentity;
   devices: AiToolsDevice[];
+  mcpServers: string[];
   processContextFiles?: ProcContextFile[];
   storage: PromptStorage;
   ripgit: PromptRipgitClient | null;

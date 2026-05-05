@@ -40,6 +40,9 @@ const GSV_RUNTIME_FACTS = [
   "",
   "Available targets:",
   "{{devices}}",
+  "",
+  "Ready MCP servers:",
+  "{{mcpServers}}",
 ].join("\n");
 
 export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {

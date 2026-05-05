@@ -1,7 +1,7 @@
 /**
  * ai.* syscall handlers.
  *
- * ai.tools — returns available tool schemas + online devices accessible to caller.
+ * ai.tools — returns available tool schemas, online devices, and ready MCP servers accessible to caller.
  * ai.config — reads model/provider/apiKey from /sys/ (kernel SQLite via ConfigStore).
  *
  * Config resolution order:
@@ -102,7 +102,11 @@ export async function handleAiTools(
     }
   }
 
-  return { tools, devices: onlineDevices };
+  return {
+    tools,
+    devices: onlineDevices,
+    mcpServers: listReadyMcpServerNames(ctx, uid),
+  };
 }
 
 export async function handleAiConfig(
@@ -279,6 +283,19 @@ function listReadyMcpToolSources(
         })),
     }];
   });
+}
+
+function listReadyMcpServerNames(ctx: KernelContext, uid: number): string[] {
+  const names = new Set<string>();
+  for (const record of ctx.mcpServers.list(uid)) {
+    const connection = ctx.mcp.mcpConnections[record.serverId] as {
+      connectionState?: unknown;
+    } | undefined;
+    if (connection?.connectionState === "ready") {
+      names.add(record.name);
+    }
+  }
+  return [...names].sort((left, right) => left.localeCompare(right));
 }
 
 function truncateMcpTypeHints(typeDeclarations: string): string {

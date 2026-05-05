@@ -146,6 +146,7 @@ type RunState = {
   config?: AiConfigResult;
   tools?: ToolDefinition[];
   devices?: AiToolsDevice[];
+  mcpServers?: string[];
   systemPrompt?: string;
   approvalPolicy?: ToolApprovalPolicy;
 };
@@ -2082,6 +2083,7 @@ export class Process extends Host<Env> {
       }
       run.tools = toolsResult.tools;
       run.devices = toolsResult.devices;
+      run.mcpServers = toolsResult.mcpServers ?? [];
 
       this.currentRun = run;
     }
@@ -2094,6 +2096,7 @@ export class Process extends Host<Env> {
         purpose: "chat.reply",
         identity: this.identity,
         devices: run.devices ?? [],
+        mcpServers: run.mcpServers ?? [],
         processContextFiles: this.store.getProcessContextFiles(),
         storage: this.env.STORAGE,
         ripgit: this.ripgit,

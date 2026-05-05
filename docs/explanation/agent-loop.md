@@ -68,7 +68,7 @@ this order:
 
 Each section is rendered as `[section.name]` and separated with `---`. System
 and profile context can template values such as `identity.username`, `identity.cwd`,
-`workspace`, `devices`, and `known_paths`. Home and workspace context are loaded
+`workspace`, `devices`, `mcpServers`, and `known_paths`. Home and workspace context are loaded
 lexically and bounded by `config/ai/max_context_bytes`.
 
 Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,

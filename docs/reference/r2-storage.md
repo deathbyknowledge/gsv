@@ -20,8 +20,7 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 |---|---|---|
 | `/sys/*`, `/proc/*`, `/dev/*` | Kernel SQLite and live registries | Virtual control-plane files. |
 | `/etc/passwd`, `/etc/shadow`, `/etc/group` | Kernel auth tables | Overlaid on top of regular `/etc` storage. |
-| `~/CONSTITUTION.md` | ripgit home repo | User-global identity and standing context. |
-| `~/context.d/*` | ripgit home repo, with R2 fallback | User-global prompt context. |
+| `~/context.d/*` | ripgit home repo, with R2 fallback | User-global prompt context, including seeded constitution and user files. |
 | `~/skills.d/*` | ripgit home repo, with R2 fallback | User-global reusable process skills. |
 | `~/knowledge/*` | ripgit home repo | Durable knowledge databases. |
 | Other home files | R2 | Stored as ordinary objects with uid/gid/mode metadata. |
@@ -90,7 +89,7 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 
 | Repository | Ref Helper | Mounted At | Purpose |
 |---|---|---|---|
-| `{username}/home` | `homeKnowledgeRepoRef(username)` | `~/CONSTITUTION.md`, `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, skills, and knowledge databases. |
+| `{username}/home` | `homeKnowledgeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, skills, and knowledge databases. |
 | `{username}/{workspaceId}` | `workspaceRepoRef(workspaceId, username)` | `/workspaces/{workspaceId}` | Task workspace files and checkpoints. |
 | Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/packages/{packageName}`, `repo.*` | Installed package source, review context, and generic repo operations. |
 
