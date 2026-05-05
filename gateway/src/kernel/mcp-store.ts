@@ -35,9 +35,10 @@ export class McpServerStore {
         updated_at INTEGER NOT NULL
       )
     `);
+    this.sql.exec("DROP INDEX IF EXISTS idx_mcp_servers_uid_url");
     this.sql.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_uid_url
-      ON mcp_servers(uid, url)
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_uid_name_url
+      ON mcp_servers(uid, name, url)
     `);
     this.sql.exec(`
       CREATE INDEX IF NOT EXISTS idx_mcp_servers_uid
@@ -86,10 +87,11 @@ export class McpServerStore {
     return rows[0] ? recordFromRow(rows[0]) : null;
   }
 
-  findByUidUrl(uid: number, url: string): McpServerRecord | null {
+  findByUidNameUrl(uid: number, name: string, url: string): McpServerRecord | null {
     const rows = this.sql.exec<McpServerRow>(
-      "SELECT * FROM mcp_servers WHERE uid = ? AND url = ?",
+      "SELECT * FROM mcp_servers WHERE uid = ? AND name = ? AND url = ?",
       uid,
+      name,
       url,
     ).toArray();
     return rows[0] ? recordFromRow(rows[0]) : null;

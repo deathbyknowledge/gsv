@@ -52,7 +52,7 @@ export async function handleSysMcpAdd(
   const callbackHost = parseOptionalCallbackHost(args.callbackHost);
   const transport = parseTransport(args.transport);
 
-  const existing = ctx.mcpServers.findByUidUrl(effectiveUid, url);
+  const existing = ctx.mcpServers.findByUidNameUrl(effectiveUid, name, url);
   if (existing) {
     return { server: summarizeServer(existing, ctx) };
   }

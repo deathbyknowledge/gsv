@@ -13,7 +13,7 @@ type FakeMcpServers = {
   records: Map<string, McpServerRecord>;
   upsert: ReturnType<typeof vi.fn>;
   get: ReturnType<typeof vi.fn>;
-  findByUidUrl: ReturnType<typeof vi.fn>;
+  findByUidNameUrl: ReturnType<typeof vi.fn>;
   list: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
 };
@@ -71,8 +71,10 @@ function createFakeMcpServers(): FakeMcpServers {
       return record;
     }),
     get: vi.fn((serverId) => fake.records.get(serverId) ?? null),
-    findByUidUrl: vi.fn((uid, url) =>
-      [...fake.records.values()].find((record) => record.uid === uid && record.url === url) ?? null
+    findByUidNameUrl: vi.fn((uid, name, url) =>
+      [...fake.records.values()].find((record) =>
+        record.uid === uid && record.name === name && record.url === url
+      ) ?? null
     ),
     list: vi.fn((uid) =>
       [...fake.records.values()].filter((record) => uid === undefined || record.uid === uid)
@@ -115,6 +117,38 @@ describe("sys.mcp handlers", () => {
       uid: 1000,
       name: "GitHub",
     });
+  });
+
+  it("deduplicates MCP adds by caller, name, and URL", async () => {
+    const ctx = makeContext(1000, mcpServers);
+    mcpServers.upsert({
+      serverId: "server-1",
+      uid: 1000,
+      name: "GitHub",
+      url: "https://mcp.example.com/mcp",
+      transport: "auto",
+    });
+
+    const existing = await handleSysMcpAdd({
+      name: "GitHub",
+      url: "https://mcp.example.com/mcp",
+    }, ctx);
+    expect(existing.server.serverId).toBe("server-1");
+    expect(ctx.addMcpServerConnection).not.toHaveBeenCalled();
+
+    (ctx.addMcpServerConnection as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "server-2",
+      state: "ready",
+    });
+    await handleSysMcpAdd({
+      name: "GitHub Work",
+      url: "https://mcp.example.com/mcp",
+    }, ctx);
+    expect(ctx.addMcpServerConnection).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      name: "GitHub Work",
+      url: "https://mcp.example.com/mcp",
+    }));
   });
 
   it("rejects non-root MCP add for another uid", async () => {
