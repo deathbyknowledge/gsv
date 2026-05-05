@@ -82,7 +82,10 @@ export function McpPanel({
           onSubmit={(event) => {
             event.preventDefault();
             if (addDisabled) return;
-            void onAddServer(form).then(() => {
+            void onAddServer({
+              ...form,
+              callbackHost: window.location.origin,
+            }).then(() => {
               setForm({ name: "", url: "", transport: "auto" });
             }).catch(() => {});
           }}

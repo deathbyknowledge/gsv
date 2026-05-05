@@ -161,6 +161,7 @@ export async function addMcpServer(
   const result = await kernel.request("sys.mcp.add", {
     name: normalizeRequired(args.name, "name"),
     url: normalizeRequired(args.url, "url"),
+    callbackHost: normalizeOptional(args.callbackHost),
     transport: { type: transport },
   }) as SysMcpAddResult;
 

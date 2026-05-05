@@ -140,6 +140,7 @@ export type AddMcpServerArgs = {
   name: string;
   url: string;
   transport: ControlMcpTransportType;
+  callbackHost?: string;
 };
 
 export type RefreshMcpServerArgs = {
