@@ -1162,12 +1162,19 @@ export function Composer(props: {
       {props.attachments.length > 0 ? (
         <div class="attachment-list">
           {props.attachments.map((attachment, index) => (
-            <div class={"attachment-chip" + (attachment.type === "audio" ? " is-audio" : "")} key={`${attachment.filename ?? "file"}:${index}`}>
-              <span class="attachment-name">{attachment.filename || "attachment"}</span>
-              {attachment.duration ? <span class="attachment-duration">{formatAttachmentDuration(attachment.duration)}</span> : null}
-              {attachment.type === "audio" && attachment.previewUrl ? <audio controls preload="metadata" src={attachment.previewUrl} /> : null}
-              <button type="button" aria-label="Remove attachment" title="Remove attachment" onClick={() => props.onRemoveAttachment(index)}>x</button>
-            </div>
+            attachment.type === "audio" ? (
+              <DraftVoiceAttachment
+                key={`${attachment.filename ?? "voice"}:${index}`}
+                attachment={attachment}
+                onRemove={() => props.onRemoveAttachment(index)}
+              />
+            ) : (
+              <div class="attachment-chip" key={`${attachment.filename ?? "file"}:${index}`}>
+                <span class="attachment-name">{attachment.filename || "attachment"}</span>
+                {attachment.duration ? <span class="attachment-duration">{formatAttachmentDuration(attachment.duration)}</span> : null}
+                <button type="button" aria-label="Remove attachment" title="Remove attachment" onClick={() => props.onRemoveAttachment(index)}>x</button>
+              </div>
+            )
           ))}
         </div>
       ) : null}
@@ -1245,6 +1252,25 @@ export function Composer(props: {
         </button>
       </div>
     </form>
+  );
+}
+
+function DraftVoiceAttachment(props: { attachment: Attachment; onRemove(): void }) {
+  const source = props.attachment.previewUrl || props.attachment.data;
+  return (
+    <div class="attachment-chip is-audio" title={props.attachment.filename || "Voice recording"}>
+      <span class="voice-message-icon" aria-hidden="true"><MicIcon /></span>
+      <div class="attachment-voice-main">
+        {source ? (
+          <VoiceAudioPlayer source={source} duration={props.attachment.duration ?? null} />
+        ) : (
+          <div class="voice-message-loading">Loading audio...</div>
+        )}
+      </div>
+      <button type="button" aria-label="Remove voice recording" title="Remove voice recording" onClick={props.onRemove}>
+        <XIcon />
+      </button>
+    </div>
   );
 }
 

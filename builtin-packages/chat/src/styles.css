@@ -1646,9 +1646,9 @@ textarea {
 }
 
 .attachment-chip.is-audio {
-  max-width: min(100%, 420px);
+  width: min(100%, 430px);
+  max-width: min(100%, 430px);
   border-radius: 8px;
-  flex-wrap: wrap;
   padding: 7px 8px;
 }
 
@@ -1659,10 +1659,9 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-.attachment-chip audio {
-  flex: 1 0 100%;
-  width: 100%;
-  height: 32px;
+.attachment-voice-main {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .attachment-chip button {
@@ -1673,7 +1672,26 @@ textarea {
   border-radius: 999px;
   background: transparent;
   color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+}
+
+.attachment-chip.is-audio button {
+  width: 24px;
+  height: 24px;
+  color: var(--soft);
+}
+
+.attachment-chip button svg {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .attachment-chip button:hover {
