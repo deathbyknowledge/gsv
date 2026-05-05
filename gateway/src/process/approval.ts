@@ -43,6 +43,7 @@ export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
   rules: [
     { match: "shell.exec", action: "ask" },
     { match: "fs.delete", action: "ask" },
+    { match: "sys.mcp.call", action: "ask" },
   ],
 };
 

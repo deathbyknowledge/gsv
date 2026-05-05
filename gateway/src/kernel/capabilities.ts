@@ -7,11 +7,11 @@
  * Capability format:
  *   "*"           — unrestricted access
  *   "domain.*"    — all syscalls in a domain (e.g. "fs.*")
- *   "domain.name" — single syscall (e.g. "proc.exec")
+ *   "domain.name" — single syscall (e.g. "proc.exec" or "sys.mcp.add")
  */
 
 
-const CAPABILITY_PATTERN = /^(\*|[a-z][a-z0-9]*\.\*|[a-z][a-z0-9]*\.[a-z][a-z0-9]*)$/;
+const CAPABILITY_PATTERN = /^(\*|[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*\.(?:[a-z][a-z0-9]*|\*))$/;
 
 const DEFAULT_CAPABILITIES: [number, string[]][] = [
   [0,   ["*"]],                                           // root
@@ -53,6 +53,14 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.device.list",
     "sys.device.update",
     "sys.workspace.list",
+    "sys.oauth.forget",
+    "sys.oauth.list",
+    "sys.oauth.start",
+    "sys.mcp.add",
+    "sys.mcp.call",
+    "sys.mcp.list",
+    "sys.mcp.refresh",
+    "sys.mcp.remove",
     "sys.link",
     "sys.link.list",
     "sys.token.create",
@@ -150,6 +158,7 @@ export class CapabilityStore {
  *   "*"           matches everything
  *   "fs.*"        matches any "fs.XXX"
  *   "proc.exec"   matches only "proc.exec"
+ *   "sys.mcp.*"   matches nested syscalls under "sys.mcp."
  */
 export function hasCapability(
   capabilities: string[],
@@ -159,7 +168,7 @@ export function hasCapability(
 
   for (const cap of capabilities) {
     if (cap === "*") return true;
-    if (cap === `${domain}.*`) return true;
+    if (cap.endsWith(".*") && syscall.startsWith(cap.slice(0, -1))) return true;
     if (cap === syscall) return true;
   }
 

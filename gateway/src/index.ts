@@ -18,6 +18,7 @@ import {
   isSupportedCliChannel,
   loadDefaultCliChannel,
 } from "./downloads/cli";
+import { buildOAuthClientMetadata } from "./oauth-http";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -39,6 +40,20 @@ export default {
           "cache-control": "no-store",
         },
       });
+    }
+
+    if (url.pathname === "/.well-known/oauth-client/gsv.json" && request.method === "GET") {
+      return Response.json(buildOAuthClientMetadata(url.origin), {
+        headers: {
+          "cache-control": "no-store",
+          "access-control-allow-origin": "*",
+        },
+      });
+    }
+
+    if (url.pathname === "/oauth/callback" && request.method === "GET") {
+      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      return kernel.fetch(request);
     }
 
     const cliDownload = matchCliDownloadPath(url.pathname);

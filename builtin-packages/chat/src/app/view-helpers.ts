@@ -643,6 +643,15 @@ function describeToolCard(toolName: string, args: unknown, syscall: string | nul
     const code = asString(record?.code)?.trim();
     return { title: "Run CodeMode script", subtitle: code ? truncateInline(firstCodeLine(code), 72) : "process-local JavaScript", target: "process" };
   }
+  if (syscall === "sys.mcp.call") {
+    const serverId = asString(record?.serverId);
+    const name = asString(record?.name);
+    return {
+      title: name ? "Call MCP " + truncateInline(name, 48) : "Call MCP tool",
+      subtitle: serverId ? `server ${truncateInline(serverId, 36)}` : "",
+      target: "mcp",
+    };
+  }
   return { title: toolName, subtitle: "", target };
 }
 
@@ -658,6 +667,13 @@ function describeHilSummary(request: HilRequest, syscall: string): string {
   if (request.toolName === "Edit" || syscall === "fs.edit") return path ? `Edit ${path}.` : "Edit a file.";
   if (request.toolName === "Delete" || syscall === "fs.delete") return path ? `Delete ${path}.` : "Delete a file.";
   if (request.toolName === "CodeMode" || syscall === "codemode.exec" || syscall === "codemode.run") return "Run a process-local CodeMode script.";
+  if (syscall === "sys.mcp.call") {
+    const serverId = asString(args.serverId);
+    const name = asString(args.name);
+    if (serverId && name) return `Call MCP tool ${name} on ${serverId}.`;
+    if (name) return `Call MCP tool ${name}.`;
+    return "Call an MCP tool.";
+  }
   return "Confirm this tool call before it runs.";
 }
 

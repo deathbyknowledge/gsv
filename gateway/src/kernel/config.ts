@@ -29,6 +29,7 @@ const GSV_RUNTIME_CONTEXT = [
 
 const GSV_CONTEXT_DISCOVERY = [
   "Load detailed procedures on demand: use `skills list`, `skills search <query>`, and `skills show <skill>` for reusable workflows; use `man` and `man <topic>` for exact native command syntax.",
+  "Connected MCP integrations may be exposed through CodeMode rather than as top-level tools. Before saying an MCP server or integration is unavailable, inspect CodeMode `mcpTools` or use the native `mcp` shell command.",
   "After completing a complex workflow, create a skill if one didn't exist. If a skill's instructions were partially wrong, you should amend them."
 ].join("\n");
 
@@ -39,6 +40,9 @@ const GSV_RUNTIME_FACTS = [
   "",
   "Available targets:",
   "{{devices}}",
+  "",
+  "Ready MCP servers:",
+  "{{mcpServers}}",
 ].join("\n");
 
 export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
@@ -119,12 +123,12 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
 
   // Tool approval policy for agent tool execution. JSON object with a default
   // action and ordered rules matching exact syscalls or domain wildcards.
-  "config/ai/profile/init/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
-  "config/ai/profile/task/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
-  "config/ai/profile/review/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
-  "config/ai/profile/app/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
-  "config/ai/profile/mcp/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"}]}",
-  "config/ai/profile/cron/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
+  "config/ai/profile/init/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
+  "config/ai/profile/task/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
+  "config/ai/profile/review/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
+  "config/ai/profile/app/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
+  "config/ai/profile/mcp/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
+  "config/ai/profile/cron/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"sys.mcp.call\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
 };
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".

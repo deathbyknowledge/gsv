@@ -1,6 +1,15 @@
-export type ControlTabId = "config" | "access" | "advanced";
+export type ControlTabId = "config" | "access" | "mcp" | "advanced";
 export type ControlConfigSectionId = "ai" | "profiles" | "shell" | "server" | "processes" | "automation";
 export type ControlTokenKind = "node" | "service" | "user";
+export type ControlMcpTransportType = "auto" | "streamable-http" | "sse";
+export type ControlMcpConnectionState =
+  | "not-connected"
+  | "authenticating"
+  | "connecting"
+  | "connected"
+  | "discovering"
+  | "ready"
+  | "failed";
 
 export type ControlConfigEntry = {
   key: string;
@@ -46,6 +55,33 @@ export type ControlLink = {
   linkedByUid: number;
 };
 
+export type ControlMcpTool = {
+  name: string;
+  description: string | null;
+  inputFields: string[];
+  requiredInputFields: string[];
+  outputFields: string[];
+  hasInputSchema: boolean;
+  hasOutputSchema: boolean;
+};
+
+export type ControlMcpServer = {
+  serverId: string;
+  uid: number;
+  name: string;
+  url: string;
+  transport: ControlMcpTransportType;
+  state: ControlMcpConnectionState;
+  authUrl: string | null;
+  error: string | null;
+  instructions: string | null;
+  tools: ControlMcpTool[];
+  resourceCount: number;
+  promptCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type ControlViewer = {
   uid: number;
   username: string;
@@ -60,6 +96,7 @@ export type ControlState = {
   configValues: Record<string, string>;
   tokens: ControlToken[];
   links: ControlLink[];
+  mcpServers: ControlMcpServer[];
 };
 
 export type SaveEntryArgs = {
@@ -99,9 +136,29 @@ export type ApplyRawConfigArgs = {
   entries: SaveEntryArgs[];
 };
 
+export type AddMcpServerArgs = {
+  name: string;
+  url: string;
+  transport: ControlMcpTransportType;
+  callbackHost?: string;
+};
+
+export type RefreshMcpServerArgs = {
+  serverId: string;
+};
+
+export type RemoveMcpServerArgs = {
+  serverId: string;
+};
+
 export type CreateTokenResult = {
   state: ControlState;
   token: ControlCreatedToken;
+};
+
+export type McpServerMutationResult = {
+  state: ControlState;
+  server: ControlMcpServer | null;
 };
 
 export interface ControlBackend {
@@ -113,4 +170,7 @@ export interface ControlBackend {
   createLink(args: CreateLinkArgs): Promise<ControlState>;
   unlink(args: UnlinkArgs): Promise<ControlState>;
   applyRawConfig(args: ApplyRawConfigArgs): Promise<ControlState>;
+  addMcpServer(args: AddMcpServerArgs): Promise<McpServerMutationResult>;
+  refreshMcpServer(args: RefreshMcpServerArgs): Promise<McpServerMutationResult>;
+  removeMcpServer(args: RemoveMcpServerArgs): Promise<ControlState>;
 }

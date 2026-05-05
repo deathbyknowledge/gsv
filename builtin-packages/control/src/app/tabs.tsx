@@ -8,6 +8,7 @@ type TabsProps = {
 const TABS: Array<{ id: ControlTabId; label: string; description: string }> = [
   { id: "config", label: "Config", description: "System and user configuration." },
   { id: "access", label: "Access", description: "Tokens and identity links." },
+  { id: "mcp", label: "MCP", description: "Servers and sign-in state." },
   { id: "advanced", label: "Advanced", description: "Raw config entry editor." },
 ];
 

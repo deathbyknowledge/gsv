@@ -2,6 +2,7 @@ import {
   DynamicWorkerExecutor,
   type ResolvedProvider,
 } from "@cloudflare/codemode";
+import type { CodeModeMcpToolBinding } from "../codemode/mcp";
 import type { SyscallName } from "../syscalls";
 import type { CodeModeExecResult } from "../syscalls/codemode";
 import {
@@ -11,7 +12,11 @@ import {
   FS_SEARCH,
   FS_WRITE,
   SHELL_EXEC,
+  SYS_MCP_CALL,
 } from "../syscalls/constants";
+
+export { buildCodeModeMcpToolBindings } from "../codemode/mcp";
+export type { CodeModeMcpToolBinding } from "../codemode/mcp";
 
 export const CODE_MODE_EXECUTION_TIMEOUT_MS = 60_000;
 
@@ -25,6 +30,7 @@ export type CodeModeExecutionOptions = {
   defaultCwd?: string;
   argv?: string[];
   args?: unknown;
+  mcpToolBindings?: CodeModeMcpToolBinding[];
 };
 
 export function buildCodeModeSource(
@@ -36,9 +42,21 @@ export function buildCodeModeSource(
   const defaultCwd = JSON.stringify(options?.defaultCwd ?? null);
   const argv = JSON.stringify(options?.argv ?? []);
   const args = JSON.stringify(options && "args" in options ? options.args : null);
+  const mcpToolBindings = options?.mcpToolBindings ?? [];
+  const mcpToolInfo = JSON.stringify(mcpToolBindings.map((binding) => ({
+    functionName: binding.functionName,
+    serverId: binding.serverId,
+    serverName: binding.serverName,
+    toolName: binding.toolName,
+    description: binding.description,
+    inputSchema: binding.inputSchema,
+    outputSchema: binding.outputSchema,
+  })));
+  const mcpFunctionDeclarations = buildMcpFunctionDeclarations(mcpToolBindings);
   return `async () => {
   const argv = Object.freeze(${argv});
   const args = ${args};
+  const mcpTools = Object.freeze(${mcpToolInfo});
   const __defaultTarget = ${defaultTarget};
   const __defaultCwd = ${defaultCwd};
   const __isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -72,6 +90,37 @@ export function buildCodeModeSource(
     }
     return request;
   };
+  const __withObjectArgs = (name, value = {}) => {
+    if (!__isObject(value)) {
+      throw new Error(name + " requires an object argument");
+    }
+    return { ...value };
+  };
+  const __unwrapMcpResult = (result) => {
+    if (!__isObject(result)) return result;
+    if ("toolResult" in result) return result.toolResult;
+    if (result.isError) {
+      const text = Array.isArray(result.content)
+        ? result.content
+            .filter((item) => __isObject(item) && item.type === "text" && typeof item.text === "string")
+            .map((item) => item.text)
+            .join("\\n")
+        : "";
+      throw new Error(text || "MCP tool call failed");
+    }
+    if (result.structuredContent !== undefined && result.structuredContent !== null) {
+      return result.structuredContent;
+    }
+    if (Array.isArray(result.content) && result.content.length > 0 && result.content.every((item) => __isObject(item) && item.type === "text" && typeof item.text === "string")) {
+      const text = result.content.map((item) => item.text).join("\\n");
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
+    }
+    return result;
+  };
   const shell = async (input, options = {}) => {
     if (typeof input !== "string") {
       throw new Error("shell(input, options) requires a string input");
@@ -88,9 +137,18 @@ export function buildCodeModeSource(
     delete: (args) => codemode.delete(__withFsDefaults("fs.delete", args)),
     search: (args) => codemode.search(__withFsDefaults("fs.search", args)),
   });
+${mcpFunctionDeclarations}
   const __userMain = ${userMain};
   return await __userMain();
 }`;
+}
+
+function buildMcpFunctionDeclarations(bindings: CodeModeMcpToolBinding[]): string {
+  return bindings
+    .map((binding) =>
+      `  const ${binding.functionName} = async (args = {}) => __unwrapMcpResult(await __mcp.${binding.functionName}(__withObjectArgs(${JSON.stringify(binding.functionName)}, args)));`
+    )
+    .join("\n");
 }
 
 function sanitizeCodeModeSource(code: string): string {
@@ -151,6 +209,20 @@ export async function executeCodeMode(
       },
     },
   ];
+  const mcpToolBindings = options?.mcpToolBindings ?? [];
+  if (mcpToolBindings.length > 0) {
+    providers.push({
+      name: "__mcp",
+      fns: Object.fromEntries(mcpToolBindings.map((binding) => [
+        binding.functionName,
+        async (args: unknown) => requestTool(SYS_MCP_CALL as SyscallName, {
+          serverId: binding.serverId,
+          name: binding.toolName,
+          arguments: toOptionalRecord(args, binding.functionName),
+        }),
+      ])),
+    });
+  }
 
   let response;
   try {
@@ -173,4 +245,11 @@ function toRecord(value: unknown, name: string): Record<string, unknown> {
     throw new Error(`${name} requires an object argument`);
   }
   return value as Record<string, unknown>;
+}
+
+function toOptionalRecord(value: unknown, name: string): Record<string, unknown> {
+  if (value === undefined || value === null) {
+    return {};
+  }
+  return toRecord(value, name);
 }

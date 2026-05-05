@@ -104,6 +104,8 @@ describe("hasCapability", () => {
     expect(hasCapability(["fs.*"], "fs.read")).toBe(true);
     expect(hasCapability(["fs.*"], "fs.write")).toBe(true);
     expect(hasCapability(["fs.*"], "fs.delete")).toBe(true);
+    expect(hasCapability(["sys.mcp.*"], "sys.mcp.add")).toBe(true);
+    expect(hasCapability(["sys.mcp.*"], "sys.mcp.call")).toBe(true);
   });
 
   it("domain.* does not match other domains", () => {
@@ -139,12 +141,14 @@ describe("isValidCapability", () => {
     expect(isValidCapability("fs.*")).toBe(true);
     expect(isValidCapability("proc.*")).toBe(true);
     expect(isValidCapability("session.*")).toBe(true);
+    expect(isValidCapability("sys.mcp.*")).toBe(true);
   });
 
   it("accepts exact syscall names", () => {
     expect(isValidCapability("fs.read")).toBe(true);
     expect(isValidCapability("proc.exec")).toBe(true);
     expect(isValidCapability("adapter.send")).toBe(true);
+    expect(isValidCapability("sys.mcp.add")).toBe(true);
   });
 
   it("rejects malformed strings", () => {
@@ -153,7 +157,8 @@ describe("isValidCapability", () => {
     expect(isValidCapability("fs")).toBe(false);
     expect(isValidCapability(".read")).toBe(false);
     expect(isValidCapability("fs.")).toBe(false);
-    expect(isValidCapability("fs.read.extra")).toBe(false);
+    expect(isValidCapability("fs..read")).toBe(false);
+    expect(isValidCapability("fs.*.read")).toBe(false);
     expect(isValidCapability("**")).toBe(false);
     expect(isValidCapability("FS.READ")).toBe(false);
   });
@@ -217,6 +222,14 @@ describe("CapabilityStore", () => {
       "sys.link",
       "sys.link.consume",
       "sys.link.list",
+      "sys.mcp.add",
+      "sys.mcp.call",
+      "sys.mcp.list",
+      "sys.mcp.refresh",
+      "sys.mcp.remove",
+      "sys.oauth.forget",
+      "sys.oauth.list",
+      "sys.oauth.start",
       "sys.token.create",
       "sys.token.list",
       "sys.token.revoke",

@@ -103,12 +103,17 @@ native shell to inspect reusable process workflows populated from layered
 `skills.d` directories.
 
 The native shell also includes a `codemode` command for reusable GSV tool
-scripts:
+scripts and an `mcp` command for connected MCP servers:
 
 ```bash
 codemode ./check.js --target macbook --cwd ~/projects/gsv --json
 codemode run ./check.js --target macbook --cwd ~/projects/gsv --json
 codemode -e 'return await shell("pwd")'
+mcp status
+mcp tools Linear
+mcp describe Linear list_issues
+mcp codemode
+mcp call Linear list_issues --args-json '{"assignee":"me","limit":5}' --json
 ```
 
 Scripts use the same CodeMode shape exposed to agents. A script is treated as
@@ -117,7 +122,8 @@ be returned explicitly.
 
 ```js
 const file = await fs.read({ path: "package.json" });
-return { argv, args, bytes: file.content.length };
+const result = await lookup_record({ query: "gsv" });
+return { argv, args, bytes: file.content.length, result };
 ```
 
 `--target` and `--cwd` become defaults for in-script `shell(...)` and `fs.*`
@@ -146,6 +152,21 @@ if (res.status === "failed") {
 
 return { exitCode: res.exitCode, output };
 ```
+
+MCP tools inside CodeMode are generated as async functions from the connected
+server schemas. A unique tool such as `lookup-record` becomes
+`lookup_record(args)`; each tool also gets a server-qualified alias such as
+`Search_lookup_record(args)` for clarity and collision handling. The CodeMode
+tool description includes generated TypeScript declarations for ready MCP tools
+when their schemas are known. The `mcpTools` array lists the generated function
+names, server ids, original tool names, input schemas, and output schemas.
+Generated functions unwrap MCP result envelopes: structured content is returned
+directly, text-only content is parsed as JSON when possible or returned as a
+string, and MCP tool errors throw. Server management remains available from the
+native shell as `mcp status`, `mcp tools`, `mcp describe`, `mcp search`,
+`mcp codemode`, `mcp refresh`, and `mcp call`. The shell command accepts either
+server ids or unique server names, and tool selectors may use either the
+original MCP tool name or the generated CodeMode function name.
 
 ## CLI Device Targets
 

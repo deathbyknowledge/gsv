@@ -1,0 +1,321 @@
+import type {
+  SysMcpAddArgs,
+  SysMcpAddResult,
+  SysMcpCallArgs,
+  SysMcpCallResult,
+  SysMcpConnectionState,
+  SysMcpListArgs,
+  SysMcpListResult,
+  SysMcpRefreshArgs,
+  SysMcpRefreshResult,
+  SysMcpRemoveArgs,
+  SysMcpRemoveResult,
+  SysMcpServerSummary,
+  SysMcpToolSummary,
+  SysMcpTransportType,
+} from "@gsv/protocol/syscalls/system";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { KernelContext } from "../context";
+import type { McpServerRecord } from "../mcp-store";
+
+export type McpAddConnectionInput = {
+  uid: number;
+  name: string;
+  url: string;
+  callbackHost?: string;
+  transport: {
+    type: SysMcpTransportType;
+    headers?: Record<string, string>;
+  };
+};
+
+export type McpAddConnectionResult = {
+  id: string;
+  state: string;
+  authUrl?: string;
+};
+
+const MCP_TRANSPORT_TYPES = new Set<SysMcpTransportType>(["auto", "streamable-http", "sse"]);
+
+export function canRediscoverMcpConnectionState(input: unknown): boolean {
+  return input === "connected" || input === "ready";
+}
+
+export async function handleSysMcpAdd(
+  args: SysMcpAddArgs,
+  ctx: KernelContext,
+): Promise<SysMcpAddResult> {
+  const identity = ctx.identity!;
+  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "add MCP servers");
+  const name = parseName(args.name);
+  const url = parseServerUrl(args.url);
+  const callbackHost = parseOptionalCallbackHost(args.callbackHost);
+  const transport = parseTransport(args.transport);
+
+  const existing = ctx.mcpServers.findByUidNameUrl(effectiveUid, name, url);
+  if (existing) {
+    return { server: summarizeServer(existing, ctx) };
+  }
+
+  if (!ctx.addMcpServerConnection) {
+    throw new Error("MCP server connection support is unavailable");
+  }
+
+  const connection = await ctx.addMcpServerConnection({
+    uid: effectiveUid,
+    name,
+    url,
+    callbackHost,
+    transport,
+  });
+
+  const record = ctx.mcpServers.upsert({
+    serverId: connection.id,
+    uid: effectiveUid,
+    name,
+    url,
+    transport: transport.type,
+  });
+  return { server: summarizeServer(record, ctx) };
+}
+
+export function handleSysMcpList(
+  args: SysMcpListArgs,
+  ctx: KernelContext,
+): SysMcpListResult {
+  const identity = ctx.identity!;
+  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "list MCP servers");
+  return {
+    servers: ctx.mcpServers.list(effectiveUid).map((record) => summarizeServer(record, ctx)),
+  };
+}
+
+export async function handleSysMcpRemove(
+  args: SysMcpRemoveArgs,
+  ctx: KernelContext,
+): Promise<SysMcpRemoveResult> {
+  const identity = ctx.identity!;
+  const serverId = parseId(args.serverId, "serverId");
+  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "remove MCP servers");
+  const record = ctx.mcpServers.get(serverId);
+  if (!record || record.uid !== effectiveUid) {
+    return { removed: false };
+  }
+
+  if (ctx.removeMcpServerConnection) {
+    await ctx.removeMcpServerConnection(serverId);
+  }
+  return { removed: ctx.mcpServers.delete(serverId, effectiveUid) };
+}
+
+export async function handleSysMcpRefresh(
+  args: SysMcpRefreshArgs,
+  ctx: KernelContext,
+): Promise<SysMcpRefreshResult> {
+  const identity = ctx.identity!;
+  const serverId = parseId(args.serverId, "serverId");
+  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "refresh MCP servers");
+  const record = ctx.mcpServers.get(serverId);
+  if (!record || record.uid !== effectiveUid) {
+    return { server: null };
+  }
+
+  if (ctx.refreshMcpServerConnection) {
+    await ctx.refreshMcpServerConnection(serverId);
+  }
+  return { server: summarizeServer(record, ctx) };
+}
+
+export async function handleSysMcpCall(
+  args: SysMcpCallArgs,
+  ctx: KernelContext,
+): Promise<SysMcpCallResult> {
+  const identity = ctx.identity!;
+  const serverId = parseId(args.serverId, "serverId");
+  const toolName = parseId(args.name, "name");
+  const effectiveUid = parseEffectiveUid(args.uid, identity.process.uid, "call MCP tools");
+  const record = ctx.mcpServers.get(serverId);
+  if (!record || record.uid !== effectiveUid) {
+    throw new Error("MCP server not found");
+  }
+  if (!ctx.callMcpTool) {
+    throw new Error("MCP tool execution support is unavailable");
+  }
+
+  const result = await ctx.callMcpTool(
+    serverId,
+    toolName,
+    isRecord(args.arguments) ? args.arguments : {},
+  ) as {
+    content?: unknown;
+    structuredContent?: unknown;
+    isError?: boolean;
+  };
+  return {
+    ...(result.content !== undefined ? { content: result.content } : {}),
+    ...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
+    ...(result.isError !== undefined ? { isError: result.isError } : {}),
+  };
+}
+
+export function summarizeServer(record: McpServerRecord, ctx: KernelContext): SysMcpServerSummary {
+  const server = ctx.mcp.listServers().find((item) => item.id === record.serverId);
+  const connection = ctx.mcp.mcpConnections[record.serverId];
+  const tools = ctx.mcp.listTools({ serverId: record.serverId }) as Tool[];
+  const resources = ctx.mcp.listResources({ serverId: record.serverId });
+  const prompts = ctx.mcp.listPrompts({ serverId: record.serverId });
+
+  return {
+    serverId: record.serverId,
+    uid: record.uid,
+    name: record.name,
+    url: record.url,
+    transport: record.transport,
+    state: connection
+      ? parseConnectionState(connection.connectionState)
+      : server?.auth_url ? "authenticating" : "not-connected",
+    authUrl: typeof server?.auth_url === "string" ? server.auth_url : null,
+    error: typeof connection?.connectionError === "string" ? connection.connectionError : null,
+    instructions: typeof connection?.instructions === "string" ? connection.instructions : null,
+    capabilities: isRecord(connection?.serverCapabilities) ? connection.serverCapabilities : null,
+    tools: tools.map(summarizeTool),
+    resourceCount: resources.length,
+    promptCount: prompts.length,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function summarizeTool(tool: Tool): SysMcpToolSummary {
+  return {
+    name: tool.name,
+    description: typeof tool.description === "string" ? tool.description : null,
+    inputSchema: isRecord(tool.inputSchema) ? tool.inputSchema : null,
+    outputSchema: isRecord(tool.outputSchema) ? tool.outputSchema : null,
+  };
+}
+
+function parseEffectiveUid(input: unknown, callerUid: number, action: string): number {
+  if (input !== undefined && input !== null) {
+    if (!Number.isInteger(input) || (input as number) < 0) {
+      throw new Error("uid must be a non-negative integer");
+    }
+    if (callerUid !== 0 && input !== callerUid) {
+      throw new Error(`Permission denied: cannot ${action} for another user`);
+    }
+    return input as number;
+  }
+  return callerUid;
+}
+
+function parseName(input: unknown): string {
+  if (typeof input !== "string") {
+    throw new Error("name is required");
+  }
+  const trimmed = input.trim();
+  if (trimmed.length === 0 || trimmed.length > 80) {
+    throw new Error("name must be 1-80 characters");
+  }
+  return trimmed;
+}
+
+function parseId(input: unknown, field: string): string {
+  if (typeof input !== "string" || input.trim().length === 0) {
+    throw new Error(`${field} is required`);
+  }
+  return input.trim();
+}
+
+function parseServerUrl(input: unknown): string {
+  if (typeof input !== "string") {
+    throw new Error("url is required");
+  }
+  const url = new URL(input);
+  if (!isSecureOrLoopbackUrl(url)) {
+    throw new Error("url must use https, except localhost development URLs");
+  }
+  return url.href;
+}
+
+function parseOptionalCallbackHost(input: unknown): string | undefined {
+  if (input === undefined || input === null || input === "") {
+    return undefined;
+  }
+  if (typeof input !== "string") {
+    throw new Error("callbackHost must be a URL origin");
+  }
+  const url = new URL(input);
+  if (url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("callbackHost must be a URL origin");
+  }
+  if (!isSecureOrLoopbackUrl(url)) {
+    throw new Error("callbackHost must use https, except localhost development URLs");
+  }
+  return url.origin;
+}
+
+function isSecureOrLoopbackUrl(url: URL): boolean {
+  if (url.protocol === "https:") {
+    return true;
+  }
+  return url.protocol === "http:" && (
+    url.hostname === "localhost"
+    || url.hostname === "127.0.0.1"
+    || url.hostname === "::1"
+    || url.hostname === "[::1]"
+  );
+}
+
+function parseTransport(input: unknown): McpAddConnectionInput["transport"] {
+  if (input === undefined || input === null) {
+    return { type: "auto" };
+  }
+  if (!isRecord(input)) {
+    throw new Error("transport must be an object");
+  }
+  const rawType = input.type;
+  const type = rawType === undefined ? "auto" : rawType;
+  if (typeof type !== "string" || !MCP_TRANSPORT_TYPES.has(type as SysMcpTransportType)) {
+    throw new Error("transport.type must be auto, streamable-http, or sse");
+  }
+  const headers = parseHeaders(input.headers);
+  return {
+    type: type as SysMcpTransportType,
+    ...(headers ? { headers } : {}),
+  };
+}
+
+function parseHeaders(input: unknown): Record<string, string> | undefined {
+  if (input === undefined || input === null) {
+    return undefined;
+  }
+  if (!isRecord(input)) {
+    throw new Error("transport.headers must be an object");
+  }
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value !== "string") {
+      throw new Error("transport.headers values must be strings");
+    }
+    headers[key] = value;
+  }
+  return headers;
+}
+
+function parseConnectionState(input: unknown): SysMcpConnectionState {
+  switch (input) {
+    case "authenticating":
+    case "connecting":
+    case "connected":
+    case "discovering":
+    case "ready":
+    case "failed":
+      return input;
+    default:
+      return "not-connected";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}

@@ -17,6 +17,8 @@ GSV assembles process context from explicit, inspectable sources:
 
 The skill index contains ids and descriptions only. It does not include full bodies or long source paths.
 
+Tool and integration metadata is not the same thing as prompt context. The outer chat tool list may show only generic tools such as Shell, Read, and CodeMode, while connected MCP servers are mounted inside CodeMode as `mcpTools` metadata and generated async functions. Do not conclude that an MCP server is unavailable just because there is no top-level tool namespace for it.
+
 ## Skill Commands
 
 Use the native shell:

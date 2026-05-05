@@ -334,6 +334,172 @@ export type SysWorkspaceListResult = {
   workspaces: SysWorkspaceSummary[];
 };
 
+export type SysOAuthConnectionKind = "ai-provider" | "mcp-server" | "generic";
+
+export type SysOAuthStartArgs = {
+  uid?: number;
+  kind: SysOAuthConnectionKind;
+  provider: string;
+  accountKey?: string;
+  label?: string;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  clientId: string;
+  redirectUri: string;
+  scope?: string;
+  resource?: string;
+  extraAuthParams?: Record<string, string>;
+};
+
+export type SysOAuthFlowSummary = {
+  flowId: string;
+  uid: number;
+  kind: SysOAuthConnectionKind;
+  provider: string;
+  accountKey: string;
+  label: string | null;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  clientId: string;
+  redirectUri: string;
+  scope: string | null;
+  resource: string | null;
+  createdAt: number;
+  expiresAt: number;
+};
+
+export type SysOAuthAccountSummary = {
+  accountId: string;
+  uid: number;
+  kind: SysOAuthConnectionKind;
+  provider: string;
+  accountKey: string;
+  label: string | null;
+  scope: string | null;
+  resource: string | null;
+  clientId: string;
+  tokenType: string;
+  expiresAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  lastUsedAt: number | null;
+  metadata: Record<string, unknown>;
+};
+
+export type SysOAuthStartResult = {
+  authorizationUrl: string;
+  flow: SysOAuthFlowSummary;
+};
+
+export type SysOAuthListArgs = {
+  uid?: number;
+  includePending?: boolean;
+};
+
+export type SysOAuthListResult = {
+  accounts: SysOAuthAccountSummary[];
+  flows?: SysOAuthFlowSummary[];
+};
+
+export type SysOAuthForgetArgs = {
+  accountId: string;
+  uid?: number;
+};
+
+export type SysOAuthForgetResult = {
+  forgotten: boolean;
+};
+
+export type SysMcpTransportType = "auto" | "streamable-http" | "sse";
+
+export type SysMcpConnectionState =
+  | "not-connected"
+  | "authenticating"
+  | "connecting"
+  | "connected"
+  | "discovering"
+  | "ready"
+  | "failed";
+
+export type SysMcpToolSummary = {
+  name: string;
+  description: string | null;
+  inputSchema: Record<string, unknown> | null;
+  outputSchema: Record<string, unknown> | null;
+};
+
+export type SysMcpServerSummary = {
+  serverId: string;
+  uid: number;
+  name: string;
+  url: string;
+  transport: SysMcpTransportType;
+  state: SysMcpConnectionState;
+  authUrl: string | null;
+  error: string | null;
+  instructions: string | null;
+  capabilities: Record<string, unknown> | null;
+  tools: SysMcpToolSummary[];
+  resourceCount: number;
+  promptCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SysMcpAddArgs = {
+  uid?: number;
+  name: string;
+  url: string;
+  callbackHost?: string;
+  transport?: {
+    type?: SysMcpTransportType;
+    headers?: Record<string, string>;
+  };
+};
+
+export type SysMcpAddResult = {
+  server: SysMcpServerSummary;
+};
+
+export type SysMcpListArgs = {
+  uid?: number;
+};
+
+export type SysMcpListResult = {
+  servers: SysMcpServerSummary[];
+};
+
+export type SysMcpRemoveArgs = {
+  uid?: number;
+  serverId: string;
+};
+
+export type SysMcpRemoveResult = {
+  removed: boolean;
+};
+
+export type SysMcpRefreshArgs = {
+  uid?: number;
+  serverId: string;
+};
+
+export type SysMcpRefreshResult = {
+  server: SysMcpServerSummary | null;
+};
+
+export type SysMcpCallArgs = {
+  uid?: number;
+  serverId: string;
+  name: string;
+  arguments?: Record<string, unknown>;
+};
+
+export type SysMcpCallResult = {
+  content?: unknown;
+  structuredContent?: unknown;
+  isError?: boolean;
+};
+
 export type SysTokenKind = "node" | "service" | "user";
 export type SysTokenRole = "driver" | "service" | "user";
 

@@ -301,13 +301,13 @@ those records while keeping `GsvFs` as the operational filesystem for live files
   - `history(path, limit?)`
   - `archiveSession(processId, sessionId, messages, summary?)`
 - [ ] Explicit boundary: repo-backed archives are NOT a replacement for `GsvFs`
-  - good fits: `CONSTITUTION.md`, `context.d/*`, memory notes, archived sessions, skills/app packages later
+  - good fits: `context.d/*`, memory notes, archived sessions, skills/app packages later
   - bad fits: `/sys`, `/proc`, `/dev`, auth/config runtime truth, active process state, scratch files
 - [ ] Repo granularity decision:
-  - one repo per user for home knowledge (`CONSTITUTION.md`, `context.d/`, memory notes)
+  - one repo per user for home knowledge (`context.d/`, memory notes)
   - separate repo per user for session archives if transcript volume/search churn warrants it
 - [ ] Keep semantic helpers above kernel primitives; do not add app-shaped syscall domains
-- [ ] Migrate prompt assembly from raw R2 `CONSTITUTION.md` + `context.d/*.md` reads to repo-backed retrieval
+- [ ] Migrate prompt assembly from raw R2 `context.d/*.md` reads to repo-backed retrieval
 - [ ] Migrate conversation archival from raw R2 gzip blobs to repo-backed archives
 - [ ] Expose archive retrieval as a context provider for long-context / recursive process retrieval
 - [ ] Optional later: read-only history mount for browsing archived knowledge (not write-through FS)
@@ -362,7 +362,7 @@ Kernel-internal process management. Not routable (no `target`).
 - [x] SQLite: `pending_tool_calls` + `process_meta` tables
 - [x] `registerToolCall` / `resolveToolCall` / `failToolCall` / `getToolResults`
 - [x] `dispatchSyscall` — send req to kernel, handle sync/async receipt
-- [x] Prompt assembly: system prompt (ConfigStore) + `~/CONSTITUTION.md` + `~/context.d/*.md`
+- [x] Prompt assembly: system prompt (ConfigStore) + `~/context.d/*.md`
 - [x] Response routing delegated to kernel `run_routes` (no process-local `lastInboundContext`)
 - [x] Agent loop: LLM call → tool dispatch → result collection → continue
 - [x] Export + bind in `wrangler.jsonc` / `index.ts`

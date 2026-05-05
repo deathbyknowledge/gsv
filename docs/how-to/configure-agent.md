@@ -54,7 +54,7 @@ gsv config set config/ai/profile/task/context.d/50-style.md \
 
 System and profile context can use runtime template variables such as
 `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`,
-`workspace`, `devices`, and `known_paths`.
+`workspace`, `devices`, `mcpServers`, and `known_paths`.
 
 ## Add Home and Workspace Context
 
@@ -87,7 +87,7 @@ Example policy:
 
 ```bash
 gsv config set config/ai/profile/task/tools/approval \
-  '{"default":"auto","rules":[{"match":"shell.exec","action":"ask"},{"match":"fs.delete","action":"ask"},{"match":"fs.*","when":{"target":"device"},"action":"ask"}]}'
+  '{"default":"auto","rules":[{"match":"shell.exec","action":"ask"},{"match":"fs.delete","action":"ask"},{"match":"sys.mcp.call","action":"ask"},{"match":"fs.*","when":{"target":"device"},"action":"ask"}]}'
 ```
 
 Rules match exact syscalls or domain wildcards such as `fs.*`. Conditions can

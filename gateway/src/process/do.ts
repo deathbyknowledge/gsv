@@ -128,7 +128,10 @@ import {
 } from "../syscalls/constants";
 import { RipgitClient } from "../fs/ripgit/client";
 import { workspaceRepoRef } from "../fs/ripgit/repos";
-import { executeCodeMode } from "./codemode";
+import {
+  buildCodeModeMcpToolBindings,
+  executeCodeMode,
+} from "./codemode";
 import {
   DEFAULT_CONVERSATION_ID,
   normalizeConversationId,
@@ -143,6 +146,7 @@ type RunState = {
   config?: AiConfigResult;
   tools?: ToolDefinition[];
   devices?: AiToolsDevice[];
+  mcpServers?: string[];
   systemPrompt?: string;
   approvalPolicy?: ToolApprovalPolicy;
 };
@@ -2079,6 +2083,7 @@ export class Process extends Host<Env> {
       }
       run.tools = toolsResult.tools;
       run.devices = toolsResult.devices;
+      run.mcpServers = toolsResult.mcpServers ?? [];
 
       this.currentRun = run;
     }
@@ -2091,6 +2096,7 @@ export class Process extends Host<Env> {
         purpose: "chat.reply",
         identity: this.identity,
         devices: run.devices ?? [],
+        mcpServers: run.mcpServers ?? [],
         processContextFiles: this.store.getProcessContextFiles(),
         storage: this.env.STORAGE,
         ripgit: this.ripgit,
@@ -3002,6 +3008,7 @@ export class Process extends Host<Env> {
           defaultCwd: normalizeOptionalString(args.cwd),
           argv: normalizeStringArray(args.argv),
           args: args.args ?? null,
+          mcpToolBindings: await this.getCodeModeMcpToolBindings(),
         },
       );
     } catch (error) {
@@ -3048,6 +3055,9 @@ export class Process extends Host<Env> {
           toolArgs,
           approvalPolicy,
         ),
+        {
+          mcpToolBindings: await this.getCodeModeMcpToolBindings(),
+        },
       );
       this.store.resolve(toolCallId, result);
     } catch (error) {
@@ -3055,6 +3065,15 @@ export class Process extends Host<Env> {
         status: "failed",
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  private async getCodeModeMcpToolBindings() {
+    try {
+      const result = await this.kernelRpc("sys.mcp.list", {});
+      return buildCodeModeMcpToolBindings(result.servers);
+    } catch {
+      return [];
     }
   }
 

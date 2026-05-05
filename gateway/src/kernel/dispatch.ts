@@ -71,6 +71,18 @@ import {
   handleSysTokenRevoke,
 } from "./sys/token";
 import {
+  handleSysOAuthForget,
+  handleSysOAuthList,
+  handleSysOAuthStart,
+} from "./sys/oauth";
+import {
+  handleSysMcpAdd,
+  handleSysMcpCall,
+  handleSysMcpList,
+  handleSysMcpRefresh,
+  handleSysMcpRemove,
+} from "./sys/mcp";
+import {
   handleSysLink,
   handleSysLinkConsume,
   handleSysLinkList,
@@ -366,6 +378,30 @@ async function dispatchNative(
         break;
       case "sys.workspace.list":
         data = handleSysWorkspaceList(frame.args, ctx);
+        break;
+      case "sys.oauth.start":
+        data = await handleSysOAuthStart(frame.args, ctx);
+        break;
+      case "sys.oauth.list":
+        data = handleSysOAuthList(frame.args, ctx);
+        break;
+      case "sys.oauth.forget":
+        data = handleSysOAuthForget(frame.args, ctx);
+        break;
+      case "sys.mcp.add":
+        data = await handleSysMcpAdd(frame.args, ctx);
+        break;
+      case "sys.mcp.list":
+        data = handleSysMcpList(frame.args, ctx);
+        break;
+      case "sys.mcp.remove":
+        data = await handleSysMcpRemove(frame.args, ctx);
+        break;
+      case "sys.mcp.refresh":
+        data = await handleSysMcpRefresh(frame.args, ctx);
+        break;
+      case "sys.mcp.call":
+        data = await handleSysMcpCall(frame.args, ctx);
         break;
       case "sys.token.create":
         data = await handleSysTokenCreate(frame.args, ctx);

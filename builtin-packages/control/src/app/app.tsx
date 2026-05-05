@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import { AdvancedPanel } from "./advanced-panel";
 import { AccessPanel } from "./access-panel";
 import { ConfigPanel } from "./config-panel";
+import { McpPanel } from "./mcp-panel";
 import { Tabs } from "./tabs";
 import type {
+  AddMcpServerArgs,
   ControlBackend,
   ControlConfigSectionId,
   ControlCreatedToken,
@@ -24,6 +26,7 @@ export function App({ backend }: AppProps) {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [issuedToken, setIssuedToken] = useState<ControlCreatedToken | null>(null);
+  const [selectedMcpServerId, setSelectedMcpServerId] = useState<string | null>(null);
 
   const updateRoute = useCallback((nextTab: ControlTabId, nextSection: ControlConfigSectionId = activeConfigSection) => {
     const url = new URL(window.location.href);
@@ -149,6 +152,61 @@ export function App({ backend }: AppProps) {
       );
     }
 
+    if (activeTab === "mcp") {
+      return (
+        <McpPanel
+          servers={state.mcpServers}
+          selectedServerId={selectedMcpServerId}
+          pendingAction={pendingAction}
+          onSelectServer={setSelectedMcpServerId}
+          onAddServer={async (args: AddMcpServerArgs) => {
+            setIssuedToken(null);
+            setPendingAction("mcp:add");
+            try {
+              const result = await backend.addMcpServer(args);
+              setState(result.state);
+              setSelectedMcpServerId(result.server?.serverId ?? null);
+              setError(null);
+              return result.server;
+            } catch (cause) {
+              setError(formatError(cause));
+              throw cause;
+            } finally {
+              setPendingAction(null);
+            }
+          }}
+          onRefreshServer={async (serverId) => {
+            setIssuedToken(null);
+            setPendingAction(`mcp:refresh:${serverId}`);
+            try {
+              const result = await backend.refreshMcpServer({ serverId });
+              setState(result.state);
+              setSelectedMcpServerId(result.server?.serverId ?? serverId);
+              setError(null);
+            } catch (cause) {
+              setError(formatError(cause));
+            } finally {
+              setPendingAction(null);
+            }
+          }}
+          onRemoveServer={async (serverId) => {
+            setIssuedToken(null);
+            setPendingAction(`mcp:remove:${serverId}`);
+            try {
+              const nextState = await backend.removeMcpServer({ serverId });
+              setState(nextState);
+              setSelectedMcpServerId(null);
+              setError(null);
+            } catch (cause) {
+              setError(formatError(cause));
+            } finally {
+              setPendingAction(null);
+            }
+          }}
+        />
+      );
+    }
+
     return (
       <AdvancedPanel
         entries={state.configEntries}
@@ -161,14 +219,14 @@ export function App({ backend }: AppProps) {
         onClientError={setError}
       />
     );
-  }, [activeConfigSection, activeTab, backend, issuedToken, pendingAction, runStateAction, state, updateConfigSection]);
+  }, [activeConfigSection, activeTab, backend, issuedToken, pendingAction, runStateAction, selectedMcpServerId, state, updateConfigSection]);
 
   return (
     <div class="control-app">
       <header class="control-toolbar">
         <div>
           <h1>Control</h1>
-          <p>System settings, runtime profiles, access tokens, and identity links.</p>
+          <p>System settings, runtime profiles, access tokens, identity links, and MCP servers.</p>
         </div>
         <div class="control-toolbar-actions">
           <button class="control-button" disabled={pendingAction === "load-state"} onClick={() => void refresh()}>
@@ -185,7 +243,7 @@ export function App({ backend }: AppProps) {
 
 function readTabFromLocation(): ControlTabId {
   const value = new URL(window.location.href).searchParams.get("tab");
-  return value === "access" || value === "advanced" ? value : "config";
+  return value === "access" || value === "mcp" || value === "advanced" ? value : "config";
 }
 
 function readSectionFromLocation(): ControlConfigSectionId {

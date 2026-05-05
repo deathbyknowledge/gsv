@@ -68,7 +68,7 @@ this order:
 
 Each section is rendered as `[section.name]` and separated with `---`. System
 and profile context can template values such as `identity.username`, `identity.cwd`,
-`workspace`, `devices`, and `known_paths`. Home and workspace context are loaded
+`workspace`, `devices`, `mcpServers`, and `known_paths`. Home and workspace context are loaded
 lexically and bounded by `config/ai/max_context_bytes`.
 
 Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,
@@ -86,8 +86,17 @@ cached in `currentRun` for the duration of that run.
 ## Model and Tool Cycle
 
 Each tick builds a `pi-ai` context from the system prompt, stored messages, and
-available tools. The process calls the configured generation service with
-`sessionAffinityKey` set to the PID.
+available tools. MCP tools are not expanded into the direct model tool surface;
+processes use them intentionally through CodeMode's generated async functions
+or the native shell `mcp` command, both of which dispatch back through
+`sys.mcp.*`. When ready MCP tools expose schemas, CodeMode includes generated
+TypeScript declarations in its tool description so agents can see input and
+structured output shapes before writing code. Generated functions unwrap MCP
+result envelopes inside CodeMode, while the underlying syscall path still
+preserves the raw MCP response for shell and low-level callers.
+
+The process calls the configured generation service with `sessionAffinityKey`
+set to the PID.
 
 The model response can contain text, thinking blocks, and tool calls:
 
@@ -100,8 +109,14 @@ The model response can contain text, thinking blocks, and tool calls:
   each allowed call as a syscall frame.
 
 Only syscall-backed tools are exposed to the model. Current agent-visible tool
-names are `Read`, `Write`, `Edit`, `Delete`, `Search`, and `Shell`; they map to
-`fs.read`, `fs.write`, `fs.edit`, `fs.delete`, `fs.search`, and `shell.exec`.
+names are `Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`, and `CodeMode`;
+they map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, `fs.search`,
+`shell.exec`, and `codemode.exec`.
+
+`CodeMode` remains the programmable tool for multi-step orchestration. It can
+call `fs.*`, `shell.exec`, and connected MCP tools as generated async
+functions.
+
 Routable tools require a `target`. `target: "gsv"` runs the native Kernel
 implementation; a device id routes the same syscall to that connected device.
 
@@ -136,6 +151,7 @@ defaults to:
 - Auto-allow most tools.
 - Ask before `shell.exec`.
 - Ask before `fs.delete`.
+- Ask before `sys.mcp.call`.
 
 Rules can match exact syscalls or wildcard domains and can inspect facts such as
 profile, target type, tags, paths, commands, and argument prefixes. The approval

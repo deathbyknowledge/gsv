@@ -120,6 +120,66 @@ type ConnectionIdentity =
   | { role: "driver"; process: ProcessIdentity; capabilities: string[]; device: string; implements: string[] }
   | { role: "service"; process: ProcessIdentity; capabilities: string[]; channel: string };
 
+type OAuthConnectionKind = "ai-provider" | "mcp-server" | "generic";
+type OAuthFlowSummary = {
+  flowId: string;
+  uid: number;
+  kind: OAuthConnectionKind;
+  provider: string;
+  accountKey: string;
+  label: string | null;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  clientId: string;
+  redirectUri: string;
+  scope: string | null;
+  resource: string | null;
+  createdAt: number;
+  expiresAt: number;
+};
+type OAuthAccountSummary = {
+  accountId: string;
+  uid: number;
+  kind: OAuthConnectionKind;
+  provider: string;
+  accountKey: string;
+  label: string | null;
+  scope: string | null;
+  resource: string | null;
+  clientId: string;
+  tokenType: string;
+  expiresAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  lastUsedAt: number | null;
+  metadata: Record<string, unknown>;
+};
+type McpTransportType = "auto" | "streamable-http" | "sse";
+type McpConnectionState = "not-connected" | "authenticating" | "connecting" | "connected" | "discovering" | "ready" | "failed";
+type McpToolSummary = {
+  name: string;
+  description: string | null;
+  inputSchema: Record<string, unknown> | null;
+  outputSchema: Record<string, unknown> | null;
+};
+type McpServerSummary = {
+  serverId: string;
+  uid: number;
+  name: string;
+  url: string;
+  transport: McpTransportType;
+  state: McpConnectionState;
+  authUrl: string | null;
+  error: string | null;
+  instructions: string | null;
+  capabilities: Record<string, unknown> | null;
+  tools: McpToolSummary[];
+  resourceCount: number;
+  promptCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
 type OnboardingDraft = {
   lane: "quick" | "customize" | "advanced";
   mode: "manual" | "guided";
@@ -243,7 +303,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env, builtin commands such as `pkg`, `codemode`, and `notify`, and installed package CLI commands such as `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env, builtin commands such as `pkg`, `codemode`, `mcp`, and `notify`, and installed package CLI commands such as `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
 
 ```ts
 type ShellSyscalls = {
@@ -310,24 +370,25 @@ Worker Loader executor, but is not exposed as a model tool.
 Kernel dispatcher and is not itself device-routed. `codemode.run` is public and
 kernel-forwarded to a process, defaulting to the caller's init process. In both
 cases, the sandboxed block receives wrappers for the existing filesystem and
-shell tools:
+shell tools, plus generated async functions for connected MCP tools:
 
 ```ts
 const res = await shell("npm test", { target: "macbook", cwd: "~/projects/gsv" });
 const file = await fs.read({ target: "macbook", path: "package.json" });
+const toolResult = await lookup_record({ query: "gsv" });
 ```
 
 Nested tool calls are dispatched back through the Process DO and Kernel as
-ordinary `shell.exec` and `fs.*` request frames. They keep the same capability,
-approval, target routing, async device response, and shell session behavior as
-direct model tool calls.
+ordinary `shell.exec`, `fs.*`, and `sys.mcp.*` request frames. They keep the
+same capability, approval, target routing, async device response, and shell
+session behavior as direct model tool calls.
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)` plus `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, and `fs.search`. Returns a structured `completed` or `failed` CodeMode result. |
-| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec` and `fs.*` syscalls. |
+| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
+| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, and `sys.mcp.*` syscalls. |
 
 ```ts
 type CodeModeSyscalls = {
@@ -370,8 +431,19 @@ statement:
 ```js
 const pwd = await shell("pwd");
 const packageJson = await fs.read({ path: "package.json" });
-return { pwd: pwd.output, packageJson: packageJson.content };
+const found = await lookup_record({ query: "gsv" });
+return { pwd: pwd.output, packageJson: packageJson.content, found };
 ```
+
+Connected MCP tools are generated as direct async functions. A unique MCP tool
+name such as `lookup-record` becomes `lookup_record(args)`, and a
+server-qualified alias such as `Search_lookup_record(args)` is also generated
+for clarity and collision handling. The `CodeMode` tool description includes
+generated TypeScript declarations for ready MCP tools when their schemas are
+known. `mcpTools` lists the generated function names, server ids, original tool
+names, input schemas, and output schemas. Generated functions unwrap MCP result
+envelopes: structured content is returned directly, text-only content is parsed
+as JSON when possible or returned as a string, and MCP tool errors throw.
 
 Inside manual CodeMode runs, `argv` contains positional arguments after `--` and
 `args` contains values from `--arg key=value` or `--args-json`.
@@ -840,6 +912,14 @@ Runtime behavior:
 | `sys.device.get` | `handleSysDeviceGet` | Reads one device descriptor. Missing or inaccessible devices return `device: null` rather than a permission error. |
 | `sys.device.update` | `handleSysDeviceUpdate` | Updates owner-managed device metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible devices return `device: null`. |
 | `sys.workspace.list` | `handleSysWorkspaceList` | Lists workspaces for caller uid by default. Root may request any uid; non-root may only request self. Adds active process summary and process count. |
+| `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
+| `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
+| `sys.oauth.forget` | `handleSysOAuthForget` | Deletes a stored OAuth account. Non-root can delete only own accounts. Missing or inaccessible accounts return `forgotten: false`. |
+| `sys.mcp.add` | `handleSysMcpAdd` | Connects a user-owned HTTP MCP server through the Kernel MCP client manager. Server URLs and callback hosts must use HTTPS except localhost development URLs. Returns the server summary, including `authUrl` when OAuth sign-in is required. Uses `/oauth/callback` and client metadata when possible. Non-root is scoped to self. |
+| `sys.mcp.list` | `handleSysMcpList` | Lists caller-owned MCP servers with connection state, OAuth URL, discovered tools, resource count, and prompt count. Root may pass `uid`; non-root is scoped to self. |
+| `sys.mcp.remove` | `handleSysMcpRemove` | Removes a caller-owned MCP server from GSV ownership metadata and the underlying MCP client manager. Missing or inaccessible servers return `removed: false`. |
+| `sys.mcp.refresh` | `handleSysMcpRefresh` | Reconnects and rediscovers a caller-owned MCP server when possible. Returns the latest summary or `server: null` when inaccessible. |
+| `sys.mcp.call` | `handleSysMcpCall` | Calls a tool on a caller-owned MCP server. Generated CodeMode MCP functions and the native shell `mcp call` command use this path. Native `mcp status/tools/describe/search/codemode` provide discovery around the same summaries returned by `sys.mcp.list`. |
 | `sys.token.create` | `handleSysTokenCreate` | Creates a hashed node, service, or user token. Root may target any uid. Role defaults must match token kind; driver/node tokens may bind to `allowedDeviceId`. Raw token is returned only once. |
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
 | `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
@@ -849,6 +929,16 @@ Runtime behavior:
 | `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
 
 `sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
+
+OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
+Gateway forwards that route to the Kernel, where the inherited Agent MCP client
+manager gets first chance to consume MCP OAuth callbacks before the generic
+`sys.oauth.*` callback handler runs. `sys.oauth.start` callers must pass the
+exact redirect URI they registered with the remote provider, normally
+`https://<gsv-origin>/oauth/callback`. The Gateway also serves client metadata
+at `/.well-known/oauth-client/gsv.json` for providers that accept client
+metadata URLs; in those cases the `clientId` can be that metadata URL, and the
+metadata document advertises the same URL as its `client_id`.
 
 ```ts
 type SystemSyscalls = {
@@ -902,6 +992,46 @@ type SystemSyscalls = {
     result: { workspaces: Array<{ workspaceId: string; ownerUid: number; label: string | null; kind: "thread" | "app" | "shared"; state: "active" | "archived"; createdAt: number; updatedAt: number; defaultBranch: string; headCommit: string | null; activeProcess: { pid: string; label: string | null; cwd: string; createdAt: number } | null; processCount: number }> };
   };
 
+  "sys.oauth.start": {
+    args: { uid?: number; kind: OAuthConnectionKind; provider: string; accountKey?: string; label?: string; authorizationEndpoint: string; tokenEndpoint: string; clientId: string; redirectUri: string; scope?: string; resource?: string; extraAuthParams?: Record<string, string> };
+    result: { authorizationUrl: string; flow: OAuthFlowSummary };
+  };
+
+  "sys.oauth.list": {
+    args: { uid?: number; includePending?: boolean };
+    result: { accounts: OAuthAccountSummary[]; flows?: OAuthFlowSummary[] };
+  };
+
+  "sys.oauth.forget": {
+    args: { accountId: string; uid?: number };
+    result: { forgotten: boolean };
+  };
+
+  "sys.mcp.add": {
+    args: { uid?: number; name: string; url: string; callbackHost?: string; transport?: { type?: McpTransportType; headers?: Record<string, string> } };
+    result: { server: McpServerSummary };
+  };
+
+  "sys.mcp.list": {
+    args: { uid?: number };
+    result: { servers: McpServerSummary[] };
+  };
+
+  "sys.mcp.remove": {
+    args: { uid?: number; serverId: string };
+    result: { removed: boolean };
+  };
+
+  "sys.mcp.refresh": {
+    args: { uid?: number; serverId: string };
+    result: { server: McpServerSummary | null };
+  };
+
+  "sys.mcp.call": {
+    args: { uid?: number; serverId: string; name: string; arguments?: Record<string, unknown> };
+    result: { content?: unknown; structuredContent?: unknown; isError?: boolean };
+  };
+
   "sys.token.create": {
     args: { uid?: number; kind: "node" | "service" | "user"; label?: string; allowedRole?: "driver" | "service" | "user"; allowedDeviceId?: string; expiresAt?: number };
     result: { token: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node" | "service" | "user"; label: string | null; allowedRole: "driver" | "service" | "user" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
@@ -947,7 +1077,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. |
+| `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
 | `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
 
 External callers cannot normally invoke `ai.*`; these syscalls are exposed to process-originated calls.

@@ -136,6 +136,22 @@ import type {
   SysDeviceUpdateResult,
   SysWorkspaceListArgs,
   SysWorkspaceListResult,
+  SysOAuthStartArgs,
+  SysOAuthStartResult,
+  SysOAuthListArgs,
+  SysOAuthListResult,
+  SysOAuthForgetArgs,
+  SysOAuthForgetResult,
+  SysMcpAddArgs,
+  SysMcpAddResult,
+  SysMcpCallArgs,
+  SysMcpCallResult,
+  SysMcpListArgs,
+  SysMcpListResult,
+  SysMcpRefreshArgs,
+  SysMcpRefreshResult,
+  SysMcpRemoveArgs,
+  SysMcpRemoveResult,
   SysTokenCreateArgs,
   SysTokenCreateResult,
   SysTokenListArgs,
@@ -285,6 +301,14 @@ export type SyscallDomains = {
   "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
   "sys.device.update": { args: SysDeviceUpdateArgs; result: SysDeviceUpdateResult };
   "sys.workspace.list": { args: SysWorkspaceListArgs; result: SysWorkspaceListResult };
+  "sys.oauth.start": { args: SysOAuthStartArgs; result: SysOAuthStartResult };
+  "sys.oauth.list": { args: SysOAuthListArgs; result: SysOAuthListResult };
+  "sys.oauth.forget": { args: SysOAuthForgetArgs; result: SysOAuthForgetResult };
+  "sys.mcp.add": { args: SysMcpAddArgs; result: SysMcpAddResult };
+  "sys.mcp.list": { args: SysMcpListArgs; result: SysMcpListResult };
+  "sys.mcp.remove": { args: SysMcpRemoveArgs; result: SysMcpRemoveResult };
+  "sys.mcp.refresh": { args: SysMcpRefreshArgs; result: SysMcpRefreshResult };
+  "sys.mcp.call": { args: SysMcpCallArgs; result: SysMcpCallResult };
   "sys.token.create": { args: SysTokenCreateArgs; result: SysTokenCreateResult };
   "sys.token.list": { args: SysTokenListArgs; result: SysTokenListResult };
   "sys.token.revoke": { args: SysTokenRevokeArgs; result: SysTokenRevokeResult };

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { executeCodeMode } from "./codemode";
+import { buildCodeModeMcpTypeDeclarations } from "../codemode/mcp";
+import {
+  buildCodeModeMcpToolBindings,
+  executeCodeMode,
+} from "./codemode";
 
 describe("CodeMode executor", () => {
   it("runs with the Worker Loader binding and exposes shell and fs wrappers", async () => {
@@ -94,6 +98,169 @@ describe("CodeMode executor", () => {
         args: { mode: "check" },
       },
     });
+  });
+
+  it("exposes connected MCP tools as direct CodeMode functions", async () => {
+    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const mcpToolBindings = buildCodeModeMcpToolBindings([
+      {
+        serverId: "server-1",
+        uid: 1000,
+        name: "Search",
+        url: "https://mcp.example.com/mcp",
+        transport: "auto",
+        state: "ready",
+        authUrl: null,
+        error: null,
+        instructions: null,
+        capabilities: null,
+        tools: [{
+          name: "lookup-record",
+          description: "Lookup a record",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string" },
+            },
+            required: ["query"],
+          },
+          outputSchema: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+            },
+            required: ["title"],
+          },
+        }],
+        resourceCount: 0,
+        promptCount: 0,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ]);
+    const result = await executeCodeMode(
+      env,
+      `
+        const shortResult = await lookup_record({ query: "gsv" });
+        const qualifiedResult = await Search_lookup_record({ query: "gsv" });
+        return { mcpTools, shortResult, qualifiedResult };
+      `,
+      async (call, args) => {
+        calls.push({ call, args });
+        if (call === "sys.mcp.call") {
+          return { structuredContent: { title: "GSV" } };
+        }
+        throw new Error(`unexpected call: ${call}`);
+      },
+      { mcpToolBindings },
+    );
+
+    expect(calls).toEqual([
+      {
+        call: "sys.mcp.call",
+        args: {
+          serverId: "server-1",
+          name: "lookup-record",
+          arguments: { query: "gsv" },
+        },
+      },
+      {
+        call: "sys.mcp.call",
+        args: {
+          serverId: "server-1",
+          name: "lookup-record",
+          arguments: { query: "gsv" },
+        },
+      },
+    ]);
+    expect(result).toEqual({
+      status: "completed",
+      result: {
+        mcpTools: [
+          {
+            functionName: "lookup_record",
+            serverId: "server-1",
+            serverName: "Search",
+            toolName: "lookup-record",
+            description: "Lookup a record",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: { type: "string" },
+              },
+              required: ["query"],
+            },
+            outputSchema: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+              },
+              required: ["title"],
+            },
+          },
+          {
+            functionName: "Search_lookup_record",
+            serverId: "server-1",
+            serverName: "Search",
+            toolName: "lookup-record",
+            description: "Lookup a record",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: { type: "string" },
+              },
+              required: ["query"],
+            },
+            outputSchema: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+              },
+              required: ["title"],
+            },
+          },
+        ],
+        shortResult: { title: "GSV" },
+        qualifiedResult: { title: "GSV" },
+      },
+    });
+  });
+
+  it("generates TypeScript declarations for connected MCP functions", () => {
+    const bindings = buildCodeModeMcpToolBindings([
+      {
+        serverId: "server-1",
+        name: "Search",
+        state: "ready",
+        tools: [{
+          name: "lookup-record",
+          description: "Lookup a record",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string" },
+            },
+            required: ["query"],
+          },
+          outputSchema: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+            },
+            required: ["title"],
+          },
+        }],
+      },
+    ]);
+
+    const declarations = buildCodeModeMcpTypeDeclarations(bindings);
+
+    expect(declarations).toContain("type LookupRecordInput");
+    expect(declarations).toContain("query: string");
+    expect(declarations).toContain("type LookupRecordOutput");
+    expect(declarations).toContain("title: string");
+    expect(declarations).toContain("declare function lookup_record(input: LookupRecordInput): Promise<LookupRecordOutput>;");
+    expect(declarations).toContain("declare function Search_lookup_record(input: SearchLookupRecordInput): Promise<SearchLookupRecordOutput>;");
   });
 
   it("does not prepend default cwd to Windows absolute fs paths", async () => {

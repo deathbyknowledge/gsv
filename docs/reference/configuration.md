@@ -77,7 +77,7 @@ config/ai/context.d/10-runtime.md
 config/ai/profile/task/context.d/00-role.md
 ```
 
-System and profile context support runtime template variables such as `profile`, `identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`, `workspace`, `devices`, and `known_paths`.
+System and profile context support runtime template variables such as `profile`, `identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`, `workspace`, `devices`, `mcpServers`, and `known_paths`.
 
 ## Tool Approval Policy
 
@@ -94,6 +94,7 @@ Policy shape:
   "default": "auto",
   "rules": [
     { "match": "shell.exec", "action": "ask" },
+    { "match": "sys.mcp.call", "action": "ask" },
     { "match": "fs.delete", "action": "deny" },
     { "match": "fs.*", "when": { "target": "device" }, "action": "ask" }
   ]
@@ -106,8 +107,8 @@ Default policies:
 
 | Profiles | Default | Rules |
 |---|---|---|
-| `init`, `task`, `review`, `app`, `mcp` | `auto` | Ask for `shell.exec` and `fs.delete`. |
-| `cron` | `auto` | Deny `fs.delete`; allow `shell.exec`. |
+| `init`, `task`, `review`, `app`, `mcp` | `auto` | Ask for `shell.exec`, `fs.delete`, and `sys.mcp.call`. |
+| `cron` | `auto` | Deny `fs.delete` and `sys.mcp.call`; allow `shell.exec`. |
 
 ## Runtime Config Keys
 

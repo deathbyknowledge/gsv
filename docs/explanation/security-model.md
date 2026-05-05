@@ -53,6 +53,13 @@ configuration lives in Kernel SQLite under `config/...` and `users/{uid}/...`.
 Sensitive config names such as `api_key`, `secret`, `token`, and `password` are
 filtered from non-root config reads.
 
+OAuth account credentials live in Kernel SQLite, separate from runtime config.
+The public syscall surface exposes account summaries only; access tokens,
+refresh tokens, and PKCE verifiers are not returned by `sys.oauth.*`. MCP server
+tokens are managed by the Kernel Agent MCP client manager; GSV keeps separate
+user ownership metadata so MCP listing and tool calls are scoped before
+CodeMode or shell can use them.
+
 Agent processes receive the AI runtime configuration they need to call the
 selected model provider, including the resolved provider key. That key is used
 by the process runtime; it is not sent to CLI devices as part of normal device
@@ -70,7 +77,7 @@ Default groups are intentionally OS-like:
 
 - `root` (`gid 0`) receives `*`.
 - `users` (`gid 100`) receives broad user capabilities, including filesystem,
-  shell, process, package, repository, adapter status/connect, token,
+  shell, process, package, repository, adapter status/connect, OAuth, token,
   workspace, and config syscalls.
 - `drivers` (`gid 101`) receives `fs.*` and `shell.*` for device execution.
 - `services` (`gid 102`) receives `adapter.*`.
@@ -98,8 +105,8 @@ smallest useful directory.
 
 Tool approval is a policy layer, not an isolation layer. Profiles can auto,
 deny, or ask for matching syscalls. The default interactive policy asks for
-`shell.exec` and `fs.delete`; non-interactive profiles cannot pause for human
-approval.
+`shell.exec`, `fs.delete`, and `sys.mcp.call`; non-interactive profiles cannot
+pause for human approval.
 
 ## Devices
 

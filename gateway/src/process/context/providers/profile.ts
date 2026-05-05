@@ -51,6 +51,7 @@ function renderContextTemplate(
       workspaceId: string | null;
     };
     devices: Array<{ id: string; implements: string[]; description?: string; platform?: string }>;
+    mcpServers: string[];
   },
 ): string {
   const values = new Map<string, string>([
@@ -63,6 +64,7 @@ function renderContextTemplate(
     ["identity.workspaceId", input.identity.workspaceId ?? ""],
     ["workspace", input.identity.workspaceId ? `/workspaces/${input.identity.workspaceId}` : "(none)"],
     ["devices", formatDevices(input.devices)],
+    ["mcpServers", formatMcpServers(input.mcpServers)],
     ["known_paths", formatKnownPaths(input.identity.home)],
   ]);
 
@@ -96,6 +98,16 @@ function formatDevices(
       }),
   ];
   return lines.join("\n");
+}
+
+function formatMcpServers(mcpServers: string[]): string {
+  if (mcpServers.length === 0) {
+    return "- (none)";
+  }
+  return [...new Set(mcpServers)]
+    .sort((left, right) => left.localeCompare(right))
+    .map((name) => `- ${name}`)
+    .join("\n");
 }
 
 function formatKnownPaths(home: string): string {

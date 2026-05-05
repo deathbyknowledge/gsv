@@ -261,7 +261,6 @@ Keep the distinction sharp.
 
 Home:
 
-- `~/CONSTITUTION.md`
 - `~/context.d/`
 - `~/memory/`
 
@@ -282,7 +281,6 @@ The current shape is:
    - resolved from `/sys/config/ai/profile/{profile}/system_prompt`
    - user overrides can live under `/sys/users/{uid}/ai/profile/{profile}/system_prompt`
 3. home knowledge
-   - `~/CONSTITUTION.md`
    - `~/context.d/*.md`
 4. workspace summary
    - `/workspaces/{id}/.gsv/summary.md`

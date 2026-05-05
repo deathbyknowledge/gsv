@@ -13,6 +13,7 @@ description: Guide on which GSV command surface to use for a task and when to us
 4. Use `skills show <skill>` before a nontrivial reusable workflow.
 5. Use host `gsv ...` commands only when operating from a connected machine, deployment environment, or user instruction.
 6. Use a device target only when data or execution must happen on that external machine.
+7. Do not treat the outer chat tool list as the full integration inventory. Connected MCP servers may only be visible inside CodeMode.
 
 Do not confuse the native `skills` command with a host `gsv skills` command. Skills are read inside the Gateway shell with `skills list`, `skills search`, `skills show`, `skills files`, and `skills read`.
 
@@ -29,7 +30,8 @@ Core commands:
 - `sched ...`: manage kernel schedules.
 - `notify ...`: send and manage user notifications.
 - `wiki ...`: manage durable knowledge when the Wiki package is installed.
-- `codemode ...`: run JavaScript tool scripts that can call `shell(...)` and `fs.*`.
+- `codemode ...`: run JavaScript tool scripts that can call `shell(...)`, `fs.*`, and connected MCP tools.
+- `mcp ...`: inspect status/tools/schemas, print CodeMode examples, refresh, and call connected MCP servers from the native shell.
 
 Useful references:
 
@@ -41,6 +43,30 @@ man sched
 man skills
 man notify
 man codemode
+man mcp
+```
+
+## CodeMode and MCP Tools
+
+CodeMode is process-local and can expose integrations that are not listed as top-level chat tools.
+When a task asks about MCP servers, external apps, or integrations:
+
+1. Check CodeMode before concluding an integration is unavailable.
+2. Inspect `mcpTools` for server names, tool names, schemas, and generated function names.
+3. Call generated async functions directly when available.
+4. Use the native shell `mcp status`, `mcp tools`, `mcp describe`, `mcp search`, `mcp codemode`, `mcp refresh`, and `mcp call` commands for discovery, server management, or manual calls.
+
+Discovery example:
+
+```js
+return {
+  servers: [...new Set(Object.values(mcpTools || {}).map((tool) => tool.serverName))],
+  tools: Object.values(mcpTools || {}).map((tool) => ({
+    serverName: tool.serverName,
+    functionName: tool.functionName,
+    toolName: tool.toolName,
+  })),
+};
 ```
 
 ## Package Commands

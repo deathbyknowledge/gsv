@@ -4,6 +4,10 @@ import {
   Agent as Host,
   type WSMessage,
 } from "agents";
+import {
+  DurableObjectOAuthClientProvider,
+  type AgentMcpOAuthProvider,
+} from "agents/mcp/do-oauth-client-provider";
 import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protocol/frames";
 import type {
   ConnectionIdentity,
@@ -25,6 +29,8 @@ import { ProcessRegistry } from "./processes";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { WorkspaceStore } from "./workspaces";
+import { OAuthStore } from "./oauth-store";
+import { McpServerStore } from "./mcp-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
 import { NotificationStore } from "./notifications";
 import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
@@ -47,6 +53,17 @@ import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
+import {
+  completeOAuthCallback as completeOAuthCallbackFlow,
+  type OAuthCallbackInput,
+  type OAuthCallbackResult,
+} from "./sys/oauth";
+import {
+  canRediscoverMcpConnectionState,
+  type McpAddConnectionInput,
+  type McpAddConnectionResult,
+} from "./sys/mcp";
+import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
   resolveAdapterServiceForKernel,
@@ -186,6 +203,8 @@ export class Kernel extends Host<Env> {
   private readonly schedules: ScheduleStore;
   private readonly appSessions: AppSessionStore;
   private readonly packages: PackageStore;
+  private readonly oauth: OAuthStore;
+  private readonly mcpServers: McpServerStore;
   private readonly ready: Promise<void>;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
@@ -243,9 +262,109 @@ export class Kernel extends Host<Env> {
 
     this.packages = new PackageStore(sql, env.STORAGE);
     this.packages.init();
+
+    this.oauth = new OAuthStore(sql);
+    this.oauth.init();
+
+    this.mcpServers = new McpServerStore(sql);
+    this.mcpServers.init();
+    this.mcp.configureOAuthCallback({
+      customHandler: (result) => oauthCallbackHtmlResponse(
+        result.authSuccess
+          ? {
+            ok: true,
+            account: {
+              provider: "MCP server",
+              label: result.serverId,
+            },
+          }
+          : {
+            ok: false,
+            message: result.authError,
+          },
+      ),
+    });
+
     this.ready = this.initialize();
 
     this.rehydrateConnections();
+  }
+
+  createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
+    const provider = (
+      new DurableObjectOAuthClientProvider(this.ctx.storage, this.name, callbackUrl)
+    ) as AgentMcpOAuthProvider & { clientMetadataUrl?: string };
+    const metadataUrl = `${new URL(callbackUrl).origin}/.well-known/oauth-client/gsv.json`;
+    if (metadataUrl.startsWith("https://")) {
+      provider.clientMetadataUrl = metadataUrl;
+    }
+    return provider;
+  }
+
+  async onRequest(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname !== "/oauth/callback" || request.method !== "GET") {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    const result = await completeOAuthCallbackFlow({
+      state: url.searchParams.get("state"),
+      code: url.searchParams.get("code"),
+      error: url.searchParams.get("error"),
+      errorDescription: url.searchParams.get("error_description"),
+    }, this.oauth);
+    return oauthCallbackHtmlResponse(result, result.ok ? 200 : result.status);
+  }
+
+  private async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnectionResult> {
+    const result = await this.addMcpServer(
+      `u${input.uid}:${input.name}`,
+      input.url,
+      {
+        callbackHost: input.callbackHost,
+        callbackPath: "/oauth/callback",
+        transport: {
+          type: input.transport.type,
+          ...(input.transport.headers ? { headers: input.transport.headers } : {}),
+        },
+      },
+    );
+    return {
+      id: result.id,
+      state: result.state,
+      ...("authUrl" in result ? { authUrl: result.authUrl } : {}),
+    };
+  }
+
+  private async removeMcpServerConnection(serverId: string): Promise<void> {
+    await this.removeMcpServer(serverId);
+  }
+
+  private async refreshMcpServerConnection(serverId: string): Promise<void> {
+    const connection = this.mcp.mcpConnections[serverId] as {
+      connectionState?: unknown;
+    } | undefined;
+    if (canRediscoverMcpConnectionState(connection?.connectionState)) {
+      await this.mcp.discoverIfConnected(serverId);
+      return;
+    }
+
+    const result = await this.mcp.connectToServer(serverId);
+    if (result.state === "connected") {
+      await this.mcp.discoverIfConnected(serverId);
+    }
+  }
+
+  private async callMcpTool(
+    serverId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    return await this.mcp.callTool({
+      serverId,
+      name: toolName,
+      arguments: args,
+    });
   }
 
   private async initialize(): Promise<void> {
@@ -610,6 +729,11 @@ export class Kernel extends Host<Env> {
     };
   }
 
+  async completeOAuthCallback(input: OAuthCallbackInput): Promise<OAuthCallbackResult> {
+    await this.ready;
+    return completeOAuthCallbackFlow(input, this.oauth);
+  }
+
   /**
    * Relay process signals using deterministic run route lookups.
    */
@@ -934,6 +1058,9 @@ export class Kernel extends Host<Env> {
       procs: this.procs,
       workspaces: this.workspaces,
       packages: this.packages,
+      oauth: this.oauth,
+      mcp: this.mcp,
+      mcpServers: this.mcpServers,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
@@ -952,6 +1079,10 @@ export class Kernel extends Host<Env> {
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
       cancelScheduleWake: this.cancelScheduleWake.bind(this),
       runSchedules: this.runSchedules.bind(this),
+      addMcpServerConnection: this.addMcpServerConnection.bind(this),
+      removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
+      refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
+      callMcpTool: this.callMcpTool.bind(this),
     };
 
     const origin: RouteOrigin = { type: "process", id: processId };
@@ -1003,6 +1134,9 @@ export class Kernel extends Host<Env> {
       procs: this.procs,
       workspaces: this.workspaces,
       packages: this.packages,
+      oauth: this.oauth,
+      mcp: this.mcp,
+      mcpServers: this.mcpServers,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
@@ -1021,6 +1155,10 @@ export class Kernel extends Host<Env> {
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
       cancelScheduleWake: this.cancelScheduleWake.bind(this),
       runSchedules: this.runSchedules.bind(this),
+      addMcpServerConnection: this.addMcpServerConnection.bind(this),
+      removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
+      refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
+      callMcpTool: this.callMcpTool.bind(this),
     };
   }
 
@@ -1034,6 +1172,9 @@ export class Kernel extends Host<Env> {
       procs: this.procs,
       workspaces: this.workspaces,
       packages: this.packages,
+      oauth: this.oauth,
+      mcp: this.mcp,
+      mcpServers: this.mcpServers,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
@@ -1052,6 +1193,10 @@ export class Kernel extends Host<Env> {
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
       cancelScheduleWake: this.cancelScheduleWake.bind(this),
       runSchedules: this.runSchedules.bind(this),
+      addMcpServerConnection: this.addMcpServerConnection.bind(this),
+      removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
+      refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
+      callMcpTool: this.callMcpTool.bind(this),
     };
   }
 
@@ -1849,6 +1994,9 @@ export class Kernel extends Host<Env> {
       procs: this.procs,
       workspaces: this.workspaces,
       packages: this.packages,
+      oauth: this.oauth,
+      mcp: this.mcp,
+      mcpServers: this.mcpServers,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
@@ -1867,6 +2015,10 @@ export class Kernel extends Host<Env> {
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
       cancelScheduleWake: this.cancelScheduleWake.bind(this),
       runSchedules: this.runSchedules.bind(this),
+      addMcpServerConnection: this.addMcpServerConnection.bind(this),
+      removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
+      refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
+      callMcpTool: this.callMcpTool.bind(this),
     };
   }
 

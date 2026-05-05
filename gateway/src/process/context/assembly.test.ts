@@ -26,7 +26,7 @@ const CONFIG: AiConfigResult = {
   profileContextFiles: [
     {
       name: "00-role.md",
-      text: "Task for {{identity.username}} in {{identity.cwd}}\n\nTargets:\n{{devices}}\n\nPaths:\n{{known_paths}}",
+      text: "Task for {{identity.username}} in {{identity.cwd}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}\n\nPaths:\n{{known_paths}}",
     },
   ],
   skillIndex: [
@@ -95,6 +95,7 @@ describe("createProfileInstructionsProvider", () => {
             implements: ["shell.exec", "fs.read"],
           },
         ],
+        mcpServers: ["Linear", "Cloudflare"],
       }),
     );
     expect(sections).toEqual([
@@ -105,6 +106,8 @@ describe("createProfileInstructionsProvider", () => {
     expect(sections[0]?.text).toContain("Task for root in /workspaces/ws_test");
     expect(sections[0]?.text).toContain("- gsv");
     expect(sections[0]?.text).toContain("- macbook: Personal laptop (darwin)");
+    expect(sections[0]?.text).toContain("- Cloudflare");
+    expect(sections[0]?.text).toContain("- Linear");
     expect(sections[0]?.text).toContain("- /sys: live kernel configuration and runtime control surfaces");
   });
 });
@@ -233,6 +236,7 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     purpose: "chat.reply",
     identity: IDENTITY,
     devices: [],
+    mcpServers: [],
     storage: {
       async get() {
         return null;

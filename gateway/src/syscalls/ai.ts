@@ -56,6 +56,7 @@ export type AiToolsDevice = {
 export type AiToolsResult = {
   tools: ToolDefinition[];
   devices: AiToolsDevice[];
+  mcpServers: string[];
 };
 
 export type AiSkillIndexEntry = {
