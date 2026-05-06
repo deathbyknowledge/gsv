@@ -472,6 +472,13 @@ function MessageBubble({
           </div>
         </details>
       </div>
+      {row.role === "assistant" && relatedToolRows.length > 0 ? (
+        <button type="button" class="message-trace-button" onClick={() => setTraceOpen(true)}>
+          <span class="spinner" aria-hidden="true" />
+          <span>View trace</span>
+          <span class="thinking-status-meta">{relatedToolRows.length} steps</span>
+        </button>
+      ) : null}
       {thinking.length > 0 ? (
         <details class="message-thinking">
           <summary>Reasoning</summary>
@@ -511,45 +518,36 @@ function MessageBubble({
           ))}
         </div>
       ) : null}
-      {row.role === "assistant" && relatedToolRows.length > 0 ? (
-        <>
-          <button type="button" class="message-trace-button" onClick={() => setTraceOpen(true)}>
-            <span class="spinner" aria-hidden="true" />
-            <span>View trace</span>
-            <span class="thinking-status-meta">{relatedToolRows.length} steps</span>
-          </button>
-          {traceOpen ? (
-            <div class="thinking-sidebar-backdrop" onClick={() => setTraceOpen(false)}>
-              <aside class="thinking-sidebar" onClick={(event) => event.stopPropagation()}>
-                <header class="thinking-sidebar-head">
-                  <div>
-                    <h2>Thinking trace</h2>
-                    <p>{relatedToolRows.length} steps captured for this answer.</p>
-                  </div>
-                  <button type="button" class="icon-button small" onClick={() => setTraceOpen(false)}>
-                    <XIcon />
-                  </button>
-                </header>
-                <div class="thinking-sidebar-body">
-                  <section class="thinking-summary-panel">
-                    <h3>Summary</h3>
-                    <ul>
-                      {toolSummary.map((item, index) => <li key={`${item}:${index}`}>{item}</li>)}
-                    </ul>
-                  </section>
-                  <details class="thinking-raw-panel">
-                    <summary>Raw trace</summary>
-                    <div class="thinking-raw-panel-body">
-                      {relatedToolRows.map((toolRow, index) => (
-                        <ToolCard key={`${toolRow.callId}:${index}`} row={toolRow} />
-                      ))}
-                    </div>
-                  </details>
+      {traceOpen ? (
+        <div class="thinking-sidebar-backdrop" onClick={() => setTraceOpen(false)}>
+          <aside class="thinking-sidebar" onClick={(event) => event.stopPropagation()}>
+            <header class="thinking-sidebar-head">
+              <div>
+                <h2>Thinking trace</h2>
+                <p>{relatedToolRows.length} steps captured for this answer.</p>
+              </div>
+              <button type="button" class="icon-button small" onClick={() => setTraceOpen(false)}>
+                <XIcon />
+              </button>
+            </header>
+            <div class="thinking-sidebar-body">
+              <section class="thinking-summary-panel">
+                <h3>Summary</h3>
+                <ul>
+                  {toolSummary.map((item, index) => <li key={`${item}:${index}`}>{item}</li>)}
+                </ul>
+              </section>
+              <details class="thinking-raw-panel">
+                <summary>Raw trace</summary>
+                <div class="thinking-raw-panel-body">
+                  {relatedToolRows.map((toolRow, index) => (
+                    <ToolCard key={`${toolRow.callId}:${index}`} row={toolRow} />
+                  ))}
                 </div>
-              </aside>
+              </details>
             </div>
-          ) : null}
-        </>
+          </aside>
+        </div>
       ) : null}
     </article>
   );

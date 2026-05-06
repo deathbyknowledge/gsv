@@ -856,9 +856,6 @@ export function App({ backend }: { backend: ChatBackend }) {
         if (errorText) {
           appendSystem(errorText);
         }
-        window.setTimeout(() => {
-          setPendingAssistant((current) => current?.mode === "done" ? null : current);
-        }, 12000);
         void loadThreads();
         void loadHistory(target);
       } else if (signal === "chat.hil") {
