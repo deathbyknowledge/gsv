@@ -60,12 +60,14 @@ export type MessageRecord = {
   toolCalls: string | null;
   toolCallId: string | null;
   media: string | null;
+  runId: string | null;
   createdAt: number;
 };
 
 export type AssistantMessageMeta = {
   thinking?: ThinkingContent[];
   toolCalls?: ToolCall[];
+  runId?: string;
 };
 
 export type QueuedMessage = {
@@ -204,6 +206,11 @@ export class ProcessStore {
       "messages",
       "generation",
       "ALTER TABLE messages ADD COLUMN generation INTEGER NOT NULL DEFAULT 1",
+    );
+    this.ensureColumn(
+      "messages",
+      "run_id",
+      "ALTER TABLE messages ADD COLUMN run_id TEXT",
     );
     this.ensureColumn(
       "pending_tool_calls",
@@ -811,6 +818,7 @@ export class ProcessStore {
       toolCalls?: string;
       toolCallId?: string;
       media?: string;
+      runId?: string;
       createdAt?: number;
     },
   ): number {
@@ -818,8 +826,8 @@ export class ProcessStore {
     const generation = opts?.generation ?? this.getConversationGeneration(conversationId);
     this.sql.exec(
       `INSERT INTO messages (
-        conversation_id, generation, role, content, tool_calls, tool_call_id, media_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        conversation_id, generation, role, content, tool_calls, tool_call_id, media_json, run_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       conversationId,
       generation,
       role,
@@ -827,6 +835,7 @@ export class ProcessStore {
       opts?.toolCalls ?? null,
       opts?.toolCallId ?? null,
       opts?.media ?? null,
+      opts?.runId ?? null,
       opts?.createdAt ?? Date.now(),
     );
 
@@ -875,6 +884,7 @@ export class ProcessStore {
       tool_calls: string | null;
       tool_call_id: string | null;
       media_json: string | null;
+      run_id: string | null;
       created_at: number;
       }>(
         `SELECT * FROM messages WHERE ${where.join(" AND ")} ORDER BY id ${order} ${pagination.clause}`,
@@ -894,6 +904,7 @@ export class ProcessStore {
       toolCalls: row.tool_calls,
       toolCallId: row.tool_call_id,
       media: row.media_json,
+      runId: row.run_id,
       createdAt: row.created_at,
     }));
   }
@@ -948,6 +959,7 @@ export class ProcessStore {
       toolCalls: row.tool_calls,
       toolCallId: row.tool_call_id,
       media: row.media_json,
+      runId: row.run_id,
       createdAt: row.created_at,
     }));
   }
@@ -998,6 +1010,7 @@ export class ProcessStore {
       toolCalls: row.tool_calls,
       toolCallId: row.tool_call_id,
       media: row.media_json,
+      runId: row.run_id,
       createdAt: row.created_at,
     }));
   }
@@ -1048,6 +1061,7 @@ export class ProcessStore {
       toolCalls: row.tool_calls,
       toolCallId: row.tool_call_id,
       media: row.media_json,
+      runId: row.run_id,
       createdAt: row.created_at,
     }));
   }
@@ -1240,12 +1254,14 @@ export class ProcessStore {
     content: string,
     isError: boolean,
     conversationId: string = DEFAULT_CONVERSATION_ID,
+    runId?: string,
   ): number {
     const toolName = SYSCALL_TOOL_NAMES[syscallName] ?? syscallName;
     return this.appendMessage("toolResult", content, {
       conversationId,
       toolCallId,
       toolCalls: JSON.stringify({ toolName, isError }),
+      runId,
     });
   }
 
@@ -1461,16 +1477,18 @@ export function stringifyAssistantMessageMeta(
 ): string | undefined {
   const thinking = meta.thinking?.length ? meta.thinking : undefined;
   const toolCalls = meta.toolCalls?.length ? meta.toolCalls : undefined;
+  const runId = meta.runId;
 
-  if (!thinking && !toolCalls) {
+  if (!thinking && !toolCalls && !runId) {
     return undefined;
   }
-  if (!thinking && toolCalls) {
+  if (!thinking && toolCalls && !runId) {
     return JSON.stringify(toolCalls);
   }
 
   return JSON.stringify({
     thinking,
     toolCalls,
+    ...(runId ? { runId } : {}),
   });
 }

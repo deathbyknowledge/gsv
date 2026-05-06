@@ -64,8 +64,9 @@ function flattenHistory(messages: unknown[]): LogRow[] {
     const messageId = asNumber(record?.id);
     if (record?.role === "assistant") {
       const parsed = extractAssistantHistory(record.content);
+      const runId = parsed.runId ?? asString(record?.runId) ?? null;
       if ((parsed.text && parsed.text.trim()) || parsed.thinking.length > 0) {
-        rows.push({ kind: "message", role: "assistant", text: parsed.text, thinking: parsed.thinking, timestamp, messageId });
+        rows.push({ kind: "message", role: "assistant", text: parsed.text, thinking: parsed.thinking, timestamp, messageId, runId });
       }
       for (const toolCall of parsed.toolCalls) {
         rows.push({
@@ -75,6 +76,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
           args: toolCall.args,
           syscall: toolCall.syscall,
           timestamp,
+          runId,
         });
       }
       continue;
@@ -96,6 +98,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
             ok: parsed.ok,
             error: parsed.error,
             timestamp,
+            runId: parsed.runId ?? prior.runId ?? null,
           };
         } else {
           rows.push({
@@ -108,6 +111,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
             ok: parsed.ok,
             error: parsed.error,
             timestamp,
+            runId: parsed.runId,
           });
         }
       } else {
@@ -253,10 +257,10 @@ function normalizeContextSignal(payload: unknown, active: ThreadContext): Contex
   return next;
 }
 
-function extractAssistantHistory(content: unknown): { text: string; thinking: string[]; toolCalls: Array<{ toolName: string; callId: string; args: unknown; syscall: string | null }> } {
+function extractAssistantHistory(content: unknown): { text: string; thinking: string[]; toolCalls: Array<{ toolName: string; callId: string; args: unknown; syscall: string | null }>; runId: string | null } {
   const record = asRecord(content);
   if (!record) {
-    return { text: typeof content === "string" ? content : formatMessageContent(content), thinking: [], toolCalls: [] };
+    return { text: typeof content === "string" ? content : formatMessageContent(content), thinking: [], toolCalls: [], runId: null };
   }
   const text = asString(record.text) || "";
   const thinking = (Array.isArray(record.thinking) ? record.thinking : [])
@@ -275,7 +279,7 @@ function extractAssistantHistory(content: unknown): { text: string; thinking: st
       return { toolName, callId, args: call.arguments ?? call.args ?? {}, syscall: inferToolSyscall(toolName, asString(call.syscall)) };
     })
     .filter(Boolean) as Array<{ toolName: string; callId: string; args: unknown; syscall: string | null }>;
-  return { text, thinking, toolCalls };
+  return { text, thinking, toolCalls, runId: asString(record.runId) ?? null };
 }
 
 function extractToolResultHistory(content: unknown) {
@@ -289,6 +293,7 @@ function extractToolResultHistory(content: unknown) {
     output: record?.output,
     error: asString(record?.error),
     syscall: inferToolSyscall(toolName, asString(record?.syscall)),
+    runId: asString(record?.runId) ?? null,
   };
 }
 
