@@ -1474,7 +1474,45 @@ textarea {
   padding: 14px;
   display: grid;
   align-content: start;
+  gap: 14px;
+}
+
+.thinking-summary-panel,
+.thinking-raw-panel {
+  display: grid;
   gap: 10px;
+}
+
+.thinking-summary-panel h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.thinking-raw-panel summary {
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.thinking-raw-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-raw-panel-body {
+  display: grid;
+  gap: 10px;
+}
+
+.thinking-summary-panel ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.thinking-summary-panel li {
+  margin: 0;
 }
 
 .spinner {

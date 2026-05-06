@@ -373,13 +373,7 @@ export function Transcript(props: {
       <div class="transcript-anchor" ref={(node) => { props.autoscrollAnchorRef.current = node; }} />
       {props.rows.map((row, index) => {
         if (row.kind === "toolCall" || row.kind === "toolResult") {
-          if (props.pendingHil && row.kind === "toolCall" && row.callId === props.pendingHil.callId) {
-            return null;
-          }
-          if (isHiddenInternalToolRow(row, props.pendingHil)) {
-            return null;
-          }
-          return <ToolCard key={`${row.callId}:${index}`} row={row} />;
+          return null;
         }
         const messageRow = row as MessageRow;
         return (
@@ -519,12 +513,16 @@ function ThinkingStatus(props: { pendingAssistant: PendingAssistantState; rows: 
     const end = props.pendingAssistant?.finishedAt ?? Date.now();
     return Math.max(0, end - props.pendingAssistant.startedAt);
   });
+  const [showDoneSummary, setShowDoneSummary] = useState(props.pendingAssistant.mode !== "done");
 
   useEffect(() => {
     if (props.pendingAssistant.mode === "done") {
       setElapsedMs(Math.max(0, (props.pendingAssistant.finishedAt ?? Date.now()) - props.pendingAssistant.startedAt));
-      return;
+      setShowDoneSummary(true);
+      const timer = window.setTimeout(() => setShowDoneSummary(false), 4000);
+      return () => window.clearTimeout(timer);
     }
+    setShowDoneSummary(true);
     const timer = window.setInterval(() => {
       setElapsedMs(Date.now() - props.pendingAssistant.startedAt);
     }, 250);
@@ -535,12 +533,15 @@ function ThinkingStatus(props: { pendingAssistant: PendingAssistantState; rows: 
     () => props.rows.filter((row) => row.kind === "toolCall" || row.kind === "toolResult") as ToolRow[],
     [props.rows],
   );
+  const toolSummary = useMemo(() => summarizeToolRows(toolRows), [toolRows]);
 
   const label = props.pendingAssistant.mode === "tool"
-    ? "Accessing tools..."
+    ? describeThinkingStatus(toolRows)
     : props.pendingAssistant.mode === "thinking"
       ? "Looking up stuff..."
-      : `Thought for ${formatThinkingElapsed(elapsedMs)}`;
+      : showDoneSummary
+        ? `Thought for ${formatThinkingElapsed(elapsedMs)}`
+        : "Thought";
 
   return (
     <>
@@ -563,9 +564,24 @@ function ThinkingStatus(props: { pendingAssistant: PendingAssistantState; rows: 
             <div class="thinking-sidebar-body">
               {toolRows.length === 0 ? (
                 <div class="panel-empty">No tool activity recorded.</div>
-              ) : toolRows.map((row, index) => (
-                <ToolCard key={`${row.callId}:${index}`} row={row} />
-              ))}
+              ) : (
+                <>
+                  <section class="thinking-summary-panel">
+                    <h3>Summary</h3>
+                    <ul>
+                      {toolSummary.map((item, index) => <li key={`${item}:${index}`}>{item}</li>)}
+                    </ul>
+                  </section>
+                  <details class="thinking-raw-panel">
+                    <summary>Raw trace</summary>
+                    <div class="thinking-raw-panel-body">
+                      {toolRows.map((row, index) => (
+                        <ToolCard key={`${row.callId}:${index}`} row={row} />
+                      ))}
+                    </div>
+                  </details>
+                </>
+              )}
             </div>
           </aside>
         </div>
@@ -582,6 +598,36 @@ function formatThinkingElapsed(elapsedMs: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}m ${seconds}s`;
+}
+
+function describeThinkingStatus(toolRows: ToolRow[]): string {
+  const latest = toolRows[toolRows.length - 1];
+  const syscall = inferToolSyscall(latest?.toolName || "", latest?.syscall);
+  if (syscall === "shell.exec" || syscall === "fs.search" || syscall === "fs.read") {
+    return "Looking up stuff...";
+  }
+  if (syscall === "sys.mcp.call") {
+    return "Accessing the web...";
+  }
+  if (syscall === "fs.write" || syscall === "fs.edit" || syscall === "fs.delete") {
+    return "Working on files...";
+  }
+  return "Thinking...";
+}
+
+function summarizeToolRows(toolRows: ToolRow[]): string[] {
+  const counts = new Map<string, number>();
+  for (const row of toolRows) {
+    const syscall = inferToolSyscall(row.toolName, row.syscall);
+    let label = "Used a tool";
+    if (syscall === "fs.read") label = "Read files";
+    else if (syscall === "fs.search") label = "Searched workspace";
+    else if (syscall === "shell.exec") label = "Ran shell commands";
+    else if (syscall === "fs.write" || syscall === "fs.edit" || syscall === "fs.delete") label = "Modified files";
+    else if (syscall === "sys.mcp.call") label = "Accessed external services";
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([label, count]) => `${label}${count > 1 ? ` (${count})` : ""}`);
 }
 
 function MediaAttachment(props: {
