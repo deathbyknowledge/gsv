@@ -1454,7 +1454,11 @@ export function App({ backend }: { backend: ChatBackend }) {
       return;
     }
     if (mode === "next-message") {
-      autoscrollAnchorRef.current?.scrollIntoView({ block: "start" });
+      const anchor = autoscrollAnchorRef.current;
+      if (!anchor) {
+        return;
+      }
+      node.scrollTop = Math.max(0, anchor.offsetTop - 12);
       stickToBottomRef.current = true;
       clearNewMessages();
       return;
