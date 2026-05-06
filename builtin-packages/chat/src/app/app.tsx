@@ -1032,9 +1032,6 @@ export function App({ backend }: { backend: ChatBackend }) {
           prepareForLiveTranscriptActivity();
           appendSystem(errorText);
         }
-        window.setTimeout(() => {
-          setPendingAssistant((current) => current?.mode === "done" ? null : current);
-        }, 12000);
         void loadThreads();
       } else if (signal === "chat.hil") {
         if (!signalMatchesActiveThread(payload, target)) {
