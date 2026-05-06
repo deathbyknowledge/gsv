@@ -44,9 +44,6 @@ function groupToolRows(rows: LogRow[]): LogRow[] {
       pendingGroup.push(row);
       continue;
     }
-    if (row.kind === "message" && row.role === "assistant") {
-      continue;
-    }
     flushGroup();
     grouped.push(row);
   }
