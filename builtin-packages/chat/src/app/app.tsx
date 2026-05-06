@@ -824,14 +824,17 @@ export function App({ backend }: { backend: ChatBackend }) {
         }
       } else if (signal === "chat.tool_call") {
         setPendingHil(null);
-        setPendingAssistant("tool");
+        setPendingAssistant((current) => current?.mode === "tool"
+          ? current
+          : { mode: "tool", startedAt: current?.startedAt ?? Date.now() });
         applyToolCallSignal(payload, target, setRows);
       } else if (signal === "chat.tool_result") {
         applyToolResultSignal(payload, target, setRows);
-        setPendingAssistant("thinking");
+        setPendingAssistant((current) => current?.mode === "thinking"
+          ? current
+          : { mode: "thinking", startedAt: current?.startedAt ?? Date.now() });
       } else if (signal === "chat.text") {
         applyAssistantSignal(payload, target, setRows);
-        setPendingAssistant(null);
       } else if (signal === "chat.complete") {
         const record = asRecord(payload);
         setPendingHil(null);
@@ -839,7 +842,14 @@ export function App({ backend }: { backend: ChatBackend }) {
           if (record?.aborted === true && suppressNextAbortedComplete) {
             return current;
           }
-          return null;
+          if (!current) {
+            return null;
+          }
+          return {
+            mode: "done",
+            startedAt: current.startedAt,
+            finishedAt: Date.now(),
+          };
         });
         setSuppressNextAbortedComplete(false);
         const errorText = asString(record?.error);
@@ -1017,7 +1027,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         appendSystem("send failed: " + safeText(record?.error || "unknown error"));
         return;
       }
-      setPendingAssistant("thinking");
+      setPendingAssistant({ mode: "thinking", startedAt: Date.now() });
       if (record.queued === true) {
         appendSystem("message queued while process is busy");
       }
@@ -1045,7 +1055,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         setPendingHil(null);
         if (record.continuedQueuedRunId) {
           setSuppressNextAbortedComplete(true);
-          setPendingAssistant("thinking");
+          setPendingAssistant({ mode: "thinking", startedAt: Date.now() });
         } else {
           setPendingAssistant(null);
           appendSystem("run interrupted");
@@ -1074,7 +1084,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       const nextHil = normalizeHilRequest(record.pendingHil);
       setPendingHil(nextHil);
       if (!nextHil) {
-        setPendingAssistant("thinking");
+        setPendingAssistant({ mode: "thinking", startedAt: Date.now() });
       }
     } catch (error) {
       appendSystem("tool confirmation failed: " + formatError(error));

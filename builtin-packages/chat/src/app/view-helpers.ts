@@ -547,7 +547,9 @@ function getStatusText(args: {
   if (args.pendingHil) return "Tool confirmation is required before the run can continue.";
   if (args.abortBusy) return "Stopping active run...";
   if (args.messageBusy) return "Run in progress. Responses will refresh as signals arrive.";
-  if (args.pendingAssistant) return "Run active. Send to queue another message or stop it.";
+  if (args.pendingAssistant?.mode === "tool") return "Using tools...";
+  if (args.pendingAssistant?.mode === "thinking") return "Thinking...";
+  if (args.pendingAssistant?.mode === "done") return "Thought complete.";
   if (args.active) return "Ready";
   return draftConversationMeta(args.draftProfile);
 }

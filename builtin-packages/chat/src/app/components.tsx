@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type {
   ArchiveState,
@@ -401,10 +401,7 @@ export function Transcript(props: {
         <HilOverlay request={props.pendingHil} busy={props.hilBusy} onDecision={props.onHilDecision} />
       ) : null}
       {props.pendingAssistant ? (
-        <article class="message-pending">
-          <span class="spinner" aria-hidden="true" />
-          <span>{props.pendingAssistant === "tool" ? "Working..." : "Thinking..."}</span>
-        </article>
+        <ThinkingStatus pendingAssistant={props.pendingAssistant} rows={props.rows} />
       ) : null}
     </div>
   );
@@ -514,6 +511,77 @@ function MessageBubble({
       ) : null}
     </article>
   );
+}
+
+function ThinkingStatus(props: { pendingAssistant: PendingAssistantState; rows: LogRow[] }) {
+  const [open, setOpen] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(() => {
+    const end = props.pendingAssistant?.finishedAt ?? Date.now();
+    return Math.max(0, end - props.pendingAssistant.startedAt);
+  });
+
+  useEffect(() => {
+    if (props.pendingAssistant.mode === "done") {
+      setElapsedMs(Math.max(0, (props.pendingAssistant.finishedAt ?? Date.now()) - props.pendingAssistant.startedAt));
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setElapsedMs(Date.now() - props.pendingAssistant.startedAt);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [props.pendingAssistant]);
+
+  const toolRows = useMemo(
+    () => props.rows.filter((row) => row.kind === "toolCall" || row.kind === "toolResult") as ToolRow[],
+    [props.rows],
+  );
+
+  const label = props.pendingAssistant.mode === "tool"
+    ? "Accessing tools..."
+    : props.pendingAssistant.mode === "thinking"
+      ? "Looking up stuff..."
+      : `Thought for ${formatThinkingElapsed(elapsedMs)}`;
+
+  return (
+    <>
+      <button type="button" class="thinking-status" onClick={() => setOpen(true)}>
+        <span class="spinner" aria-hidden="true" />
+        <span>{label}</span>
+      </button>
+      {open ? (
+        <div class="thinking-sidebar-backdrop" onClick={() => setOpen(false)}>
+          <aside class="thinking-sidebar" onClick={(event) => event.stopPropagation()}>
+            <header class="thinking-sidebar-head">
+              <div>
+                <h2>Thinking trace</h2>
+                <p>{props.pendingAssistant.mode === "done" ? `Thought for ${formatThinkingElapsed(elapsedMs)}` : label}</p>
+              </div>
+              <button type="button" class="icon-button small" onClick={() => setOpen(false)}>
+                <XIcon />
+              </button>
+            </header>
+            <div class="thinking-sidebar-body">
+              {toolRows.length === 0 ? (
+                <div class="panel-empty">No tool activity recorded.</div>
+              ) : toolRows.map((row, index) => (
+                <ToolCard key={`${row.callId}:${index}`} row={row} />
+              ))}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function formatThinkingElapsed(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.round(elapsedMs / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
 }
 
 function MediaAttachment(props: {

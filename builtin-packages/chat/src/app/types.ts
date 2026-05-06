@@ -143,7 +143,11 @@ export type ConversationSegment = {
 
 export type WorkspaceView = "chat" | "archive";
 
-export type PendingAssistantState = "thinking" | "tool" | null;
+export type PendingAssistantState = {
+  mode: "thinking" | "tool" | "done";
+  startedAt: number;
+  finishedAt?: number;
+} | null;
 
 export type CompactDialogState = { keepLast: string; suggested: number } | null;
 
