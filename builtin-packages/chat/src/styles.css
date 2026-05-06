@@ -1535,15 +1535,30 @@ textarea {
   display: none;
 }
 
+.tool-group-details:not([open]) .tool-card-head {
+  margin-bottom: 0;
+}
+
+.tool-group-details:not([open]) .tool-card-head p {
+  margin-bottom: 0;
+}
+
 .tool-group-list {
   display: grid;
   gap: 8px;
+  padding-top: 2px;
 }
 
 .tool-group-list .tool-card {
   width: 100%;
   max-width: 100%;
   margin-left: 0;
+}
+
+.tool-group-list .tool-card .tool-preview pre,
+.tool-group-list .tool-card .tool-details pre {
+  max-height: 240px;
+  overflow: auto;
 }
 
 .tool-detail-stack {
@@ -1885,6 +1900,38 @@ textarea {
   place-items: center;
   padding: 20px;
   background: rgba(18, 25, 32, 0.28);
+}
+
+.hil-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 25, 32, 0.22);
+  backdrop-filter: blur(4px);
+}
+
+.hil-overlay-panel {
+  width: min(720px, calc(100% - 24px));
+  max-height: calc(100% - 40px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 44px rgba(24, 32, 40, 0.22);
+}
+
+.hil-overlay-panel > h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.hil-overlay-panel .tool-card {
+  width: 100%;
+  max-width: 100%;
 }
 
 .modal {

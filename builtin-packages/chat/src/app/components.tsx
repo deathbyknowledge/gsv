@@ -370,17 +370,11 @@ export function Transcript(props: {
     : true;
   return (
     <div class="transcript" ref={(node) => { props.refNode.current = node; }}>
+      <div class="transcript-anchor" ref={(node) => { props.autoscrollAnchorRef.current = node; }} />
       {props.rows.map((row, index) => {
         if (row.kind === "toolCall" || row.kind === "toolResult") {
           if (props.pendingHil && row.kind === "toolCall" && row.callId === props.pendingHil.callId) {
-            return (
-              <HilCard
-                key={`${row.callId}:${index}`}
-                request={{ ...props.pendingHil, toolName: row.toolName || props.pendingHil.toolName, syscall: row.syscall || props.pendingHil.syscall, args: row.args ?? props.pendingHil.args }}
-                busy={props.hilBusy}
-                onDecision={props.onHilDecision}
-              />
-            );
+            return null;
           }
           if (isHiddenInternalToolRow(row, props.pendingHil)) {
             return null;
@@ -404,9 +398,8 @@ export function Transcript(props: {
         );
       })}
       {props.pendingHil && !hilRendered ? (
-        <HilCard request={props.pendingHil} busy={props.hilBusy} onDecision={props.onHilDecision} />
+        <HilOverlay request={props.pendingHil} busy={props.hilBusy} onDecision={props.onHilDecision} />
       ) : null}
-      <div class="transcript-anchor" ref={(node) => { props.autoscrollAnchorRef.current = node; }} />
       {props.pendingAssistant ? (
         <article class="message-pending">
           <span class="spinner" aria-hidden="true" />
@@ -890,18 +883,20 @@ function ToolCard({ row }: { row: ToolRow }) {
     const running = childRows.some((child) => child.kind === "toolCall");
     const errors = childRows.filter((child) => child.kind === "toolResult" && child.ok === false).length;
     const done = childRows.filter((child) => child.kind === "toolResult" && child.ok !== false).length;
+    const approvals = childRows.filter((child) => child.kind === "toolCall").length;
     const statusClass = running ? "is-pending" : errors > 0 ? "is-error" : "is-ok";
+    const defaultOpen = errors > 0;
     return (
       <article class={`tool-card ${statusClass} is-collapsed-group`}>
-        <details class="tool-group-details">
+        <details class="tool-group-details" open={defaultOpen}>
           <summary class="tool-card-head">
             <div>
               <h3>Tool activity</h3>
-              <p>{childRows.length} steps · {running ? "running" : `${done} done`}{errors ? ` · ${errors} error` : ""}</p>
+              <p>{done + approvals} tools{approvals > 0 ? ` · ${approvals} running` : ""}{errors > 0 ? ` · ${errors} error` : running ? "" : " · done"}</p>
             </div>
             <span class={`tool-status ${statusClass}`}>
               {running ? "Running" : errors > 0 ? "Error" : "Done"}
-              <span>group</span>
+              <span>{done + approvals} tools</span>
             </span>
           </summary>
           <div class="tool-group-list">
@@ -1157,6 +1152,17 @@ function HilCard(props: { request: HilRequest; busy: boolean; onDecision(request
         <ToolDetails row={{ kind: "toolCall", toolName: props.request.toolName, callId: props.request.callId, args: props.request.args, syscall: props.request.syscall, timestamp: props.request.createdAt }} syscall={props.request.syscall} />
       </details>
     </article>
+  );
+}
+
+function HilOverlay(props: { request: HilRequest; busy: boolean; onDecision(requestId: string, decision: "approve" | "deny", remember?: boolean): void }) {
+  return (
+    <div class="hil-overlay-backdrop">
+      <section class="hil-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="hil-overlay-title">
+        <h2 id="hil-overlay-title">Permission needed</h2>
+        <HilCard {...props} />
+      </section>
+    </div>
   );
 }
 
