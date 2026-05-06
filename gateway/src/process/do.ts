@@ -1647,6 +1647,7 @@ export class Process extends Host<Env> {
       ? stringifyAssistantMessageMeta({
           toolCalls: message.toolCalls,
           thinking: message.thinking,
+          runId: message.runId ?? undefined,
         })
       : message.toolCalls
         ? JSON.stringify(message.toolCalls)
@@ -1657,6 +1658,7 @@ export class Process extends Host<Env> {
       toolCalls,
       toolCallId: message.toolCallId,
       media: message.media === undefined ? undefined : JSON.stringify(message.media),
+      runId: message.runId ?? undefined,
       createdAt: message.createdAt,
     });
   }
@@ -2230,9 +2232,11 @@ export class Process extends Host<Env> {
 
     this.store.appendMessage("assistant", text, {
       conversationId,
+      runId,
       toolCalls: stringifyAssistantMessageMeta({
         thinking: thinkingBlocks,
         toolCalls,
+        runId,
       }),
     });
 
@@ -2850,6 +2854,7 @@ export class Process extends Host<Env> {
         content,
         isError,
         conversationId,
+        runId,
       );
 
       await this.sendSignal("chat.tool_result", {
@@ -3403,6 +3408,7 @@ export class Process extends Host<Env> {
       `Error: ${errorMessage}`,
       true,
       conversationId,
+      runId,
     );
     await this.sendSignal("chat.tool_result", {
       name: SYSCALL_TOOL_NAMES[syscallName] ?? syscallName,

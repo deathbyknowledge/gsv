@@ -378,9 +378,25 @@ export function Transcript(props: {
         }
         const messageRow = row as MessageRow;
         const traceRunId = messageRow.runId ?? (messageRow.role === "assistant" ? props.completedTraceRunId ?? null : null);
-        const relatedToolRows = traceRunId
+        let relatedToolRows = traceRunId
           ? props.rows.filter((candidate) => (candidate.kind === "toolCall" || candidate.kind === "toolResult") && candidate.runId && candidate.runId === traceRunId) as ToolRow[]
           : [];
+        let traceSource: "runId" | "preceding-block" | "none" = traceRunId && relatedToolRows.length > 0 ? "runId" : "none";
+        if (messageRow.role === "assistant" && relatedToolRows.length === 0) {
+          const fallback: ToolRow[] = [];
+          for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+            const candidate = props.rows[cursor];
+            if (candidate.kind === "toolCall" || candidate.kind === "toolResult") {
+              fallback.unshift(candidate as ToolRow);
+              continue;
+            }
+            break;
+          }
+          if (fallback.length > 0) {
+            relatedToolRows = fallback;
+            traceSource = "preceding-block";
+          }
+        }
         if (messageRow.role === "assistant") {
           console.debug("[chat-trace][Transcript]", {
             messageId: messageRow.messageId ?? null,
@@ -388,6 +404,7 @@ export function Transcript(props: {
             messageRunId: messageRow.runId ?? null,
             completedTraceRunId: props.completedTraceRunId ?? null,
             traceRunId,
+            traceSource,
             relatedToolRows: relatedToolRows.length,
             toolRows: props.rows
               .filter((candidate) => candidate.kind === "toolCall" || candidate.kind === "toolResult")
