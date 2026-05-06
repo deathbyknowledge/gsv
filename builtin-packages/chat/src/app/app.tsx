@@ -1463,16 +1463,6 @@ export function App({ backend }: { backend: ChatBackend }) {
     if ((mode === "near-bottom" || mode === "next-message") && !stickToBottomRef.current && !isNearBottom(node)) {
       return;
     }
-    if (mode === "next-message") {
-      const anchor = autoscrollAnchorRef.current;
-      if (!anchor) {
-        return;
-      }
-      node.scrollTop = Math.max(0, anchor.offsetTop - 12);
-      stickToBottomRef.current = true;
-      clearNewMessages();
-      return;
-    }
     node.scrollTop = node.scrollHeight;
     stickToBottomRef.current = true;
     clearNewMessages();
