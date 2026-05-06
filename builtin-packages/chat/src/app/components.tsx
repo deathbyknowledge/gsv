@@ -356,6 +356,7 @@ export function Transcript(props: {
   hilBusy: boolean;
   branchBusy: boolean;
   refNode: { current: HTMLDivElement | null };
+  autoscrollAnchorRef: { current: HTMLDivElement | null };
   mediaSources: Record<string, string>;
   mediaSourceErrors: Record<string, string>;
   onCopy(text: string): void;
@@ -405,6 +406,7 @@ export function Transcript(props: {
       {props.pendingHil && !hilRendered ? (
         <HilCard request={props.pendingHil} busy={props.hilBusy} onDecision={props.onHilDecision} />
       ) : null}
+      <div class="transcript-anchor" ref={(node) => { props.autoscrollAnchorRef.current = node; }} />
       {props.pendingAssistant ? (
         <article class="message-pending">
           <span class="spinner" aria-hidden="true" />
@@ -883,6 +885,35 @@ function mediaMimeType(media: unknown): string | null {
 }
 
 function ToolCard({ row }: { row: ToolRow }) {
+  if (row.collapsed && row.childRows?.length) {
+    const childRows = row.childRows;
+    const running = childRows.some((child) => child.kind === "toolCall");
+    const errors = childRows.filter((child) => child.kind === "toolResult" && child.ok === false).length;
+    const done = childRows.filter((child) => child.kind === "toolResult" && child.ok !== false).length;
+    const statusClass = running ? "is-pending" : errors > 0 ? "is-error" : "is-ok";
+    return (
+      <article class={`tool-card ${statusClass} is-collapsed-group`}>
+        <details class="tool-group-details">
+          <summary class="tool-card-head">
+            <div>
+              <h3>Tool activity</h3>
+              <p>{childRows.length} steps · {running ? "running" : `${done} done`}{errors ? ` · ${errors} error` : ""}</p>
+            </div>
+            <span class={`tool-status ${statusClass}`}>
+              {running ? "Running" : errors > 0 ? "Error" : "Done"}
+              <span>group</span>
+            </span>
+          </summary>
+          <div class="tool-group-list">
+            {childRows.map((child, index) => (
+              <ToolCard key={`${child.callId}:${index}`} row={child} />
+            ))}
+          </div>
+        </details>
+      </article>
+    );
+  }
+
   const syscall = inferToolSyscall(row.toolName, row.syscall);
   const card = describeToolCard(row.toolName, row.args, syscall);
   const ok = row.kind === "toolCall" ? false : row.ok !== false;

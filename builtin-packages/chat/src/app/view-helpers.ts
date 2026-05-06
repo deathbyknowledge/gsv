@@ -13,6 +13,49 @@ import type {
   WorkspaceEntry,
 } from "./types";
 
+function groupToolRows(rows: LogRow[]): LogRow[] {
+  const grouped: LogRow[] = [];
+  let pendingGroup: ToolRow[] = [];
+
+  function flushGroup(): void {
+    if (pendingGroup.length === 0) {
+      return;
+    }
+    if (pendingGroup.length === 1) {
+      grouped.push(pendingGroup[0]);
+    } else {
+      const latest = pendingGroup[pendingGroup.length - 1];
+      const hasPending = pendingGroup.some((row) => row.kind === "toolCall");
+      const hasError = pendingGroup.some((row) => row.kind === "toolResult" && row.ok === false);
+      grouped.push({
+        kind: hasPending ? "toolCall" : "toolResult",
+        toolName: `Tool activity (${pendingGroup.length})`,
+        callId: `tool-group:${latest.callId}`,
+        args: {},
+        syscall: null,
+        timestamp: pendingGroup[0]?.timestamp ?? latest.timestamp,
+        runId: latest.runId,
+        ok: hasPending ? undefined : !hasError,
+        collapsed: true,
+        childRows: pendingGroup.slice(),
+      });
+    }
+    pendingGroup = [];
+  }
+
+  for (const row of rows) {
+    if (row.kind === "toolCall" || row.kind === "toolResult") {
+      pendingGroup.push(row);
+      continue;
+    }
+    flushGroup();
+    grouped.push(row);
+  }
+
+  flushGroup();
+  return grouped;
+}
+
 const ACTIVE_THREAD_CONTEXT_KEY = "gsv.activeThreadContext.v1";
 
 function flattenHistory(messages: unknown[]): LogRow[] {
@@ -872,6 +915,7 @@ function escapeHtml(value: string): string {
 
 export {
   activeMeta,
+  groupToolRows,
   applyAssistantSignal,
   applyProcessMessageSignal,
   applyToolCallSignal,
