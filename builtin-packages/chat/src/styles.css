@@ -1411,7 +1411,8 @@ textarea {
   padding: 4px 2px;
 }
 
-.thinking-status {
+.thinking-status,
+.message-trace-button {
   justify-self: start;
   border: 1px solid rgba(24, 32, 40, 0.08);
   border-radius: 999px;
@@ -1425,8 +1426,15 @@ textarea {
   cursor: pointer;
 }
 
-.thinking-status:hover {
+.thinking-status:hover,
+.message-trace-button:hover {
   background: var(--panel-strong);
+}
+
+.thinking-status-meta {
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .thinking-sidebar-backdrop {
