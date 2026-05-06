@@ -991,6 +991,9 @@ export function App({ backend }: { backend: ChatBackend }) {
         prepareForLiveTranscriptActivity();
         const record = asRecord(payload);
         const runId = asString(record?.runId);
+        if (true) {
+          console.debug("[chat-trace][signal tool_call]", { runId, callId: asString(record?.callId) ?? null, name: asString(record?.name) ?? null, payload: record });
+        }
         setPendingHil(null);
         setPendingAssistant((current) => current?.mode === "tool"
           ? { ...current, runId: current.runId ?? runId }
@@ -1003,6 +1006,9 @@ export function App({ backend }: { backend: ChatBackend }) {
         prepareForLiveTranscriptActivity();
         const record = asRecord(payload);
         const runId = asString(record?.runId);
+        if (true) {
+          console.debug("[chat-trace][signal tool_result]", { runId, callId: asString(record?.callId) ?? null, ok: record?.ok, payload: record });
+        }
         applyToolResultSignal(payload, target, setRows);
         setPendingAssistant((current) => current?.mode === "thinking"
           ? { ...current, runId: current.runId ?? runId }
@@ -1012,12 +1018,19 @@ export function App({ backend }: { backend: ChatBackend }) {
           return;
         }
         prepareForLiveTranscriptActivity();
+        const record = asRecord(payload);
+        if (true) {
+          console.debug("[chat-trace][signal text]", { runId: asString(record?.runId) ?? null, textPreview: (asString(record?.text) ?? '').slice(0, 120), payload: record });
+        }
         applyAssistantSignal(payload, target, setRows);
       } else if (signal === "chat.complete") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
         const record = asRecord(payload);
+        if (true) {
+          console.debug("[chat-trace][signal complete]", { payload: record, pendingAssistant });
+        }
         setPendingHil(null);
         setPendingAssistant((current) => {
           if (record?.aborted === true && suppressNextAbortedComplete) {
