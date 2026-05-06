@@ -54,6 +54,7 @@ import {
   formatError,
   getStatusText,
   getStoredThreadContext,
+  groupToolRows,
   isInsideChatMenu,
   isNearBottom,
   normalizeContextSignal,
@@ -251,6 +252,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [notice, setNotice] = useState("");
   const [suppressNextAbortedComplete, setSuppressNextAbortedComplete] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const autoscrollAnchorRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active);
   const mountedRef = useRef(true);
   const attachmentsRef = useRef(attachments);
@@ -1038,7 +1040,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   }, [appendSystem, loadArchiveSegments, loadConversations, loadHistory, loadThreads, prepareForLiveTranscriptActivity, suppressNextAbortedComplete, workspaceView]);
 
   useEffect(() => {
-    scrollTranscript("near-bottom");
+    scrollTranscript("next-message");
   }, [rows.length, pendingAssistant, pendingHil]);
 
   async function openHome(): Promise<void> {
@@ -1443,12 +1445,18 @@ export function App({ backend }: { backend: ChatBackend }) {
     });
   }
 
-  function scrollTranscript(mode: "bottom" | "near-bottom"): void {
+  function scrollTranscript(mode: "bottom" | "near-bottom" | "next-message"): void {
     const node = transcriptRef.current;
     if (!node) {
       return;
     }
-    if (mode === "near-bottom" && !stickToBottomRef.current && !isNearBottom(node)) {
+    if ((mode === "near-bottom" || mode === "next-message") && !stickToBottomRef.current && !isNearBottom(node)) {
+      return;
+    }
+    if (mode === "next-message") {
+      autoscrollAnchorRef.current?.scrollIntoView({ block: "start" });
+      stickToBottomRef.current = true;
+      clearNewMessages();
       return;
     }
     node.scrollTop = node.scrollHeight;
@@ -1580,7 +1588,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         ) : (
           <>
             <Transcript
-              rows={rows}
+              rows={groupToolRows(rows)}
               userLabel={viewerUsername}
               pendingAssistant={pendingAssistant}
               pendingHil={pendingHil}
@@ -1590,6 +1598,7 @@ export function App({ backend }: { backend: ChatBackend }) {
               hilBusy={hilBusy}
               branchBusy={branchBusy}
               refNode={transcriptRef}
+              autoscrollAnchorRef={autoscrollAnchorRef}
               mediaSources={mediaSources}
               mediaSourceErrors={mediaSourceErrors}
               onCopy={(text) => void copyText("message", text)}

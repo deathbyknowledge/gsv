@@ -116,6 +116,8 @@ export type ToolRow = {
   output?: unknown;
   ok?: boolean;
   error?: string | null;
+  collapsed?: boolean;
+  childRows?: ToolRow[];
 };
 
 export type LogRow = MessageRow | ToolRow;

@@ -922,6 +922,11 @@ textarea {
   stroke-linejoin: round;
 }
 
+.transcript-anchor {
+  width: 100%;
+  height: 1px;
+}
+
 .message,
 .tool-card {
   min-width: 0;
@@ -1608,6 +1613,31 @@ textarea {
 .tool-details {
   margin-top: 10px;
   min-width: 0;
+}
+
+.tool-group-details {
+  display: grid;
+  gap: 10px;
+}
+
+.tool-group-details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool-group-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-group-list {
+  display: grid;
+  gap: 8px;
+}
+
+.tool-group-list .tool-card {
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
 }
 
 .tool-detail-stack {
