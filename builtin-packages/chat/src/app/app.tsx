@@ -235,6 +235,7 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [contextState, setContextState] = useState<ContextState | null>(null);
   const [contextStatesByConversation, setContextStatesByConversation] = useState<Record<string, ContextState>>({});
   const [pendingAssistant, setPendingAssistant] = useState<PendingAssistantState>(null);
+  const [completedTraceRunId, setCompletedTraceRunId] = useState<string | null>(null);
   const [pendingHil, setPendingHil] = useState<HilRequest | null>(null);
   const [messageBusy, setMessageBusy] = useState(false);
   const [abortBusy, setAbortBusy] = useState(false);
@@ -691,6 +692,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       });
       setPendingHil(normalizeHilRequest(record.pendingHil));
       setPendingAssistant(null);
+      setCompletedTraceRunId(null);
       setRows(flattened);
       clearNewMessages();
       requestAnimationFrame(() => scrollTranscript("bottom"));
@@ -987,20 +989,24 @@ export function App({ backend }: { backend: ChatBackend }) {
           return;
         }
         prepareForLiveTranscriptActivity();
+        const record = asRecord(payload);
+        const runId = asString(record?.runId);
         setPendingHil(null);
         setPendingAssistant((current) => current?.mode === "tool"
-          ? current
-          : { mode: "tool", startedAt: current?.startedAt ?? Date.now() });
+          ? { ...current, runId: current.runId ?? runId }
+          : { mode: "tool", startedAt: current?.startedAt ?? Date.now(), runId: current?.runId ?? runId });
         applyToolCallSignal(payload, target, setRows);
       } else if (signal === "chat.tool_result") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
         prepareForLiveTranscriptActivity();
+        const record = asRecord(payload);
+        const runId = asString(record?.runId);
         applyToolResultSignal(payload, target, setRows);
         setPendingAssistant((current) => current?.mode === "thinking"
-          ? current
-          : { mode: "thinking", startedAt: current?.startedAt ?? Date.now() });
+          ? { ...current, runId: current.runId ?? runId }
+          : { mode: "thinking", startedAt: current?.startedAt ?? Date.now(), runId: current?.runId ?? runId });
       } else if (signal === "chat.text") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
@@ -1020,10 +1026,12 @@ export function App({ backend }: { backend: ChatBackend }) {
           if (!current) {
             return null;
           }
+          setCompletedTraceRunId(current.runId ?? null);
           return {
             mode: "done",
             startedAt: current.startedAt,
             finishedAt: Date.now(),
+            runId: current.runId ?? null,
           };
         });
         setSuppressNextAbortedComplete(false);
@@ -1033,15 +1041,18 @@ export function App({ backend }: { backend: ChatBackend }) {
           appendSystem(errorText);
         }
         void loadThreads();
+        void loadHistory(target);
       } else if (signal === "chat.hil") {
         if (!signalMatchesActiveThread(payload, target)) {
           return;
         }
         prepareForLiveTranscriptActivity();
         setPendingAssistant(null);
+        setCompletedTraceRunId(null);
         setPendingHil(normalizeHilRequest(payload));
       } else if (signal === "chat.error" || signal === "process.exit") {
         setPendingAssistant(null);
+        setCompletedTraceRunId(null);
         setPendingHil(null);
         setSuppressNextAbortedComplete(false);
         void loadThreads();
@@ -1206,7 +1217,8 @@ export function App({ backend }: { backend: ChatBackend }) {
         appendSystem("send failed: " + safeText(record?.error || "unknown error"));
         return;
       }
-      setPendingAssistant({ mode: "thinking", startedAt: Date.now() });
+      setCompletedTraceRunId(null);
+      setPendingAssistant({ mode: "thinking", startedAt: Date.now(), runId: null });
       if (record.queued === true) {
         appendSystem("message queued while process is busy");
       }
@@ -1234,7 +1246,8 @@ export function App({ backend }: { backend: ChatBackend }) {
         setPendingHil(null);
         if (record.continuedQueuedRunId) {
           setSuppressNextAbortedComplete(true);
-          setPendingAssistant({ mode: "thinking", startedAt: Date.now() });
+          setCompletedTraceRunId(null);
+          setPendingAssistant({ mode: "thinking", startedAt: Date.now(), runId: null });
         } else {
           setPendingAssistant(null);
           appendSystem("run interrupted");
@@ -1263,7 +1276,8 @@ export function App({ backend }: { backend: ChatBackend }) {
       const nextHil = normalizeHilRequest(record.pendingHil);
       setPendingHil(nextHil);
       if (!nextHil) {
-        setPendingAssistant({ mode: "thinking", startedAt: Date.now() });
+        setCompletedTraceRunId(null);
+        setPendingAssistant({ mode: "thinking", startedAt: Date.now(), runId: null });
       }
     } catch (error) {
       appendSystem("tool confirmation failed: " + formatError(error));
@@ -1601,6 +1615,7 @@ export function App({ backend }: { backend: ChatBackend }) {
               hasNewMessages={hasNewMessages}
               hilBusy={hilBusy}
               branchBusy={branchBusy}
+              completedTraceRunId={completedTraceRunId}
               refNode={transcriptRef}
               autoscrollAnchorRef={autoscrollAnchorRef}
               mediaSources={mediaSources}
