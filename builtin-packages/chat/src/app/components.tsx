@@ -381,6 +381,27 @@ export function Transcript(props: {
         const relatedToolRows = traceRunId
           ? props.rows.filter((candidate) => (candidate.kind === "toolCall" || candidate.kind === "toolResult") && candidate.runId && candidate.runId === traceRunId) as ToolRow[]
           : [];
+        if (messageRow.role === "assistant") {
+          console.debug("[chat-trace][Transcript]", {
+            messageId: messageRow.messageId ?? null,
+            timestamp: messageRow.timestamp,
+            messageRunId: messageRow.runId ?? null,
+            completedTraceRunId: props.completedTraceRunId ?? null,
+            traceRunId,
+            relatedToolRows: relatedToolRows.length,
+            toolRows: props.rows
+              .filter((candidate) => candidate.kind === "toolCall" || candidate.kind === "toolResult")
+              .map((candidate) => {
+                const toolRow = candidate as ToolRow;
+                return {
+                  kind: toolRow.kind,
+                  callId: toolRow.callId,
+                  runId: toolRow.runId ?? null,
+                  toolName: toolRow.toolName,
+                };
+              }),
+          });
+        }
         return (
           <MessageBubble
             key={`${messageRow.messageId ?? index}:${messageRow.timestamp}`}
