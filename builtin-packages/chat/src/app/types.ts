@@ -147,6 +147,7 @@ export type PendingAssistantState = {
   mode: "thinking" | "tool" | "done";
   startedAt: number;
   finishedAt?: number;
+  runId?: string | null;
 } | null;
 
 export type CompactDialogState = { keepLast: string; suggested: number } | null;

@@ -355,6 +355,7 @@ export function Transcript(props: {
   pendingHil: HilRequest | null;
   hilBusy: boolean;
   branchBusy: boolean;
+  completedTraceRunId?: string | null;
   refNode: { current: HTMLDivElement | null };
   autoscrollAnchorRef: { current: HTMLDivElement | null };
   mediaSources: Record<string, string>;
@@ -376,8 +377,9 @@ export function Transcript(props: {
           return null;
         }
         const messageRow = row as MessageRow;
-        const relatedToolRows = messageRow.role === "assistant"
-          ? props.rows.filter((candidate) => (candidate.kind === "toolCall" || candidate.kind === "toolResult") && candidate.runId && candidate.runId === messageRow.runId) as ToolRow[]
+        const traceRunId = messageRow.runId ?? (messageRow.role === "assistant" ? props.completedTraceRunId ?? null : null);
+        const relatedToolRows = traceRunId
+          ? props.rows.filter((candidate) => (candidate.kind === "toolCall" || candidate.kind === "toolResult") && candidate.runId && candidate.runId === traceRunId) as ToolRow[]
           : [];
         return (
           <MessageBubble
