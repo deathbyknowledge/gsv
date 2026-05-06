@@ -11,13 +11,20 @@ export type PackageAppBoot = {
 };
 
 type CapnwebGlobal = {
-  newWebSocketRpcSession<T = unknown>(url: string, localMain?: unknown): T;
+  newWebSocketRpcSession<T = unknown>(socket: string | WebSocket, localMain?: unknown): T;
   RpcTarget?: abstract new (...args: unknown[]) => object;
 };
 
 type RemoteBackend = {
   invoke(method: string, args?: unknown): Promise<unknown>;
+  onRpcBroken?: (callback: (error: unknown) => void) => void;
 } & Record<string | symbol, unknown>;
+
+type BackendConnection = {
+  backend: RemoteBackend;
+  socket: WebSocket;
+  broken: boolean;
+};
 
 type BackendProxyControl = {
   invoke(method: string, args?: unknown): Promise<unknown>;
@@ -55,31 +62,44 @@ function getCapnweb(): CapnwebGlobal {
   return capnweb;
 }
 
-let backendConnectionPromise: Promise<RemoteBackend> | null = null;
+let backendConnectionPromise: Promise<BackendConnection> | null = null;
 let backendProxy: unknown = null;
 let appClientTarget: unknown = null;
 let appSessionRefreshPromise: Promise<PackageAppBoot> | null = null;
 const appEventListeners = new Set<AppEventListener>();
 const APP_SESSION_REFRESH_LEEWAY_MS = 60_000;
 
-function isReconnectableBackendError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.toLowerCase();
-  return normalized.includes("websocket disconnected")
-    || normalized.includes("websocket closed")
-    || normalized.includes("peer closed connection")
-    || normalized.includes("connection closed")
-    || normalized.includes("transport closed")
-    || normalized.includes("socket closed")
-    || normalized.includes("broken pipe")
-    || normalized.includes("rpc stream closed");
+class BackendTransportClosedError extends Error {
+  readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "BackendTransportClosedError";
+    this.cause = cause;
+  }
 }
 
 function resetBackendConnection(): void {
+  const previousConnection = backendConnectionPromise;
   backendConnectionPromise = null;
   if (globalThis.window) {
     globalThis.window.__GSV_BACKEND_READY__ = undefined;
   }
+  void previousConnection
+    ?.then((connection) => closeBackendSocket(connection.socket))
+    .catch(() => {});
+}
+
+function closeBackendSocket(socket: WebSocket): void {
+  if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+    socket.close(1000, "client reconnect");
+  }
+}
+
+function shouldRetryBackendCall(connection: BackendConnection | null, error: unknown): boolean {
+  return error instanceof BackendTransportClosedError
+    || Boolean(connection?.broken)
+    || Boolean(connection && connection.socket.readyState !== WebSocket.OPEN);
 }
 
 function isPackageAppBoot(value: unknown): value is PackageAppBoot {
@@ -172,7 +192,7 @@ function getOrCreateAppClientTarget(): unknown {
   return appClientTarget;
 }
 
-async function connectBackendTransport(): Promise<RemoteBackend> {
+async function connectBackendTransport(): Promise<BackendConnection> {
   if (backendConnectionPromise) {
     return backendConnectionPromise;
   }
@@ -184,10 +204,26 @@ async function connectBackendTransport(): Promise<RemoteBackend> {
     boot = await refreshAppSession(boot);
   }
   const capnweb = getCapnweb();
-  const ready = (async () => {
+  const socket = new WebSocket(buildRpcWebSocketUrl(boot.rpcBase));
+  let connection: BackendConnection | null = null;
+  let ready: Promise<BackendConnection>;
+  let transportBroken = socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED;
+  const markTransportBroken = () => {
+    transportBroken = true;
+    if (connection) {
+      connection.broken = true;
+    }
+    if (backendConnectionPromise === ready) {
+      resetBackendConnection();
+    }
+  };
+  socket.addEventListener("close", markTransportBroken);
+  socket.addEventListener("error", markTransportBroken);
+
+  ready = (async () => {
     const session = capnweb.newWebSocketRpcSession<{
       authenticate(secret: string, clientTarget?: unknown): unknown;
-    }>(buildRpcWebSocketUrl(boot.rpcBase));
+    }>(socket);
     const backend = await session.authenticate(boot.sessionSecret, getOrCreateAppClientTarget());
     if (!backend || (typeof backend !== "object" && typeof backend !== "function")) {
       throw new Error("package backend rpc returned an invalid target");
@@ -196,12 +232,20 @@ async function connectBackendTransport(): Promise<RemoteBackend> {
     if (typeof target.invoke !== "function") {
       throw new Error("package backend rpc target is missing invoke()");
     }
-    return target;
+    connection = {
+      backend: target,
+      socket,
+      broken: transportBroken || socket.readyState !== WebSocket.OPEN,
+    };
+    if (typeof target.onRpcBroken === "function") {
+      target.onRpcBroken(markTransportBroken);
+    }
+    return connection;
   })().catch((error) => {
     if (backendConnectionPromise === ready) {
       resetBackendConnection();
     }
-    throw error;
+    throw transportBroken ? new BackendTransportClosedError(error) : error;
   });
   backendConnectionPromise = ready;
   if (globalThis.window) {
@@ -211,18 +255,19 @@ async function connectBackendTransport(): Promise<RemoteBackend> {
 }
 
 async function invokeBackend(method: string, args?: unknown): Promise<unknown> {
+  let connection: BackendConnection | null = null;
   try {
-    const backend = await connectBackendTransport();
-    return await backend.invoke(method, args);
+    connection = await connectBackendTransport();
+    return await connection.backend.invoke(method, args);
   } catch (error) {
-    if (!isReconnectableBackendError(error)) {
+    if (!shouldRetryBackendCall(connection, error)) {
       throw error;
     }
   }
 
   resetBackendConnection();
-  const backend = await connectBackendTransport();
-  return backend.invoke(method, args);
+  const nextConnection = await connectBackendTransport();
+  return nextConnection.backend.invoke(method, args);
 }
 
 function createBackendProxy<T = unknown>(): T {
