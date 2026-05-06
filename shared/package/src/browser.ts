@@ -17,6 +17,7 @@ type CapnwebGlobal = {
 
 type RemoteBackend = {
   invoke(method: string, args?: unknown): Promise<unknown>;
+  onRpcBroken?: (callback: (error: unknown) => void) => void;
 } & Record<string | symbol, unknown>;
 
 type BackendProxyControl = {
@@ -65,14 +66,17 @@ const APP_SESSION_REFRESH_LEEWAY_MS = 60_000;
 function isReconnectableBackendError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
-  return normalized.includes("websocket disconnected")
-    || normalized.includes("websocket closed")
-    || normalized.includes("peer closed connection")
-    || normalized.includes("connection closed")
-    || normalized.includes("transport closed")
-    || normalized.includes("socket closed")
-    || normalized.includes("broken pipe")
-    || normalized.includes("rpc stream closed");
+  const hasTransportWord = normalized.includes("websocket")
+    || normalized.includes("socket")
+    || normalized.includes("stream")
+    || normalized.includes("transport")
+    || normalized.includes("pipe");
+  const hasTransportFailureWord = normalized.includes("disconnect")
+    || normalized.includes("close")
+    || normalized.includes("fail")
+    || normalized.includes("not open")
+    || normalized.includes("broke");
+  return hasTransportWord && hasTransportFailureWord;
 }
 
 function resetBackendConnection(): void {
@@ -184,7 +188,8 @@ async function connectBackendTransport(): Promise<RemoteBackend> {
     boot = await refreshAppSession(boot);
   }
   const capnweb = getCapnweb();
-  const ready = (async () => {
+  let ready: Promise<RemoteBackend>;
+  ready = (async () => {
     const session = capnweb.newWebSocketRpcSession<{
       authenticate(secret: string, clientTarget?: unknown): unknown;
     }>(buildRpcWebSocketUrl(boot.rpcBase));
@@ -195,6 +200,13 @@ async function connectBackendTransport(): Promise<RemoteBackend> {
     const target = backend as RemoteBackend;
     if (typeof target.invoke !== "function") {
       throw new Error("package backend rpc target is missing invoke()");
+    }
+    if (typeof target.onRpcBroken === "function") {
+      target.onRpcBroken(() => {
+        if (backendConnectionPromise === ready) {
+          resetBackendConnection();
+        }
+      });
     }
     return target;
   })().catch((error) => {
