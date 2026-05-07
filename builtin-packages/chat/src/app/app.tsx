@@ -284,8 +284,8 @@ export function App({ backend }: { backend: ChatBackend }) {
   const hasDraft = composeText.trim().length > 0 || attachments.length > 0;
   const voiceActive = voice.status !== "idle";
   const runActive = pendingAssistant !== null || pendingHil !== null;
-  const runStateClass = hostError ? "is-error" : pendingHil ? "is-waiting" : runActive ? "is-running" : "is-ready";
-  const runStateLabel = hostError ? "Error" : pendingHil ? "Approval" : runActive ? "Running" : "Ready";
+  const runStateClass = hostError ? "is-error" : pendingHil ? "is-waiting" : messageBusy ? "is-running" : pendingAssistant === null && activeConversation ? "is-done" : "is-ready";
+  const runStateLabel = hostError ? "Error" : pendingHil ? "Approval" : messageBusy ? "Running" : pendingAssistant === null && activeConversation ? "Done" : "Ready";
   const canSend = interactive && !messageBusy && hasDraft && !voiceActive;
   const canStop = interactive && Boolean(active?.pid) && !abortBusy && runActive && !hasDraft && !voiceActive;
   const canActOnConversation = interactive && Boolean(active?.pid) && !messageBusy && pendingAssistant === null;

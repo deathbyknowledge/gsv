@@ -671,6 +671,15 @@ textarea {
   box-shadow: 0 0 0 4px rgba(31, 92, 153, 0.1);
 }
 
+.run-status.is-done {
+  color: var(--green);
+}
+
+.run-status.is-done::after {
+  background: var(--green);
+  box-shadow: 0 0 0 4px rgba(45, 124, 85, 0.1);
+}
+
 .run-status.is-waiting::after {
   background: var(--yellow);
 }
