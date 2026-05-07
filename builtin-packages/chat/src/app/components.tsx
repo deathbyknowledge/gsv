@@ -576,7 +576,14 @@ function MessageBubble({
             </header>
             <div class="thinking-sidebar-body">
               {groupToolRowsByCall(relatedToolRows).map((item) => (
-                <ToolTraceListItem key={item.callId} row={item.row} syscall={item.syscall} summary={item.summary} />
+                <ToolTraceListItem
+                  key={item.callId}
+                  callRow={item.callRow}
+                  resultRow={item.resultRow}
+                  displayRow={item.displayRow}
+                  syscall={item.syscall}
+                  summary={item.summary}
+                />
               ))}
             </div>
           </aside>
@@ -647,7 +654,14 @@ function ThinkingStatus(props: { pendingAssistant: PendingAssistantState; rows: 
               ) : (
                 <>
                   {groupToolRowsByCall(toolRows).map((item) => (
-                    <ToolTraceListItem key={item.callId} row={item.row} syscall={item.syscall} summary={item.summary} />
+                    <ToolTraceListItem
+                      key={item.callId}
+                      callRow={item.callRow}
+                      resultRow={item.resultRow}
+                      displayRow={item.displayRow}
+                      syscall={item.syscall}
+                      summary={item.summary}
+                    />
                   ))}
                 </>
               )}
@@ -697,7 +711,7 @@ function formatToolCount(toolRows: ToolRow[]): string {
   return `${count} tool${count === 1 ? "" : "s"}`;
 }
 
-function groupToolRowsByCall(toolRows: ToolRow[]): Array<{ callId: string; row: ToolRow; syscall: string | null; summary: string }> {
+function groupToolRowsByCall(toolRows: ToolRow[]): Array<{ callId: string; callRow: ToolRow | null; resultRow: ToolRow | null; displayRow: ToolRow; syscall: string | null; summary: string }> {
   const grouped = new Map<string, { call?: ToolRow; result?: ToolRow }>();
   for (const row of toolRows) {
     const current = grouped.get(row.callId) || {};
@@ -706,16 +720,18 @@ function groupToolRowsByCall(toolRows: ToolRow[]): Array<{ callId: string; row: 
     grouped.set(row.callId, current);
   }
   return Array.from(grouped.entries()).map(([callId, pair]) => {
-    const row = pair.result || pair.call;
-    if (!row) {
+    const displayRow = pair.result || pair.call;
+    if (!displayRow) {
       throw new Error(`missing tool row for call ${callId}`);
     }
-    const syscall = inferToolSyscall(row.toolName, row.syscall);
+    const syscall = inferToolSyscall(displayRow.toolName, displayRow.syscall);
     return {
       callId,
-      row,
+      callRow: pair.call || null,
+      resultRow: pair.result || null,
+      displayRow,
       syscall,
-      summary: describeToolTraceSummary(pair.call || row, pair.result || null, syscall),
+      summary: describeToolTraceSummary(pair.call || displayRow, pair.result || null, syscall),
     };
   });
 }
@@ -1115,24 +1131,96 @@ function describeToolTraceSummary(callRow: ToolRow, resultRow: ToolRow | null, s
   return describeToolCard(callRow.toolName, callRow.args, syscall).title;
 }
 
-function ToolTraceListItem({ row, syscall, summary }: { row: ToolRow; syscall: string | null; summary: string }) {
-  const ok = row.kind === "toolResult" ? row.ok !== false : false;
-  const statusClass = row.kind === "toolCall" ? "is-pending" : ok ? "is-ok" : "is-error";
-  const statusLabel = row.kind === "toolCall" ? "Running" : ok ? "Done" : "Error";
-  const detailsLabel = row.kind === "toolCall" ? "Input" : "Details";
+function summarizeToolArgs(args: unknown, syscall: string | null): string {
+  const record = asRecord(args);
+  if (!record) return "";
+  if (syscall === "fs.read" || syscall === "fs.write" || syscall === "fs.edit" || syscall === "fs.delete") {
+    return asString(record.path) || "";
+  }
+  if (syscall === "fs.search") {
+    const query = asString(record.query);
+    return query ? `query ${JSON.stringify(truncateInline(query, 40))}` : "";
+  }
+  if (syscall === "shell.exec") {
+    const input = asString(record.input);
+    return input ? truncateInline(input, 56) : "";
+  }
+  if (syscall === "sys.mcp.call") {
+    return asString(record.name) || asString(record.serverId) || "";
+  }
+  return "";
+}
+
+function summarizeToolResult(row: ToolRow | null): string {
+  if (!row) return "";
+  if (row.ok === false) {
+    return row.error || "Failed";
+  }
+  const normalized = normalizeToolOutput(row.output);
+  const record = asRecord(normalized);
+  if (typeof normalized === "string") {
+    return truncateInline(normalized.trim() || "Completed", 80);
+  }
+  if (typeof record?.content === "string") {
+    return truncateInline(record.content.trim(), 80);
+  }
+  if (typeof record?.stdout === "string" && record.stdout.trim()) {
+    return truncateInline(record.stdout.trim(), 80);
+  }
+  if (typeof record?.error === "string" && record.error.trim()) {
+    return truncateInline(record.error.trim(), 80);
+  }
+  if (Array.isArray(record?.matches)) {
+    return `${record.matches.length} matches`;
+  }
+  if (typeof record?.count === "number") {
+    return `${record.count} results`;
+  }
+  return "Completed";
+}
+
+function ToolTraceListItem(
+  { callRow, resultRow, displayRow, syscall, summary }: {
+    callRow: ToolRow | null;
+    resultRow: ToolRow | null;
+    displayRow: ToolRow;
+    syscall: string | null;
+    summary: string;
+  },
+) {
+  const running = !resultRow;
+  const ok = resultRow ? resultRow.ok !== false : false;
+  const statusClass = running ? "is-pending" : ok ? "is-ok" : "is-error";
+  const statusLabel = running ? "Running" : ok ? "Done" : "Error";
+  const argsSummary = summarizeToolArgs(callRow?.args ?? displayRow.args, syscall);
+  const resultSummary = summarizeToolResult(resultRow);
   return (
     <article class="tool-trace-item">
       <div class="tool-trace-item-head">
         <span class={`tool-trace-state ${statusClass}`} aria-label={statusLabel} title={statusLabel}>
-          {row.kind === "toolCall" ? <span class="spinner tool-status-spinner" aria-hidden="true" /> : null}
+          {running ? <span class="spinner tool-status-spinner" aria-hidden="true" /> : null}
         </span>
         <div class="tool-trace-item-copy">
           <h3>{summary}</h3>
-          <p>{statusLabel}</p>
+          <p>{statusLabel}{argsSummary ? ` · ${argsSummary}` : ""}</p>
+          {!running && resultSummary ? <p>{resultSummary}</p> : null}
         </div>
         <details class="tool-trace-item-details">
           <summary>Details</summary>
-          <ToolDetails row={row} syscall={syscall} />
+          <div class="tool-detail-stack">
+            {callRow ? (
+              <section>
+                <h4>Call</h4>
+                <ToolDetails row={callRow} syscall={syscall} />
+              </section>
+            ) : null}
+            {resultRow ? (
+              <section>
+                <h4>Result</h4>
+                <ToolDetails row={resultRow} syscall={syscall} />
+              </section>
+            ) : null}
+          </div>
         </details>
       </div>
     </article>
@@ -1154,12 +1242,12 @@ function ToolCard({ row }: { row: ToolRow }) {
           <summary class="tool-card-head">
             <div>
               <h3>Tool activity</h3>
-              <p>{done + approvals} tools{approvals > 0 ? ` · ${approvals} running` : ""}{errors > 0 ? ` · ${errors} error` : running ? "" : " · done"}</p>
+              <p>{formatToolCount(childRows)}{approvals > 0 ? ` · ${approvals} running` : ""}{errors > 0 ? ` · ${errors} error` : running ? "" : " · done"}</p>
             </div>
             <span class={`tool-status ${statusClass}`}>
               {running ? <span class="spinner tool-status-spinner" aria-hidden="true" /> : null}
               {running ? "Running" : errors > 0 ? "Error" : "Done"}
-              <span>{done + approvals} tools</span>
+              <span>{formatToolCount(childRows)}</span>
             </span>
           </summary>
           <div class="tool-group-list">
@@ -1245,10 +1333,18 @@ function ToolDetails({ row, syscall }: { row: ToolRow; syscall: string | null })
   }
   return (
     <div class="tool-detail-stack">
-      <MetaGrid rows={[["call", row.callId], ["syscall", syscall || ""]]} />
-      <pre>{truncateBlock(prettyJson(row.args), 2400)}</pre>
-      {row.kind === "toolResult" && normalized !== undefined ? (
-        <pre>{truncateBlock(typeof normalized === "string" ? normalized : prettyJson(normalized), 4000)}</pre>
+      <MetaGrid rows={[["call", row.callId], ["syscall", syscall || ""], ["tool", row.toolName]]} />
+      {row.kind === "toolCall" ? (
+        <section>
+          <h4>Arguments</h4>
+          <pre>{truncateBlock(prettyJson(row.args), 2400)}</pre>
+        </section>
+      ) : null}
+      {row.kind === "toolResult" ? (
+        <section>
+          <h4>Output</h4>
+          <pre>{truncateBlock(typeof normalized === "string" ? normalized : prettyJson(normalized), 4000)}</pre>
+        </section>
       ) : null}
     </div>
   );

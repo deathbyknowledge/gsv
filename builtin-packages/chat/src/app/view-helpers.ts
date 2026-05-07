@@ -24,9 +24,10 @@ function groupToolRows(rows: LogRow[]): LogRow[] {
     const latest = pendingGroup[pendingGroup.length - 1];
     const hasPending = pendingGroup.some((row) => row.kind === "toolCall");
     const hasError = pendingGroup.some((row) => row.kind === "toolResult" && row.ok === false);
+    const toolCount = new Set(pendingGroup.map((row) => row.callId).filter(Boolean)).size || pendingGroup.length;
     grouped.push({
       kind: hasPending ? "toolCall" : "toolResult",
-      toolName: `Tool activity (${pendingGroup.length})`,
+      toolName: `Tool activity (${toolCount})`,
       callId: `tool-group:${latest.callId}`,
       args: {},
       syscall: null,
