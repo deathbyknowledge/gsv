@@ -1097,6 +1097,7 @@ function ToolCard({ row }: { row: ToolRow }) {
               <p>{done + approvals} tools{approvals > 0 ? ` · ${approvals} running` : ""}{errors > 0 ? ` · ${errors} error` : running ? "" : " · done"}</p>
             </div>
             <span class={`tool-status ${statusClass}`}>
+              {running ? <span class="spinner tool-status-spinner" aria-hidden="true" /> : null}
               {running ? "Running" : errors > 0 ? "Error" : "Done"}
               <span>{done + approvals} tools</span>
             </span>
@@ -1123,6 +1124,7 @@ function ToolCard({ row }: { row: ToolRow }) {
           {card.subtitle ? <p>{card.subtitle}</p> : null}
         </div>
         <span class={`tool-status ${statusClass}`}>
+          {row.kind === "toolCall" ? <span class="spinner tool-status-spinner" aria-hidden="true" /> : null}
           {row.kind === "toolCall" ? "Running" : ok ? "Done" : "Error"}
           <span>{card.target}</span>
         </span>
