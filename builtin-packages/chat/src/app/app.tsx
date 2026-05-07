@@ -77,7 +77,7 @@ import {
 const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
 const PENDING_TARGETS_KEY = "__gsvPendingChatProcessTargets";
 const WINDOW_ID = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
-const HISTORY_PAGE_SIZE = 200;
+const HISTORY_PAGE_SIZE = 50;
 
 function historyTargetKey(target: Pick<ThreadContext, "pid" | "conversationId">): string {
   return `${target.pid}\n${target.conversationId || "default"}`;
