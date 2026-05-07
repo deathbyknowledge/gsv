@@ -1695,6 +1695,12 @@ textarea {
   white-space: nowrap;
 }
 
+.tool-status-spinner {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+
 .tool-preview {
   margin-top: 10px;
 }
