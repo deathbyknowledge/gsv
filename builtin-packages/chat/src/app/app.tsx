@@ -666,6 +666,22 @@ export function App({ backend }: { backend: ChatBackend }) {
       }
       const messages = Array.isArray(record.messages) ? record.messages : [];
       const flattened = flattenHistory(messages);
+      console.debug("[chat-trace][loadHistory flattened]", flattened.map((row) => (
+        row.kind === "message"
+          ? {
+              kind: row.kind,
+              role: row.role,
+              messageId: row.messageId ?? null,
+              runId: row.runId ?? null,
+              textPreview: row.text.slice(0, 80),
+            }
+          : {
+              kind: row.kind,
+              callId: row.callId,
+              runId: row.runId ?? null,
+              toolName: row.toolName,
+            }
+      )));
       const ids = historyMessageIds(messages);
       const total = asNumber(record.messageCount) ?? messages.length;
       updateHistoryWindow({
