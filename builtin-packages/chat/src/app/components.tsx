@@ -520,7 +520,7 @@ function MessageBubble({
         <button type="button" class="message-trace-button" onClick={() => setTraceOpen(true)}>
           {traceRunning ? <span class="spinner" aria-hidden="true" /> : <CheckIcon />}
           <span>View trace</span>
-          <span class="thinking-status-meta">{countUniqueToolCalls(relatedToolRows)} tools</span>
+          <span class="thinking-status-meta">{formatToolCount(relatedToolRows)}</span>
         </button>
       ) : null}
       {thinking.length > 0 ? (
@@ -568,7 +568,7 @@ function MessageBubble({
             <header class="thinking-sidebar-head">
               <div>
                 <h2>Thinking trace</h2>
-                <p>{countUniqueToolCalls(relatedToolRows)} tools used for this answer.</p>
+                <p>{formatToolCount(relatedToolRows)} used for this answer.</p>
               </div>
               <button type="button" class="icon-button small" onClick={() => setTraceOpen(false)}>
                 <XIcon />
@@ -576,7 +576,7 @@ function MessageBubble({
             </header>
             <div class="thinking-sidebar-body">
               {groupToolRowsByCall(relatedToolRows).map((item) => (
-                <ToolTraceListItem key={item.callId} row={item.row} syscall={item.syscall} />
+                <ToolTraceListItem key={item.callId} row={item.row} syscall={item.syscall} summary={item.summary} />
               ))}
             </div>
           </aside>
@@ -627,7 +627,7 @@ function ThinkingStatus(props: { pendingAssistant: PendingAssistantState; rows: 
       <button type="button" class="thinking-status" onClick={() => setOpen(true)}>
         <span class="spinner" aria-hidden="true" />
         <span>{label}</span>
-        {toolRows.length > 0 ? <span class="thinking-status-meta">{countUniqueToolCalls(toolRows)} tools</span> : null}
+        {toolRows.length > 0 ? <span class="thinking-status-meta">{formatToolCount(toolRows)}</span> : null}
       </button>
       {open ? (
         <div class="thinking-sidebar-backdrop" onClick={() => setOpen(false)}>
@@ -647,7 +647,7 @@ function ThinkingStatus(props: { pendingAssistant: PendingAssistantState; rows: 
               ) : (
                 <>
                   {groupToolRowsByCall(toolRows).map((item) => (
-                    <ToolTraceListItem key={item.callId} row={item.row} syscall={item.syscall} />
+                    <ToolTraceListItem key={item.callId} row={item.row} syscall={item.syscall} summary={item.summary} />
                   ))}
                 </>
               )}
@@ -685,22 +685,39 @@ function describeThinkingStatus(toolRows: ToolRow[]): string {
 }
 
 function countUniqueToolCalls(toolRows: ToolRow[]): number {
-  return groupToolRowsByCall(toolRows).length;
+  const callIds = new Set<string>();
+  for (const row of toolRows) {
+    if (row.callId) callIds.add(row.callId);
+  }
+  return callIds.size;
 }
 
-function groupToolRowsByCall(toolRows: ToolRow[]): Array<{ callId: string; row: ToolRow; syscall: string | null }> {
-  const grouped = new Map<string, ToolRow>();
+function formatToolCount(toolRows: ToolRow[]): string {
+  const count = countUniqueToolCalls(toolRows);
+  return `${count} tool${count === 1 ? "" : "s"}`;
+}
+
+function groupToolRowsByCall(toolRows: ToolRow[]): Array<{ callId: string; row: ToolRow; syscall: string | null; summary: string }> {
+  const grouped = new Map<string, { call?: ToolRow; result?: ToolRow }>();
   for (const row of toolRows) {
-    const existing = grouped.get(row.callId);
-    if (!existing || row.kind === "toolResult") {
-      grouped.set(row.callId, row);
-    }
+    const current = grouped.get(row.callId) || {};
+    if (row.kind === "toolCall") current.call = row;
+    else current.result = row;
+    grouped.set(row.callId, current);
   }
-  return Array.from(grouped.values()).map((row) => ({
-    callId: row.callId,
-    row,
-    syscall: inferToolSyscall(row.toolName, row.syscall),
-  }));
+  return Array.from(grouped.entries()).map(([callId, pair]) => {
+    const row = pair.result || pair.call;
+    if (!row) {
+      throw new Error(`missing tool row for call ${callId}`);
+    }
+    const syscall = inferToolSyscall(row.toolName, row.syscall);
+    return {
+      callId,
+      row,
+      syscall,
+      summary: describeToolTraceSummary(pair.call || row, pair.result || null, syscall),
+    };
+  });
 }
 
 function summarizeToolRows(toolRows: ToolRow[]): string[] {
@@ -1079,27 +1096,45 @@ function mediaMimeType(media: unknown): string | null {
   return asString(record?.mimeType);
 }
 
-function ToolTraceListItem({ row, syscall }: { row: ToolRow; syscall: string | null }) {
-  const card = describeToolCard(row.toolName, row.args, syscall);
+function describeToolTraceSummary(callRow: ToolRow, resultRow: ToolRow | null, syscall: string | null): string {
+  const argsRecord = asRecord(callRow.args);
+  const path = asString(argsRecord?.path);
+  if (syscall === "fs.read") return path ? `Read ${path}` : "Read a file";
+  if (syscall === "fs.search") {
+    const query = asString(argsRecord?.query);
+    return query ? `Searched for ${JSON.stringify(query)}` : "Searched the workspace";
+  }
+  if (syscall === "shell.exec") {
+    const command = asString(argsRecord?.input);
+    return command ? `Ran ${truncateInline(command, 72)}` : "Ran a shell command";
+  }
+  if (syscall === "fs.write") return path ? `Wrote ${path}` : "Wrote a file";
+  if (syscall === "fs.edit") return path ? `Edited ${path}` : "Edited a file";
+  if (syscall === "fs.delete") return path ? `Deleted ${path}` : "Deleted a file";
+  if (resultRow?.ok === false) return resultRow.error || "Tool call failed";
+  return describeToolCard(callRow.toolName, callRow.args, syscall).title;
+}
+
+function ToolTraceListItem({ row, syscall, summary }: { row: ToolRow; syscall: string | null; summary: string }) {
   const ok = row.kind === "toolResult" ? row.ok !== false : false;
+  const statusClass = row.kind === "toolCall" ? "is-pending" : ok ? "is-ok" : "is-error";
   const statusLabel = row.kind === "toolCall" ? "Running" : ok ? "Done" : "Error";
   const detailsLabel = row.kind === "toolCall" ? "Input" : "Details";
   return (
     <article class="tool-trace-item">
       <div class="tool-trace-item-head">
-        <div class="tool-trace-item-copy">
-          <h3>{card.title}</h3>
-          <p>{card.subtitle || card.target}</p>
-        </div>
-        <span class={`tool-status ${row.kind === "toolCall" ? "is-pending" : ok ? "is-ok" : "is-error"}`}>
-          {row.kind === "toolCall" ? <span class="spinner tool-status-spinner" aria-hidden="true" /> : ok ? <CheckIcon /> : <span aria-hidden="true">!</span>}
-          {statusLabel}
+        <span class={`tool-trace-state ${statusClass}`} aria-label={statusLabel} title={statusLabel}>
+          {row.kind === "toolCall" ? <span class="spinner tool-status-spinner" aria-hidden="true" /> : null}
         </span>
+        <div class="tool-trace-item-copy">
+          <h3>{summary}</h3>
+          <p>{statusLabel}</p>
+        </div>
+        <details class="tool-trace-item-details">
+          <summary>Details</summary>
+          <ToolDetails row={row} syscall={syscall} />
+        </details>
       </div>
-      <details class="tool-trace-item-details">
-        <summary>{detailsLabel}</summary>
-        <ToolDetails row={row} syscall={syscall} />
-      </details>
     </article>
   );
 }

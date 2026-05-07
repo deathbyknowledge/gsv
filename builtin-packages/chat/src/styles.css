@@ -1517,6 +1517,36 @@ textarea {
   gap: 12px;
 }
 
+.tool-trace-state {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: var(--soft);
+}
+
+.tool-trace-state.is-ok {
+  background: var(--green);
+}
+
+.tool-trace-state.is-error {
+  background: var(--red);
+}
+
+.tool-trace-state.is-pending {
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-trace-state .spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 2px;
+}
+
 .tool-trace-item-copy {
   min-width: 0;
   display: grid;
