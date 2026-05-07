@@ -553,6 +553,7 @@ export function Transcript(props: {
               onLoadMediaSource={props.onLoadMediaSource}
               onRetryMediaSource={props.onRetryMediaSource}
               relatedToolRows={relatedToolRows}
+              traceRunning={relatedToolRows.some((toolRow) => toolRow.kind === "toolCall")}
             />
           );
         })}
@@ -585,6 +586,7 @@ function MessageBubble({
   onLoadMediaSource,
   onRetryMediaSource,
   relatedToolRows = [],
+  traceRunning = false,
 }: {
   row: MessageRow;
   userLabel: string;
@@ -597,6 +599,7 @@ function MessageBubble({
   onLoadMediaSource(media: unknown): void;
   onRetryMediaSource(media: unknown): void;
   relatedToolRows?: ToolRow[];
+  traceRunning?: boolean;
 }) {
   const [traceOpen, setTraceOpen] = useState(false);
   const thinking = row.thinking?.filter(Boolean) ?? [];
@@ -642,7 +645,7 @@ function MessageBubble({
       </div>
       {row.role === "assistant" && relatedToolRows.length > 0 ? (
         <button type="button" class="message-trace-button" onClick={() => setTraceOpen(true)}>
-          <span class="spinner" aria-hidden="true" />
+          {traceRunning ? <span class="spinner" aria-hidden="true" /> : <CheckIcon />}
           <span>View trace</span>
           <span class="thinking-status-meta">{relatedToolRows.length} steps</span>
         </button>
