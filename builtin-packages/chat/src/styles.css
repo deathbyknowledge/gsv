@@ -1424,11 +1424,11 @@ textarea {
 .message-trace-button {
   justify-self: start;
   border: 1px solid rgba(24, 32, 40, 0.08);
-  border-radius: 999px;
-  padding: 8px 12px;
+  border-radius: 10px;
+  padding: 7px 10px;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.82);
   font-weight: 700;
@@ -1438,6 +1438,13 @@ textarea {
 .thinking-status:hover,
 .message-trace-button:hover {
   background: var(--panel-strong);
+}
+
+.message-trace-button svg,
+.thinking-status svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
 }
 
 .thinking-status-meta {
@@ -1494,42 +1501,55 @@ textarea {
   gap: 14px;
 }
 
-.thinking-summary-panel,
-.thinking-raw-panel {
+.tool-trace-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 12px;
   display: grid;
   gap: 10px;
 }
 
-.thinking-summary-panel h3 {
+.tool-trace-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tool-trace-item-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.tool-trace-item-copy h3 {
   margin: 0;
   font-size: 13px;
 }
 
-.thinking-raw-panel summary {
+.tool-trace-item-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.tool-trace-item-details {
+  display: grid;
+  gap: 8px;
+}
+
+.tool-trace-item-details summary {
   cursor: pointer;
   color: var(--blue);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   list-style: none;
 }
 
-.thinking-raw-panel summary::-webkit-details-marker {
+.tool-trace-item-details summary::-webkit-details-marker {
   display: none;
-}
-
-.thinking-raw-panel-body {
-  display: grid;
-  gap: 10px;
-}
-
-.thinking-summary-panel ul {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--muted);
-}
-
-.thinking-summary-panel li {
-  margin: 0;
 }
 
 .spinner {
