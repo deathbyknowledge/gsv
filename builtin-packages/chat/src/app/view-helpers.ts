@@ -166,15 +166,27 @@ function applyAssistantSignal(payload: unknown, active: ThreadContext, setRows: 
   const thinking = extractThinkingBlocks(record);
   if (!text.trim() && thinking.length === 0) return;
   const runId = asString(record?.runId);
+  console.debug("[chat-trace][applyAssistantSignal]", {
+    incomingRunId: runId ?? null,
+    textPreview: text.slice(0, 120),
+  });
   setRows((current) => {
     const next = current.slice();
     const last = next[next.length - 1];
     const row: MessageRow = { kind: "message", role: "assistant", text, thinking, timestamp: Date.now(), runId };
-    if (last?.kind === "message" && last.role === "assistant" && runId && last.runId === runId) {
+    const replacing = !!(last?.kind === "message" && last.role === "assistant" && runId && last.runId === runId);
+    if (replacing) {
       next[next.length - 1] = row;
     } else {
       next.push(row);
     }
+    console.debug("[chat-trace][applyAssistantSignal result]", {
+      replacing,
+      lastKind: last?.kind ?? null,
+      lastRole: last && last.kind === "message" ? last.role : null,
+      lastRunId: last && last.kind === "message" ? last.runId ?? null : null,
+      resultLastRow: next[next.length - 1],
+    });
     return dropEmptyPlaceholder(next);
   });
 }

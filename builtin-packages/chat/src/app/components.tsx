@@ -377,7 +377,8 @@ export function Transcript(props: {
           return null;
         }
         const messageRow = row as MessageRow;
-        const traceRunId = messageRow.runId ?? (messageRow.role === "assistant" ? props.completedTraceRunId ?? null : null);
+        const isEphemeralAssistantRow = messageRow.role === "assistant" && messageRow.messageId == null;
+        const traceRunId = messageRow.runId ?? (isEphemeralAssistantRow ? props.completedTraceRunId ?? null : null);
         let relatedToolRows = traceRunId
           ? props.rows.filter((candidate) => (candidate.kind === "toolCall" || candidate.kind === "toolResult") && candidate.runId && candidate.runId === traceRunId) as ToolRow[]
           : [];

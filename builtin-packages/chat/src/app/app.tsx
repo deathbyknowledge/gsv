@@ -607,6 +607,22 @@ export function App({ backend }: { backend: ChatBackend }) {
         }
       }
       const flattened = flattenHistory(merged);
+      console.debug("[chat-trace][loadHistory flattened]", flattened.map((row) => (
+        row.kind === "message"
+          ? {
+              kind: row.kind,
+              role: row.role,
+              messageId: row.messageId ?? null,
+              runId: row.runId ?? null,
+              textPreview: row.text.slice(0, 80),
+            }
+          : {
+              kind: row.kind,
+              callId: row.callId,
+              runId: row.runId ?? null,
+              toolName: row.toolName,
+            }
+      )));
       if (truncated && offset < total) {
         flattened.push(systemRow(`history truncated at ${offset}/${total} messages`));
       }
