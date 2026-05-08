@@ -1234,9 +1234,7 @@ export class Process extends Host<Env> {
 
   private async getContextStateForHistory(conversationId: string): Promise<ProcContextState | null> {
     const stored = this.store.getContextState(conversationId);
-    const records = this.store.getMessages({ conversationId });
-    const messageCount = records.length;
-    const lastMessageId = records[messageCount - 1]?.id ?? null;
+    const { count: messageCount, lastMessageId } = this.store.messageStats(conversationId);
     if (
       stored
       && stored.messageCount === messageCount
@@ -1244,30 +1242,7 @@ export class Process extends Host<Env> {
     ) {
       return stored;
     }
-
-    const config = stored ? null : await this.resolveCheckpointConfig();
-    const provider = stored?.provider ?? config?.provider;
-    const model = stored?.model ?? config?.model;
-    if (!provider || !model) {
-      return stored;
-    }
-
-    const context: Context = {
-      systemPrompt: "",
-      messages: this.store.toMessages({ conversationId }),
-    };
-    const state = buildProcContextState({
-      conversationId,
-      messageCount,
-      lastMessageId,
-      provider,
-      model,
-      contextWindowTokens: stored?.contextWindowTokens ?? config?.contextWindowTokens ?? null,
-      maxOutputTokens: stored?.maxOutputTokens ?? config?.maxTokens ?? 0,
-      estimatedInputTokens: estimateContextInputTokens(context),
-    });
-    this.store.setContextState(state);
-    return state;
+    return stored ? { ...stored, messageCount, lastMessageId } : null;
   }
 
   private handleConversationOpen(args: ProcConversationOpenArgs): ProcConversationOpenResult {
@@ -2440,9 +2415,7 @@ export class Process extends Host<Env> {
     context: Context,
     usage?: AssistantMessage["usage"],
   ): Promise<ProcContextState> {
-    const messages = this.store.getMessages({ conversationId });
-    const messageCount = messages.length;
-    const lastMessageId = messages[messageCount - 1]?.id ?? null;
+    const { count: messageCount, lastMessageId } = this.store.messageStats(conversationId);
     const state = buildProcContextState({
       conversationId,
       runId,
@@ -2769,8 +2742,8 @@ export class Process extends Host<Env> {
   }
 
   private async buildContextMessages(conversationId: string): Promise<Context["messages"]> {
-    const records = this.store.getMessages({ conversationId });
-    const messages = this.store.toMessages({ conversationId });
+    const records = this.store.getMessages({ conversationId, limit: null });
+    const messages = this.store.toMessages({ conversationId, limit: null });
 
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];

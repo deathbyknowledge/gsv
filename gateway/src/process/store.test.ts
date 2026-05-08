@@ -239,16 +239,33 @@ describe("ProcessStore", () => {
       });
     });
 
-    it("getMessages returns all messages when no limit is provided", async () => {
+    it("getMessages uses a bounded default and requires explicit unbounded reads", async () => {
       const stub = await getProcessByPid("msg-no-implicit-limit");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         for (let i = 0; i < 205; i++) {
           store.appendMessage("user", `msg-${i}`);
         }
-        const messages = store.getMessages();
-        expect(messages).toHaveLength(205);
-        expect(messages[204].content).toBe("msg-204");
+        const defaultMessages = store.getMessages();
+        expect(defaultMessages).toHaveLength(200);
+        expect(defaultMessages[199].content).toBe("msg-199");
+
+        const allMessages = store.getMessages({ limit: null });
+        expect(allMessages).toHaveLength(205);
+        expect(allMessages[204].content).toBe("msg-204");
+      });
+    });
+
+    it("messageStats returns count and last message id without reading rows", async () => {
+      const stub = await getProcessByPid("msg-stats");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        expect(store.messageStats()).toEqual({ count: 0, lastMessageId: null });
+
+        const firstId = store.appendMessage("user", "one");
+        const secondId = store.appendMessage("assistant", "two");
+        expect(store.messageStats()).toEqual({ count: 2, lastMessageId: secondId });
+        expect(firstId).toBeLessThan(secondId);
       });
     });
 

@@ -34,6 +34,8 @@ import {
   type ProcessConversationSegmentRecord,
 } from "./conversations";
 
+const DEFAULT_MESSAGE_READ_LIMIT = 200;
+
 export type ToolCallStatus = "pending" | "completed" | "error";
 
 export type ToolCallRecord = {
@@ -841,7 +843,7 @@ export class ProcessStore {
     tail?: boolean;
   }): MessageRecord[] {
     const conversationId = normalizeConversationId(opts?.conversationId);
-    const limit = opts?.limit ?? null;
+    const limit = opts?.limit === null ? null : opts?.limit ?? DEFAULT_MESSAGE_READ_LIMIT;
     const offset = opts?.offset ?? 0;
     const beforeMessageId = opts?.beforeMessageId;
     const afterMessageId = opts?.afterMessageId;
@@ -1008,6 +1010,20 @@ export class ProcessStore {
     return rows[0]?.cnt ?? 0;
   }
 
+  messageStats(conversationId: string = DEFAULT_CONVERSATION_ID): {
+    count: number;
+    lastMessageId: number | null;
+  } {
+    const rows = [...this.sql.exec<{ cnt: number; last_id: number | null }>(
+      "SELECT COUNT(*) as cnt, MAX(id) as last_id FROM messages WHERE conversation_id = ?",
+      normalizeConversationId(conversationId),
+    )];
+    return {
+      count: rows[0]?.cnt ?? 0,
+      lastMessageId: rows[0]?.last_id ?? null,
+    };
+  }
+
   allMessagesForArchive(conversationId: string = DEFAULT_CONVERSATION_ID): MessageRecord[] {
     const normalizedConversationId = normalizeConversationId(conversationId);
     return [...this.sql.exec<{
@@ -1133,7 +1149,7 @@ export class ProcessStore {
 
   toMessages(opts?: {
     conversationId?: string;
-    limit?: number;
+    limit?: number | null;
     offset?: number;
   }): Message[] {
     const records = this.getMessages(opts);
