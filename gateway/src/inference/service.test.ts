@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveGenerationOptions } from "./service";
 import type { AiConfigResult } from "../syscalls/ai";
-import type { Context } from "@mariozechner/pi-ai";
+import type { Context } from "@earendil-works/pi-ai";
 
 const CONFIG: AiConfigResult = {
   provider: "anthropic",
@@ -11,7 +11,6 @@ const CONFIG: AiConfigResult = {
   maxTokens: 4096,
   contextWindowTokens: 200000,
   contextWindowSource: "model",
-  systemPrompt: "",
   maxContextBytes: 32768,
 };
 

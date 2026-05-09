@@ -3,8 +3,8 @@ import type {
   Context,
   KnownProvider,
   ThinkingLevel,
-} from "@mariozechner/pi-ai";
-import { completeSimple, getModels, getProviders } from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
+import { completeSimple, getModels, getProviders } from "@earendil-works/pi-ai";
 import type { AiConfigResult } from "../syscalls/ai";
 import { completeWithWorkersAi, isWorkersAiProvider } from "./workers-ai";
 

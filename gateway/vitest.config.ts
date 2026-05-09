@@ -17,7 +17,7 @@ export default defineWorkersConfig({
           include: [
             "ajv",
             "turndown",
-            "@mariozechner/pi-ai",
+            "@earendil-works/pi-ai",
           ],
           esbuildOptions: {
             external: ["node:sqlite"],

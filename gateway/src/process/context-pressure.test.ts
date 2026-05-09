@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Context, Usage } from "@mariozechner/pi-ai";
+import type { Context, Usage } from "@earendil-works/pi-ai";
 import {
   buildProcContextState,
   estimateContextInputTokens,

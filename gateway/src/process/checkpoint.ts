@@ -1,4 +1,4 @@
-import type { Context } from "@mariozechner/pi-ai";
+import type { Context } from "@earendil-works/pi-ai";
 import { parseAssistantMessageMeta, type MessageRecord } from "./store";
 import { describeStoredProcessMedia, parseStoredProcessMedia } from "./media";
 

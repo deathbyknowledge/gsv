@@ -1,4 +1,4 @@
-import type { Context, Usage } from "@mariozechner/pi-ai";
+import type { Context, Usage } from "@earendil-works/pi-ai";
 import type { ProcContextPressureLevel, ProcContextState } from "../syscalls/proc";
 
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
