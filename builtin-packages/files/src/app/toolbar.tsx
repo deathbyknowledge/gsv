@@ -55,11 +55,11 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
 
   if (pathStyle === "absolute") {
     if (normalized === "/") {
-      return <button type="button" class="files-crumb is-current">/</button>;
+      return <button type="button" class="files-crumb is-current" title="/">/</button>;
     }
 
     nodes.push(
-      <button type="button" class="files-crumb" onClick={() => onNavigate("/")}>/</button>,
+      <button type="button" class="files-crumb" title="/" onClick={() => onNavigate("/")}>/</button>,
     );
 
     let current = "";
@@ -69,7 +69,7 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
       const isLast = nextPath === normalized;
       nodes.push(<span class="files-crumb-sep">›</span>);
       nodes.push(
-        <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} onClick={() => onNavigate(nextPath)}>
+        <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} title={segment} onClick={() => onNavigate(nextPath)}>
           {segment}
         </button>,
       );
@@ -78,11 +78,11 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
   }
 
   if (normalized === ".") {
-    return <button type="button" class="files-crumb is-current">workspace</button>;
+    return <button type="button" class="files-crumb is-current" title="workspace">workspace</button>;
   }
 
   nodes.push(
-    <button type="button" class="files-crumb" onClick={() => onNavigate(".")}>workspace</button>,
+    <button type="button" class="files-crumb" title="workspace" onClick={() => onNavigate(".")}>workspace</button>,
   );
   let current = "";
   for (const segment of normalized.split("/").filter(Boolean)) {
@@ -91,7 +91,7 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
     const isLast = nextPath === normalized;
     nodes.push(<span class="files-crumb-sep">›</span>);
     nodes.push(
-      <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} onClick={() => onNavigate(nextPath)}>
+      <button type="button" class={`files-crumb${isLast ? " is-current" : ""}`} title={segment} onClick={() => onNavigate(nextPath)}>
         {segment}
       </button>,
     );
@@ -115,7 +115,7 @@ export function Toolbar(props: Props) {
         <div class="files-toolbar-group">
           <label class="files-field">
             <span>Target</span>
-            <select value={normalizedTarget} onInput={(event) => props.onTargetDraftChange((event.currentTarget as HTMLSelectElement).value)}>
+            <select aria-label="Target" value={normalizedTarget} onInput={(event) => props.onTargetDraftChange((event.currentTarget as HTMLSelectElement).value)}>
               <option value="gsv">Kernel (gsv)</option>
               {!hasSelectedTarget ? (
                 <option value={normalizedTarget}>{`${normalizedTarget} · requested target`}</option>
@@ -129,6 +129,7 @@ export function Toolbar(props: Props) {
             <span>Path</span>
             <input
               type="text"
+              aria-label="Path"
               value={props.pathDraft}
               spellcheck={false}
               onInput={(event) => props.onPathDraftChange((event.currentTarget as HTMLInputElement).value)}
@@ -157,6 +158,7 @@ export function Toolbar(props: Props) {
             <span>Search</span>
             <input
               type="text"
+              aria-label="Search"
               value={props.searchDraft}
               placeholder="Search this folder"
               spellcheck={false}
