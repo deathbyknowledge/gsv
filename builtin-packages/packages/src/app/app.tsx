@@ -648,7 +648,7 @@ export function App({ backend }: AppProps) {
       {error ? <div class="packages-banner packages-banner--error">{error}</div> : null}
       {notice ? <div class="packages-banner">{notice}</div> : null}
 
-      <main class="packages-workbench">
+      <main class={`packages-workbench${selectedPackage ? " has-selected-package" : ""}`}>
         <aside class="packages-rail">
           <nav class="packages-nav" aria-label="Package work queues">
             <QueueButton label="Inventory" count={state?.counts.installed ?? 0} active={view === "inventory"} onClick={() => updateRoute({ view: "inventory", packageId: null })} />
@@ -757,15 +757,15 @@ function PackageInventoryTable(props: { packages: PackageRecord[]; query: string
       </div>
       {packages.map((pkg) => (
         <button key={pkg.packageId} class="packages-table-row packages-table-row--button" type="button" onClick={() => onOpenPackage(pkg)}>
-          <span class="packages-table-primary">
+          <span class="packages-table-primary" data-label="Package">
             <strong>{pkg.name}</strong>
             <small>{pkg.description || "No description provided."}</small>
           </span>
-          <span><PackageBadges pkg={pkg} compact /></span>
-          <span><PackageSurfaceIcons pkg={pkg} /></span>
-          <span><RiskBadge pkg={pkg} /></span>
-          <span><RepoSlug repo={pkg.source.repo} viewerUsername={viewerUsername} /></span>
-          <span><TimeAgo timestamp={pkg.updatedAt} /></span>
+          <span data-label="State"><PackageBadges pkg={pkg} compact /></span>
+          <span data-label="Surfaces"><PackageSurfaceIcons pkg={pkg} /></span>
+          <span data-label="Risk"><RiskBadge pkg={pkg} /></span>
+          <span data-label="Source"><RepoSlug repo={pkg.source.repo} viewerUsername={viewerUsername} /></span>
+          <span data-label="Updated"><TimeAgo timestamp={pkg.updatedAt} /></span>
         </button>
       ))}
     </div>
@@ -1011,12 +1011,12 @@ function SummaryTab({ pkg, viewerUsername }: { pkg: PackageRecord; viewerUsernam
           </div>
           {pkg.entrypoints.length === 0 ? <div class="packages-empty-state">No entrypoints declared.</div> : pkg.entrypoints.map((entry) => (
             <div key={`${entry.name}:${entry.kind}`} class="packages-table-row">
-              <span class="packages-table-primary">
+              <span class="packages-table-primary" data-label="Name">
                 <strong>{entry.name}</strong>
                 <small>{entry.description || "No description"}</small>
               </span>
-              <span><SurfaceIcon kind={entry.kind} title={surfaceTitle(entry.kind, 1)} /></span>
-              <span class="packages-mono">{entry.route || (entry.syscalls?.join(", ") || "-")}</span>
+              <span data-label="Kind"><SurfaceIcon kind={entry.kind} title={surfaceTitle(entry.kind, 1)} /></span>
+              <span class="packages-mono" data-label="Details">{entry.route || (entry.syscalls?.join(", ") || "-")}</span>
             </div>
           ))}
         </div>
@@ -1281,6 +1281,7 @@ function SourceWorkbench(props: {
                 <InfoItem label="Deletions" value={String(props.diffResult.stats.deletions)} />
               </div>
               {props.diffResult.files.map((file) => <DiffFileView key={`${props.diffResult?.commitHash}:${file.path}`} file={file} />)}
+              {props.diffResult.files.length === 0 ? <div class="packages-empty-state">No changed files in this diff.</div> : null}
             </div>
           ) : null}
         </section>
@@ -1304,6 +1305,7 @@ function SourceReadPanel(props: {
           <span>{props.codeSearchResult.matches.length} match{props.codeSearchResult.matches.length === 1 ? "" : "es"}</span>
         </header>
         {props.codeSearchResult.truncated ? <div class="packages-empty-inline">Search results truncated.</div> : null}
+        {props.codeSearchResult.matches.length === 0 ? <div class="packages-empty-state">No source matches found.</div> : null}
         {props.codeSearchResult.matches.map((match) => (
           <button key={`${match.path}:${match.line}:${match.content}`} class="packages-search-result" type="button" onClick={() => props.setCodePath(match.path)}>
             <strong>{match.path}</strong>
@@ -1319,6 +1321,7 @@ function SourceReadPanel(props: {
   if (props.codeRead?.kind === "tree") {
     return (
       <div class="packages-directory-view">
+        {props.codeRead.entries.length === 0 ? <div class="packages-empty-state">This directory is empty.</div> : null}
         {sortTreeEntries(props.codeRead.entries).map((entry) => (
           <button key={entry.path} class="packages-directory-row" type="button" onClick={() => props.setCodePath(entry.path)}>
             <span class="packages-file-label"><Icon name={entry.type === "tree" ? "folder" : "file"} />{entry.name}</span>
@@ -1391,6 +1394,7 @@ function SourcesPanel(props: {
 }) {
   const sources = (props.state?.sources ?? []).filter((source) => sourceMatchesQuery(source, props.query));
   const sourcePackages = props.state?.packages.filter((pkg) => pkg.source.repo === props.selectedSource?.repo) ?? [];
+  const sourceListEmpty = props.state === null ? "Loading sources..." : "No source repositories match this filter.";
   return (
     <section class="packages-panel">
       <header class="packages-panel-head">
@@ -1402,7 +1406,7 @@ function SourcesPanel(props: {
       </header>
       <section class="packages-sources-layout">
         <div class="packages-source-list">
-          {sources.length === 0 ? <div class="packages-empty-state">No source repositories match this filter.</div> : sources.map((source) => (
+          {sources.length === 0 ? <div class="packages-empty-state">{sourceListEmpty}</div> : sources.map((source) => (
             <button key={source.repo} class={`packages-source-row${props.selectedSource?.repo === source.repo ? " is-active" : ""}`} type="button" onClick={() => props.updateRoute({ sourceRepo: source.repo })}>
               <strong><RepoSlug repo={source.repo} viewerUsername={props.viewerUsername} /></strong>
               <span>{source.packageCount} package{source.packageCount === 1 ? "" : "s"}</span>
@@ -1547,12 +1551,12 @@ function DiscoverPanel(props: {
                   const installed = matchInstalledPackage(entry, props.state?.packages ?? []);
                   return (
                     <div key={`${entry.source.repo}:${entry.source.subdir}:${entry.name}`} class="packages-table-row">
-                      <span class="packages-table-primary">
+                      <span class="packages-table-primary" data-label="Package">
                         <strong>{entry.name}</strong>
                         <small>{entry.description || formatRepoDisplay(entry.source.repo, props.state?.viewer.username ?? "")}</small>
                       </span>
-                      <span><RepoSlug repo={entry.source.repo} viewerUsername={props.state?.viewer.username ?? ""} /></span>
-                      <span class="packages-inline-actions">
+                      <span data-label="Source"><RepoSlug repo={entry.source.repo} viewerUsername={props.state?.viewer.username ?? ""} /></span>
+                      <span class="packages-inline-actions" data-label="Action">
                         {installed ? (
                           <button class="packages-button" type="button" onClick={() => props.updateRoute({ view: installed.reviewPending ? "review" : installed.updateAvailable ? "updates" : "inventory", packageId: installed.packageId, sourceRepo: installed.source.repo, tab: "summary" })}>
                             Inspect
@@ -1620,12 +1624,12 @@ function RemotesPanel(props: {
         </div>
         {remotes.length === 0 ? <div class="packages-empty-state">No remote catalogs configured.</div> : remotes.map((catalog) => (
           <div key={catalog.name} class="packages-table-row">
-            <span class="packages-table-primary">
+            <span class="packages-table-primary" data-label="Remote">
               <strong>{catalog.name}</strong>
               <small>{catalog.packages.length} package{catalog.packages.length === 1 ? "" : "s"}</small>
             </span>
-            <span class="packages-mono">{catalog.baseUrl}</span>
-            <span class="packages-inline-actions">
+            <span class="packages-mono" data-label="Base URL">{catalog.baseUrl}</span>
+            <span class="packages-inline-actions" data-label="Action">
               <button class="packages-button" type="button" onClick={() => props.updateRoute({ view: "discover", catalog: catalog.name })}>Open catalog</button>
               <button class="packages-button packages-button--danger" type="button" disabled={props.pendingAction === `remove-remote:${catalog.name}`} onClick={() => props.handleRemoveRemote(catalog.name)}>Remove</button>
             </span>
