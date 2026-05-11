@@ -11,6 +11,7 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 [hidden] {
@@ -19,6 +20,8 @@ body,
 
 body {
   background: #02050d;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body.is-dragging-window,
@@ -1989,6 +1992,7 @@ button:disabled {
   min-height: 0;
   padding: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   background: rgba(247, 249, 252, 0.96);
   color: #191c1e;
 }
@@ -5702,18 +5706,19 @@ button:disabled {
 
   .mobile-home-handle {
     position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    left: 50%;
+    right: auto;
+    bottom: env(safe-area-inset-bottom);
     z-index: 7;
-    width: auto;
-    height: max(74px, calc(env(safe-area-inset-bottom) + 62px));
+    width: 96px;
+    height: 28px;
     border: 0;
     background: transparent;
     opacity: 0;
     padding: 0;
     pointer-events: none;
     touch-action: none;
+    transform: translateX(-50%);
     transition: opacity 140ms ease;
   }
 
@@ -6096,5 +6101,13 @@ button:disabled {
 
   100% {
     transform: translateX(460%);
+  }
+}
+
+@media (max-width: 720px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

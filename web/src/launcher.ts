@@ -1035,6 +1035,11 @@ export function createLauncher(options: LauncherOptions): LauncherController {
       return;
     }
 
+    if (event.detail > 0) {
+      event.preventDefault();
+      return;
+    }
+
     if (mobileShellState !== "app") {
       return;
     }
