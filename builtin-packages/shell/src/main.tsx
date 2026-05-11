@@ -407,10 +407,15 @@ function setSelectedTarget(target: string | null | undefined): void {
     return;
   }
   const normalizedTarget = target?.trim() || "";
-  const availableOption = Array.from(targetSelect.options).find((option) => (
-    option.value === normalizedTarget && !option.disabled
-  ));
+  const availableOption = Array.from(targetSelect.options).find((option) => option.value === normalizedTarget);
   targetSelect.value = availableOption ? normalizedTarget : "gsv";
+}
+
+function selectedTargetUnavailable(): boolean {
+  if (!targetSelect) {
+    return false;
+  }
+  return targetSelect.selectedOptions[0]?.disabled === true;
 }
 
 function renderTargetOptions(devices: ShellDevice[], requestedTarget?: string | null): void {
@@ -454,6 +459,16 @@ function escapeHtml(value: string): string {
 async function runCommand(backend: ShellBackend, command: string): Promise<void> {
   const trimmed = String(command || "").trim();
   if (!trimmed || running || !terminal) {
+    return;
+  }
+
+  if (selectedTargetUnavailable()) {
+    const target = currentTarget();
+    terminal.write("\r\n");
+    terminal.write(`\x1b[38;2;255;214;153mTarget ${target} is offline. Select an online target or gsv before running commands.\x1b[0m\r\n`);
+    currentLine = "";
+    writePrompt();
+    setStatus("error", "Shell target is offline");
     return;
   }
 

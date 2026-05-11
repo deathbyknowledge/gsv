@@ -18,13 +18,14 @@ self.addEventListener("push", (event) => {
       : "GSV";
     const body = typeof payload.body === "string" ? payload.body : undefined;
     const notificationId = typeof payload.notificationId === "string" ? payload.notificationId : undefined;
+    const url = typeof payload.url === "string" && payload.url.trim() ? payload.url.trim() : null;
 
     await self.registration.showNotification(title, {
       body,
       tag: notificationId,
       data: {
         notificationId,
-        url: typeof payload.url === "string" ? payload.url : "/",
+        url,
       },
     });
   })());
@@ -34,7 +35,10 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
   event.waitUntil((async () => {
-    const targetUrl = new URL(event.notification.data?.url || "/", self.location.origin).href;
+    const rawUrl = event.notification.data?.url;
+    const targetUrl = typeof rawUrl === "string" && rawUrl.trim()
+      ? new URL(rawUrl, self.location.origin).href
+      : null;
     const windows = await self.clients.matchAll({
       type: "window",
       includeUncontrolled: true,
@@ -42,17 +46,21 @@ self.addEventListener("notificationclick", (event) => {
 
     for (const client of windows) {
       if ("focus" in client) {
-        await client.focus();
-        client.postMessage({
+        const targetClient = targetUrl && client.url !== targetUrl && "navigate" in client
+          ? (await client.navigate(targetUrl).catch(() => null)) || client
+          : client;
+        await targetClient.focus();
+        targetClient.postMessage({
           type: "gsv.notification.click",
           notificationId: event.notification.data?.notificationId ?? null,
+          url: targetUrl,
         });
         return;
       }
     }
 
     if (self.clients.openWindow) {
-      await self.clients.openWindow(targetUrl);
+      await self.clients.openWindow(targetUrl || "/");
     }
   })());
 });
