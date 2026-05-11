@@ -31,6 +31,10 @@ function formatTimestampMs(value: unknown) {
   return date.toLocaleString();
 }
 
+function errorToText(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function stateClass(value: unknown) {
   const state = String(value ?? "unknown").trim().toLowerCase();
   if (state === "running") {
@@ -74,6 +78,7 @@ export function App({ backend }: Props) {
   const [loading, setLoading] = useState(true);
   const [searchDraft, setSearchDraft] = useState(route.q);
   const [errorText, setErrorText] = useState("");
+  const [killingPid, setKillingPid] = useState("");
   const loadRequestId = useRef(0);
 
   const loadState = useCallback(async () => {
@@ -86,6 +91,11 @@ export function App({ backend }: Props) {
       }
       setState(nextState);
       setErrorText(nextState.errorText || "");
+    } catch (error) {
+      if (requestId !== loadRequestId.current) {
+        return;
+      }
+      setErrorText(errorToText(error));
     } finally {
       if (requestId === loadRequestId.current) {
         setLoading(false);
@@ -115,14 +125,25 @@ export function App({ backend }: Props) {
   }, []);
 
   const onKill = useCallback(async (pid: string) => {
-    const result = await backend.killProcess({ pid });
-    if (!result.ok) {
-      setErrorText(result.errorText);
+    const normalizedPid = pid.trim();
+    if (!normalizedPid || killingPid) {
       return;
     }
-    setErrorText("");
-    await loadState();
-  }, [backend, loadState]);
+    setKillingPid(normalizedPid);
+    try {
+      const result = await backend.killProcess({ pid: normalizedPid });
+      if (!result.ok) {
+        setErrorText(result.errorText);
+        return;
+      }
+      setErrorText("");
+      await loadState();
+    } catch (error) {
+      setErrorText(errorToText(error));
+    } finally {
+      setKillingPid("");
+    }
+  }, [backend, killingPid, loadState]);
 
   if (!state && loading) {
     return (
@@ -153,6 +174,12 @@ export function App({ backend }: Props) {
       </section>
     );
   }
+
+  const hasFilter = route.q.trim().length > 0;
+  const totalProcesses = state?.processes.length ?? 0;
+  const toolbarMeta = loading
+    ? `Refreshing… Showing ${filtered.length} of ${totalProcesses} process${totalProcesses === 1 ? "" : "es"}.`
+    : `Showing ${filtered.length} of ${totalProcesses} process${totalProcesses === 1 ? "" : "es"}.`;
 
   return (
     <section class="process-app">
@@ -189,9 +216,19 @@ export function App({ backend }: Props) {
             >
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6 6 18"></path></svg>
             </button>
+            <button
+              type="button"
+              class={`process-icon-btn process-refresh-btn${loading ? " is-pending" : ""}`}
+              aria-label={loading ? "Refreshing processes" : "Refresh processes"}
+              title={loading ? "Refreshing processes" : "Refresh processes"}
+              disabled={loading}
+              onClick={() => void loadState()}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"></path><path d="M20 4v6h-6"></path></svg>
+            </button>
           </div>
         </form>
-        <div class="process-toolbar-meta">Showing {filtered.length} of {state?.processes.length ?? 0} process{(state?.processes.length ?? 0) === 1 ? "" : "es"}.</div>
+        <div class="process-toolbar-meta" aria-live="polite">{toolbarMeta}</div>
       </section>
 
       {errorText ? <p class="control-error-text">{errorText}</p> : null}
@@ -202,11 +239,11 @@ export function App({ backend }: Props) {
           <span>Workspace</span>
           <span>Actions</span>
         </div>
-        <section class="process-list">
+        <section class="process-list" aria-busy={loading ? "true" : "false"}>
           {filtered.length === 0 ? (
             <div class="process-empty">
-              <h3>No processes</h3>
-              <p>No processes match the current filter.</p>
+              <h3>{hasFilter ? "No matching processes" : "No running processes"}</h3>
+              <p>{hasFilter ? "Clear the filter or search by another pid, label, or parent pid." : "Refresh to check for newly started processes."}</p>
             </div>
           ) : filtered.map((entry) => {
             const title = entry?.label && String(entry.label).trim().length > 0 ? String(entry.label).trim() : String(entry?.pid ?? "unknown");
@@ -219,6 +256,10 @@ export function App({ backend }: Props) {
             const workspaceLabel = workspaceId || "—";
             const cwdLabel = cwd || "—";
             const stateLabel = String(entry?.state ?? "unknown").trim().toLowerCase();
+            const normalizedPid = pid.trim();
+            const canOpenChat = normalizedPid.length > 0 && cwd.trim().length > 0;
+            const killPending = killingPid === normalizedPid;
+            const killLabel = !normalizedPid || title === normalizedPid ? title : `${title} (${normalizedPid})`;
             return (
               <article class="process-row">
                 <div class="process-row-main">
@@ -248,18 +289,26 @@ export function App({ backend }: Props) {
                     class="process-icon-btn"
                     aria-label="Open in Chat"
                     title="Open in Chat"
+                    disabled={!canOpenChat}
                     onClick={() => openChatProcess(entry)}
                   >
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7.5h12A2.5 2.5 0 0 1 20.5 10v5A2.5 2.5 0 0 1 18 17.5H11l-4.5 3v-3H6A2.5 2.5 0 0 1 3.5 15v-5A2.5 2.5 0 0 1 6 7.5z"></path></svg>
+                    <span class="process-action-text">Open</span>
                   </button>
                   <button
                     type="button"
-                    class="process-icon-btn process-icon-btn-danger"
-                    aria-label="Reset process"
-                    title="Reset process"
-                    onClick={() => onKill(pid)}
+                    class={`process-icon-btn process-icon-btn-danger${killPending ? " is-pending" : ""}`}
+                    aria-label={killPending ? `Killing process ${killLabel}` : `Kill process ${killLabel}`}
+                    title={killPending ? "Killing process" : "Kill process"}
+                    disabled={Boolean(killingPid) || !normalizedPid}
+                    onClick={() => {
+                      if (window.confirm(`Kill process ${killLabel}?\n\nThis stops the process immediately.`)) {
+                        void onKill(pid);
+                      }
+                    }}
                   >
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"></path></svg>
+                    <span class="process-action-text">{killPending ? "Killing" : "Kill"}</span>
                   </button>
                 </div>
               </article>
