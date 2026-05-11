@@ -2,6 +2,7 @@ import { useState } from "preact/hooks";
 import type { IssuedNodeToken } from "./types";
 
 type ProvisionInstallPlatform = "unix" | "windows";
+type CopyTarget = "install" | "bootstrap";
 
 type ProvisionFormState = {
   deviceId: string;
@@ -27,6 +28,8 @@ export function ProvisionPanel({
   onSubmit,
 }: ProvisionPanelProps) {
   const [platform, setPlatform] = useState<ProvisionInstallPlatform>("unix");
+  const [copiedTarget, setCopiedTarget] = useState<CopyTarget | null>(null);
+  const canCopy = typeof navigator.clipboard?.writeText === "function";
   const install = buildInstallCommand(window.location.origin, platform);
   const bootstrap = issuedToken
     ? buildBootstrapCommand(
@@ -37,6 +40,21 @@ export function ProvisionPanel({
         issuedToken.token,
       )
     : "";
+
+  async function copyCommand(target: CopyTarget, value: string): Promise<void> {
+    if (!canCopy) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedTarget(target);
+      window.setTimeout(() => {
+        setCopiedTarget((current) => current === target ? null : current);
+      }, 1400);
+    } catch {
+      setCopiedTarget(null);
+    }
+  }
 
   return (
     <section class="devices-provision-stage">
@@ -70,18 +88,38 @@ export function ProvisionPanel({
             </select>
           </label>
           <section class="devices-command-block">
-            <header>
-              <h3>Install CLI</h3>
-              <p>Run this on the target machine first.</p>
+            <header class="devices-command-head">
+              <div>
+                <h3>Install CLI</h3>
+                <p>Run this on the target machine first.</p>
+              </div>
+              <button
+                class="devices-button devices-button--quiet devices-copy-button"
+                type="button"
+                disabled={!canCopy}
+                onClick={() => void copyCommand("install", install)}
+              >
+                {copiedTarget === "install" ? "Copied" : "Copy"}
+              </button>
             </header>
-            <textarea class="devices-output" readOnly value={install} />
+            <textarea class="devices-output" readOnly value={install} onFocus={(event) => event.currentTarget.select()} />
           </section>
           <section class="devices-command-block">
-            <header>
-              <h3>Bootstrap device</h3>
-              <p>{issuedToken.allowedDeviceId ?? initialDeviceId} · {issuedToken.expiresAt ? new Date(issuedToken.expiresAt).toLocaleString() : "no expiry"}</p>
+            <header class="devices-command-head">
+              <div>
+                <h3>Bootstrap device</h3>
+                <p>{issuedToken.allowedDeviceId ?? initialDeviceId} · {issuedToken.expiresAt ? new Date(issuedToken.expiresAt).toLocaleString() : "no expiry"}</p>
+              </div>
+              <button
+                class="devices-button devices-button--quiet devices-copy-button"
+                type="button"
+                disabled={!canCopy}
+                onClick={() => void copyCommand("bootstrap", bootstrap)}
+              >
+                {copiedTarget === "bootstrap" ? "Copied" : "Copy"}
+              </button>
             </header>
-            <textarea class="devices-output" readOnly value={bootstrap} />
+            <textarea class="devices-output" readOnly value={bootstrap} onFocus={(event) => event.currentTarget.select()} />
           </section>
         </div>
       ) : null}

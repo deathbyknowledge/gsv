@@ -20,7 +20,9 @@
 html,
 body {
   margin: 0;
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
 }
@@ -44,24 +46,31 @@ textarea.devices-output,
 }
 
 #root {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
 }
 
 .devices-app {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   background: var(--panel);
 }
 
 .devices-layout {
-  min-height: 100vh;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .devices-sidebar {
   min-height: 0;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
+  overflow: hidden;
   border-right: 1px solid var(--line);
   background: rgba(251, 252, 254, 0.9);
 }
@@ -117,15 +126,22 @@ textarea.devices-output,
 
 .devices-list-summary {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
   font-size: 12px;
 }
 
+.devices-list-summary span {
+  white-space: nowrap;
+}
+
 .devices-list {
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .devices-list-item,
@@ -161,6 +177,24 @@ textarea.devices-output,
   gap: 12px;
 }
 
+.devices-list-item-head {
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.devices-device-id,
+.devices-device-title,
+.devices-table-value,
+.is-mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.devices-device-title {
+  line-height: 1.15;
+}
+
 .devices-list-item-meta {
   display: flex;
   flex-wrap: wrap;
@@ -178,6 +212,7 @@ textarea.devices-output,
 .devices-status-pill {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   min-height: 28px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -201,6 +236,8 @@ textarea.devices-output,
   min-width: 0;
   min-height: 0;
   display: grid;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .devices-detail-pane,
@@ -229,14 +266,20 @@ textarea.devices-output,
 .devices-tabbar {
   display: flex;
   gap: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
   border-bottom: 1px solid var(--line);
   margin-bottom: 18px;
 }
 
 .devices-tab {
+  flex: 0 0 auto;
   min-height: 38px;
   padding: 0 12px;
   border-bottom: 2px solid transparent;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -289,6 +332,7 @@ textarea.devices-output,
 .devices-info-box strong {
   font-size: 20px;
   line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 
 .devices-detail-table-wrap {
@@ -311,6 +355,65 @@ textarea.devices-output,
 
 .devices-detail-table th {
   color: var(--muted);
+}
+
+.devices-access-head {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.devices-access-table {
+  min-width: 760px;
+}
+
+.devices-access-cards {
+  display: none;
+}
+
+.devices-access-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.devices-access-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.devices-access-card header > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.devices-access-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  margin: 0;
+}
+
+.devices-access-card dl > div {
+  min-width: 0;
+}
+
+.devices-access-card dt,
+.devices-access-card header span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.devices-access-card dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .devices-capability-groups {
@@ -370,6 +473,10 @@ textarea.devices-output,
   background: rgba(255, 255, 255, 0.82);
   text-decoration: none;
   cursor: pointer;
+}
+
+.devices-compact-back {
+  display: none;
 }
 
 .devices-button--primary {
@@ -441,6 +548,21 @@ textarea.devices-output,
   gap: 10px;
 }
 
+.devices-command-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.devices-command-head > div {
+  min-width: 0;
+}
+
+.devices-copy-button {
+  min-width: 72px;
+}
+
 .devices-actions-cell {
   width: 1%;
   white-space: nowrap;
@@ -471,11 +593,20 @@ textarea.devices-output,
 @media (max-width: 860px) {
   .devices-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .devices-sidebar {
     border-right: 0;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 0;
+  }
+
+  .devices-layout.is-fleet-view .devices-main {
+    display: none;
+  }
+
+  .devices-layout.is-detail-view .devices-sidebar {
+    display: none;
   }
 
   .devices-sidebar-filters,
@@ -485,9 +616,84 @@ textarea.devices-output,
     grid-template-columns: 1fr;
   }
 
-  .devices-detail-head,
+  .devices-detail-pane,
+  .devices-provision-stage,
+  .devices-detail-empty {
+    padding: 14px;
+  }
+
+  .devices-sidebar-head,
+  .devices-sidebar-filters {
+    padding: 12px;
+  }
+
+  .devices-detail-head {
+    display: grid;
+  }
+
   .devices-inline-actions,
   .devices-section-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .devices-detail-head .devices-inline-actions {
+    width: 100%;
+  }
+
+  .devices-button,
+  .devices-input {
+    min-height: 44px;
+  }
+
+  .devices-icon-btn {
+    width: 44px;
+    min-height: 44px;
+  }
+
+  .devices-tab {
+    min-height: 44px;
+    padding: 0 14px;
+  }
+
+  .devices-list-item {
+    min-height: 72px;
+    padding: 14px;
+  }
+
+  .devices-compact-back {
+    display: inline-flex;
+  }
+
+  .devices-access-table-wrap {
+    display: none;
+  }
+
+  .devices-access-cards {
     display: grid;
+    gap: 12px;
+  }
+
+  .devices-access-head {
+    justify-content: flex-start;
+  }
+
+  .devices-command-head {
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 480px) {
+  .devices-sidebar-head {
+    display: grid;
+  }
+
+  .devices-sidebar-head .devices-button {
+    width: 100%;
+  }
+
+  .devices-access-card dl {
+    grid-template-columns: 1fr;
   }
 }

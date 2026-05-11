@@ -25,6 +25,7 @@ export function App({ backend }: AppProps) {
   const [mode, setMode] = useState<DevicesMode>(readModeFromLocation());
   const [activeTab, setActiveTab] = useState<DevicesTabId>(readTabFromLocation());
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(readDeviceFromLocation());
+  const [compactFleetOpen, setCompactFleetOpen] = useState(() => readModeFromLocation() === "detail" && !readDeviceFromLocation());
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<DeviceScope>("all");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
@@ -73,9 +74,12 @@ export function App({ backend }: AppProps) {
 
   useEffect(() => {
     const onPopState = () => {
-      setMode(readModeFromLocation());
+      const nextMode = readModeFromLocation();
+      const nextDeviceId = readDeviceFromLocation();
+      setMode(nextMode);
       setActiveTab(readTabFromLocation());
-      setSelectedDeviceId(readDeviceFromLocation());
+      setSelectedDeviceId(nextDeviceId);
+      setCompactFleetOpen(nextMode === "detail" && !nextDeviceId);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -164,7 +168,10 @@ export function App({ backend }: AppProps) {
           viewerUsername={state.viewer.username}
           pendingAction={pendingAction}
           issuedToken={issuedToken}
-          onBack={() => updateRoute({ mode: "detail" })}
+          onBack={() => {
+            setCompactFleetOpen(true);
+            updateRoute({ mode: "detail" });
+          }}
           onSubmit={(form) => void handleCreateToken(form)}
         />
       );
@@ -184,10 +191,17 @@ export function App({ backend }: AppProps) {
         <header class="devices-detail-head">
           <div>
             <p class="devices-eyebrow">Fleet detail</p>
-            <h2>{selectedDevice.deviceId}</h2>
+            <h2 class="devices-device-title">{selectedDevice.deviceId}</h2>
             <p>{selectedDevice.online ? "Online and ready for routing." : "Offline. Review health and access before routing work here."}</p>
           </div>
           <div class="devices-inline-actions">
+            <button
+              class="devices-button devices-button--quiet devices-compact-back"
+              type="button"
+              onClick={() => setCompactFleetOpen(true)}
+            >
+              Back to fleet
+            </button>
             <button
               class="devices-button devices-button--quiet devices-icon-btn"
               type="button"
@@ -207,7 +221,7 @@ export function App({ backend }: AppProps) {
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z" /><path d="m7 10 3 2.5L7 15" /><path d="M12.5 15H17" /></svg>
             </button>
             {state.viewer.canManageTokens ? (
-              <button class="devices-button devices-button--primary" onClick={() => { setIssuedToken(null); updateRoute({ mode: "provision", deviceId: selectedDevice.deviceId }); }}>
+              <button class="devices-button devices-button--primary" onClick={() => { setIssuedToken(null); setCompactFleetOpen(false); updateRoute({ mode: "provision", deviceId: selectedDevice.deviceId }); }}>
                 Add access
               </button>
             ) : null}
@@ -258,13 +272,16 @@ export function App({ backend }: AppProps) {
     );
   }, [activeTab, handleCreateToken, handleUpdateDescription, issuedToken, mode, openCompanion, pendingAction, selectedDevice, selectedId, state, updateRoute]);
 
+  const showFleetOnCompact = mode === "detail" && (compactFleetOpen || (!selectedId && !selectedDevice));
+
   return (
     <div class="devices-app">
       {error ? <div class="devices-error-banner">{error}</div> : null}
-      <div class="devices-layout">
+      <div class={`devices-layout${showFleetOnCompact ? " is-fleet-view" : " is-detail-view"}`}>
         <DeviceList
           devices={state?.devices ?? []}
           canManageTokens={canManageTokens}
+          loading={!state}
           selectedDeviceId={selectedId}
           query={query}
           scope={scope}
@@ -272,10 +289,12 @@ export function App({ backend }: AppProps) {
           onScopeChange={setScope}
           onSelectDevice={(deviceId) => {
             setIssuedToken(null);
+            setCompactFleetOpen(false);
             updateRoute({ mode: "detail", deviceId });
           }}
           onStartProvision={() => {
             setIssuedToken(null);
+            setCompactFleetOpen(false);
             updateRoute({ mode: "provision" });
           }}
         />
