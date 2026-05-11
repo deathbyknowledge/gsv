@@ -5,6 +5,7 @@ import type {
   NotificationRecord,
 } from "@gsv/protocol/syscalls/notification";
 import type { GatewayClientLike } from "./gateway-client";
+import { canUseServiceWorker, registerGsvServiceWorker } from "./service-worker";
 
 type NotificationsPanelOptions = {
   rootNode: HTMLElement;
@@ -20,7 +21,6 @@ type ToastRecord = {
 };
 
 const DEFAULT_NOTIFICATION_SOUND = "/notification-sounds/27568__suonho__memorymoon_space-blaster-plays.wav";
-const SERVICE_WORKER_URL = "/gsv-service-worker.js";
 const MOBILE_PANEL_QUERY = "(max-width: 720px)";
 
 function escapeHtml(value: string): string {
@@ -72,7 +72,6 @@ export function createNotificationsPanel(
   let isOpen = false;
   let notifications: NotificationRecord[] = [];
   let activeToggleNode = toggleNodes[0];
-  let serviceWorkerRegistrationPromise: Promise<ServiceWorkerRegistration | null> | null = null;
   const toasts = new Map<string, ToastRecord>();
   const originalParent = panelNode.parentElement;
   const originalNextSibling = panelNode.nextSibling;
@@ -90,7 +89,7 @@ export function createNotificationsPanel(
   };
 
   const supportsServiceWorkerNotifications = (): boolean => {
-    return "serviceWorker" in navigator && window.isSecureContext;
+    return canUseServiceWorker();
   };
 
   const systemPermission = (): NotificationPermission | "unsupported" => {
@@ -120,9 +119,7 @@ export function createNotificationsPanel(
     if (!supportsServiceWorkerNotifications()) {
       return null;
     }
-    serviceWorkerRegistrationPromise ??= navigator.serviceWorker.register(SERVICE_WORKER_URL)
-      .catch(() => null);
-    return serviceWorkerRegistrationPromise;
+    return registerGsvServiceWorker();
   };
 
   const positionPanel = (): void => {

@@ -10,6 +10,16 @@ import { renderDesktopShell } from "./shell-template";
 import { createWindowManager } from "./window-manager";
 import type { PkgListResult } from "@gsv/protocol/syscalls/packages";
 
+type StandaloneNavigator = Navigator & {
+  standalone?: boolean;
+};
+
+function isStandaloneDisplay(): boolean {
+  return window.matchMedia("(display-mode: standalone)").matches
+    || window.matchMedia("(display-mode: fullscreen)").matches
+    || (navigator as StandaloneNavigator).standalone === true;
+}
+
 const app = document.querySelector<HTMLElement>("#app");
 
 if (!app) {
@@ -24,6 +34,10 @@ const windowsLayerEl = app.querySelector<HTMLElement>("[data-windows-layer]");
 if (!shellEl || !windowsLayerEl) {
   throw new Error("Shell markup is incomplete");
 }
+
+const standalone = isStandaloneDisplay();
+document.documentElement.classList.toggle("is-standalone", standalone);
+shellEl.classList.toggle("is-standalone", standalone);
 
 const gatewayClient = createGatewayClient();
 const sessionService = createSessionService(gatewayClient);

@@ -10,8 +10,15 @@ body,
   margin: 0;
   width: 100%;
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+html.is-standalone,
+html.is-standalone body,
+html.is-standalone #app {
+  height: 100lvh;
 }
 
 [hidden] {
@@ -142,9 +149,13 @@ button:disabled {
   overflow: hidden;
   color: var(--text-main);
   font-family: var(--font-ui);
-  background-image: url("https://cdn.midjourney.com/7cf76c86-3f53-4990-9252-3c2fb01f8d95/0_0.png");
+  background-image: url("https://cdn.midjourney.com/a8b72c34-49ad-4df8-afca-891013f78c7f/0_0.png");
   background-size: cover;
   background-position: center;
+}
+
+.desktop-shell.is-standalone {
+  height: 100lvh;
 }
 
 .desktop-shell,
@@ -935,17 +946,32 @@ button:disabled {
   color: #18314f;
 }
 
+.desktop-shell.is-standalone .session-screen {
+  background-position: center bottom;
+  background-size: cover;
+}
+
 .session-screen[hidden] {
   display: none;
 }
 
 .session-stage {
+  --session-stage-block-padding: clamp(24px, 5vw, 48px);
+  --session-stage-inline-padding: clamp(24px, 5vw, 48px);
+  --session-stage-safe-top: max(var(--session-stage-block-padding), calc(env(safe-area-inset-top) + 12px));
+  --session-stage-safe-right: max(var(--session-stage-inline-padding), calc(env(safe-area-inset-right) + 12px));
+  --session-stage-safe-bottom: max(var(--session-stage-block-padding), calc(env(safe-area-inset-bottom) + 12px));
+  --session-stage-safe-left: max(var(--session-stage-inline-padding), calc(env(safe-area-inset-left) + 12px));
   width: 100%;
   min-height: 100%;
   display: flex;
   justify-content: flex-end;
   align-items: stretch;
-  padding: clamp(24px, 5vw, 48px);
+  padding:
+    var(--session-stage-safe-top)
+    var(--session-stage-safe-right)
+    var(--session-stage-safe-bottom)
+    var(--session-stage-safe-left);
   background: linear-gradient(
     90deg,
     rgba(7, 15, 34, 0.04) 0%,
@@ -954,9 +980,15 @@ button:disabled {
   );
 }
 
+.desktop-shell.is-standalone .session-stage {
+  --session-stage-safe-bottom: max(var(--session-stage-block-padding), calc(env(safe-area-inset-bottom) + 28px));
+  min-height: 100dvh;
+  height: 100dvh;
+}
+
 .session-panel {
   width: min(480px, 100%);
-  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - var(--session-stage-safe-top) - var(--session-stage-safe-bottom));
   align-self: center;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 5px;
@@ -4434,14 +4466,14 @@ button:disabled {
 
 @media (max-width: 900px) {
   .session-stage {
-    padding: 16px;
+    --session-stage-block-padding: 16px;
+    --session-stage-inline-padding: 16px;
     justify-content: center;
   }
 
   .session-panel,
   .session-panel-wide {
     width: min(100%, 640px);
-    max-height: calc(100vh - 32px);
   }
 
   .session-result-grid {
@@ -5193,6 +5225,12 @@ button:disabled {
     opacity: 0;
     pointer-events: none;
     transform: scale(0.985);
+  }
+
+  .desktop-shell.mobile-app-active .mobile-home-actions {
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
   }
 
   .desktop-shell.mobile-app-active.mobile-home-gesture-active .mobile-home {
