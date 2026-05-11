@@ -1539,7 +1539,7 @@ function buildCustomCommands(
 
   const uname = defineCommand("uname", async (args): Promise<ExecResult> => {
     const name = ctx.config.get("config/server/name") ?? "gsv";
-    const ver = ctx.config.get("config/server/version") ?? "0.1.4";
+    const ver = ctx.config.get("config/server/version") ?? "0.1.5";
     const flag = args[0] ?? "";
     if (flag.includes("a") || flag === "-a") {
       return { stdout: `GSV ${name} ${ver} #1 cloudflare-worker\n`, stderr: "", exitCode: 0 };

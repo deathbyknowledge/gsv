@@ -1,6 +1,6 @@
 {
   "name": "@gsv/ascii-starfield",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "dependencies": {
     "@chenglou/pretext": "0.0.4",

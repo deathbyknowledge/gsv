@@ -1,6 +1,6 @@
 {
   "name": "@gsv/wiki",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "dependencies": {
     "@gsv/package": "file:../../shared/package",
