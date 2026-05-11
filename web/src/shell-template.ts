@@ -414,6 +414,18 @@ export function renderDesktopShell(): string {
         </main>
         <section class="mobile-shell" data-mobile-shell aria-label="Mobile shell">
           <section class="mobile-home" data-mobile-home>
+            <header class="mobile-home-header" aria-label="Home">
+              <p class="mobile-home-date" data-mobile-home-date></p>
+              <h1>Hello, <span data-mobile-home-username>operator</span></h1>
+              <button type="button" class="mobile-home-search" data-mobile-command-launcher aria-label="Search apps and windows">
+                <span aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="7"></circle>
+                    <path d="m20 20-3.8-3.8"></path>
+                  </svg>
+                </span>
+              </button>
+            </header>
             <nav class="mobile-app-grid" data-mobile-apps aria-label="Applications"></nav>
           </section>
           <button type="button" class="mobile-home-handle" data-mobile-home-button aria-label="Home"></button>
@@ -423,6 +435,12 @@ export function renderDesktopShell(): string {
         <section class="command-palette" data-command-palette role="dialog" aria-label="Command palette" hidden>
           <div class="command-palette-panel">
             <input data-command-palette-input type="text" autocomplete="off" placeholder="Search apps and windows" />
+            <button type="button" class="command-palette-close" data-command-palette-close aria-label="Close search">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18"></path>
+                <path d="m6 6 12 12"></path>
+              </svg>
+            </button>
             <ul class="command-palette-list" data-command-palette-list></ul>
           </div>
         </section>
