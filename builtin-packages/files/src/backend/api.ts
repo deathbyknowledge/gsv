@@ -15,7 +15,7 @@ type KernelClient = {
   request(call: string, args: Record<string, unknown>): Promise<any>;
 };
 
-function detectPathStyle(path: string) {
+function detectPathStyle(path: string): "absolute" | "relative" {
   return String(path ?? "").trim().startsWith("/") ? "absolute" : "relative";
 }
 

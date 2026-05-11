@@ -416,6 +416,7 @@ export function App({ backend }: Props) {
           fileResult={state.fileResult}
           searchResult={state.searchResult}
           editorContent={editorContent}
+          isDirty={dirty}
           onEditorChange={(value) => {
             setEditorContent(value);
             setDirty(true);

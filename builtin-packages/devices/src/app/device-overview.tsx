@@ -87,7 +87,7 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
   return (
     <tr>
       <th>{label}</th>
-      <td class={mono ? "is-mono" : undefined}>{value}</td>
+      <td class={`${mono ? "is-mono " : ""}devices-table-value`}>{value}</td>
     </tr>
   );
 }

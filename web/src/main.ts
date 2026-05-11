@@ -8,8 +8,17 @@ import { createSessionService } from "./session-service";
 import { createSessionUi } from "./session-ui";
 import { renderDesktopShell } from "./shell-template";
 import { createWindowManager } from "./window-manager";
-import { createWindowsPanel } from "./windows-panel";
 import type { PkgListResult } from "@gsv/protocol/syscalls/packages";
+
+type StandaloneNavigator = Navigator & {
+  standalone?: boolean;
+};
+
+function isStandaloneDisplay(): boolean {
+  return window.matchMedia("(display-mode: standalone)").matches
+    || window.matchMedia("(display-mode: fullscreen)").matches
+    || (navigator as StandaloneNavigator).standalone === true;
+}
 
 const app = document.querySelector<HTMLElement>("#app");
 
@@ -26,6 +35,10 @@ if (!shellEl || !windowsLayerEl) {
   throw new Error("Shell markup is incomplete");
 }
 
+const standalone = isStandaloneDisplay();
+document.documentElement.classList.toggle("is-standalone", standalone);
+shellEl.classList.toggle("is-standalone", standalone);
+
 const gatewayClient = createGatewayClient();
 const sessionService = createSessionService(gatewayClient);
 const appRuntime = createAppRuntime(gatewayClient);
@@ -33,11 +46,6 @@ const windowManager = createWindowManager({
   layerNode: windowsLayerEl,
   appRegistry: [],
   appRuntime,
-});
-
-createWindowsPanel({
-  rootNode: shellEl,
-  windowManager,
 });
 
 createNotificationsPanel({
@@ -59,8 +67,11 @@ async function refreshDesktopApps(): Promise<void> {
   try {
     const payload = await gatewayClient.call<PkgListResult>("pkg.list", {});
     const packages = Array.isArray(payload.packages) ? payload.packages : [];
-    launcher.setApps(packages.flatMap(packageToAppManifests));
+    const apps = packages.flatMap(packageToAppManifests);
+    windowManager.setAppRegistry(apps);
+    launcher.setApps(apps);
   } catch {
+    windowManager.setAppRegistry([]);
     launcher.setApps([]);
   }
 }
@@ -72,6 +83,7 @@ gatewayClient.onStatus((status) => {
   }
 
   launcher.setApps([]);
+  windowManager.setAppRegistry([]);
 });
 
 gatewayClient.onSignal((signal) => {

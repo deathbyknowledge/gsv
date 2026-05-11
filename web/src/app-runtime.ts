@@ -5,6 +5,10 @@ export type AppRuntimeContext = {
   manifest: AppManifest;
   route: string;
   requestFocus: () => void;
+  setTitle: (title: string | null) => void;
+  setBadge: (badge: string | null) => void;
+  setDirty: (dirty: boolean) => void;
+  requestNewWindow: (route?: string) => string;
 };
 
 export type AppInstance = {

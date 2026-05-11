@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type {
   AddMcpServerArgs,
@@ -70,7 +71,7 @@ export function McpPanel({
   const addDisabled = pendingAction === "mcp:add" || !form.name.trim() || !form.url.trim();
 
   return (
-    <div class="control-mcp-stage">
+    <div class={`control-mcp-stage${selectedServer ? " has-selection" : ""}`}>
       <section class="control-mcp-rail">
         <header class="control-config-rail-head">
           <h2>MCP servers</h2>
@@ -353,40 +354,80 @@ function ToolTable({ tools }: { tools: ControlMcpTool[] }) {
   }
 
   return (
-    <div class="control-table-wrap control-table-wrap--flush">
-      <table class="control-table">
-        <thead>
-          <tr>
-            <th>Tool</th>
-            <th>Arguments</th>
-            <th>Output</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tools.map((tool) => (
-            <tr key={tool.name}>
-              <td>
-                <code>{tool.name}</code>
-                {tool.description ? <div class="control-subtle">{tool.description}</div> : null}
-              </td>
-              <td>
+    <>
+      <div class="control-table-wrap control-table-wrap--flush">
+        <table class="control-table">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Arguments</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tools.map((tool) => (
+              <tr key={tool.name}>
+                <td>
+                  <code>{tool.name}</code>
+                  {tool.description ? <div class="control-subtle">{tool.description}</div> : null}
+                </td>
+                <td>
+                  <FieldChips
+                    fields={tool.inputFields}
+                    requiredFields={tool.requiredInputFields}
+                    fallback={tool.hasInputSchema ? "object" : "not declared"}
+                  />
+                </td>
+                <td>
+                  <FieldChips
+                    fields={tool.outputFields}
+                    requiredFields={[]}
+                    fallback={tool.hasOutputSchema ? "structured" : "not declared"}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="control-record-list control-record-list--flush" aria-label="MCP tools">
+        {tools.map((tool) => (
+          <article class="control-record" key={`tool-record:${tool.name}`}>
+            <div class="control-record-head">
+              <div class="control-record-title">
+                <strong><code>{tool.name}</code></strong>
+                {tool.description ? <span class="control-subtle">{tool.description}</span> : null}
+              </div>
+            </div>
+            <div class="control-record-meta">
+              <RecordField label="Arguments">
                 <FieldChips
                   fields={tool.inputFields}
                   requiredFields={tool.requiredInputFields}
                   fallback={tool.hasInputSchema ? "object" : "not declared"}
                 />
-              </td>
-              <td>
+              </RecordField>
+              <RecordField label="Output">
                 <FieldChips
                   fields={tool.outputFields}
                   requiredFields={[]}
                   fallback={tool.hasOutputSchema ? "structured" : "not declared"}
                 />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </RecordField>
+            </div>
+          </article>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function RecordField({ label, children }: { label: string; children: ComponentChildren }) {
+  return (
+    <div class="control-record-field">
+      <span>{label}</span>
+      <div>{children}</div>
     </div>
   );
 }

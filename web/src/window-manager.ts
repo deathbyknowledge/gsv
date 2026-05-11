@@ -9,6 +9,8 @@ type LifecyclePhase = "mount" | "suspend" | "resume" | "terminate";
 
 type PersistedWindow = {
   appId: string;
+  route?: string;
+  title?: string;
   mode: WindowMode;
   lastVisibleMode: Exclude<WindowMode, "minimized">;
   x: number;
@@ -38,6 +40,9 @@ type WindowRecord = {
   windowId: string;
   app: AppManifest;
   route: string;
+  title: string;
+  badge: string | null;
+  dirty: boolean;
   mode: WindowMode;
   lastVisibleMode: Exclude<WindowMode, "minimized">;
   x: number;
@@ -80,15 +85,26 @@ export type WindowSummary = {
   windowId: string;
   appId: string;
   title: string;
+  appName: string;
+  route: string;
   mode: WindowMode;
   active: boolean;
+  badge: string | null;
+  dirty: boolean;
+  zIndex: number;
 };
 
 export type WindowManager = {
-  openApp: (app: AppManifest, route?: string, options?: { pendingAppOpenRequest?: OpenAppRequest | null; forceRestart?: boolean }) => string;
+  openApp: (app: AppManifest, route?: string, options?: { pendingAppOpenRequest?: OpenAppRequest | null; forceRestart?: boolean; forceNew?: boolean }) => string;
   focusWindow: (windowId: string) => void;
   restoreWindow: (windowId: string) => void;
+  minimizeWindow: (windowId: string) => void;
+  maximizeWindow: (windowId: string) => void;
   closeWindow: (windowId: string) => void;
+  setAppRegistry: (apps: readonly AppManifest[]) => void;
+  setWindowTitle: (windowId: string, title: string | null) => void;
+  setWindowBadge: (windowId: string, badge: string | null) => void;
+  setWindowDirty: (windowId: string, dirty: boolean) => void;
   subscribe: (listener: (summaries: WindowSummary[]) => void) => () => void;
   destroy: () => void;
 };
@@ -160,8 +176,14 @@ function createWindowNode(app: AppManifest, route: string): HTMLElement {
         <button type="button" class="dot amber" data-window-action="minimize" aria-label="Minimize window"></button>
         <button type="button" class="dot green" data-window-action="maximize" aria-label="Maximize or restore window"></button>
       </div>
-      <span class="window-title">${escapeHtml(app.name)}</span>
-      <span class="window-meta">${escapeHtml(route)}</span>
+      <span class="window-title">
+        <span data-window-title>${escapeHtml(app.name)}</span>
+        <span class="window-dirty-dot" data-window-dirty hidden aria-label="Unsaved changes"></span>
+      </span>
+      <span class="window-chrome-meta">
+        <span class="window-badge" data-window-badge hidden></span>
+        <span class="window-meta" data-window-route>${escapeHtml(route)}</span>
+      </span>
     </div>
 
     <div class="window-content" data-window-content></div>
@@ -226,11 +248,19 @@ function writePersistedLayout(layout: PersistedLayout): void {
   }
 }
 
+function normalizeChromeText(value: string | null, maxLength = 80): string | null {
+  const normalized = value?.trim() ?? "";
+  if (!normalized) {
+    return null;
+  }
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
 export function createWindowManager({ layerNode, appRegistry, appRuntime }: WindowManagerOptions): WindowManager {
   const windows = new Map<string, WindowRecord>();
-  const windowByAppId = new Map<string, string>();
-  const appById = new Map(appRegistry.map((app) => [app.id, app]));
+  let appById = new Map(appRegistry.map((app) => [app.id, app]));
   const listeners = new Set<(summaries: WindowSummary[]) => void>();
+  const pendingPersistedLayout = readPersistedLayout();
 
   const snapOverlayNode = document.createElement("div");
   snapOverlayNode.className = "window-snap-overlay";
@@ -243,6 +273,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   let sequence = 0;
   let openCounter = 0;
   let zCounter = 100;
+  let restoredPersistedLayout = false;
 
   const workspaceBounds = () => {
     const rect = layerNode.getBoundingClientRect();
@@ -254,14 +285,26 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     };
   };
 
-  const fitSizeToWorkspace = (width: number, height: number) => {
+  const fitSizeToWorkspace = (app: AppManifest, width: number, height: number) => {
     const bounds = workspaceBounds();
     const maxWidth = Math.max(bounds.width - WINDOW_MARGIN * 2, 200);
     const maxHeight = Math.max(bounds.height - WINDOW_MARGIN * 2, 180);
+    const minWidth = Math.min(Math.max(app.windowDefaults.minWidth, MIN_WINDOW_WIDTH), maxWidth);
+    const minHeight = Math.min(Math.max(app.windowDefaults.minHeight, MIN_WINDOW_HEIGHT), maxHeight);
 
     return {
-      width: Math.min(Math.max(width, MIN_WINDOW_WIDTH), maxWidth),
-      height: Math.min(Math.max(height, MIN_WINDOW_HEIGHT), maxHeight),
+      width: Math.min(Math.max(width, minWidth), maxWidth),
+      height: Math.min(Math.max(height, minHeight), maxHeight),
+    };
+  };
+
+  const minSizeForWorkspace = (app: AppManifest) => {
+    const bounds = workspaceBounds();
+    const maxWidth = Math.max(bounds.width - WINDOW_MARGIN * 2, 200);
+    const maxHeight = Math.max(bounds.height - WINDOW_MARGIN * 2, 180);
+    return {
+      width: Math.min(Math.max(app.windowDefaults.minWidth, MIN_WINDOW_WIDTH), maxWidth),
+      height: Math.min(Math.max(app.windowDefaults.minHeight, MIN_WINDOW_HEIGHT), maxHeight),
     };
   };
 
@@ -274,7 +317,33 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     record.y = clamp(record.y, WINDOW_MARGIN, maxY);
   };
 
+  const applyWindowChrome = (record: WindowRecord): void => {
+    const titleNode = record.node.querySelector<HTMLElement>("[data-window-title]");
+    const dirtyNode = record.node.querySelector<HTMLElement>("[data-window-dirty]");
+    const badgeNode = record.node.querySelector<HTMLElement>("[data-window-badge]");
+    const routeNode = record.node.querySelector<HTMLElement>("[data-window-route]");
+
+    if (titleNode) {
+      titleNode.textContent = record.title;
+    }
+    if (dirtyNode) {
+      dirtyNode.hidden = !record.dirty;
+    }
+    if (badgeNode) {
+      badgeNode.hidden = !record.badge;
+      badgeNode.textContent = record.badge ?? "";
+    }
+    if (routeNode) {
+      routeNode.textContent = record.route;
+    }
+
+    record.node.classList.toggle("is-dirty", record.dirty);
+    record.node.classList.toggle("has-badge", !!record.badge);
+    record.node.setAttribute("aria-label", record.title === record.app.name ? record.app.name : `${record.title} - ${record.app.name}`);
+  };
+
   const applyWindowFrame = (record: WindowRecord): void => {
+    applyWindowChrome(record);
     record.node.style.zIndex = String(record.zIndex);
     record.node.classList.toggle("is-active", activeWindowId === record.windowId);
 
@@ -297,7 +366,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     }
 
     record.node.classList.remove("is-maximized");
-    const fitted = fitSizeToWorkspace(record.width, record.height);
+    const fitted = fitSizeToWorkspace(record.app, record.width, record.height);
     record.width = fitted.width;
     record.height = fitted.height;
     clampNormalPosition(record);
@@ -312,9 +381,14 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       .map((record) => ({
         windowId: record.windowId,
         appId: record.app.id,
-        title: record.app.name,
+        title: record.title,
+        appName: record.app.name,
+        route: record.route,
         mode: record.mode,
         active: activeWindowId === record.windowId,
+        badge: record.badge,
+        dirty: record.dirty,
+        zIndex: record.zIndex,
       }));
   };
 
@@ -327,6 +401,8 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       activeAppId,
       windows: ordered.map((record) => ({
         appId: record.app.id,
+        route: record.route,
+        title: record.title === record.app.name ? undefined : record.title,
         mode: record.mode,
         lastVisibleMode: record.lastVisibleMode,
         x: record.x,
@@ -551,6 +627,10 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       manifest: record.app,
       route: record.route,
       requestFocus: () => focusWindow(record.windowId),
+      setTitle: (title) => setWindowTitle(record.windowId, title),
+      setBadge: (badge) => setWindowBadge(record.windowId, badge),
+      setDirty: (dirty) => setWindowDirty(record.windowId, dirty),
+      requestNewWindow: (route) => openApp(record.app, route ?? record.route, { forceNew: true }),
     };
 
     invokeLifecycle(
@@ -650,11 +730,6 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     record.node.remove();
     windows.delete(windowId);
 
-    const appWindowId = windowByAppId.get(record.app.id);
-    if (appWindowId === windowId) {
-      windowByAppId.delete(record.app.id);
-    }
-
     if (activeWindowId === windowId) {
       chooseNextActiveWindow();
       return;
@@ -718,6 +793,39 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     record.mode = record.lastVisibleMode;
     resumeRuntime(record);
     focusWindow(windowId);
+  };
+
+  const setWindowTitle = (windowId: string, title: string | null): void => {
+    const record = windows.get(windowId);
+    if (!record) {
+      return;
+    }
+
+    record.title = normalizeChromeText(title) ?? record.app.name;
+    applyWindowChrome(record);
+    emit();
+  };
+
+  const setWindowBadge = (windowId: string, badge: string | null): void => {
+    const record = windows.get(windowId);
+    if (!record) {
+      return;
+    }
+
+    record.badge = normalizeChromeText(badge, 16);
+    applyWindowChrome(record);
+    emit();
+  };
+
+  const setWindowDirty = (windowId: string, dirty: boolean): void => {
+    const record = windows.get(windowId);
+    if (!record) {
+      return;
+    }
+
+    record.dirty = dirty;
+    applyWindowChrome(record);
+    emit();
   };
 
   const applySnap = (windowId: string, target: Exclude<SnapTarget, null>): void => {
@@ -905,6 +1013,15 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       window.addEventListener("dragstart", blockSelection);
     });
 
+    record.dragHandleNode.addEventListener("dblclick", (event) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest(".window-controls")) {
+        return;
+      }
+      event.preventDefault();
+      maximizeWindow(record.windowId);
+    });
+
     const resizeHandles = Array.from(record.node.querySelectorAll<HTMLElement>("[data-window-resize]"));
     for (const handleNode of resizeHandles) {
       handleNode.addEventListener("pointerdown", (event) => {
@@ -923,7 +1040,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const createRecord = (app: AppManifest, persisted?: PersistedWindow, route?: string): WindowRecord => {
-    const resolvedRoute = route ?? app.entrypoint.route;
+    const resolvedRoute = route ?? persisted?.route ?? app.entrypoint.route;
     const node = createWindowNode(app, resolvedRoute);
     const dragHandleNode = node.querySelector<HTMLElement>("[data-window-drag-handle]");
     const contentNode = node.querySelector<HTMLElement>("[data-window-content]");
@@ -937,15 +1054,18 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
     const baseWidth = persisted?.width ?? app.windowDefaults.width;
     const baseHeight = persisted?.height ?? app.windowDefaults.height;
-    const fitted = fitSizeToWorkspace(baseWidth, baseHeight);
+    const fitted = fitSizeToWorkspace(app, baseWidth, baseHeight);
     const fittedRestore = persisted
-      ? fitSizeToWorkspace(persisted.restoreWidth, persisted.restoreHeight)
+      ? fitSizeToWorkspace(app, persisted.restoreWidth, persisted.restoreHeight)
       : fitted;
 
     const record: WindowRecord = {
       windowId: `win-${++sequence}`,
       app,
       route: resolvedRoute,
+      title: normalizeChromeText(persisted?.title ?? null) ?? app.name,
+      badge: null,
+      dirty: false,
       mode: persisted?.mode ?? "normal",
       lastVisibleMode: persisted?.lastVisibleMode ?? "normal",
       x: persisted?.x ?? WINDOW_START_X + stagger * WINDOW_OFFSET_X,
@@ -972,34 +1092,30 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
   };
 
   const restorePersistedLayout = (): void => {
-    const persisted = readPersistedLayout();
-    if (!persisted) {
+    if (restoredPersistedLayout || !pendingPersistedLayout || appById.size === 0) {
       return;
     }
+    restoredPersistedLayout = true;
 
-    const orderedWindows = [...persisted.windows].sort((left, right) => left.zIndex - right.zIndex);
+    const orderedWindows = [...pendingPersistedLayout.windows].sort((left, right) => left.zIndex - right.zIndex);
     for (const snapshot of orderedWindows) {
       const app = appById.get(snapshot.appId);
-      if (!app || windowByAppId.has(app.id)) {
+      if (!app) {
         continue;
       }
 
       const record = createRecord(app, snapshot);
       attachWindowListeners(record);
       windows.set(record.windowId, record);
-      windowByAppId.set(app.id, record.windowId);
       layerNode.appendChild(record.node);
       zCounter = Math.max(zCounter, record.zIndex);
     }
 
-    if (persisted.activeAppId) {
-      const activeId = windowByAppId.get(persisted.activeAppId);
-      if (activeId) {
-        const record = windows.get(activeId);
-        if (record && record.mode !== "minimized") {
-          activeWindowId = record.windowId;
-        }
-      }
+    if (pendingPersistedLayout.activeAppId) {
+      const activeRecord = [...windows.values()]
+        .filter((record) => record.app.id === pendingPersistedLayout.activeAppId && record.mode !== "minimized")
+        .sort((left, right) => right.zIndex - left.zIndex)[0];
+      activeWindowId = activeRecord?.windowId ?? activeWindowId;
     }
 
     if (!activeWindowId) {
@@ -1018,42 +1134,64 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     repaintAll();
   };
 
-  const openApp = (app: AppManifest, route?: string, options?: { pendingAppOpenRequest?: OpenAppRequest | null; forceRestart?: boolean }): string => {
-    const existingWindowId = windowByAppId.get(app.id);
-    if (existingWindowId) {
-      const existing = windows.get(existingWindowId);
-      if (existing) {
-        const requestedRoute = route ?? existing.route;
-        const routeChanged = requestedRoute !== existing.route;
-        const shouldRestart = !!options?.forceRestart || routeChanged;
-        if (options?.pendingAppOpenRequest) {
-          queuePendingAppOpen(existingWindowId, options.pendingAppOpenRequest);
-        }
-        if (routeChanged) {
-          existing.route = requestedRoute;
-          const metaNode = existing.node.querySelector<HTMLElement>(".window-meta");
-          if (metaNode) {
-            metaNode.textContent = requestedRoute;
-          }
-        }
-        if (shouldRestart) {
-          restartRuntime(existing);
-        }
-        if (existing.mode === "minimized") {
-          restoreWindow(existingWindowId);
-        } else {
-          focusWindow(existingWindowId);
-        }
-        return existingWindowId;
-      }
+  const setAppRegistry = (apps: readonly AppManifest[]): void => {
+    const shouldDeferEmptyRegistry = apps.length === 0 && windows.size === 0 && !!pendingPersistedLayout && !restoredPersistedLayout;
+    appById = new Map(apps.map((app) => [app.id, app]));
 
-      windowByAppId.delete(app.id);
+    for (const record of windows.values()) {
+      const nextApp = appById.get(record.app.id);
+      if (!nextApp) {
+        continue;
+      }
+      const titleWasDefault = record.title === record.app.name;
+      record.app = nextApp;
+      if (titleWasDefault) {
+        record.title = nextApp.name;
+      }
+      applyWindowChrome(record);
     }
 
-    const record = createRecord(app, undefined, route);
+    restorePersistedLayout();
+    repaintAll();
+    if (shouldDeferEmptyRegistry) {
+      return;
+    }
+    emit();
+  };
+
+  const findReusableWindow = (app: AppManifest, route?: string): WindowRecord | null => {
+    const candidates = [...windows.values()]
+      .filter((record) => record.app.id === app.id)
+      .sort((left, right) => right.zIndex - left.zIndex);
+
+    if (route) {
+      return candidates.find((record) => record.route === route) ?? null;
+    }
+
+    return candidates[0] ?? null;
+  };
+
+  const openApp = (app: AppManifest, route?: string, options?: { pendingAppOpenRequest?: OpenAppRequest | null; forceRestart?: boolean; forceNew?: boolean }): string => {
+    const requestedRoute = route ?? app.entrypoint.route;
+    const existing = options?.forceNew ? null : findReusableWindow(app, route);
+    if (existing) {
+      if (options?.pendingAppOpenRequest) {
+        queuePendingAppOpen(existing.windowId, options.pendingAppOpenRequest);
+      }
+      if (options?.forceRestart) {
+        restartRuntime(existing);
+      }
+      if (existing.mode === "minimized") {
+        restoreWindow(existing.windowId);
+      } else {
+        focusWindow(existing.windowId);
+      }
+      return existing.windowId;
+    }
+
+    const record = createRecord(app, undefined, requestedRoute);
     attachWindowListeners(record);
     windows.set(record.windowId, record);
-    windowByAppId.set(app.id, record.windowId);
     layerNode.appendChild(record.node);
 
     if (options?.pendingAppOpenRequest) {
@@ -1082,6 +1220,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       event.preventDefault();
 
       const bounds = workspaceBounds();
+      const minSize = minSizeForWorkspace(record.app);
       const startRight = resizeState.startX + resizeState.startWidth;
       const startBottom = resizeState.startY + resizeState.startHeight;
       const deltaX = event.clientX - resizeState.startClientX;
@@ -1093,21 +1232,21 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       let nextHeight = resizeState.startHeight;
 
       if (resizeState.direction.includes("w")) {
-        const maxX = startRight - MIN_WINDOW_WIDTH;
+        const maxX = startRight - minSize.width;
         nextX = clamp(resizeState.startX + deltaX, WINDOW_MARGIN, maxX);
         nextWidth = startRight - nextX;
       } else if (resizeState.direction.includes("e")) {
-        const maxWidth = Math.max(bounds.width - WINDOW_MARGIN - resizeState.startX, MIN_WINDOW_WIDTH);
-        nextWidth = clamp(resizeState.startWidth + deltaX, MIN_WINDOW_WIDTH, maxWidth);
+        const maxWidth = Math.max(bounds.width - WINDOW_MARGIN - resizeState.startX, minSize.width);
+        nextWidth = clamp(resizeState.startWidth + deltaX, minSize.width, maxWidth);
       }
 
       if (resizeState.direction.includes("n")) {
-        const maxY = startBottom - MIN_WINDOW_HEIGHT;
+        const maxY = startBottom - minSize.height;
         nextY = clamp(resizeState.startY + deltaY, WINDOW_MARGIN, maxY);
         nextHeight = startBottom - nextY;
       } else if (resizeState.direction.includes("s")) {
-        const maxHeight = Math.max(bounds.height - WINDOW_MARGIN - resizeState.startY, MIN_WINDOW_HEIGHT);
-        nextHeight = clamp(resizeState.startHeight + deltaY, MIN_WINDOW_HEIGHT, maxHeight);
+        const maxHeight = Math.max(bounds.height - WINDOW_MARGIN - resizeState.startY, minSize.height);
+        nextHeight = clamp(resizeState.startHeight + deltaY, minSize.height, maxHeight);
       }
 
       record.x = nextX;
@@ -1196,11 +1335,74 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     emit();
   };
 
+  const cycleWindow = (direction: 1 | -1): void => {
+    const candidates = [...windows.values()]
+      .filter((record) => record.mode !== "minimized")
+      .sort((left, right) => left.zIndex - right.zIndex);
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const activeIndex = candidates.findIndex((record) => record.windowId === activeWindowId);
+    const fallbackIndex = direction === 1 ? 0 : candidates.length - 1;
+    const nextIndex = activeIndex < 0
+      ? fallbackIndex
+      : (activeIndex + direction + candidates.length) % candidates.length;
+    focusWindow(candidates[nextIndex].windowId);
+  };
+
+  const isEditableTarget = (target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+    return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+  };
+
+  const onDocumentKeyDown = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented) {
+      return;
+    }
+
+    if (event.altKey && event.key === "Tab") {
+      event.preventDefault();
+      cycleWindow(event.shiftKey ? -1 : 1);
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key === "`") {
+      event.preventDefault();
+      cycleWindow(event.shiftKey ? -1 : 1);
+      return;
+    }
+
+    if (!activeWindowId || isEditableTarget(event.target)) {
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
+      event.preventDefault();
+      closeWindow(activeWindowId);
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "m") {
+      event.preventDefault();
+      minimizeWindow(activeWindowId);
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      maximizeWindow(activeWindowId);
+    }
+  };
+
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   window.addEventListener("pointercancel", onPointerCancel);
   window.addEventListener("blur", onWindowBlur);
   window.addEventListener("resize", onWindowResize);
+  document.addEventListener("keydown", onDocumentKeyDown);
 
   restorePersistedLayout();
 
@@ -1208,7 +1410,13 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     openApp,
     focusWindow,
     restoreWindow,
+    minimizeWindow,
+    maximizeWindow,
     closeWindow,
+    setAppRegistry,
+    setWindowTitle,
+    setWindowBadge,
+    setWindowDirty,
     subscribe: (listener) => {
       listeners.add(listener);
       listener(buildSummaries());
@@ -1225,6 +1433,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       window.removeEventListener("pointercancel", onPointerCancel);
       window.removeEventListener("blur", onWindowBlur);
       window.removeEventListener("resize", onWindowResize);
+      document.removeEventListener("keydown", onDocumentKeyDown);
 
       for (const record of windows.values()) {
         detachRuntime(record);
@@ -1233,7 +1442,6 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
       snapOverlayNode.remove();
       windows.clear();
-      windowByAppId.clear();
       listeners.clear();
       activeWindowId = null;
     },

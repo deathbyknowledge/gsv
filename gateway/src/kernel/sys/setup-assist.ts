@@ -1,4 +1,4 @@
-import type { Context } from "@mariozechner/pi-ai";
+import type { Context } from "@earendil-works/pi-ai";
 import type { KernelContext } from "../context";
 import { handleAiConfig } from "../ai";
 import { createGenerationService } from "../../inference/service";

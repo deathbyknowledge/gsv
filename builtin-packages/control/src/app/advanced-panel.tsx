@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { ControlConfigEntry, ControlViewer } from "./types";
 
@@ -103,7 +104,32 @@ export function AdvancedPanel({ entries, viewer, pendingAction, onApply, onClien
             </tbody>
           </table>
         </div>
+
+        <div class="control-record-list" aria-label="Visible config keys">
+          {entries.map((entry) => (
+            <article class="control-record" key={`entry-record:${entry.key}`}>
+              <div class="control-record-head">
+                <div class="control-record-title">
+                  <strong>{entry.scopeLabel}</strong>
+                  <span class="control-subtle"><code>{entry.pathLabel}</code></span>
+                </div>
+              </div>
+              <div class="control-record-meta">
+                <RecordField label="Value"><code>{entry.value}</code></RecordField>
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
+    </div>
+  );
+}
+
+function RecordField({ label, children }: { label: string; children: ComponentChildren }) {
+  return (
+    <div class="control-record-field">
+      <span>{label}</span>
+      <div>{children}</div>
     </div>
   );
 }

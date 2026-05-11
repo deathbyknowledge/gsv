@@ -25,6 +25,7 @@ import {
   Composer,
   ConversationBar,
   ContextMeter,
+  MobileProcessNav,
   Transcript,
 } from "./components";
 import {
@@ -1477,6 +1478,19 @@ export function App({ backend }: { backend: ChatBackend }) {
 
       <section class={"chat-stage" + (workspaceView === "archive" ? " is-archive" : "")}>
         <header class="chat-stage-head">
+          <MobileProcessNav
+            active={active}
+            threads={threads}
+            threadsLoading={threadsLoading}
+            threadsError={threadsError}
+            profiles={newConversationProfiles}
+            draftProfileId={draftProfile.id}
+            onDraftProfileChange={setDraftProfileId}
+            onHome={() => void openHome()}
+            onNew={resetToNewThread}
+            onRefreshThreads={() => void loadThreads()}
+            onOpenThread={(workspaceId) => void openThread(workspaceId)}
+          />
           <div class="chat-stage-title">
             <h1>{activeTitle}</h1>
             {!active ? (

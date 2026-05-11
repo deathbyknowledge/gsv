@@ -3,6 +3,7 @@ import type { DeviceScope, DeviceSummary } from "./types";
 type DeviceListProps = {
   devices: DeviceSummary[];
   canManageTokens: boolean;
+  loading: boolean;
   selectedDeviceId: string | null;
   query: string;
   scope: DeviceScope;
@@ -15,6 +16,7 @@ type DeviceListProps = {
 export function DeviceList({
   devices,
   canManageTokens,
+  loading,
   selectedDeviceId,
   query,
   scope,
@@ -23,7 +25,7 @@ export function DeviceList({
   onSelectDevice,
   onStartProvision,
 }: DeviceListProps) {
-  const filtered = devices.filter((device) => {
+  const filtered = loading ? [] : devices.filter((device) => {
     if (scope === "online" && !device.online) return false;
     if (scope === "offline" && device.online) return false;
     const q = query.trim().toLowerCase();
@@ -68,13 +70,15 @@ export function DeviceList({
       </div>
 
       <div class="devices-list-summary">
-        <span>{devices.length} known</span>
-        <span>{devices.filter((device) => device.online).length} online</span>
+        <span>{loading ? "Loading" : `${devices.length} known`}</span>
+        <span>{loading ? "Checking status" : `${devices.filter((device) => device.online).length} online`}</span>
       </div>
 
-      <div class="devices-list" role="list">
-        {filtered.length === 0 ? (
-          <div class="devices-empty-list">No matching devices.</div>
+      <div class="devices-list" role="list" aria-busy={loading ? "true" : "false"}>
+        {loading ? (
+          <div class="devices-empty-list">Loading devices...</div>
+        ) : filtered.length === 0 ? (
+          <div class="devices-empty-list">{devices.length === 0 ? "No devices enrolled." : "No matching devices."}</div>
         ) : filtered.map((device) => (
           <button
             key={device.deviceId}
@@ -82,7 +86,7 @@ export function DeviceList({
             onClick={() => onSelectDevice(device.deviceId)}
           >
             <div class="devices-list-item-head">
-              <strong>{device.deviceId}</strong>
+              <strong class="devices-device-id">{device.deviceId}</strong>
               <span class={`devices-status-pill${device.online ? " is-online" : " is-offline"}`}>
                 {device.online ? "online" : "offline"}
               </span>

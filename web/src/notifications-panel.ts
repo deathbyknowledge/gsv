@@ -5,6 +5,7 @@ import type {
   NotificationRecord,
 } from "@gsv/protocol/syscalls/notification";
 import type { GatewayClientLike } from "./gateway-client";
+import { canUseServiceWorker, registerGsvServiceWorker } from "./service-worker";
 
 type NotificationsPanelOptions = {
   rootNode: HTMLElement;
@@ -20,6 +21,7 @@ type ToastRecord = {
 };
 
 const DEFAULT_NOTIFICATION_SOUND = "/notification-sounds/27568__suonho__memorymoon_space-blaster-plays.wav";
+const MOBILE_PANEL_QUERY = "(max-width: 720px)";
 
 function escapeHtml(value: string): string {
   return value
@@ -54,22 +56,26 @@ export function createNotificationsPanel(
 ): NotificationsPanelController {
   const { rootNode, gatewayClient } = options;
 
-  const toggleNode = rootNode.querySelector<HTMLButtonElement>("[data-notifications-toggle]");
+  const toggleNodes = Array.from(rootNode.querySelectorAll<HTMLButtonElement>("[data-notifications-toggle]"));
   const panelNode = rootNode.querySelector<HTMLElement>("[data-notifications-panel]");
   const listNode = rootNode.querySelector<HTMLElement>("[data-notifications-list]");
   const emptyNode = rootNode.querySelector<HTMLElement>("[data-notifications-empty]");
-  const badgeNode = rootNode.querySelector<HTMLElement>("[data-notifications-badge]");
+  const badgeNodes = Array.from(rootNode.querySelectorAll<HTMLElement>("[data-notifications-badge]"));
   const toastsNode = rootNode.querySelector<HTMLElement>("[data-notification-toasts]");
+  const systemEnableNode = rootNode.querySelector<HTMLButtonElement>("[data-notifications-system-enable]");
+  const deliveryStateNode = rootNode.querySelector<HTMLElement>("[data-notifications-delivery-state]");
 
-  if (!toggleNode || !panelNode || !listNode || !emptyNode || !badgeNode || !toastsNode) {
+  if (toggleNodes.length === 0 || !panelNode || !listNode || !emptyNode || badgeNodes.length === 0 || !toastsNode) {
     throw new Error("Notifications panel markup is incomplete");
   }
 
   let isOpen = false;
   let notifications: NotificationRecord[] = [];
+  let activeToggleNode = toggleNodes[0];
   const toasts = new Map<string, ToastRecord>();
   const originalParent = panelNode.parentElement;
   const originalNextSibling = panelNode.nextSibling;
+  const mobilePanelMedia = window.matchMedia(MOBILE_PANEL_QUERY);
   const resizeObserver = typeof ResizeObserver === "function"
     ? new ResizeObserver(() => {
         positionPanel();
@@ -78,11 +84,63 @@ export function createNotificationsPanel(
 
   document.body.appendChild(panelNode);
 
+  const supportsSystemNotifications = (): boolean => {
+    return "Notification" in window;
+  };
+
+  const supportsServiceWorkerNotifications = (): boolean => {
+    return canUseServiceWorker();
+  };
+
+  const systemPermission = (): NotificationPermission | "unsupported" => {
+    return supportsSystemNotifications() ? Notification.permission : "unsupported";
+  };
+
+  const updateDeliveryState = (): void => {
+    const permission = systemPermission();
+    if (deliveryStateNode) {
+      if (permission === "granted") {
+        deliveryStateNode.textContent = "System alerts enabled";
+      } else if (permission === "denied") {
+        deliveryStateNode.textContent = "System alerts blocked";
+      } else if (!supportsSystemNotifications() || !supportsServiceWorkerNotifications()) {
+        deliveryStateNode.textContent = "In-shell alerts";
+      } else {
+        deliveryStateNode.textContent = "In-shell alerts";
+      }
+    }
+
+    if (systemEnableNode) {
+      systemEnableNode.hidden = !supportsSystemNotifications() || !supportsServiceWorkerNotifications() || permission !== "default";
+    }
+  };
+
+  const ensureServiceWorkerRegistration = async (): Promise<ServiceWorkerRegistration | null> => {
+    if (!supportsServiceWorkerNotifications()) {
+      return null;
+    }
+    return registerGsvServiceWorker();
+  };
+
   const positionPanel = (): void => {
     if (!isOpen) {
       return;
     }
-    const rect = toggleNode.getBoundingClientRect();
+
+    panelNode.style.position = "fixed";
+    panelNode.style.zIndex = "260";
+
+    if (mobilePanelMedia.matches) {
+      panelNode.style.left = "max(10px, env(safe-area-inset-left))";
+      panelNode.style.right = "max(10px, env(safe-area-inset-right))";
+      panelNode.style.top = "max(72px, calc(env(safe-area-inset-top) + 62px))";
+      panelNode.style.bottom = "max(14px, env(safe-area-inset-bottom))";
+      return;
+    }
+
+    panelNode.style.right = "auto";
+    panelNode.style.bottom = "auto";
+    const rect = activeToggleNode.getBoundingClientRect();
     const width = panelNode.offsetWidth || 320;
     const height = panelNode.offsetHeight || 180;
     const maxLeft = Math.max(8, window.innerWidth - width - 8);
@@ -95,24 +153,21 @@ export function createNotificationsPanel(
   const setOpen = (open: boolean): void => {
     isOpen = open;
     panelNode.hidden = !open;
-    toggleNode.setAttribute("aria-expanded", open ? "true" : "false");
+    for (const toggleNode of toggleNodes) {
+      toggleNode.setAttribute("aria-expanded", open ? "true" : "false");
+    }
     if (open) {
-      panelNode.style.position = "fixed";
-      panelNode.style.bottom = "auto";
-      panelNode.style.right = "auto";
-      panelNode.style.zIndex = "260";
       panelNode.style.visibility = "hidden";
       requestAnimationFrame(() => {
         positionPanel();
         panelNode.style.visibility = "visible";
-        console.debug("[notifications-panel] set open", {
-          hidden: panelNode.hidden,
-          rect: panelNode.getBoundingClientRect().toJSON?.() ?? null,
-        });
       });
     } else {
+      panelNode.style.left = "";
+      panelNode.style.right = "";
+      panelNode.style.top = "";
+      panelNode.style.bottom = "";
       panelNode.style.visibility = "";
-      console.debug("[notifications-panel] set closed", { hidden: panelNode.hidden });
     }
   };
 
@@ -131,8 +186,10 @@ export function createNotificationsPanel(
 
   const render = (): void => {
     const unreadCount = notifications.filter((entry) => !entry.readAt).length;
-    badgeNode.hidden = unreadCount === 0;
-    badgeNode.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
+    for (const badgeNode of badgeNodes) {
+      badgeNode.hidden = unreadCount === 0;
+      badgeNode.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
+    }
 
     if (notifications.length === 0) {
       listNode.innerHTML = "";
@@ -196,8 +253,37 @@ export function createNotificationsPanel(
     }
   };
 
-  const showToast = (notification: NotificationRecord): void => {
+  const showSystemNotification = async (notification: NotificationRecord): Promise<boolean> => {
+    if (systemPermission() !== "granted") {
+      return false;
+    }
+
+    const options: NotificationOptions = {
+      body: notification.body,
+      tag: notification.notificationId,
+      data: {
+        notificationId: notification.notificationId,
+      },
+      silent: false,
+    };
+
+    const registration = await ensureServiceWorkerRegistration();
+    if (registration) {
+      await registration.showNotification(notification.title, options);
+      return true;
+    }
+
+    new Notification(notification.title, options);
+    return true;
+  };
+
+  const showToast = async (notification: NotificationRecord): Promise<void> => {
     removeToast(notification.notificationId);
+    const deliveredSystemNotification = await showSystemNotification(notification).catch(() => false);
+    if (deliveredSystemNotification) {
+      return;
+    }
+
     playNotificationSound();
     const toastNode = document.createElement("div");
     toastNode.className = `notification-toast is-${notification.level}`;
@@ -229,12 +315,10 @@ export function createNotificationsPanel(
     render();
   };
 
-  const onToggleClick = (): void => {
-    console.debug("[notifications-panel] toggle click", {
-      isOpen,
-      hidden: panelNode.hidden,
-      count: notifications.length,
-    });
+  const onToggleClick = (event: MouseEvent): void => {
+    if (event.currentTarget instanceof HTMLButtonElement) {
+      activeToggleNode = event.currentTarget;
+    }
     setOpen(!isOpen);
   };
 
@@ -246,7 +330,7 @@ export function createNotificationsPanel(
     if (!(target instanceof Node)) {
       return;
     }
-    if (panelNode.contains(target) || toggleNode.contains(target)) {
+    if (panelNode.contains(target) || toggleNodes.some((toggleNode) => toggleNode.contains(target))) {
       return;
     }
     setOpen(false);
@@ -259,9 +343,6 @@ export function createNotificationsPanel(
   };
 
   const onListClick = async (event: MouseEvent): Promise<void> => {
-    console.debug("[notifications-panel] list click", {
-      target: event.target instanceof HTMLElement ? event.target.outerHTML.slice(0, 120) : String(event.target),
-    });
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
       return;
@@ -273,7 +354,6 @@ export function createNotificationsPanel(
       const result = await gatewayClient.call<NotificationDismissResult>("notification.dismiss", {
         notificationId,
       });
-      console.debug("[notifications-panel] dismiss", { notificationId, found: Boolean(result.notification) });
       if (result.notification) {
         upsertNotification(result.notification);
       }
@@ -286,11 +366,48 @@ export function createNotificationsPanel(
       const result = await gatewayClient.call<NotificationMarkReadResult>("notification.mark_read", {
         notificationId,
       });
-      console.debug("[notifications-panel] mark read", { notificationId, found: Boolean(result.notification) });
       if (result.notification) {
         upsertNotification(result.notification);
       }
     }
+  };
+
+  const onSystemEnableClick = async (): Promise<void> => {
+    if (!supportsSystemNotifications()) {
+      updateDeliveryState();
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") {
+      await ensureServiceWorkerRegistration();
+    }
+    updateDeliveryState();
+  };
+
+  const onSystemEnableButtonClick = (): void => {
+    void onSystemEnableClick();
+  };
+
+  const onListClickEvent = (event: MouseEvent): void => {
+    void onListClick(event);
+  };
+
+  const onServiceWorkerMessage = (event: MessageEvent): void => {
+    const data = event.data as { type?: unknown; notificationId?: unknown } | null;
+    if (!data || data.type !== "gsv.notification.click") {
+      return;
+    }
+
+    if (typeof data.notificationId === "string") {
+      void gatewayClient.call<NotificationMarkReadResult>("notification.mark_read", {
+        notificationId: data.notificationId,
+      }).then((result) => {
+        if (result.notification) {
+          upsertNotification(result.notification);
+        }
+      }).catch(() => {});
+    }
+    setOpen(true);
   };
 
   const unsubscribeStatus = gatewayClient.onStatus((status) => {
@@ -303,14 +420,11 @@ export function createNotificationsPanel(
   });
 
   const unsubscribeSignal = gatewayClient.onSignal((signal, payload) => {
-    if (signal.startsWith("notification.")) {
-      console.debug("[notifications-panel] signal", { signal, payload });
-    }
     if (signal === "notification.created") {
       const notification = extractNotification(payload);
       if (notification) {
         upsertNotification(notification);
-        showToast(notification);
+        void showToast(notification);
       }
       return;
     }
@@ -322,15 +436,19 @@ export function createNotificationsPanel(
     }
   });
 
-  toggleNode.addEventListener("click", onToggleClick);
+  for (const toggleNode of toggleNodes) {
+    toggleNode.addEventListener("click", onToggleClick);
+  }
+  systemEnableNode?.addEventListener("click", onSystemEnableButtonClick);
   document.addEventListener("click", onDocumentClick);
   document.addEventListener("keydown", onDocumentKeyDown);
   window.addEventListener("resize", positionPanel);
-  listNode.addEventListener("click", (event) => {
-    void onListClick(event);
-  });
+  mobilePanelMedia.addEventListener("change", positionPanel);
+  navigator.serviceWorker?.addEventListener("message", onServiceWorkerMessage);
+  listNode.addEventListener("click", onListClickEvent);
   resizeObserver?.observe(panelNode);
 
+  updateDeliveryState();
   render();
 
   return {
@@ -339,9 +457,15 @@ export function createNotificationsPanel(
       unsubscribeSignal();
       resizeObserver?.disconnect();
       window.removeEventListener("resize", positionPanel);
-      toggleNode.removeEventListener("click", onToggleClick);
+      mobilePanelMedia.removeEventListener("change", positionPanel);
+      for (const toggleNode of toggleNodes) {
+        toggleNode.removeEventListener("click", onToggleClick);
+      }
+      systemEnableNode?.removeEventListener("click", onSystemEnableButtonClick);
+      listNode.removeEventListener("click", onListClickEvent);
       document.removeEventListener("click", onDocumentClick);
       document.removeEventListener("keydown", onDocumentKeyDown);
+      navigator.serviceWorker?.removeEventListener("message", onServiceWorkerMessage);
       for (const toast of toasts.values()) {
         window.clearTimeout(toast.timeoutId);
       }

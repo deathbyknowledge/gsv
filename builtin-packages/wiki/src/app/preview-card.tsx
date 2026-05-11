@@ -1,4 +1,4 @@
-import { renderPreviewBodyHtml } from "./markdown";
+import { escapeHtml, renderPreviewBodyHtml } from "./markdown";
 import type { WikiPreviewPayload } from "./types";
 
 type Props = {
@@ -6,15 +6,27 @@ type Props = {
   loading: boolean;
   payload: WikiPreviewPayload | null;
   error: string;
+  pinned: boolean;
+  onDismiss(): void;
   onMouseEnter(): void;
   onMouseLeave(): void;
 };
 
 function positionFromRect(rect: DOMRect) {
+  const margin = 12;
+  const gap = 10;
   const width = Math.min(420, window.innerWidth - 24);
-  const left = Math.min(window.innerWidth - width - 12, Math.max(12, rect.right + 12));
-  const top = Math.min(window.innerHeight - 24, Math.max(12, rect.top));
-  return { left, top };
+  const maxHeight = Math.min(520, Math.max(80, window.innerHeight - (margin * 2)));
+  const leftCandidate = rect.right + gap + width <= window.innerWidth - margin
+    ? rect.right + gap
+    : rect.left - width - gap;
+  const left = Math.min(window.innerWidth - width - margin, Math.max(margin, leftCandidate));
+  const topCandidate = window.innerHeight - rect.bottom - margin >= 180
+    ? rect.bottom + gap
+    : rect.top - maxHeight - gap;
+  const maxTop = Math.max(margin, window.innerHeight - maxHeight - margin);
+  const top = Math.min(maxTop, Math.max(margin, topCandidate));
+  return { left, top, maxHeight };
 }
 
 export function PreviewCard(props: Props) {
@@ -37,17 +49,23 @@ export function PreviewCard(props: Props) {
   const html = props.loading
     ? '<div class="preview-empty">Loading preview…</div>'
     : props.error
-      ? `<div class="preview-empty">${props.error}</div>`
+      ? `<div class="preview-empty">${escapeHtml(props.error)}</div>`
       : renderPreviewBodyHtml(props.payload || { ok: false, error: "Preview unavailable." });
 
   return (
     <div
-      class="wiki-preview-card"
-      style={{ left: `${position.left}px`, top: `${position.top}px` }}
+      class={`wiki-preview-card${props.pinned ? " is-pinned" : ""}`}
+      data-preview-card="true"
+      role="dialog"
+      aria-label={`${title} preview`}
+      style={{ left: `${position.left}px`, top: `${position.top}px`, maxHeight: `${position.maxHeight}px` }}
       onMouseEnter={props.onMouseEnter}
       onMouseLeave={props.onMouseLeave}
     >
-      <h4>{title}</h4>
+      <div class="preview-head">
+        <h4>{title}</h4>
+        <button type="button" class="preview-close" aria-label="Close preview" onClick={props.onDismiss}>Close</button>
+      </div>
       {meta.length > 0 ? <div class="preview-meta">{meta.join(" · ")}</div> : null}
       <div class="preview-body" dangerouslySetInnerHTML={{ __html: html }} />
     </div>

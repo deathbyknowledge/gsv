@@ -178,6 +178,84 @@ const RUNTIME_THEME_CSS = [
   "a { color: var(--accent); }",
 ].join("\n");
 
+const PACKAGE_APP_VIEWPORT_META = `<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">`;
+
+const PACKAGE_APP_RUNTIME_STYLE = [
+  "<style data-gsv-package-runtime>",
+  "html[data-gsv-runtime-state] body::before,",
+  "html[data-gsv-runtime-state] body::after {",
+  "  position: fixed;",
+  "  left: 50%;",
+  "  z-index: 2147483646;",
+  "  pointer-events: auto;",
+  "  opacity: 1;",
+  "  transition: opacity 160ms ease;",
+  "}",
+  "html[data-gsv-runtime-state] body::before {",
+  "  content: \"\";",
+  "  inset: 0;",
+  "  left: 0;",
+  "  background: linear-gradient(180deg, rgba(247, 249, 252, 0.98), rgba(231, 238, 246, 0.96));",
+  "}",
+  "html[data-gsv-runtime-state] body::after {",
+  "  content: attr(data-gsv-runtime-message);",
+  "  top: 50%;",
+  "  max-width: min(320px, calc(100vw - 48px));",
+  "  min-height: 44px;",
+  "  padding: 13px 16px;",
+  "  border: 1px solid rgba(42, 50, 56, 0.12);",
+  "  border-radius: 8px;",
+  "  background: rgba(255, 255, 255, 0.92);",
+  "  box-shadow: 0 18px 54px rgba(25, 34, 44, 0.14);",
+  "  color: #1f2d33;",
+  "  font: 600 14px/1.35 system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;",
+  "  text-align: center;",
+  "  transform: translate(-50%, -50%);",
+  "}",
+  "html[data-gsv-app-ready=\"true\"] body::before,",
+  "html[data-gsv-app-ready=\"true\"] body::after {",
+  "  opacity: 0;",
+  "  pointer-events: none;",
+  "}",
+  "html[data-gsv-runtime-state=\"error\"] body::after {",
+  "  border-color: rgba(155, 65, 55, 0.24);",
+  "  color: #8a3b3b;",
+  "}",
+  "@media (max-width: 720px) {",
+  "  html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }",
+  "  input, select, textarea { font-size: 16px !important; }",
+  "}",
+  "</style>",
+].join("");
+
+const PACKAGE_APP_RUNTIME_SCRIPT = [
+  "(function(){",
+  "var root=document.documentElement;",
+  "var ready=false;",
+  "var fallback=null;",
+  "function body(){return document.body;}",
+  "function syncMessage(message){root.dataset.gsvRuntimeMessage=message;var b=body();if(b)b.dataset.gsvRuntimeMessage=message;}",
+  "function setStatus(state,message){root.dataset.gsvRuntimeState=state;syncMessage(message||defaultMessage(state));}",
+  "function clearFallback(){if(fallback!==null){clearTimeout(fallback);fallback=null;}}",
+  "function defaultMessage(state){",
+  "if(state==='connecting')return 'Connecting app...';",
+  "if(state==='connected')return 'Opening app...';",
+  "if(state==='loading')return 'Loading app...';",
+  "if(state==='reconnecting')return 'Reconnecting app...';",
+  "if(state==='error')return 'App unavailable';",
+  "return 'Booting app...';",
+  "}",
+  "function markReady(){ready=true;clearFallback();root.dataset.gsvAppReady='true';setStatus('ready','Ready');}",
+  "function showLoading(message){ready=false;clearFallback();delete root.dataset.gsvAppReady;setStatus('loading',message||defaultMessage('loading'));}",
+  "function showError(message){ready=false;clearFallback();delete root.dataset.gsvAppReady;setStatus('error',message||defaultMessage('error'));}",
+  "function scheduleBootFallback(){clearFallback();fallback=setTimeout(function(){if(!ready&&root.dataset.gsvRuntimeState==='booting')markReady();},800);}",
+  "window.__GSV_APP_RUNTIME__={setStatus:setStatus,setLoading:showLoading,setReady:markReady,setError:showError};",
+  "setStatus('booting',defaultMessage('booting'));",
+  "document.addEventListener('DOMContentLoaded',function(){syncMessage(root.dataset.gsvRuntimeMessage||defaultMessage(root.dataset.gsvRuntimeState));},{once:true});",
+  "window.addEventListener('load',scheduleBootFallback,{once:true});",
+  "})();",
+].join("");
+
 type PackageAppSession = {
   username: string;
   token: string;
@@ -608,7 +686,7 @@ function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): s
     .replace(/>/g, "\\u003e")
     .replace(/&/g, "\\u0026");
   const scriptLines = [
-    `<script>window.__GSV_APP_BOOT__=${boot};</script>`,
+    `<script>window.__GSV_APP_BOOT__=${boot};${PACKAGE_APP_RUNTIME_SCRIPT}</script>`,
   ];
   if (resolved.hasRpc) {
     scriptLines.push(
@@ -618,15 +696,30 @@ function injectAppBootstrapHtml(html: string, resolved: ResolvedPackageRoute): s
       "</script>",
     );
   }
-  const script = scriptLines.join("");
+  const headExtras = [
+    htmlHasViewportMeta(html) ? "" : PACKAGE_APP_VIEWPORT_META,
+    PACKAGE_APP_RUNTIME_STYLE,
+    scriptLines.join(""),
+  ].join("");
 
-  if (html.includes("</head>")) {
-    return html.replace("</head>", `${script}</head>`);
+  const headInjected = injectBeforeClosingTag(html, "head", headExtras);
+  if (headInjected !== html) {
+    return headInjected;
   }
-  if (html.includes("</body>")) {
-    return html.replace("</body>", `${script}</body>`);
+  const bodyInjected = injectBeforeClosingTag(html, "body", headExtras);
+  if (bodyInjected !== html) {
+    return bodyInjected;
   }
-  return `${script}${html}`;
+  return `${headExtras}${html}`;
+}
+
+function htmlHasViewportMeta(html: string): boolean {
+  return /<meta\b[^>]*\bname\s*=\s*["']?viewport["']?/i.test(html);
+}
+
+function injectBeforeClosingTag(html: string, tagName: string, content: string): string {
+  const pattern = new RegExp(`</${tagName}>`, "i");
+  return html.replace(pattern, `${content}$&`);
 }
 
 function buildPackageAppBoot(resolved: ResolvedPackageRoute) {

@@ -32,11 +32,20 @@ type BackendProxyControl = {
 };
 
 export type AppEventListener = (event: string, payload: unknown) => void;
+export type AppRuntimeStatus = "booting" | "connecting" | "connected" | "loading" | "ready" | "reconnecting" | "error";
+
+type PackageAppRuntimeChrome = {
+  setStatus(state: AppRuntimeStatus, message?: string): void;
+  setLoading(message?: string): void;
+  setReady(): void;
+  setError(message?: string): void;
+};
 
 declare global {
   interface Window {
     __GSV_APP_BOOT__?: PackageAppBoot;
     __GSV_BACKEND_READY__?: Promise<unknown>;
+    __GSV_APP_RUNTIME__?: PackageAppRuntimeChrome;
     backend?: unknown;
     capnweb?: CapnwebGlobal;
   }
@@ -66,8 +75,118 @@ let backendConnectionPromise: Promise<BackendConnection> | null = null;
 let backendProxy: unknown = null;
 let appClientTarget: unknown = null;
 let appSessionRefreshPromise: Promise<PackageAppBoot> | null = null;
+let appRuntimeReady = false;
+let connectedReadyFallback: ReturnType<typeof setTimeout> | null = null;
 const appEventListeners = new Set<AppEventListener>();
 const APP_SESSION_REFRESH_LEEWAY_MS = 60_000;
+const CONNECTED_READY_FALLBACK_MS = 650;
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function defaultRuntimeMessage(status: AppRuntimeStatus): string {
+  switch (status) {
+    case "connecting":
+      return "Connecting app...";
+    case "connected":
+      return "Opening app...";
+    case "loading":
+      return "Loading app...";
+    case "ready":
+      return "Ready";
+    case "reconnecting":
+      return "Reconnecting app...";
+    case "error":
+      return "App unavailable";
+    case "booting":
+    default:
+      return "Booting app...";
+  }
+}
+
+function clearConnectedReadyFallback(): void {
+  if (connectedReadyFallback !== null) {
+    clearTimeout(connectedReadyFallback);
+    connectedReadyFallback = null;
+  }
+}
+
+function setDocumentRuntimeStatus(status: AppRuntimeStatus, message?: string): void {
+  const resolvedMessage = message ?? defaultRuntimeMessage(status);
+  const root = globalThis.document?.documentElement;
+  if (root) {
+    root.dataset.gsvRuntimeState = status;
+    root.dataset.gsvRuntimeMessage = resolvedMessage;
+    if (status === "ready") {
+      root.dataset.gsvAppReady = "true";
+    } else if (status === "loading" || status === "error") {
+      delete root.dataset.gsvAppReady;
+    }
+  }
+  if (globalThis.document?.body) {
+    globalThis.document.body.dataset.gsvRuntimeMessage = resolvedMessage;
+  }
+}
+
+function runtimeChrome(): PackageAppRuntimeChrome | null {
+  return globalThis.window?.__GSV_APP_RUNTIME__ ?? null;
+}
+
+function setRuntimeStatus(status: AppRuntimeStatus, message?: string): void {
+  const resolvedMessage = message ?? defaultRuntimeMessage(status);
+  runtimeChrome()?.setStatus(status, resolvedMessage);
+  setDocumentRuntimeStatus(status, resolvedMessage);
+}
+
+export function setAppStatus(status: AppRuntimeStatus, message?: string): void {
+  if (status === "ready") {
+    setAppReady();
+    return;
+  }
+  if (status === "loading") {
+    setAppLoading(message);
+    return;
+  }
+  if (status === "error") {
+    setAppError(message ?? defaultRuntimeMessage("error"));
+    return;
+  }
+  setRuntimeStatus(status, message);
+}
+
+function scheduleConnectedReadyFallback(): void {
+  clearConnectedReadyFallback();
+  connectedReadyFallback = setTimeout(() => {
+    connectedReadyFallback = null;
+    if (!appRuntimeReady) {
+      setAppReady();
+    }
+  }, CONNECTED_READY_FALLBACK_MS);
+}
+
+export function setAppLoading(message?: string): void {
+  appRuntimeReady = false;
+  clearConnectedReadyFallback();
+  const resolvedMessage = message ?? defaultRuntimeMessage("loading");
+  runtimeChrome()?.setLoading(resolvedMessage);
+  setDocumentRuntimeStatus("loading", resolvedMessage);
+}
+
+export function setAppReady(): void {
+  appRuntimeReady = true;
+  clearConnectedReadyFallback();
+  runtimeChrome()?.setReady();
+  setDocumentRuntimeStatus("ready", defaultRuntimeMessage("ready"));
+}
+
+export function setAppError(error: unknown): void {
+  appRuntimeReady = false;
+  clearConnectedReadyFallback();
+  const message = formatErrorMessage(error);
+  runtimeChrome()?.setError(message);
+  setDocumentRuntimeStatus("error", message);
+}
 
 class BackendTransportClosedError extends Error {
   readonly cause: unknown;
@@ -196,9 +315,12 @@ async function connectBackendTransport(): Promise<BackendConnection> {
   if (backendConnectionPromise) {
     return backendConnectionPromise;
   }
+  setRuntimeStatus(appRuntimeReady ? "reconnecting" : "connecting");
   let boot = getAppBoot();
   if (!boot.hasBackend) {
-    throw new Error("package app has no backend rpc");
+    const error = new Error("package app has no backend rpc");
+    setAppError(error);
+    throw error;
   }
   if (shouldRefreshAppSession(boot)) {
     boot = await refreshAppSession(boot);
@@ -240,12 +362,18 @@ async function connectBackendTransport(): Promise<BackendConnection> {
     if (typeof target.onRpcBroken === "function") {
       target.onRpcBroken(markTransportBroken);
     }
+    setRuntimeStatus("connected");
+    if (!appRuntimeReady) {
+      scheduleConnectedReadyFallback();
+    }
     return connection;
   })().catch((error) => {
     if (backendConnectionPromise === ready) {
       resetBackendConnection();
     }
-    throw transportBroken ? new BackendTransportClosedError(error) : error;
+    const nextError = transportBroken ? new BackendTransportClosedError(error) : error;
+    setAppError(nextError);
+    throw nextError;
   });
   backendConnectionPromise = ready;
   if (globalThis.window) {
@@ -266,6 +394,7 @@ async function invokeBackend(method: string, args?: unknown): Promise<unknown> {
   }
 
   resetBackendConnection();
+  setRuntimeStatus(appRuntimeReady ? "reconnecting" : "connecting");
   const nextConnection = await connectBackendTransport();
   return nextConnection.backend.invoke(method, args);
 }

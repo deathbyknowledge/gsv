@@ -109,7 +109,12 @@ function createWebAppInstance(manifest: AppManifest, gatewayClient: GatewayClien
       bridge?.destroy();
       focusController?.destroy();
       focusController = attachIframeInteractionFocus(iframe, context.requestFocus);
-      bridge = attachHostBridge(iframe, gatewayClient);
+      bridge = attachHostBridge(iframe, gatewayClient, {
+        setTitle: context.setTitle,
+        setBadge: context.setBadge,
+        setDirty: context.setDirty,
+        requestNewWindow: context.requestNewWindow,
+      });
       container.replaceChildren(iframe);
     },
     terminate: () => {

@@ -236,21 +236,31 @@ export function App({ backend }: { backend: AdaptersBackend }) {
               <span>{adapterMeta.detail}</span>
             </span>
           </button>
-          {accounts.map((account) => (
-            <button
-              key={account.accountId}
-              type="button"
-              class={`account-row${selectedAccount === account.accountId ? " is-active" : ""}`}
-              onClick={() => setSelectedAccount(account.accountId)}
-            >
-              <span class="account-row-icon">{adapterMeta.icon}</span>
-              <span class="account-row-copy">
-                <strong>{account.accountId}</strong>
-                <span>{account.connected ? "Connected" : account.authenticated ? "Authenticated" : "Needs attention"}</span>
-              </span>
-              <span class={`adapter-dot ${account.connected ? "is-good" : account.authenticated ? "is-warn" : "is-idle"}`}></span>
-            </button>
-          ))}
+          {loading ? (
+            <div class="account-list-status">Loading accounts...</div>
+          ) : accounts.length === 0 ? (
+            <div class="account-list-status">{error ? "Status unavailable." : "No accounts connected yet."}</div>
+          ) : (
+            accounts.map((account) => {
+              const status = account.connected ? "Connected" : account.authenticated ? "Authenticated" : "Needs attention";
+              return (
+                <button
+                  key={account.accountId}
+                  type="button"
+                  class={`account-row${selectedAccount === account.accountId ? " is-active" : ""}`}
+                  onClick={() => setSelectedAccount(account.accountId)}
+                  title={`${account.accountId} - ${status}`}
+                >
+                  <span class="account-row-icon">{adapterMeta.icon}</span>
+                  <span class="account-row-copy">
+                    <strong>{account.accountId}</strong>
+                    <span>{status}</span>
+                  </span>
+                  <span class={`adapter-dot ${account.connected ? "is-good" : account.authenticated ? "is-warn" : "is-idle"}`}></span>
+                </button>
+              );
+            })
+          )}
         </div>
       </aside>
 
@@ -336,9 +346,9 @@ export function App({ backend }: { backend: AdaptersBackend }) {
                     <label>
                       <span>Name</span>
                       {selectedAdapter === "whatsapp" ? (
-                        <input value={whatsappName} onInput={(event) => setWhatsappName((event.currentTarget as HTMLInputElement).value)} placeholder={adapterMeta.accountPlaceholder} required />
+                        <input type="text" value={whatsappName} onInput={(event) => setWhatsappName((event.currentTarget as HTMLInputElement).value)} placeholder={adapterMeta.accountPlaceholder} required />
                       ) : (
-                        <input value={discordName} onInput={(event) => setDiscordName((event.currentTarget as HTMLInputElement).value)} placeholder={adapterMeta.accountPlaceholder} required />
+                        <input type="text" value={discordName} onInput={(event) => setDiscordName((event.currentTarget as HTMLInputElement).value)} placeholder={adapterMeta.accountPlaceholder} required />
                       )}
                     </label>
 

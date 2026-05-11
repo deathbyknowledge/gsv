@@ -369,32 +369,9 @@ export function renderDesktopShell(): string {
       <div class="desktop-root" data-desktop-root hidden>
         <header class="topbar">
           <div class="topbar-section">
-            <span class="pill">GSV</span>
+            <button type="button" class="pill topbar-launcher" data-command-launcher aria-label="Open command palette">GSV</button>
           </div>
-          <div class="topbar-section topbar-windows">
-            <button
-              type="button"
-              class="windows-toggle"
-              data-windows-toggle
-              aria-label="Windows"
-              aria-haspopup="menu"
-              aria-expanded="false"
-              aria-controls="windows-panel"
-            >
-              <span class="topbar-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="4" y="5" width="6.5" height="6.5" rx="1.4"></rect>
-                  <rect x="13.5" y="5" width="6.5" height="6.5" rx="1.4"></rect>
-                  <rect x="4" y="14.5" width="6.5" height="6.5" rx="1.4"></rect>
-                  <rect x="13.5" y="14.5" width="6.5" height="6.5" rx="1.4"></rect>
-                </svg>
-              </span>
-            </button>
-            <div class="windows-panel" id="windows-panel" data-windows-panel hidden>
-              <p class="windows-empty muted" data-windows-empty>No minimized windows</p>
-              <ul class="windows-list" data-windows-list hidden></ul>
-            </div>
-          </div>
+          <nav class="taskbar-windows" data-taskbar-windows aria-label="Open windows"></nav>
           <div class="topbar-section topbar-notifications">
             <button
               type="button"
@@ -414,6 +391,13 @@ export function renderDesktopShell(): string {
               <span class="notification-badge" data-notifications-badge hidden>0</span>
             </button>
             <div class="notifications-panel" id="notifications-panel" data-notifications-panel hidden>
+              <header class="notifications-panel-head">
+                <div>
+                  <strong>Notifications</strong>
+                  <span data-notifications-delivery-state>In-shell alerts</span>
+                </div>
+                <button type="button" class="notifications-system-enable" data-notifications-system-enable hidden>Enable system</button>
+              </header>
               <p class="windows-empty muted" data-notifications-empty>No notifications</p>
               <ul class="notifications-list" data-notifications-list hidden></ul>
             </div>
@@ -435,7 +419,49 @@ export function renderDesktopShell(): string {
           <nav class="desktop-icons" data-desktop-icons aria-label="Desktop applications"></nav>
           <section class="windows-layer" data-windows-layer></section>
         </main>
+        <section class="mobile-shell" data-mobile-shell aria-label="Mobile shell">
+          <section class="mobile-home" data-mobile-home>
+            <header class="mobile-home-header" aria-label="Home">
+              <p class="mobile-home-date" data-mobile-home-date></p>
+              <h1>Hello, <span data-mobile-home-username>operator</span></h1>
+              <div class="mobile-home-actions">
+                <button type="button" class="mobile-home-action" data-notifications-toggle aria-label="Notifications" aria-haspopup="menu" aria-expanded="false" aria-controls="notifications-panel">
+                  <span aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9"></path>
+                      <path d="M10 20a2 2 0 0 0 4 0"></path>
+                    </svg>
+                  </span>
+                  <span class="notification-badge" data-notifications-badge hidden>0</span>
+                </button>
+                <button type="button" class="mobile-home-action" data-mobile-command-launcher aria-label="Search apps and windows">
+                  <span aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="11" cy="11" r="7"></circle>
+                      <path d="m20 20-3.8-3.8"></path>
+                    </svg>
+                  </span>
+                </button>
+              </div>
+            </header>
+            <nav class="mobile-app-grid" data-mobile-apps aria-label="Applications"></nav>
+          </section>
+          <button type="button" class="mobile-home-handle" data-mobile-home-button aria-label="Home"></button>
+        </section>
+        <div class="dock-reveal-zone" data-dock-reveal-zone aria-hidden="true"></div>
         <div class="notification-toasts" data-notification-toasts aria-live="polite" aria-atomic="false"></div>
+        <section class="command-palette" data-command-palette role="dialog" aria-label="Command palette" hidden>
+          <div class="command-palette-panel">
+            <input data-command-palette-input type="text" autocomplete="off" placeholder="Search apps and windows" />
+            <button type="button" class="command-palette-close" data-command-palette-close aria-label="Close search">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18"></path>
+                <path d="m6 6 12 12"></path>
+              </svg>
+            </button>
+            <ul class="command-palette-list" data-command-palette-list></ul>
+          </div>
+        </section>
       </div>
     </div>
   `;

@@ -4,6 +4,8 @@
   "type": "module",
   "dependencies": {
     "@gsv/package": "file:../../shared/package",
+    "dompurify": "^3.4.2",
+    "marked": "^16.3.0",
     "preact": "^10.27.2"
   }
 }

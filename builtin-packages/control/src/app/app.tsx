@@ -224,7 +224,7 @@ export function App({ backend }: AppProps) {
   return (
     <div class="control-app">
       <header class="control-toolbar">
-        <div>
+        <div class="control-toolbar-copy">
           <h1>Control</h1>
           <p>System settings, runtime profiles, access tokens, identity links, and MCP servers.</p>
         </div>

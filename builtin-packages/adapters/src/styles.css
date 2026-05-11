@@ -1,4 +1,4 @@
- :root {
+:root {
   color-scheme: light;
   --adapters-bg: #edf2f6;
   --adapters-surface: rgba(255, 255, 255, 0.82);
@@ -22,7 +22,10 @@
 html,
 body {
   margin: 0;
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: linear-gradient(180deg, #f8fbfd 0%, var(--adapters-bg) 100%);
   color: var(--adapters-text);
   font-family: "Iosevka Aile", "IBM Plex Sans", "Segoe UI", sans-serif;
@@ -30,10 +33,14 @@ body {
 
 body {
   min-height: 100vh;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -42,22 +49,32 @@ button {
 }
 
 #root {
+  height: 100%;
   min-height: 100vh;
+  overscroll-behavior: none;
 }
 
 .adapters-shell {
+  height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 260px 300px minmax(0, 1fr);
+  grid-template-columns: 200px minmax(240px, 280px) minmax(0, 1fr);
+  overflow: hidden;
+  overscroll-behavior: none;
   background: rgba(255, 255, 255, 0.42);
 }
 
 .adapters-pane,
 .adapters-detail {
   min-width: 0;
+  min-height: 0;
 }
 
 .adapters-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   background: var(--adapters-pane);
   border-right: 1px solid var(--adapters-line);
 }
@@ -80,6 +97,11 @@ button {
   align-items: flex-start;
 }
 
+.adapters-pane-head > div,
+.adapters-detail-head > div {
+  min-width: 0;
+}
+
 .adapters-pane-head--tight p,
 .adapters-pane-head p,
 .adapters-detail-head p {
@@ -97,6 +119,10 @@ button {
   line-height: 1.2;
 }
 
+.adapters-detail-head h2 {
+  overflow-wrap: anywhere;
+}
+
 .adapters-kicker {
   display: block;
   font-size: 11px;
@@ -108,7 +134,10 @@ button {
 
 .adapters-list,
 .account-list {
+  min-height: 0;
+  overflow-y: auto;
   display: grid;
+  align-content: start;
   gap: 2px;
   padding: 10px;
 }
@@ -121,6 +150,7 @@ button {
   background: transparent;
   text-align: left;
   padding: 12px;
+  min-height: 48px;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) 10px;
   gap: 12px;
@@ -154,6 +184,10 @@ button {
 
 .adapter-row-copy strong,
 .account-row-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
 }
 
@@ -184,6 +218,7 @@ button {
 .adapters-detail {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  container-type: inline-size;
   background: linear-gradient(180deg, rgba(255,255,255,0.68), rgba(245,248,251,0.94));
 }
 
@@ -200,6 +235,7 @@ button {
 }
 
 .adapters-detail-body {
+  min-height: 0;
   overflow: auto;
   padding: 18px;
   display: grid;
@@ -237,6 +273,7 @@ button {
 }
 
 .adapters-info-grid article {
+  min-width: 0;
   background: var(--adapters-surface);
   border: 1px solid var(--adapters-line);
   padding: 12px;
@@ -252,6 +289,7 @@ button {
 .adapters-info-grid strong {
   display: block;
   font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
 .adapters-property-list {
@@ -271,10 +309,13 @@ button {
 
 .adapters-property-row dt {
   color: var(--adapters-muted);
+  overflow-wrap: anywhere;
 }
 
 .adapters-property-row dd {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .adapters-form {
@@ -307,6 +348,7 @@ button {
   display: flex !important;
   align-items: center;
   gap: 10px;
+  min-height: 44px;
 }
 
 .adapters-toggle-row span {
@@ -328,6 +370,7 @@ button {
 
 .adapters-primary-button {
   padding: 10px 14px;
+  min-height: 40px;
 }
 
 .adapters-primary-button:disabled,
@@ -337,8 +380,9 @@ button {
 }
 
 .adapters-icon-button {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -354,6 +398,7 @@ button {
 .adapters-inline-status {
   border: 1px solid var(--adapters-line);
   padding: 10px 12px;
+  overflow-wrap: anywhere;
 }
 
 .adapters-inline-status.is-error {
@@ -368,20 +413,29 @@ button {
 
 .adapters-empty-state {
   color: var(--adapters-muted);
+  overflow-wrap: anywhere;
+}
+
+.account-list-status {
+  padding: 10px 12px;
+  color: var(--adapters-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .adapters-challenge-layout {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+  grid-template-columns: minmax(240px, 300px) minmax(180px, 1fr);
   gap: 18px;
   align-items: start;
 }
 
 .adapters-challenge-graphic {
   width: 100%;
-  max-width: 280px;
-  min-height: 280px;
+  max-width: 300px;
+  aspect-ratio: 1;
   border: 1px solid var(--adapters-line);
   background: rgba(255,255,255,0.96);
   padding: 16px;
@@ -425,6 +479,7 @@ button {
   margin: 12px 0 0;
   color: var(--adapters-muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .adapters-boot-error {
@@ -433,26 +488,124 @@ button {
 
 @media (max-width: 1080px) {
   .adapters-shell {
-    grid-template-columns: 220px 260px minmax(0, 1fr);
+    grid-template-columns: 180px minmax(220px, 250px) minmax(0, 1fr);
   }
 
   .adapters-info-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
 
+@media (max-width: 1120px) {
   .adapters-challenge-layout {
     grid-template-columns: 1fr;
+  }
+
+  .adapters-challenge-graphic {
+    justify-self: center;
+    max-width: min(100%, 320px);
+  }
+}
+
+@container (max-width: 640px) {
+  .adapters-challenge-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .adapters-challenge-graphic {
+    justify-self: center;
+    max-width: min(100%, 320px);
   }
 }
 
 @media (max-width: 860px) {
+  html,
+  body,
+  #root {
+    height: auto;
+  }
+
   .adapters-shell {
+    height: auto;
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    overflow: visible;
   }
 
   .adapters-pane,
   .adapters-detail {
     border-right: 0;
     border-bottom: 1px solid var(--adapters-line);
+  }
+
+  .adapters-pane {
+    overflow: visible;
+  }
+
+  .adapters-pane--secondary {
+    max-height: min(440px, 48vh);
+  }
+
+  .adapters-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .account-list {
+    overflow-y: auto;
+  }
+
+  .adapters-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .adapters-property-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .adapters-detail-body {
+    overflow: visible;
+    padding: 14px;
+  }
+
+  .adapter-row,
+  .account-row,
+  .adapters-primary-button,
+  .adapters-icon-button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 520px) {
+  .adapters-pane-head,
+  .adapters-detail-head {
+    padding: 12px;
+  }
+
+  .adapters-list {
+    grid-template-columns: 1fr;
+  }
+
+  .adapter-row,
+  .account-row {
+    grid-template-columns: 20px minmax(0, 1fr) 10px;
+    padding: 11px 12px;
+  }
+
+  .adapters-challenge-layout {
+    gap: 14px;
+  }
+
+  .adapters-challenge-graphic {
+    padding: 10px;
+  }
+}
+
+@media (max-width: 860px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

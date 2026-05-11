@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Type } from "@mariozechner/pi-ai";
-import type { Context } from "@mariozechner/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/pi-ai";
 import {
   DEFAULT_WORKERS_AI_MODEL,
   buildWorkersAiInput,

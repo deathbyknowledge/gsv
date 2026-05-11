@@ -7,7 +7,15 @@ import type {
   ProcSpawnResult,
 } from "./gateway-client";
 
-type HostRpcMethod = "call" | "spawnProcess" | "sendMessage" | "getHistory";
+type HostRpcMethod =
+  | "call"
+  | "spawnProcess"
+  | "sendMessage"
+  | "getHistory"
+  | "setTitle"
+  | "setBadge"
+  | "setDirty"
+  | "requestNewWindow";
 
 type HostRpcMessage = {
   type: "rpc";
@@ -43,12 +51,20 @@ type HostSignalMessage = {
 
 type HostConnectMessage = {
   type: "gsv-host-connect";
+  requestId?: string;
 };
 
 type HostPortMessage = HostRpcMessage | HostRpcResultMessage | HostStatusMessage | HostSignalMessage;
 
 export type HostBridgeController = {
   destroy: () => void;
+};
+
+type HostChromeController = {
+  setTitle: (title: string | null) => void;
+  setBadge: (badge: string | null) => void;
+  setDirty: (dirty: boolean) => void;
+  requestNewWindow: (route?: string) => string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -62,6 +78,10 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function asBoolean(value: unknown): boolean {
+  return value === true;
+}
+
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -72,6 +92,7 @@ function postMessage(port: MessagePort, message: HostPortMessage): void {
 
 async function handleRpc(
   gatewayClient: GatewayClientLike,
+  chrome: HostChromeController | null,
   message: HostRpcMessage,
 ): Promise<unknown> {
   switch (message.method) {
@@ -99,16 +120,39 @@ async function handleRpc(
       const offset = typeof payload?.offset === "number" ? payload.offset : undefined;
       return gatewayClient.getHistory(limit, pid, offset);
     }
+    case "setTitle": {
+      const payload = asRecord(message.payload);
+      chrome?.setTitle(asString(payload?.title));
+      return { ok: true };
+    }
+    case "setBadge": {
+      const payload = asRecord(message.payload);
+      chrome?.setBadge(asString(payload?.badge));
+      return { ok: true };
+    }
+    case "setDirty": {
+      const payload = asRecord(message.payload);
+      chrome?.setDirty(asBoolean(payload?.dirty));
+      return { ok: true };
+    }
+    case "requestNewWindow": {
+      const payload = asRecord(message.payload);
+      const route = asString(payload?.route) ?? undefined;
+      return { windowId: chrome?.requestNewWindow(route) ?? null };
+    }
   }
 }
 
 export function attachHostBridge(
   iframe: HTMLIFrameElement,
   gatewayClient: GatewayClientLike,
+  chrome: HostChromeController | null = null,
 ): HostBridgeController {
   let port: MessagePort | null = null;
   let unsubscribeStatus: (() => void) | null = null;
   let unsubscribeSignal: (() => void) | null = null;
+  let iframeLoaded = false;
+  let pendingConnectRequestId: string | undefined;
   let destroyed = false;
 
   const cleanup = (): void => {
@@ -120,7 +164,7 @@ export function attachHostBridge(
     port = null;
   };
 
-  const onLoad = (): void => {
+  const connect = (requestId?: string): void => {
     if (destroyed || !iframe.contentWindow) {
       return;
     }
@@ -136,7 +180,7 @@ export function attachHostBridge(
         return;
       }
 
-      void handleRpc(gatewayClient, message as HostRpcMessage)
+      void handleRpc(gatewayClient, chrome, message as HostRpcMessage)
         .then((data) => {
           postMessage(channel.port1, {
             type: "rpc-result",
@@ -159,6 +203,7 @@ export function attachHostBridge(
     iframe.contentWindow.postMessage(
       {
         type: "gsv-host-connect",
+        requestId,
       } satisfies HostConnectMessage,
       window.location.origin,
       [channel.port2],
@@ -179,12 +224,36 @@ export function attachHostBridge(
     });
   };
 
+  const onLoad = (): void => {
+    iframeLoaded = true;
+    connect(pendingConnectRequestId);
+    pendingConnectRequestId = undefined;
+  };
+
+  const onConnectRequest = (event: MessageEvent<unknown>): void => {
+    if (destroyed || event.origin !== window.location.origin || event.source !== iframe.contentWindow) {
+      return;
+    }
+    const record = asRecord(event.data);
+    if (!record || record.type !== "gsv-host-connect-request") {
+      return;
+    }
+    const requestId = asString(record.requestId) ?? undefined;
+    if (!iframeLoaded) {
+      pendingConnectRequestId = requestId;
+      return;
+    }
+    connect(requestId);
+  };
+
   iframe.addEventListener("load", onLoad, { once: true });
+  window.addEventListener("message", onConnectRequest);
 
   return {
     destroy: () => {
       destroyed = true;
       iframe.removeEventListener("load", onLoad);
+      window.removeEventListener("message", onConnectRequest);
       cleanup();
     },
   };

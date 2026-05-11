@@ -103,6 +103,7 @@ export function App({ backend }: { backend: WikiBackend }) {
   const pageHeadings = useMemo(() => state.selectedNote ? extractHeadings(state.selectedNote.markdown || "") : [], [state.selectedNote]);
   const visiblePages = state.searchMatches ?? state.pages;
   const selectedDb = state.selectedDb || state.dbs[0]?.id || "";
+  const activeDb = state.dbs.find((db) => db.id === selectedDb);
   const selectedInboxPath = mode === "inbox" ? (route.path || state.inbox[0]?.path || "") : "";
 
   const refresh = useCallback(async (nextRoute = route): Promise<void> => {
@@ -292,6 +293,7 @@ export function App({ backend }: { backend: WikiBackend }) {
     setPreviewPayload(null);
     setPreviewError("");
     setPreviewPinned(pin);
+    previewPinnedRef.current = pin;
     try {
       const payload = await backend.previewContent(request);
       if (previewToken.current !== token) return;
@@ -315,6 +317,7 @@ export function App({ backend }: { backend: WikiBackend }) {
     if (force) {
       previewToken.current += 1;
       setPreviewPinned(false);
+      previewPinnedRef.current = false;
       setPreviewRect(null);
       setPreviewLoading(false);
       setPreviewPayload(null);
@@ -327,6 +330,7 @@ export function App({ backend }: { backend: WikiBackend }) {
     previewHideTimer.current = window.setTimeout(() => {
       previewToken.current += 1;
       setPreviewPinned(false);
+      previewPinnedRef.current = false;
       setPreviewRect(null);
       setPreviewLoading(false);
       setPreviewPayload(null);
@@ -337,6 +341,33 @@ export function App({ backend }: { backend: WikiBackend }) {
   const handleArticlePreviewOpen = useCallback((anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean): void => {
     void openPreview(anchor, request, pin);
   }, [openPreview]);
+
+  useEffect(() => {
+    if (!previewRect) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        hidePreview(true);
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!previewPinnedRef.current) {
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target || target.closest(".wiki-preview-card") || target.closest("[data-preview-kind]")) {
+        return;
+      }
+      hidePreview(true);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [hidePreview, previewRect]);
 
   return (
     <div class="wiki-shell">
@@ -369,11 +400,19 @@ export function App({ backend }: { backend: WikiBackend }) {
                     openDb(db.id);
                   }}
                 >
-                  <strong>{db.title || db.id}</strong>
-                  <span>{db.id}</span>
+                  <strong title={db.title || db.id}>{db.title || db.id}</strong>
+                  <span title={db.id}>{db.id}</span>
                 </a>
               ))}
+              {state.dbs.length === 0 ? <div class="wiki-empty wiki-empty--compact">No databases yet.</div> : null}
             </div>
+            {selectedDb ? (
+              <div class="wiki-current-context">
+                <span>Active source</span>
+                <strong title={activeDb?.title || selectedDb}>{activeDb?.title || selectedDb}</strong>
+                <code title={state.selectedPath || selectedDb}>{state.selectedPath || selectedDb}</code>
+              </div>
+            ) : null}
           </section>
 
           {(mode === "browse" || mode === "edit") ? (
@@ -405,10 +444,13 @@ export function App({ backend }: { backend: WikiBackend }) {
                         openPage(entry.path);
                       }}
                     >
-                      <strong>{entry.title || displayTitleFromPath(entry.path)}</strong>
-                      <span>{entry.path}</span>
+                      <strong title={entry.title || displayTitleFromPath(entry.path)}>{entry.title || displayTitleFromPath(entry.path)}</strong>
+                      <span title={entry.path}>{entry.path}</span>
                     </a>
                   ))}
+                  {visiblePages.length === 0 ? (
+                    <div class="wiki-empty wiki-empty--compact">{state.searchMatches ? "No pages matched this search." : "No pages in this database yet."}</div>
+                  ) : null}
                 </div>
               </section>
             </>
@@ -431,10 +473,11 @@ export function App({ backend }: { backend: WikiBackend }) {
                       openInboxNote(entry.path);
                     }}
                   >
-                    <strong>{entry.title || displayTitleFromPath(entry.path)}</strong>
-                    <span>{entry.path}</span>
+                    <strong title={entry.title || displayTitleFromPath(entry.path)}>{entry.title || displayTitleFromPath(entry.path)}</strong>
+                    <span title={entry.path}>{entry.path}</span>
                   </a>
                 ))}
+                {state.inbox.length === 0 ? <div class="wiki-empty wiki-empty--compact">Inbox is empty.</div> : null}
               </div>
             </section>
           ) : null}
@@ -452,7 +495,7 @@ export function App({ backend }: { backend: WikiBackend }) {
                   <div class="wiki-pane-head">
                     <div>
                       <h2>{currentTitle || "Browse"}</h2>
-                      <p>{state.selectedPath || "Choose a page from the left rail."}</p>
+                      <p title={state.selectedPath || undefined}>{state.selectedPath || "Choose a page from navigation."}</p>
                     </div>
                   </div>
                   {state.queryResult ? (
@@ -463,8 +506,8 @@ export function App({ backend }: { backend: WikiBackend }) {
                         <div class="wiki-ref-list">
                           {state.queryResult.refs.map((ref) => (
                             <button key={ref.path} type="button" class="wiki-ref-row" onClick={() => openPage(ref.path)}>
-                              <strong>{ref.title || displayTitleFromPath(ref.path)}</strong>
-                              <span>{ref.path}</span>
+                              <strong title={ref.title || displayTitleFromPath(ref.path)}>{ref.title || displayTitleFromPath(ref.path)}</strong>
+                              <span title={ref.path}>{ref.path}</span>
                             </button>
                           ))}
                         </div>
@@ -652,7 +695,7 @@ export function App({ backend }: { backend: WikiBackend }) {
                       onPreviewOpen={handleArticlePreviewOpen}
                       onPreviewHide={hidePreview}
                     />
-                  ) : <div class="wiki-empty">Select an inbox note from the left rail.</div>}
+                  ) : <div class="wiki-empty">Select an inbox note from navigation.</div>}
                 </section>
               ) : null}
             </>
@@ -688,6 +731,8 @@ export function App({ backend }: { backend: WikiBackend }) {
           loading={previewLoading}
           payload={previewPayload}
           error={previewError}
+          pinned={previewPinned}
+          onDismiss={() => hidePreview(true)}
           onMouseEnter={() => {
             if (previewHideTimer.current) {
               window.clearTimeout(previewHideTimer.current);

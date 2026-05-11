@@ -6,10 +6,10 @@ export default definePackage({
     description: "Manage connected accounts for WhatsApp, Discord, and future message adapters.",
     icon: "ui/adapters-icon.svg",
     window: {
-      width: 1120,
+      width: 1200,
       height: 760,
-      minWidth: 860,
-      minHeight: 560,
+      minWidth: 320,
+      minHeight: 480,
     },
     capabilities: {
       kernel: [

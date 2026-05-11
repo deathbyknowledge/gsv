@@ -59,7 +59,7 @@ declare global {
 const SHELL_LAYOUT = `
   <main class="shell-app">
     <section class="shell-toolbar">
-      <label class="shell-field">
+      <label class="shell-field shell-field-target">
         <span>Target</span>
         <select data-shell-target></select>
       </label>
@@ -67,32 +67,37 @@ const SHELL_LAYOUT = `
         <span>Working directory</span>
         <input data-shell-cwd type="text" value="" placeholder="Optional" spellcheck="false" />
       </label>
-      <div class="shell-toolbar-actions">
-        <div class="shell-status-indicator" data-shell-status data-kind="booting" aria-label="Shell status" title="Shell loading">
-          <span class="shell-status-dot" aria-hidden="true"></span>
-        </div>
-        <details class="shell-settings">
-          <summary aria-label="Shell options" title="Shell options">⚙</summary>
-          <div class="shell-options">
-            <label class="shell-field">
-              <span>Timeout (ms)</span>
-              <input data-shell-timeout type="text" inputmode="numeric" value="" placeholder="30000" />
-            </label>
-            <label class="shell-field">
-              <span>Yield (ms)</span>
-              <input data-shell-yield type="text" inputmode="numeric" value="" placeholder="2000" />
-            </label>
-            <label class="shell-toggle-row">
-              <input data-shell-background type="checkbox" />
-              <span class="shell-toggle">Run in background</span>
-            </label>
-          </div>
-        </details>
+      <button class="shell-status-indicator" data-shell-status data-kind="booting" type="button" aria-label="Shell loading" title="Shell loading" aria-live="polite">
+        <span class="shell-status-dot" aria-hidden="true"></span>
+        <span class="shell-status-label" data-shell-status-label>Loading</span>
+      </button>
+      <button class="shell-settings-toggle" data-shell-settings-toggle type="button" aria-expanded="false" aria-controls="shell-options" title="Shell options">
+        <span aria-hidden="true">⚙</span>
+        <span class="shell-settings-label">Options</span>
+      </button>
+      <div class="shell-options" id="shell-options" data-shell-options hidden>
+        <label class="shell-field">
+          <span>Timeout (ms)</span>
+          <input data-shell-timeout type="text" inputmode="numeric" value="" placeholder="30000" />
+        </label>
+        <label class="shell-field">
+          <span>Yield (ms)</span>
+          <input data-shell-yield type="text" inputmode="numeric" value="" placeholder="2000" />
+        </label>
+        <label class="shell-toggle-row">
+          <input data-shell-background type="checkbox" />
+          <span class="shell-toggle">Run in background</span>
+        </label>
       </div>
     </section>
     <section class="shell-stage">
       <div class="shell-terminal-wrap">
-        <div class="shell-terminal" data-shell-terminal></div>
+        <div class="shell-terminal" data-shell-terminal>
+          <div class="shell-terminal-state" data-shell-boot-state>
+            <div class="shell-terminal-state-title" data-shell-boot-title>Starting shell</div>
+            <div class="shell-terminal-state-message" data-shell-boot-message>Loading terminal runtime...</div>
+          </div>
+        </div>
       </div>
     </section>
   </main>
@@ -108,7 +113,12 @@ if (!window.__GSV_GHOSTTY__) {
 
 const streamNode = document.querySelector<HTMLElement>("[data-shell-terminal]");
 const statusNode = document.querySelector<HTMLElement>("[data-shell-status]");
+const statusLabelNode = document.querySelector<HTMLElement>("[data-shell-status-label]");
 const targetSelect = document.querySelector<HTMLSelectElement>("[data-shell-target]");
+const settingsToggle = document.querySelector<HTMLButtonElement>("[data-shell-settings-toggle]");
+const optionsNode = document.querySelector<HTMLElement>("[data-shell-options]");
+const bootTitleNode = document.querySelector<HTMLElement>("[data-shell-boot-title]");
+const bootMessageNode = document.querySelector<HTMLElement>("[data-shell-boot-message]");
 function readFrameLaunchUrl(): URL | null {
   try {
     const frame = window.frameElement;
@@ -162,13 +172,44 @@ let history: string[] = [];
 let historyCursor: number | null = null;
 let historyDraft = "";
 let running = false;
+let pendingFit = 0;
 
-function setStatus(kind: string, title?: string): void {
+function statusLabel(kind: string): string {
+  switch (kind) {
+    case "booting":
+      return "Loading";
+    case "working":
+      return "Running";
+    case "ready":
+      return "Ready";
+    case "error":
+      return "Error";
+    default:
+      return kind;
+  }
+}
+
+function setStatus(kind: string, title?: string, label?: string): void {
   if (!statusNode) {
     return;
   }
+  const nextLabel = label ?? statusLabel(kind);
+  const nextTitle = title ?? `Shell ${kind}`;
   statusNode.dataset.kind = kind;
-  statusNode.title = title ?? `Shell ${kind}`;
+  statusNode.title = nextTitle;
+  statusNode.setAttribute("aria-label", nextTitle);
+  if (statusLabelNode) {
+    statusLabelNode.textContent = nextLabel;
+  }
+}
+
+function setBootState(title: string, message: string): void {
+  if (bootTitleNode) {
+    bootTitleNode.textContent = title;
+  }
+  if (bootMessageNode) {
+    bootMessageNode.textContent = message;
+  }
 }
 
 function readActiveThreadContext(): { cwd: string; workspaceId: string } | null {
@@ -237,8 +278,76 @@ function currentPath(): string {
   return value || "~";
 }
 
+function estimateTerminalColumns(): number {
+  const width = streamNode?.clientWidth || window.innerWidth || 320;
+  return Math.max(20, Math.floor(width / 8));
+}
+
+function truncateMiddle(value: string, maxLength: number): string {
+  const normalized = String(value || "");
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  if (maxLength <= 3) {
+    return normalized.slice(0, maxLength);
+  }
+  const leftLength = Math.ceil((maxLength - 3) / 2);
+  const rightLength = Math.floor((maxLength - 3) / 2);
+  return `${normalized.slice(0, leftLength)}...${normalized.slice(normalized.length - rightLength)}`;
+}
+
+function compactPath(path: string, maxLength: number): string {
+  const normalized = path || "~";
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const parts = normalized.split("/").filter(Boolean);
+  const last = parts[parts.length - 1] || normalized;
+  const parent = parts.length > 1 ? parts[parts.length - 2] : "";
+  const candidates = [
+    parent ? `.../${parent}/${last}` : `.../${last}`,
+    `.../${last}`,
+    truncateMiddle(last, Math.max(4, maxLength - 4)),
+  ];
+  for (const candidate of candidates) {
+    if (candidate.length <= maxLength) {
+      return candidate;
+    }
+  }
+  return truncateMiddle(normalized, maxLength);
+}
+
 function promptText(): string {
-  return `${username}@${currentTarget()}:${currentPath()} $ `;
+  const target = currentTarget();
+  const path = currentPath();
+  const fullPrompt = `${username}@${target}:${path} $ `;
+  const columns = estimateTerminalColumns();
+  const maxPromptLength = Math.min(72, Math.max(18, Math.floor(columns * 0.44)));
+  if (fullPrompt.length <= maxPromptLength) {
+    return fullPrompt;
+  }
+
+  const compactUser = truncateMiddle(username, 10);
+  const compactTarget = truncateMiddle(target, 14);
+  const userPrefix = `${compactUser}@${compactTarget}:`;
+  const userPathBudget = maxPromptLength - userPrefix.length - 3;
+  if (userPathBudget >= 6) {
+    return `${userPrefix}${compactPath(path, userPathBudget)} $ `;
+  }
+
+  const targetPrefix = `${compactTarget}:`;
+  const targetPathBudget = maxPromptLength - targetPrefix.length - 3;
+  if (targetPathBudget >= 6) {
+    return `${targetPrefix}${compactPath(path, targetPathBudget)} $ `;
+  }
+
+  const pathBudget = maxPromptLength - 3;
+  if (pathBudget >= 6) {
+    return `${compactPath(path, pathBudget)} $ `;
+  }
+
+  return "$ ";
 }
 
 function writePrompt(): void {
@@ -293,11 +402,27 @@ function clearTerminal(): void {
   writePrompt();
 }
 
+function setSelectedTarget(target: string | null | undefined): void {
+  if (!targetSelect) {
+    return;
+  }
+  const normalizedTarget = target?.trim() || "";
+  const availableOption = Array.from(targetSelect.options).find((option) => option.value === normalizedTarget);
+  targetSelect.value = availableOption ? normalizedTarget : "gsv";
+}
+
+function selectedTargetUnavailable(): boolean {
+  if (!targetSelect) {
+    return false;
+  }
+  return targetSelect.selectedOptions[0]?.disabled === true;
+}
+
 function renderTargetOptions(devices: ShellDevice[], requestedTarget?: string | null): void {
   if (!targetSelect) {
     return;
   }
-  const options = [{ value: "gsv", label: "Kernel (gsv)" }];
+  const options: Array<{ value: string; label: string; disabled?: boolean }> = [{ value: "gsv", label: "Kernel (gsv)" }];
   const normalizedRequestedTarget = requestedTarget?.trim() || "";
   if (normalizedRequestedTarget && normalizedRequestedTarget !== "gsv" && !devices.some((device) => device.deviceId === normalizedRequestedTarget)) {
     options.push({ value: normalizedRequestedTarget, label: `${normalizedRequestedTarget} · requested target` });
@@ -310,12 +435,16 @@ function renderTargetOptions(devices: ShellDevice[], requestedTarget?: string | 
       return {
         value: device.deviceId,
         label: `${labelBase} · ${device.online ? "online" : "offline"}`,
+        disabled: !device.online,
       };
     }),
   );
   targetSelect.innerHTML = options
-    .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+    .map((option) => (
+      `<option value="${escapeHtml(option.value)}"${option.disabled ? " disabled" : ""}>${escapeHtml(option.label)}</option>`
+    ))
     .join("");
+  setSelectedTarget(normalizedRequestedTarget);
 }
 
 function escapeHtml(value: string): string {
@@ -330,6 +459,16 @@ function escapeHtml(value: string): string {
 async function runCommand(backend: ShellBackend, command: string): Promise<void> {
   const trimmed = String(command || "").trim();
   if (!trimmed || running || !terminal) {
+    return;
+  }
+
+  if (selectedTargetUnavailable()) {
+    const target = currentTarget();
+    terminal.write("\r\n");
+    terminal.write(`\x1b[38;2;255;214;153mTarget ${target} is offline. Select an online target or gsv before running commands.\x1b[0m\r\n`);
+    currentLine = "";
+    writePrompt();
+    setStatus("error", "Shell target is offline");
     return;
   }
 
@@ -373,19 +512,35 @@ async function runCommand(backend: ShellBackend, command: string): Promise<void>
   }
 }
 
+function scheduleFit(syncLine = false): void {
+  if (pendingFit) {
+    window.cancelAnimationFrame(pendingFit);
+  }
+  pendingFit = window.requestAnimationFrame(() => {
+    pendingFit = 0;
+    fitAddon?.fit();
+    if (syncLine && terminal && !running) {
+      syncCurrentLine();
+    }
+  });
+}
+
 async function boot(): Promise<void> {
   if (!root) {
     throw new Error("shell root missing");
   }
-  if (!streamNode || !statusNode || !targetSelect || !cwdInput || !timeoutInput || !yieldInput || !backgroundInput) {
+  if (!streamNode || !statusNode || !targetSelect || !settingsToggle || !optionsNode || !cwdInput || !timeoutInput || !yieldInput || !backgroundInput) {
     throw new Error("Shell UI is incomplete.");
   }
 
+  setStatus("booting", "Loading terminal runtime", "Loading");
+  setBootState("Starting shell", "Loading terminal runtime...");
   const ghostty = await window.__GSV_GHOSTTY__;
   if (!ghostty) {
     throw new Error("Terminal runtime failed to load.");
   }
 
+  setBootState("Connecting shell", "Loading targets and launch context...");
   const route = readRouteParams();
   const backend = await getBackend<ShellBackend>();
   const state = await backend.loadState({});
@@ -405,13 +560,14 @@ async function boot(): Promise<void> {
   }
 
   if (route.target) {
-    targetSelect.value = route.target;
+    setSelectedTarget(route.target);
     console.debug("[shell] applied target route", {
       requestedTarget: route.target,
       selectedTarget: targetSelect.value,
     });
   }
 
+  setBootState("Opening terminal", "Preparing the interactive session...");
   await ghostty.init();
   terminal = new ghostty.Terminal({
     fontFamily: "JetBrains Mono, SFMono-Regular, Consolas, monospace",
@@ -443,6 +599,7 @@ async function boot(): Promise<void> {
   });
   fitAddon = new ghostty.FitAddon();
   terminal.loadAddon(fitAddon);
+  streamNode.replaceChildren();
   terminal.open(streamNode);
   fitAddon.fit();
   terminal.focus();
@@ -495,13 +652,32 @@ async function boot(): Promise<void> {
       if (!running && currentLine.length === 0) {
         syncCurrentLine();
       }
+      scheduleFit();
     });
   }
 
-  window.addEventListener("resize", () => {
-    fitAddon?.fit();
+  settingsToggle.addEventListener("click", () => {
+    const shouldOpen = optionsNode.hidden;
+    optionsNode.hidden = !shouldOpen;
+    settingsToggle.setAttribute("aria-expanded", String(shouldOpen));
+    scheduleFit(true);
+  });
+
+  statusNode.addEventListener("click", () => {
     terminal?.focus();
   });
+
+  window.addEventListener("resize", () => {
+    scheduleFit(true);
+  });
+
+  if (typeof ResizeObserver !== "undefined") {
+    const resizeObserver = new ResizeObserver(() => {
+      scheduleFit(true);
+    });
+    resizeObserver.observe(streamNode);
+    resizeObserver.observe(root);
+  }
 }
 
 void boot().catch((error) => {

@@ -1,3 +1,5 @@
+import DOMPurify from "dompurify";
+import { parse as parseMarkdown } from "marked";
 import type {
   Attachment,
   ContextState,
@@ -312,15 +314,12 @@ function inferAttachmentKind(mimeType: string, filename: string): string {
 }
 
 function renderMarkdownHtml(value: string): string {
-  const runtime = globalThis as unknown as {
-    marked?: { parse(source: string, options?: Record<string, unknown>): unknown };
-    DOMPurify?: { sanitize(source: string): string };
-  };
-  if (!runtime.marked?.parse || !runtime.DOMPurify?.sanitize) {
+  try {
+    const html = parseMarkdown(value, { async: false, breaks: true, gfm: true });
+    return DOMPurify.sanitize(html);
+  } catch {
     return escapeHtml(value);
   }
-  const html = runtime.marked.parse(value, { async: false, breaks: true, gfm: true });
-  return runtime.DOMPurify.sanitize(typeof html === "string" ? html : String(html));
 }
 
 function normalizeProfile(value: unknown): Profile | null {

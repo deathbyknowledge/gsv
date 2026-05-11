@@ -82,7 +82,7 @@ import type {
   Tool,
   UserMessage,
   ImageContent,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import { createGenerationService } from "../inference/service";
 import {
   buildCheckpointCommitMessageContext,

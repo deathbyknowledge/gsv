@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { ControlCreatedToken, ControlLink, ControlToken, CreateTokenArgs, ControlTokenKind } from "./types";
 
@@ -34,6 +35,38 @@ export function AccessPanel({
   });
   const [code, setCode] = useState("");
   const [manualLink, setManualLink] = useState({ adapter: "", accountId: "", actorId: "" });
+
+  function renderRevokeButton(token: ControlToken): ComponentChildren {
+    const isPending = pendingAction === `revoke:${token.tokenId}`;
+    return (
+      <button
+        class="control-button control-button--danger"
+        disabled={isPending || token.revokedAt !== null}
+        onClick={() => {
+          if (!window.confirm(`Revoke token ${token.tokenPrefix}?`)) return;
+          void onRevokeToken(token.tokenId);
+        }}
+      >
+        {token.revokedAt ? "Revoked" : isPending ? "Revoking…" : "Revoke"}
+      </button>
+    );
+  }
+
+  function renderUnlinkButton(link: ControlLink): ComponentChildren {
+    const actionId = linkActionId(link);
+    return (
+      <button
+        class="control-button control-button--danger"
+        disabled={pendingAction === actionId}
+        onClick={() => {
+          if (!window.confirm(`Unlink ${link.adapter}:${link.accountId}?`)) return;
+          void onUnlink(link);
+        }}
+      >
+        {pendingAction === actionId ? "Removing…" : "Unlink"}
+      </button>
+    );
+  }
 
   useEffect(() => {
     if (issuedToken) {
@@ -169,21 +202,37 @@ export function AccessPanel({
                   <td>{formatDate(token.createdAt)}</td>
                   <td>{token.lastUsedAt ? formatDate(token.lastUsedAt) : "never"}</td>
                   <td class="control-actions-cell">
-                    <button
-                      class="control-button control-button--danger"
-                      disabled={pendingAction === `revoke:${token.tokenId}` || token.revokedAt !== null}
-                      onClick={() => {
-                        if (!window.confirm(`Revoke token ${token.tokenPrefix}?`)) return;
-                        void onRevokeToken(token.tokenId);
-                      }}
-                    >
-                      {token.revokedAt ? "Revoked" : pendingAction === `revoke:${token.tokenId}` ? "Revoking…" : "Revoke"}
-                    </button>
+                    {renderRevokeButton(token)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+
+        <div class="control-record-list" aria-label="Issued access tokens">
+          {tokens.length === 0 ? (
+            <div class="control-empty-block">No tokens issued.</div>
+          ) : tokens.map((token) => (
+            <article class="control-record" key={`token-record:${token.tokenId}`}>
+              <div class="control-record-head">
+                <div class="control-record-title">
+                  <strong><code>{token.tokenPrefix}</code></strong>
+                  <span class="control-subtle">{token.label ?? token.tokenId}</span>
+                </div>
+                {renderRevokeButton(token)}
+              </div>
+              <div class="control-record-meta">
+                <RecordField label="Kind">{token.kind}</RecordField>
+                <RecordField label="Scope">
+                  {token.allowedDeviceId ? <div>device: {token.allowedDeviceId}</div> : null}
+                  <div class="control-subtle">role: {token.allowedRole ?? "default"}</div>
+                </RecordField>
+                <RecordField label="Created">{formatDate(token.createdAt)}</RecordField>
+                <RecordField label="Last used">{token.lastUsedAt ? formatDate(token.lastUsedAt) : "never"}</RecordField>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
 
@@ -295,25 +344,49 @@ export function AccessPanel({
                   <td><code>{link.actorId}</code></td>
                   <td>{formatDate(link.createdAt)}</td>
                   <td class="control-actions-cell">
-                    <button
-                      class="control-button control-button--danger"
-                      disabled={pendingAction === `unlink:${link.adapter}:${link.accountId}:${link.actorId}`}
-                      onClick={() => {
-                        if (!window.confirm(`Unlink ${link.adapter}:${link.accountId}?`)) return;
-                        void onUnlink(link);
-                      }}
-                    >
-                      {pendingAction === `unlink:${link.adapter}:${link.accountId}:${link.actorId}` ? "Removing…" : "Unlink"}
-                    </button>
+                    {renderUnlinkButton(link)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+
+        <div class="control-record-list" aria-label="Linked identities">
+          {links.length === 0 ? (
+            <div class="control-empty-block">No linked identities.</div>
+          ) : links.map((link) => (
+            <article class="control-record" key={`link-record:${link.adapter}:${link.accountId}:${link.actorId}`}>
+              <div class="control-record-head">
+                <div class="control-record-title">
+                  <strong>{link.adapter}</strong>
+                  <span class="control-subtle">{formatDate(link.createdAt)}</span>
+                </div>
+                {renderUnlinkButton(link)}
+              </div>
+              <div class="control-record-meta">
+                <RecordField label="Account"><code>{link.accountId}</code></RecordField>
+                <RecordField label="Actor"><code>{link.actorId}</code></RecordField>
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
     </div>
   );
+}
+
+function RecordField({ label, children }: { label: string; children: ComponentChildren }) {
+  return (
+    <div class="control-record-field">
+      <span>{label}</span>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function linkActionId(link: ControlLink): string {
+  return `unlink:${link.adapter}:${link.accountId}:${link.actorId}`;
 }
 
 function formatDate(value: number): string {

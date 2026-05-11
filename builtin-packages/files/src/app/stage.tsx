@@ -8,6 +8,7 @@ type Props = {
   fileResult: FilesFileResult | null;
   searchResult: FilesSearchResult;
   editorContent: string;
+  isDirty: boolean;
   onEditorChange(value: string): void;
   onOpenDirectory(path: string): void;
   onOpenFile(path: string): void;
@@ -39,6 +40,12 @@ function formatBytes(size: number | undefined) {
   }
   const mb = kb / 1024;
   return `${mb.toFixed(1)} MB`;
+}
+
+function baseName(path: string) {
+  const normalized = String(path ?? "").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] || normalized || "file";
 }
 
 function fileIconVariant(name: string, isDirectory: boolean) {
@@ -115,13 +122,13 @@ function DirectoryStage(props: Pick<Props, "currentPath" | "searchQuery" | "dire
     <section class="files-directory-stage">
       <div class="files-entry-grid">
         {directories.map((name) => (
-          <button type="button" class="files-entry-row is-directory" onClick={() => props.onOpenDirectory(resolveChildPath(props.currentPath, name))}>
+          <button type="button" class="files-entry-row is-directory" aria-label={`Open folder ${name}`} title={`Open folder ${name}`} onClick={() => props.onOpenDirectory(resolveChildPath(props.currentPath, name))}>
             {renderIcon("folder")}
-            <span class="files-entry-name">{name}</span>
+            <span class="files-entry-name">{name}<span class="files-directory-affordance" aria-hidden="true">/</span></span>
           </button>
         ))}
         {files.map((name) => (
-          <button type="button" class="files-entry-row" onClick={() => props.onOpenFile(resolveChildPath(props.currentPath, name))}>
+          <button type="button" class="files-entry-row" title={name} onClick={() => props.onOpenFile(resolveChildPath(props.currentPath, name))}>
             {renderIcon(fileIconVariant(name, false))}
             <span class="files-entry-name">{name}</span>
           </button>
@@ -150,32 +157,45 @@ function SearchStage(props: Pick<Props, "searchResult" | "onOpenFile">) {
         {props.searchResult.truncated ? <span class="files-pill">Truncated</span> : null}
       </div>
       <div class="files-search-list">
-        {props.searchResult.matches.map((match) => (
-          <button type="button" class="files-search-row" onClick={() => props.onOpenFile(match.path)}>
-            <strong>{match.path}:{Number(match.line ?? 0)}</strong>
-            <code>{String(match.content ?? "")}</code>
-          </button>
-        ))}
+        {props.searchResult.matches.map((match) => {
+          const line = Number(match.line ?? 0);
+          const content = String(match.content ?? "");
+          return (
+            <button type="button" class="files-search-row" title={`${match.path}:${line}`} onClick={() => props.onOpenFile(match.path)}>
+              <span class="files-search-row-main">
+                <strong>{match.path}</strong>
+                <code>{content}</code>
+              </span>
+              <span class="files-search-line">:{line}</span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
 }
 
-function FileStage(props: Pick<Props, "currentPath" | "searchQuery" | "filePath" | "fileResult" | "editorContent" | "onEditorChange" | "onOpenDirectory" | "onSave" | "onDelete">) {
+function FileStage(props: Pick<Props, "currentPath" | "searchQuery" | "filePath" | "fileResult" | "editorContent" | "isDirty" | "onEditorChange" | "onOpenDirectory" | "onSave" | "onDelete">) {
   if (!props.fileResult) {
     return null;
   }
   const sizeLabel = formatBytes(props.fileResult.size);
   const isBinaryPreview = Array.isArray(props.fileResult.content);
+  const name = baseName(props.filePath);
 
   return (
     <section class="files-file-stage">
-      <header class="files-content-toolbar">
+      <header class="files-content-toolbar files-file-toolbar">
         <button type="button" class="files-back-link" aria-label="Back to folder" title="Back to folder" onClick={() => props.onOpenDirectory(props.currentPath)}>
           ←
         </button>
+        <div class="files-file-context">
+          <strong class="files-file-name" title={name}>{name}</strong>
+          <span class="files-file-path" title={props.filePath}>{props.filePath}</span>
+        </div>
         <div class="files-inline-meta">
           <span>{sizeLabel}</span>
+          {!isBinaryPreview ? <span class={`files-save-state ${props.isDirty ? "is-dirty" : "is-clean"}`}>{props.isDirty ? "Unsaved" : "Saved"}</span> : null}
         </div>
         {isBinaryPreview ? (
           <div class="files-file-actions">

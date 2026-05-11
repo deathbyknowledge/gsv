@@ -11,7 +11,7 @@
  */
 
 import type { KernelContext } from "./context";
-import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
+import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
 import type {
   AiToolsResult,
   AiToolsDevice,

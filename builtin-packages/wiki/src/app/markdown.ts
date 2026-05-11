@@ -83,6 +83,7 @@ export function slugifyHeading(value: unknown): string {
 }
 
 export function extractHeadings(markdown: string): Array<{ level: number; text: string; id: string }> {
+  const seenHeadingIds = new Map<string, number>();
   return stripFrontmatter(markdown)
     .split("\n")
     .flatMap((line) => {
@@ -91,7 +92,10 @@ export function extractHeadings(markdown: string): Array<{ level: number; text: 
         return [];
       }
       const text = match[2].trim();
-      return [{ level: match[1].length, text, id: slugifyHeading(text) }];
+      const base = slugifyHeading(text);
+      const count = seenHeadingIds.get(base) || 0;
+      seenHeadingIds.set(base, count + 1);
+      return [{ level: match[1].length, text, id: count === 0 ? base : `${base}-${count + 1}` }];
     });
 }
 
@@ -184,8 +188,11 @@ function renderMarkdownHtml(markdown: string): string {
 
 
 export function renderPreviewBodyHtml(payload: WikiPreviewPayload): string {
-  if (!payload || payload.ok === false) {
-    return `<div class="preview-empty">${escapeHtml(payload?.error || "Preview unavailable.")}</div>`;
+  if (!payload) {
+    return '<div class="preview-empty">Preview unavailable.</div>';
+  }
+  if (payload.ok === false) {
+    return `<div class="preview-empty">${escapeHtml(payload.error || "Preview unavailable.")}</div>`;
   }
   if (payload.kind === "page") {
     const markdown = String(payload.markdown || "").trim();
@@ -277,7 +284,10 @@ export function renderArticleInto(container: HTMLElement, options: RenderOptions
             return;
           }
           const label = parsedSource.title || parsedSource.path.split("/").pop() || parsedSource.path;
-          item.innerHTML = `<div class="source-ref"><div class="source-ref-head"><a href="#" class="wiki-source-link">${escapeHtml(label)}</a><span class="source-ref-target">${escapeHtml(parsedSource.target)}</span></div><div class="source-ref-path">${escapeHtml(parsedSource.path)}</div></div>`;
+          const sourceLabel = escapeHtml(label);
+          const sourceTarget = escapeHtml(parsedSource.target);
+          const sourcePath = escapeHtml(parsedSource.path);
+          item.innerHTML = `<div class="source-ref"><div class="source-ref-head"><a href="#" class="wiki-source-link" title="${sourceLabel}">${sourceLabel}</a><span class="source-ref-target" title="${sourceTarget}">${sourceTarget}</span></div><div class="source-ref-path" title="${sourcePath}">${sourcePath}</div></div>`;
           const link = item.querySelector<HTMLAnchorElement>(".wiki-source-link");
           if (!link) {
             return;

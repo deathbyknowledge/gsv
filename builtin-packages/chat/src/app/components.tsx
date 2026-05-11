@@ -35,6 +35,7 @@ import {
   RefreshIcon,
   SendIcon,
   StopIcon,
+  ThreadsIcon,
   VideoIcon,
   XIcon,
 } from "./icons";
@@ -93,6 +94,96 @@ export function ChatNavigator(props: {
         onOpenThread={props.onOpenThread}
       />
     </aside>
+  );
+}
+
+export function MobileProcessNav(props: {
+  active: ThreadContext | null;
+  threads: WorkspaceEntry[];
+  threadsLoading: boolean;
+  threadsError: string;
+  profiles: Profile[];
+  draftProfileId: string;
+  onDraftProfileChange(profileId: string): void;
+  onHome(): void;
+  onNew(): void;
+  onRefreshThreads(): void;
+  onOpenThread(workspaceId: string): void;
+}) {
+  const activeWorkspaceId = props.active?.workspaceId ?? null;
+  const activePid = props.active?.pid ?? "";
+  const selectedValue = activePid.startsWith("init:")
+    ? "home"
+    : activeWorkspaceId
+      ? `workspace:${activeWorkspaceId}`
+      : "draft";
+  const hasActiveWorkspace = Boolean(
+    activeWorkspaceId && props.threads.some((thread) => thread.workspaceId === activeWorkspaceId),
+  );
+  const showDraftOption = !props.active || selectedValue === "draft";
+  const status = props.threadsLoading
+    ? "Refreshing..."
+    : props.threadsError
+      || (props.threads.length === 0
+        ? "No task processes"
+        : `${props.threads.length} task process${props.threads.length === 1 ? "" : "es"}`);
+
+  const switchProcess = (event: Event) => {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    if (value === "home") {
+      props.onHome();
+      return;
+    }
+    if (value.startsWith("workspace:")) {
+      props.onOpenThread(value.slice("workspace:".length));
+    }
+  };
+
+  return (
+    <section class="mobile-process-nav" aria-label="Process navigation">
+      <div class="mobile-process-row">
+        <label class="mobile-process-select">
+          <ThreadsIcon />
+          <select value={selectedValue} aria-label="Switch process" onChange={switchProcess}>
+            {showDraftOption ? (
+              <option value="draft">{props.active ? "Current process" : "New draft"}</option>
+            ) : null}
+            <option value="home">Home</option>
+            {activeWorkspaceId && !hasActiveWorkspace ? (
+              <option value={`workspace:${activeWorkspaceId}`}>Current process</option>
+            ) : null}
+            {props.threads.map((thread) => (
+              <option key={thread.workspaceId} value={`workspace:${thread.workspaceId}`}>
+                {displayThreadLabel(thread)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div class="mobile-process-actions">
+          <button class="icon-button" type="button" title="New process" aria-label="New process" onClick={props.onNew}>
+            <PlusIcon />
+          </button>
+          <button class="icon-button" type="button" title="Refresh processes" aria-label="Refresh processes" onClick={props.onRefreshThreads}>
+            <RefreshIcon />
+          </button>
+        </div>
+      </div>
+      <div class="mobile-process-row is-secondary">
+        <label class="mobile-profile-select">
+          <span>Profile</span>
+          <select
+            value={props.draftProfileId}
+            aria-label="Profile"
+            onChange={(event) => props.onDraftProfileChange((event.currentTarget as HTMLSelectElement).value)}
+          >
+            {props.profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>{profile.displayName}</option>
+            ))}
+          </select>
+        </label>
+        <span class="mobile-process-status">{status}</span>
+      </div>
+    </section>
   );
 }
 

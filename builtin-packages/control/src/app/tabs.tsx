@@ -19,6 +19,7 @@ export function Tabs({ activeTab, onChange }: TabsProps) {
         <button
           key={tab.id}
           class={`control-tab${tab.id === activeTab ? " is-active" : ""}`}
+          title={tab.description}
           onClick={() => onChange(tab.id)}
         >
           <span>{tab.label}</span>

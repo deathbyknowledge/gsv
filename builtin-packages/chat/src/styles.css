@@ -30,12 +30,15 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
   font: 13px/1.45 var(--ui);
   color: var(--text);
   background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 button,
@@ -47,11 +50,13 @@ textarea {
 
 .chat-app {
   height: 100vh;
+  height: 100dvh;
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(284px, 336px) minmax(0, 1fr);
   background: var(--panel);
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .chat-nav,
@@ -75,6 +80,11 @@ textarea {
 .nav-pane {
   display: flex;
   flex-direction: column;
+}
+
+.mobile-process-nav {
+  display: none;
+  min-width: 0;
 }
 
 .nav-pane-header {
@@ -435,7 +445,7 @@ textarea {
 .chat-stage {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   background: var(--panel);
 }
 
@@ -844,7 +854,7 @@ textarea {
   height: 100%;
   min-height: 0;
   overflow: auto;
-  padding: 14px 14px 284px;
+  padding: 14px;
   display: grid;
   align-content: start;
   gap: 10px;
@@ -880,7 +890,7 @@ textarea {
   position: absolute;
   z-index: 14;
   right: 50%;
-  bottom: 168px;
+  bottom: 14px;
   transform: translateX(50%);
   min-height: 36px;
   border: 1px solid rgba(31, 92, 153, 0.26);
@@ -920,6 +930,7 @@ textarea {
   border-radius: 10px;
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.82);
+  overflow-wrap: anywhere;
 }
 
 .message-user {
@@ -1513,6 +1524,10 @@ textarea {
   gap: 12px;
 }
 
+.tool-card-head > div {
+  min-width: 0;
+}
+
 .tool-card h3 {
   margin: 0;
   font-size: 13px;
@@ -1531,6 +1546,8 @@ textarea {
 
 .tool-status {
   flex: 0 0 auto;
+  min-width: 0;
+  max-width: 48%;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1554,7 +1571,11 @@ textarea {
 }
 
 .tool-status span {
+  min-width: 0;
+  overflow: hidden;
   color: var(--soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-preview {
@@ -1572,10 +1593,13 @@ textarea {
 
 .tool-preview pre,
 .tool-details pre {
+  max-width: 100%;
   margin: 8px 0 0;
   padding: 10px;
   border-radius: 8px;
   background: var(--panel-soft);
+  overflow: auto;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
   word-break: break-word;
   font: 12px/1.5 var(--mono);
@@ -1583,6 +1607,7 @@ textarea {
 
 .tool-details {
   margin-top: 10px;
+  min-width: 0;
 }
 
 .tool-detail-stack {
@@ -1607,6 +1632,7 @@ textarea {
 }
 
 .meta-grid div {
+  min-width: 0;
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -1614,9 +1640,16 @@ textarea {
 }
 
 .meta-grid div span:first-child {
+  flex: 0 0 auto;
   color: var(--soft);
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.meta-grid div span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .approval-actions {
@@ -1655,18 +1688,15 @@ textarea {
 }
 
 .composer {
-  position: absolute;
-  z-index: 12;
-  right: 18px;
-  bottom: 16px;
-  left: 18px;
   width: min(860px, calc(100% - 36px));
-  margin: 0 auto;
+  max-height: min(42vh, 360px);
+  margin: 10px auto 14px;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   padding: 9px;
   display: grid;
   gap: 7px;
+  overflow: auto;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 18px 40px rgba(24, 32, 40, 0.16);
   backdrop-filter: blur(12px);
@@ -1702,9 +1732,12 @@ textarea {
 
 .attachment-list {
   min-height: 0;
+  max-height: 112px;
+  overflow: auto;
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+  padding-right: 2px;
 }
 
 .attachment-chip .attachment-name {
@@ -1976,7 +2009,36 @@ textarea {
 
 @media (max-width: 1040px) {
   .chat-app {
-    grid-template-columns: 300px minmax(0, 1fr);
+    grid-template-columns: minmax(258px, 29vw) minmax(0, 1fr);
+  }
+
+  .thread-row {
+    padding-inline: 12px;
+  }
+
+  .conversation-chip {
+    max-width: 180px;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 900px) {
+  .chat-app {
+    grid-template-columns: minmax(232px, 27vw) minmax(0, 1fr);
+  }
+
+  .nav-pane-header {
+    padding-inline: 10px;
+  }
+
+  .thread-row {
+    grid-template-columns: 22px minmax(0, 1fr);
+    column-gap: 7px;
+    padding: 10px;
+  }
+
+  .row-icon {
+    width: 22px;
+    height: 22px;
   }
 }
 
@@ -1990,32 +2052,182 @@ textarea {
   }
 
   .chat-stage-head {
-    align-items: stretch;
-    flex-direction: column;
+    min-height: 0;
+    padding: 10px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: flex-start;
+    gap: 10px 12px;
+  }
+
+  .mobile-process-nav {
+    grid-column: 1 / -1;
+    min-width: 0;
+    display: grid;
+    gap: 7px;
+  }
+
+  .mobile-process-row {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .mobile-process-row.is-secondary {
+    gap: 10px;
+  }
+
+  .mobile-process-select,
+  .mobile-profile-select {
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.78);
+  }
+
+  .mobile-process-select {
+    flex: 1 1 auto;
+    height: 40px;
+    padding: 0 9px;
+    gap: 7px;
+  }
+
+  .mobile-process-select svg {
+    flex: 0 0 auto;
+    width: 17px;
+    height: 17px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.9;
+  }
+
+  .mobile-profile-select {
+    flex: 1 1 auto;
+    height: 40px;
+    padding: 0 8px;
+    gap: 8px;
+  }
+
+  .mobile-profile-select span {
+    flex: 0 0 auto;
+    color: var(--soft);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .mobile-process-select select,
+  .mobile-profile-select select {
+    min-width: 0;
+    width: 100%;
+    border: 0;
+    outline: none;
+    color: inherit;
+    background: transparent;
+    font-weight: 700;
+  }
+
+  .mobile-process-actions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .mobile-process-status {
+    min-width: 0;
+    max-width: 42%;
+    flex: 0 1 auto;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-stage-title {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .chat-stage-title h1,
+  .chat-stage-title p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .chat-stage-actions {
-    justify-content: flex-start;
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+    justify-content: flex-end;
+  }
+
+  .process-menu-popover {
+    right: 0;
+    left: auto;
+    width: min(220px, calc(100vw - 20px));
+    max-width: calc(100vw - 20px);
+  }
+
+  .message-menu-popover {
+    width: min(150px, calc(100vw - 20px));
+    max-width: calc(100vw - 20px);
   }
 
   .transcript {
-    padding: 12px 10px 318px;
+    padding: 10px;
   }
 
   .new-messages-button {
-    bottom: 196px;
+    bottom: 10px;
   }
 
   .composer {
-    right: 10px;
-    bottom: 10px;
-    left: 10px;
     width: calc(100% - 20px);
+    max-height: min(42vh, 320px);
+    margin: 8px auto 10px;
+    border-radius: 12px;
+    padding: 8px;
   }
 
+  .composer-shell {
+    gap: 6px;
+  }
+
+  .attachment-list {
+    max-height: 96px;
+  }
+
+  .attachment-chip {
+    max-width: 100%;
+  }
+
+  .attachment-chip button {
+    width: 30px;
+    height: 30px;
+  }
+
+  .icon-button,
+  .icon-button.small,
   .composer-action {
-    width: 38px;
-    min-width: 38px;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+  }
+
+  .message-action {
+    width: 36px;
+    height: 36px;
+  }
+
+  .menu-action {
+    min-height: 40px;
   }
 
   .voice-panel {
@@ -2027,25 +2239,97 @@ textarea {
   }
 
   .conversation-bar {
-    align-items: flex-start;
-    flex-direction: column;
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .conversation-bar-list {
+    width: 100%;
+  }
+
+  .conversation-chip,
+  .archive-toggle,
+  .conversation-overflow {
+    height: 36px;
+  }
+
+  .conversation-chip {
+    max-width: 148px;
   }
 
   .conversation-bar-actions {
-    width: 100%;
-    justify-content: flex-start;
+    width: auto;
+    justify-content: flex-end;
+  }
+
+  .archive-workspace {
+    padding: 10px;
+  }
+
+  .archive-workspace-head {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .archive-workspace-head h2 {
+    font-size: 16px;
   }
 
   .archive-workspace-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
+    overflow: hidden;
   }
 
   .archive-workspace .archive-segments {
-    max-height: 180px;
+    min-height: 88px;
+    max-height: min(28vh, 180px);
+    overflow: auto;
+  }
+
+  .archive-row {
+    min-height: 42px;
+  }
+
+  .archive-message-list {
+    min-height: 0;
+    overflow: auto;
   }
 
   .message,
   .tool-card {
     max-width: 100%;
+  }
+
+  .tool-card-head {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .tool-status {
+    max-width: 100%;
+  }
+
+  .meta-grid div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .meta-grid div span:last-child {
+    text-align: left;
+  }
+}
+
+@media (max-width: 760px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

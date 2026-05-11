@@ -20,13 +20,19 @@
 html,
 body {
   margin: 0;
-  min-height: 100%;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
 }
 
 body {
   font: 14px/1.5 Manrope, system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 button,
@@ -39,29 +45,45 @@ textarea {
 code,
 pre {
   font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
 }
 
 #root {
-  min-height: 100vh;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .control-app {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--panel);
 }
 
 .control-toolbar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 14px;
   padding: 12px 14px 10px;
   border-bottom: 1px solid var(--line);
   background: rgba(247, 249, 252, 0.56);
   backdrop-filter: blur(10px) saturate(1.04);
   -webkit-backdrop-filter: blur(10px) saturate(1.04);
+}
+
+.control-toolbar-copy {
+  min-width: 0;
+  flex: 1 1 320px;
 }
 
 .control-toolbar h1 {
@@ -73,17 +95,23 @@ pre {
 .control-toolbar p {
   margin: 6px 0 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .control-toolbar-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .control-tabs {
   display: flex;
   gap: 0;
+  min-width: 0;
+  overflow-x: auto;
   border-bottom: 1px solid var(--line);
   background: rgba(251, 252, 254, 0.9);
 }
@@ -92,6 +120,7 @@ pre {
   display: grid;
   gap: 2px;
   min-width: 180px;
+  min-height: 44px;
   padding: 11px 14px 10px;
   border: 0;
   border-right: 1px solid var(--line);
@@ -111,25 +140,33 @@ pre {
 }
 
 .control-main {
+  grid-row: 4;
   min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .control-error-text {
+  grid-row: 3;
   margin: 0;
   padding: 8px 14px 0;
   color: var(--danger);
+  overflow-wrap: anywhere;
 }
 
 .control-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 34px;
+  min-height: 40px;
+  min-width: 40px;
   padding: 0 12px;
   border: 1px solid var(--line-strong);
   background: rgba(255, 255, 255, 0.82);
   color: var(--text);
   text-decoration: none;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -145,12 +182,13 @@ pre {
 
 .control-button:disabled {
   opacity: 0.68;
-  cursor: wait;
+  cursor: not-allowed;
 }
 
 .control-field {
   width: 100%;
-  min-height: 34px;
+  min-width: 0;
+  min-height: 40px;
   border: 1px solid rgba(38, 48, 56, 0.08);
   background: rgba(255, 255, 255, 0.8);
   color: var(--text);
@@ -169,17 +207,21 @@ pre {
 }
 
 .control-field--raw {
-  min-height: 420px;
+  min-height: 360px;
+  overflow: auto;
 }
 
 .control-config-stage {
+  height: 100%;
   min-height: 0;
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .control-config-rail {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   border-right: 1px solid var(--line);
   background: rgba(251, 252, 254, 0.9);
@@ -207,6 +249,7 @@ pre {
 .control-config-nav-item {
   display: grid;
   gap: 3px;
+  min-height: 44px;
   padding: 12px 14px;
   border: 0;
   border-bottom: 1px solid var(--line);
@@ -228,9 +271,11 @@ pre {
 .control-config-detail,
 .control-stage-grid,
 .control-advanced-stage {
+  height: 100%;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .control-stage-grid,
@@ -245,6 +290,8 @@ pre {
 .control-detail-pane,
 .control-pane {
   min-width: 0;
+  min-height: 0;
+  overflow: auto;
   padding: 18px 20px 22px;
   background: rgba(255, 255, 255, 0.82);
 }
@@ -291,6 +338,11 @@ pre {
   border-top: 1px solid var(--line);
 }
 
+.control-setting-row > *,
+.control-editor-row > * {
+  min-width: 0;
+}
+
 .control-setting-row:first-child,
 .control-editor-row:first-child {
   border-top: 1px solid var(--line);
@@ -309,9 +361,11 @@ pre {
 .control-setting-meta p,
 .control-inline-note,
 .control-subtle,
-.control-advanced-note p {
+.control-advanced-note p,
+.control-field-note {
   margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .control-setting-meta code,
@@ -330,16 +384,23 @@ pre {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  min-height: 34px;
+  min-height: 40px;
+}
+
+.control-checkbox-row input {
+  width: 18px;
+  height: 18px;
 }
 
 .control-readonly-value {
-  min-height: 34px;
+  min-width: 0;
+  min-height: 40px;
   display: flex;
   align-items: center;
   padding: 0 10px;
   border: 1px solid var(--line);
   background: rgba(244, 247, 251, 0.9);
+  overflow-wrap: anywhere;
 }
 
 .control-profile-picker {
@@ -352,6 +413,7 @@ pre {
 .control-profile-pill {
   display: grid;
   gap: 3px;
+  min-height: 44px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   background: rgba(251, 252, 254, 0.92);
@@ -373,10 +435,13 @@ pre {
 .control-banner {
   display: grid;
   gap: 4px;
+  min-width: 0;
   margin-bottom: 16px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   background: rgba(251, 252, 254, 0.92);
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .control-banner--success {
@@ -406,6 +471,7 @@ pre {
 .control-actions-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
 }
@@ -427,13 +493,16 @@ pre {
 }
 
 .control-mcp-stage {
+  height: 100%;
   min-height: 0;
   display: grid;
   grid-template-columns: 330px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .control-mcp-rail {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   border-right: 1px solid var(--line);
   background: rgba(251, 252, 254, 0.9);
@@ -466,6 +535,7 @@ pre {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+  min-height: 52px;
   padding: 12px 14px;
   border: 0;
   border-bottom: 1px solid var(--line);
@@ -573,6 +643,7 @@ pre {
 .control-mcp-auth-flow p {
   margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .control-mcp-auth-flow {
@@ -617,6 +688,7 @@ pre {
   background: rgba(244, 247, 251, 0.92);
   color: var(--text);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .control-chip.is-required {
@@ -651,6 +723,7 @@ pre {
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .control-table th {
@@ -671,6 +744,63 @@ pre {
   white-space: nowrap;
 }
 
+.control-record-list {
+  display: none;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+}
+
+.control-record-list--flush {
+  margin-top: 0;
+}
+
+.control-record {
+  display: grid;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.control-record-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.control-record-title {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.control-record-meta {
+  display: grid;
+  gap: 8px;
+}
+
+.control-record-field {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.control-record-field > span:first-child {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.control-record-field > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .control-advanced-note {
   margin-top: 18px;
   padding-top: 16px;
@@ -687,63 +817,10 @@ pre {
   padding-left: 18px;
 }
 
-@media (max-width: 1120px) {
-  .control-profile-picker {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .control-setting-row,
-  .control-editor-row,
-  .control-stage-grid,
-  .control-mcp-stage {
-    grid-template-columns: 1fr;
-  }
-
-  .control-stage-grid > .control-pane:first-child {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .control-mcp-rail {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-}
-
-@media (max-width: 840px) {
-  .control-config-stage,
-  .control-form-grid,
-  .control-inline-grid,
-  .control-tabs {
-    grid-template-columns: 1fr;
-  }
-
-  .control-config-stage {
-    display: block;
-  }
-
-  .control-config-rail {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .control-tabs {
-    display: grid;
-  }
-
-  .control-tab {
-    min-width: 0;
-  }
-
-  .control-mcp-facts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 .control-settings-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px 18px;
+  gap: 14px 18px;
 }
 
 .control-setting-block {
@@ -756,49 +833,32 @@ pre {
   grid-column: 1 / -1;
 }
 
-.control-setting-block label {
+.control-setting-block > label {
   font-weight: 700;
 }
 
-.control-setting-block p {
+.control-setting-block > p {
   margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .control-section-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 18px;
-  padding-top: 14px;
+  padding-top: 16px;
   border-top: 1px solid var(--line);
 }
 
 .control-section-actions-group {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
-}
-
-@media (max-width: 840px) {
-  .control-settings-form-grid,
-  .control-section-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .control-section-actions {
-    display: grid;
-    justify-content: stretch;
-  }
-
-  .control-section-actions-group {
-    justify-content: stretch;
-  }
-}
-
-.control-button:disabled {
-  cursor: not-allowed;
 }
 
 .control-field:disabled {
@@ -831,53 +891,222 @@ pre {
   font-size: 12px;
 }
 
-.control-settings-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 18px;
-}
-
-.control-setting-block {
-  display: grid;
-  gap: 6px;
+.control-advanced-stage {
   align-content: start;
+  overflow: auto;
 }
 
-.control-setting-block.is-wide {
-  grid-column: 1 / -1;
+.control-advanced-stage > .control-pane {
+  overflow: visible;
 }
 
-.control-setting-block > label {
-  font-weight: 700;
-}
+@media (max-width: 1120px) {
+  .control-profile-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 
-.control-setting-block > p {
-  margin: 0;
-  color: var(--muted);
-}
+  .control-setting-row,
+  .control-editor-row,
+  .control-stage-grid,
+  .control-mcp-stage {
+    grid-template-columns: 1fr;
+  }
 
-.control-section-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-}
+  .control-stage-grid,
+  .control-mcp-stage {
+    align-content: start;
+    overflow: auto;
+  }
 
-.control-section-actions-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  .control-stage-grid > .control-pane,
+  .control-mcp-rail,
+  .control-mcp-detail {
+    overflow: visible;
+  }
+
+  .control-stage-grid > .control-pane:first-child {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .control-mcp-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
 }
 
 @media (max-width: 840px) {
+  .control-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    padding: 10px 12px;
+  }
+
+  .control-toolbar-copy {
+    flex: initial;
+  }
+
+  .control-toolbar h1 {
+    font-size: 24px;
+  }
+
+  .control-toolbar p {
+    font-size: 13px;
+    line-height: 1.35;
+  }
+
+  .control-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .control-tab {
+    min-width: 0;
+    padding: 8px 6px;
+    text-align: center;
+    align-content: center;
+  }
+
+  .control-tab small {
+    display: none;
+  }
+
+  .control-config-stage {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .control-config-rail {
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .control-config-rail-head {
+    display: none;
+  }
+
+  .control-config-nav {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(104px, 1fr);
+    overflow-x: auto;
+  }
+
+  .control-config-nav-item {
+    min-width: 104px;
+    padding: 9px 8px;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
+    text-align: center;
+    align-content: center;
+  }
+
+  .control-config-nav-item small {
+    display: none;
+  }
+
+  .control-config-nav-item.is-active {
+    box-shadow: inset 0 -2px 0 var(--primary);
+  }
+
+  .control-detail-head {
+    display: grid;
+    gap: 8px;
+  }
+
+  .control-form-grid,
+  .control-inline-grid,
   .control-settings-form-grid {
     grid-template-columns: 1fr;
   }
 
+  .control-mcp-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .control-mcp-stage.has-selection .control-mcp-detail {
+    order: 1;
+  }
+
+  .control-mcp-stage.has-selection .control-mcp-rail {
+    order: 2;
+  }
+
+  .control-table-wrap {
+    display: none;
+  }
+
+  .control-record-list {
+    display: grid;
+  }
+
   .control-section-actions {
     display: grid;
+    justify-content: stretch;
+  }
+
+  .control-section-actions-group {
+    justify-content: stretch;
+  }
+}
+
+@media (max-width: 560px) {
+  .control-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .control-toolbar-actions {
+    justify-content: stretch;
+  }
+
+  .control-toolbar-actions .control-button,
+  .control-actions-bar .control-button,
+  .control-section-actions-group .control-button,
+  .control-section-actions-group a,
+  .control-inline-grid .control-button {
+    width: 100%;
+  }
+
+  .control-actions-bar,
+  .control-section-actions-group {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .control-detail-pane,
+  .control-pane {
+    padding: 14px 14px 18px;
+  }
+
+  .control-detail-head h2 {
+    font-size: 20px;
+  }
+
+  .control-profile-picker,
+  .control-mcp-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .control-record-head {
+    display: grid;
+  }
+
+  .control-record-field {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .control-field--raw {
+    min-height: 300px;
+  }
+}
+
+@media (max-width: 840px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

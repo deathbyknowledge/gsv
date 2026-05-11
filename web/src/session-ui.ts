@@ -210,6 +210,8 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const statusNode = rootNode.querySelector<HTMLElement>("[data-session-status]");
   const dotNode = rootNode.querySelector<HTMLElement>("[data-session-dot]");
   const lockNode = rootNode.querySelector<HTMLButtonElement>("[data-session-lock]");
+  const mobileHomeUsernameNode = rootNode.querySelector<HTMLElement>("[data-mobile-home-username]");
+  const mobileHomeDateNode = rootNode.querySelector<HTMLElement>("[data-mobile-home-date]");
   const setupHeadingNode = rootNode.querySelector<HTMLElement>("[data-setup-heading]");
   const setupCopyNode = rootNode.querySelector<HTMLElement>("[data-setup-copy]");
   const setupStagePills = Array.from(rootNode.querySelectorAll<HTMLElement>("[data-setup-stage-pill]"));
@@ -921,6 +923,16 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
   const render = (): void => {
     if (statusNode) {
       statusNode.textContent = statusText(sessionSnapshot);
+    }
+    if (mobileHomeUsernameNode) {
+      mobileHomeUsernameNode.textContent = sessionSnapshot.username || "operator";
+    }
+    if (mobileHomeDateNode) {
+      mobileHomeDateNode.textContent = new Intl.DateTimeFormat(undefined, {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+      }).format(new Date());
     }
 
     if (sessionSnapshot.phase === "setup-complete" || sessionSnapshot.phase === "ready") {
