@@ -21,6 +21,7 @@ body,
 #root {
   height: 100%;
   min-height: 0;
+  overscroll-behavior: none;
 }
 body {
   margin: 0;
@@ -28,13 +29,24 @@ body {
   background: transparent;
   color: var(--text);
   overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
 .process-app {
   height: 100%;
   min-height: 0;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
+  overscroll-behavior: none;
   background: var(--panel);
 }
 .process-toolbar {
@@ -333,5 +345,13 @@ code { font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace; }
   }
   .process-row-actions .process-action-text {
     display: inline;
+  }
+}
+
+@media (max-width: 760px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

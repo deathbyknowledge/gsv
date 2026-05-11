@@ -24,6 +24,8 @@ body {
   margin: 0;
   height: 100%;
   min-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: linear-gradient(180deg, #f8fbfd 0%, var(--adapters-bg) 100%);
   color: var(--adapters-text);
   font-family: "Iosevka Aile", "IBM Plex Sans", "Segoe UI", sans-serif;
@@ -31,10 +33,14 @@ body {
 
 body {
   min-height: 100vh;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -45,14 +51,17 @@ button {
 #root {
   height: 100%;
   min-height: 100vh;
+  overscroll-behavior: none;
 }
 
 .adapters-shell {
   height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
   display: grid;
   grid-template-columns: 200px minmax(240px, 280px) minmax(0, 1fr);
   overflow: hidden;
+  overscroll-behavior: none;
   background: rgba(255, 255, 255, 0.42);
 }
 
@@ -590,5 +599,13 @@ button {
 
   .adapters-challenge-graphic {
     padding: 10px;
+  }
+}
+
+@media (max-width: 860px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

@@ -23,12 +23,15 @@ body {
   height: 100%;
   min-height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
 }
 
 body {
   font: 14px/1.5 Manrope, system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 button,
@@ -48,6 +51,7 @@ textarea.devices-output,
 #root {
   height: 100%;
   min-height: 0;
+  overscroll-behavior: none;
 }
 
 .devices-app {
@@ -56,6 +60,7 @@ textarea.devices-output,
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+  overscroll-behavior: none;
   background: var(--panel);
 }
 
@@ -695,5 +700,13 @@ textarea.devices-output,
 
   .devices-access-card dl {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

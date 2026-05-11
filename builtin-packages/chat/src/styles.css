@@ -30,12 +30,15 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
   font: 13px/1.45 var(--ui);
   color: var(--text);
   background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 button,
@@ -47,11 +50,13 @@ textarea {
 
 .chat-app {
   height: 100vh;
+  height: 100dvh;
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(284px, 336px) minmax(0, 1fr);
   background: var(--panel);
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .chat-nav,
@@ -2318,5 +2323,13 @@ textarea {
 
   .meta-grid div span:last-child {
     text-align: left;
+  }
+}
+
+@media (max-width: 760px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

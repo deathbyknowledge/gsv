@@ -29,17 +29,22 @@ body {
   margin: 0;
   height: 100%;
   min-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
   background: var(--packages-bg);
   color: var(--packages-text);
   overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 #root {
   height: 100%;
   min-height: 0;
+  overscroll-behavior: none;
 }
 
 button,
@@ -64,6 +69,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .packages-topbar {
@@ -1441,5 +1447,13 @@ textarea:focus {
   .packages-commit-row {
     padding-top: 13px;
     padding-bottom: 13px;
+  }
+}
+
+@media (max-width: 760px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }
