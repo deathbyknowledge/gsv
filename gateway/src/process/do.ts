@@ -180,6 +180,7 @@ type ArchivedMessageRecord = {
   thinking?: ThinkingContent[];
   toolCallId?: string;
   media?: unknown;
+  runId?: string;
   createdAt?: number;
 };
 
@@ -3518,6 +3519,7 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
       tool_calls: meta.toolCalls,
       thinking: meta.thinking,
       tool_call_id: message.toolCallId ?? undefined,
+      run_id: message.runId ?? undefined,
       ts: message.createdAt,
     };
   }
@@ -3531,6 +3533,7 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
     media: message.media ? parseStoredProcessMedia(message.media) : undefined,
     tool_calls: message.toolCalls ? JSON.parse(message.toolCalls) : undefined,
     tool_call_id: message.toolCallId ?? undefined,
+    run_id: message.runId ?? undefined,
     ts: message.createdAt,
   };
 }
@@ -3551,6 +3554,9 @@ function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
   const id = typeof record.id === "number" && Number.isInteger(record.id) && record.id > 0
     ? record.id
     : undefined;
+  const runId = typeof record.run_id === "string" && record.run_id.trim().length > 0
+    ? record.run_id
+    : undefined;
 
   return {
     id,
@@ -3564,6 +3570,7 @@ function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
       : undefined,
     toolCallId,
     media: record.media,
+    runId,
     createdAt,
   };
 }

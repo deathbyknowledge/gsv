@@ -155,7 +155,7 @@ function applyProcessMessageSignal(
       messageId: messageId ?? null,
     });
   });
-  setPendingAssistant("thinking");
+  setPendingAssistant({ mode: "thinking", startedAt: Date.now(), runId: asString(record?.runId) ?? null });
 }
 
 function applyAssistantSignal(payload: unknown, active: ThreadContext, setRows: (update: (current: LogRow[]) => LogRow[]) => void) {

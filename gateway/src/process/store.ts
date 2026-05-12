@@ -942,6 +942,7 @@ export class ProcessStore {
       tool_calls: string | null;
       tool_call_id: string | null;
       media_json: string | null;
+      run_id: string | null;
       created_at: number;
     }>(
       `SELECT * FROM messages
@@ -992,6 +993,7 @@ export class ProcessStore {
       tool_calls: string | null;
       tool_call_id: string | null;
       media_json: string | null;
+      run_id: string | null;
       created_at: number;
     }>(
       `SELECT * FROM messages
@@ -1048,6 +1050,7 @@ export class ProcessStore {
       tool_calls: string | null;
       tool_call_id: string | null;
       media_json: string | null;
+      run_id: string | null;
       created_at: number;
       }>(
         "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id ASC",

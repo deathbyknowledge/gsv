@@ -63,6 +63,7 @@ import {
   renderMarkdownHtml,
   shortId,
   truncateBlock,
+  truncateInline,
 } from "./view-helpers";
 
 export function ChatNavigator(props: {
@@ -865,7 +866,7 @@ function groupToolRowsByCall(toolRows: ToolRow[]): Array<{ callId: string; callR
 
 function summarizeToolRows(toolRows: ToolRow[]): string[] {
   const counts = new Map<string, number>();
-  for (const row of groupToolRowsByCall(toolRows).map((item) => item.row)) {
+  for (const row of groupToolRowsByCall(toolRows).map((item) => item.displayRow)) {
     const syscall = inferToolSyscall(row.toolName, row.syscall);
     let label = "Used a tool";
     if (syscall === "fs.read") label = "Read files";
