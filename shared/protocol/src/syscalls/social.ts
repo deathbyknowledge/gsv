@@ -166,12 +166,18 @@ export type SocialGrant = {
 };
 
 export type SocialFriendSummary = {
-  did: SocialDid;
-  handle?: string;
+  handle: string;
   displayName?: string;
+  description?: string;
+  agentDisplayName?: string;
+  agentSummary?: string;
+  acceptsMessages: boolean;
+  acceptsRequests: boolean;
+  acceptedSocialMethods: SocialRemoteOperation[];
   grants: SocialGrant[];
   createdAt: SocialIsoDateString;
   updatedAt: SocialIsoDateString;
+  syncedAt?: SocialIsoDateString;
 };
 
 export type SocialLocalIdentity = {
@@ -206,7 +212,7 @@ export type SocialThreadStatus =
 
 export type SocialThreadSummary = {
   threadId: string;
-  peerDid: SocialDid;
+  peerHandle: string;
   conversationId: string;
   status: SocialThreadStatus;
   topic?: string;
@@ -228,8 +234,8 @@ export type SocialMessageSummary = {
   messageId: string;
   threadId: string;
   direction: SocialMessageDirection;
-  fromDid: SocialDid;
-  toDid: SocialDid;
+  fromHandle: string;
+  toHandle: string;
   text?: string;
   body?: unknown;
   replyToMessageId?: string;
@@ -260,8 +266,8 @@ export type SocialRequestSummary = {
   threadId?: string;
   kind: SocialRequestKind;
   status: SocialRequestStatus;
-  fromDid: SocialDid;
-  toDid: SocialDid;
+  fromHandle: string;
+  toHandle: string;
   title: string;
   body?: unknown;
   createdAt: SocialIsoDateString;
@@ -352,8 +358,7 @@ export type SocialFriendListResult = {
 };
 
 export type SocialFriendAddArgs = {
-  did: SocialDid;
-  handle?: string;
+  handle: string;
   displayName?: string;
   grants?: SocialGrant[];
 };
@@ -363,14 +368,14 @@ export type SocialFriendAddResult = {
 };
 
 export type SocialFriendRemoveArgs = {
-  did: SocialDid;
+  handle: string;
 };
 export type SocialFriendRemoveResult = {
   removed: boolean;
 };
 
 export type SocialFriendGrantsSetArgs = {
-  did: SocialDid;
+  handle: string;
   grants: SocialGrant[];
 };
 export type SocialFriendGrantsSetResult = {
@@ -378,7 +383,7 @@ export type SocialFriendGrantsSetResult = {
 };
 
 export type SocialThreadCreateArgs = {
-  peerDid: SocialDid;
+  peerHandle: string;
   topic?: string;
   initialMessage?: string;
   expiresAt?: SocialIsoDateString;
@@ -389,7 +394,7 @@ export type SocialThreadCreateResult = {
 };
 
 export type SocialThreadListArgs = {
-  peerDid?: SocialDid;
+  peerHandle?: string;
   status?: SocialThreadStatus;
   limit?: number;
 };
@@ -407,7 +412,7 @@ export type SocialThreadGetResult = {
 };
 
 export type SocialMessageSendArgs = {
-  toDid: SocialDid;
+  toHandle: string;
   threadId?: string;
   text?: string;
   body?: unknown;
@@ -430,7 +435,7 @@ export type SocialMessageReplyResult = {
 };
 
 export type SocialRequestCreateArgs = {
-  toDid: SocialDid;
+  toHandle: string;
   threadId?: string;
   kind: SocialRequestKind;
   title: string;
@@ -444,7 +449,7 @@ export type SocialRequestCreateResult = {
 
 export type SocialRequestListArgs = {
   status?: SocialRequestStatus;
-  peerDid?: SocialDid;
+  peerHandle?: string;
   limit?: number;
 };
 export type SocialRequestListResult = {
@@ -488,19 +493,19 @@ export type SocialPackageLikeDeleteResult = {
 };
 
 export type SocialPackageLikeListArgs = {
-  did?: SocialDid;
+  handle?: string;
   limit?: number;
 };
 export type SocialPackageLikeListResult = {
   likes: Array<{
-    did: SocialDid;
+    handle: string;
     uri: SocialAtUri;
     record: SpaceGsvPackageLikeRecord;
   }>;
 };
 
 export type SocialSyncRunArgs = {
-  did?: SocialDid;
+  handle?: string;
   limit?: number;
 };
 export type SocialSyncRunResult = {

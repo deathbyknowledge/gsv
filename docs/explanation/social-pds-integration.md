@@ -114,9 +114,10 @@ GSV_B_PASSWORD='bob-password' \
 npm run smoke:social:local
 ```
 
-This currently verifies identity, DID documents, and public
-`space.gsv.profile`, `space.gsv.instance`, and `space.gsv.agent.card` records.
-Friend grants and signed social messages are the next implementation layer.
+This verifies identity, DID documents, public `space.gsv.profile`,
+`space.gsv.instance`, and `space.gsv.agent.card` records, and handle-based
+friend/grant setup in both directions. Signed social messages are the next
+implementation layer.
 
 ## TODOs
 
@@ -149,16 +150,16 @@ Friend grants and signed social messages are the next implementation layer.
 
 ### 3. Add Local Friend And Grant State
 
-- [ ] Add Kernel tables for known social identities.
-- [ ] Add Kernel tables for social grants keyed by remote DID.
-- [ ] Model grants as social operations, not broad trust:
+- [x] Add Kernel tables for known social identities.
+- [x] Add Kernel tables for social grants keyed by remote handle.
+- [x] Model grants as social operations, not broad trust:
       `social.message.send`, `social.thread.create`,
       `social.request.create`, `social.package.like.read`, and similar.
-- [ ] Add `social.friend.list`, `social.friend.add`, `social.friend.remove`,
+- [x] Add `social.friend.list`, `social.friend.add`, `social.friend.remove`,
       and grant update syscalls.
-- [ ] Ensure public follow/friend records never grant authority by themselves.
+- [x] Ensure public follow/friend records never grant authority by themselves.
 - [ ] Add authorization tests for allowed, denied, revoked, expired, and unknown
-      remote DIDs.
+      remote handles.
 
 ### 4. Implement Service-To-Service Auth
 

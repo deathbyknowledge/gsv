@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   handleSocialAgentCardUpdate,
+  handleSocialFriendAdd,
+  handleSocialFriendGrantsSet,
+  handleSocialFriendList,
+  handleSocialFriendRemove,
   handleSocialIdentityGet,
   handleSocialIdentitySet,
   handleSocialSetup,
@@ -152,6 +156,121 @@ function createMockSql() {
       return cursor<T>([]);
     }
 
+    if (q.startsWith("SELECT * FROM social_friends WHERE uid = ? ORDER BY handle ASC")) {
+      const [uid] = bindings as [number];
+      return cursor(
+        getTable("social_friends")
+          .filter((row) => row.uid === uid)
+          .sort((left, right) => String(left.handle).localeCompare(String(right.handle))) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_friends WHERE uid = ? AND handle = ?")) {
+      const [uid, handle] = bindings as [number, string];
+      return cursor(getTable("social_friends").filter((row) =>
+        row.uid === uid && row.handle === handle
+      ) as T[]);
+    }
+
+    if (q.startsWith("INSERT OR REPLACE INTO social_friends")) {
+      const [
+        uid,
+        handle,
+        did,
+        pds_endpoint,
+        display_name,
+        profile_json,
+        instance_json,
+        agent_card_json,
+        created_at,
+        updated_at,
+        synced_at,
+      ] = bindings as [
+        number,
+        string,
+        string,
+        string,
+        string | null,
+        string | null,
+        string,
+        string | null,
+        number,
+        number,
+        number | null,
+      ];
+      const table = getTable("social_friends");
+      const existing = table.findIndex((row) => row.uid === uid && row.handle === handle);
+      const row = {
+        uid,
+        handle,
+        did,
+        pds_endpoint,
+        display_name,
+        profile_json,
+        instance_json,
+        agent_card_json,
+        created_at,
+        updated_at,
+        synced_at,
+      };
+      if (existing >= 0) {
+        table[existing] = row;
+      } else {
+        table.push(row);
+      }
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("DELETE FROM social_friend_grants WHERE uid = ? AND friend_handle = ?")) {
+      const [uid, friend_handle] = bindings as [number, string];
+      const table = getTable("social_friend_grants");
+      tables.set("social_friend_grants", table.filter((row) =>
+        !(row.uid === uid && row.friend_handle === friend_handle)
+      ));
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("DELETE FROM social_friends WHERE uid = ? AND handle = ?")) {
+      const [uid, handle] = bindings as [number, string];
+      const table = getTable("social_friends");
+      tables.set("social_friends", table.filter((row) =>
+        !(row.uid === uid && row.handle === handle)
+      ));
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_friend_grants WHERE uid = ? AND friend_handle = ?")) {
+      const [uid, friend_handle] = bindings as [number, string];
+      return cursor(
+        getTable("social_friend_grants")
+          .filter((row) => row.uid === uid && row.friend_handle === friend_handle)
+          .sort((left, right) => String(left.operation).localeCompare(String(right.operation))) as T[],
+      );
+    }
+
+    if (q.startsWith("INSERT OR REPLACE INTO social_friend_grants")) {
+      const [uid, friend_handle, operation, scope_json, expires_at, created_at, updated_at] = bindings as [
+        number,
+        string,
+        string,
+        string | null,
+        string | null,
+        number,
+        number,
+      ];
+      const table = getTable("social_friend_grants");
+      const existing = table.findIndex((row) =>
+        row.uid === uid && row.friend_handle === friend_handle && row.operation === operation
+      );
+      const row = { uid, friend_handle, operation, scope_json, expires_at, created_at, updated_at };
+      if (existing >= 0) {
+        table[existing] = row;
+      } else {
+        table.push(row);
+      }
+      return cursor<T>([]);
+    }
+
     throw new Error(`Unhandled SQL: ${q}`);
   }
 
@@ -189,6 +308,10 @@ function createCtx(
 }
 
 describe("social identity and records", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("sets up the builtin PDS identity and publishes baseline social records", async () => {
     const accountCalls: PdsEnsureAccountInput[] = [];
     const putCalls: PdsPutRecordInput[] = [];
@@ -391,5 +514,138 @@ describe("social identity and records", () => {
         acceptsMessages: "yes",
       } as unknown as SpaceGsvAgentCardRecord,
     }, ctx)).rejects.toThrow("acceptsMessages must be a boolean");
+  });
+
+  it("adds friends by handle, stores public records privately, and manages grants", async () => {
+    const ctx = createCtx();
+    handleSocialIdentitySet({
+      did: "did:web:gsv.example",
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL) => {
+      const href = String(url);
+      if (href === "https://alice.example/.well-known/atproto-did") {
+        return new Response("did:web:alice.example");
+      }
+      const parsed = new URL(href);
+      const collection = parsed.searchParams.get("collection");
+      if (parsed.origin === "https://alice.example" && parsed.pathname === "/xrpc/com.atproto.repo.getRecord") {
+        if (collection === SPACE_GSV_PROFILE) {
+          return Response.json({
+            uri: "at://did:web:alice.example/space.gsv.profile/self",
+            cid: "bafy-profile",
+            value: {
+              $type: SPACE_GSV_PROFILE,
+              createdAt: "2026-05-12T12:00:00Z",
+              displayName: "Alice",
+              description: "Builds small agents.",
+            },
+          });
+        }
+        if (collection === SPACE_GSV_INSTANCE) {
+          return Response.json({
+            uri: "at://did:web:alice.example/space.gsv.instance/self",
+            cid: "bafy-instance",
+            value: {
+              $type: SPACE_GSV_INSTANCE,
+              createdAt: "2026-05-12T12:00:00Z",
+              endpoint: "https://alice.example",
+              protocolVersion: 1,
+              serviceKey: {
+                id: "did:web:alice.example#gsv-social-key",
+                type: "Multikey",
+                publicKeyMultibase: "zAliceKey",
+              },
+              acceptedSocialMethods: ["social.message.send", "social.request.create"],
+            },
+          });
+        }
+        if (collection === SPACE_GSV_AGENT_CARD) {
+          return Response.json({
+            uri: "at://did:web:alice.example/space.gsv.agent.card/self",
+            cid: "bafy-agent-card",
+            value: {
+              $type: SPACE_GSV_AGENT_CARD,
+              createdAt: "2026-05-12T12:00:00Z",
+              displayName: "Alice's GSV",
+              summary: "Can talk about projects.",
+              acceptsMessages: true,
+              acceptsRequests: true,
+            },
+          });
+        }
+      }
+      return Response.json({ error: "not found" }, { status: 404 });
+    }));
+
+    await expect(handleSocialFriendAdd({
+      handle: "Alice.Example",
+      grants: [{ operation: "social.message.send" }],
+    }, ctx)).resolves.toMatchObject({
+      created: true,
+      friend: {
+        handle: "alice.example",
+        displayName: "Alice",
+        description: "Builds small agents.",
+        agentDisplayName: "Alice's GSV",
+        acceptsMessages: true,
+        acceptsRequests: true,
+        acceptedSocialMethods: ["social.message.send", "social.request.create"],
+        grants: [{ operation: "social.message.send" }],
+      },
+    });
+
+    expect(handleSocialFriendList({}, ctx).friends).toHaveLength(1);
+
+    const updated = handleSocialFriendGrantsSet({
+      handle: "alice.example",
+      grants: [
+        {
+          operation: "social.request.create",
+          scope: { kind: "question" },
+          expiresAt: "2027-01-01T00:00:00Z",
+        },
+      ],
+    }, ctx);
+    expect(updated.friend.grants).toEqual([
+      {
+        operation: "social.request.create",
+        scope: { kind: "question" },
+        expiresAt: "2027-01-01T00:00:00Z",
+      },
+    ]);
+
+    expect(handleSocialFriendRemove({ handle: "alice.example" }, ctx)).toEqual({ removed: true });
+    expect(handleSocialFriendList({}, ctx).friends).toEqual([]);
+  });
+
+  it("rejects duplicate or unsupported friend grants", async () => {
+    const ctx = createCtx();
+    expect(() => handleSocialFriendGrantsSet({
+      handle: "alice.example",
+      grants: [
+        { operation: "social.message.send" },
+        { operation: "social.message.send" },
+      ],
+    }, ctx)).toThrow("duplicate grant operation");
+    expect(() => handleSocialFriendGrantsSet({
+      handle: "alice.example",
+      grants: [{ operation: "fs.read" as never }],
+    }, ctx)).toThrow("unsupported grant operation");
+  });
+
+  it("does not allow adding the local identity as a friend", async () => {
+    const ctx = createCtx();
+    handleSocialIdentitySet({
+      did: "did:web:gsv.example",
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+
+    await expect(handleSocialFriendAdd({
+      handle: "gsv.example",
+    }, ctx)).rejects.toThrow("Cannot add the local GSV identity as a friend");
   });
 });

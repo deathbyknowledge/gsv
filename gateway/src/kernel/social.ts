@@ -5,6 +5,16 @@ import type {
   SocialAgentCardUpdateResult,
   SocialAtUri,
   SocialDid,
+  SocialFriendAddArgs,
+  SocialFriendAddResult,
+  SocialFriendGrantsSetArgs,
+  SocialFriendGrantsSetResult,
+  SocialFriendListArgs,
+  SocialFriendListResult,
+  SocialFriendRemoveArgs,
+  SocialFriendRemoveResult,
+  SocialFriendSummary,
+  SocialGrant,
   SocialIdentityGetArgs,
   SocialIdentityGetResult,
   SocialIdentitySetArgs,
@@ -39,6 +49,7 @@ import { requirePdsClient } from "../pds/client";
 const SELF_RKEY = "self";
 const DID_PATTERN = /^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$/;
 const MAIN_SOCIAL_UID = 1000;
+const FRIEND_SELF_RKEY = "self";
 
 type IdentityRow = {
   uid: number;
@@ -64,6 +75,30 @@ type SettingsRow = {
   uid: number;
   service_private_jwk_json: string;
   service_public_key_multibase: string;
+  created_at: number;
+  updated_at: number;
+};
+
+type FriendRow = {
+  uid: number;
+  handle: string;
+  did: string;
+  pds_endpoint: string;
+  display_name: string | null;
+  profile_json: string | null;
+  instance_json: string;
+  agent_card_json: string | null;
+  created_at: number;
+  updated_at: number;
+  synced_at: number | null;
+};
+
+type FriendGrantRow = {
+  uid: number;
+  friend_handle: string;
+  operation: string;
+  scope_json: string | null;
+  expires_at: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -94,6 +129,20 @@ export type SocialPublicRecord<TRecord extends SpaceGsvRecord = SpaceGsvRecord> 
   record: TRecord;
   createdAt: number;
   updatedAt: number;
+};
+
+export type SocialFriendRecord = {
+  uid: number;
+  handle: string;
+  did: SocialDid;
+  pdsEndpoint: string;
+  displayName?: string;
+  profile?: SpaceGsvProfileRecord;
+  instance: SpaceGsvInstanceRecord;
+  agentCard?: SpaceGsvAgentCardRecord;
+  createdAt: number;
+  updatedAt: number;
+  syncedAt?: number;
 };
 
 export class SocialStore {
@@ -136,6 +185,37 @@ export class SocialStore {
         service_public_key_multibase TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
+      )
+    `);
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS social_friends (
+        uid INTEGER NOT NULL,
+        handle TEXT NOT NULL,
+        did TEXT NOT NULL,
+        pds_endpoint TEXT NOT NULL,
+        display_name TEXT,
+        profile_json TEXT,
+        instance_json TEXT NOT NULL,
+        agent_card_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        synced_at INTEGER,
+        PRIMARY KEY (uid, handle)
+      )
+    `);
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_social_friends_did ON social_friends (uid, did)",
+    );
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS social_friend_grants (
+        uid INTEGER NOT NULL,
+        friend_handle TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        scope_json TEXT,
+        expires_at TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (uid, friend_handle, operation)
       )
     `);
   }
@@ -277,6 +357,124 @@ export class SocialStore {
       createdAt,
       updatedAt: now,
     };
+  }
+
+  listFriends(uid: number): SocialFriendRecord[] {
+    return this.sql.exec<FriendRow>(
+      "SELECT * FROM social_friends WHERE uid = ? ORDER BY handle ASC",
+      uid,
+    ).toArray().map(toFriendRecord);
+  }
+
+  getFriend(uid: number, handle: string): SocialFriendRecord | null {
+    const rows = this.sql.exec<FriendRow>(
+      "SELECT * FROM social_friends WHERE uid = ? AND handle = ? LIMIT 1",
+      uid,
+      handle,
+    ).toArray();
+    return rows[0] ? toFriendRecord(rows[0]) : null;
+  }
+
+  upsertFriend(input: {
+    uid: number;
+    handle: string;
+    did: SocialDid;
+    pdsEndpoint: string;
+    displayName?: string;
+    profile?: SpaceGsvProfileRecord;
+    instance: SpaceGsvInstanceRecord;
+    agentCard?: SpaceGsvAgentCardRecord;
+  }): { friend: SocialFriendRecord; created: boolean } {
+    const existing = this.getFriend(input.uid, input.handle);
+    const now = Date.now();
+    const createdAt = existing?.createdAt ?? now;
+    this.sql.exec(
+      `INSERT OR REPLACE INTO social_friends
+        (uid, handle, did, pds_endpoint, display_name, profile_json, instance_json, agent_card_json, created_at, updated_at, synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      input.uid,
+      input.handle,
+      input.did,
+      input.pdsEndpoint,
+      input.displayName ?? null,
+      input.profile ? JSON.stringify(input.profile) : null,
+      JSON.stringify(input.instance),
+      input.agentCard ? JSON.stringify(input.agentCard) : null,
+      createdAt,
+      now,
+      now,
+    );
+    return {
+      friend: {
+        uid: input.uid,
+        handle: input.handle,
+        did: input.did,
+        pdsEndpoint: input.pdsEndpoint,
+        displayName: input.displayName,
+        profile: input.profile,
+        instance: input.instance,
+        agentCard: input.agentCard,
+        createdAt,
+        updatedAt: now,
+        syncedAt: now,
+      },
+      created: !existing,
+    };
+  }
+
+  removeFriend(uid: number, handle: string): boolean {
+    const existing = this.getFriend(uid, handle);
+    if (!existing) {
+      return false;
+    }
+    this.sql.exec(
+      "DELETE FROM social_friend_grants WHERE uid = ? AND friend_handle = ?",
+      uid,
+      handle,
+    );
+    this.sql.exec(
+      "DELETE FROM social_friends WHERE uid = ? AND handle = ?",
+      uid,
+      handle,
+    );
+    return true;
+  }
+
+  getFriendGrants(uid: number, handle: string): SocialGrant[] {
+    return this.sql.exec<FriendGrantRow>(
+      "SELECT * FROM social_friend_grants WHERE uid = ? AND friend_handle = ? ORDER BY operation ASC",
+      uid,
+      handle,
+    ).toArray().map(toGrantRecord);
+  }
+
+  replaceFriendGrants(uid: number, handle: string, grants: SocialGrant[]): SocialGrant[] {
+    const now = Date.now();
+    this.sql.exec(
+      "DELETE FROM social_friend_grants WHERE uid = ? AND friend_handle = ?",
+      uid,
+      handle,
+    );
+    for (const grant of grants) {
+      this.sql.exec(
+        `INSERT OR REPLACE INTO social_friend_grants
+          (uid, friend_handle, operation, scope_json, expires_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        uid,
+        handle,
+        grant.operation,
+        grant.scope ? JSON.stringify(grant.scope) : null,
+        grant.expiresAt ?? null,
+        now,
+        now,
+      );
+    }
+    return this.getFriendGrants(uid, handle);
+  }
+
+  toFriendSummary(friend: SocialFriendRecord): SocialFriendSummary {
+    const grants = this.getFriendGrants(friend.uid, friend.handle);
+    return toFriendSummary(friend, grants);
   }
 
   toLocalIdentity(identity: SocialIdentityRecord): SocialLocalIdentity {
@@ -503,6 +701,82 @@ export async function handleSocialAgentCardUpdate(
   };
 }
 
+export function handleSocialFriendList(
+  _args: SocialFriendListArgs,
+  ctx: KernelContext,
+): SocialFriendListResult {
+  const uid = requireMainSocialUserUid(ctx);
+  const store = requireSocialStore(ctx);
+  return {
+    friends: store.listFriends(uid).map((friend) => store.toFriendSummary(friend)),
+  };
+}
+
+export async function handleSocialFriendAdd(
+  args: SocialFriendAddArgs,
+  ctx: KernelContext,
+): Promise<SocialFriendAddResult> {
+  const uid = requireMainSocialUserUid(ctx);
+  const identity = requireWritableSocialIdentity(ctx);
+  const handle = normalizeHandle(args.handle, "handle");
+  if (identity.handle === handle) {
+    throw new Error("Cannot add the local GSV identity as a friend");
+  }
+  const grants = args.grants === undefined ? undefined : validateGrants(args.grants);
+  const publicIdentity = await resolveFriendPublicIdentity(handle);
+  const displayName = nonEmpty(args.displayName)
+    ?? nonEmpty(publicIdentity.profile?.displayName)
+    ?? nonEmpty(publicIdentity.agentCard?.displayName)
+    ?? handle;
+  const store = requireSocialStore(ctx);
+  const { friend, created } = store.upsertFriend({
+    uid,
+    handle,
+    did: publicIdentity.did,
+    pdsEndpoint: publicIdentity.instance.endpoint,
+    displayName,
+    profile: publicIdentity.profile,
+    instance: publicIdentity.instance,
+    agentCard: publicIdentity.agentCard,
+  });
+  if (grants !== undefined) {
+    store.replaceFriendGrants(uid, handle, grants);
+  }
+  return {
+    friend: store.toFriendSummary(friend),
+    created,
+  };
+}
+
+export function handleSocialFriendRemove(
+  args: SocialFriendRemoveArgs,
+  ctx: KernelContext,
+): SocialFriendRemoveResult {
+  const uid = requireMainSocialUserUid(ctx);
+  const handle = normalizeHandle(args.handle, "handle");
+  return {
+    removed: requireSocialStore(ctx).removeFriend(uid, handle),
+  };
+}
+
+export function handleSocialFriendGrantsSet(
+  args: SocialFriendGrantsSetArgs,
+  ctx: KernelContext,
+): SocialFriendGrantsSetResult {
+  const uid = requireMainSocialUserUid(ctx);
+  const handle = normalizeHandle(args.handle, "handle");
+  const grants = validateGrants(args.grants);
+  const store = requireSocialStore(ctx);
+  const friend = store.getFriend(uid, handle);
+  if (!friend) {
+    throw new Error(`Friend is not known: ${handle}`);
+  }
+  store.replaceFriendGrants(uid, handle, grants);
+  return {
+    friend: store.toFriendSummary(friend),
+  };
+}
+
 async function publishSelfRecord<TRecord extends SpaceGsvRecord>(
   ctx: KernelContext,
   identity: SocialIdentityRecord,
@@ -592,17 +866,50 @@ function normalizeOptionalHandle(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
+  return normalizeHandle(value, "handle");
+}
+
+function normalizeHandle(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new Error("handle must be a string");
+    throw new Error(`${field} must be a string`);
   }
   const handle = value.trim().toLowerCase();
-  if (!handle) {
-    return undefined;
-  }
   if (!/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(handle) || !handle.includes(".")) {
-    throw new Error("invalid handle");
+    throw new Error(`invalid ${field}`);
   }
   return handle;
+}
+
+function validateGrants(value: unknown): SocialGrant[] {
+  if (!Array.isArray(value)) {
+    throw new Error("grants must be an array");
+  }
+  const seen = new Set<string>();
+  return value.map((grant, index) => {
+    const item = requireObject(grant, `grants[${index}]`);
+    const operation = requireString(item.operation, `grants[${index}].operation`);
+    if (!isSocialRemoteOperation(operation)) {
+      throw new Error(`unsupported grant operation: ${operation}`);
+    }
+    if (seen.has(operation)) {
+      throw new Error(`duplicate grant operation: ${operation}`);
+    }
+    seen.add(operation);
+    if (item.expiresAt !== undefined) {
+      requireIsoString(item.expiresAt, `grants[${index}].expiresAt`);
+    }
+    if (
+      item.scope !== undefined &&
+      (!item.scope || typeof item.scope !== "object" || Array.isArray(item.scope))
+    ) {
+      throw new Error(`grants[${index}].scope must be an object`);
+    }
+    return {
+      operation,
+      scope: item.scope as Record<string, unknown> | undefined,
+      expiresAt: item.expiresAt as string | undefined,
+    };
+  });
 }
 
 function normalizePdsEndpoint(value: unknown): string {
@@ -783,6 +1090,89 @@ function requireUrlString(value: unknown, field: string): void {
   }
 }
 
+async function resolveFriendPublicIdentity(handle: string): Promise<{
+  did: SocialDid;
+  profile?: SpaceGsvProfileRecord;
+  instance: SpaceGsvInstanceRecord;
+  agentCard?: SpaceGsvAgentCardRecord;
+}> {
+  const did = normalizeDid((await fetchRequiredText(
+    `https://${handle}/.well-known/atproto-did`,
+    `${handle} handle DID`,
+  )).trim());
+
+  const [profile, instance, agentCard] = await Promise.all([
+    fetchOptionalRecord<SpaceGsvProfileRecord>(handle, did, SPACE_GSV_PROFILE),
+    fetchRequiredRecord<SpaceGsvInstanceRecord>(handle, did, SPACE_GSV_INSTANCE),
+    fetchOptionalRecord<SpaceGsvAgentCardRecord>(handle, did, SPACE_GSV_AGENT_CARD),
+  ]);
+
+  return {
+    did,
+    profile: profile ? validateProfileRecord(profile) : undefined,
+    instance: validateInstanceRecord(instance),
+    agentCard: agentCard ? validateAgentCardRecord(agentCard) : undefined,
+  };
+}
+
+async function fetchRequiredRecord<TRecord extends SpaceGsvRecord>(
+  handle: string,
+  did: SocialDid,
+  collection: SpaceGsvCollection,
+): Promise<TRecord> {
+  const record = await fetchOptionalRecord<TRecord>(handle, did, collection);
+  if (!record) {
+    throw new Error(`${handle} did not publish ${collection}/${FRIEND_SELF_RKEY}`);
+  }
+  return record;
+}
+
+async function fetchOptionalRecord<TRecord extends SpaceGsvRecord>(
+  handle: string,
+  did: SocialDid,
+  collection: SpaceGsvCollection,
+): Promise<TRecord | null> {
+  const url = new URL(`https://${handle}/xrpc/com.atproto.repo.getRecord`);
+  url.searchParams.set("repo", did);
+  url.searchParams.set("collection", collection);
+  url.searchParams.set("rkey", FRIEND_SELF_RKEY);
+  const response = await fetch(url.toString());
+  const body = await parseFetchBody(response);
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`${handle} ${collection} fetch failed status=${response.status}: ${formatFetchBody(body)}`);
+  }
+  const object = requireObject(body, `${collection} response`);
+  return object.value as TRecord;
+}
+
+async function fetchRequiredText(url: string, label: string): Promise<string> {
+  const response = await fetch(url);
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`${label} fetch failed status=${response.status}: ${body}`);
+  }
+  return body;
+}
+
+async function parseFetchBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function formatFetchBody(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 function toIdentityRecord(row: IdentityRow): SocialIdentityRecord {
   return {
     uid: row.uid,
@@ -802,6 +1192,47 @@ function toServiceSettings(row: SettingsRow): SocialServiceSettings {
     servicePublicKeyMultibase: row.service_public_key_multibase,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function toFriendRecord(row: FriendRow): SocialFriendRecord {
+  return {
+    uid: row.uid,
+    handle: row.handle,
+    did: row.did as SocialDid,
+    pdsEndpoint: row.pds_endpoint,
+    displayName: row.display_name ?? undefined,
+    profile: row.profile_json ? JSON.parse(row.profile_json) as SpaceGsvProfileRecord : undefined,
+    instance: JSON.parse(row.instance_json) as SpaceGsvInstanceRecord,
+    agentCard: row.agent_card_json ? JSON.parse(row.agent_card_json) as SpaceGsvAgentCardRecord : undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    syncedAt: row.synced_at ?? undefined,
+  };
+}
+
+function toGrantRecord(row: FriendGrantRow): SocialGrant {
+  return {
+    operation: row.operation as SocialGrant["operation"],
+    scope: row.scope_json ? JSON.parse(row.scope_json) as Record<string, unknown> : undefined,
+    expiresAt: row.expires_at ?? undefined,
+  };
+}
+
+function toFriendSummary(friend: SocialFriendRecord, grants: SocialGrant[]): SocialFriendSummary {
+  return {
+    handle: friend.handle,
+    displayName: friend.displayName,
+    description: friend.profile?.description,
+    agentDisplayName: friend.agentCard?.displayName,
+    agentSummary: friend.agentCard?.summary,
+    acceptsMessages: friend.agentCard?.acceptsMessages ?? false,
+    acceptsRequests: friend.agentCard?.acceptsRequests ?? false,
+    acceptedSocialMethods: friend.instance.acceptedSocialMethods,
+    grants,
+    createdAt: new Date(friend.createdAt).toISOString(),
+    updatedAt: new Date(friend.updatedAt).toISOString(),
+    syncedAt: friend.syncedAt ? new Date(friend.syncedAt).toISOString() : undefined,
   };
 }
 

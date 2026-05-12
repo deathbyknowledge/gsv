@@ -47,6 +47,32 @@ for (const peer of results) {
   }
 }
 
+for (const peer of peers) {
+  const ws = await connect(peer);
+  try {
+    const other = results.find((result) => result.label !== peer.label);
+    if (!other?.handle) {
+      throw new Error(`${peer.label} has no peer handle to add`);
+    }
+    const added = await rpc(ws, "social.friend.add", {
+      handle: other.handle,
+      grants: [
+        { operation: "social.message.send" },
+        { operation: "social.request.create" },
+      ],
+    });
+    if (added?.friend?.handle !== other.handle) {
+      throw new Error(`${peer.label} added unexpected friend handle`);
+    }
+    const listed = await rpc(ws, "social.friend.list", {});
+    if (!Array.isArray(listed?.friends) || !listed.friends.some((friend) => friend.handle === other.handle)) {
+      throw new Error(`${peer.label} friend list does not include ${other.handle}`);
+    }
+  } finally {
+    ws.close(1000, "smoke complete");
+  }
+}
+
 console.log(JSON.stringify({
   ok: true,
   ensured: ensureIdentity,

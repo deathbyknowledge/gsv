@@ -105,6 +105,10 @@ import {
 import {
   handleSocialAgentCardGet,
   handleSocialAgentCardUpdate,
+  handleSocialFriendAdd,
+  handleSocialFriendGrantsSet,
+  handleSocialFriendList,
+  handleSocialFriendRemove,
   handleSocialSetup,
   handleSocialIdentityGet,
   handleSocialIdentitySet,
@@ -512,6 +516,18 @@ async function dispatchNative(
         break;
       case "social.agent.card.update":
         data = await handleSocialAgentCardUpdate(frame.args, ctx);
+        break;
+      case "social.friend.list":
+        data = handleSocialFriendList(frame.args, ctx);
+        break;
+      case "social.friend.add":
+        data = await handleSocialFriendAdd(frame.args, ctx);
+        break;
+      case "social.friend.remove":
+        data = handleSocialFriendRemove(frame.args, ctx);
+        break;
+      case "social.friend.grants.set":
+        data = handleSocialFriendGrantsSet(frame.args, ctx);
         break;
 
       case "signal.watch":
