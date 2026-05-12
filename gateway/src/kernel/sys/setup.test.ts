@@ -40,9 +40,9 @@ function createMockSql() {
       const [uid] = bindings as [number];
       return cursor(getTable("social_identities").filter((row) => row.uid === uid) as T[]);
     }
-    if (q.startsWith("SELECT * FROM social_identities WHERE did = ?")) {
-      const [did] = bindings as [string];
-      return cursor(getTable("social_identities").filter((row) => row.did === did) as T[]);
+    if (q.startsWith("SELECT * FROM social_identities WHERE handle = ?")) {
+      const [handle] = bindings as [string];
+      return cursor(getTable("social_identities").filter((row) => row.handle === handle) as T[]);
     }
     if (q.startsWith("SELECT * FROM social_identities ORDER BY uid ASC LIMIT 1")) {
       return cursor(
@@ -283,7 +283,8 @@ describe("handleSysSetup", () => {
       handle: "gsv.example",
       did: "did:web:gsv.example",
     });
-    expect(result.social?.identity.did).toBe("did:web:gsv.example");
+    expect(result.social?.identity.handle).toBe("gsv.example");
+    expect(result.social?.identity).not.toHaveProperty("did");
     expect(result.social?.identity.profile?.displayName).toBe("Alice");
     expect(putCalls.map((call) => call.collection)).toEqual([
       SPACE_GSV_PROFILE,

@@ -22,11 +22,11 @@ for (const peer of peers) {
   const ws = await connect(peer);
   try {
     const identity = await getOrSetupIdentity(peer, ws);
-    const publicState = await readPublicState(peer.origin, identity.did);
+    const publicState = await readPublicState(peer.origin);
     results.push({
       label: peer.label,
       origin: peer.origin,
-      did: identity.did,
+      did: publicState.did,
       handle: identity.handle,
       profile: publicState.profile.value,
       instance: publicState.instance.value,
@@ -248,11 +248,8 @@ async function getOrSetupIdentity(peer, ws) {
   return setup.identity;
 }
 
-async function readPublicState(origin, did) {
-  const didText = (await fetchText(`${origin}/.well-known/atproto-did`)).trim();
-  if (didText !== did) {
-    throw new Error(`${origin}/.well-known/atproto-did returned ${didText}, expected ${did}`);
-  }
+async function readPublicState(origin) {
+  const did = (await fetchText(`${origin}/.well-known/atproto-did`)).trim();
 
   const didDoc = await fetchJson(`${origin}/.well-known/did.json`);
   if (didDoc.id !== did) {
@@ -265,7 +262,7 @@ async function readPublicState(origin, did) {
   assertRecordType(profile.value, "space.gsv.profile", `${origin} profile`);
   assertRecordType(instance.value, "space.gsv.instance", `${origin} instance`);
   assertRecordType(agentCard.value, "space.gsv.agent.card", `${origin} agent card`);
-  return { profile, instance, agentCard };
+  return { did, profile, instance, agentCard };
 }
 
 async function getRecord(origin, did, collection) {

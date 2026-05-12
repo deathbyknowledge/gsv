@@ -228,10 +228,10 @@ export class SocialStore {
     return rows[0] ? toIdentityRecord(rows[0]) : null;
   }
 
-  getIdentityByDid(did: string): SocialIdentityRecord | null {
+  getIdentityByHandle(handle: string): SocialIdentityRecord | null {
     const rows = this.sql.exec<IdentityRow>(
-      "SELECT * FROM social_identities WHERE did = ? LIMIT 1",
-      did,
+      "SELECT * FROM social_identities WHERE handle = ? LIMIT 1",
+      handle,
     ).toArray();
     return rows[0] ? toIdentityRecord(rows[0]) : null;
   }
@@ -480,8 +480,7 @@ export class SocialStore {
   toLocalIdentity(identity: SocialIdentityRecord): SocialLocalIdentity {
     return {
       uid: identity.uid,
-      did: identity.did,
-      handle: identity.handle,
+      handle: identity.handle ?? handleFromDid(identity.did),
       pdsEndpoint: identity.pdsEndpoint,
       profile: this.getPublicRecord<SpaceGsvProfileRecord>(
         identity.uid,
@@ -577,7 +576,6 @@ export async function handleSocialSetup(
       instance: instance.uri as SocialAtUri | undefined,
       agentCard: agentCard.uri as SocialAtUri | undefined,
     },
-    pdslsRepoUrl: `https://pdsls.dev/at://${did}`,
   };
 }
 
@@ -597,8 +595,8 @@ export function handleSocialIdentitySet(
   ctx: KernelContext,
 ): SocialIdentitySetResult {
   const uid = requireMainSocialUserUid(ctx);
-  const did = normalizeDid(args.did);
-  const handle = normalizeOptionalHandle(args.handle);
+  const handle = normalizeHandle(args.handle, "handle");
+  const did = normalizeDid(`did:web:${handle}`);
   const pdsEndpoint = normalizePdsEndpoint(args.pdsEndpoint);
   const store = requireSocialStore(ctx);
   ensureInstanceIdentityOwner(store, uid);
@@ -621,7 +619,7 @@ export function handleSocialProfileGet(
   args: SocialProfileGetArgs,
   ctx: KernelContext,
 ): SocialProfileGetResult {
-  const resolved = resolveReadableIdentity(args.did, ctx);
+  const resolved = resolveReadableIdentity(args.handle, ctx);
   return {
     profile: resolved
       ? requireSocialStore(ctx).getPublicRecord<SpaceGsvProfileRecord>(
@@ -649,7 +647,7 @@ export function handleSocialInstanceGet(
   args: SocialInstanceGetArgs,
   ctx: KernelContext,
 ): SocialInstanceGetResult {
-  const resolved = resolveReadableIdentity(args.did, ctx);
+  const resolved = resolveReadableIdentity(args.handle, ctx);
   return {
     instance: resolved
       ? requireSocialStore(ctx).getPublicRecord<SpaceGsvInstanceRecord>(
@@ -677,7 +675,7 @@ export function handleSocialAgentCardGet(
   args: SocialAgentCardGetArgs,
   ctx: KernelContext,
 ): SocialAgentCardGetResult {
-  const resolved = resolveReadableIdentity(args.did, ctx);
+  const resolved = resolveReadableIdentity(args.handle, ctx);
   return {
     agentCard: resolved
       ? requireSocialStore(ctx).getPublicRecord<SpaceGsvAgentCardRecord>(
@@ -833,12 +831,12 @@ function ensureInstanceIdentityOwner(store: SocialStore, uid: number): void {
 }
 
 function resolveReadableIdentity(
-  did: SocialDid | undefined,
+  handle: string | undefined,
   ctx: KernelContext,
 ): SocialIdentityRecord | null {
   const store = requireSocialStore(ctx);
-  if (did) {
-    return store.getIdentityByDid(normalizeDid(did));
+  if (handle) {
+    return store.getIdentityByHandle(normalizeHandle(handle, "handle"));
   }
   return store.getIdentity(requireUserUid(ctx));
 }
@@ -862,11 +860,12 @@ function normalizeDid(value: unknown): SocialDid {
   return did;
 }
 
-function normalizeOptionalHandle(value: unknown): string | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
+function handleFromDid(did: SocialDid): string {
+  const prefix = "did:web:";
+  if (!did.startsWith(prefix)) {
+    throw new Error("Social identity does not have a handle");
   }
-  return normalizeHandle(value, "handle");
+  return normalizeHandle(decodeURIComponent(did.slice(prefix.length).replace(/:/g, ".")), "handle");
 }
 
 function normalizeHandle(value: unknown, field: string): string {

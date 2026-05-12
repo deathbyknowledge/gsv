@@ -182,8 +182,7 @@ export type SocialFriendSummary = {
 
 export type SocialLocalIdentity = {
   uid: number;
-  did: SocialDid;
-  handle?: string;
+  handle: string;
   pdsEndpoint: string;
   profile?: SpaceGsvProfileRecord;
   instance?: SpaceGsvInstanceRecord;
@@ -290,7 +289,6 @@ export type SocialSetupResult = {
     instance?: SocialAtUri;
     agentCard?: SocialAtUri;
   };
-  pdslsRepoUrl: string;
 };
 
 export type SocialIdentityGetArgs = SocialEmptyArgs;
@@ -299,8 +297,7 @@ export type SocialIdentityGetResult = {
 };
 
 export type SocialIdentitySetArgs = {
-  did: SocialDid;
-  handle?: string;
+  handle: string;
   pdsEndpoint: string;
 };
 export type SocialIdentitySetResult = {
@@ -308,7 +305,7 @@ export type SocialIdentitySetResult = {
 };
 
 export type SocialProfileGetArgs = {
-  did?: SocialDid;
+  handle?: string;
 };
 export type SocialProfileGetResult = {
   profile: SpaceGsvProfileRecord | null;
@@ -323,7 +320,7 @@ export type SocialProfileUpdateResult = {
 };
 
 export type SocialInstanceGetArgs = {
-  did?: SocialDid;
+  handle?: string;
 };
 export type SocialInstanceGetResult = {
   instance: SpaceGsvInstanceRecord | null;
@@ -338,7 +335,7 @@ export type SocialInstanceUpdateResult = {
 };
 
 export type SocialAgentCardGetArgs = {
-  did?: SocialDid;
+  handle?: string;
 };
 export type SocialAgentCardGetResult = {
   agentCard: SpaceGsvAgentCardRecord | null;

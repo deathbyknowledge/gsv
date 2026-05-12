@@ -4,23 +4,25 @@ This document tracks the work needed to make GSV social through PDS and
 ATProto repositories.
 
 The target is not a social feed bolted onto GSV. The target is GSV-to-GSV
-coordination: people can friend each other by DID, their agents can exchange
+coordination: people can friend each other by handle, their agents can exchange
 bounded asynchronous messages, and public social records can make packages,
-profiles, and agent contact cards discoverable.
+profiles, and agent contact cards discoverable. DIDs remain an internal
+verification detail that the Kernel resolves from handles.
 
 ## Finish Line
 
 A complete first version should support this journey:
 
-1. Alice and Hank each have a GSV user linked to a DID-backed PDS repo.
+1. Alice and Hank each have a GSV user linked to a handle-backed PDS repo.
 2. Each GSV publishes a public profile, instance contact record, agent card, and
    package-like records.
-3. Alice grants Hank's DID permission to use a narrow set of social operations.
+3. Alice grants Hank's handle permission to use a narrow set of social
+   operations.
 4. Hank asks Alice's agent a question while Alice is offline.
 5. Hank's GSV signs and sends an asynchronous service-to-service social message.
-6. Alice's GSV verifies Hank's DID and request signature, checks Alice's local
-   grants, stores the inbound message, and opens or reuses a social conversation
-   on Alice's init process.
+6. Alice's GSV resolves Hank's handle, verifies the underlying DID and request
+   signature, checks Alice's local grants, stores the inbound message, and opens
+   or reuses a social conversation on Alice's init process.
 7. Alice's agent can reply from that conversation using a social reply syscall.
 8. Hank's GSV receives the signed reply asynchronously and delivers it into
    Hank's local social thread.
@@ -72,7 +74,7 @@ network information, or OS details.
 - Make social messages asynchronous by default. Outbound sends return accepted,
   rejected, or retryable delivery state, not the remote model reply.
 - Map social threads to real Process DO conversations:
-  `social:<peer-did-hash>:<thread-id>`.
+  `social:<peer-handle>:<thread-id>`.
 - Store protocol state in Kernel social tables, and store agent-visible
   conversation state in the Process DO.
 - Start with scheduled or manual friend-record sync. Live firehose ingestion can
@@ -137,7 +139,7 @@ implementation layer.
 
 ### 2. Link GSV Users To PDS Identities
 
-- [x] Add Kernel storage for a user's DID, handle, and PDS endpoint.
+- [x] Add Kernel storage for a user's internal DID, handle, and PDS endpoint.
 - [x] Add Kernel storage for local social settings.
 - [x] Add Gateway-to-PDS service binding scaffolding with public XRPC proxy and
       internal RPC client.
@@ -163,12 +165,15 @@ implementation layer.
 
 ### 4. Implement Service-To-Service Auth
 
-- [x] Define signed social request envelopes with id, method, from DID, to DID,
-      created time, expiry, nonce, body, key id, and signature.
-- [ ] Resolve and verify the sender DID and advertised GSV service key.
+- [x] Define signed social request envelopes with id, method, internal sender
+      DID, internal recipient DID, created time, expiry, nonce, body, key id,
+      and signature.
+- [ ] Resolve the sender handle and verify its DID and advertised GSV service
+      key.
 - [ ] Reject expired requests.
 - [ ] Reject replayed ids or nonces.
-- [ ] Reject requests whose `to` DID does not match the local user.
+- [ ] Reject requests whose internal recipient DID does not match the local
+      user.
 - [ ] Route verified inbound requests through a service-only
       `social.inbound` syscall.
 - [ ] Add negative tests for bad signature, wrong DID, wrong key, replay,
@@ -194,9 +199,9 @@ implementation layer.
 
 - [ ] Add a Kernel-owned process event delivery path for typed social events.
 - [ ] Open or reuse `conversationId =
-      social:<peer-did-hash>:<thread-id>` on the user's init process.
+      social:<peer-handle>:<thread-id>` on the user's init process.
 - [ ] Render inbound social messages as explicit process events, preserving
-      peer DID, thread id, message id, and request metadata.
+      peer handle, thread id, message id, and request metadata.
 - [ ] Add an agent-visible way to reply through `social.message.reply`.
 - [ ] Do not expose remote peers as callers of `proc.send`.
 - [ ] Add tests proving inbound social messages create or reuse the expected
@@ -241,14 +246,14 @@ implementation layer.
 ### 10. Build End-To-End Smoke Tests
 
 - [ ] Add a two-GSV test harness or smoke script.
-- [ ] Create two users with linked DIDs.
+- [ ] Create two users with linked handles.
 - [ ] Publish profile, instance, agent-card, and package-like records.
 - [ ] Add a friend grant from Alice to Hank.
 - [ ] Send a signed async message from Hank to Alice.
 - [ ] Verify Alice's init process receives the social conversation.
 - [ ] Reply from Alice back to Hank.
 - [ ] Verify Hank receives the reply in the original thread.
-- [ ] Verify denied DIDs cannot send messages.
+- [ ] Verify denied handles cannot send messages.
 - [ ] Verify no public record contains device inventory.
 
 ## Deferred

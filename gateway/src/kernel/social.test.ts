@@ -62,9 +62,9 @@ function createMockSql() {
       return cursor(getTable("social_identities").filter((row) => row.uid === uid) as T[]);
     }
 
-    if (q.startsWith("SELECT * FROM social_identities WHERE did = ?")) {
-      const [did] = bindings as [string];
-      return cursor(getTable("social_identities").filter((row) => row.did === did) as T[]);
+    if (q.startsWith("SELECT * FROM social_identities WHERE handle = ?")) {
+      const [handle] = bindings as [string];
+      return cursor(getTable("social_identities").filter((row) => row.handle === handle) as T[]);
     }
 
     if (q.startsWith("SELECT * FROM social_identities ORDER BY uid ASC LIMIT 1")) {
@@ -349,7 +349,6 @@ describe("social identity and records", () => {
     expect(result.createdAccount).toBe(true);
     expect(result.identity).toMatchObject({
       uid: 1000,
-      did: "did:web:gsv.example",
       handle: "gsv.example",
       pdsEndpoint: "https://gsv.example",
       profile: {
@@ -363,7 +362,7 @@ describe("social identity and records", () => {
         acceptsRequests: true,
       },
     });
-    expect(result.pdslsRepoUrl).toBe("https://pdsls.dev/at://did:web:gsv.example");
+    expect(result.identity).not.toHaveProperty("did");
 
     expect(putCalls.map((call) => call.collection)).toEqual([
       SPACE_GSV_PROFILE,
@@ -398,7 +397,6 @@ describe("social identity and records", () => {
     }, ctx)).rejects.toThrow("Social identity is limited to the main GSV user");
 
     expect(() => handleSocialIdentitySet({
-      did: "did:web:gsv.example",
       handle: "gsv.example",
       pdsEndpoint: "https://gsv.example",
     }, ctx)).toThrow("Social identity is limited to the main GSV user");
@@ -408,21 +406,20 @@ describe("social identity and records", () => {
     const ctx = createCtx();
 
     const result = handleSocialIdentitySet({
-      did: "did:web:gsv.example",
       handle: "gsv.example",
       pdsEndpoint: "https://gsv.example/xrpc",
     }, ctx);
 
     expect(result.identity).toMatchObject({
       uid: 1000,
-      did: "did:web:gsv.example",
       handle: "gsv.example",
       pdsEndpoint: "https://gsv.example",
     });
+    expect(result.identity).not.toHaveProperty("did");
     expect(handleSocialIdentityGet({}, ctx).identity).toMatchObject({
-      did: "did:web:gsv.example",
       handle: "gsv.example",
     });
+    expect(handleSocialIdentityGet({}, ctx).identity).not.toHaveProperty("did");
   });
 
   it("publishes profile updates through the PDS RPC binding and stores the result", async () => {
@@ -438,7 +435,6 @@ describe("social identity and records", () => {
       },
     });
     handleSocialIdentitySet({
-      did: "did:web:gsv.example",
       handle: "gsv.example",
       pdsEndpoint: "https://gsv.example",
     }, ctx);
@@ -466,7 +462,7 @@ describe("social identity and records", () => {
       uri: "at://did:web:gsv.example/space.gsv.profile/self",
     });
     expect(handleSocialProfileGet({}, ctx).profile).toEqual(record);
-    expect(handleSocialProfileGet({ did: "did:web:gsv.example" }, ctx).profile).toEqual(record);
+    expect(handleSocialProfileGet({ handle: "gsv.example" }, ctx).profile).toEqual(record);
   });
 
   it("requires a linked identity before publishing public records", async () => {
@@ -492,7 +488,7 @@ describe("social identity and records", () => {
       }),
     });
     handleSocialIdentitySet({
-      did: "did:web:gsv.example",
+      handle: "gsv.example",
       pdsEndpoint: "https://gsv.example",
     }, ctx);
 
@@ -519,7 +515,6 @@ describe("social identity and records", () => {
   it("adds friends by handle, stores public records privately, and manages grants", async () => {
     const ctx = createCtx();
     handleSocialIdentitySet({
-      did: "did:web:gsv.example",
       handle: "gsv.example",
       pdsEndpoint: "https://gsv.example",
     }, ctx);
@@ -639,7 +634,6 @@ describe("social identity and records", () => {
   it("does not allow adding the local identity as a friend", async () => {
     const ctx = createCtx();
     handleSocialIdentitySet({
-      did: "did:web:gsv.example",
       handle: "gsv.example",
       pdsEndpoint: "https://gsv.example",
     }, ctx);
