@@ -2,7 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STATE_ROOT="$ROOT_DIR/.wrangler/dev-state/v3"
+PERSIST_ROOT="${GSV_DEV_PERSIST_TO:-$ROOT_DIR/.wrangler/dev-state}"
+STATE_ROOT="$PERSIST_ROOT/v3"
+IP="${GSV_DEV_IP:-0.0.0.0}"
+
+PORT_ARGS=()
+if [[ -n "${GSV_DEV_PORT:-}" ]]; then
+  PORT_ARGS+=(--port "$GSV_DEV_PORT")
+fi
 
 mkdir -p "$STATE_ROOT/do/ripgit-Repository"
 mkdir -p "$STATE_ROOT/do/gsv-Kernel"
@@ -15,5 +22,6 @@ exec npm exec -- wrangler dev \
   -c ../assembler/wrangler.toml \
   -c ../adapters/whatsapp/wrangler.jsonc \
   -c wrangler.toml \
-  --ip 0.0.0.0 \
-  --persist-to ../.wrangler/dev-state
+  --ip "$IP" \
+  --persist-to "$PERSIST_ROOT" \
+  "${PORT_ARGS[@]}"

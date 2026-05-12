@@ -24,6 +24,7 @@ import type { SignalWatchStore } from "./signal-watches";
 import type { NotificationStore } from "./notifications";
 import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
+import type { SocialStore } from "./social";
 import type { AppFrameContext } from "../protocol/app-frame";
 import type { SchedulerRunArgs, SchedulerRunResult } from "../syscalls/scheduler";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -47,6 +48,7 @@ export type KernelContext = {
   ipcCalls?: IpcCallStore;
   notifications?: NotificationStore;
   schedules?: ScheduleStore;
+  social?: SocialStore;
   connection: Connection;
   identity?: ConnectionIdentity;
   processId?: string;

@@ -1,8 +1,124 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import { handleSysSetup } from "./setup";
+import { SocialStore } from "../social";
+import type { PdsEnsureAccountInput, PdsPutRecordInput, PdsServiceBinding } from "../../pds/client";
+import { SPACE_GSV_AGENT_CARD, SPACE_GSV_INSTANCE, SPACE_GSV_PROFILE } from "@gsv/protocol/syscalls/social";
 
-function createCtx(overrides?: { setupMode?: boolean }) {
+type Row = Record<string, unknown>;
+
+function createMockSql() {
+  const tables = new Map<string, Row[]>();
+
+  function getTable(name: string): Row[] {
+    if (!tables.has(name)) {
+      tables.set(name, []);
+    }
+    return tables.get(name)!;
+  }
+
+  function cursor<T>(rows: T[]) {
+    return {
+      toArray: () => rows,
+      [Symbol.iterator]: function* () {
+        yield* rows;
+      },
+    };
+  }
+
+  function exec<T = Row>(query: string, ...bindings: unknown[]) {
+    const q = query.trim();
+    if (q.startsWith("CREATE TABLE IF NOT EXISTS")) {
+      const match = q.match(/CREATE TABLE IF NOT EXISTS (\w+)/);
+      if (match) getTable(match[1]);
+      return cursor<T>([]);
+    }
+    if (q.startsWith("CREATE INDEX IF NOT EXISTS")) {
+      return cursor<T>([]);
+    }
+    if (q.startsWith("SELECT * FROM social_identities WHERE uid = ?")) {
+      const [uid] = bindings as [number];
+      return cursor(getTable("social_identities").filter((row) => row.uid === uid) as T[]);
+    }
+    if (q.startsWith("SELECT * FROM social_identities WHERE did = ?")) {
+      const [did] = bindings as [string];
+      return cursor(getTable("social_identities").filter((row) => row.did === did) as T[]);
+    }
+    if (q.startsWith("SELECT * FROM social_identities ORDER BY uid ASC LIMIT 1")) {
+      return cursor(
+        [...getTable("social_identities")]
+          .sort((left, right) => Number(left.uid) - Number(right.uid))
+          .slice(0, 1) as T[],
+      );
+    }
+    if (q.startsWith("INSERT OR REPLACE INTO social_identities")) {
+      const [uid, did, handle, pds_endpoint, created_at, updated_at] = bindings as [
+        number,
+        string,
+        string | null,
+        string,
+        number,
+        number,
+      ];
+      const table = getTable("social_identities");
+      const existing = table.findIndex((row) => row.uid === uid);
+      const row = { uid, did, handle, pds_endpoint, created_at, updated_at };
+      if (existing >= 0) table[existing] = row;
+      else table.push(row);
+      return cursor<T>([]);
+    }
+    if (q.startsWith("SELECT * FROM social_records WHERE uid = ?")) {
+      const [uid, collection, rkey] = bindings as [number, string, string];
+      return cursor(getTable("social_records").filter((row) =>
+        row.uid === uid && row.collection === collection && row.rkey === rkey
+      ) as T[]);
+    }
+    if (q.startsWith("INSERT OR REPLACE INTO social_records")) {
+      const [uid, collection, rkey, uri, cid, record_json, created_at, updated_at] = bindings as [
+        number,
+        string,
+        string,
+        string | null,
+        string | null,
+        string,
+        number,
+        number,
+      ];
+      const table = getTable("social_records");
+      const existing = table.findIndex((row) =>
+        row.uid === uid && row.collection === collection && row.rkey === rkey
+      );
+      const row = { uid, collection, rkey, uri, cid, record_json, created_at, updated_at };
+      if (existing >= 0) table[existing] = row;
+      else table.push(row);
+      return cursor<T>([]);
+    }
+    if (q.startsWith("SELECT * FROM social_settings WHERE uid = ?")) {
+      const [uid] = bindings as [number];
+      return cursor(getTable("social_settings").filter((row) => row.uid === uid) as T[]);
+    }
+    if (q.startsWith("INSERT OR REPLACE INTO social_settings")) {
+      const [uid, service_private_jwk_json, service_public_key_multibase, created_at, updated_at] = bindings as [
+        number,
+        string,
+        string,
+        number,
+        number,
+      ];
+      const table = getTable("social_settings");
+      const existing = table.findIndex((row) => row.uid === uid);
+      const row = { uid, service_private_jwk_json, service_public_key_multibase, created_at, updated_at };
+      if (existing >= 0) table[existing] = row;
+      else table.push(row);
+      return cursor<T>([]);
+    }
+    throw new Error(`Unhandled SQL: ${q}`);
+  }
+
+  return { exec };
+}
+
+function createCtx(overrides?: { setupMode?: boolean; pds?: Partial<PdsServiceBinding> }) {
   const usersGroup = { name: "users", gid: 100, members: [] as string[] };
   const passwd: Array<{ username: string; uid: number }> = [{ username: "root", uid: 0 }];
   const shadowRoot = { username: "root", hash: "!" };
@@ -68,7 +184,12 @@ function createCtx(overrides?: { setupMode?: boolean }) {
   const ctx = {
     auth: auth as unknown as KernelContext["auth"],
     config: config as unknown as KernelContext["config"],
-    env: { STORAGE: storage } as unknown as KernelContext["env"],
+    env: { STORAGE: storage, PDS: overrides?.pds } as unknown as KernelContext["env"],
+    social: (() => {
+      const social = new SocialStore(createMockSql() as unknown as SqlStorage);
+      social.init();
+      return social;
+    })(),
   } as KernelContext;
 
   return { ctx, auth, config, storage, usersGroup };
@@ -119,6 +240,56 @@ describe("handleSysSetup", () => {
     );
     expect(result.user.username).toBe("alice");
     expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
+  });
+
+  it("can set up the builtin social PDS during onboarding", async () => {
+    const accountCalls: PdsEnsureAccountInput[] = [];
+    const putCalls: PdsPutRecordInput[] = [];
+    const { ctx } = createCtx({
+      pds: {
+        pdsEnsureAccount: async (input: PdsEnsureAccountInput) => {
+          accountCalls.push(input);
+          return {
+            did: "did:web:gsv.example",
+            handle: "gsv.example",
+            created: false,
+          };
+        },
+        pdsPutRecord: async (input: PdsPutRecordInput) => {
+          putCalls.push(input);
+          return {
+            uri: `at://${input.repo}/${input.collection}/${input.rkey}`,
+            cid: `bafy-${input.collection.replace(/\./g, "-")}`,
+          };
+        },
+      },
+    });
+
+    const result = await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        social: {
+          origin: "https://gsv.example",
+          displayName: "Alice",
+        },
+      },
+      ctx,
+    );
+
+    expect(accountCalls).toHaveLength(1);
+    expect(accountCalls[0]).toMatchObject({
+      host: "gsv.example",
+      handle: "gsv.example",
+      did: "did:web:gsv.example",
+    });
+    expect(result.social?.identity.did).toBe("did:web:gsv.example");
+    expect(result.social?.identity.profile?.displayName).toBe("Alice");
+    expect(putCalls.map((call) => call.collection)).toEqual([
+      SPACE_GSV_PROFILE,
+      SPACE_GSV_INSTANCE,
+      SPACE_GSV_AGENT_CARD,
+    ]);
   });
 
   it("rejects when setup mode is already completed", async () => {

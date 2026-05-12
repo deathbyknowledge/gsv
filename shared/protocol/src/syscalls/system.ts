@@ -71,6 +71,14 @@ export type SysSetupArgs = {
   username: string;
   password: string;
   rootPassword?: string;
+  social?: {
+    enabled?: boolean;
+    origin: string;
+    displayName?: string;
+    description?: string;
+    agentDisplayName?: string;
+    agentSummary?: string;
+  };
   bootstrap?: {
     remoteUrl?: string;
     repo?: string;
@@ -171,6 +179,7 @@ export type SysSetupResult = {
   user: ProcessIdentity;
   rootLocked: boolean;
   bootstrap?: SysBootstrapResult;
+  social?: import("./social").SocialSetupResult;
   nodeToken?: {
     tokenId: string;
     token: string;

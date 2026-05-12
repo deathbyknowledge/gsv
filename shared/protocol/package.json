@@ -10,6 +10,7 @@
     "./syscalls/packages": "./src/syscalls/packages.ts",
     "./syscalls/repositories": "./src/syscalls/repositories.ts",
     "./syscalls/proc": "./src/syscalls/proc.ts",
-    "./syscalls/notification": "./src/syscalls/notification.ts"
+    "./syscalls/notification": "./src/syscalls/notification.ts",
+    "./syscalls/social": "./src/syscalls/social.ts"
   }
 }

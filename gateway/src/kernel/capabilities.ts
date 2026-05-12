@@ -22,6 +22,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "notification.*",
     "proc.*",
     "signal.*",
+    "social.*",
     "pkg.create",
     "pkg.list",
     "pkg.checkout",

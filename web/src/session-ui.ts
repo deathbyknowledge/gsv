@@ -152,6 +152,24 @@ function gatewayOrigin(): string {
   return typeof window === "undefined" ? "http://localhost:8787" : window.location.origin;
 }
 
+function buildBuiltinSocialSetup(username: string): SessionSetupInput["social"] | undefined {
+  const origin = gatewayOrigin();
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" || !url.hostname.includes(".")) {
+    return undefined;
+  }
+  return {
+    origin: url.origin,
+    displayName: username,
+    agentDisplayName: `${username}'s GSV`,
+  };
+}
+
 function gatewayWsUrl(origin: string): string {
   if (origin.startsWith("https://")) {
     return `wss://${origin.slice("https://".length)}/ws`;
@@ -809,11 +827,17 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
 
   const buildSetupPayload = (): SessionSetupInput => {
     const { draft } = onboardingSnapshot;
+    const username = draft.account.username.trim();
     const payload: SessionSetupInput = {
-      username: draft.account.username.trim(),
+      username,
       password: draft.account.password,
       timezone: draft.system.timezone.trim(),
     };
+
+    const social = buildBuiltinSocialSetup(username);
+    if (social) {
+      payload.social = social;
+    }
 
     if (draft.admin.mode === "custom" && draft.admin.password.trim()) {
       payload.rootPassword = draft.admin.password.trim();

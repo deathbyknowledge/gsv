@@ -2,10 +2,12 @@ import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
 import type { KernelContext } from "../context";
 import type { PasswdEntry } from "../../auth/passwd";
 import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "@gsv/protocol/syscalls/system";
+import type { SocialSetupArgs } from "@gsv/protocol/syscalls/social";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureHomeStorageLayout } from "../home-knowledge";
 import { RipgitClient } from "../../fs";
 import { seedRepoSkillsToHome } from "./skills-seed";
+import { handleSocialSetup } from "../social";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -131,6 +133,27 @@ function parseNodeConfig(args: SysSetupArgs): {
   };
 }
 
+function parseSocialSetup(args: SysSetupArgs): SocialSetupArgs | undefined {
+  const raw = args as Record<string, unknown>;
+  if (raw.social === undefined || raw.social === null) {
+    return undefined;
+  }
+  if (typeof raw.social !== "object" || Array.isArray(raw.social)) {
+    throw new Error("social must be an object");
+  }
+  const social = raw.social as Record<string, unknown>;
+  if (social.enabled === false) {
+    return undefined;
+  }
+  return {
+    origin: readRequiredString(social.origin, "social.origin"),
+    displayName: readOptionalString(social.displayName),
+    description: readOptionalString(social.description),
+    agentDisplayName: readOptionalString(social.agentDisplayName),
+    agentSummary: readOptionalString(social.agentSummary),
+  };
+}
+
 export async function handleSysSetup(
   args: SysSetupArgs,
   ctx: KernelContext,
@@ -151,6 +174,7 @@ export async function handleSysSetup(
   const ai = parseAiConfig(args);
   const timezone = parseTimezone(args);
   const node = parseNodeConfig(args);
+  const socialSetup = parseSocialSetup(args);
   const rootPassword = readOptionalString((args as Record<string, unknown>).rootPassword);
   if (rootPassword && rootPassword.length < 8) {
     throw new Error("rootPassword must be at least 8 characters");
@@ -189,6 +213,7 @@ export async function handleSysSetup(
     capabilities: ["*"],
   };
   let bootstrap: SysSetupResult["bootstrap"];
+  let social: SysSetupResult["social"];
   let nodeToken: SysSetupResult["nodeToken"];
 
   try {
@@ -247,6 +272,17 @@ export async function handleSysSetup(
         config.set("config/ai/api_key", ai.apiKey);
       }
     });
+
+    if (socialSetup) {
+      social = await timeSetupStep(
+        timings,
+        "setup-social",
+        () => handleSocialSetup(socialSetup, {
+          ...ctx,
+          identity: bootstrapIdentity,
+        } as KernelContext),
+      );
+    }
 
     if (node) {
       nodeToken = await timeSetupStep(timings, "issue-node-token", async () => {
@@ -320,6 +356,7 @@ export async function handleSysSetup(
       user: processIdentity,
       rootLocked,
       bootstrap,
+      social,
       nodeToken,
     };
   } catch (error) {

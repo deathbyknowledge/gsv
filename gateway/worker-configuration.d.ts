@@ -19,6 +19,7 @@ declare namespace Cloudflare {
 		CHANNEL_DISCORD: Service /* entrypoint DiscordChannel from gsv-channel-discord */;
 		RIPGIT: Fetcher /* ripgit */;
 		ASSEMBLER: Fetcher /* gsv-assembler */;
+		PDS: Fetcher /* gsv-pds */;
 	}
 }
 interface Env extends Cloudflare.Env {}

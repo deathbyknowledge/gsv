@@ -102,6 +102,17 @@ import {
   handleNotificationList,
   handleNotificationMarkRead,
 } from "./notifications";
+import {
+  handleSocialAgentCardGet,
+  handleSocialAgentCardUpdate,
+  handleSocialSetup,
+  handleSocialIdentityGet,
+  handleSocialIdentitySet,
+  handleSocialInstanceGet,
+  handleSocialInstanceUpdate,
+  handleSocialProfileGet,
+  handleSocialProfileUpdate,
+} from "./social";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import {
   handleSchedulerAdd,
@@ -473,6 +484,34 @@ async function dispatchNative(
         break;
       case "notification.dismiss":
         data = handleNotificationDismiss(frame.args, ctx);
+        break;
+
+      case "social.setup":
+        data = await handleSocialSetup(frame.args, ctx);
+        break;
+      case "social.identity.get":
+        data = handleSocialIdentityGet(frame.args, ctx);
+        break;
+      case "social.identity.set":
+        data = handleSocialIdentitySet(frame.args, ctx);
+        break;
+      case "social.profile.get":
+        data = handleSocialProfileGet(frame.args, ctx);
+        break;
+      case "social.profile.update":
+        data = await handleSocialProfileUpdate(frame.args, ctx);
+        break;
+      case "social.instance.get":
+        data = handleSocialInstanceGet(frame.args, ctx);
+        break;
+      case "social.instance.update":
+        data = await handleSocialInstanceUpdate(frame.args, ctx);
+        break;
+      case "social.agent.card.get":
+        data = handleSocialAgentCardGet(frame.args, ctx);
+        break;
+      case "social.agent.card.update":
+        data = await handleSocialAgentCardUpdate(frame.args, ctx);
         break;
 
       case "signal.watch":

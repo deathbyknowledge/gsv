@@ -67,6 +67,7 @@ export default defineConfig({
             { text: "Architecture Overview", link: "/explanation/architecture" },
             { text: "The Agent Loop", link: "/explanation/agent-loop" },
             { text: "Process IPC and Scheduler", link: "/explanation/process-ipc-and-scheduler" },
+            { text: "Social PDS Integration", link: "/explanation/social-pds-integration" },
             { text: "Context Compaction & Memory", link: "/explanation/context-compaction" },
             { text: "The Channel Model", link: "/explanation/channel-model" },
             { text: "Security Model", link: "/explanation/security-model" },

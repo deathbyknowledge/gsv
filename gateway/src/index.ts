@@ -19,6 +19,7 @@ import {
   loadDefaultCliChannel,
 } from "./downloads/cli";
 import { buildOAuthClientMetadata } from "./oauth-http";
+import { proxyPdsRequest, proxyPdsXrpcRequest } from "./pds/client";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -49,6 +50,17 @@ export default {
           "access-control-allow-origin": "*",
         },
       });
+    }
+
+    if (
+      request.method === "GET" &&
+      (url.pathname === "/.well-known/did.json" || url.pathname === "/.well-known/atproto-did")
+    ) {
+      return proxyPdsRequest(request, env);
+    }
+
+    if (url.pathname.startsWith("/xrpc/")) {
+      return proxyPdsXrpcRequest(request, env);
     }
 
     if (url.pathname === "/oauth/callback" && request.method === "GET") {

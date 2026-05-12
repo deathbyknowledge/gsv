@@ -33,6 +33,7 @@ import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
 import { NotificationStore } from "./notifications";
+import { SocialStore } from "./social";
 import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
 import {
   assertCanManageSchedule,
@@ -200,6 +201,7 @@ export class Kernel extends Host<Env> {
   private readonly signalWatches: SignalWatchStore;
   private readonly ipcCalls: IpcCallStore;
   private readonly notifications: NotificationStore;
+  private readonly social: SocialStore;
   private readonly schedules: ScheduleStore;
   private readonly appSessions: AppSessionStore;
   private readonly packages: PackageStore;
@@ -253,6 +255,9 @@ export class Kernel extends Host<Env> {
 
     this.notifications = new NotificationStore(sql);
     this.notifications.init();
+
+    this.social = new SocialStore(sql);
+    this.social.init();
 
     this.schedules = new ScheduleStore(sql);
     this.schedules.init();
@@ -1068,6 +1073,7 @@ export class Kernel extends Host<Env> {
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
       schedules: this.schedules,
+      social: this.social,
       connection: null as unknown as Connection,
       identity: connIdentity,
       processId,
@@ -1144,6 +1150,7 @@ export class Kernel extends Host<Env> {
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
       schedules: this.schedules,
+      social: this.social,
       connection,
       identity: state.identity as ConnectionIdentity,
       processId: undefined,
@@ -1182,6 +1189,7 @@ export class Kernel extends Host<Env> {
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
       schedules: this.schedules,
+      social: this.social,
       connection: null as unknown as Connection,
       identity,
       processId: undefined,
@@ -2004,6 +2012,7 @@ export class Kernel extends Host<Env> {
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
       schedules: this.schedules,
+      social: this.social,
       connection: null as unknown as Connection,
       identity,
       processId: record.runAs.kind === "process" ? record.runAs.pid : undefined,

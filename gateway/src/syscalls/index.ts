@@ -215,6 +215,7 @@ import type {
   NotificationMarkReadArgs,
   NotificationMarkReadResult,
 } from "@gsv/protocol/syscalls/notification";
+import type { SocialSyscalls } from "@gsv/protocol/syscalls/social";
 export type ToolDefinition = {
   name: string;
   description: string;
@@ -345,7 +346,7 @@ export type SyscallDomains = {
   // Durable signal watches
   "signal.watch": { args: SignalWatchArgs; result: SignalWatchResult };
   "signal.unwatch": { args: SignalUnwatchArgs; result: SignalUnwatchResult };
-};
+} & SocialSyscalls;
 
 export type SyscallName = keyof SyscallDomains;
 export type ArgsOf<S extends SyscallName> = SyscallDomains[S]["args"];
@@ -362,6 +363,7 @@ export type SyscallDomain =
   | "ai"
   | "sched"
   | "notification"
+  | "social"
   | "adapter"
   | "signal";
 
