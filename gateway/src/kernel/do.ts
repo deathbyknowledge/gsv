@@ -14,6 +14,10 @@ import type {
   ProcessIdentity,
   SysSetupResult,
 } from "@gsv/protocol/syscalls/system";
+import type {
+  SocialInboundArgs,
+  SocialInboundResult,
+} from "@gsv/protocol/syscalls/social";
 import type { ProcHilRequest } from "../syscalls/proc";
 import type { PkgPublicListResult } from "@gsv/protocol/syscalls/packages";
 import type {
@@ -473,6 +477,27 @@ export class Kernel extends Host<Env> {
     }
 
     return this.handleServiceReq(frame);
+  }
+
+  async socialInbound(args: SocialInboundArgs): Promise<SocialInboundResult> {
+    await this.ready;
+    const frame: RequestFrame<"social.inbound"> = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "social.inbound",
+      args,
+    };
+    const identity = this.buildServiceBindingIdentity(frame);
+    const ctx = this.buildServiceContext(identity);
+    const origin: RouteOrigin = { type: "process", id: "__social_inbound__" };
+    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+    if (!result.handled) {
+      return { ok: false, status: "rejected", error: "social.inbound was not handled" };
+    }
+    if (!result.response.ok) {
+      return { ok: false, status: "rejected", error: result.response.error.message };
+    }
+    return result.response.data as SocialInboundResult;
   }
 
   async appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame> {

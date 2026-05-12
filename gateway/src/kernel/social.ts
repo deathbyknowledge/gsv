@@ -19,6 +19,8 @@ import type {
   SocialIdentityGetResult,
   SocialIdentitySetArgs,
   SocialIdentitySetResult,
+  SocialInboundArgs,
+  SocialInboundResult,
   SocialInstanceGetArgs,
   SocialInstanceGetResult,
   SocialInstanceUpdateArgs,
@@ -30,6 +32,8 @@ import type {
   SocialProfileUpdateResult,
   SocialSetupArgs,
   SocialSetupResult,
+  SocialSignedRequestEnvelope,
+  SocialRemoteOperation,
   SpaceGsvAgentCardRecord,
   SpaceGsvCollection,
   SpaceGsvInstanceRecord,
@@ -50,6 +54,9 @@ const SELF_RKEY = "self";
 const DID_PATTERN = /^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$/;
 const MAIN_SOCIAL_UID = 1000;
 const FRIEND_SELF_RKEY = "self";
+const P256_MULTICODEC_PREFIX = [0x80, 0x24] as const;
+const P256_FIELD_PRIME = BigInt("0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
+const P256_B = BigInt("0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
 
 type IdentityRow = {
   uid: number;
@@ -101,6 +108,16 @@ type FriendGrantRow = {
   expires_at: string | null;
   created_at: number;
   updated_at: number;
+};
+
+type InboundReplayRow = {
+  uid: number;
+  envelope_id: string;
+  nonce: string;
+  from_handle: string;
+  method: string;
+  received_at: number;
+  expires_at: number;
 };
 
 export type SocialIdentityRecord = {
@@ -218,6 +235,21 @@ export class SocialStore {
         PRIMARY KEY (uid, friend_handle, operation)
       )
     `);
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS social_inbound_replays (
+        uid INTEGER NOT NULL,
+        envelope_id TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        from_handle TEXT NOT NULL,
+        method TEXT NOT NULL,
+        received_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (uid, envelope_id)
+      )
+    `);
+    this.sql.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_social_inbound_replays_nonce ON social_inbound_replays (uid, nonce)",
+    );
   }
 
   getIdentity(uid: number): SocialIdentityRecord | null {
@@ -375,6 +407,15 @@ export class SocialStore {
     return rows[0] ? toFriendRecord(rows[0]) : null;
   }
 
+  getFriendByDid(uid: number, did: SocialDid): SocialFriendRecord | null {
+    const rows = this.sql.exec<FriendRow>(
+      "SELECT * FROM social_friends WHERE uid = ? AND did = ? LIMIT 1",
+      uid,
+      did,
+    ).toArray();
+    return rows[0] ? toFriendRecord(rows[0]) : null;
+  }
+
   upsertFriend(input: {
     uid: number;
     handle: string;
@@ -475,6 +516,47 @@ export class SocialStore {
   toFriendSummary(friend: SocialFriendRecord): SocialFriendSummary {
     const grants = this.getFriendGrants(friend.uid, friend.handle);
     return toFriendSummary(friend, grants);
+  }
+
+  pruneExpiredInboundReplays(uid: number, now: number): void {
+    this.sql.exec(
+      "DELETE FROM social_inbound_replays WHERE uid = ? AND expires_at <= ?",
+      uid,
+      now,
+    );
+  }
+
+  hasInboundReplay(uid: number, envelopeId: string, nonce: string): boolean {
+    const rows = this.sql.exec<InboundReplayRow>(
+      "SELECT * FROM social_inbound_replays WHERE uid = ? AND (envelope_id = ? OR nonce = ?) LIMIT 1",
+      uid,
+      envelopeId,
+      nonce,
+    ).toArray();
+    return rows.length > 0;
+  }
+
+  recordInboundReplay(input: {
+    uid: number;
+    envelopeId: string;
+    nonce: string;
+    fromHandle: string;
+    method: SocialRemoteOperation;
+    receivedAt: number;
+    expiresAt: number;
+  }): void {
+    this.sql.exec(
+      `INSERT INTO social_inbound_replays
+        (uid, envelope_id, nonce, from_handle, method, received_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      input.uid,
+      input.envelopeId,
+      input.nonce,
+      input.fromHandle,
+      input.method,
+      input.receivedAt,
+      input.expiresAt,
+    );
   }
 
   toLocalIdentity(identity: SocialIdentityRecord): SocialLocalIdentity {
@@ -773,6 +855,95 @@ export function handleSocialFriendGrantsSet(
   return {
     friend: store.toFriendSummary(friend),
   };
+}
+
+export async function handleSocialInbound(
+  args: SocialInboundArgs,
+  ctx: KernelContext,
+): Promise<SocialInboundResult> {
+  if (ctx.identity?.role !== "service") {
+    return rejectInbound("social.inbound is service-only");
+  }
+
+  const store = requireSocialStore(ctx);
+  const localIdentity = store.getIdentity(MAIN_SOCIAL_UID);
+  if (!localIdentity) {
+    return rejectInbound("Local social identity is not linked");
+  }
+
+  let envelope: SocialSignedRequestEnvelope;
+  try {
+    envelope = normalizeSignedEnvelope(args.envelope);
+  } catch (error) {
+    return rejectInbound(error instanceof Error ? error.message : String(error));
+  }
+  const now = args.receivedAt ? Date.parse(args.receivedAt) : Date.now();
+  if (!Number.isFinite(now)) {
+    return rejectInbound("receivedAt must be an ISO date string");
+  }
+
+  const expiresAt = Date.parse(envelope.expiresAt);
+  if (expiresAt <= now) {
+    return rejectInbound("Envelope expired");
+  }
+  if (envelope.toDid !== localIdentity.did) {
+    return rejectInbound("Envelope recipient does not match local identity");
+  }
+
+  const friend = store.getFriendByDid(MAIN_SOCIAL_UID, envelope.fromDid);
+  if (!friend) {
+    return rejectInbound("Unknown sender");
+  }
+
+  let publicIdentity: { did: SocialDid; instance: SpaceGsvInstanceRecord };
+  try {
+    publicIdentity = await resolveFriendServiceIdentity(friend.handle);
+  } catch (error) {
+    return rejectInbound(error instanceof Error ? error.message : String(error));
+  }
+  if (publicIdentity.did !== envelope.fromDid) {
+    return rejectInbound("Sender handle no longer resolves to envelope DID");
+  }
+  if (publicIdentity.instance.serviceKey.id !== envelope.keyId) {
+    return rejectInbound("Envelope key does not match sender service key");
+  }
+  if (!publicIdentity.instance.acceptedSocialMethods.includes(envelope.method)) {
+    return rejectInbound(`Sender does not accept ${envelope.method}`);
+  }
+
+  const grant = store.getFriendGrants(MAIN_SOCIAL_UID, friend.handle)
+    .find((candidate) => candidate.operation === envelope.method);
+  if (!grant) {
+    return rejectInbound(`Missing grant for ${envelope.method}`);
+  }
+  if (grant.expiresAt && Date.parse(grant.expiresAt) <= now) {
+    return rejectInbound(`Grant expired for ${envelope.method}`);
+  }
+
+  store.pruneExpiredInboundReplays(MAIN_SOCIAL_UID, now);
+  if (store.hasInboundReplay(MAIN_SOCIAL_UID, envelope.id, envelope.nonce)) {
+    return rejectInbound("Envelope replayed");
+  }
+
+  const verified = await verifySocialEnvelopeSignature(
+    envelope,
+    publicIdentity.instance.serviceKey.publicKeyMultibase,
+  );
+  if (!verified) {
+    return rejectInbound("Invalid envelope signature");
+  }
+
+  store.recordInboundReplay({
+    uid: MAIN_SOCIAL_UID,
+    envelopeId: envelope.id,
+    nonce: envelope.nonce,
+    fromHandle: friend.handle,
+    method: envelope.method,
+    receivedAt: now,
+    expiresAt,
+  });
+
+  return { ok: true, status: "accepted" };
 }
 
 async function publishSelfRecord<TRecord extends SpaceGsvRecord>(
@@ -1089,6 +1260,61 @@ function requireUrlString(value: unknown, field: string): void {
   }
 }
 
+function normalizeSignedEnvelope(value: unknown): SocialSignedRequestEnvelope {
+  const envelope = requireObject(value, "envelope");
+  const method = requireString(envelope.method, "envelope.method");
+  if (!isSocialRemoteOperation(method)) {
+    throw new Error(`unsupported envelope method: ${method}`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(envelope, "body")) {
+    throw new Error("envelope.body is required");
+  }
+  assertCanonicalJsonValue(envelope.body, "envelope.body");
+  return {
+    id: requireString(envelope.id, "envelope.id"),
+    method,
+    fromDid: normalizeDid(envelope.fromDid),
+    toDid: normalizeDid(envelope.toDid),
+    createdAt: requireIsoStringValue(envelope.createdAt, "envelope.createdAt"),
+    expiresAt: requireIsoStringValue(envelope.expiresAt, "envelope.expiresAt"),
+    nonce: requireString(envelope.nonce, "envelope.nonce"),
+    keyId: requireString(envelope.keyId, "envelope.keyId"),
+    body: envelope.body,
+    signature: requireString(envelope.signature, "envelope.signature"),
+  };
+}
+
+function requireIsoStringValue(value: unknown, field: string): string {
+  const text = requireString(value, field);
+  if (Number.isNaN(Date.parse(text))) {
+    throw new Error(`${field} must be an ISO date string`);
+  }
+  return text;
+}
+
+function rejectInbound(error: string): SocialInboundResult {
+  return { ok: false, status: "rejected", error };
+}
+
+async function resolveFriendServiceIdentity(handle: string): Promise<{
+  did: SocialDid;
+  instance: SpaceGsvInstanceRecord;
+}> {
+  const did = normalizeDid((await fetchRequiredText(
+    `https://${handle}/.well-known/atproto-did`,
+    `${handle} handle DID`,
+  )).trim());
+  const instance = await fetchRequiredRecord<SpaceGsvInstanceRecord>(
+    handle,
+    did,
+    SPACE_GSV_INSTANCE,
+  );
+  return {
+    did,
+    instance: validateInstanceRecord(instance),
+  };
+}
+
 async function resolveFriendPublicIdentity(handle: string): Promise<{
   did: SocialDid;
   profile?: SpaceGsvProfileRecord;
@@ -1261,7 +1487,7 @@ async function ensureServiceSettings(store: SocialStore, uid: number): Promise<S
   });
 }
 
-async function generateP256ServiceKey(): Promise<{
+export async function generateP256ServiceKey(): Promise<{
   privateJwk: JsonWebKey;
   publicKeyMultibase: string;
 }> {
@@ -1278,6 +1504,108 @@ async function generateP256ServiceKey(): Promise<{
   };
 }
 
+export type UnsignedSocialEnvelope = Omit<SocialSignedRequestEnvelope, "signature">;
+
+export async function signSocialEnvelope(
+  envelope: UnsignedSocialEnvelope,
+  privateJwk: JsonWebKey,
+): Promise<SocialSignedRequestEnvelope> {
+  assertCanonicalJsonValue(envelope.body, "envelope.body");
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    privateJwk,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"],
+  );
+  const signature = new Uint8Array(await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    socialEnvelopeSigningBytes(envelope),
+  ));
+  return {
+    ...envelope,
+    signature: base64UrlEncode(signature),
+  };
+}
+
+async function verifySocialEnvelopeSignature(
+  envelope: SocialSignedRequestEnvelope,
+  publicKeyMultibase: string,
+): Promise<boolean> {
+  let signature: Uint8Array;
+  let publicJwk: JsonWebKey;
+  try {
+    signature = base64UrlDecode(envelope.signature);
+    publicJwk = p256PublicMultibaseToJwk(publicKeyMultibase);
+  } catch {
+    return false;
+  }
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    publicJwk,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["verify"],
+  );
+  return await crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    signature,
+    socialEnvelopeSigningBytes(envelope),
+  );
+}
+
+function socialEnvelopeSigningBytes(envelope: UnsignedSocialEnvelope | SocialSignedRequestEnvelope): Uint8Array {
+  return new TextEncoder().encode(canonicalJson({
+    id: envelope.id,
+    method: envelope.method,
+    fromDid: envelope.fromDid,
+    toDid: envelope.toDid,
+    createdAt: envelope.createdAt,
+    expiresAt: envelope.expiresAt,
+    nonce: envelope.nonce,
+    keyId: envelope.keyId,
+    body: envelope.body,
+  }));
+}
+
+function canonicalJson(value: unknown): string {
+  assertCanonicalJsonValue(value, "value");
+  if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object).sort().map((key) =>
+    `${JSON.stringify(key)}:${canonicalJson(object[key])}`
+  ).join(",")}}`;
+}
+
+function assertCanonicalJsonValue(value: unknown, field: string): void {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertCanonicalJsonValue(item, `${field}[${index}]`));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) {
+      assertCanonicalJsonValue(item, `${field}.${key}`);
+    }
+    return;
+  }
+  throw new Error(`${field} must be JSON-serializable`);
+}
+
 function p256PublicJwkToMultibase(jwk: JsonWebKey): string {
   if (jwk.kty !== "EC" || jwk.crv !== "P-256" || !jwk.x || !jwk.y) {
     throw new Error("generated service key is not a P-256 public key");
@@ -1290,6 +1618,39 @@ function p256PublicJwkToMultibase(jwk: JsonWebKey): string {
   compressed[2] = y[31] % 2 === 0 ? 0x02 : 0x03;
   compressed.set(x, 3);
   return `z${base58Encode(compressed)}`;
+}
+
+function p256PublicMultibaseToJwk(value: string): JsonWebKey {
+  if (!value.startsWith("z")) {
+    throw new Error("service key must be base58btc multibase");
+  }
+  const bytes = base58Decode(value.slice(1));
+  if (
+    bytes.length !== 35 ||
+    bytes[0] !== P256_MULTICODEC_PREFIX[0] ||
+    bytes[1] !== P256_MULTICODEC_PREFIX[1] ||
+    (bytes[2] !== 0x02 && bytes[2] !== 0x03)
+  ) {
+    throw new Error("service key is not a compressed P-256 public key");
+  }
+  const xBytes = bytes.slice(3);
+  const x = bytesToBigInt(xBytes);
+  const ySquared = mod(x ** 3n - 3n * x + P256_B, P256_FIELD_PRIME);
+  let y = modPow(ySquared, (P256_FIELD_PRIME + 1n) / 4n, P256_FIELD_PRIME);
+  if (mod(y * y - ySquared, P256_FIELD_PRIME) !== 0n) {
+    throw new Error("service key is not on the P-256 curve");
+  }
+  const wantsOddY = bytes[2] === 0x03;
+  if ((y & 1n) !== (wantsOddY ? 1n : 0n)) {
+    y = P256_FIELD_PRIME - y;
+  }
+  return {
+    kty: "EC",
+    crv: "P-256",
+    x: base64UrlEncode(xBytes),
+    y: base64UrlEncode(bigIntToBytes(y, 32)),
+    ext: true,
+  };
 }
 
 function leftPadBytes(bytes: Uint8Array, length: number): Uint8Array {
@@ -1340,6 +1701,79 @@ function base58Encode(bytes: Uint8Array): string {
     output += alphabet[digits[i]];
   }
   return output;
+}
+
+function base58Decode(value: string): Uint8Array {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const indexes = new Map([...alphabet].map((char, index) => [char, index]));
+  const bytes = [0];
+  for (const char of value) {
+    const index = indexes.get(char);
+    if (index === undefined) {
+      throw new Error("invalid base58 character");
+    }
+    let carry = index;
+    for (let i = 0; i < bytes.length; i += 1) {
+      const next = bytes[i] * 58 + carry;
+      bytes[i] = next & 0xff;
+      carry = next >> 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+
+  let leadingZeros = 0;
+  for (const char of value) {
+    if (char !== alphabet[0]) break;
+    leadingZeros += 1;
+  }
+  const decoded = new Uint8Array(leadingZeros + bytes.length);
+  for (let i = 0; i < bytes.length; i += 1) {
+    decoded[decoded.length - 1 - i] = bytes[i];
+  }
+  return decoded;
+}
+
+function bytesToBigInt(bytes: Uint8Array): bigint {
+  let output = 0n;
+  for (const byte of bytes) {
+    output = (output << 8n) + BigInt(byte);
+  }
+  return output;
+}
+
+function bigIntToBytes(value: bigint, length: number): Uint8Array {
+  const output = new Uint8Array(length);
+  let remaining = value;
+  for (let index = length - 1; index >= 0; index -= 1) {
+    output[index] = Number(remaining & 0xffn);
+    remaining >>= 8n;
+  }
+  if (remaining !== 0n) {
+    throw new Error("integer is too large");
+  }
+  return output;
+}
+
+function mod(value: bigint, modulus: bigint): bigint {
+  const result = value % modulus;
+  return result >= 0n ? result : result + modulus;
+}
+
+function modPow(base: bigint, exponent: bigint, modulus: bigint): bigint {
+  let result = 1n;
+  let value = mod(base, modulus);
+  let power = exponent;
+  while (power > 0n) {
+    if (power & 1n) {
+      result = mod(result * value, modulus);
+    }
+    value = mod(value * value, modulus);
+    power >>= 1n;
+  }
+  return result;
 }
 
 function randomSetupPassword(): string {

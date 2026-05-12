@@ -118,7 +118,8 @@ npm run smoke:social:local
 
 This verifies identity, DID documents, public `space.gsv.profile`,
 `space.gsv.instance`, and `space.gsv.agent.card` records, and handle-based
-friend/grant setup in both directions. Signed social messages are the next
+friend/grant setup in both directions. Signed inbound service-to-service
+authentication is implemented; social thread/message persistence is the next
 implementation layer.
 
 ## TODOs
@@ -168,15 +169,15 @@ implementation layer.
 - [x] Define signed social request envelopes with id, method, internal sender
       DID, internal recipient DID, created time, expiry, nonce, body, key id,
       and signature.
-- [ ] Resolve the sender handle and verify its DID and advertised GSV service
+- [x] Resolve the sender handle and verify its DID and advertised GSV service
       key.
-- [ ] Reject expired requests.
-- [ ] Reject replayed ids or nonces.
-- [ ] Reject requests whose internal recipient DID does not match the local
+- [x] Reject expired requests.
+- [x] Reject replayed ids or nonces.
+- [x] Reject requests whose internal recipient DID does not match the local
       user.
-- [ ] Route verified inbound requests through a service-only
+- [x] Route verified inbound requests through a service-only
       `social.inbound` syscall.
-- [ ] Add negative tests for bad signature, wrong DID, wrong key, replay,
+- [x] Add negative tests for bad signature, wrong DID, wrong key, replay,
       expiry, missing grant, and malformed body.
 
 ### 5. Add Social Threads And Messages

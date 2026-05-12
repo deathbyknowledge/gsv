@@ -7,9 +7,12 @@ import {
   handleSocialFriendRemove,
   handleSocialIdentityGet,
   handleSocialIdentitySet,
+  handleSocialInbound,
   handleSocialSetup,
   handleSocialProfileGet,
   handleSocialProfileUpdate,
+  generateP256ServiceKey,
+  signSocialEnvelope,
   SocialStore,
 } from "./social";
 import type { KernelContext } from "./context";
@@ -17,6 +20,8 @@ import {
   SPACE_GSV_AGENT_CARD,
   SPACE_GSV_INSTANCE,
   SPACE_GSV_PROFILE,
+  type SocialRemoteOperation,
+  type SocialSignedRequestEnvelope,
   type SpaceGsvAgentCardRecord,
   type SpaceGsvInstanceRecord,
   type SpaceGsvProfileRecord,
@@ -156,6 +161,10 @@ function createMockSql() {
       return cursor<T>([]);
     }
 
+    if (q.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS idx_social_inbound_replays_nonce")) {
+      return cursor<T>([]);
+    }
+
     if (q.startsWith("SELECT * FROM social_friends WHERE uid = ? ORDER BY handle ASC")) {
       const [uid] = bindings as [number];
       return cursor(
@@ -169,6 +178,13 @@ function createMockSql() {
       const [uid, handle] = bindings as [number, string];
       return cursor(getTable("social_friends").filter((row) =>
         row.uid === uid && row.handle === handle
+      ) as T[]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_friends WHERE uid = ? AND did = ?")) {
+      const [uid, did] = bindings as [number, string];
+      return cursor(getTable("social_friends").filter((row) =>
+        row.uid === uid && row.did === did
       ) as T[]);
     }
 
@@ -271,6 +287,40 @@ function createMockSql() {
       return cursor<T>([]);
     }
 
+    if (q.startsWith("DELETE FROM social_inbound_replays WHERE uid = ? AND expires_at <= ?")) {
+      const [uid, now] = bindings as [number, number];
+      const table = getTable("social_inbound_replays");
+      tables.set("social_inbound_replays", table.filter((row) =>
+        !(row.uid === uid && Number(row.expires_at) <= now)
+      ));
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_inbound_replays WHERE uid = ?")) {
+      const [uid, envelope_id, nonce] = bindings as [number, string, string];
+      return cursor(getTable("social_inbound_replays").filter((row) =>
+        row.uid === uid && (row.envelope_id === envelope_id || row.nonce === nonce)
+      ) as T[]);
+    }
+
+    if (q.startsWith("INSERT INTO social_inbound_replays")) {
+      const [uid, envelope_id, nonce, from_handle, method, received_at, expires_at] = bindings as [
+        number,
+        string,
+        string,
+        string,
+        string,
+        number,
+        number,
+      ];
+      const table = getTable("social_inbound_replays");
+      if (table.some((row) => row.uid === uid && (row.envelope_id === envelope_id || row.nonce === nonce))) {
+        throw new Error("constraint failed");
+      }
+      table.push({ uid, envelope_id, nonce, from_handle, method, received_at, expires_at });
+      return cursor<T>([]);
+    }
+
     throw new Error(`Unhandled SQL: ${q}`);
   }
 
@@ -279,7 +329,7 @@ function createMockSql() {
 
 function createCtx(
   pds?: Partial<PdsServiceBinding>,
-  options: { uid?: number; username?: string } = {},
+  options: { uid?: number; username?: string; role?: "user" | "service" } = {},
 ): KernelContext {
   const sql = createMockSql();
   const social = new SocialStore(sql as unknown as SqlStorage);
@@ -292,7 +342,7 @@ function createCtx(
     },
     social,
     identity: {
-      role: "user",
+      role: options.role ?? "user",
       process: {
         uid,
         gid: 100,
@@ -305,6 +355,102 @@ function createCtx(
       capabilities: ["social.*"],
     },
   } as unknown as KernelContext;
+}
+
+function setContextRole(ctx: KernelContext, role: "user" | "service"): void {
+  (ctx.identity as { role: "user" | "service" }).role = role;
+}
+
+function stubAlicePublicIdentity(publicKeyMultibase: string): void {
+  vi.stubGlobal("fetch", vi.fn(async (url: string | URL) => {
+    const href = String(url);
+    if (href === "https://alice.example/.well-known/atproto-did") {
+      return new Response("did:web:alice.example");
+    }
+    const parsed = new URL(href);
+    const collection = parsed.searchParams.get("collection");
+    if (parsed.origin === "https://alice.example" && parsed.pathname === "/xrpc/com.atproto.repo.getRecord") {
+      if (collection === SPACE_GSV_PROFILE) {
+        return Response.json({
+          uri: "at://did:web:alice.example/space.gsv.profile/self",
+          cid: "bafy-profile",
+          value: {
+            $type: SPACE_GSV_PROFILE,
+            createdAt: "2026-05-12T12:00:00Z",
+            displayName: "Alice",
+          },
+        });
+      }
+      if (collection === SPACE_GSV_INSTANCE) {
+        return Response.json({
+          uri: "at://did:web:alice.example/space.gsv.instance/self",
+          cid: "bafy-instance",
+          value: {
+            $type: SPACE_GSV_INSTANCE,
+            createdAt: "2026-05-12T12:00:00Z",
+            endpoint: "https://alice.example",
+            protocolVersion: 1,
+            serviceKey: {
+              id: "did:web:alice.example#gsv-social-key",
+              type: "Multikey",
+              publicKeyMultibase,
+            },
+            acceptedSocialMethods: ["social.message.send", "social.request.create"],
+          },
+        });
+      }
+      if (collection === SPACE_GSV_AGENT_CARD) {
+        return Response.json({
+          uri: "at://did:web:alice.example/space.gsv.agent.card/self",
+          cid: "bafy-agent-card",
+          value: {
+            $type: SPACE_GSV_AGENT_CARD,
+            createdAt: "2026-05-12T12:00:00Z",
+            displayName: "Alice's GSV",
+            acceptsMessages: true,
+            acceptsRequests: true,
+          },
+        });
+      }
+    }
+    return Response.json({ error: "not found" }, { status: 404 });
+  }));
+}
+
+async function aliceEnvelope(
+  privateJwk: JsonWebKey,
+  overrides: Partial<Omit<SocialSignedRequestEnvelope, "signature">> = {},
+): Promise<SocialSignedRequestEnvelope> {
+  return await signSocialEnvelope({
+    id: "env-1",
+    method: "social.message.send",
+    fromDid: "did:web:alice.example",
+    toDid: "did:web:gsv.example",
+    createdAt: "2026-05-12T12:00:00Z",
+    expiresAt: "2026-05-12T12:10:00Z",
+    nonce: "nonce-1",
+    keyId: "did:web:alice.example#gsv-social-key",
+    body: { text: "hello" },
+    ...overrides,
+  }, privateJwk);
+}
+
+async function setupSignedInboundFriend(grants: Array<{ operation: SocialRemoteOperation; expiresAt?: string }> = [
+  { operation: "social.message.send" },
+]) {
+  const ctx = createCtx();
+  handleSocialIdentitySet({
+    handle: "gsv.example",
+    pdsEndpoint: "https://gsv.example",
+  }, ctx);
+  const aliceKeys = await generateP256ServiceKey();
+  stubAlicePublicIdentity(aliceKeys.publicKeyMultibase);
+  await handleSocialFriendAdd({
+    handle: "alice.example",
+    grants,
+  }, ctx);
+  setContextRole(ctx, "service");
+  return { ctx, aliceKeys };
 }
 
 describe("social identity and records", () => {
@@ -641,5 +787,152 @@ describe("social identity and records", () => {
     await expect(handleSocialFriendAdd({
       handle: "gsv.example",
     }, ctx)).rejects.toThrow("Cannot add the local GSV identity as a friend");
+  });
+
+  it("accepts signed inbound envelopes from granted friends and rejects replays", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+    const envelope = await aliceEnvelope(aliceKeys.privateJwk);
+
+    await expect(handleSocialInbound({
+      envelope,
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toEqual({ ok: true, status: "accepted" });
+
+    await expect(handleSocialInbound({
+      envelope,
+      receivedAt: "2026-05-12T12:02:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Envelope replayed",
+    });
+  });
+
+  it("rejects inbound envelopes outside the service-only path", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+    setContextRole(ctx, "user");
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "social.inbound is service-only",
+    });
+  });
+
+  it("rejects malformed inbound envelopes", async () => {
+    const { ctx } = await setupSignedInboundFriend();
+    await expect(handleSocialInbound({
+      envelope: { id: "env-malformed" } as unknown as SocialSignedRequestEnvelope,
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "envelope.method must be a non-empty string",
+    });
+  });
+
+  it("rejects inbound envelopes with bad signatures", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+    const envelope = await aliceEnvelope(aliceKeys.privateJwk);
+
+    await expect(handleSocialInbound({
+      envelope: {
+        ...envelope,
+        body: { text: "tampered" },
+      },
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Invalid envelope signature",
+    });
+  });
+
+  it("rejects inbound envelopes for the wrong recipient or after expiry", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        toDid: "did:web:other.example",
+      }),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Envelope recipient does not match local identity",
+    });
+
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        id: "env-expired",
+        nonce: "nonce-expired",
+        expiresAt: "2026-05-12T11:59:00Z",
+      }),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Envelope expired",
+    });
+  });
+
+  it("rejects inbound envelopes from unknown or ungranted friends", async () => {
+    const ctx = createCtx();
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+    setContextRole(ctx, "service");
+    const aliceKeys = await generateP256ServiceKey();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase);
+
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Unknown sender",
+    });
+
+    const prepared = await setupSignedInboundFriend([{ operation: "social.request.create" }]);
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(prepared.aliceKeys.privateJwk),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, prepared.ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Missing grant for social.message.send",
+    });
+  });
+
+  it("rejects inbound envelopes with expired grants or mismatched keys", async () => {
+    const expired = await setupSignedInboundFriend([
+      { operation: "social.message.send", expiresAt: "2026-05-12T12:00:30Z" },
+    ]);
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(expired.aliceKeys.privateJwk),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, expired.ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Grant expired for social.message.send",
+    });
+
+    const wrongKey = await setupSignedInboundFriend();
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(wrongKey.aliceKeys.privateJwk, {
+        id: "env-wrong-key",
+        nonce: "nonce-wrong-key",
+        keyId: "did:web:alice.example#other-key",
+      }),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, wrongKey.ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Envelope key does not match sender service key",
+    });
   });
 });

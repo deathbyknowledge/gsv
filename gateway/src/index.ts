@@ -5,6 +5,7 @@ import type {
   GatewayAdapterInterface,
 } from "./adapter-interface";
 import type { Frame } from "./protocol/frames";
+import type { SocialInboundResult, SocialSignedRequestEnvelope } from "@gsv/protocol/syscalls/social";
 import { getAgentByName } from "agents";
 import type { AppFrameContext } from "./protocol/app-frame";
 import { buildAppRunnerName } from "./protocol/app-session";
@@ -61,6 +62,10 @@ export default {
 
     if (url.pathname.startsWith("/xrpc/")) {
       return proxyPdsXrpcRequest(request, env);
+    }
+
+    if (url.pathname === "/social/inbound" && request.method === "POST") {
+      return handleSocialInboundHttp(request, env);
     }
 
     if (url.pathname === "/oauth/callback" && request.method === "GET") {
@@ -168,6 +173,37 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+async function handleSocialInboundHttp(request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json(
+      { ok: false, status: "rejected", error: "Request body must be JSON" },
+      { status: 400, headers: { "cache-control": "no-store" } },
+    );
+  }
+  const envelope = body && typeof body === "object" && "envelope" in body
+    ? (body as { envelope: unknown }).envelope
+    : undefined;
+  if (!envelope) {
+    return Response.json(
+      { ok: false, status: "rejected", error: "Request body must include envelope" },
+      { status: 400, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  const kernel = await getAgentByName(env.KERNEL, "singleton");
+  const result = await kernel.socialInbound({
+    envelope: envelope as SocialSignedRequestEnvelope,
+    receivedAt: new Date().toISOString(),
+  }) as SocialInboundResult;
+  return Response.json(result, {
+    status: result.ok ? 202 : 403,
+    headers: { "cache-control": "no-store" },
+  });
+}
 
 const RUNTIME_THEME_CSS = [
   ":root {",

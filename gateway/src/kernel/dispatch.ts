@@ -109,6 +109,7 @@ import {
   handleSocialFriendGrantsSet,
   handleSocialFriendList,
   handleSocialFriendRemove,
+  handleSocialInbound,
   handleSocialSetup,
   handleSocialIdentityGet,
   handleSocialIdentitySet,
@@ -528,6 +529,9 @@ async function dispatchNative(
         break;
       case "social.friend.grants.set":
         data = handleSocialFriendGrantsSet(frame.args, ctx);
+        break;
+      case "social.inbound":
+        data = await handleSocialInbound(frame.args, ctx);
         break;
 
       case "signal.watch":
