@@ -268,6 +268,7 @@ export const BUILTIN_SOURCE_REF = "main";
 
 const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
   createBuiltinRipgitPackageSpec("chat"),
+  createBuiltinRipgitPackageSpec("gsv"),
   createBuiltinRipgitPackageSpec("shell", {
     bindings: [
       {

@@ -498,6 +498,23 @@ Avoid by default:
 
 The app should feel like a serious workstation tool.
 
+### Design consolidated system surfaces like native app shells
+
+The consolidated `GSV` builtin is the system console for operating and configuring a GSV installation.
+It should feel like system software inside the desktop shell, not like a responsive website.
+
+Use `docs/gsv-system-console.md` as the product and navigation contract.
+
+The core rules:
+- global navigation chooses the kind of work; local navigation chooses object state
+- desktop uses persistent grouped navigation
+- mobile uses a focused screen, top bar/back/action chrome, and grouped bottom navigation
+- `Overview` is an attention inbox, not a dashboard
+- prefer native-feeling lists, panes, inspectors, queues, and navigation stacks
+- avoid hero sections, large stat-card grids, decorative gradients, and marketing spacing
+- keep `Chat`, `Files`, `Shell`, and `Wiki` as standalone work surfaces
+- show permission state before actions, especially because `GSV` is a high-privilege first-party console
+
 ### Use the right control for the job
 
 Do not use one generic input type everywhere.
