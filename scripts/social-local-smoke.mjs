@@ -61,6 +61,7 @@ for (const peer of peers) {
         { operation: "social.message.send" },
         { operation: "social.message.reply" },
         { operation: "social.request.create" },
+        { operation: "social.request.respond" },
       ],
     });
     if (added?.friend?.handle !== other.handle) {
@@ -122,6 +123,69 @@ let socialMessage;
   }
 }
 
+let socialRequest;
+{
+  const ws = await connect(senderPeer);
+  try {
+    socialRequest = await rpc(ws, "social.request.create", {
+      toHandle: receiver.handle,
+      kind: "question",
+      title: `Local social request from ${sender.label}`,
+      body: {
+        kind: "smoke-request",
+        sender: sender.handle,
+        receiver: receiver.handle,
+      },
+    });
+    if (socialRequest?.request?.status !== "pending") {
+      throw new Error(`${sender.label} request status was ${socialRequest?.request?.status ?? "missing"}`);
+    }
+  } finally {
+    ws.close(1000, "smoke complete");
+  }
+}
+
+{
+  const ws = await connect(receiverPeer);
+  try {
+    const received = await rpc(ws, "social.thread.get", {
+      threadId: socialRequest.thread.threadId,
+    });
+    const request = received?.requests?.find((candidate) =>
+      candidate.requestId === socialRequest.request.requestId &&
+      candidate.fromHandle === sender.handle &&
+      candidate.toHandle === receiver.handle
+    );
+    if (!request) {
+      throw new Error(`${receiver.label} did not store inbound request ${socialRequest.request.requestId}`);
+    }
+    const response = await rpc(ws, "social.request.respond", {
+      requestId: socialRequest.request.requestId,
+      status: "completed",
+      text: `Local social request completed by ${receiver.label}`,
+    });
+    if (response?.request?.status !== "completed") {
+      throw new Error(`${receiver.label} request response status was ${response?.request?.status ?? "missing"}`);
+    }
+  } finally {
+    ws.close(1000, "smoke complete");
+  }
+}
+
+{
+  const ws = await connect(senderPeer);
+  try {
+    const request = await rpc(ws, "social.request.get", {
+      requestId: socialRequest.request.requestId,
+    });
+    if (request?.request?.status !== "completed") {
+      throw new Error(`${sender.label} did not receive completed request status`);
+    }
+  } finally {
+    ws.close(1000, "smoke complete");
+  }
+}
+
 console.log(JSON.stringify({
   ok: true,
   ensured: ensureIdentity,
@@ -130,6 +194,13 @@ console.log(JSON.stringify({
     to: receiver.handle,
     threadId: socialMessage.thread.threadId,
     deliveryStatus: socialMessage.message.deliveryStatus,
+  },
+  request: {
+    from: sender.handle,
+    to: receiver.handle,
+    threadId: socialRequest.thread.threadId,
+    requestId: socialRequest.request.requestId,
+    status: "completed",
   },
   peers: results.map((peer) => ({
     label: peer.label,

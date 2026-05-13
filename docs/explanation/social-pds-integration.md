@@ -120,9 +120,10 @@ npm run smoke:social:local
 
 This verifies identity, DID documents, public `space.gsv.profile`,
 `space.gsv.instance`, and `space.gsv.agent.card` records, handle-based
-friend/grant setup in both directions, and one signed async message from GSV A
-to GSV B. The receiver stores the inbound message in its Kernel social thread
-state and delivers it to the receiver's init process conversation.
+friend/grant setup in both directions, one signed async message from GSV A to
+GSV B, and one typed request from GSV A that GSV B completes. The receiver
+stores inbound social events in its Kernel social thread state and delivers
+them to the receiver's init process conversation.
 
 ## Subagent Handoff Context
 
@@ -180,7 +181,6 @@ Completed milestones:
 
 Next implementation contract:
 
-- Add typed social requests and inbox state.
 - Add friend public-record sync and package-like surfaces.
 - Expand the two-GSV smoke into request/reply and denied-sender cases.
 
@@ -272,18 +272,21 @@ Next implementation contract:
 
 ### 7. Add Social Requests And Inbox State
 
-- [ ] Add `social.request.create`, `social.request.list`,
+- [x] Add `social.request.create`, `social.request.list`,
       `social.request.get`, and `social.request.respond`.
-- [ ] Track request status:
+- [x] Track request status:
       `pending`, `agent-replied`, `needs-human`, `accepted`, `declined`,
       `completed`, `expired`.
-- [ ] Integrate `notification.create` for requests that need user attention.
-- [ ] Maintain a generated inbox index at `~/context.d/90-social-inbox.md` when
+- [x] Integrate notifications for inbound requests and request updates that
+      need user attention.
+- [x] Maintain a generated inbox index at `~/context.d/90-social-inbox.md` when
       there are active requests.
-- [ ] Keep the context file as an index only; Kernel tables remain the source of
+- [x] Keep the context file as an index only; Kernel tables remain the source of
       truth.
-- [ ] Add tests for agent-handled requests, needs-human requests, expiry, and
-      context index generation/removal.
+- [x] Add tests for outbound request creation, inbound request storage,
+      notifications, response delivery, and context index generation/removal.
+- [ ] Add focused tests for `needs-human` request notifications and explicit
+      expiry transitions.
 
 ### 8. Sync Friend Public Records
 
@@ -315,6 +318,8 @@ Next implementation contract:
 - [x] Add a friend grant from Alice to Hank.
 - [x] Send a signed async message from Hank to Alice.
 - [x] Verify Alice stores the social conversation.
+- [x] Send a typed request from Hank to Alice and respond from Alice to Hank.
+- [x] Verify Hank receives the completed request status.
 - [ ] Reply from Alice back to Hank.
 - [ ] Verify Hank receives the reply in the original thread.
 - [ ] Verify denied handles cannot send messages.

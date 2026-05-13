@@ -24,6 +24,10 @@ import {
   handleSocialSetup,
   handleSocialProfileGet,
   handleSocialProfileUpdate,
+  handleSocialRequestCreate,
+  handleSocialRequestGet,
+  handleSocialRequestList,
+  handleSocialRequestRespond,
   handleSocialThreadCreate,
   handleSocialThreadGet,
   handleSocialThreadList,
@@ -559,6 +563,130 @@ function createMockSql() {
       return cursor<T>([]);
     }
 
+    if (q.startsWith("SELECT * FROM social_requests WHERE uid = ? AND request_id = ?")) {
+      const [uid, request_id] = bindings as [number, string];
+      return cursor(getTable("social_requests").filter((row) =>
+        row.uid === uid && row.request_id === request_id
+      ) as T[]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_requests WHERE uid = ? AND remote_event_id = ?")) {
+      const [uid, remote_event_id] = bindings as [number, string];
+      return cursor(getTable("social_requests").filter((row) =>
+        row.uid === uid && row.remote_event_id === remote_event_id
+      ) as T[]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_requests") && q.includes("(from_handle = ? OR to_handle = ?)") && q.includes("status = ?")) {
+      const [uid, peer_handle_1, peer_handle_2, status, limit] = bindings as [number, string, string, string, number];
+      return cursor(
+        getTable("social_requests")
+          .filter((row) =>
+            row.uid === uid &&
+            (row.from_handle === peer_handle_1 || row.to_handle === peer_handle_2) &&
+            row.status === status
+          )
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_requests") && q.includes("(from_handle = ? OR to_handle = ?)")) {
+      const [uid, peer_handle_1, peer_handle_2, limit] = bindings as [number, string, string, number];
+      return cursor(
+        getTable("social_requests")
+          .filter((row) =>
+            row.uid === uid && (row.from_handle === peer_handle_1 || row.to_handle === peer_handle_2)
+          )
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_requests WHERE uid = ? AND status = ?")) {
+      const [uid, status, limit] = bindings as [number, string, number];
+      return cursor(
+        getTable("social_requests")
+          .filter((row) => row.uid === uid && row.status === status)
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_requests WHERE uid = ? AND thread_id = ? ORDER BY created_at ASC")) {
+      const [uid, thread_id] = bindings as [number, string];
+      return cursor(
+        getTable("social_requests")
+          .filter((row) => row.uid === uid && row.thread_id === thread_id)
+          .sort((left, right) => Number(left.created_at) - Number(right.created_at)) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_requests WHERE uid = ? ORDER BY updated_at DESC")) {
+      const [uid, limit] = bindings as [number, number];
+      return cursor(
+        getTable("social_requests")
+          .filter((row) => row.uid === uid)
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("INSERT OR REPLACE INTO social_requests")) {
+      const [
+        uid,
+        request_id,
+        thread_id,
+        kind,
+        status,
+        from_handle,
+        to_handle,
+        title,
+        body_json,
+        remote_event_id,
+        created_at,
+        updated_at,
+        expires_at,
+      ] = bindings as [
+        number,
+        string,
+        string | null,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string | null,
+        string | null,
+        number,
+        number,
+        string | null,
+      ];
+      const table = getTable("social_requests");
+      const existing = table.findIndex((row) => row.uid === uid && row.request_id === request_id);
+      const row = {
+        uid,
+        request_id,
+        thread_id,
+        kind,
+        status,
+        from_handle,
+        to_handle,
+        title,
+        body_json,
+        remote_event_id,
+        created_at,
+        updated_at,
+        expires_at,
+      };
+      if (existing >= 0) {
+        table[existing] = row;
+      } else {
+        table.push(row);
+      }
+      return cursor<T>([]);
+    }
+
     if (q.startsWith("INSERT INTO social_delivery_attempts")) {
       const [uid, attempt_id, message_id, status, error, attempted_at, created_at] = bindings as [
         number,
@@ -587,6 +715,82 @@ function createMockSql() {
   return { exec, tables };
 }
 
+function createMockStorage() {
+  const objects = new Map<string, {
+    key: string;
+    value: string;
+    httpMetadata?: Record<string, string>;
+    customMetadata?: Record<string, string>;
+    uploaded: Date;
+    size: number;
+    text: () => Promise<string>;
+    arrayBuffer: () => Promise<ArrayBuffer>;
+  }>();
+  const makeObject = (
+    key: string,
+    value: string,
+    options?: { httpMetadata?: Record<string, string>; customMetadata?: Record<string, string> },
+  ) => {
+    const encoded = new TextEncoder().encode(value);
+    return {
+      key,
+      value,
+      httpMetadata: options?.httpMetadata,
+      customMetadata: options?.customMetadata,
+      uploaded: new Date(),
+      size: encoded.byteLength,
+      text: async () => value,
+      arrayBuffer: async () => encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength),
+    };
+  };
+  return {
+    objects,
+    async get(key: string) {
+      return objects.get(key) ?? null;
+    },
+    async head(key: string) {
+      return objects.get(key) ?? null;
+    },
+    async put(key: string, value: unknown, options?: { httpMetadata?: Record<string, string>; customMetadata?: Record<string, string> }) {
+      const text = typeof value === "string"
+        ? value
+        : value instanceof Uint8Array
+          ? new TextDecoder().decode(value)
+          : "";
+      const object = makeObject(key, text, options);
+      objects.set(key, object);
+      return object;
+    },
+    async delete(keyOrKeys: string | string[]) {
+      for (const key of Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys]) {
+        objects.delete(key);
+      }
+    },
+    async list(options: { prefix?: string; delimiter?: string; limit?: number } = {}) {
+      const prefix = options.prefix ?? "";
+      const keys = [...objects.keys()].filter((key) => key.startsWith(prefix)).sort();
+      const delimitedPrefixes = new Set<string>();
+      const listed = [];
+      for (const key of keys) {
+        if (options.delimiter) {
+          const rest = key.slice(prefix.length);
+          const delimiterIndex = rest.indexOf(options.delimiter);
+          if (delimiterIndex >= 0) {
+            delimitedPrefixes.add(prefix + rest.slice(0, delimiterIndex + 1));
+            continue;
+          }
+        }
+        listed.push(objects.get(key)!);
+      }
+      return {
+        objects: listed.slice(0, options.limit ?? listed.length),
+        delimitedPrefixes: [...delimitedPrefixes],
+        truncated: false,
+      };
+    },
+  };
+}
+
 function createCtx(
   pds?: Partial<PdsServiceBinding>,
   options: { uid?: number; username?: string; role?: "user" | "service" } = {},
@@ -607,10 +811,26 @@ function createCtx(
   };
   const processIdentities = new Map<string, typeof processIdentity>();
   const scheduledSocialRetries: Array<{ messageId: string; dueAtMs: number; scheduleId: string }> = [];
+  const storage = createMockStorage();
+  const notifications = {
+    create: vi.fn((input: { title: string; body?: string; level: string }) => ({
+      notificationId: "notification-1",
+      title: input.title,
+      body: input.body,
+      level: input.level,
+      createdAt: Date.now(),
+      readAt: null,
+      dismissedAt: null,
+      expiresAt: null,
+      actions: [],
+      source: { kind: "user" },
+    })),
+  };
 
   return {
     env: {
       PDS: pds,
+      STORAGE: storage,
     },
     social,
     auth: {
@@ -641,6 +861,9 @@ function createCtx(
       return scheduleId;
     }),
     __scheduledSocialRetries: scheduledSocialRetries,
+    __storage: storage,
+    notifications,
+    broadcastToUid: vi.fn(),
     identity: {
       role: options.role ?? "user",
       process: processIdentity,
@@ -699,6 +922,7 @@ function stubAlicePublicIdentity(
               "social.message.send",
               "social.message.reply",
               "social.request.create",
+              "social.request.respond",
             ],
           },
         });
@@ -1198,6 +1422,150 @@ describe("social identity and records", () => {
       deliveryStatus: "accepted",
     });
     expect(handleSocialThreadGet({ threadId: sent.thread.threadId }, ctx).messages).toHaveLength(2);
+  });
+
+  it("creates, lists, and reads typed social requests", async () => {
+    const ctx = createCtx();
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+    const aliceKeys = await generateP256ServiceKey();
+    const inboundBodies: unknown[] = [];
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: (body) => {
+        inboundBodies.push(body);
+        return Response.json({ ok: true, status: "accepted" });
+      },
+    });
+    await handleSocialFriendAdd({
+      handle: "alice.example",
+      grants: [{ operation: "social.request.create" }],
+    }, ctx);
+
+    const created = await handleSocialRequestCreate({
+      toHandle: "alice.example",
+      kind: "question",
+      title: "Can your agent review this plan?",
+      body: { workspace: "demo", priority: "normal" },
+    }, ctx);
+
+    expect(created.request).toMatchObject({
+      threadId: created.thread.threadId,
+      kind: "question",
+      status: "pending",
+      fromHandle: "gsv.example",
+      toHandle: "alice.example",
+      title: "Can your agent review this plan?",
+      body: { workspace: "demo", priority: "normal" },
+    });
+    expect(handleSocialRequestList({ peerHandle: "alice.example" }, ctx).requests).toHaveLength(1);
+    expect(handleSocialRequestGet({ requestId: created.request.requestId }, ctx).request).toMatchObject({
+      requestId: created.request.requestId,
+      status: "pending",
+    });
+    expect(handleSocialThreadGet({ threadId: created.thread.threadId }, ctx)).toMatchObject({
+      messages: [
+        {
+          direction: "outbound",
+          deliveryStatus: "accepted",
+          text: "Can your agent review this plan?",
+        },
+      ],
+      requests: [
+        {
+          requestId: created.request.requestId,
+          title: "Can your agent review this plan?",
+        },
+      ],
+    });
+    expect((inboundBodies[0] as { envelope: { method: string; body: { requestId: string; kind: string } } }).envelope)
+      .toMatchObject({
+        method: "social.request.create",
+        body: {
+          requestId: created.request.requestId,
+          kind: "question",
+        },
+      });
+  });
+
+  it("accepts inbound typed requests, writes inbox context, notifies, and responds", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend([
+      { operation: "social.request.create" },
+    ]);
+    const remoteInboundBodies: unknown[] = [];
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: (body) => {
+        remoteInboundBodies.push(body);
+        return Response.json({ ok: true, status: "accepted" });
+      },
+    });
+    const envelope = await aliceEnvelope(aliceKeys.privateJwk, {
+      id: "env-request",
+      method: "social.request.create",
+      nonce: "nonce-request",
+      body: {
+        threadId: "thread-request",
+        messageId: "msg-request",
+        requestId: "req-alice",
+        kind: "task",
+        title: "Check the deployment plan",
+        body: { repo: "gsv-social" },
+      },
+    });
+
+    await expect(handleSocialInbound({
+      envelope,
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: true,
+      status: "accepted",
+      threadId: "thread-request",
+      messageId: "msg-request",
+      requestId: "req-alice",
+    });
+
+    const storage = (ctx as unknown as { __storage: ReturnType<typeof createMockStorage> }).__storage;
+    const inbox = await storage.get("home/hank/context.d/90-social-inbox.md");
+    expect(await inbox?.text()).toContain("Check the deployment plan");
+    expect(ctx.notifications?.create).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      title: "Social request from alice.example",
+      body: "Check the deployment plan (pending)",
+    }));
+
+    setContextRole(ctx, "user");
+    expect(handleSocialRequestList({ status: "pending" }, ctx).requests).toEqual([
+      expect.objectContaining({
+        requestId: "req-alice",
+        fromHandle: "alice.example",
+        toHandle: "gsv.example",
+      }),
+    ]);
+
+    const response = await handleSocialRequestRespond({
+      requestId: "req-alice",
+      status: "completed",
+      text: "Reviewed. The plan is good.",
+    }, ctx);
+    expect(response.request).toMatchObject({
+      requestId: "req-alice",
+      status: "completed",
+    });
+    expect(response.message).toMatchObject({
+      direction: "outbound",
+      deliveryStatus: "accepted",
+      text: "Reviewed. The plan is good.",
+    });
+    expect(await storage.get("home/hank/context.d/90-social-inbox.md")).toBeNull();
+    expect((remoteInboundBodies[0] as { envelope: { method: string; body: { requestId: string; status: string } } }).envelope)
+      .toMatchObject({
+        method: "social.request.respond",
+        body: {
+          requestId: "req-alice",
+          status: "completed",
+        },
+      });
   });
 
   it("schedules and completes a retry after a transient outbound failure", async () => {
