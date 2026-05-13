@@ -137,6 +137,8 @@ then inspect these files:
 - `gateway/src/kernel/social.test.ts`: the highest-signal behavioral examples.
 - `gateway/src/pds/client.ts`: Gateway-to-PDS binding and XRPC proxy client.
 - `gateway/src/index.ts`: public PDS/XRPC proxy routes and `/social/inbound`.
+- `builtin-packages/social/`: builtin UI for friends, local grants, social
+  threads, messages, and typed requests.
 - `pds/src/worker_entry.rs` and `pds/src/entrypoint.ts`: PDS Worker HTTP and
   Worker Entrypoint surface.
 - `scripts/dev-stack.sh`: local multi-worker dev setup.
@@ -178,11 +180,18 @@ Completed milestones:
   bounded attempt count; permanent failures are marked `failed`.
 - Accepted inbound messages are idempotently stored before process delivery and
   rendered into the main user's init process conversation.
+- The builtin Social app can manage friends, edit local grants, inspect
+  threads, send messages, create typed requests, and respond to inbound
+  requests.
 
 Next implementation contract:
 
-- Add friend public-record sync and package-like surfaces.
-- Expand the two-GSV smoke into request/reply and denied-sender cases.
+- Sync the builtin package into a local GSV and use the Social app against two
+  dev-stack instances.
+- Add friend public-record sync and package-like surfaces after the app-driven
+  local workflow is verified.
+- Expand the two-GSV smoke into app-relevant request/reply and denied-sender
+  cases.
 
 ## TODOs
 

@@ -1,0 +1,538 @@
+:root {
+  color-scheme: light;
+  --social-bg: #edf1f0;
+  --social-panel: #fbfcfb;
+  --social-panel-soft: #f5f8f7;
+  --social-line: rgba(34, 43, 38, 0.12);
+  --social-line-strong: rgba(34, 43, 38, 0.22);
+  --social-text: #1e2a26;
+  --social-muted: #65736d;
+  --social-primary: #126151;
+  --social-primary-strong: #0a463a;
+  --social-accent: #6f4e1d;
+  --social-danger: #8c3434;
+  --social-warning: #95620f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--social-bg);
+  color: var(--social-text);
+}
+
+body {
+  font: 14px/1.5 Inter, Manrope, system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+code,
+pre {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+#root {
+  height: 100%;
+  min-height: 0;
+}
+
+.social-app {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--social-panel);
+}
+
+.social-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(290px, 330px) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.social-sidebar {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border-right: 1px solid var(--social-line);
+  background: var(--social-panel-soft);
+  overflow: hidden;
+}
+
+.social-sidebar-head,
+.social-detail-head {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--social-line);
+}
+
+.social-sidebar-head h1,
+.social-detail-head h2,
+.social-empty-state h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.social-sidebar-head p,
+.social-detail-head p,
+.social-list-note,
+.social-message header span,
+.social-request-summary dd,
+.social-friend-buttons small,
+.social-list-item span,
+.social-list-item small {
+  color: var(--social-muted);
+}
+
+.social-eyebrow,
+.social-field-label,
+.social-request-summary dt,
+.social-add-friend label span,
+.social-compose label span {
+  margin: 0 0 4px;
+  color: var(--social-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.social-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 10px;
+  border-bottom: 1px solid var(--social-line);
+}
+
+.social-tab,
+.social-button,
+.social-list-item {
+  border: 1px solid var(--social-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--social-text);
+}
+
+.social-tab {
+  min-height: 34px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.social-tab.is-active {
+  border-color: rgba(18, 97, 81, 0.42);
+  background: rgba(18, 97, 81, 0.1);
+  color: var(--social-primary-strong);
+}
+
+.social-sidebar-list,
+.social-friend-buttons {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.social-list-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 9px;
+  padding: 11px 12px;
+  margin: 0 0 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.social-list-item strong,
+.social-list-item span,
+.social-list-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-list-item strong,
+.social-list-item span,
+.social-list-item small {
+  grid-column: 2;
+}
+
+.social-list-item.is-active {
+  border-color: rgba(18, 97, 81, 0.48);
+  background: rgba(18, 97, 81, 0.08);
+}
+
+.social-status-dot {
+  grid-row: 1 / span 3;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--social-muted);
+}
+
+.social-status-dot.is-active,
+.social-status-dot.is-pending,
+.social-status-dot.is-accepted {
+  background: var(--social-primary);
+}
+
+.social-status-dot.is-needs-human,
+.social-status-dot.is-waiting-on-human,
+.social-status-dot.is-retrying {
+  background: var(--social-warning);
+}
+
+.social-status-dot.is-failed,
+.social-status-dot.is-declined {
+  background: var(--social-danger);
+}
+
+.social-main {
+  min-height: 0;
+  overflow: hidden;
+  background: var(--social-panel);
+}
+
+.social-thread-pane,
+.social-friends-pane,
+.social-friend-detail {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.social-thread-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.social-thread-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 34%);
+  border-bottom: 1px solid var(--social-line);
+  overflow: hidden;
+}
+
+.social-message-stream,
+.social-request-rail {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.social-request-rail {
+  border-left: 1px solid var(--social-line);
+  background: var(--social-panel-soft);
+}
+
+.social-request-rail h3,
+.social-detail-section h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.social-message,
+.social-request-summary,
+.social-add-friend,
+.social-detail-section {
+  border: 1px solid var(--social-line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.social-message,
+.social-request-summary {
+  margin: 0 0 12px;
+  padding: 12px;
+}
+
+.social-message.is-outbound {
+  border-color: rgba(18, 97, 81, 0.28);
+  background: rgba(18, 97, 81, 0.06);
+}
+
+.social-message header,
+.social-request-summary header,
+.social-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.social-message p {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+}
+
+.social-message pre,
+.social-request-summary pre {
+  margin: 10px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 6px;
+  background: #f0f3f2;
+  font-size: 12px;
+}
+
+.social-request-summary dl {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.social-request-summary dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.social-request-summary dt,
+.social-request-summary dd {
+  margin: 0;
+}
+
+.social-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--social-line);
+  border-radius: 999px;
+  color: var(--social-muted);
+  background: #fff;
+  font-size: 12px;
+}
+
+.social-pill.is-needs-human {
+  color: var(--social-warning);
+  border-color: rgba(149, 98, 15, 0.3);
+  background: rgba(149, 98, 15, 0.08);
+}
+
+.social-pill.is-completed {
+  color: var(--social-primary-strong);
+  border-color: rgba(18, 97, 81, 0.3);
+  background: rgba(18, 97, 81, 0.08);
+}
+
+.social-composer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 40%);
+  gap: 12px;
+  padding: 14px;
+  background: var(--social-panel-soft);
+}
+
+.social-start-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 42%);
+  gap: 12px;
+}
+
+.social-compose,
+.social-response-form,
+.social-add-friend {
+  display: grid;
+  gap: 10px;
+}
+
+.social-compose,
+.social-add-friend,
+.social-detail-section {
+  padding: 14px;
+}
+
+.social-compose label,
+.social-add-friend label {
+  display: grid;
+  gap: 4px;
+}
+
+.social-inline-fields {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--social-line-strong);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--social-text);
+  padding: 8px 10px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.social-button {
+  min-height: 34px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.social-button--primary {
+  border-color: var(--social-primary);
+  background: var(--social-primary);
+  color: #fff;
+}
+
+.social-button--quiet {
+  border-color: rgba(18, 97, 81, 0.34);
+  color: var(--social-primary-strong);
+}
+
+.social-button--danger {
+  border-color: rgba(140, 52, 52, 0.4);
+  color: var(--social-danger);
+}
+
+.social-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.social-friends-pane {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+}
+
+.social-friends-list {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-right: 1px solid var(--social-line);
+  overflow: hidden;
+}
+
+.social-friend-detail {
+  overflow: auto;
+}
+
+.social-detail-section {
+  margin: 16px;
+}
+
+.social-grant-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.social-grant-list.is-compact {
+  grid-template-columns: 1fr;
+}
+
+.social-grant-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--social-line);
+  border-radius: 6px;
+  background: var(--social-panel-soft);
+}
+
+.social-grant-list input {
+  width: auto;
+}
+
+.social-method-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.social-method-grid code {
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: #eef2f0;
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-response-form {
+  margin-top: 12px;
+}
+
+.social-empty-state,
+.social-boot-error,
+.social-error-banner,
+.social-list-note {
+  padding: 16px;
+}
+
+.social-empty-state {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  text-align: center;
+  color: var(--social-muted);
+}
+
+.social-error-banner,
+.social-boot-error {
+  border-bottom: 1px solid rgba(140, 52, 52, 0.25);
+  background: rgba(140, 52, 52, 0.08);
+  color: var(--social-danger);
+}
+
+@media (max-width: 860px) {
+  .social-layout,
+  .social-thread-grid,
+  .social-composer-grid,
+  .social-start-grid,
+  .social-friends-pane {
+    grid-template-columns: 1fr;
+  }
+
+  .social-layout {
+    grid-template-rows: minmax(220px, 38%) minmax(0, 1fr);
+  }
+
+  .social-sidebar,
+  .social-friends-list,
+  .social-request-rail {
+    border-right: 0;
+    border-left: 0;
+    border-bottom: 1px solid var(--social-line);
+  }
+
+  .social-sidebar-head,
+  .social-detail-head {
+    padding: 14px;
+  }
+}

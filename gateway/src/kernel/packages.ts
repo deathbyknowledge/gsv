@@ -281,6 +281,18 @@ const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
       mode: "none",
     },
   }),
+  createBuiltinRipgitPackageSpec("social", {
+    bindings: [
+      {
+        binding: "KERNEL",
+        providerKind: "kernel-entrypoint",
+        providerRef: "kernel://app/request",
+      },
+    ],
+    egress: {
+      mode: "none",
+    },
+  }),
   createBuiltinRipgitPackageSpec("files", {
     bindings: [
       {
