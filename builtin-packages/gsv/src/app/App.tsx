@@ -1,13 +1,20 @@
 import { openApp } from "@gsv/package/host";
 import { useEffect, useMemo, useState } from "preact/hooks";
-import type { GsvBackend } from "./backend";
+import type { GsvBackend } from "./backend-contract";
 import { DevicesSection } from "./features/devices/DevicesSection";
 import { IntegrationsSection } from "./features/integrations/IntegrationsSection";
 import { PackagesSection } from "./features/packages/PackagesSection";
 import { RuntimeSection } from "./features/runtime/RuntimeSection";
 import { SourcesSection } from "./features/sources/SourcesSection";
-import { ATTENTION_ITEMS, GROUPS, SECTIONS, findSection, sectionExists } from "./navigation";
-import type { GsvGroup, GsvSection, GsvSectionId, Tone } from "./types";
+import { ATTENTION_ITEMS, GROUPS, findSection } from "./navigation/sections";
+import {
+  pushPackagesLocation,
+  pushSectionLocation,
+  pushSourcesLocation,
+  readSectionFromLocation,
+  type PackagesRouteView,
+} from "./navigation/route-state";
+import type { GsvGroup, GsvHandoff, GsvSection, GsvSectionId, Tone } from "./navigation/types";
 
 export function App({ backend }: { backend: GsvBackend }) {
   const [activeSectionId, setActiveSectionId] = useState<GsvSectionId>(readSectionFromLocation);
@@ -21,9 +28,7 @@ export function App({ backend }: { backend: GsvBackend }) {
   }, []);
 
   function navigate(sectionId: GsvSectionId): void {
-    const url = new URL(window.location.href);
-    url.searchParams.set("section", sectionId);
-    window.history.pushState({}, "", url);
+    pushSectionLocation(sectionId);
     setActiveSectionId(sectionId);
   }
 
@@ -35,22 +40,13 @@ export function App({ backend }: { backend: GsvBackend }) {
   }
 
   function openSources(repo: string, ref?: string, path?: string): void {
-    const url = new URL(window.location.href);
-    url.searchParams.set("section", "sources");
-    url.searchParams.set("repo", repo);
-    if (ref) {
-      url.searchParams.set("ref", ref);
-    } else {
-      url.searchParams.delete("ref");
-    }
-    if (path && path !== ".") {
-      url.searchParams.set("path", path);
-    } else {
-      url.searchParams.delete("path");
-    }
-    url.searchParams.delete("mode");
-    window.history.pushState({}, "", url);
+    pushSourcesLocation({ repo, ref, path });
     setActiveSectionId("sources");
+  }
+
+  function openPackage(packageId: string, view: PackagesRouteView = "inventory"): void {
+    pushPackagesLocation({ packageId, view });
+    setActiveSectionId("packages");
   }
 
   return (
@@ -81,9 +77,9 @@ export function App({ backend }: { backend: GsvBackend }) {
           ) : activeSection.id === "packages" ? (
             <PackagesSection backend={backend} onOpenSources={openSources} />
           ) : activeSection.id === "sources" ? (
-            <SourcesSection backend={backend} />
+            <SourcesSection backend={backend} onOpenPackage={openPackage} />
           ) : (
-            <SectionWorkspace section={activeSection} onOpenHandoff={openHandoff} />
+            <SectionWorkspace section={activeSection} onNavigate={navigate} onOpenHandoff={openHandoff} />
           )}
         </main>
       </section>
@@ -211,10 +207,10 @@ function Overview({
         })}
       </div>
 
-      <section class="gsv-handoff-panel" aria-label="Current compatibility surfaces">
+      <section class="gsv-handoff-panel" aria-label="Console handoffs">
         <header>
-          <span class="gsv-kicker">Current surfaces</span>
-          <h3>Compatibility handoffs</h3>
+          <span class="gsv-kicker">Quick paths</span>
+          <h3>Open related surfaces</h3>
         </header>
         <div class="gsv-handoff-list">
           {overview.handoffs.map((handoff) => (
@@ -222,7 +218,7 @@ function Overview({
               class="gsv-handoff-row"
               key={handoff.label}
               type="button"
-              onClick={() => onOpenHandoff(handoff.target, handoff.route)}
+              onClick={() => openHandoffTarget(handoff, onNavigate, onOpenHandoff)}
             >
               <span>
                 <strong>{handoff.label}</strong>
@@ -239,9 +235,11 @@ function Overview({
 
 function SectionWorkspace({
   section,
+  onNavigate,
   onOpenHandoff,
 }: {
   section: GsvSection;
+  onNavigate: (sectionId: GsvSectionId) => void;
   onOpenHandoff: (target: string, route?: string) => void;
 }) {
   return (
@@ -277,7 +275,7 @@ function SectionWorkspace({
               class="gsv-handoff-row"
               key={handoff.label}
               type="button"
-              onClick={() => onOpenHandoff(handoff.target, handoff.route)}
+              onClick={() => openHandoffTarget(handoff, onNavigate, onOpenHandoff)}
             >
               <span>
                 <strong>{handoff.label}</strong>
@@ -290,6 +288,20 @@ function SectionWorkspace({
       </section>
     </section>
   );
+}
+
+function openHandoffTarget(
+  handoff: GsvHandoff,
+  onNavigate: (sectionId: GsvSectionId) => void,
+  onOpenHandoff: (target: string, route?: string) => void,
+): void {
+  if (handoff.sectionId) {
+    onNavigate(handoff.sectionId);
+    return;
+  }
+  if (handoff.target) {
+    onOpenHandoff(handoff.target, handoff.route);
+  }
 }
 
 function MobileNav({
@@ -322,9 +334,4 @@ function MobileNav({
 
 function StatusMark({ tone }: { tone: Tone }) {
   return <span class={`gsv-mark is-${tone}`} aria-hidden="true"></span>;
-}
-
-function readSectionFromLocation(): GsvSectionId {
-  const value = new URL(window.location.href).searchParams.get("section") ?? "";
-  return sectionExists(value) ? value : "overview";
 }

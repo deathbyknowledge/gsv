@@ -193,12 +193,12 @@ Use one `section` parameter for global location and section-specific parameters 
 /apps/gsv?section=runtime&q=...
 /apps/gsv?section=devices&device=...&tab=health
 /apps/gsv?section=packages&view=review&package=...&tab=summary
-/apps/gsv?section=integrations&type=adapters&adapter=whatsapp&account=primary
+/apps/gsv?section=integrations&type=message-adapters&adapter=whatsapp&account=primary
 /apps/gsv?section=access&tab=tokens
 /apps/gsv?section=settings&category=ai
 ```
 
-Former app ids can remain as compatibility launchers during migration and should deep-link into the matching `GSV` section once the feature has moved.
+The former `processes`, `devices`, and `adapters` builtin apps have been consolidated into matching `GSV` sections. New navigation should link directly to `GSV` sections instead of depending on those retired app ids.
 
 ## Permission Model
 
@@ -214,10 +214,9 @@ The privilege caveat is intentional: one app can own the system console, but it 
 ## Migration Plan
 
 1. Add the `GSV` shell and navigation contract.
-2. Keep old builtin apps available as compatibility surfaces.
-3. Refactor existing apps into feature-shaped modules before moving them.
-4. Move `control`, `devices`, `processes`, and `adapters` features first.
-5. Refactor `packages` in place before moving it into `GSV`.
-6. Retire old app ids only after deep links and package sync behavior are settled.
+2. Move `devices`, `processes`, and `adapters` into feature-shaped sections.
+3. Retire the old `devices`, `processes`, and `adapters` builtin package ids.
+4. Keep refining `packages` and `sources` before deciding whether to retire the standalone `packages` app.
+5. Move remaining system configuration surfaces only when the GSV section is stronger than the standalone surface.
 
 Keep the shell contract stable while individual features migrate.

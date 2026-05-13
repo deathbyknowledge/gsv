@@ -4,6 +4,7 @@ export default definePackage({
   meta: {
     displayName: "GSV",
     description: "System console for operating and configuring GSV.",
+    icon: "ui/gsv-icon.svg",
     window: {
       width: 1220,
       height: 820,

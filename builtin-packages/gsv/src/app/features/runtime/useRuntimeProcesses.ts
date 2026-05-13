@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { GsvBackend } from "../../backend";
+import type { GsvBackend } from "../../backend-contract";
 import { errorToText } from "../../utils/format";
 import { filterProcesses } from "./runtime-domain";
 import type { ProcessEntry, RuntimeState } from "./types";

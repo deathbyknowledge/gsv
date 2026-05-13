@@ -1,5 +1,5 @@
 import { openApp } from "@gsv/package/host";
-import type { GsvBackend } from "../../backend";
+import type { GsvBackend } from "../../backend-contract";
 import { formatTimestampMs } from "../../utils/format";
 import {
   buildPermissionSummary,
@@ -184,6 +184,7 @@ function PackageDetail({
   const viewerUsername = state?.viewer.username ?? "";
   const packageId = pkg.packageId;
   const packageRepo = pkg.source.repo;
+  const packageSourcePath = pkg.source.subdir && pkg.source.subdir !== "." ? pkg.source.subdir : undefined;
   const busy = runtime.pendingAction !== null;
   const reviewAction = `package:review:${packageId}`;
   const approveAction = `package:approve:${packageId}`;
@@ -222,6 +223,14 @@ function PackageDetail({
               <h4>Source</h4>
               <p>{sourceSummary(pkg, viewerUsername)}</p>
             </div>
+            <button
+              type="button"
+              class="gsv-mini-button"
+              onClick={() => onOpenSources?.(pkg.source.repo, pkg.source.ref, packageSourcePath)}
+              disabled={!onOpenSources}
+            >
+              Open in Sources
+            </button>
           </header>
           <div class="gsv-summary-grid">
             <article class="gsv-info-box">
@@ -362,18 +371,6 @@ function PackageDetail({
               <div class="gsv-package-permission-row" key={note}>{note}</div>
             ))}
           </div>
-          <button
-            type="button"
-            class="gsv-action-button"
-            onClick={() => onOpenSources?.(
-              pkg.source.repo,
-              pkg.source.ref,
-              pkg.source.subdir && pkg.source.subdir !== "." ? pkg.source.subdir : undefined,
-            )}
-            disabled={!onOpenSources}
-          >
-            Open in Sources
-          </button>
         </section>
 
         {detail?.commits.length ? (

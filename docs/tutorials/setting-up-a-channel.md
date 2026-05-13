@@ -10,7 +10,7 @@ can open the Desktop in your browser.
 ## 1. Open the Adapter UI
 
 The Desktop is made of package apps. Open **Packages** if you need to verify the
-built-in apps are installed, then open **Adapters**.
+built-in apps are installed, then open **GSV > Integrations**.
 
 If adapter Workers were not deployed yet, deploy them from the CLI:
 
@@ -23,7 +23,7 @@ Deploying everything with `gsv infra deploy --all` includes both adapter Workers
 
 ## 2. Connect WhatsApp
 
-In **Adapters**:
+In **GSV > Integrations**:
 
 1. Select **WhatsApp**.
 2. Use account id `primary` unless you need multiple WhatsApp accounts.
@@ -43,7 +43,7 @@ Create a Discord bot in the Discord Developer Portal:
 3. Enable **Message Content Intent** when the bot needs to read message text.
 4. Invite the bot to the server where you want to use it.
 
-In **Adapters**:
+In **GSV > Integrations**:
 
 1. Select **Discord**.
 2. Use account id `main` unless you need multiple bot accounts.
@@ -87,7 +87,7 @@ gsv auth link CODE
 
 ## Troubleshooting
 
-- If **Adapters** is missing, open **Packages** and sync built-in packages, or run
+- If **GSV** is missing, open **Packages** and sync built-in packages, or run
   `gsv packages sync`.
 - If WhatsApp does not show a QR code, reconnect with the force option enabled.
 - If Discord stays offline, check the bot token, invite permissions, Gateway

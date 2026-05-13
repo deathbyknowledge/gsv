@@ -115,13 +115,14 @@ Builtin apps live under `builtin-packages/*`.
 
 Examples:
 - `chat`
+- `gsv`
 - `files`
 - `shell`
-- `devices`
-- `processes`
 - `control`
 - `packages`
-- `adapters`
+- `wiki`
+
+Runtime operations for processes, devices, and message adapters belong in the consolidated `gsv` builtin app, not separate standalone builtin apps.
 
 They are synced from `root/gsv` into the running system. A builtin app change is not applied by redeploying the gateway worker alone.
 
@@ -513,6 +514,7 @@ The core rules:
 - prefer native-feeling lists, panes, inspectors, queues, and navigation stacks
 - avoid hero sections, large stat-card grids, decorative gradients, and marketing spacing
 - keep `Chat`, `Files`, `Shell`, and `Wiki` as standalone work surfaces
+- keep `Processes`, `Devices`, and message adapter management inside `GSV`
 - show permission state before actions, especially because `GSV` is a high-privilege first-party console
 
 ### Use the right control for the job

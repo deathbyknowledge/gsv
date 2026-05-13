@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import type { GsvBackend } from "../../backend";
+import type { GsvBackend } from "../../backend-contract";
+import {
+  readPackageFromLocation,
+  readPackagesViewFromLocation,
+  replacePackagesLocation,
+} from "../../navigation/route-state";
 import { errorToText } from "../../utils/format";
 import { filteredPackages } from "./packages-domain";
 import type {
@@ -182,10 +187,7 @@ export function usePackages(backend: GsvBackend): PackagesRuntime {
 
   function setView(nextView: PackagesView): void {
     setViewState(nextView);
-    const url = new URL(window.location.href);
-    url.searchParams.set("section", "packages");
-    url.searchParams.set("view", nextView);
-    window.history.replaceState({}, "", url);
+    replacePackagesLocation({ view: nextView });
   }
 
   function setScope(nextScope: PackageScopeFilter): void {
@@ -194,14 +196,7 @@ export function usePackages(backend: GsvBackend): PackagesRuntime {
 
   function selectPackage(packageId: string | null): void {
     setSelectedPackageId(packageId);
-    const url = new URL(window.location.href);
-    url.searchParams.set("section", "packages");
-    if (packageId) {
-      url.searchParams.set("package", packageId);
-    } else {
-      url.searchParams.delete("package");
-    }
-    window.history.replaceState({}, "", url);
+    replacePackagesLocation({ packageId });
     if (packageId) {
       void refresh(packageId);
     }
@@ -236,12 +231,4 @@ export function usePackages(backend: GsvBackend): PackagesRuntime {
   };
 }
 
-function readViewFromLocation(): PackagesView {
-  const value = new URL(window.location.href).searchParams.get("view");
-  return value === "updates" || value === "review" ? value : "inventory";
-}
-
-function readPackageFromLocation(): string | null {
-  const value = new URL(window.location.href).searchParams.get("package");
-  return value?.trim() || null;
-}
+const readViewFromLocation = readPackagesViewFromLocation;

@@ -1,5 +1,5 @@
 import { openApp } from "@gsv/package/host";
-import type { GsvBackend } from "../../backend";
+import type { GsvBackend } from "../../backend-contract";
 import { formatTimestampMs } from "../../utils/format";
 import {
   canOpenChat,

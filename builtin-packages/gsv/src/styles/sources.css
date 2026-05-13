@@ -264,8 +264,20 @@
   border-radius: 999px;
   background: #ffffff;
   color: #24292f;
+  cursor: pointer;
   font-size: 0.78rem;
   font-weight: 700;
+  text-align: left;
+}
+
+.gsv-source-package-chip:hover {
+  background: #f6f8fa;
+  color: #0969da;
+}
+
+.gsv-source-package-chip:disabled {
+  cursor: default;
+  color: #24292f;
 }
 
 .gsv-source-package-chip small {

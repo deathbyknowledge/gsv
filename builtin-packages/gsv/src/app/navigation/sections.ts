@@ -64,9 +64,9 @@ export const SECTIONS: GsvSection[] = [
         route: "/apps/packages?view=review",
       },
       {
-        label: "Open current Devices",
-        description: "Use the existing fleet app while the Devices section migrates.",
-        target: "devices",
+        label: "Open Devices",
+        description: "Inspect fleet health, provisioning, and device access in GSV.",
+        sectionId: "devices",
       },
     ],
   },
@@ -99,9 +99,9 @@ export const SECTIONS: GsvSection[] = [
     ],
     handoffs: [
       {
-        label: "Open current Processes",
-        description: "Launch the existing process inspector.",
-        target: "processes",
+        label: "Open Runtime",
+        description: "Inspect and control running processes in GSV.",
+        sectionId: "runtime",
       },
     ],
   },
@@ -133,9 +133,9 @@ export const SECTIONS: GsvSection[] = [
     ],
     handoffs: [
       {
-        label: "Open current Devices",
-        description: "Launch the existing fleet manager.",
-        target: "devices",
+        label: "Open Devices",
+        description: "Stay in GSV to manage the device fleet.",
+        sectionId: "devices",
       },
       {
         label: "Open Shell",
@@ -230,9 +230,9 @@ export const SECTIONS: GsvSection[] = [
     ],
     handoffs: [
       {
-        label: "Open current Adapters",
-        description: "Launch the existing adapter account manager.",
-        target: "adapters",
+        label: "Open Message adapters",
+        description: "Stay in GSV to manage WhatsApp and Discord accounts.",
+        sectionId: "integrations",
       },
       {
         label: "Open MCP settings",

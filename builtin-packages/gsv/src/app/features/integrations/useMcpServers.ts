@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import type { GsvBackend } from "../../backend";
+import type { GsvBackend } from "../../backend-contract";
 import { errorToText } from "../../utils/format";
 import type { AddMcpServerArgs, McpServer, McpState, McpTransportType } from "./types";
 

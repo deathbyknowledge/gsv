@@ -101,7 +101,7 @@ Connected devices appear in process context and tool schemas. Agents always see
 the same tool names (`Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`);
 `target` selects where the syscall runs.
 
-Give devices short notes in the Devices app so agents see why a target exists,
+Give devices short notes in **GSV > Devices** so agents see why a target exists,
 not just its id and platform. For example, describe `rearden` as a Linux home
 server for GPU work or home automation if that is the routing intent.
 

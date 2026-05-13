@@ -121,6 +121,10 @@
   gap: 0.45rem;
 }
 
+.gsv-device-compact-back {
+  display: none;
+}
+
 .gsv-local-tabs {
   display: flex;
   gap: 0.35rem;
@@ -298,6 +302,79 @@
   min-height: 6.5rem;
 }
 
+@media (max-width: 839px) {
+  .gsv-devices {
+    grid-template-columns: 1fr;
+  }
+
+  .gsv-devices.is-fleet-view .gsv-device-detail {
+    display: none;
+  }
+
+  .gsv-devices.is-detail-view .gsv-devices-list-pane {
+    display: none;
+  }
+
+  .gsv-device-detail-head {
+    display: grid;
+  }
+
+  .gsv-device-actions,
+  .gsv-device-access-head {
+    justify-content: flex-start;
+  }
+
+  .gsv-device-actions {
+    width: 100%;
+  }
+
+  .gsv-device-compact-back {
+    display: inline-flex;
+  }
+
+  .gsv-mini-button,
+  .gsv-action-button,
+  .gsv-runtime-search input,
+  .gsv-runtime-search select,
+  .gsv-provision-form input,
+  .gsv-provision-form select {
+    min-height: 2.75rem;
+    font-size: 16px;
+  }
+
+  .gsv-runtime-search input,
+  .gsv-runtime-search select,
+  .gsv-provision-form input,
+  .gsv-provision-form select {
+    height: 2.75rem;
+  }
+
+  .gsv-local-tabs button {
+    min-height: 2.65rem;
+    padding: 0 0.85rem;
+  }
+
+  .gsv-device-row {
+    min-height: 4.5rem;
+    padding: 0.9rem;
+  }
+
+  .gsv-token-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 0.65rem;
+    padding: 0.9rem;
+  }
+
+  .gsv-token-row > .gsv-mark {
+    display: none;
+  }
+
+  .gsv-token-row .gsv-mini-button {
+    justify-self: start;
+  }
+}
+
 @media (max-width: 520px) {
   .gsv-devices-filters,
   .gsv-summary-grid,
@@ -305,9 +382,12 @@
     grid-template-columns: 1fr;
   }
 
-  .gsv-device-row,
-  .gsv-token-row {
+  .gsv-device-row {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .gsv-token-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .gsv-row-meta {

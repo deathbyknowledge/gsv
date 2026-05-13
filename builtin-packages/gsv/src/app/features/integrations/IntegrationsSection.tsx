@@ -1,6 +1,6 @@
 import qrcode from "qrcode-generator";
 import { useMemo, useState } from "preact/hooks";
-import type { GsvBackend } from "../../backend";
+import type { GsvBackend } from "../../backend-contract";
 import { formatTimestampMs } from "../../utils/format";
 import {
   ADAPTERS,

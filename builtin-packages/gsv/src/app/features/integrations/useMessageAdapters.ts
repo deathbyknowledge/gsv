@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import type { GsvBackend } from "../../backend";
+import type { GsvBackend } from "../../backend-contract";
 import { errorToText } from "../../utils/format";
 import { EMPTY_ADAPTERS_STATE, getAdapterMeta } from "./integrations-domain";
 import type {

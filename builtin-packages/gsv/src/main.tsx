@@ -1,7 +1,7 @@
 import { render } from "preact";
 import { getBackend } from "@gsv/package/browser";
 import { App } from "./app/App";
-import type { GsvBackend } from "./app/backend";
+import type { GsvBackend } from "./app/backend-contract";
 
 const root = document.getElementById("root");
 if (!root) {

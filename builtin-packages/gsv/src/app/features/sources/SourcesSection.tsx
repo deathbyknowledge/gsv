@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
-import type { GsvBackend } from "../../backend";
+import type { GsvBackend } from "../../backend-contract";
+import type { PackagesRouteView } from "../../navigation/route-state";
 import {
   buildBreadcrumbs,
   diffStatusLabel,
@@ -16,6 +17,7 @@ import type {
   SourceCommit,
   SourceDiffFile,
   SourceDiffResult,
+  SourceLinkedPackage,
   SourceReadResult,
   SourceRepoRecord,
   SourceSearchMatch,
@@ -29,13 +31,19 @@ import {
   shortHash,
 } from "../../utils/format";
 
-export function SourcesSection({ backend }: { backend: GsvBackend }) {
+export function SourcesSection({
+  backend,
+  onOpenPackage,
+}: {
+  backend: GsvBackend;
+  onOpenPackage?: (packageId: string, view?: PackagesRouteView) => void;
+}) {
   const runtime = useSources(backend);
 
   return (
     <section class="gsv-sources">
       <RepoSidebar runtime={runtime} />
-      <RepoWorkspace runtime={runtime} />
+      <RepoWorkspace runtime={runtime} onOpenPackage={onOpenPackage} />
     </section>
   );
 }
@@ -185,7 +193,13 @@ function RepoRow({
   );
 }
 
-function RepoWorkspace({ runtime }: { runtime: SourcesRuntime }) {
+function RepoWorkspace({
+  runtime,
+  onOpenPackage,
+}: {
+  runtime: SourcesRuntime;
+  onOpenPackage?: (packageId: string, view?: PackagesRouteView) => void;
+}) {
   const repo = runtime.selectedRepo;
   if (!repo) {
     return (
@@ -247,12 +261,7 @@ function RepoWorkspace({ runtime }: { runtime: SourcesRuntime }) {
       {repo.linkedPackages.length > 0 ? (
         <div class="gsv-source-package-links" aria-label="Linked packages">
           {repo.linkedPackages.map((pkg) => (
-            <span class="gsv-source-package-chip" key={pkg.packageId}>
-              <SourceIcon name="package" />
-              {pkg.name}
-              {pkg.subdir && pkg.subdir !== "." ? <small>{pkg.subdir}</small> : null}
-              {pkg.reviewPending ? <small>review</small> : null}
-            </span>
+            <LinkedPackageChip key={pkg.packageId} pkg={pkg} onOpenPackage={onOpenPackage} />
           ))}
         </div>
       ) : null}
@@ -285,6 +294,29 @@ function RepoWorkspace({ runtime }: { runtime: SourcesRuntime }) {
         )}
       </section>
     </section>
+  );
+}
+
+function LinkedPackageChip({
+  pkg,
+  onOpenPackage,
+}: {
+  pkg: SourceLinkedPackage;
+  onOpenPackage?: (packageId: string, view?: PackagesRouteView) => void;
+}) {
+  const view: PackagesRouteView = pkg.reviewPending ? "review" : "inventory";
+  return (
+    <button
+      type="button"
+      class="gsv-source-package-chip"
+      onClick={() => onOpenPackage?.(pkg.packageId, view)}
+      disabled={!onOpenPackage}
+    >
+      <SourceIcon name="package" />
+      {pkg.name}
+      {pkg.subdir && pkg.subdir !== "." ? <small>{pkg.subdir}</small> : null}
+      {pkg.reviewPending ? <small>review</small> : null}
+    </button>
   );
 }
 

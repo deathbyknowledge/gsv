@@ -42,7 +42,8 @@ export type GsvLocalItem = {
 export type GsvHandoff = {
   label: string;
   description: string;
-  target: string;
+  sectionId?: GsvSectionId;
+  target?: string;
   route?: string;
 };
 

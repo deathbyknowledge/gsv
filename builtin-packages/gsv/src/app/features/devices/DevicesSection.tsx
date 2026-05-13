@@ -1,6 +1,6 @@
 import { openApp } from "@gsv/package/host";
 import { useEffect, useState } from "preact/hooks";
-import type { GsvBackend } from "../../backend";
+import type { GsvBackend } from "../../backend-contract";
 import { formatNullableTimestamp, formatRelativeTime, groupCapabilities, hasFiles, hasShell, deviceHealthSummary } from "./devices-domain";
 import { buildBootstrapCommand, buildInstallCommand, type ProvisionInstallPlatform } from "./provision";
 import { useDevices } from "./useDevices";
@@ -10,9 +10,17 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
   const devices = useDevices(backend);
   const selected = devices.selectedDevice;
   const viewer = devices.state?.viewer ?? null;
+  const [compactFleetOpen, setCompactFleetOpen] = useState(shouldStartInFleetView);
+  const showFleetOnCompact = devices.mode === "detail" && (compactFleetOpen || (!devices.selectedDeviceId && !selected));
+
+  useEffect(() => {
+    const onPopState = () => setCompactFleetOpen(shouldStartInFleetView());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   return (
-    <section class="gsv-devices">
+    <section class={`gsv-devices${showFleetOnCompact ? " is-fleet-view" : " is-detail-view"}`}>
       <section class="gsv-devices-list-pane" aria-label="Device fleet">
         <header class="gsv-devices-list-head">
           <div>
@@ -26,6 +34,7 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
             title={viewer?.canManageTokens ? "Issue a node token and enroll a device." : "Token permissions are required to add devices."}
             onClick={() => {
               devices.setIssuedToken(null);
+              setCompactFleetOpen(false);
               devices.writeRoute({ mode: "provision" });
             }}
           >
@@ -57,6 +66,7 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
               selected={device.deviceId === devices.selectedDeviceId}
               onSelect={() => {
                 devices.setIssuedToken(null);
+                setCompactFleetOpen(false);
                 devices.writeRoute({ mode: "detail", deviceId: device.deviceId });
               }}
             />
@@ -70,7 +80,10 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
           viewer={viewer}
           pendingAction={devices.pendingAction}
           issuedToken={devices.issuedToken}
-          onBack={() => devices.writeRoute({ mode: "detail" })}
+          onBack={() => {
+            setCompactFleetOpen(true);
+            devices.writeRoute({ mode: "detail" });
+          }}
           onSubmit={(form) => void devices.createToken(form)}
         />
       ) : (
@@ -81,8 +94,10 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
           tokens={devices.state?.deviceTokens ?? []}
           pendingAction={devices.pendingAction}
           onTab={(tab) => devices.writeRoute({ tab })}
+          onBackToFleet={() => setCompactFleetOpen(true)}
           onProvision={(deviceId) => {
             devices.setIssuedToken(null);
+            setCompactFleetOpen(false);
             devices.writeRoute({ mode: "provision", deviceId });
           }}
           onRevoke={(tokenId) => void devices.revokeToken(tokenId)}
@@ -148,6 +163,7 @@ function DeviceDetailPanel({
   tokens,
   pendingAction,
   onTab,
+  onBackToFleet,
   onProvision,
   onRevoke,
   onUpdateDescription,
@@ -158,6 +174,7 @@ function DeviceDetailPanel({
   tokens: DeviceToken[];
   pendingAction: string | null;
   onTab: (tab: DevicesTabId) => void;
+  onBackToFleet: () => void;
   onProvision: (deviceId: string) => void;
   onRevoke: (tokenId: string) => void;
   onUpdateDescription: (deviceId: string, description: string) => void;
@@ -182,6 +199,9 @@ function DeviceDetailPanel({
           <p>{device.online ? "Online and ready for routing." : "Offline. Review health and access before routing work here."}</p>
         </div>
         <div class="gsv-device-actions">
+          <button class="gsv-mini-button gsv-device-compact-back" type="button" onClick={onBackToFleet}>
+            Back to fleet
+          </button>
           <button class="gsv-mini-button" type="button" disabled={!hasFiles(device)} onClick={() => openApp({ target: "files", payload: { device: device.deviceId, path: "." } })}>
             Files
           </button>
@@ -267,6 +287,8 @@ function DeviceOverview({
         <Info label="Platform" value={device.platform || "Unknown"} />
         <Info label="Version" value={device.version || "Unknown"} />
         <Info label="Owner" value={`uid ${device.ownerUid}`} />
+        <Info label="First seen" value={formatNullableTimestamp(device.firstSeenAt)} />
+        <Info label="Last seen" value={formatNullableTimestamp(device.lastSeenAt)} />
         <Info label="Shell" value={hasShell(device) ? "Available" : "Unavailable"} />
         <Info label="Files" value={hasFiles(device) ? "Available" : "Unavailable"} />
       </div>
@@ -325,7 +347,9 @@ function DeviceAccess({
               <span class="gsv-row-copy">
                 <strong>{token.tokenPrefix}</strong>
                 <span>{token.label || device.deviceId} / {revoked ? "revoked" : "active"}</span>
-                <span>created {new Date(token.createdAt).toLocaleString()}</span>
+                <span>created {formatNullableTimestamp(token.createdAt)}</span>
+                <span>last used {formatNullableTimestamp(token.lastUsedAt)}</span>
+                <span>expires {formatNullableTimestamp(token.expiresAt)}</span>
               </span>
               {viewer?.canManageTokens && !revoked ? (
                 <button class="gsv-mini-button" type="button" disabled={pendingAction === `revoke:${token.tokenId}`} onClick={() => onRevoke(token.tokenId)}>
@@ -411,7 +435,7 @@ function ProvisionPanel({
           <h3>Add device</h3>
           <p>Issue a node token and bootstrap the next execution target.</p>
         </div>
-        <button class="gsv-mini-button" type="button" onClick={onBack}>Back</button>
+        <button class="gsv-mini-button" type="button" onClick={onBack}>Back to fleet</button>
       </header>
 
       <form
@@ -469,4 +493,9 @@ function Info({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function shouldStartInFleetView(): boolean {
+  const url = new URL(window.location.href);
+  return url.searchParams.get("mode") !== "provision" && !url.searchParams.get("device");
 }
