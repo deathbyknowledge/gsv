@@ -726,7 +726,7 @@ Runtime behavior:
 |---|---|---|
 | `pkg.list` | `handlePkgList` | Lists visible packages with optional `enabled`, exact trimmed `name`, and `runtime` filters. Visible scope is actor user scope first, then global. |
 | `pkg.add` | `handlePkgAdd` | Imports a package from `remoteUrl` or GitHub `repo`, resolves and assembles it, stores the artifact, and upserts the package record. Defaults `ref` to `main` and `subdir` to `.`. Imports outside `root/gsv` stay disabled and review-required by default. |
-| `pkg.sync` | `handlePkgSync` | Rebuilds builtin package seeds from `root/gsv`, removes stale builtin rows, and preserves existing enabled state. Requires `RIPGIT` and `ASSEMBLER`. Broadcasts `pkg.changed` after success. |
+| `pkg.sync` | `handlePkgSync` | Discovers builtin packages from `root/gsv:builtin-packages/*`, rebuilds those package seeds, removes stale builtin rows, and preserves existing enabled state. Requires `RIPGIT` and `ASSEMBLER`. Broadcasts `pkg.changed` after success. |
 | `pkg.checkout` | `handlePkgCheckout` | Re-resolves an existing package at a new ref and replaces manifest and artifact while preserving grants, enabled state, review flags, and install time. Requires mutable package access. |
 | `pkg.install` | `handlePkgInstall` | Enables an installed package. Errors if review is required and not approved. Idempotent when already enabled. |
 | `pkg.review.approve` | `handlePkgReviewApprove` | Sets review approval metadata for review-required packages. If review is not required, returns unchanged. |

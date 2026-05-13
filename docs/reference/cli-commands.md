@@ -194,8 +194,9 @@ gsv adapter connect --adapter whatsapp --config-json '{"pairing":true}'
 gsv packages sync
 ```
 
-`sync` re-seeds builtin packages from the mirrored `root/gsv` repository through
-the `pkg.sync` syscall and prints the resolved package commits.
+`sync` discovers builtin packages from `root/gsv:builtin-packages/*`, re-seeds
+the discovered packages through the `pkg.sync` syscall, and prints the resolved
+package commits.
 
 ## Infrastructure Commands
 

@@ -213,7 +213,6 @@ export interface PackageManifest {
 
 type BuiltinRipgitPackageSpec = {
   source: PackageSource;
-  grants?: PackageGrantSet;
   enabled: boolean;
 };
 
@@ -266,80 +265,19 @@ export const BUILTIN_SOURCE_OWNER = "root";
 export const BUILTIN_SOURCE_REPO = "gsv";
 export const BUILTIN_SOURCE_REF = "main";
 
-const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
-  createBuiltinRipgitPackageSpec("chat"),
-  createBuiltinRipgitPackageSpec("gsv"),
-  createBuiltinRipgitPackageSpec("shell", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("social", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("files", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("wiki", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-] as const;
-
 const TEXT_DECODER = new TextDecoder();
 
 export function packageRouteBase(packageName: string): string {
   return `/apps/${packageName}`;
 }
 
-function createBuiltinRipgitPackageSpec(
-  name: string,
-  grants: PackageGrantSet = {
-    egress: {
-      mode: "none",
-    },
-  },
-): BuiltinRipgitPackageSpec {
+function createBuiltinRipgitPackageSpec(name: string): BuiltinRipgitPackageSpec {
   return {
     source: {
       repo: `${BUILTIN_SOURCE_OWNER}/${BUILTIN_SOURCE_REPO}`,
       ref: BUILTIN_SOURCE_REF,
       subdir: `builtin-packages/${name}`,
     },
-    grants,
     enabled: true,
   };
 }
@@ -922,18 +860,63 @@ export async function buildBuiltinPackageSeeds(
   }
 
   const ripgit = new RipgitClient(ripgitBinding);
-  const ripgitSeeds = await mapWithConcurrency(
-    BUILTIN_RIPGIT_PACKAGE_SPECS,
-    BUILTIN_PACKAGE_ASSEMBLY_CONCURRENCY,
-    (spec) => resolveBuiltinRipgitPackage(env, ripgit, spec),
-  ).catch((error) => {
+  const ripgitSeeds = await (async () => {
+    const builtinSpecs = await discoverBuiltinRipgitPackageSpecs(ripgit);
+    return mapWithConcurrency(
+      builtinSpecs,
+      BUILTIN_PACKAGE_ASSEMBLY_CONCURRENCY,
+      (spec) => resolveBuiltinRipgitPackage(env, ripgit, spec),
+    );
+  })().catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Failed to resolve builtin packages from ripgit. Push the gsv monorepo to root/gsv first. ${message}`,
+      `Failed to resolve builtin packages from mirrored root/gsv. Bootstrap or sync root/gsv first. ${message}`,
     );
   });
 
   return ripgitSeeds;
+}
+
+async function discoverBuiltinRipgitPackageSpecs(
+  ripgit: RipgitClient,
+): Promise<BuiltinRipgitPackageSpec[]> {
+  const repo = builtinSourceRepoRef();
+  const root = await ripgit.readPath(repo, "builtin-packages");
+  if (root.kind === "missing") {
+    throw new Error("missing builtin package directory: builtin-packages");
+  }
+  if (root.kind !== "tree") {
+    throw new Error("builtin-packages is not a directory");
+  }
+
+  const packageDirs = root.entries
+    .filter((entry) => entry.type === "tree" && isBuiltinPackageDirName(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const specs = await mapWithConcurrency(
+    packageDirs,
+    BUILTIN_PACKAGE_ASSEMBLY_CONCURRENCY,
+    async (entry) => {
+      const packageJson = await ripgit.readPath(repo, `builtin-packages/${entry.name}/package.json`);
+      return packageJson.kind === "file" ? createBuiltinRipgitPackageSpec(entry.name) : null;
+    },
+  );
+  const discovered = specs.filter((spec): spec is BuiltinRipgitPackageSpec => spec !== null);
+  if (discovered.length === 0) {
+    throw new Error("no builtin packages with package.json found under builtin-packages");
+  }
+  return discovered;
+}
+
+function builtinSourceRepoRef(): RipgitRepoRef {
+  return {
+    owner: BUILTIN_SOURCE_OWNER,
+    repo: BUILTIN_SOURCE_REPO,
+    branch: BUILTIN_SOURCE_REF,
+  };
+}
+
+function isBuiltinPackageDirName(value: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(value) && !value.startsWith(".");
 }
 
 export async function resolvePackageFromRipgitSource(
@@ -1072,10 +1055,32 @@ async function resolveBuiltinRipgitPackage(
     scope: { kind: "global" },
     manifest,
     artifact,
-    grants: spec.grants,
+    grants: builtinGrantSetForManifest(manifest),
     enabled: spec.enabled,
     reviewRequired: false,
     reviewedAt: Date.now(),
+  };
+}
+
+function builtinGrantSetForManifest(manifest: PackageManifest): PackageGrantSet {
+  const bindings = (manifest.capabilities?.bindings ?? [])
+    .filter((binding) => binding.kind === "kernel")
+    .map((binding): PackageBindingGrant => ({
+      binding: binding.binding,
+      providerKind: "kernel-entrypoint",
+      providerRef: "kernel://app/request",
+    }));
+  const requestedEgress = manifest.capabilities?.egress;
+  return {
+    ...(bindings.length > 0 ? { bindings } : {}),
+    egress: requestedEgress?.mode === "allowlist"
+      ? {
+          mode: "allowlist",
+          allow: uniqueStrings(requestedEgress.allow),
+        }
+      : {
+          mode: "none",
+        },
   };
 }
 
