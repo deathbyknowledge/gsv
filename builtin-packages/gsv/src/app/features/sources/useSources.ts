@@ -4,12 +4,16 @@ import { errorToText } from "../../utils/format";
 import { parentPath, visibleRepos } from "./sources-domain";
 import type {
   CreateSourceRepoResult,
+  SourceCommit,
+  SourceCommitsPage,
   SourceDiffResult,
   SourceMode,
   SourceRepoRecord,
   SourcesState,
   SourceSearchResult,
 } from "./types";
+
+const COMMIT_PAGE_SIZE = 20;
 
 export type CreateRepoForm = {
   owner: string;
@@ -37,6 +41,9 @@ export type SourcesRuntime = {
   searchBusy: boolean;
   searchResult: SourceSearchResult | null;
   selectedCommitHash: string | null;
+  selectedCommit: SourceCommit | null;
+  commitsPage: SourceCommitsPage | null;
+  historyBusy: boolean;
   diffBusy: boolean;
   diffResult: SourceDiffResult | null;
   diffError: string | null;
@@ -49,6 +56,9 @@ export type SourcesRuntime = {
   openParent(): Promise<void>;
   runSearch(): Promise<void>;
   selectCommit(hash: string): Promise<void>;
+  closeCommit(): void;
+  previousCommitPage(): Promise<void>;
+  nextCommitPage(): Promise<void>;
   pullRepo(): Promise<void>;
   setRepoPublic(publicValue: boolean): Promise<void>;
   createRepo(): Promise<CreateSourceRepoResult | null>;
@@ -69,6 +79,7 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchResult, setSearchResult] = useState<SourceSearchResult | null>(null);
   const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
   const [diffBusy, setDiffBusy] = useState(false);
   const [diffResult, setDiffResult] = useState<SourceDiffResult | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -80,6 +91,11 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
   });
 
   const selectedRepo = state?.selectedRepo ?? null;
+  const commitsPage = state?.commitsPage ?? null;
+  const selectedCommit = useMemo(
+    () => state?.commits.find((commit) => commit.hash === selectedCommitHash) ?? null,
+    [selectedCommitHash, state],
+  );
   const filteredRepos = useMemo(
     () => state ? visibleRepos(state.repos, query) : [],
     [query, state],
@@ -111,6 +127,7 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
       setRepo(resolvedRepo);
       setRef(resolvedRef);
       setPath(resolvedPath);
+      clearCommitDetail();
       setCreateForm((current) => ({
         ...current,
         owner: current.owner || nextState.selectedRepo?.owner || nextState.repos[0]?.owner || "",
@@ -128,6 +145,7 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
     setPath("");
     setSearchResult(null);
     setDiffResult(null);
+    setDiffError(null);
     setSelectedCommitHash(null);
     setMode("code");
     writeLocation(nextRepo, "", "", "code");
@@ -138,6 +156,7 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
     setRef(nextRef);
     setPath("");
     setSearchResult(null);
+    clearCommitDetail();
     setMode("code");
     writeLocation(repo, nextRef, "", "code");
     await refresh({ ref: nextRef, path: "", mode: "code" });
@@ -146,6 +165,7 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
   async function openPath(nextPath: string): Promise<void> {
     setPath(nextPath);
     setSearchResult(null);
+    clearCommitDetail();
     setMode("code");
     writeLocation(repo, ref, nextPath, "code");
     await refresh({ path: nextPath, mode: "code" });
@@ -177,6 +197,7 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
     if (!repo || !searchQuery.trim()) return;
     setSearchBusy(true);
     setError(null);
+    clearCommitDetail();
     setMode("code");
     try {
       const result = await backend.searchSourceRepo({
@@ -193,10 +214,17 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
     }
   }
 
+  function clearCommitDetail(): void {
+    setSelectedCommitHash(null);
+    setDiffResult(null);
+    setDiffError(null);
+  }
+
   async function selectCommit(hash: string): Promise<void> {
     if (!repo || !hash) return;
     setSelectedCommitHash(hash);
     setDiffBusy(true);
+    setDiffResult(null);
     setDiffError(null);
     setMode("history");
     try {
@@ -206,6 +234,47 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
     } finally {
       setDiffBusy(false);
     }
+  }
+
+  function closeCommit(): void {
+    clearCommitDetail();
+  }
+
+  async function loadCommitPage(offset: number): Promise<void> {
+    if (!repo) return;
+    const normalizedOffset = Math.max(0, offset);
+    setHistoryBusy(true);
+    setError(null);
+    clearCommitDetail();
+    try {
+      const page = await backend.loadSourceCommits({
+        repo,
+        ref: ref || state?.refs?.activeRef || undefined,
+        limit: COMMIT_PAGE_SIZE,
+        offset: normalizedOffset,
+      });
+      setState((current) => current ? {
+        ...current,
+        commits: page.commits,
+        commitsPage: page,
+      } : current);
+    } catch (cause) {
+      setError(errorToText(cause));
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function previousCommitPage(): Promise<void> {
+    const page = state?.commitsPage;
+    if (!page || page.offset <= 0) return;
+    await loadCommitPage(page.offset - page.limit);
+  }
+
+  async function nextCommitPage(): Promise<void> {
+    const page = state?.commitsPage;
+    if (!page || !page.hasNextPage) return;
+    await loadCommitPage(page.offset + page.limit);
   }
 
   async function pullRepo(): Promise<void> {
@@ -267,6 +336,9 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
     searchBusy,
     searchResult,
     selectedCommitHash,
+    selectedCommit,
+    commitsPage,
+    historyBusy,
     diffBusy,
     diffResult,
     diffError,
@@ -279,6 +351,9 @@ export function useSources(backend: GsvBackend): SourcesRuntime {
     openParent,
     runSearch,
     selectCommit,
+    closeCommit,
+    previousCommitPage,
+    nextCommitPage,
     pullRepo,
     setRepoPublic,
     createRepo,

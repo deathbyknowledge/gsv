@@ -34,10 +34,12 @@ import type {
   CreateSourceRepoArgs,
   CreateSourceRepoResult,
   DiffSourceRepoArgs,
+  LoadSourceCommitsArgs,
   LoadSourcesStateArgs,
   PullSourceRepoArgs,
   SearchSourceRepoArgs,
   SetSourceRepoPublicArgs,
+  SourceCommitsPage,
   SourceDiffResult,
   SourcesState,
   SourceSearchResult,
@@ -68,6 +70,7 @@ export interface GsvBackend {
   setPackagePublic(args: SetPackagePublicArgs): Promise<unknown>;
   startPackageReview(args: PackageIdArgs): Promise<StartPackageReviewResult>;
   loadSourcesState(args: LoadSourcesStateArgs): Promise<SourcesState>;
+  loadSourceCommits(args: LoadSourceCommitsArgs): Promise<SourceCommitsPage>;
   searchSourceRepo(args: SearchSourceRepoArgs): Promise<SourceSearchResult>;
   diffSourceRepo(args: DiffSourceRepoArgs): Promise<SourceDiffResult>;
   pullSourceRepo(args: PullSourceRepoArgs): Promise<unknown>;

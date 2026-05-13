@@ -62,6 +62,15 @@ export type SourceCommit = {
   parents: string[];
 };
 
+export type SourceCommitsPage = {
+  repo: string;
+  ref: string;
+  limit: number;
+  offset: number;
+  commits: SourceCommit[];
+  hasNextPage: boolean;
+};
+
 export type SourceSearchMatch = {
   path: string;
   line: number;
@@ -116,12 +125,22 @@ export type SourcesState = {
   refs: SourceRefs | null;
   read: SourceReadResult | null;
   commits: SourceCommit[];
+  commitsPage: SourceCommitsPage | null;
 };
 
 export type LoadSourcesStateArgs = {
   repo?: string;
   ref?: string;
   path?: string;
+  commitLimit?: number;
+  commitOffset?: number;
+};
+
+export type LoadSourceCommitsArgs = {
+  repo: string;
+  ref?: string;
+  limit?: number;
+  offset?: number;
 };
 
 export type SearchSourceRepoArgs = {

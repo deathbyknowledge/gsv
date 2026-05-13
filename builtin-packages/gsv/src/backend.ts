@@ -23,6 +23,7 @@ import { killRuntimeProcess, loadRuntimeState } from "./backend/runtime";
 import {
   createSourceRepo,
   diffSourceRepo,
+  loadSourceCommits,
   loadSourcesState,
   pullSourceRepo,
   searchSourceRepo,
@@ -124,6 +125,10 @@ export default class GsvBackend extends PackageBackendEntrypoint {
 
   async loadSourcesState(args: unknown): Promise<unknown> {
     return loadSourcesState(args as never, this.kernel);
+  }
+
+  async loadSourceCommits(args: unknown): Promise<unknown> {
+    return loadSourceCommits(this.kernel, args as never);
   }
 
   async searchSourceRepo(args: unknown): Promise<unknown> {

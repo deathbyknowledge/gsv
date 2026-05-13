@@ -2,11 +2,13 @@ import type {
   CreateSourceRepoArgs,
   CreateSourceRepoResult,
   DiffSourceRepoArgs,
+  LoadSourceCommitsArgs,
   LoadSourcesStateArgs,
   PullSourceRepoArgs,
   SearchSourceRepoArgs,
   SetSourceRepoPublicArgs,
   SourceCommit,
+  SourceCommitsPage,
   SourceDiffFile,
   SourceDiffResult,
   SourceReadResult,
@@ -16,6 +18,9 @@ import type {
   SourceSearchResult,
   SourceTreeEntry,
 } from "../app/features/sources/types";
+
+const DEFAULT_COMMIT_PAGE_SIZE = 20;
+const MAX_COMMIT_PAGE_SIZE = 100;
 
 type KernelClientLike = {
   request(method: string, payload?: unknown): Promise<unknown>;
@@ -56,18 +61,24 @@ export async function loadSourcesState(
       refs: null,
       read: null,
       commits: [],
+      commitsPage: null,
     };
   }
 
   const refs = await loadSourceRefs(kernel, selectedRepo.repo, asString(args?.ref));
   const path = normalizeRepoPath(args?.path);
-  const [read, commits] = await Promise.all([
+  const [read, commitsPage] = await Promise.all([
     readSourceRepo(kernel, {
       repo: selectedRepo.repo,
       ref: refs.activeRef,
       path,
     }),
-    loadSourceLog(kernel, selectedRepo.repo, refs.activeRef),
+    loadSourceCommits(kernel, {
+      repo: selectedRepo.repo,
+      ref: refs.activeRef,
+      limit: args?.commitLimit,
+      offset: args?.commitOffset,
+    }),
   ]);
 
   return {
@@ -75,7 +86,35 @@ export async function loadSourcesState(
     selectedRepo,
     refs,
     read,
+    commits: commitsPage.commits,
+    commitsPage,
+  };
+}
+
+export async function loadSourceCommits(
+  kernel: KernelClientLike,
+  args: LoadSourceCommitsArgs,
+): Promise<SourceCommitsPage> {
+  const repo = asString(args?.repo);
+  const ref = asString(args?.ref) || "main";
+  const limit = normalizeLimit(args?.limit);
+  const offset = normalizeOffset(args?.offset);
+  if (!repo) throw new Error("repo is required");
+  const result = asRecord(await kernel.request("repo.log", {
+    repo,
+    ref,
+    limit: limit + 1,
+    offset,
+  }));
+  const entries = asArray<Record<string, unknown>>(result?.entries);
+  const commits = entries.slice(0, limit).map(normalizeCommit);
+  return {
+    repo: asString(result?.repo) || repo,
+    ref: asString(result?.ref) || ref,
+    limit,
+    offset,
     commits,
+    hasNextPage: entries.length > limit,
   };
 }
 
@@ -210,16 +249,6 @@ async function readSourceRepo(
     isBinary: result?.isBinary === true,
     content: typeof result?.content === "string" ? result.content : null,
   };
-}
-
-async function loadSourceLog(kernel: KernelClientLike, repo: string, ref: string): Promise<SourceCommit[]> {
-  const result = asRecord(await kernel.request("repo.log", {
-    repo,
-    ref,
-    limit: 30,
-    offset: 0,
-  }));
-  return asArray<Record<string, unknown>>(result?.entries).map(normalizeCommit);
 }
 
 async function listPackages(kernel: KernelClientLike): Promise<PackageLike[]> {
@@ -375,4 +404,18 @@ function asNumber(value: unknown): number {
 
 function asOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeLimit(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return DEFAULT_COMMIT_PAGE_SIZE;
+  }
+  return Math.min(Math.floor(value), MAX_COMMIT_PAGE_SIZE);
+}
+
+function normalizeOffset(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.floor(value);
 }

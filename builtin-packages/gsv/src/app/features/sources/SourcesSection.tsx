@@ -461,7 +461,13 @@ function SearchResults({ runtime }: { runtime: SourcesRuntime }) {
 }
 
 function HistoryPane({ runtime }: { runtime: SourcesRuntime }) {
-  const commits = runtime.state?.commits ?? [];
+  const page = runtime.commitsPage;
+  const commits = page?.commits ?? runtime.state?.commits ?? [];
+  if (runtime.selectedCommitHash) {
+    return <CommitDetailPage runtime={runtime} />;
+  }
+  const start = commits.length > 0 ? (page?.offset ?? 0) + 1 : 0;
+  const end = (page?.offset ?? 0) + commits.length;
   return (
     <aside class="gsv-source-history" aria-label="Repository history">
       <header>
@@ -469,7 +475,10 @@ function HistoryPane({ runtime }: { runtime: SourcesRuntime }) {
           <span class="gsv-kicker">History</span>
           <h4>Commits</h4>
         </div>
+        <span>{commits.length > 0 ? `${start}-${end}` : "No commits"}</span>
       </header>
+      <HistoryPager runtime={runtime} />
+      {runtime.historyBusy ? <div class="gsv-empty-state">Loading commits...</div> : null}
       <div class="gsv-source-commit-list">
         {commits.length === 0 ? <div class="gsv-empty-state">No commit history available.</div> : commits.map((commit) => (
           <CommitRow
@@ -480,10 +489,59 @@ function HistoryPane({ runtime }: { runtime: SourcesRuntime }) {
           />
         ))}
       </div>
+      <HistoryPager runtime={runtime} />
+    </aside>
+  );
+}
+
+function HistoryPager({ runtime }: { runtime: SourcesRuntime }) {
+  const page = runtime.commitsPage;
+  const pageNumber = page ? Math.floor(page.offset / page.limit) + 1 : 1;
+  return (
+    <div class="gsv-source-history-pager">
+      <button
+        type="button"
+        class="gsv-mini-button"
+        disabled={runtime.historyBusy || !page || page.offset <= 0}
+        onClick={() => void runtime.previousCommitPage()}
+      >
+        Previous
+      </button>
+      <span>Page {pageNumber}</span>
+      <button
+        type="button"
+        class="gsv-mini-button"
+        disabled={runtime.historyBusy || !page?.hasNextPage}
+        onClick={() => void runtime.nextCommitPage()}
+      >
+        Next
+      </button>
+    </div>
+  );
+}
+
+function CommitDetailPage({ runtime }: { runtime: SourcesRuntime }) {
+  const commit = runtime.selectedCommit;
+  const commitHash = runtime.selectedCommitHash;
+  return (
+    <article class="gsv-source-commit-detail" aria-label="Commit changes">
+      <header>
+        <button type="button" class="gsv-source-back-button" onClick={runtime.closeCommit}>
+          Back to commits
+        </button>
+        <div>
+          <span class="gsv-kicker">Commit</span>
+          <h4>{commit ? firstLine(commit.message) : shortHash(commitHash)}</h4>
+          <p>
+            {commit?.author || "unknown"} - {formatRelativeTime(commit?.commitTime)}
+            {commitHash ? ` - ${shortHash(commitHash)}` : ""}
+          </p>
+        </div>
+      </header>
       {runtime.diffBusy ? <div class="gsv-empty-state">Loading diff...</div> : null}
       {runtime.diffError ? <p class="gsv-inline-error">{runtime.diffError}</p> : null}
       {runtime.diffResult ? <DiffView diff={runtime.diffResult} /> : null}
-    </aside>
+    </article>
   );
 }
 

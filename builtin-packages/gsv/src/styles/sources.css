@@ -18,6 +18,7 @@
 .gsv-source-toolbar,
 .gsv-source-file header,
 .gsv-source-history header,
+.gsv-source-commit-detail > header,
 .gsv-source-diff header,
 .gsv-source-diff-file header {
   display: flex;
@@ -34,7 +35,8 @@
 
 .gsv-source-sidebar-head h3,
 .gsv-source-repo-head h3,
-.gsv-source-history h4 {
+.gsv-source-history h4,
+.gsv-source-commit-detail h4 {
   margin: 0.2rem 0 0;
 }
 
@@ -166,7 +168,9 @@
 
 .gsv-source-workspace {
   display: grid;
-  align-content: start;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  align-content: stretch;
+  min-height: 0;
 }
 
 .gsv-source-repo-head {
@@ -350,12 +354,16 @@
   display: grid;
   gap: 0.75rem;
   min-width: 0;
+  min-height: 0;
   padding: 0.75rem;
+  overflow: auto;
 }
 
 .gsv-source-code-pane,
-.gsv-source-history {
+.gsv-source-history,
+.gsv-source-commit-detail {
   min-width: 0;
+  min-height: 0;
 }
 
 .gsv-source-toolbar {
@@ -463,6 +471,7 @@
 .gsv-source-file,
 .gsv-source-search-results,
 .gsv-source-history,
+.gsv-source-commit-detail,
 .gsv-source-diff {
   border: 1px solid #d0d7de;
   border-top: 0;
@@ -542,7 +551,6 @@
 }
 
 .gsv-source-code-block {
-  max-height: 34rem;
   overflow: auto;
   background: #ffffff;
 }
@@ -597,6 +605,7 @@
 
 .gsv-source-search-results header,
 .gsv-source-history header,
+.gsv-source-commit-detail > header,
 .gsv-source-diff header {
   padding: 0.75rem;
   border-bottom: 1px solid #d8dee4;
@@ -660,11 +669,72 @@
   border-radius: 8px;
 }
 
+.gsv-source-commit-detail {
+  border-top: 1px solid #d0d7de;
+  border-radius: 8px;
+}
+
+.gsv-source-commit-detail > header {
+  justify-content: flex-start;
+}
+
+.gsv-source-commit-detail > header div {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.gsv-source-commit-detail h4 {
+  color: #24292f;
+  overflow-wrap: anywhere;
+}
+
+.gsv-source-commit-detail p {
+  margin: 0;
+  color: #57606a;
+  font-size: 0.78rem;
+}
+
+.gsv-source-back-button {
+  min-height: 2rem;
+  flex: 0 0 auto;
+  padding: 0 0.65rem;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0969da;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.gsv-source-back-button:hover {
+  background: #f6f8fa;
+}
+
+.gsv-source-history-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid #d8dee4;
+  background: #ffffff;
+}
+
+.gsv-source-history-pager:last-child {
+  border-top: 1px solid #d8dee4;
+  border-bottom: 0;
+}
+
+.gsv-source-history-pager span {
+  color: #57606a;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
 .gsv-source-commit-list {
   display: grid;
   min-width: 0;
-  max-height: 22rem;
-  overflow: auto;
 }
 
 .gsv-source-commit-row {
@@ -772,6 +842,7 @@
 
   .gsv-sources-sidebar,
   .gsv-source-workspace {
+    height: calc(100dvh - 7rem);
     max-height: calc(100dvh - 7rem);
   }
 
@@ -794,7 +865,8 @@
 @media (max-width: 640px) {
   .gsv-source-repo-head,
   .gsv-source-sidebar-head,
-  .gsv-source-file header {
+  .gsv-source-file header,
+  .gsv-source-commit-detail > header {
     display: grid;
   }
 
