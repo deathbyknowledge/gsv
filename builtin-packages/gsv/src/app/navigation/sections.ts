@@ -58,10 +58,9 @@ export const SECTIONS: GsvSection[] = [
     ],
     handoffs: [
       {
-        label: "Open current Packages",
-        description: "Use the existing package app while the Packages section migrates.",
-        target: "packages",
-        route: "/apps/packages?view=review",
+        label: "Review packages",
+        description: "Stay in GSV to handle package trust decisions and updates.",
+        sectionId: "packages",
       },
       {
         label: "Open Devices",
@@ -235,10 +234,9 @@ export const SECTIONS: GsvSection[] = [
         sectionId: "integrations",
       },
       {
-        label: "Open MCP settings",
-        description: "Launch Control on the MCP section.",
-        target: "control",
-        route: "/apps/control?tab=mcp",
+        label: "Manage MCP servers",
+        description: "Stay in GSV to review tool server health and available tools.",
+        sectionId: "integrations",
       },
     ],
   },
@@ -268,14 +266,7 @@ export const SECTIONS: GsvSection[] = [
         meta: "Policy",
       },
     ],
-    handoffs: [
-      {
-        label: "Open current Access",
-        description: "Launch Control on the access section.",
-        target: "control",
-        route: "/apps/control?tab=access",
-      },
-    ],
+    handoffs: [],
   },
   {
     id: "settings",
@@ -303,14 +294,7 @@ export const SECTIONS: GsvSection[] = [
         meta: "Escape hatch",
       },
     ],
-    handoffs: [
-      {
-        label: "Open current Settings",
-        description: "Launch Control on the configuration section.",
-        target: "control",
-        route: "/apps/control?tab=config",
-      },
-    ],
+    handoffs: [],
   },
 ];
 

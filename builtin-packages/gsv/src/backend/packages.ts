@@ -1,6 +1,11 @@
 import type {
   CatalogEntry,
   CatalogRecord,
+  AddCatalogRemoteArgs,
+  CreatePackageArgs,
+  CreatePackageResult,
+  ImportPackageArgs,
+  ImportPackageResult,
   LoadPackagesStateArgs,
   PackageCommit,
   PackageDetail,
@@ -10,6 +15,7 @@ import type {
   PullPackageSourceArgs,
   PackagesState,
   PackageIdArgs,
+  RemoveCatalogRemoteArgs,
   SetPackagePublicArgs,
   SourceRecord,
   StartPackageReviewResult,
@@ -129,6 +135,17 @@ function asBoolean(value: unknown): boolean {
 
 function unique<T>(items: T[]): T[] {
   return [...new Set(items)];
+}
+
+function parseImportSource(raw: string): { remoteUrl?: string; repo?: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error("Source is required.");
+  }
+  if (trimmed.includes("://") || trimmed.startsWith("git@")) {
+    return { remoteUrl: trimmed };
+  }
+  return { repo: trimmed.replace(/^\/+|\/+$/g, "") };
 }
 
 function isBuiltinRepo(repo: string): boolean {
@@ -535,6 +552,67 @@ export async function syncPackages(kernel: KernelClientLike, ctx: ViewerRuntime)
     });
   }
   return { ok: true };
+}
+
+export async function importPackage(
+  kernel: KernelClientLike,
+  args: ImportPackageArgs,
+): Promise<ImportPackageResult> {
+  const source = parseImportSource(asString(args?.source));
+  const result = asRecord(await kernel.request("pkg.add", {
+    ...source,
+    ref: asString(args?.ref) || "main",
+    subdir: asString(args?.subdir) || ".",
+  }));
+  const pkg = asRecord(result?.package);
+  if (!pkg) {
+    throw new Error("Package import did not return a package.");
+  }
+  return { package: pkg as PackageRecord };
+}
+
+export async function createPackage(
+  kernel: KernelClientLike,
+  args: CreatePackageArgs,
+): Promise<CreatePackageResult> {
+  const result = asRecord(await kernel.request("pkg.create", {
+    repo: asString(args?.repo),
+    ref: asString(args?.ref) || undefined,
+    subdir: asString(args?.subdir) || undefined,
+    name: asString(args?.name) || undefined,
+    displayName: asString(args?.displayName) || undefined,
+    description: asString(args?.description) || undefined,
+    template: args?.template === "command" ? "command" : "web-ui",
+    command: asString(args?.command) || undefined,
+    enable: args?.enable === true,
+    overwrite: args?.overwrite === true,
+  }));
+  const pkg = asRecord(result?.package);
+  if (!pkg) {
+    throw new Error("Package creation did not return a package.");
+  }
+  return {
+    package: pkg as PackageRecord,
+    created: asBoolean(result?.created),
+    files: asArray<string>(result?.files),
+  };
+}
+
+export async function addCatalogRemote(
+  kernel: KernelClientLike,
+  args: AddCatalogRemoteArgs,
+): Promise<unknown> {
+  return kernel.request("pkg.remote.add", {
+    name: asString(args?.name),
+    baseUrl: asString(args?.baseUrl),
+  });
+}
+
+export async function removeCatalogRemote(
+  kernel: KernelClientLike,
+  args: RemoveCatalogRemoteArgs,
+): Promise<unknown> {
+  return kernel.request("pkg.remote.remove", { name: asString(args?.name) });
 }
 
 export async function enablePackage(kernel: KernelClientLike, args: PackageIdArgs): Promise<unknown> {

@@ -104,6 +104,7 @@
 }
 
 .gsv-package-search input,
+.gsv-package-filters input,
 .gsv-package-filters select {
   width: 100%;
   min-width: 0;
@@ -214,6 +215,12 @@
   border-color: #e6c5c5;
   background: #fff4f4;
   color: #9f2f2f;
+}
+
+.gsv-action-button.is-active {
+  border-color: #bac7e5;
+  background: #e8eefb;
+  color: #172033;
 }
 
 .gsv-package-detail {

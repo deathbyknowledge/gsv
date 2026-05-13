@@ -1,4 +1,6 @@
 import type {
+  CatalogEntry,
+  CatalogRecord,
   PackageEntrypoint,
   PackageRecord,
   PackageScopeFilter,
@@ -7,12 +9,18 @@ import type {
 } from "./types";
 
 export function viewTitle(view: PackagesView): string {
+  if (view === "discover") return "Discover packages";
+  if (view === "create") return "Create package";
+  if (view === "remotes") return "Catalog remotes";
   if (view === "updates") return "Available updates";
   if (view === "review") return "Trust review";
   return "Installed packages";
 }
 
 export function viewDescription(view: PackagesView): string {
+  if (view === "discover") return "Import from a source URL, shorthand, local catalog, or configured remote.";
+  if (view === "create") return "Scaffold a user package source and install it into your package inventory.";
+  if (view === "remotes") return "Manage remote catalogs that advertise public packages from other systems.";
   if (view === "updates") return "Packages whose source heads moved ahead of the installed commit.";
   if (view === "review") return "Packages that need a trust decision before enablement.";
   return "Operational inventory of software installed in this GSV instance.";
@@ -174,6 +182,32 @@ export function filteredPackages(
 export function sourceSummary(pkg: PackageRecord, viewerUsername: string): string {
   const subdir = pkg.source.subdir && pkg.source.subdir !== "." ? `:${pkg.source.subdir}` : "";
   return `${formatRepoDisplay(pkg.source.repo, viewerUsername)} @ ${pkg.source.ref}${subdir}`;
+}
+
+export function catalogPackageCount(state: PackagesState | null): number {
+  return (state?.catalogs ?? []).reduce((total, catalog) => total + catalog.packages.length, 0);
+}
+
+export function matchInstalledPackage(entry: CatalogEntry, packages: PackageRecord[]): PackageRecord | null {
+  return packages.find((pkg) => pkg.source.repo === entry.source.repo && pkg.source.subdir === entry.source.subdir) ?? null;
+}
+
+export function catalogImportSource(catalog: CatalogRecord, entry: CatalogEntry): string {
+  if (catalog.kind === "remote" && catalog.baseUrl) {
+    const [owner, repo] = entry.source.repo.split("/");
+    if (owner && repo) {
+      return `${catalog.baseUrl.replace(/\/+$/g, "")}/git/${owner}/${repo}.git`;
+    }
+  }
+  return entry.source.repo;
+}
+
+export function createRepoName(raw: string): string {
+  return raw
+    .trim()
+    .replace(/\.git$/i, "")
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\/+/g, "/");
 }
 
 function packageAttentionScore(pkg: PackageRecord): number {

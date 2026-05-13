@@ -8,7 +8,7 @@ export type SourcesRoute = {
   mode?: "code" | "history";
 };
 
-export type PackagesRouteView = "inventory" | "updates" | "review";
+export type PackagesRouteView = "inventory" | "updates" | "review" | "discover" | "create" | "remotes";
 
 export type PackagesRoute = {
   packageId?: string | null;
@@ -22,7 +22,13 @@ export function readSectionFromLocation(): GsvSectionId {
 
 export function readPackagesViewFromLocation(): PackagesRouteView {
   const value = new URL(window.location.href).searchParams.get("view");
-  return value === "updates" || value === "review" ? value : "inventory";
+  return value === "updates"
+    || value === "review"
+    || value === "discover"
+    || value === "create"
+    || value === "remotes"
+    ? value
+    : "inventory";
 }
 
 export function readPackageFromLocation(): string | null {

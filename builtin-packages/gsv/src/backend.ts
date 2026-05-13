@@ -1,6 +1,15 @@
 import { PackageBackendEntrypoint } from "@gsv/package/backend";
 import { connectAdapter, disconnectAdapter, loadAdaptersState } from "./backend/adapters";
 import {
+  applyConfigEntries,
+  consumeIdentityLinkCode,
+  createAccessToken,
+  createIdentityLink,
+  loadAdministrationState,
+  removeIdentityLink,
+  revokeAccessToken,
+} from "./backend/control";
+import {
   createDeviceNodeToken,
   loadDevicesState,
   revokeDeviceToken,
@@ -9,12 +18,16 @@ import {
 import { addMcpServer, loadMcpState, refreshMcpServer, removeMcpServer } from "./backend/mcp";
 import {
   approvePackageReview,
+  addCatalogRemote,
+  createPackage,
   disablePackage,
   enablePackage,
+  importPackage,
   loadPackagesState,
   pullPackage,
   pullPackageSource,
   refreshPackage,
+  removeCatalogRemote,
   setPackagePublic,
   startPackageReview,
   syncPackages,
@@ -31,6 +44,35 @@ import {
 } from "./backend/sources";
 
 export default class GsvBackend extends PackageBackendEntrypoint {
+  async loadAdministrationState(args: Record<string, never> = {}): Promise<unknown> {
+    void args;
+    return loadAdministrationState(this.kernel, this);
+  }
+
+  async applyConfigEntries(args: unknown): Promise<unknown> {
+    return applyConfigEntries(this.kernel, this, args as never);
+  }
+
+  async createAccessToken(args: unknown): Promise<unknown> {
+    return createAccessToken(this.kernel, this, args as never);
+  }
+
+  async revokeAccessToken(args: unknown): Promise<unknown> {
+    return revokeAccessToken(this.kernel, this, args as never);
+  }
+
+  async consumeIdentityLinkCode(args: unknown): Promise<unknown> {
+    return consumeIdentityLinkCode(this.kernel, this, args as never);
+  }
+
+  async createIdentityLink(args: unknown): Promise<unknown> {
+    return createIdentityLink(this.kernel, this, args as never);
+  }
+
+  async removeIdentityLink(args: unknown): Promise<unknown> {
+    return removeIdentityLink(this.kernel, this, args as never);
+  }
+
   async loadRuntimeState(): Promise<unknown> {
     return loadRuntimeState(this.kernel);
   }
@@ -89,6 +131,22 @@ export default class GsvBackend extends PackageBackendEntrypoint {
 
   async syncPackages(): Promise<unknown> {
     return syncPackages(this.kernel, this);
+  }
+
+  async importPackage(args: unknown): Promise<unknown> {
+    return importPackage(this.kernel, args as never);
+  }
+
+  async createPackage(args: unknown): Promise<unknown> {
+    return createPackage(this.kernel, args as never);
+  }
+
+  async addCatalogRemote(args: unknown): Promise<unknown> {
+    return addCatalogRemote(this.kernel, args as never);
+  }
+
+  async removeCatalogRemote(args: unknown): Promise<unknown> {
+    return removeCatalogRemote(this.kernel, args as never);
   }
 
   async enablePackage(args: unknown): Promise<unknown> {

@@ -1,5 +1,6 @@
-export type PackagesView = "inventory" | "updates" | "review";
+export type PackagesView = "inventory" | "updates" | "review" | "discover" | "create" | "remotes";
 export type PackageScopeFilter = "all" | "mine" | "system";
+export type PackageCreateTemplate = "web-ui" | "command";
 
 export type PackageEntrypoint = {
   name: string;
@@ -151,4 +152,42 @@ export type StartPackageReviewResult = {
   pid: string;
   workspaceId: string | null;
   cwd: string | null;
+};
+
+export type ImportPackageArgs = {
+  source: string;
+  ref?: string;
+  subdir?: string;
+};
+
+export type ImportPackageResult = {
+  package: PackageRecord;
+};
+
+export type CreatePackageArgs = {
+  repo: string;
+  ref?: string;
+  subdir?: string;
+  name?: string;
+  displayName?: string;
+  description?: string;
+  template?: PackageCreateTemplate;
+  command?: string;
+  enable?: boolean;
+  overwrite?: boolean;
+};
+
+export type CreatePackageResult = {
+  package: PackageRecord;
+  created: boolean;
+  files: string[];
+};
+
+export type AddCatalogRemoteArgs = {
+  name: string;
+  baseUrl: string;
+};
+
+export type RemoveCatalogRemoteArgs = {
+  name: string;
 };

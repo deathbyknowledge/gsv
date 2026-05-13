@@ -118,11 +118,10 @@ Examples:
 - `gsv`
 - `files`
 - `shell`
-- `control`
-- `packages`
 - `wiki`
+- `doctor`
 
-Runtime operations for processes, devices, and message adapters belong in the consolidated `gsv` builtin app, not separate standalone builtin apps.
+Runtime operations for processes, devices, message adapters, access, settings, packages, and source repositories belong in the consolidated `gsv` builtin app, not separate standalone builtin apps.
 
 They are synced from `root/gsv` into the running system. A builtin app change is not applied by redeploying the gateway worker alone.
 

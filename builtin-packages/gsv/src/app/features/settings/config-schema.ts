@@ -1,70 +1,48 @@
-import type { ControlConfigSectionId } from "./types";
+import type { ConfigSection, ProfileId, SettingField } from "./types";
 
-export type ControlSettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly" | "json";
-
-export type ControlSettingField = {
-  key: string;
-  label: string;
-  description: string;
-  kind: ControlSettingKind;
-  placeholder?: string;
-  rows?: number;
-  options?: Array<{ value: string; label: string }>;
-};
-
-export type ControlConfigSection = {
-  id: ControlConfigSectionId;
-  label: string;
-  description: string;
-};
-
-export type ControlProfileId =
-  | "init"
-  | "task"
-  | "review"
-  | "cron"
-  | "mcp"
-  | "app"
-  | "archivist"
-  | "curator";
-
-export const CONFIG_SECTIONS: ControlConfigSection[] = [
+export const CONFIG_SECTIONS: ConfigSection[] = [
   {
     id: "ai",
-    label: "AI Defaults",
-    description: "Provider, model, and prompt budget defaults used across system-owned runs.",
+    panel: "ai",
+    label: "AI defaults",
+    description: "Provider, model, reasoning, and prompt budget defaults.",
   },
   {
     id: "profiles",
+    panel: "profiles",
     label: "Profiles",
-    description: "Profile-specific context blocks and tool approval policies.",
+    description: "Profile context blocks and tool approval policies.",
   },
   {
     id: "shell",
+    panel: "runtime",
     label: "Shell",
-    description: "Execution limits and network behavior for native shell commands.",
+    description: "Native command execution limits and network behavior.",
   },
   {
     id: "server",
+    panel: "runtime",
     label: "Server",
     description: "Instance identity and runtime metadata.",
   },
   {
     id: "processes",
+    panel: "runtime",
     label: "Processes",
     description: "Process naming and concurrency controls.",
   },
   {
     id: "automation",
+    panel: "runtime",
     label: "Automation",
     description: "Background archivist and curator scheduling.",
   },
 ];
 
-export const PROFILE_OPTIONS: Array<{ id: ControlProfileId; label: string; description: string }> = [
+export const PROFILE_OPTIONS: Array<{ id: ProfileId; label: string; description: string }> = [
   { id: "init", label: "Init", description: "Persistent system coordinator." },
   { id: "task", label: "Task", description: "Primary interactive task runner." },
-  { id: "review", label: "Review", description: "Package/code review specialist." },
+  { id: "review", label: "Review", description: "Package and code review specialist." },
   { id: "cron", label: "Cron", description: "Scheduled background work." },
   { id: "mcp", label: "MCP", description: "Operational control and diagnosis." },
   { id: "app", label: "App", description: "App-owned runtime processes." },
@@ -72,7 +50,7 @@ export const PROFILE_OPTIONS: Array<{ id: ControlProfileId; label: string; descr
   { id: "curator", label: "Curator", description: "Inbox candidate review and promotion." },
 ];
 
-export const AI_FIELDS: ControlSettingField[] = [
+export const AI_FIELDS: SettingField[] = [
   {
     key: "config/ai/provider",
     label: "Provider",
@@ -119,7 +97,7 @@ export const AI_FIELDS: ControlSettingField[] = [
   },
 ];
 
-export const SHELL_FIELDS: ControlSettingField[] = [
+export const SHELL_FIELDS: SettingField[] = [
   {
     key: "config/shell/timeout_ms",
     label: "Timeout (ms)",
@@ -140,7 +118,7 @@ export const SHELL_FIELDS: ControlSettingField[] = [
   },
 ];
 
-export const SERVER_FIELDS: ControlSettingField[] = [
+export const SERVER_FIELDS: SettingField[] = [
   {
     key: "config/server/name",
     label: "Instance name",
@@ -162,22 +140,22 @@ export const SERVER_FIELDS: ControlSettingField[] = [
   },
 ];
 
-export const PROCESS_FIELDS: ControlSettingField[] = [
+export const PROCESS_FIELDS: SettingField[] = [
   {
     key: "config/process/init_label",
     label: "Init label template",
-    description: "Label template for init processes. `{username}` is substituted at runtime.",
+    description: "Label template for init processes. {username} is substituted at runtime.",
     kind: "text",
   },
   {
     key: "config/process/max_per_user",
     label: "Max processes per user",
-    description: "Concurrent process limit per user. Use `0` for unlimited.",
+    description: "Concurrent process limit per user. Use 0 for unlimited.",
     kind: "number",
   },
 ];
 
-export const AUTOMATION_FIELDS: ControlSettingField[] = [
+export const AUTOMATION_FIELDS: SettingField[] = [
   {
     key: "config/automation/archivist/min_interval_ms",
     label: "Archivist minimum interval (ms)",
@@ -187,13 +165,13 @@ export const AUTOMATION_FIELDS: ControlSettingField[] = [
   {
     key: "config/automation/curator/interval_ms",
     label: "Curator interval (ms)",
-    description: "Periodic curator sweep interval. Use `0` to disable periodic runs.",
+    description: "Periodic curator sweep interval. Use 0 to disable periodic runs.",
     kind: "number",
   },
   {
     key: "config/automation/curator/batch_size",
     label: "Curator batch size",
-    description: "Maximum number of inbox candidates reviewed in a single sweep.",
+    description: "Maximum inbox candidates reviewed in a single sweep.",
     kind: "number",
   },
 ];
@@ -219,11 +197,11 @@ export const PROFILE_CONTEXT_FIELDS: Array<{ file: string; label: string; descri
   },
 ];
 
-export function buildProfileContextKey(profile: ControlProfileId, file: string): string {
+export function buildProfileContextKey(profile: ProfileId, file: string): string {
   return `config/ai/profile/${profile}/context.d/${file}`;
 }
 
-export function buildProfileApprovalKey(profile: ControlProfileId): string {
+export function buildProfileApprovalKey(profile: ProfileId): string {
   return `config/ai/profile/${profile}/tools/approval`;
 }
 

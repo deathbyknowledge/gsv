@@ -305,32 +305,8 @@ const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
       mode: "none",
     },
   }),
-  createBuiltinRipgitPackageSpec("control", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
   createBuiltinRipgitPackageSpec("ascii-starfield"),
   createBuiltinRipgitPackageSpec("doctor"),
-  createBuiltinRipgitPackageSpec("packages", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
 ] as const;
 
 const TEXT_DECODER = new TextDecoder();

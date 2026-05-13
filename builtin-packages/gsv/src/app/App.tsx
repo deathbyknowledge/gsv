@@ -5,6 +5,7 @@ import { DevicesSection } from "./features/devices/DevicesSection";
 import { IntegrationsSection } from "./features/integrations/IntegrationsSection";
 import { PackagesSection } from "./features/packages/PackagesSection";
 import { RuntimeSection } from "./features/runtime/RuntimeSection";
+import { AdministrationSection } from "./features/settings/AdministrationSection";
 import { SourcesSection } from "./features/sources/SourcesSection";
 import { ATTENTION_ITEMS, GROUPS, findSection } from "./navigation/sections";
 import {
@@ -78,6 +79,10 @@ export function App({ backend }: { backend: GsvBackend }) {
             <PackagesSection backend={backend} onOpenSources={openSources} />
           ) : activeSection.id === "sources" ? (
             <SourcesSection backend={backend} onOpenPackage={openPackage} />
+          ) : activeSection.id === "access" ? (
+            <AdministrationSection backend={backend} mode="access" />
+          ) : activeSection.id === "settings" ? (
+            <AdministrationSection backend={backend} mode="settings" />
           ) : (
             <SectionWorkspace section={activeSection} onNavigate={navigate} onOpenHandoff={openHandoff} />
           )}

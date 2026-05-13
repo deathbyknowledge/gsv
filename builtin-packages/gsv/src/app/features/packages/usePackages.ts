@@ -8,10 +8,16 @@ import {
 import { errorToText } from "../../utils/format";
 import { filteredPackages } from "./packages-domain";
 import type {
+  AddCatalogRemoteArgs,
+  CreatePackageArgs,
+  CreatePackageResult,
+  ImportPackageArgs,
+  ImportPackageResult,
   PackageRecord,
   PackageScopeFilter,
   PackagesState,
   PackagesView,
+  RemoveCatalogRemoteArgs,
   StartPackageReviewResult,
 } from "./types";
 
@@ -41,6 +47,10 @@ export type PackagesRuntime = {
   pullPackageSource(repo: string): Promise<void>;
   setPackagePublic(args: { packageId?: string; repo?: string; public: boolean }): Promise<void>;
   startPackageReview(packageId: string): Promise<StartPackageReviewResult | null>;
+  importPackage(args: ImportPackageArgs): Promise<PackageRecord | null>;
+  createPackage(args: CreatePackageArgs): Promise<CreatePackageResult | null>;
+  addCatalogRemote(args: AddCatalogRemoteArgs): Promise<void>;
+  removeCatalogRemote(args: RemoveCatalogRemoteArgs): Promise<void>;
 };
 
 export function usePackages(backend: GsvBackend): PackagesRuntime {
@@ -185,6 +195,46 @@ export function usePackages(backend: GsvBackend): PackagesRuntime {
     return result;
   }
 
+  async function importPackage(args: ImportPackageArgs): Promise<PackageRecord | null> {
+    let imported: PackageRecord | null = null;
+    await runMutation("package:import", async () => {
+      const result: ImportPackageResult = await backend.importPackage(args);
+      imported = result.package;
+      setNotice(`Imported ${result.package.name}.`);
+      selectPackage(result.package.packageId);
+      await refresh(result.package.packageId);
+    });
+    return imported;
+  }
+
+  async function createPackage(args: CreatePackageArgs): Promise<CreatePackageResult | null> {
+    let created: CreatePackageResult | null = null;
+    await runMutation("package:create", async () => {
+      const result = await backend.createPackage(args);
+      created = result;
+      setNotice(`${result.created ? "Created" : "Updated"} ${result.package.name} with ${result.files.length} scaffold file${result.files.length === 1 ? "" : "s"}.`);
+      selectPackage(result.package.packageId);
+      await refresh(result.package.packageId);
+    });
+    return created;
+  }
+
+  async function addCatalogRemote(args: AddCatalogRemoteArgs): Promise<void> {
+    await runMutation("catalog-remote:add", async () => {
+      await backend.addCatalogRemote(args);
+      setNotice(`Added remote ${args.name}.`);
+      await refresh();
+    });
+  }
+
+  async function removeCatalogRemote(args: RemoveCatalogRemoteArgs): Promise<void> {
+    await runMutation(`catalog-remote:remove:${args.name}`, async () => {
+      await backend.removeCatalogRemote(args);
+      setNotice(`Removed remote ${args.name}.`);
+      await refresh();
+    });
+  }
+
   function setView(nextView: PackagesView): void {
     setViewState(nextView);
     replacePackagesLocation({ view: nextView });
@@ -228,6 +278,10 @@ export function usePackages(backend: GsvBackend): PackagesRuntime {
     pullPackageSource,
     setPackagePublic,
     startPackageReview,
+    importPackage,
+    createPackage,
+    addCatalogRemote,
+    removeCatalogRemote,
   };
 }
 
