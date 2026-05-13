@@ -57,7 +57,9 @@ for (const peer of peers) {
     const added = await rpc(ws, "social.friend.add", {
       handle: other.handle,
       grants: [
+        { operation: "social.thread.create" },
         { operation: "social.message.send" },
+        { operation: "social.message.reply" },
         { operation: "social.request.create" },
       ],
     });
@@ -73,9 +75,62 @@ for (const peer of peers) {
   }
 }
 
+const senderPeer = peers[0];
+const receiverPeer = peers[1];
+const sender = results.find((result) => result.label === senderPeer.label);
+const receiver = results.find((result) => result.label === receiverPeer.label);
+if (!sender || !receiver) {
+  throw new Error("Missing sender or receiver state");
+}
+let socialMessage;
+{
+  const ws = await connect(senderPeer);
+  try {
+    socialMessage = await rpc(ws, "social.message.send", {
+      toHandle: receiver.handle,
+      text: `Local social smoke from ${sender.label} to ${receiver.label}`,
+      body: {
+        kind: "smoke",
+        sender: sender.handle,
+        receiver: receiver.handle,
+      },
+    });
+    if (socialMessage?.message?.deliveryStatus !== "accepted") {
+      throw new Error(`${sender.label} message delivery was ${socialMessage?.message?.deliveryStatus ?? "missing"}`);
+    }
+  } finally {
+    ws.close(1000, "smoke complete");
+  }
+}
+
+{
+  const ws = await connect(receiverPeer);
+  try {
+    const received = await rpc(ws, "social.thread.get", {
+      threadId: socialMessage.thread.threadId,
+    });
+    const inbound = received?.messages?.find((message) =>
+      message.direction === "inbound" &&
+      message.fromHandle === sender.handle &&
+      message.text === `Local social smoke from ${sender.label} to ${receiver.label}`
+    );
+    if (!inbound) {
+      throw new Error(`${receiver.label} did not store inbound message for ${socialMessage.thread.threadId}`);
+    }
+  } finally {
+    ws.close(1000, "smoke complete");
+  }
+}
+
 console.log(JSON.stringify({
   ok: true,
   ensured: ensureIdentity,
+  message: {
+    from: sender.handle,
+    to: receiver.handle,
+    threadId: socialMessage.thread.threadId,
+    deliveryStatus: socialMessage.message.deliveryStatus,
+  },
   peers: results.map((peer) => ({
     label: peer.label,
     origin: peer.origin,

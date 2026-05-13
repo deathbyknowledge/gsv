@@ -112,7 +112,7 @@ function createMockSql() {
       else table.push(row);
       return cursor<T>([]);
     }
-    if (q.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS idx_social_inbound_replays_nonce")) {
+    if (q.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS")) {
       return cursor<T>([]);
     }
     throw new Error(`Unhandled SQL: ${q}`);

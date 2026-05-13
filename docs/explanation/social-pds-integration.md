@@ -119,10 +119,10 @@ npm run smoke:social:local
 ```
 
 This verifies identity, DID documents, public `space.gsv.profile`,
-`space.gsv.instance`, and `space.gsv.agent.card` records, and handle-based
-friend/grant setup in both directions. Signed inbound service-to-service
-authentication is implemented; social thread/message persistence is the next
-implementation layer.
+`space.gsv.instance`, and `space.gsv.agent.card` records, handle-based
+friend/grant setup in both directions, and one signed async message from GSV A
+to GSV B. The receiver stores the inbound message in its Kernel social thread
+state and delivers it to the receiver's init process conversation.
 
 ## Subagent Handoff Context
 
@@ -168,18 +168,20 @@ Completed milestones:
 - Friends can be added by handle and assigned narrow local grants.
 - Signed inbound social envelopes can be accepted or rejected with replay
   protection.
+- Social threads and messages are stored in Kernel tables.
+- `social.thread.create`, `social.thread.list`, `social.thread.get`,
+  `social.message.send`, and `social.message.reply` are implemented.
+- Outbound messages are signed and posted to the remote GSV inbound endpoint,
+  with local delivery status updated from the immediate remote response.
+- Accepted inbound messages are idempotently stored before process delivery and
+  rendered into the main user's init process conversation.
 
 Next implementation contract:
 
-- Add Kernel tables for social threads, messages, delivery attempts, and remote
-  event ids.
-- Implement `social.thread.create`, `social.thread.list`,
-  `social.thread.get`, `social.message.send`, and `social.message.reply`.
-- Store every accepted inbound message idempotently before process delivery.
-- Map local process delivery to `conversationId =
-  social:<peer-handle>:<thread-id>`.
-- Add tests for creation, list/get, outbound queued status, inbound acceptance,
-  duplicate inbound idempotency, denied sender behavior, and process delivery.
+- Add bounded retry scheduling for transient social delivery failures.
+- Add typed social requests and inbox state.
+- Add friend public-record sync and package-like surfaces.
+- Expand the two-GSV smoke into request/reply and denied-sender cases.
 
 ## TODOs
 
@@ -241,30 +243,31 @@ Next implementation contract:
 
 ### 5. Add Social Threads And Messages
 
-- [ ] Add Kernel tables for social threads, messages, delivery attempts, and
+- [x] Add Kernel tables for social threads, messages, delivery attempts, and
       remote event ids.
 - [x] Define shared protocol types for social threads, messages, delivery
       status, and request status.
-- [ ] Add `social.thread.create`, `social.thread.list`, `social.thread.get`,
+- [x] Add `social.thread.create`, `social.thread.list`, `social.thread.get`,
       `social.message.send`, and `social.message.reply`.
-- [ ] Make outbound sends asynchronous with local status:
+- [x] Make outbound sends asynchronous with local status:
       `queued`, `sent`, `accepted`, `failed`, `retrying`, `delivered`.
 - [ ] Add bounded retries for transient remote failures.
-- [ ] Add idempotency for duplicate inbound message ids.
-- [ ] Enforce max message size and allowed content types.
-- [ ] Add tests for thread creation, follow-up routing, retries, idempotency,
-      and status transitions.
+- [x] Add idempotency for duplicate inbound message ids.
+- [x] Enforce max message size and allowed content types.
+- [x] Add tests for thread creation, follow-up routing, idempotency, and status
+      transitions.
+- [ ] Add tests for retry scheduling once retries exist.
 
 ### 6. Deliver Social Events To Processes
 
-- [ ] Add a Kernel-owned process event delivery path for typed social events.
-- [ ] Open or reuse `conversationId =
+- [x] Add a Kernel-owned process event delivery path for typed social events.
+- [x] Open or reuse `conversationId =
       social:<peer-handle>:<thread-id>` on the user's init process.
-- [ ] Render inbound social messages as explicit process events, preserving
+- [x] Render inbound social messages as explicit process events, preserving
       peer handle, thread id, message id, and request metadata.
-- [ ] Add an agent-visible way to reply through `social.message.reply`.
-- [ ] Do not expose remote peers as callers of `proc.send`.
-- [ ] Add tests proving inbound social messages create or reuse the expected
+- [x] Add an agent-visible way to reply through `social.message.reply`.
+- [x] Do not expose remote peers as callers of `proc.send`.
+- [x] Add tests proving inbound social messages create or reuse the expected
       Process DO conversation.
 
 ### 7. Add Social Requests And Inbox State
@@ -305,12 +308,13 @@ Next implementation contract:
 
 ### 10. Build End-To-End Smoke Tests
 
-- [ ] Add a two-GSV test harness or smoke script.
-- [ ] Create two users with linked handles.
-- [ ] Publish profile, instance, agent-card, and package-like records.
-- [ ] Add a friend grant from Alice to Hank.
-- [ ] Send a signed async message from Hank to Alice.
-- [ ] Verify Alice's init process receives the social conversation.
+- [x] Add a two-GSV test harness or smoke script.
+- [x] Create two users with linked handles.
+- [ ] Publish package-like records.
+- [x] Publish profile, instance, and agent-card records.
+- [x] Add a friend grant from Alice to Hank.
+- [x] Send a signed async message from Hank to Alice.
+- [x] Verify Alice stores the social conversation.
 - [ ] Reply from Alice back to Hank.
 - [ ] Verify Hank receives the reply in the original thread.
 - [ ] Verify denied handles cannot send messages.

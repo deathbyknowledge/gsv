@@ -110,6 +110,8 @@ import {
   handleSocialFriendList,
   handleSocialFriendRemove,
   handleSocialInbound,
+  handleSocialMessageReply,
+  handleSocialMessageSend,
   handleSocialSetup,
   handleSocialIdentityGet,
   handleSocialIdentitySet,
@@ -117,6 +119,9 @@ import {
   handleSocialInstanceUpdate,
   handleSocialProfileGet,
   handleSocialProfileUpdate,
+  handleSocialThreadCreate,
+  handleSocialThreadGet,
+  handleSocialThreadList,
 } from "./social";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import {
@@ -529,6 +534,21 @@ async function dispatchNative(
         break;
       case "social.friend.grants.set":
         data = handleSocialFriendGrantsSet(frame.args, ctx);
+        break;
+      case "social.thread.create":
+        data = await handleSocialThreadCreate(frame.args, ctx);
+        break;
+      case "social.thread.list":
+        data = handleSocialThreadList(frame.args, ctx);
+        break;
+      case "social.thread.get":
+        data = handleSocialThreadGet(frame.args, ctx);
+        break;
+      case "social.message.send":
+        data = await handleSocialMessageSend(frame.args, ctx);
+        break;
+      case "social.message.reply":
+        data = await handleSocialMessageReply(frame.args, ctx);
         break;
       case "social.inbound":
         data = await handleSocialInbound(frame.args, ctx);

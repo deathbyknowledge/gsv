@@ -1,4 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../shared/utils", () => ({
+  sendFrameToProcess: vi.fn(async (_pid: string, frame: { id?: string }) => ({
+    type: "res",
+    id: frame.id ?? "mock-response",
+    ok: true,
+    data: { ok: true },
+  })),
+}));
+
 import {
   handleSocialAgentCardUpdate,
   handleSocialFriendAdd,
@@ -8,9 +18,14 @@ import {
   handleSocialIdentityGet,
   handleSocialIdentitySet,
   handleSocialInbound,
+  handleSocialMessageReply,
+  handleSocialMessageSend,
   handleSocialSetup,
   handleSocialProfileGet,
   handleSocialProfileUpdate,
+  handleSocialThreadCreate,
+  handleSocialThreadGet,
+  handleSocialThreadList,
   generateP256ServiceKey,
   signSocialEnvelope,
   SocialStore,
@@ -27,6 +42,7 @@ import {
   type SpaceGsvProfileRecord,
 } from "@gsv/protocol/syscalls/social";
 import type { PdsEnsureAccountInput, PdsPutRecordInput, PdsServiceBinding } from "../pds/client";
+import { sendFrameToProcess } from "../shared/utils";
 
 type Row = Record<string, unknown>;
 
@@ -59,6 +75,10 @@ function createMockSql() {
     }
 
     if (q.startsWith("CREATE INDEX IF NOT EXISTS")) {
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS")) {
       return cursor<T>([]);
     }
 
@@ -158,10 +178,6 @@ function createMockSql() {
       } else {
         table.push(row);
       }
-      return cursor<T>([]);
-    }
-
-    if (q.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS idx_social_inbound_replays_nonce")) {
       return cursor<T>([]);
     }
 
@@ -321,6 +337,208 @@ function createMockSql() {
       return cursor<T>([]);
     }
 
+    if (q.startsWith("SELECT * FROM social_threads WHERE uid = ? AND thread_id = ?")) {
+      const [uid, thread_id] = bindings as [number, string];
+      return cursor(getTable("social_threads").filter((row) =>
+        row.uid === uid && row.thread_id === thread_id
+      ) as T[]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_threads WHERE uid = ? AND peer_handle = ? AND status = ?")) {
+      const [uid, peer_handle, status, limit] = bindings as [number, string, string, number];
+      return cursor(
+        getTable("social_threads")
+          .filter((row) => row.uid === uid && row.peer_handle === peer_handle && row.status === status)
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_threads WHERE uid = ? AND peer_handle = ?")) {
+      const [uid, peer_handle, limit] = bindings as [number, string, number];
+      return cursor(
+        getTable("social_threads")
+          .filter((row) => row.uid === uid && row.peer_handle === peer_handle)
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_threads WHERE uid = ? AND status = ?")) {
+      const [uid, status, limit] = bindings as [number, string, number];
+      return cursor(
+        getTable("social_threads")
+          .filter((row) => row.uid === uid && row.status === status)
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_threads WHERE uid = ? ORDER BY updated_at DESC")) {
+      const [uid, limit] = bindings as [number, number];
+      return cursor(
+        getTable("social_threads")
+          .filter((row) => row.uid === uid)
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("INSERT OR REPLACE INTO social_threads")) {
+      const [
+        uid,
+        thread_id,
+        peer_handle,
+        conversation_id,
+        status,
+        topic,
+        created_at,
+        updated_at,
+        expires_at,
+      ] = bindings as [
+        number,
+        string,
+        string,
+        string,
+        string,
+        string | null,
+        number,
+        number,
+        string | null,
+      ];
+      const table = getTable("social_threads");
+      const existing = table.findIndex((row) => row.uid === uid && row.thread_id === thread_id);
+      const row = {
+        uid,
+        thread_id,
+        peer_handle,
+        conversation_id,
+        status,
+        topic,
+        created_at,
+        updated_at,
+        expires_at,
+      };
+      if (existing >= 0) {
+        table[existing] = row;
+      } else {
+        table.push(row);
+      }
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_messages WHERE uid = ? AND message_id = ?")) {
+      const [uid, message_id] = bindings as [number, string];
+      return cursor(getTable("social_messages").filter((row) =>
+        row.uid === uid && row.message_id === message_id
+      ) as T[]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_messages WHERE uid = ? AND remote_event_id = ?")) {
+      const [uid, remote_event_id] = bindings as [number, string];
+      return cursor(getTable("social_messages").filter((row) =>
+        row.uid === uid && row.remote_event_id === remote_event_id
+      ) as T[]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_messages WHERE uid = ? AND thread_id = ? ORDER BY created_at ASC")) {
+      const [uid, thread_id] = bindings as [number, string];
+      return cursor(
+        getTable("social_messages")
+          .filter((row) => row.uid === uid && row.thread_id === thread_id)
+          .sort((left, right) => Number(left.created_at) - Number(right.created_at)) as T[],
+      );
+    }
+
+    if (q.startsWith("INSERT OR REPLACE INTO social_messages")) {
+      const [
+        uid,
+        message_id,
+        thread_id,
+        direction,
+        from_handle,
+        to_handle,
+        text,
+        body_json,
+        reply_to_message_id,
+        delivery_status,
+        remote_event_id,
+        created_at,
+        updated_at,
+      ] = bindings as [
+        number,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string | null,
+        string | null,
+        string | null,
+        string,
+        string | null,
+        number,
+        number,
+      ];
+      const table = getTable("social_messages");
+      const existing = table.findIndex((row) => row.uid === uid && row.message_id === message_id);
+      const row = {
+        uid,
+        message_id,
+        thread_id,
+        direction,
+        from_handle,
+        to_handle,
+        text,
+        body_json,
+        reply_to_message_id,
+        delivery_status,
+        remote_event_id,
+        created_at,
+        updated_at,
+      };
+      if (existing >= 0) {
+        table[existing] = row;
+      } else {
+        table.push(row);
+      }
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("UPDATE social_messages SET delivery_status = ?")) {
+      const [delivery_status, updated_at, uid, message_id] = bindings as [string, number, number, string];
+      const row = getTable("social_messages").find((candidate) =>
+        candidate.uid === uid && candidate.message_id === message_id
+      );
+      if (row) {
+        row.delivery_status = delivery_status;
+        row.updated_at = updated_at;
+      }
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("INSERT INTO social_delivery_attempts")) {
+      const [uid, attempt_id, message_id, status, error, attempted_at, created_at] = bindings as [
+        number,
+        string,
+        string,
+        string,
+        string | null,
+        number,
+        number,
+      ];
+      getTable("social_delivery_attempts").push({
+        uid,
+        attempt_id,
+        message_id,
+        status,
+        error,
+        attempted_at,
+        created_at,
+      });
+      return cursor<T>([]);
+    }
+
     throw new Error(`Unhandled SQL: ${q}`);
   }
 
@@ -335,23 +553,48 @@ function createCtx(
   const social = new SocialStore(sql as unknown as SqlStorage);
   social.init();
   const uid = options.uid ?? 1000;
+  const username = options.username ?? "hank";
+  const processIdentity = {
+    uid,
+    gid: 100,
+    gids: [100],
+    username,
+    home: `/home/${username}`,
+    cwd: `/home/${username}`,
+    workspaceId: null,
+  };
+  const processIdentities = new Map<string, typeof processIdentity>();
 
   return {
     env: {
       PDS: pds,
     },
     social,
+    auth: {
+      getPasswdByUid: vi.fn((requestedUid: number) => requestedUid === uid
+        ? {
+            username,
+            uid,
+            gid: 100,
+            gecos: "",
+            home: `/home/${username}`,
+            shell: "/bin/gsv",
+          }
+        : null),
+      resolveGids: vi.fn(() => [100]),
+    },
+    procs: {
+      getIdentity: vi.fn((pid: string) => processIdentities.get(pid) ?? null),
+      ensureInit: vi.fn((identity: typeof processIdentity) => {
+        const pid = `init:${identity.uid}`;
+        const created = !processIdentities.has(pid);
+        processIdentities.set(pid, identity);
+        return { pid, created };
+      }),
+    },
     identity: {
       role: options.role ?? "user",
-      process: {
-        uid,
-        gid: 100,
-        gids: [100],
-        username: options.username ?? "hank",
-        home: `/home/${options.username ?? "hank"}`,
-        cwd: `/home/${options.username ?? "hank"}`,
-        workspaceId: null,
-      },
+      process: processIdentity,
       capabilities: ["social.*"],
     },
   } as unknown as KernelContext;
@@ -361,13 +604,20 @@ function setContextRole(ctx: KernelContext, role: "user" | "service"): void {
   (ctx.identity as { role: "user" | "service" }).role = role;
 }
 
-function stubAlicePublicIdentity(publicKeyMultibase: string): void {
-  vi.stubGlobal("fetch", vi.fn(async (url: string | URL) => {
+function stubAlicePublicIdentity(
+  publicKeyMultibase: string,
+  options: { inbound?: (body: unknown) => Response | Promise<Response> } = {},
+): void {
+  vi.stubGlobal("fetch", vi.fn(async (url: string | URL, init?: RequestInit) => {
     const href = String(url);
     if (href === "https://alice.example/.well-known/atproto-did") {
       return new Response("did:web:alice.example");
     }
     const parsed = new URL(href);
+    if (parsed.origin === "https://alice.example" && parsed.pathname === "/social/inbound" && options.inbound) {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      return options.inbound(body);
+    }
     const collection = parsed.searchParams.get("collection");
     if (parsed.origin === "https://alice.example" && parsed.pathname === "/xrpc/com.atproto.repo.getRecord") {
       if (collection === SPACE_GSV_PROFILE) {
@@ -395,7 +645,12 @@ function stubAlicePublicIdentity(publicKeyMultibase: string): void {
               type: "Multikey",
               publicKeyMultibase,
             },
-            acceptedSocialMethods: ["social.message.send", "social.request.create"],
+            acceptedSocialMethods: [
+              "social.thread.create",
+              "social.message.send",
+              "social.message.reply",
+              "social.request.create",
+            ],
           },
         });
       }
@@ -456,6 +711,7 @@ async function setupSignedInboundFriend(grants: Array<{ operation: SocialRemoteO
 describe("social identity and records", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.clearAllMocks();
   });
 
   it("sets up the builtin PDS identity and publishes baseline social records", async () => {
@@ -789,22 +1045,173 @@ describe("social identity and records", () => {
     }, ctx)).rejects.toThrow("Cannot add the local GSV identity as a friend");
   });
 
-  it("accepts signed inbound envelopes from granted friends and rejects replays", async () => {
+  it("creates, lists, and reads social threads with outbound delivery state", async () => {
+    const ctx = createCtx();
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+    const aliceKeys = await generateP256ServiceKey();
+    const inboundBodies: unknown[] = [];
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: (body) => {
+        inboundBodies.push(body);
+        return Response.json({ ok: true, status: "accepted" });
+      },
+    });
+    await handleSocialFriendAdd({
+      handle: "alice.example",
+      grants: [{ operation: "social.message.send" }],
+    }, ctx);
+
+    const created = await handleSocialThreadCreate({
+      peerHandle: "alice.example",
+      topic: "Project planning",
+      initialMessage: "Can your agent look at this plan?",
+    }, ctx);
+
+    expect(created.thread).toMatchObject({
+      peerHandle: "alice.example",
+      status: "active",
+      topic: "Project planning",
+    });
+    expect(created.thread.conversationId).toBe(`social:alice.example:${created.thread.threadId}`);
+    expect(created.initialMessage).toMatchObject({
+      threadId: created.thread.threadId,
+      direction: "outbound",
+      fromHandle: "gsv.example",
+      toHandle: "alice.example",
+      text: "Can your agent look at this plan?",
+      deliveryStatus: "accepted",
+    });
+    expect(inboundBodies).toHaveLength(1);
+    expect((inboundBodies[0] as { envelope: { method: string; body: { threadId: string } } }).envelope).toMatchObject({
+      method: "social.thread.create",
+      body: { threadId: created.thread.threadId },
+    });
+
+    expect(handleSocialThreadList({}, ctx).threads.map((thread) => thread.threadId)).toEqual([
+      created.thread.threadId,
+    ]);
+    expect(handleSocialThreadGet({ threadId: created.thread.threadId }, ctx)).toMatchObject({
+      thread: {
+        threadId: created.thread.threadId,
+        peerHandle: "alice.example",
+      },
+      messages: [
+        {
+          threadId: created.thread.threadId,
+          deliveryStatus: "accepted",
+        },
+      ],
+      requests: [],
+    });
+  });
+
+  it("sends and replies to social messages on existing threads", async () => {
+    const ctx = createCtx();
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+    const aliceKeys = await generateP256ServiceKey();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: () => Response.json({ ok: true, status: "accepted" }),
+    });
+    await handleSocialFriendAdd({
+      handle: "alice.example",
+      grants: [{ operation: "social.message.send" }],
+    }, ctx);
+
+    const sent = await handleSocialMessageSend({
+      toHandle: "alice.example",
+      text: "hello from Hank",
+      body: { kind: "note", priority: 1 },
+    }, ctx);
+    expect(sent.message).toMatchObject({
+      direction: "outbound",
+      text: "hello from Hank",
+      body: { kind: "note", priority: 1 },
+      deliveryStatus: "accepted",
+    });
+
+    const reply = await handleSocialMessageReply({
+      threadId: sent.thread.threadId,
+      text: "follow-up",
+      replyToMessageId: sent.message.messageId,
+    }, ctx);
+    expect(reply.message).toMatchObject({
+      threadId: sent.thread.threadId,
+      direction: "outbound",
+      text: "follow-up",
+      replyToMessageId: sent.message.messageId,
+      deliveryStatus: "accepted",
+    });
+    expect(handleSocialThreadGet({ threadId: sent.thread.threadId }, ctx).messages).toHaveLength(2);
+  });
+
+  it("accepts signed inbound envelopes from granted friends idempotently and delivers to init", async () => {
     const { ctx, aliceKeys } = await setupSignedInboundFriend();
-    const envelope = await aliceEnvelope(aliceKeys.privateJwk);
+    const envelope = await aliceEnvelope(aliceKeys.privateJwk, {
+      body: {
+        threadId: "thread-alice",
+        messageId: "msg-alice",
+        text: "hello",
+      },
+    });
 
     await expect(handleSocialInbound({
       envelope,
       receivedAt: "2026-05-12T12:01:00Z",
-    }, ctx)).resolves.toEqual({ ok: true, status: "accepted" });
+    }, ctx)).resolves.toEqual({
+      ok: true,
+      status: "accepted",
+      threadId: "thread-alice",
+      messageId: "msg-alice",
+    });
+
+    const processSend = vi.mocked(sendFrameToProcess).mock.calls.find(([, frame]) =>
+      frame.type === "req" && frame.call === "proc.send"
+    );
+    expect(processSend).toBeTruthy();
+    expect(processSend?.[0]).toBe("init:1000");
+    expect(processSend?.[1]).toMatchObject({
+      type: "req",
+      call: "proc.send",
+      args: {
+        conversationId: "social:alice.example:thread-alice",
+        message: expect.stringContaining("From: alice.example"),
+      },
+    });
+
+    setContextRole(ctx, "user");
+    expect(handleSocialThreadGet({ threadId: "thread-alice" }, ctx)).toMatchObject({
+      thread: {
+        threadId: "thread-alice",
+        peerHandle: "alice.example",
+        conversationId: "social:alice.example:thread-alice",
+      },
+      messages: [
+        {
+          messageId: "msg-alice",
+          direction: "inbound",
+          fromHandle: "alice.example",
+          toHandle: "gsv.example",
+          text: "hello",
+          deliveryStatus: "delivered",
+        },
+      ],
+    });
+    setContextRole(ctx, "service");
 
     await expect(handleSocialInbound({
       envelope,
       receivedAt: "2026-05-12T12:02:00Z",
-    }, ctx)).resolves.toMatchObject({
-      ok: false,
-      status: "rejected",
-      error: "Envelope replayed",
+    }, ctx)).resolves.toEqual({
+      ok: true,
+      status: "accepted",
+      threadId: "thread-alice",
+      messageId: "msg-alice",
     });
   });
 
