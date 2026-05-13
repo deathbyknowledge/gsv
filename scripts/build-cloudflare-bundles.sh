@@ -26,6 +26,7 @@ echo "==> Installing dependencies"
 install_workspace "assembler"
 install_dir "${ROOT_DIR}/gateway"
 install_dir "${ROOT_DIR}/web"
+install_dir "${ROOT_DIR}/pds"
 install_dir "${ROOT_DIR}/ripgit"
 install_dir "${ROOT_DIR}/adapters/whatsapp"
 install_dir "${ROOT_DIR}/adapters/discord"
@@ -37,6 +38,7 @@ echo "==> Bundling workers with wrangler --dry-run"
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}/assembler/worker"
 mkdir -p "${DIST_DIR}/gateway/worker"
+mkdir -p "${DIST_DIR}/pds/worker"
 mkdir -p "${DIST_DIR}/ripgit/worker"
 mkdir -p "${DIST_DIR}/channel-whatsapp/worker"
 mkdir -p "${DIST_DIR}/channel-discord/worker"
@@ -48,6 +50,10 @@ mkdir -p "${DIST_DIR}/channel-discord/worker"
 (
   cd "${ROOT_DIR}/gateway"
   npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/gateway/worker"
+)
+(
+  cd "${ROOT_DIR}/pds"
+  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/pds/worker"
 )
 (
   cd "${ROOT_DIR}/ripgit"
@@ -85,6 +91,17 @@ cat > "${DIST_DIR}/gateway/manifest.json" <<'EOF'
     "wranglerConfig": "wrangler.jsonc"
   },
   "assetsDir": "assets"
+}
+EOF
+
+cp "${ROOT_DIR}/pds/wrangler.toml" "${DIST_DIR}/pds/wrangler.toml"
+cat > "${DIST_DIR}/pds/manifest.json" <<'EOF'
+{
+  "component": "pds",
+  "worker": {
+    "entrypoint": "worker/index.js",
+    "wranglerConfig": "wrangler.toml"
+  }
 }
 EOF
 
@@ -134,6 +151,7 @@ rm -f "${OUT_DIR}/gsv-cloudflare-"*.tar.gz "${OUT_DIR}/cloudflare-checksums.txt"
 
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-assembler.tar.gz" assembler
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-gateway.tar.gz" gateway
+tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-pds.tar.gz" pds
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-ripgit.tar.gz" ripgit
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-whatsapp.tar.gz" channel-whatsapp
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-discord.tar.gz" channel-discord

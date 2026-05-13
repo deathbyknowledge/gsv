@@ -36,6 +36,13 @@ echo "==> Installing ripgit test dependencies"
 )
 
 echo ""
+echo "==> Installing PDS worker dependencies"
+(
+  cd "$ROOT_DIR/pds"
+  npm ci --workspaces=false
+)
+
+echo ""
 echo "All JavaScript dependencies are installed."
 echo ""
 echo "Next:"

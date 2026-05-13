@@ -1,0 +1,19 @@
+{
+  "unsupported": {
+    "com.atproto.label.queryLabels": "Label querying belongs to a labeler service; this PDS does not publish labels.",
+    "com.atproto.label.subscribeLabels": "Label streaming belongs to a labeler service; this PDS only streams repo events.",
+    "com.atproto.moderation.createReport": "Moderation report intake is a moderation-service surface, not part of the repo/account host path.",
+    "com.atproto.sync.notifyOfUpdate": "Crawler notification is consumed by crawlers/relays; this PDS exposes subscribeRepos instead.",
+    "com.atproto.sync.requestCrawl": "Persistent crawling is a relay/crawler responsibility, not a local PDS endpoint.",
+    "com.atproto.temp.addReservedHandle": "Temporary Bluesky signup surface; handle reservation is managed through admin/account APIs here.",
+    "com.atproto.temp.checkHandleAvailability": "Temporary Bluesky signup surface; account creation and admin checks enforce handle availability.",
+    "com.atproto.temp.checkSignupQueue": "Temporary Bluesky signup queue surface; this PDS does not operate a signup waitlist.",
+    "com.atproto.temp.dereferenceScope": "Temporary OAuth/debug helper, not required for this PDS runtime.",
+    "com.atproto.temp.fetchLabels": "Temporary label fetch surface; this PDS is not a labeler.",
+    "com.atproto.temp.requestPhoneVerification": "Temporary Bluesky signup surface; this PDS does not require phone verification.",
+    "com.atproto.temp.revokeAccountCredentials": "Temporary credential-revocation surface; this PDS uses standard session/app-password/admin flows."
+  },
+  "extraImplemented": {
+    "com.atproto.server.changePassword": "Implemented for password users and covered by account smoke, but not present in the current @atproto/api generated method set."
+  }
+}

@@ -1,0 +1,31 @@
+name = "gsv-pds"
+main = "src/entrypoint.ts"
+compatibility_date = "2026-04-22"
+workers_dev = true
+
+[vars]
+PDS_LEXICON_AUTHORITY_DIDS = "gsv.space=did:web:gsv-pds.stevej.workers.dev,agent.gsv.space=did:web:gsv-pds.stevej.workers.dev,package.gsv.space=did:web:gsv-pds.stevej.workers.dev"
+PDS_ALLOWED_ACCOUNT_HANDLE_SUFFIXES = "gsv.dev"
+PDS_FIREHOSE_REPLAY_LIMIT = "64"
+
+[build]
+command = "cd ${PDS_WORKER_ROOT:-.} && worker-build --release ."
+
+[durable_objects]
+bindings = [
+  { name = "REPO_OBJECTS", class_name = "RepoObject" },
+  { name = "DIRECTORY_OBJECTS", class_name = "PdsDirectoryObject" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RepoObject"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["PdsDirectoryObject"]
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true

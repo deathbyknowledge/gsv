@@ -1,0 +1,70 @@
+{
+  "lexicon": 1,
+  "id": "space.gsv.package.like",
+  "description": "Public GSV package like record.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["$type", "createdAt", "subject"],
+        "properties": {
+          "$type": {
+            "type": "string",
+            "const": "space.gsv.package.like"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "subject": {
+            "type": "ref",
+            "ref": "#packageSubject"
+          },
+          "note": {
+            "type": "string",
+            "maxGraphemes": 300,
+            "maxLength": 1200
+          }
+        }
+      }
+    },
+    "packageSubject": {
+      "type": "object",
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "gsv-package"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "repo": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "ref": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "subdir": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "uri": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048
+        }
+      }
+    }
+  }
+}

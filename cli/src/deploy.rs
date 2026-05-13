@@ -20,12 +20,14 @@ const REPO_NAME: &str = "gsv";
 
 const COMPONENT_GATEWAY: &str = "gateway";
 const COMPONENT_RIPGIT: &str = "ripgit";
+const COMPONENT_PDS: &str = "pds";
 const COMPONENT_ASSEMBLER: &str = "assembler";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
 
 const BUNDLE_ASSEMBLER: &str = "gsv-cloudflare-assembler.tar.gz";
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
+const BUNDLE_PDS: &str = "gsv-cloudflare-pds.tar.gz";
 const BUNDLE_RIPGIT: &str = "gsv-cloudflare-ripgit.tar.gz";
 const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
 const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
@@ -33,6 +35,7 @@ const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
 const SCRIPT_ASSEMBLER: &str = "gsv-assembler";
 const SCRIPT_GATEWAY: &str = "gsv";
+const SCRIPT_PDS: &str = "gsv-pds";
 const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
@@ -475,6 +478,7 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
     match component {
         COMPONENT_ASSEMBLER => Some(BUNDLE_ASSEMBLER),
         COMPONENT_GATEWAY => Some(BUNDLE_GATEWAY),
+        COMPONENT_PDS => Some(BUNDLE_PDS),
         COMPONENT_RIPGIT => Some(BUNDLE_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(BUNDLE_CHANNEL_DISCORD),
@@ -486,6 +490,7 @@ fn component_to_script_name(component: &str) -> Option<&'static str> {
     match component {
         COMPONENT_ASSEMBLER => Some(SCRIPT_ASSEMBLER),
         COMPONENT_GATEWAY => Some(SCRIPT_GATEWAY),
+        COMPONENT_PDS => Some(SCRIPT_PDS),
         COMPONENT_RIPGIT => Some(SCRIPT_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(SCRIPT_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(SCRIPT_CHANNEL_DISCORD),
@@ -496,6 +501,7 @@ fn component_to_script_name(component: &str) -> Option<&'static str> {
 pub fn available_components() -> &'static [&'static str] {
     &[
         COMPONENT_RIPGIT,
+        COMPONENT_PDS,
         COMPONENT_ASSEMBLER,
         COMPONENT_GATEWAY,
         COMPONENT_CHANNEL_WHATSAPP,
@@ -1819,9 +1825,10 @@ async fn purge_r2_bucket_objects(
 fn deploy_order(component: &str) -> usize {
     match component {
         COMPONENT_RIPGIT => 0,
-        COMPONENT_ASSEMBLER => 1,
-        COMPONENT_CHANNEL_WHATSAPP => 2,
-        COMPONENT_CHANNEL_DISCORD => 3,
+        COMPONENT_PDS => 1,
+        COMPONENT_ASSEMBLER => 2,
+        COMPONENT_CHANNEL_WHATSAPP => 3,
+        COMPONENT_CHANNEL_DISCORD => 4,
         COMPONENT_GATEWAY => 10,
         _ => 100,
     }
@@ -2587,11 +2594,19 @@ pub async fn apply_deploy(
     let gateway_existed_before_deploy = existing_scripts.contains(SCRIPT_GATEWAY);
     let ripgit_available =
         selected_components.contains(COMPONENT_RIPGIT) || existing_scripts.contains(SCRIPT_RIPGIT);
+    let pds_available =
+        selected_components.contains(COMPONENT_PDS) || existing_scripts.contains(SCRIPT_PDS);
     let assembler_available = selected_components.contains(COMPONENT_ASSEMBLER)
         || existing_scripts.contains(SCRIPT_ASSEMBLER);
     if selected_components.contains(COMPONENT_GATEWAY) && !ripgit_available {
         return Err(
             "Deploying `gateway` requires the `ripgit` worker. Include `--component ripgit` or deploy ripgit first."
+            .into(),
+        );
+    }
+    if selected_components.contains(COMPONENT_GATEWAY) && !pds_available {
+        return Err(
+            "Deploying `gateway` requires the `pds` worker. Include `--component pds` or deploy pds first."
                 .into(),
         );
     }
@@ -3316,6 +3331,29 @@ mod tests {
     fn normalize_components_accepts_ripgit() {
         let components = normalize_components(&["ripgit".to_string()]).unwrap();
         assert_eq!(components, vec!["ripgit".to_string()]);
+    }
+
+    #[test]
+    fn normalize_components_accepts_pds() {
+        let components = normalize_components(&["pds".to_string()]).unwrap();
+        assert_eq!(components, vec!["pds".to_string()]);
+        assert_eq!(component_to_bundle(COMPONENT_PDS), Some(BUNDLE_PDS));
+        assert_eq!(component_to_script_name(COMPONENT_PDS), Some(SCRIPT_PDS));
+    }
+
+    #[test]
+    fn default_components_include_pds_before_gateway() {
+        let components = available_components();
+        let pds_index = components
+            .iter()
+            .position(|component| *component == COMPONENT_PDS)
+            .expect("pds component should be available");
+        let gateway_index = components
+            .iter()
+            .position(|component| *component == COMPONENT_GATEWAY)
+            .expect("gateway component should be available");
+        assert!(pds_index < gateway_index);
+        assert!(deploy_order(COMPONENT_PDS) < deploy_order(COMPONENT_GATEWAY));
     }
 
     #[test]

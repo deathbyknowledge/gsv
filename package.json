@@ -5,6 +5,7 @@
   "workspaces": [
     "assembler",
     "gateway",
+    "pds",
     "web",
     "shared/*"
   ],

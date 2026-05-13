@@ -1,0 +1,85 @@
+{
+  "lexicon": 1,
+  "id": "space.gsv.instance",
+  "description": "Public GSV instance endpoint and service key record.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "required": [
+          "$type",
+          "createdAt",
+          "endpoint",
+          "protocolVersion",
+          "serviceKey",
+          "acceptedSocialMethods"
+        ],
+        "properties": {
+          "$type": {
+            "type": "string",
+            "const": "space.gsv.instance"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "endpoint": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "protocolVersion": {
+            "type": "integer",
+            "enum": [1]
+          },
+          "serviceKey": {
+            "type": "ref",
+            "ref": "#serviceKey"
+          },
+          "acceptedSocialMethods": {
+            "type": "array",
+            "maxLength": 32,
+            "items": {
+              "type": "string",
+              "enum": [
+                "social.profile.read",
+                "social.agent.card.read",
+                "social.package.like.read",
+                "social.thread.create",
+                "social.message.send",
+                "social.message.reply",
+                "social.request.create",
+                "social.request.respond"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "serviceKey": {
+      "type": "object",
+      "required": ["id", "type", "publicKeyMultibase"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "type": {
+          "type": "string",
+          "const": "Multikey"
+        },
+        "publicKeyMultibase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    }
+  }
+}

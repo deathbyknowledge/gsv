@@ -1,0 +1,34 @@
+{
+  "name": "pds",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:test": "scripts/deploy-test.sh",
+    "seed:test-repo": "node scripts/seed-test-repo.mjs",
+    "smoke:account": "node scripts/account-smoke.mjs",
+    "smoke:delete-account": "node scripts/delete-account-smoke.mjs",
+    "smoke:firehose": "node scripts/firehose-smoke.mjs",
+    "smoke:firehose:cursor": "node scripts/firehose-cursor-smoke.mjs",
+    "smoke:firehose:oversize": "node scripts/firehose-oversize-smoke.mjs",
+    "smoke:lexicon": "node scripts/lexicon-cross-repo-smoke.mjs",
+    "smoke:space-gsv-lexicons": "node scripts/publish-space-gsv-lexicons.mjs",
+    "smoke:migration": "node scripts/migration-smoke.mjs",
+    "smoke:oauth:confidential": "node scripts/oauth-confidential-smoke.mjs",
+    "smoke:oauth:client": "node scripts/oauth-official-client-smoke.mjs",
+    "smoke:client": "node scripts/official-client-smoke.mjs",
+    "smoke:conformance": "node scripts/xrpc-conformance-smoke.mjs",
+    "smoke:plc-account": "node scripts/plc-account-smoke.mjs",
+    "smoke:public": "node scripts/public-smoke.mjs",
+    "audit:xrpc": "node scripts/xrpc-method-coverage.mjs",
+    "build:worker": "worker-build --release .",
+    "test:rust": "cargo test",
+    "test": "cargo test"
+  },
+  "devDependencies": {
+    "@atproto/api": "^0.19.16",
+    "@atproto/oauth-client-node": "^0.3.17",
+    "wrangler": "^4.83.0"
+  }
+}

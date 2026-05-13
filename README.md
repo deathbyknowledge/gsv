@@ -108,9 +108,9 @@ cd cli && cargo build --release
 ./scripts/build-cloudflare-bundles.sh
 gsv deploy up --bundle-dir ./release/local --version local-dev --all --force-fetch
 
-# Local-bundle deploy shortcut (defaults to `-c gateway`)
+# Local-bundle deploy shortcut (defaults to core workers)
 ./scripts/deploy-local.sh
-./scripts/deploy-local.sh -c gateway --force-fetch
+./scripts/deploy-local.sh -c ripgit -c pds -c assembler -c gateway --force-fetch
 ```
 
 ## License

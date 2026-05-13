@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PDS_DIR="${GSV_PDS_DIR:-$(cd "$ROOT_DIR/.." && pwd)/pds}"
+PDS_DIR="${GSV_PDS_DIR:-$ROOT_DIR/pds}"
 PDS_CONFIG="$PDS_DIR/wrangler.toml"
 PERSIST_ROOT="${GSV_DEV_PERSIST_TO:-$ROOT_DIR/.wrangler/dev-state}"
 STATE_ROOT="$PERSIST_ROOT/v3"
@@ -15,7 +15,7 @@ fi
 
 if [[ ! -f "$PDS_CONFIG" ]]; then
   echo "PDS worker config not found at $PDS_CONFIG" >&2
-  echo "Set GSV_PDS_DIR to the local pds repo path." >&2
+  echo "Set GSV_PDS_DIR to an alternate pds repo path if needed." >&2
   exit 1
 fi
 

@@ -11,7 +11,7 @@ if [[ ! -d "${BUNDLE_DIR}" ]]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-  set -- -c gateway
+  set -- -c ripgit -c pds -c assembler -c gateway
 fi
 
 exec gsv deploy up --bundle-dir "${BUNDLE_DIR}" "$@"

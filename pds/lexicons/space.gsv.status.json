@@ -1,0 +1,47 @@
+{
+  "lexicon": 1,
+  "id": "space.gsv.status",
+  "description": "Public GSV short status record.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["$type", "createdAt", "text"],
+        "properties": {
+          "$type": {
+            "type": "string",
+            "const": "space.gsv.status"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "text": {
+            "type": "string",
+            "maxGraphemes": 300,
+            "maxLength": 1200
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "tags": {
+            "type": "array",
+            "maxLength": 20,
+            "items": {
+              "type": "string",
+              "maxGraphemes": 64,
+              "maxLength": 256
+            }
+          }
+        }
+      }
+    }
+  }
+}

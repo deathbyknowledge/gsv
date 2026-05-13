@@ -65,6 +65,8 @@ network information, or OS details.
 
 - Add a new Kernel syscall domain for social networking. Use `social.*` rather
   than overloading `repo.*`, which already means ripgit repositories.
+- Keep the GSV PDS Worker in this repository under `pds/`. It is part of the
+  GSV stack, not an external runtime dependency.
 - Bind the PDS Worker into Gateway twice by behavior: public `/xrpc/*` traffic
   is forwarded with `fetch`, while internal GSV code uses the PDS Worker
   Entrypoint RPC methods.
@@ -121,6 +123,63 @@ This verifies identity, DID documents, public `space.gsv.profile`,
 friend/grant setup in both directions. Signed inbound service-to-service
 authentication is implemented; social thread/message persistence is the next
 implementation layer.
+
+## Subagent Handoff Context
+
+The current worktree already contains the PDS Worker, Gateway integration, and
+initial social Kernel state. A subagent should start by reading this document,
+then inspect these files:
+
+- `shared/protocol/src/syscalls/social.ts`: shared record and syscall contracts.
+- `gateway/src/kernel/social.ts`: social storage, setup, friend/grant logic,
+  public record publishing, and signed inbound auth.
+- `gateway/src/kernel/social.test.ts`: the highest-signal behavioral examples.
+- `gateway/src/pds/client.ts`: Gateway-to-PDS binding and XRPC proxy client.
+- `gateway/src/index.ts`: public PDS/XRPC proxy routes and `/social/inbound`.
+- `pds/src/worker_entry.rs` and `pds/src/entrypoint.ts`: PDS Worker HTTP and
+  Worker Entrypoint surface.
+- `scripts/dev-stack.sh`: local multi-worker dev setup.
+- `scripts/social-local-smoke.mjs`: current two-GSV smoke coverage.
+
+Hard invariants:
+
+- Handles are user-facing. DIDs are internal verification details resolved by
+  the Kernel.
+- PDS records are discovery and public state. Kernel tables are the authority
+  for grants, local delivery state, and friend trust.
+- Public records must not expose device inventory, local paths, OS details,
+  network topology, shell capability, or remote syscall capability.
+- Remote GSVs never call `proc.*`, `fs.*`, `shell.exec`, `repo.*`, device,
+  token, OAuth, MCP, or config syscalls directly.
+- Signed inbound traffic must enter through `social.inbound` and must pass
+  handle resolution, DID check, service key check, signature check, recipient
+  check, expiry check, replay check, and local grant check before any local side
+  effect.
+- Social delivery is asynchronous. An outbound send records local delivery
+  state and may later be accepted, rejected, retried, delivered, or failed.
+
+Completed milestones:
+
+- `space.gsv.*` protocol record types and PDS lexicons exist.
+- GSV onboarding can create the builtin PDS account for the main non-root user.
+- Gateway exposes public PDS routes and uses the PDS Worker over service
+  binding RPC internally.
+- Local social identity/profile/instance/agent-card records can be published.
+- Friends can be added by handle and assigned narrow local grants.
+- Signed inbound social envelopes can be accepted or rejected with replay
+  protection.
+
+Next implementation contract:
+
+- Add Kernel tables for social threads, messages, delivery attempts, and remote
+  event ids.
+- Implement `social.thread.create`, `social.thread.list`,
+  `social.thread.get`, `social.message.send`, and `social.message.reply`.
+- Store every accepted inbound message idempotently before process delivery.
+- Map local process delivery to `conversationId =
+  social:<peer-handle>:<thread-id>`.
+- Add tests for creation, list/get, outbound queued status, inbound acceptance,
+  duplicate inbound idempotency, denied sender behavior, and process delivery.
 
 ## TODOs
 

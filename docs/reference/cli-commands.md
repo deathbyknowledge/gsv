@@ -205,10 +205,10 @@ gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
 gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
 ```
 
-Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`, and
-`channel-discord`. When no deploy/upgrade component is supplied, all components
-are selected. Deploying `gateway` requires `ripgit` and `assembler` to be
-selected or already deployed.
+Valid components are `ripgit`, `pds`, `assembler`, `gateway`,
+`channel-whatsapp`, and `channel-discord`. When no deploy/upgrade component is
+supplied, all components are selected. Deploying `gateway` requires `ripgit`,
+`pds`, and `assembler` to be selected or already deployed.
 
 `deploy` fetches release bundles and applies Cloudflare Workers. `upgrade` does
 the same but auto-refreshes mutable refs such as `latest`, `stable`, and `dev`.
