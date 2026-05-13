@@ -7,7 +7,11 @@ if [ "$#" -lt 1 ]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CRATE_DIR="$ROOT_DIR/$1"
+if [[ "$1" = /* ]]; then
+  CRATE_DIR="$1"
+else
+  CRATE_DIR="$ROOT_DIR/$1"
+fi
 shift
 
 if [ ! -d "$CRATE_DIR" ]; then

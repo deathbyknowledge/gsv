@@ -1,4 +1,3 @@
-
 #[test]
 fn recognizes_host_identity_well_known_paths() {
     assert!(is_host_identity_path("/.well-known/did.json"));

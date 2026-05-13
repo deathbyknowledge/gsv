@@ -21,6 +21,7 @@ import {
 } from "./downloads/cli";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import { proxyPdsRequest, proxyPdsXrpcRequest } from "./pds/client";
+import { runtimeConfig } from "./dev";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -39,6 +40,14 @@ export default {
       return new Response(RUNTIME_THEME_CSS, {
         headers: {
           "content-type": "text/css; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
+    }
+
+    if (url.pathname === "/runtime/config.json" && request.method === "GET") {
+      return Response.json(runtimeConfig(env), {
+        headers: {
           "cache-control": "no-store",
         },
       });

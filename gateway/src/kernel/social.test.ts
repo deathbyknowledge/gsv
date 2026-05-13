@@ -577,6 +577,32 @@ function createMockSql() {
       ) as T[]);
     }
 
+    if (q.startsWith("SELECT * FROM social_requests") && q.includes("ORDER BY updated_at DESC LIMIT ?")) {
+      let index = 0;
+      const uid = bindings[index++] as number;
+      let rows = getTable("social_requests").filter((row) => row.uid === uid);
+      if (q.includes("(from_handle = ? OR to_handle = ?)")) {
+        const peer_handle_1 = bindings[index++] as string;
+        const peer_handle_2 = bindings[index++] as string;
+        rows = rows.filter((row) => row.from_handle === peer_handle_1 || row.to_handle === peer_handle_2);
+      }
+      if (q.includes("status = ?")) {
+        const status = bindings[index++] as string;
+        rows = rows.filter((row) => row.status === status);
+      }
+      if (q.includes("remote_event_id IS NOT NULL")) {
+        rows = rows.filter((row) => row.remote_event_id !== null && row.remote_event_id !== undefined);
+      } else if (q.includes("remote_event_id IS NULL")) {
+        rows = rows.filter((row) => row.remote_event_id === null || row.remote_event_id === undefined);
+      }
+      const limit = bindings[index] as number;
+      return cursor(
+        rows
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
     if (q.startsWith("SELECT * FROM social_requests") && q.includes("(from_handle = ? OR to_handle = ?)") && q.includes("status = ?")) {
       const [uid, peer_handle_1, peer_handle_2, status, limit] = bindings as [number, string, string, string, number];
       return cursor(
@@ -793,7 +819,7 @@ function createMockStorage() {
 
 function createCtx(
   pds?: Partial<PdsServiceBinding>,
-  options: { uid?: number; username?: string; role?: "user" | "service" } = {},
+  options: { uid?: number; username?: string; role?: "user" | "service"; env?: Record<string, string> } = {},
 ): KernelContext {
   const sql = createMockSql();
   const social = new SocialStore(sql as unknown as SqlStorage);
@@ -831,6 +857,7 @@ function createCtx(
     env: {
       PDS: pds,
       STORAGE: storage,
+      ...options.env,
     },
     social,
     auth: {
@@ -1059,6 +1086,57 @@ describe("social identity and records", () => {
     expect(instance.serviceKey.type).toBe("Multikey");
     expect(instance.serviceKey.publicKeyMultibase).toMatch(/^z/);
     expect(instance.acceptedSocialMethods).toContain("social.message.send");
+  });
+
+  it("sets up a local dev social identity with a synthetic handle", async () => {
+    const accountCalls: PdsEnsureAccountInput[] = [];
+    const putCalls: PdsPutRecordInput[] = [];
+    const ctx = createCtx({
+      pdsEnsureAccount: async (input: PdsEnsureAccountInput) => {
+        accountCalls.push(input);
+        return {
+          did: "did:web:gsv-8788.gsv.local",
+          handle: "gsv-8788.gsv.local",
+          created: true,
+        };
+      },
+      pdsPutRecord: async (input: PdsPutRecordInput) => {
+        putCalls.push(input);
+        return {
+          uri: `at://${input.repo}/${input.collection}/${input.rkey}`,
+          cid: `bafy-${input.collection.replace(/\./g, "-")}`,
+        };
+      },
+    }, { env: { GSV_DEV: "1" } });
+
+    const result = await handleSocialSetup({
+      origin: "http://localhost:8788",
+      handle: "gsv-8788.gsv.local",
+      displayName: "Local Hank",
+    }, ctx);
+
+    expect(accountCalls).toHaveLength(1);
+    expect(accountCalls[0]).toMatchObject({
+      host: "gsv-8788.gsv.local",
+      handle: "gsv-8788.gsv.local",
+      did: "did:web:gsv-8788.gsv.local",
+    });
+    expect(result.identity).toMatchObject({
+      handle: "gsv-8788.gsv.local",
+      pdsEndpoint: "http://localhost:8788",
+      profile: {
+        displayName: "Local Hank",
+      },
+    });
+    for (const call of putCalls) {
+      expect(call).toMatchObject({
+        host: "gsv-8788.gsv.local",
+        repo: "did:web:gsv-8788.gsv.local",
+      });
+    }
+    const instance = putCalls.find((call) => call.collection === SPACE_GSV_INSTANCE)?.record as SpaceGsvInstanceRecord;
+    expect(instance.endpoint).toBe("http://localhost:8788");
+    expect(instance.serviceKey.id).toBe("did:web:gsv-8788.gsv.local#gsv-social-key");
   });
 
   it("limits the builtin social identity to the main GSV user", async () => {
@@ -1452,6 +1530,7 @@ describe("social identity and records", () => {
 
     expect(created.request).toMatchObject({
       threadId: created.thread.threadId,
+      direction: "outbound",
       kind: "question",
       status: "pending",
       fromHandle: "gsv.example",
@@ -1460,8 +1539,11 @@ describe("social identity and records", () => {
       body: { workspace: "demo", priority: "normal" },
     });
     expect(handleSocialRequestList({ peerHandle: "alice.example" }, ctx).requests).toHaveLength(1);
+    expect(handleSocialRequestList({ direction: "outbound" }, ctx).requests).toHaveLength(1);
+    expect(handleSocialRequestList({ direction: "inbound" }, ctx).requests).toHaveLength(0);
     expect(handleSocialRequestGet({ requestId: created.request.requestId }, ctx).request).toMatchObject({
       requestId: created.request.requestId,
+      direction: "outbound",
       status: "pending",
     });
     expect(handleSocialThreadGet({ threadId: created.thread.threadId }, ctx)).toMatchObject({
@@ -1487,6 +1569,8 @@ describe("social identity and records", () => {
           kind: "question",
         },
       });
+    const storage = (ctx as unknown as { __storage: ReturnType<typeof createMockStorage> }).__storage;
+    expect(await storage.get("home/hank/context.d/90-social-inbox.md")).toBeNull();
   });
 
   it("accepts inbound typed requests, writes inbox context, notifies, and responds", async () => {
@@ -1527,7 +1611,10 @@ describe("social identity and records", () => {
 
     const storage = (ctx as unknown as { __storage: ReturnType<typeof createMockStorage> }).__storage;
     const inbox = await storage.get("home/hank/context.d/90-social-inbox.md");
-    expect(await inbox?.text()).toContain("Check the deployment plan");
+    const inboxText = await inbox?.text();
+    expect(inboxText).toContain("Check the deployment plan");
+    expect(inboxText).toContain("social request get req-alice");
+    expect(inboxText).toContain("social request respond req-alice --status agent-replied --text");
     expect(ctx.notifications?.create).toHaveBeenCalledWith(expect.objectContaining({
       uid: 1000,
       title: "Social request from alice.example",
@@ -1538,10 +1625,12 @@ describe("social identity and records", () => {
     expect(handleSocialRequestList({ status: "pending" }, ctx).requests).toEqual([
       expect.objectContaining({
         requestId: "req-alice",
+        direction: "inbound",
         fromHandle: "alice.example",
         toHandle: "gsv.example",
       }),
     ]);
+    expect(handleSocialRequestList({ direction: "outbound" }, ctx).requests).toHaveLength(0);
 
     const response = await handleSocialRequestRespond({
       requestId: "req-alice",

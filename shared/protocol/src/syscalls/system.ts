@@ -74,6 +74,7 @@ export type SysSetupArgs = {
   social?: {
     enabled?: boolean;
     origin: string;
+    handle?: string;
     displayName?: string;
     description?: string;
     agentDisplayName?: string;

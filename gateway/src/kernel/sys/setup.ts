@@ -147,6 +147,7 @@ function parseSocialSetup(args: SysSetupArgs): SocialSetupArgs | undefined {
   }
   return {
     origin: readRequiredString(social.origin, "social.origin"),
+    handle: readOptionalString(social.handle),
     displayName: readOptionalString(social.displayName),
     description: readOptionalString(social.description),
     agentDisplayName: readOptionalString(social.agentDisplayName),

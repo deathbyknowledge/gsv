@@ -194,6 +194,7 @@ function normalizeRequest(request: SocialRequestSummary): SocialRequestItem {
   return {
     requestId: request.requestId,
     threadId: request.threadId,
+    direction: request.direction,
     kind: request.kind,
     status: request.status,
     fromHandle: request.fromHandle,

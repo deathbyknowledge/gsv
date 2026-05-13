@@ -810,7 +810,7 @@ impl RepoObject {
         let store = self.store();
         let mut identity = self.repo_identity_from(&store)?;
         identity.handle = body.handle.to_ascii_lowercase();
-        validate_handle_syntax(&identity.handle).map_err(HttpError::bad_request)?;
+        validate_account_handle_syntax(&self.env, &identity.handle)?;
         store
             .put_repo_identity(&identity)
             .map_err(HttpError::worker)?;

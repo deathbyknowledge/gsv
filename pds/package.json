@@ -22,7 +22,7 @@
     "smoke:plc-account": "node scripts/plc-account-smoke.mjs",
     "smoke:public": "node scripts/public-smoke.mjs",
     "audit:xrpc": "node scripts/xrpc-method-coverage.mjs",
-    "build:worker": "worker-build --release .",
+    "build:worker": "bash ../scripts/worker-build.sh pds --release",
     "test:rust": "cargo test",
     "test": "cargo test"
   },

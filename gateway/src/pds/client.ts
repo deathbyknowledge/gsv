@@ -2,6 +2,7 @@ import type {
   SpaceGsvCollection,
   SpaceGsvRecord,
 } from "@gsv/protocol/syscalls/social";
+import { devHandleForOrigin } from "../dev";
 
 type QueryValue = string | number | boolean | null | undefined;
 
@@ -238,11 +239,28 @@ export function requirePdsClient(env: Env): PdsClient {
 }
 
 export async function proxyPdsXrpcRequest(request: Request, env: Env): Promise<Response> {
-  return requirePdsClient(env).fetchXrpc(request);
+  return requirePdsClient(env).fetchXrpc(rewriteDevPdsProxyRequest(request, env));
 }
 
 export async function proxyPdsRequest(request: Request, env: Env): Promise<Response> {
-  return requirePdsClient(env).fetch(request);
+  return requirePdsClient(env).fetch(rewriteDevPdsProxyRequest(request, env));
+}
+
+function rewriteDevPdsProxyRequest(request: Request, env: Env): Request {
+  const source = new URL(request.url);
+  const handle = devHandleForOrigin(env, source.origin);
+  if (!handle) {
+    return request;
+  }
+  source.protocol = "https:";
+  source.hostname = handle;
+  source.port = "";
+  return new Request(source.toString(), {
+    method: request.method,
+    headers: request.headers,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+    redirect: request.redirect,
+  });
 }
 
 function assertRecordResponse<TRecord>(value: unknown, label: string): PdsRecordResponse<TRecord> {

@@ -1,5 +1,6 @@
 import type { SessionService, SessionSnapshot, SessionSetupInput } from "./session-service";
 import { createOnboardingService } from "./onboarding-service";
+import type { RuntimeConfig } from "./runtime-config";
 import type {
   OnboardingDetailStep,
   OnboardingDraft,
@@ -10,6 +11,7 @@ import type {
 type SessionUiOptions = {
   rootNode: HTMLElement;
   session: SessionService;
+  runtimeConfig?: RuntimeConfig;
 };
 
 type SessionUiController = {
@@ -152,7 +154,10 @@ function gatewayOrigin(): string {
   return typeof window === "undefined" ? "http://localhost:8787" : window.location.origin;
 }
 
-function buildBuiltinSocialSetup(username: string): SessionSetupInput["social"] | undefined {
+function buildBuiltinSocialSetup(
+  username: string,
+  runtimeConfig?: RuntimeConfig,
+): SessionSetupInput["social"] | undefined {
   const origin = gatewayOrigin();
   let url: URL;
   try {
@@ -160,14 +165,29 @@ function buildBuiltinSocialSetup(username: string): SessionSetupInput["social"] 
   } catch {
     return undefined;
   }
-  if (url.protocol !== "https:" || !url.hostname.includes(".")) {
+  const devHandle = runtimeConfig?.dev ? devHandleForOrigin(url) : undefined;
+  const handle = devHandle ?? (url.hostname.includes(".") ? url.hostname.toLowerCase() : undefined);
+  const allowedOrigin = url.protocol === "https:" || devHandle !== undefined;
+  if (!allowedOrigin || !handle) {
     return undefined;
   }
   return {
     origin: url.origin,
+    handle,
     displayName: username,
     agentDisplayName: `${username}'s GSV`,
   };
+}
+
+function devHandleForOrigin(url: URL): string | undefined {
+  if (
+    url.protocol === "http:" &&
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+    /^\d+$/.test(url.port)
+  ) {
+    return `gsv-${url.port}.gsv.local`;
+  }
+  return undefined;
 }
 
 function gatewayWsUrl(origin: string): string {
@@ -209,7 +229,7 @@ function buildNodeBootstrapCommand(
 }
 
 export function createSessionUi(options: SessionUiOptions): SessionUiController {
-  const { rootNode, session } = options;
+  const { rootNode, session, runtimeConfig } = options;
 
   const screenNode = rootNode.querySelector<HTMLElement>("[data-session-screen]");
   const desktopRootNode = rootNode.querySelector<HTMLElement>("[data-desktop-root]");
@@ -834,7 +854,7 @@ export function createSessionUi(options: SessionUiOptions): SessionUiController 
       timezone: draft.system.timezone.trim(),
     };
 
-    const social = buildBuiltinSocialSetup(username);
+    const social = buildBuiltinSocialSetup(username, runtimeConfig);
     if (social) {
       payload.social = social;
     }

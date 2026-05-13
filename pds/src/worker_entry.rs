@@ -1032,6 +1032,23 @@ async fn resolve_handle_did(handle: &str) -> Result<Option<String>, HttpError> {
     Ok(Some(did))
 }
 
+async fn resolve_handle_did_with_env(handle: &str, env: &Env) -> Result<Option<String>, HttpError> {
+    validate_account_handle_syntax(env, handle)?;
+    if let Some(origin) = dev_social_origin_for_handle(env, handle) {
+        let url = format!("{origin}/.well-known/atproto-did");
+        let Some(text) = fetch_text_url_optional(&url).await? else {
+            return Ok(None);
+        };
+        let did = text.trim().to_string();
+        if did.is_empty() {
+            return Ok(None);
+        }
+        Did::new(did.clone()).map_err(HttpError::bad_request)?;
+        return Ok(Some(did));
+    }
+    resolve_handle_did(handle).await
+}
+
 fn unique_prefixed_txt_value(
     records: &[String],
     prefix: &str,
@@ -1066,7 +1083,12 @@ async fn fetch_did_document(did: &str) -> Result<Value, HttpError> {
 }
 
 async fn fetch_did_document_with_env(did: &str, env: &Env) -> Result<Value, HttpError> {
-    if did.starts_with("did:plc:") {
+    if let Some(origin) = dev_social_origin_for_did(env, did) {
+        let url = format!("{origin}/.well-known/did.json");
+        let doc = fetch_json_url(&url).await?;
+        ensure_did_document_id(&doc, did).map_err(HttpError::bad_request)?;
+        Ok(doc)
+    } else if did.starts_with("did:plc:") {
         fetch_plc_did_document(did, env).await
     } else {
         fetch_did_document(did).await
@@ -1287,7 +1309,7 @@ async fn validate_account_handle_for_creation(
     request_host: &str,
     expected_did: &str,
 ) -> Result<(), HttpError> {
-    validate_handle_syntax(handle).map_err(HttpError::bad_request)?;
+    validate_account_handle_syntax(env, handle)?;
     if handle == request_host {
         return Ok(());
     }
@@ -1299,7 +1321,7 @@ async fn validate_account_handle_for_creation(
             ),
         ));
     }
-    let Some(resolved_did) = resolve_handle_did(handle).await? else {
+    let Some(resolved_did) = resolve_handle_did_with_env(handle, env).await? else {
         return Err(HttpError::new(
             400,
             format!("HandleNotResolvable: `{handle}` did not resolve to a DID"),
@@ -1315,15 +1337,19 @@ async fn validate_account_handle_for_creation(
     }
 }
 
-async fn validate_account_did_document(handle: &str, did: &str) -> Result<(), HttpError> {
-    let doc = fetch_did_document(did).await?;
+async fn validate_account_did_document(
+    handle: &str,
+    did: &str,
+    env: &Env,
+) -> Result<(), HttpError> {
+    let doc = fetch_did_document_with_env(did, env).await?;
     if !did_document_claims_handle(&doc, handle) {
         return Err(HttpError::new(
             400,
             format!("HandleMismatch: DID document `{did}` does not claim at://{handle}"),
         ));
     }
-    let Some(resolved_did) = resolve_handle_did(handle).await? else {
+    let Some(resolved_did) = resolve_handle_did_with_env(handle, env).await? else {
         return Err(HttpError::new(
             400,
             format!("HandleNotResolvable: `{handle}` did not resolve to a DID"),

@@ -8,6 +8,7 @@ import { createSessionService } from "./session-service";
 import { createSessionUi } from "./session-ui";
 import { renderDesktopShell } from "./shell-template";
 import { createWindowManager } from "./window-manager";
+import { loadRuntimeConfig } from "./runtime-config";
 import type { PkgListResult } from "@gsv/protocol/syscalls/packages";
 
 type StandaloneNavigator = Navigator & {
@@ -92,9 +93,12 @@ gatewayClient.onSignal((signal) => {
   }
 });
 
+const runtimeConfig = await loadRuntimeConfig();
+
 createSessionUi({
   rootNode: shellEl,
   session: sessionService,
+  runtimeConfig,
 });
 
 void sessionService.start();

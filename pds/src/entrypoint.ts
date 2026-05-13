@@ -232,7 +232,7 @@ export default class GsvPdsEntrypoint extends RustWorker {
         password: input.password,
         email: input.email,
         inviteCode: input.inviteCode,
-        did: input.did,
+        did: didForCreateAccountBody(input),
         signingKey: input.signingKey,
       },
       admin: true,
@@ -257,7 +257,7 @@ export default class GsvPdsEntrypoint extends RustWorker {
         password: input.password,
         email: input.email,
         inviteCode: input.inviteCode,
-        did: input.did,
+        did: didForCreateAccountBody(input),
         signingKey: input.signingKey,
       },
       admin: true,
@@ -357,6 +357,15 @@ function normalizeHost(host: string): string {
     throw new Error("host is required");
   }
   return parsed;
+}
+
+function didForCreateAccountBody(input: { handle: string; did?: string }): string | undefined {
+  const did = input.did?.trim();
+  if (!did) {
+    return undefined;
+  }
+  const localDidWeb = `did:web:${input.handle.trim().toLowerCase()}`;
+  return did === localDidWeb ? undefined : did;
 }
 
 function appendQueryParams(url: URL, params: QueryParams | undefined): void {

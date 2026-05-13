@@ -38,6 +38,7 @@ import type {
   SocialProfileUpdateResult,
   SocialRequestCreateArgs,
   SocialRequestCreateResult,
+  SocialRequestDirection,
   SocialRequestGetArgs,
   SocialRequestGetResult,
   SocialRequestKind,
@@ -76,6 +77,7 @@ import {
 import type { RequestFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
 import { requirePdsClient } from "../pds/client";
+import { isGsvDevMode, socialOriginForHandle } from "../dev";
 import { sendFrameToProcess } from "../shared/utils";
 import { GsvFs } from "../fs/gsv-fs";
 import { createHomeKnowledgeBackend } from "../fs/backends/home-knowledge";
@@ -1063,44 +1065,31 @@ export class SocialStore {
     uid: number;
     peerHandle?: string;
     status?: SocialRequestStatus;
+    direction?: SocialRequestDirection;
     limit: number;
   }): SocialRequestRecord[] {
-    let rows: RequestRow[];
-    if (input.peerHandle && input.status) {
-      rows = this.sql.exec<RequestRow>(
-        `SELECT * FROM social_requests
-         WHERE uid = ? AND (from_handle = ? OR to_handle = ?) AND status = ?
-         ORDER BY updated_at DESC LIMIT ?`,
-        input.uid,
-        input.peerHandle,
-        input.peerHandle,
-        input.status,
-        input.limit,
-      ).toArray();
-    } else if (input.peerHandle) {
-      rows = this.sql.exec<RequestRow>(
-        `SELECT * FROM social_requests
-         WHERE uid = ? AND (from_handle = ? OR to_handle = ?)
-         ORDER BY updated_at DESC LIMIT ?`,
-        input.uid,
-        input.peerHandle,
-        input.peerHandle,
-        input.limit,
-      ).toArray();
-    } else if (input.status) {
-      rows = this.sql.exec<RequestRow>(
-        "SELECT * FROM social_requests WHERE uid = ? AND status = ? ORDER BY updated_at DESC LIMIT ?",
-        input.uid,
-        input.status,
-        input.limit,
-      ).toArray();
-    } else {
-      rows = this.sql.exec<RequestRow>(
-        "SELECT * FROM social_requests WHERE uid = ? ORDER BY updated_at DESC LIMIT ?",
-        input.uid,
-        input.limit,
-      ).toArray();
+    const clauses = ["uid = ?"];
+    const bindings: Array<string | number> = [input.uid];
+    if (input.peerHandle) {
+      clauses.push("(from_handle = ? OR to_handle = ?)");
+      bindings.push(input.peerHandle, input.peerHandle);
     }
+    if (input.status) {
+      clauses.push("status = ?");
+      bindings.push(input.status);
+    }
+    if (input.direction === "inbound") {
+      clauses.push("remote_event_id IS NOT NULL");
+    } else if (input.direction === "outbound") {
+      clauses.push("remote_event_id IS NULL");
+    }
+    bindings.push(input.limit);
+    const rows = this.sql.exec<RequestRow>(
+      `SELECT * FROM social_requests
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY updated_at DESC LIMIT ?`,
+      ...bindings,
+    ).toArray();
     return rows.map(toRequestRecord);
   }
 
@@ -1217,8 +1206,13 @@ export async function handleSocialSetup(
   const uid = requireMainSocialUserUid(ctx);
   const store = requireSocialStore(ctx);
   ensureInstanceIdentityOwner(store, uid);
-  const origin = normalizePublicOrigin(args.origin);
-  const handle = origin.hostname.toLowerCase();
+  const origin = normalizePublicOrigin(args.origin, ctx.env);
+  const handle = args.handle === undefined
+    ? origin.hostname.toLowerCase()
+    : normalizeHandle(args.handle, "handle");
+  if (handle !== origin.hostname.toLowerCase() && !isGsvDevMode(ctx.env)) {
+    throw new Error("social handle must match origin host");
+  }
   const did = normalizeDid(`did:web:${handle}`);
   const existing = store.getIdentity(uid);
   if (existing && existing.did !== did) {
@@ -1226,7 +1220,7 @@ export async function handleSocialSetup(
   }
 
   const account = await requirePdsClient(ctx.env).ensureAccount({
-    host: origin.host,
+    host: handle === origin.hostname.toLowerCase() ? origin.host : handle,
     handle,
     did,
     password: randomSetupPassword(),
@@ -1309,7 +1303,7 @@ export function handleSocialIdentitySet(
   const uid = requireMainSocialUserUid(ctx);
   const handle = normalizeHandle(args.handle, "handle");
   const did = normalizeDid(`did:web:${handle}`);
-  const pdsEndpoint = normalizePdsEndpoint(args.pdsEndpoint);
+  const pdsEndpoint = normalizePdsEndpoint(args.pdsEndpoint, ctx.env);
   const store = requireSocialStore(ctx);
   ensureInstanceIdentityOwner(store, uid);
   const existing = store.getIdentity(uid);
@@ -1433,7 +1427,7 @@ export async function handleSocialFriendAdd(
     throw new Error("Cannot add the local GSV identity as a friend");
   }
   const grants = args.grants === undefined ? undefined : validateGrants(args.grants);
-  const publicIdentity = await resolveFriendPublicIdentity(handle);
+  const publicIdentity = await resolveFriendPublicIdentity(handle, ctx.env);
   const displayName = nonEmpty(args.displayName)
     ?? nonEmpty(publicIdentity.profile?.displayName)
     ?? nonEmpty(publicIdentity.agentCard?.displayName)
@@ -1659,6 +1653,7 @@ export function handleSocialRequestList(
       uid,
       peerHandle: args.peerHandle === undefined ? undefined : normalizeHandle(args.peerHandle, "peerHandle"),
       status: args.status === undefined ? undefined : normalizeRequestStatus(args.status, "status"),
+      direction: args.direction === undefined ? undefined : normalizeRequestDirection(args.direction, "direction"),
       limit: normalizeLimit(args.limit, 50),
     }).map(toRequestSummary),
   };
@@ -1896,7 +1891,7 @@ export async function handleSocialInbound(
 
   let publicIdentity: { did: SocialDid; instance: SpaceGsvInstanceRecord };
   try {
-    publicIdentity = await resolveFriendServiceIdentity(friend.handle);
+    publicIdentity = await resolveFriendServiceIdentity(friend.handle, ctx.env);
   } catch (error) {
     return rejectInbound(error instanceof Error ? error.message : String(error));
   }
@@ -2506,7 +2501,7 @@ async function refreshSocialInboxContext(ctx: KernelContext, store: SocialStore)
     undefined,
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
   );
-  const active = store.listRequests({ uid: MAIN_SOCIAL_UID, limit: 100 })
+  const active = store.listRequests({ uid: MAIN_SOCIAL_UID, direction: "inbound", limit: 100 })
     .filter((request) => isActiveInboxRequest(request.status));
   const path = `${identity.home}/context.d/90-social-inbox.md`;
   if (active.length === 0) {
@@ -2615,6 +2610,7 @@ function renderSocialInboxContext(requests: SocialRequestRecord[]): string {
     "# Social Inbox",
     "",
     "Active friend requests visible to the GSV init process.",
+    "Use the social command to inspect and respond to these requests.",
     "",
   ];
   for (const request of requests.sort((left, right) => right.updatedAt - left.updatedAt)) {
@@ -2627,6 +2623,9 @@ function renderSocialInboxContext(requests: SocialRequestRecord[]): string {
       `- Kind: ${request.kind}`,
       `- Status: ${request.status}`,
       `- Updated: ${new Date(request.updatedAt).toISOString()}`,
+      `- Inspect: social request get ${request.requestId}`,
+      `- Respond: social request respond ${request.requestId} --status agent-replied --text "..."`,
+      `- Escalate: social request respond ${request.requestId} --status needs-human --text "..."`,
     );
     if (request.threadId) {
       lines.push(`- Thread: ${request.threadId}`);
@@ -2648,7 +2647,7 @@ async function publishSelfRecord<TRecord extends SpaceGsvRecord>(
   collection: SpaceGsvCollection,
   record: TRecord,
 ): Promise<SocialPublicRecord<TRecord>> {
-  const host = new URL(identity.pdsEndpoint).host;
+  const host = pdsHostForIdentity(ctx.env, identity);
   const response = await requirePdsClient(ctx.env).putRecord({
     host,
     repo: identity.did,
@@ -2665,6 +2664,17 @@ async function publishSelfRecord<TRecord extends SpaceGsvRecord>(
     uri: response.uri,
     cid: response.cid,
   });
+}
+
+function pdsHostForIdentity(env: Env, identity: SocialIdentityRecord): string {
+  const endpoint = new URL(identity.pdsEndpoint);
+  if (identity.handle) {
+    const handleOrigin = new URL(socialOriginForHandle(env, identity.handle));
+    if (handleOrigin.origin === endpoint.origin) {
+      return identity.handle;
+    }
+  }
+  return endpoint.host;
 }
 
 function requireSocialStore(ctx: KernelContext): SocialStore {
@@ -2839,6 +2849,16 @@ function normalizeRequestStatus(value: unknown, field: string): SocialRequestSta
     value !== "expired"
   ) {
     throw new Error(`invalid ${field}`);
+  }
+  return value;
+}
+
+function normalizeRequestDirection(value: unknown, field: string): SocialRequestDirection | undefined {
+  if (value === undefined || value === "all") {
+    return undefined;
+  }
+  if (value !== "inbound" && value !== "outbound") {
+    throw new Error(`${field} must be inbound, outbound, or all`);
   }
   return value;
 }
@@ -3054,7 +3074,7 @@ function validateGrants(value: unknown): SocialGrant[] {
   });
 }
 
-function normalizePdsEndpoint(value: unknown): string {
+function normalizePdsEndpoint(value: unknown, env: Env): string {
   if (typeof value !== "string") {
     throw new Error("pdsEndpoint is required");
   }
@@ -3064,13 +3084,13 @@ function normalizePdsEndpoint(value: unknown): string {
   } catch {
     throw new Error("pdsEndpoint must be a URL");
   }
-  if (url.protocol !== "https:" && url.hostname !== "localhost") {
+  if (url.protocol !== "https:" && !isAllowedDevHttpUrl(url, env)) {
     throw new Error("pdsEndpoint must use https");
   }
   return url.origin;
 }
 
-function normalizePublicOrigin(value: unknown): URL {
+function normalizePublicOrigin(value: unknown, env: Env): URL {
   if (typeof value !== "string") {
     throw new Error("origin is required");
   }
@@ -3080,7 +3100,7 @@ function normalizePublicOrigin(value: unknown): URL {
   } catch {
     throw new Error("origin must be a URL");
   }
-  if (url.protocol !== "https:" && url.hostname !== "localhost") {
+  if (url.protocol !== "https:" && !isAllowedDevHttpUrl(url, env)) {
     throw new Error("origin must use https");
   }
   if (url.username || url.password) {
@@ -3090,6 +3110,12 @@ function normalizePublicOrigin(value: unknown): URL {
   url.search = "";
   url.hash = "";
   return url;
+}
+
+function isAllowedDevHttpUrl(url: URL, env: Env): boolean {
+  return isGsvDevMode(env) &&
+    url.protocol === "http:" &&
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1");
 }
 
 function validateProfileRecord(record: unknown): SpaceGsvProfileRecord {
@@ -3268,18 +3294,20 @@ function rejectInbound(error: string): SocialInboundResult {
   return { ok: false, status: "rejected", error };
 }
 
-async function resolveFriendServiceIdentity(handle: string): Promise<{
+async function resolveFriendServiceIdentity(handle: string, env: Env): Promise<{
   did: SocialDid;
   instance: SpaceGsvInstanceRecord;
 }> {
+  const origin = socialOriginForHandle(env, handle);
   const did = normalizeDid((await fetchRequiredText(
-    `https://${handle}/.well-known/atproto-did`,
+    `${origin}/.well-known/atproto-did`,
     `${handle} handle DID`,
   )).trim());
   const instance = await fetchRequiredRecord<SpaceGsvInstanceRecord>(
     handle,
     did,
     SPACE_GSV_INSTANCE,
+    env,
   );
   return {
     did,
@@ -3287,21 +3315,22 @@ async function resolveFriendServiceIdentity(handle: string): Promise<{
   };
 }
 
-async function resolveFriendPublicIdentity(handle: string): Promise<{
+async function resolveFriendPublicIdentity(handle: string, env: Env): Promise<{
   did: SocialDid;
   profile?: SpaceGsvProfileRecord;
   instance: SpaceGsvInstanceRecord;
   agentCard?: SpaceGsvAgentCardRecord;
 }> {
+  const origin = socialOriginForHandle(env, handle);
   const did = normalizeDid((await fetchRequiredText(
-    `https://${handle}/.well-known/atproto-did`,
+    `${origin}/.well-known/atproto-did`,
     `${handle} handle DID`,
   )).trim());
 
   const [profile, instance, agentCard] = await Promise.all([
-    fetchOptionalRecord<SpaceGsvProfileRecord>(handle, did, SPACE_GSV_PROFILE),
-    fetchRequiredRecord<SpaceGsvInstanceRecord>(handle, did, SPACE_GSV_INSTANCE),
-    fetchOptionalRecord<SpaceGsvAgentCardRecord>(handle, did, SPACE_GSV_AGENT_CARD),
+    fetchOptionalRecord<SpaceGsvProfileRecord>(handle, did, SPACE_GSV_PROFILE, env),
+    fetchRequiredRecord<SpaceGsvInstanceRecord>(handle, did, SPACE_GSV_INSTANCE, env),
+    fetchOptionalRecord<SpaceGsvAgentCardRecord>(handle, did, SPACE_GSV_AGENT_CARD, env),
   ]);
 
   return {
@@ -3316,8 +3345,9 @@ async function fetchRequiredRecord<TRecord extends SpaceGsvRecord>(
   handle: string,
   did: SocialDid,
   collection: SpaceGsvCollection,
+  env: Env,
 ): Promise<TRecord> {
-  const record = await fetchOptionalRecord<TRecord>(handle, did, collection);
+  const record = await fetchOptionalRecord<TRecord>(handle, did, collection, env);
   if (!record) {
     throw new Error(`${handle} did not publish ${collection}/${FRIEND_SELF_RKEY}`);
   }
@@ -3328,8 +3358,9 @@ async function fetchOptionalRecord<TRecord extends SpaceGsvRecord>(
   handle: string,
   did: SocialDid,
   collection: SpaceGsvCollection,
+  env: Env,
 ): Promise<TRecord | null> {
-  const url = new URL(`https://${handle}/xrpc/com.atproto.repo.getRecord`);
+  const url = new URL(`${socialOriginForHandle(env, handle)}/xrpc/com.atproto.repo.getRecord`);
   url.searchParams.set("repo", did);
   url.searchParams.set("collection", collection);
   url.searchParams.set("rkey", FRIEND_SELF_RKEY);
@@ -3521,6 +3552,7 @@ function toRequestSummary(request: SocialRequestRecord): SocialRequestSummary {
   return {
     requestId: request.requestId,
     threadId: request.threadId,
+    direction: requestDirection(request),
     kind: request.kind,
     status: request.status,
     fromHandle: request.fromHandle,
@@ -3531,6 +3563,10 @@ function toRequestSummary(request: SocialRequestRecord): SocialRequestSummary {
     updatedAt: new Date(request.updatedAt).toISOString(),
     expiresAt: request.expiresAt,
   };
+}
+
+function requestDirection(request: SocialRequestRecord): SocialRequestDirection {
+  return request.remoteEventId ? "inbound" : "outbound";
 }
 
 function toPublicRecord<TRecord extends SpaceGsvRecord>(row: RecordRow): SocialPublicRecord<TRecord> {

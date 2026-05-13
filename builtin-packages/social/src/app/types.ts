@@ -4,6 +4,7 @@ import type {
   SocialLocalIdentity,
   SocialMessageDirection,
   SocialRemoteOperation,
+  SocialRequestDirection,
   SocialRequestKind,
   SocialRequestStatus,
   SocialThreadStatus,
@@ -47,6 +48,7 @@ export type SocialMessageItem = {
 export type SocialRequestItem = {
   requestId: string;
   threadId?: string;
+  direction: SocialRequestDirection;
   kind: SocialRequestKind;
   status: SocialRequestStatus;
   fromHandle: string;

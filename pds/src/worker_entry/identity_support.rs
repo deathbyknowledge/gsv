@@ -1,4 +1,5 @@
 use super::*;
+use crate::atproto_resolver::ResolverError;
 
 pub(super) async fn validate_hosted_account_did_document(
     handle: &str,
@@ -45,7 +46,7 @@ pub(super) async fn account_identity_for_creation(
     pds_origin: &str,
     signing_did_key: &str,
 ) -> Result<AccountCreationIdentity, HttpError> {
-    validate_handle_syntax(handle).map_err(HttpError::bad_request)?;
+    validate_account_handle_syntax(env, handle)?;
     let Some(requested_did) = requested_did else {
         if let Some(rotation_signing_key) = plc_rotation_signing_key_from_env(env)? {
             validate_local_account_handle_for_creation(env, handle, request_host)?;
@@ -125,7 +126,7 @@ pub(super) fn account_identity_for_import(
     pds_origin: &str,
     public_key_multibase: &str,
 ) -> Result<AccountCreationIdentity, HttpError> {
-    validate_handle_syntax(handle).map_err(HttpError::bad_request)?;
+    validate_account_handle_syntax(env, handle)?;
     if requested_recovery_key.is_some() {
         return Err(HttpError::new(
             400,
@@ -183,7 +184,7 @@ pub(super) fn validate_local_account_handle_for_creation(
     handle: &str,
     request_host: &str,
 ) -> Result<(), HttpError> {
-    validate_handle_syntax(handle).map_err(HttpError::bad_request)?;
+    validate_account_handle_syntax(env, handle)?;
     if handle == request_host || configured_account_handle_allowed(env, handle) {
         Ok(())
     } else {
@@ -203,6 +204,19 @@ pub(super) fn configured_account_handle_allowed(env: &Env, handle: &str) -> bool
         || env_list(env, "PDS_ALLOWED_ACCOUNT_HANDLE_SUFFIXES")
             .iter()
             .any(|suffix| handle_matches_suffix(handle, suffix))
+        || (gsv_dev_mode(env) && local_dev_handle_port(handle).is_some())
+}
+
+pub(super) fn validate_account_handle_syntax(env: &Env, handle: &str) -> Result<(), HttpError> {
+    match validate_handle_syntax(handle) {
+        Ok(()) => Ok(()),
+        Err(ResolverError::ReservedHandleTld(tld))
+            if tld == "local" && gsv_dev_mode(env) && local_dev_handle_port(handle).is_some() =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(HttpError::bad_request(error)),
+    }
 }
 
 pub(super) fn handle_matches_suffix(handle: &str, suffix: &str) -> bool {
@@ -231,6 +245,58 @@ pub(super) fn env_list(env: &Env, name: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .collect()
+}
+
+pub(super) fn gsv_dev_mode(env: &Env) -> bool {
+    env.var("GSV_DEV")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.to_string().trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub(super) fn dev_social_origin_for_handle(env: &Env, handle: &str) -> Option<String> {
+    if !gsv_dev_mode(env) {
+        return None;
+    }
+    let handle = handle.trim().to_ascii_lowercase();
+    for entry in env_list(env, "GSV_DEV_SOCIAL_ORIGINS") {
+        let Some((entry_handle, entry_origin)) = entry.split_once('=') else {
+            continue;
+        };
+        if entry_handle.trim().eq_ignore_ascii_case(&handle) {
+            let origin = entry_origin.trim().trim_end_matches('/').to_string();
+            if !origin.is_empty() {
+                return Some(origin);
+            }
+        }
+    }
+    local_dev_handle_port(&handle).map(|port| format!("http://localhost:{port}"))
+}
+
+pub(super) fn dev_social_origin_for_did(env: &Env, did: &str) -> Option<String> {
+    let handle = did_web_handle(did)?;
+    dev_social_origin_for_handle(env, &handle)
+}
+
+fn did_web_handle(did: &str) -> Option<String> {
+    did.strip_prefix("did:web:")
+        .map(|handle| handle.replace(':', ".").to_ascii_lowercase())
+}
+
+fn local_dev_handle_port(handle: &str) -> Option<u16> {
+    let port = handle.strip_prefix("gsv-")?.strip_suffix(".gsv.local")?;
+    if port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    match port.parse::<u16>().ok()? {
+        0 => None,
+        parsed => Some(parsed),
+    }
 }
 
 pub(super) fn ensure_password_strength(password: &str) -> Result<(), HttpError> {

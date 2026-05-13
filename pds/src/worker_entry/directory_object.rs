@@ -601,7 +601,7 @@ impl PdsDirectoryObject {
             )
             .await?;
         } else if identity.validate_did_document {
-            validate_account_did_document(&body.handle, identity.did.as_str()).await?;
+            validate_account_did_document(&body.handle, identity.did.as_str(), &self.env).await?;
         }
 
         let salt = random_bytes::<PASSWORD_SALT_BYTES>()?;
@@ -1298,7 +1298,7 @@ impl PdsDirectoryObject {
         let mut body: XrpcAdminUpdateAccountHandleRequest =
             req.json().await.map_err(HttpError::worker)?;
         body.handle = body.handle.to_ascii_lowercase();
-        validate_handle_syntax(&body.handle).map_err(HttpError::bad_request)?;
+        validate_account_handle_syntax(&self.env, &body.handle)?;
         let request_host = request_host(req)?;
         if body.handle != request_host
             && !configured_account_handle_allowed(&self.env, &body.handle)
@@ -1537,7 +1537,8 @@ impl PdsDirectoryObject {
             {
                 Some(account) => account,
                 None => {
-                    let Some(did) = resolve_handle_did(&identifier).await? else {
+                    let Some(did) = resolve_handle_did_with_env(&identifier, &self.env).await?
+                    else {
                         return Err(HttpError::new(404, "HandleNotFound"));
                     };
                     let did = Did::new(did).map_err(HttpError::bad_request)?;
@@ -1673,7 +1674,7 @@ impl PdsDirectoryObject {
         account: &DirectoryAccountRow,
         handle: &str,
     ) -> Result<(), HttpError> {
-        validate_handle_syntax(handle).map_err(HttpError::bad_request)?;
+        validate_account_handle_syntax(&self.env, handle)?;
         if handle == account.handle {
             return Ok(());
         }
@@ -1686,7 +1687,7 @@ impl PdsDirectoryObject {
                 ),
             ));
         }
-        let Some(resolved_did) = resolve_handle_did(handle).await? else {
+        let Some(resolved_did) = resolve_handle_did_with_env(handle, &self.env).await? else {
             return Err(HttpError::new(
                 400,
                 format!("HandleNotResolvable: `{handle}` did not resolve to a DID"),

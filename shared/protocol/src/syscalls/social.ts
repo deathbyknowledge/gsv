@@ -260,9 +260,12 @@ export type SocialRequestStatus =
   | "completed"
   | "expired";
 
+export type SocialRequestDirection = "inbound" | "outbound";
+
 export type SocialRequestSummary = {
   requestId: string;
   threadId?: string;
+  direction: SocialRequestDirection;
   kind: SocialRequestKind;
   status: SocialRequestStatus;
   fromHandle: string;
@@ -276,6 +279,7 @@ export type SocialRequestSummary = {
 
 export type SocialSetupArgs = {
   origin: string;
+  handle?: string;
   displayName?: string;
   description?: string;
   agentDisplayName?: string;
@@ -447,6 +451,7 @@ export type SocialRequestCreateResult = {
 export type SocialRequestListArgs = {
   status?: SocialRequestStatus;
   peerHandle?: string;
+  direction?: SocialRequestDirection | "all";
   limit?: number;
 };
 export type SocialRequestListResult = {

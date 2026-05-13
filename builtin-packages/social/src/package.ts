@@ -35,4 +35,9 @@ export default definePackage({
   backend: {
     entry: "./src/backend.ts",
   },
+  cli: {
+    commands: {
+      social: "./src/cli/social.ts",
+    },
+  },
 });

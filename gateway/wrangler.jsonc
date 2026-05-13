@@ -8,6 +8,9 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-01-28",
 	"compatibility_flags": ["nodejs_compat"],
+	"vars": {
+		"GSV_DEV": "0"
+	},
 	"migrations": [
 		{
 			"new_sqlite_classes": ["Kernel"],

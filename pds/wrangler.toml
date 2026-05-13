@@ -4,12 +4,14 @@ compatibility_date = "2026-04-22"
 workers_dev = true
 
 [vars]
+GSV_DEV = "0"
+GSV_DEV_SOCIAL_ORIGINS = ""
 PDS_LEXICON_AUTHORITY_DIDS = "gsv.space=did:web:gsv-pds.stevej.workers.dev,agent.gsv.space=did:web:gsv-pds.stevej.workers.dev,package.gsv.space=did:web:gsv-pds.stevej.workers.dev"
 PDS_ALLOWED_ACCOUNT_HANDLE_SUFFIXES = "gsv.dev"
 PDS_FIREHOSE_REPLAY_LIMIT = "64"
 
 [build]
-command = "cd ${PDS_WORKER_ROOT:-.} && worker-build --release ."
+command = "bash ${GSV_WORKER_BUILD:-../scripts/worker-build.sh} ${PDS_WORKER_ROOT:-pds} --release"
 
 [durable_objects]
 bindings = [

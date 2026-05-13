@@ -124,7 +124,11 @@ function createMockSql() {
   return { exec };
 }
 
-function createCtx(overrides?: { setupMode?: boolean; pds?: Partial<PdsServiceBinding> }) {
+function createCtx(overrides?: {
+  setupMode?: boolean;
+  pds?: Partial<PdsServiceBinding>;
+  env?: Record<string, string>;
+}) {
   const usersGroup = { name: "users", gid: 100, members: [] as string[] };
   const passwd: Array<{ username: string; uid: number }> = [{ username: "root", uid: 0 }];
   const shadowRoot = { username: "root", hash: "!" };
@@ -190,7 +194,7 @@ function createCtx(overrides?: { setupMode?: boolean; pds?: Partial<PdsServiceBi
   const ctx = {
     auth: auth as unknown as KernelContext["auth"],
     config: config as unknown as KernelContext["config"],
-    env: { STORAGE: storage, PDS: overrides?.pds } as unknown as KernelContext["env"],
+    env: { STORAGE: storage, PDS: overrides?.pds, ...overrides?.env } as unknown as KernelContext["env"],
     social: (() => {
       const social = new SocialStore(createMockSql() as unknown as SqlStorage);
       social.init();
@@ -297,6 +301,47 @@ describe("handleSysSetup", () => {
       SPACE_GSV_INSTANCE,
       SPACE_GSV_AGENT_CARD,
     ]);
+  });
+
+  it("passes the dev social handle through onboarding", async () => {
+    const accountCalls: PdsEnsureAccountInput[] = [];
+    const { ctx } = createCtx({
+      env: { GSV_DEV: "1" },
+      pds: {
+        pdsEnsureAccount: async (input: PdsEnsureAccountInput) => {
+          accountCalls.push(input);
+          return {
+            did: "did:web:gsv-8788.gsv.local",
+            handle: "gsv-8788.gsv.local",
+            created: true,
+          };
+        },
+        pdsPutRecord: async (input: PdsPutRecordInput) => ({
+          uri: `at://${input.repo}/${input.collection}/${input.rkey}`,
+          cid: `bafy-${input.collection.replace(/\./g, "-")}`,
+        }),
+      },
+    });
+
+    const result = await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        social: {
+          origin: "http://localhost:8788",
+          handle: "gsv-8788.gsv.local",
+        },
+      },
+      ctx,
+    );
+
+    expect(accountCalls[0]).toMatchObject({
+      host: "gsv-8788.gsv.local",
+      handle: "gsv-8788.gsv.local",
+      did: "did:web:gsv-8788.gsv.local",
+    });
+    expect(result.social?.identity.handle).toBe("gsv-8788.gsv.local");
+    expect(result.social?.identity.pdsEndpoint).toBe("http://localhost:8788");
   });
 
   it("rejects when setup mode is already completed", async () => {
