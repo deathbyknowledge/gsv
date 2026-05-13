@@ -37,7 +37,7 @@ import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
 import { NotificationStore } from "./notifications";
-import { SocialStore } from "./social";
+import { handleSocialDeliveryRetry, SocialStore } from "./social";
 import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
 import {
   assertCanManageSchedule,
@@ -1109,6 +1109,7 @@ export class Kernel extends Host<Env> {
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
       cancelScheduleWake: this.cancelScheduleWake.bind(this),
+      scheduleSocialDeliveryRetry: this.scheduleSocialDeliveryRetry.bind(this),
       runSchedules: this.runSchedules.bind(this),
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
@@ -1186,6 +1187,7 @@ export class Kernel extends Host<Env> {
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
       cancelScheduleWake: this.cancelScheduleWake.bind(this),
+      scheduleSocialDeliveryRetry: this.scheduleSocialDeliveryRetry.bind(this),
       runSchedules: this.runSchedules.bind(this),
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
@@ -1225,6 +1227,7 @@ export class Kernel extends Host<Env> {
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
       cancelScheduleWake: this.cancelScheduleWake.bind(this),
+      scheduleSocialDeliveryRetry: this.scheduleSocialDeliveryRetry.bind(this),
       runSchedules: this.runSchedules.bind(this),
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServerConnection.bind(this),
@@ -1268,6 +1271,16 @@ export class Kernel extends Host<Env> {
       wakeAt,
       "onScheduleDue",
       scheduleId,
+    );
+    return sched.id;
+  }
+
+  private async scheduleSocialDeliveryRetry(messageId: string, dueAtMs: number): Promise<string> {
+    const wakeAt = new Date(ceilToSecondMs(Math.max(Date.now() + 1_000, dueAtMs)));
+    const sched = await this.schedule(
+      wakeAt,
+      "onSocialDeliveryRetry",
+      messageId,
     );
     return sched.id;
   }
@@ -1359,7 +1372,10 @@ export class Kernel extends Host<Env> {
       typeof args.adapter === "string" && args.adapter.trim().length > 0
         ? args.adapter.trim().toLowerCase()
         : "service-binding";
+    return this.buildServiceIdentity(adapterHint);
+  }
 
+  private buildServiceIdentity(channel: string): ConnectionIdentity {
     const root = this.auth.getPasswdByUid(0);
     const process: ProcessIdentity = root
       ? {
@@ -1385,7 +1401,7 @@ export class Kernel extends Host<Env> {
       role: "service",
       process,
       capabilities: this.caps.resolve([102]),
-      channel: adapterHint,
+      channel,
     };
   }
 
@@ -1831,6 +1847,17 @@ export class Kernel extends Host<Env> {
     });
   }
 
+  async onSocialDeliveryRetry(messageId: string, wake?: { id?: unknown }): Promise<void> {
+    await this.ready;
+    const identity = this.buildServiceIdentity("social-retry");
+    const ctx = this.buildServiceContext(identity);
+    const retryScheduleId = typeof wake?.id === "string" ? wake.id : null;
+    const result = await handleSocialDeliveryRetry({ messageId, retryScheduleId }, ctx);
+    if (!result.retried) {
+      console.debug(`[social.retry] skipped message=${messageId}: ${result.reason}`);
+    }
+  }
+
   async onScheduleDue(scheduleId: string, wake?: { id?: unknown }): Promise<void> {
     await this.ready;
     const record = this.schedules.getStored(scheduleId);
@@ -2048,6 +2075,7 @@ export class Kernel extends Host<Env> {
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
       cancelScheduleWake: this.cancelScheduleWake.bind(this),
+      scheduleSocialDeliveryRetry: this.scheduleSocialDeliveryRetry.bind(this),
       runSchedules: this.runSchedules.bind(this),
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServerConnection.bind(this),

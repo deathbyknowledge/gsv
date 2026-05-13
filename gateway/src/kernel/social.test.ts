@@ -15,6 +15,7 @@ import {
   handleSocialFriendGrantsSet,
   handleSocialFriendList,
   handleSocialFriendRemove,
+  handleSocialDeliveryRetry,
   handleSocialIdentityGet,
   handleSocialIdentitySet,
   handleSocialInbound,
@@ -79,6 +80,10 @@ function createMockSql() {
     }
 
     if (q.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS")) {
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("ALTER TABLE social_messages ADD COLUMN")) {
       return cursor<T>([]);
     }
 
@@ -461,7 +466,12 @@ function createMockSql() {
         text,
         body_json,
         reply_to_message_id,
+        delivery_method,
         delivery_status,
+        delivery_attempt_count,
+        next_retry_at,
+        retry_schedule_id,
+        last_delivery_error,
         remote_event_id,
         created_at,
         updated_at,
@@ -475,7 +485,12 @@ function createMockSql() {
         string | null,
         string | null,
         string | null,
+        string | null,
         string,
+        number,
+        number | null,
+        string | null,
+        string | null,
         string | null,
         number,
         number,
@@ -492,7 +507,12 @@ function createMockSql() {
         text,
         body_json,
         reply_to_message_id,
+        delivery_method,
         delivery_status,
+        delivery_attempt_count,
+        next_retry_at,
+        retry_schedule_id,
+        last_delivery_error,
         remote_event_id,
         created_at,
         updated_at,
@@ -505,13 +525,35 @@ function createMockSql() {
       return cursor<T>([]);
     }
 
-    if (q.startsWith("UPDATE social_messages SET delivery_status = ?")) {
-      const [delivery_status, updated_at, uid, message_id] = bindings as [string, number, number, string];
+    if (q.startsWith("UPDATE social_messages")) {
+      const [
+        delivery_status,
+        delivery_attempt_count,
+        next_retry_at,
+        retry_schedule_id,
+        last_delivery_error,
+        updated_at,
+        uid,
+        message_id,
+      ] = bindings as [
+        string,
+        number,
+        number | null,
+        string | null,
+        string | null,
+        number,
+        number,
+        string,
+      ];
       const row = getTable("social_messages").find((candidate) =>
         candidate.uid === uid && candidate.message_id === message_id
       );
       if (row) {
         row.delivery_status = delivery_status;
+        row.delivery_attempt_count = delivery_attempt_count;
+        row.next_retry_at = next_retry_at;
+        row.retry_schedule_id = retry_schedule_id;
+        row.last_delivery_error = last_delivery_error;
         row.updated_at = updated_at;
       }
       return cursor<T>([]);
@@ -564,6 +606,7 @@ function createCtx(
     workspaceId: null,
   };
   const processIdentities = new Map<string, typeof processIdentity>();
+  const scheduledSocialRetries: Array<{ messageId: string; dueAtMs: number; scheduleId: string }> = [];
 
   return {
     env: {
@@ -592,6 +635,12 @@ function createCtx(
         return { pid, created };
       }),
     },
+    scheduleSocialDeliveryRetry: vi.fn(async (messageId: string, dueAtMs: number) => {
+      const scheduleId = `retry-${scheduledSocialRetries.length + 1}`;
+      scheduledSocialRetries.push({ messageId, dueAtMs, scheduleId });
+      return scheduleId;
+    }),
+    __scheduledSocialRetries: scheduledSocialRetries,
     identity: {
       role: options.role ?? "user",
       process: processIdentity,
@@ -712,6 +761,7 @@ describe("social identity and records", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it("sets up the builtin PDS identity and publishes baseline social records", async () => {
@@ -1148,6 +1198,99 @@ describe("social identity and records", () => {
       deliveryStatus: "accepted",
     });
     expect(handleSocialThreadGet({ threadId: sent.thread.threadId }, ctx).messages).toHaveLength(2);
+  });
+
+  it("schedules and completes a retry after a transient outbound failure", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-12T12:00:00Z"));
+    const ctx = createCtx();
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+    const aliceKeys = await generateP256ServiceKey();
+    let inboundCalls = 0;
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: () => {
+        inboundCalls += 1;
+        return inboundCalls === 1
+          ? Response.json({ ok: false, status: "unavailable" }, { status: 503 })
+          : Response.json({ ok: true, status: "accepted" });
+      },
+    });
+    await handleSocialFriendAdd({
+      handle: "alice.example",
+      grants: [{ operation: "social.message.send" }],
+    }, ctx);
+
+    const sent = await handleSocialMessageSend({
+      toHandle: "alice.example",
+      text: "retry me",
+    }, ctx);
+    expect(sent.message.deliveryStatus).toBe("retrying");
+
+    const scheduled = (ctx as unknown as {
+      __scheduledSocialRetries: Array<{ messageId: string; dueAtMs: number; scheduleId: string }>;
+    }).__scheduledSocialRetries;
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0].messageId).toBe(sent.message.messageId);
+
+    vi.setSystemTime(scheduled[0].dueAtMs);
+    await expect(handleSocialDeliveryRetry({
+      messageId: sent.message.messageId,
+      retryScheduleId: scheduled[0].scheduleId,
+    }, ctx)).resolves.toMatchObject({
+      retried: true,
+      message: {
+        messageId: sent.message.messageId,
+        deliveryStatus: "accepted",
+      },
+    });
+
+    expect(handleSocialThreadGet({ threadId: sent.thread.threadId }, ctx).messages[0]).toMatchObject({
+      messageId: sent.message.messageId,
+      deliveryStatus: "accepted",
+    });
+  });
+
+  it("fails retrying outbound messages after bounded attempts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-12T12:00:00Z"));
+    const ctx = createCtx();
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+    const aliceKeys = await generateP256ServiceKey();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: () => Response.json({ ok: false, status: "unavailable" }, { status: 503 }),
+    });
+    await handleSocialFriendAdd({
+      handle: "alice.example",
+      grants: [{ operation: "social.message.send" }],
+    }, ctx);
+
+    const sent = await handleSocialMessageSend({
+      toHandle: "alice.example",
+      text: "eventually fail",
+    }, ctx);
+    const scheduled = (ctx as unknown as {
+      __scheduledSocialRetries: Array<{ messageId: string; dueAtMs: number; scheduleId: string }>;
+    }).__scheduledSocialRetries;
+
+    for (let index = 0; index < 5; index += 1) {
+      vi.setSystemTime(scheduled[index].dueAtMs);
+      await handleSocialDeliveryRetry({
+        messageId: sent.message.messageId,
+        retryScheduleId: scheduled[index].scheduleId,
+      }, ctx);
+    }
+
+    expect(scheduled).toHaveLength(5);
+    expect(handleSocialThreadGet({ threadId: sent.thread.threadId }, ctx).messages[0]).toMatchObject({
+      messageId: sent.message.messageId,
+      deliveryStatus: "failed",
+    });
   });
 
   it("accepts signed inbound envelopes from granted friends idempotently and delivers to init", async () => {

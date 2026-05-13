@@ -75,6 +75,14 @@ const SOCIAL_ID_PATTERN = /^[A-Za-z0-9._-]{1,200}$/;
 const MAX_SOCIAL_TEXT_BYTES = 16 * 1024;
 const MAX_SOCIAL_BODY_BYTES = 64 * 1024;
 const SOCIAL_ENVELOPE_TTL_MS = 5 * 60 * 1000;
+const SOCIAL_DELIVERY_RETRY_DELAYS_MS = [
+  10_000,
+  60_000,
+  5 * 60_000,
+  30 * 60_000,
+  2 * 60 * 60_000,
+] as const;
+const SOCIAL_MAX_DELIVERY_ATTEMPTS = 1 + SOCIAL_DELIVERY_RETRY_DELAYS_MS.length;
 const P256_MULTICODEC_PREFIX = [0x80, 0x24] as const;
 const P256_FIELD_PRIME = BigInt("0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
 const P256_B = BigInt("0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
@@ -163,7 +171,12 @@ type MessageRow = {
   text: string | null;
   body_json: string | null;
   reply_to_message_id: string | null;
+  delivery_method: string | null;
   delivery_status: string;
+  delivery_attempt_count: number | null;
+  next_retry_at: number | null;
+  retry_schedule_id: string | null;
+  last_delivery_error: string | null;
   remote_event_id: string | null;
   created_at: number;
   updated_at: number;
@@ -233,11 +246,20 @@ export type SocialMessageRecord = {
   text?: string;
   body?: unknown;
   replyToMessageId?: string;
+  deliveryMethod?: SocialRemoteOperation;
   deliveryStatus: SocialMessageSummary["deliveryStatus"];
+  deliveryAttemptCount: number;
+  nextRetryAt?: number;
+  retryScheduleId?: string;
+  lastDeliveryError?: string;
   remoteEventId?: string;
   createdAt: number;
   updatedAt: number;
 };
+
+export type SocialDeliveryRetryResult =
+  | { retried: true; message: SocialMessageSummary }
+  | { retried: false; reason: string };
 
 export class SocialStore {
   constructor(private readonly sql: SqlStorage) {}
@@ -358,18 +380,37 @@ export class SocialStore {
         text TEXT,
         body_json TEXT,
         reply_to_message_id TEXT,
+        delivery_method TEXT,
         delivery_status TEXT NOT NULL,
+        delivery_attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_retry_at INTEGER,
+        retry_schedule_id TEXT,
+        last_delivery_error TEXT,
         remote_event_id TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (uid, message_id)
       )
     `);
+    for (const statement of [
+      "ALTER TABLE social_messages ADD COLUMN delivery_method TEXT",
+      "ALTER TABLE social_messages ADD COLUMN delivery_attempt_count INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE social_messages ADD COLUMN next_retry_at INTEGER",
+      "ALTER TABLE social_messages ADD COLUMN retry_schedule_id TEXT",
+      "ALTER TABLE social_messages ADD COLUMN last_delivery_error TEXT",
+    ]) {
+      try {
+        this.sql.exec(statement);
+      } catch {}
+    }
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_social_messages_thread ON social_messages (uid, thread_id, created_at ASC)",
     );
     this.sql.exec(
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_social_messages_remote_event ON social_messages (uid, remote_event_id)",
+    );
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_social_messages_retry ON social_messages (delivery_status, next_retry_at)",
     );
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS social_delivery_attempts (
@@ -822,7 +863,12 @@ export class SocialStore {
     text?: string;
     body?: unknown;
     replyToMessageId?: string;
+    deliveryMethod?: SocialRemoteOperation;
     deliveryStatus: SocialMessageSummary["deliveryStatus"];
+    deliveryAttemptCount?: number;
+    nextRetryAt?: number | null;
+    retryScheduleId?: string | null;
+    lastDeliveryError?: string | null;
     remoteEventId?: string;
     now?: number;
   }): SocialMessageRecord {
@@ -831,8 +877,10 @@ export class SocialStore {
     const createdAt = existing?.createdAt ?? now;
     this.sql.exec(
       `INSERT OR REPLACE INTO social_messages
-        (uid, message_id, thread_id, direction, from_handle, to_handle, text, body_json, reply_to_message_id, delivery_status, remote_event_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (uid, message_id, thread_id, direction, from_handle, to_handle, text, body_json,
+         reply_to_message_id, delivery_method, delivery_status, delivery_attempt_count,
+         next_retry_at, retry_schedule_id, last_delivery_error, remote_event_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.uid,
       input.messageId,
       input.threadId,
@@ -842,7 +890,12 @@ export class SocialStore {
       input.text ?? null,
       input.body === undefined ? null : JSON.stringify(input.body),
       input.replyToMessageId ?? null,
+      input.deliveryMethod ?? existing?.deliveryMethod ?? null,
       input.deliveryStatus,
+      input.deliveryAttemptCount ?? existing?.deliveryAttemptCount ?? 0,
+      input.nextRetryAt === undefined ? existing?.nextRetryAt ?? null : input.nextRetryAt,
+      input.retryScheduleId === undefined ? existing?.retryScheduleId ?? null : input.retryScheduleId,
+      input.lastDeliveryError === undefined ? existing?.lastDeliveryError ?? null : input.lastDeliveryError,
       input.remoteEventId ?? existing?.remoteEventId ?? null,
       createdAt,
       now,
@@ -857,17 +910,26 @@ export class SocialStore {
       text: input.text,
       body: input.body,
       replyToMessageId: input.replyToMessageId,
+      deliveryMethod: input.deliveryMethod ?? existing?.deliveryMethod,
       deliveryStatus: input.deliveryStatus,
+      deliveryAttemptCount: input.deliveryAttemptCount ?? existing?.deliveryAttemptCount ?? 0,
+      nextRetryAt: input.nextRetryAt === undefined ? existing?.nextRetryAt : input.nextRetryAt ?? undefined,
+      retryScheduleId: input.retryScheduleId === undefined ? existing?.retryScheduleId : input.retryScheduleId ?? undefined,
+      lastDeliveryError: input.lastDeliveryError === undefined ? existing?.lastDeliveryError : input.lastDeliveryError ?? undefined,
       remoteEventId: input.remoteEventId ?? existing?.remoteEventId,
       createdAt,
       updatedAt: now,
     };
   }
 
-  updateMessageDeliveryStatus(input: {
+  updateMessageDeliveryState(input: {
     uid: number;
     messageId: string;
     deliveryStatus: SocialMessageSummary["deliveryStatus"];
+    deliveryAttemptCount: number;
+    nextRetryAt?: number | null;
+    retryScheduleId?: string | null;
+    lastDeliveryError?: string | null;
     now?: number;
   }): SocialMessageRecord | null {
     const existing = this.getMessage(input.uid, input.messageId);
@@ -876,8 +938,19 @@ export class SocialStore {
     }
     const now = input.now ?? Date.now();
     this.sql.exec(
-      "UPDATE social_messages SET delivery_status = ?, updated_at = ? WHERE uid = ? AND message_id = ?",
+      `UPDATE social_messages
+          SET delivery_status = ?,
+              delivery_attempt_count = ?,
+              next_retry_at = ?,
+              retry_schedule_id = ?,
+              last_delivery_error = ?,
+              updated_at = ?
+        WHERE uid = ? AND message_id = ?`,
       input.deliveryStatus,
+      input.deliveryAttemptCount,
+      input.nextRetryAt ?? null,
+      input.retryScheduleId ?? null,
+      input.lastDeliveryError ?? null,
       now,
       input.uid,
       input.messageId,
@@ -885,6 +958,10 @@ export class SocialStore {
     return {
       ...existing,
       deliveryStatus: input.deliveryStatus,
+      deliveryAttemptCount: input.deliveryAttemptCount,
+      nextRetryAt: input.nextRetryAt ?? undefined,
+      retryScheduleId: input.retryScheduleId ?? undefined,
+      lastDeliveryError: input.lastDeliveryError ?? undefined,
       updatedAt: now,
     };
   }
@@ -1243,9 +1320,11 @@ export async function handleSocialThreadCreate(
       fromHandle: localHandle,
       toHandle: peerHandle,
       text,
+      deliveryMethod: "social.thread.create",
       deliveryStatus: "queued",
     });
     initialMessage = await attemptOutboundDelivery({
+      ctx,
       store,
       localIdentity,
       friend,
@@ -1329,9 +1408,11 @@ export async function handleSocialMessageSend(
     text: messageInput.text,
     body: messageInput.body,
     replyToMessageId,
+    deliveryMethod: "social.message.send",
     deliveryStatus: "queued",
   });
   const delivered = await attemptOutboundDelivery({
+    ctx,
     store,
     localIdentity,
     friend,
@@ -1371,9 +1452,11 @@ export async function handleSocialMessageReply(
     text: messageInput.text,
     body: messageInput.body,
     replyToMessageId,
+    deliveryMethod: "social.message.reply",
     deliveryStatus: "queued",
   });
   const delivered = await attemptOutboundDelivery({
+    ctx,
     store,
     localIdentity,
     friend,
@@ -1500,6 +1583,61 @@ export async function handleSocialInbound(
   return accepted;
 }
 
+export async function handleSocialDeliveryRetry(
+  input: { messageId: string; retryScheduleId?: string | null },
+  ctx: KernelContext,
+): Promise<SocialDeliveryRetryResult> {
+  const store = requireSocialStore(ctx);
+  const messageId = normalizeSocialId(input.messageId, "messageId");
+  const message = store.getMessage(MAIN_SOCIAL_UID, messageId);
+  if (!message) {
+    return { retried: false, reason: "message not found" };
+  }
+  if (message.direction !== "outbound") {
+    return { retried: false, reason: "message is not outbound" };
+  }
+  if (message.deliveryStatus !== "retrying") {
+    return { retried: false, reason: `message status is ${message.deliveryStatus}` };
+  }
+  if (
+    input.retryScheduleId &&
+    message.retryScheduleId &&
+    input.retryScheduleId !== message.retryScheduleId
+  ) {
+    return { retried: false, reason: "stale retry schedule" };
+  }
+  if (message.nextRetryAt !== undefined && message.nextRetryAt > Date.now()) {
+    return { retried: false, reason: "message retry is not due" };
+  }
+
+  const localIdentity = store.getIdentity(MAIN_SOCIAL_UID);
+  if (!localIdentity) {
+    return { retried: false, reason: "local social identity is not linked" };
+  }
+  const thread = store.getThread(MAIN_SOCIAL_UID, message.threadId);
+  if (!thread) {
+    return { retried: false, reason: "thread not found" };
+  }
+  const friend = store.getFriend(MAIN_SOCIAL_UID, message.toHandle);
+  if (!friend) {
+    return { retried: false, reason: "friend not found" };
+  }
+  const method = message.deliveryMethod ?? inferDeliveryMethod(message);
+  const retried = await attemptOutboundDelivery({
+    ctx,
+    store,
+    localIdentity,
+    friend,
+    thread,
+    message,
+    method,
+  });
+  return {
+    retried: true,
+    message: toMessageSummary(retried),
+  };
+}
+
 type NormalizedMessagePayload = {
   text?: string;
   body?: unknown;
@@ -1514,6 +1652,7 @@ type InboundMessageBody = NormalizedMessagePayload & {
 };
 
 async function attemptOutboundDelivery(input: {
+  ctx: KernelContext;
   store: SocialStore;
   localIdentity: SocialIdentityRecord;
   friend: SocialFriendRecord;
@@ -1545,6 +1684,7 @@ async function attemptOutboundDelivery(input: {
 
   let status: SocialMessageSummary["deliveryStatus"] = "failed";
   let error: string | undefined;
+  let retryable = false;
   try {
     const response = await fetch(new URL("/social/inbound", input.friend.pdsEndpoint).toString(), {
       method: "POST",
@@ -1557,12 +1697,29 @@ async function attemptOutboundDelivery(input: {
     if (response.ok && accepted) {
       status = "accepted";
     } else {
-      status = response.status >= 500 || response.status === 429 ? "retrying" : "failed";
+      retryable = response.status >= 500 || response.status === 429;
+      status = retryable ? "retrying" : "failed";
       error = `remote status=${response.status}: ${formatFetchBody(responseBody)}`;
     }
   } catch (caught) {
     status = "retrying";
+    retryable = true;
     error = caught instanceof Error ? caught.message : String(caught);
+  }
+
+  const attemptCount = input.message.deliveryAttemptCount + 1;
+  let nextRetryAt: number | null = null;
+  let retryScheduleId: string | null = null;
+  if (status === "retrying") {
+    const retryPlan = await scheduleDeliveryRetry({
+      ctx: input.ctx,
+      messageId: input.message.messageId,
+      attemptCount,
+      retryable,
+    });
+    status = retryPlan.status;
+    nextRetryAt = retryPlan.nextRetryAt;
+    retryScheduleId = retryPlan.retryScheduleId;
   }
 
   input.store.recordDeliveryAttempt({
@@ -1571,11 +1728,41 @@ async function attemptOutboundDelivery(input: {
     status,
     error,
   });
-  return input.store.updateMessageDeliveryStatus({
+  return input.store.updateMessageDeliveryState({
     uid: input.localIdentity.uid,
     messageId: input.message.messageId,
     deliveryStatus: status,
+    deliveryAttemptCount: attemptCount,
+    nextRetryAt,
+    retryScheduleId,
+    lastDeliveryError: error ?? null,
   }) ?? input.message;
+}
+
+async function scheduleDeliveryRetry(input: {
+  ctx: KernelContext;
+  messageId: string;
+  attemptCount: number;
+  retryable: boolean;
+}): Promise<{
+  status: SocialMessageSummary["deliveryStatus"];
+  nextRetryAt: number | null;
+  retryScheduleId: string | null;
+}> {
+  if (!input.retryable || input.attemptCount >= SOCIAL_MAX_DELIVERY_ATTEMPTS) {
+    return { status: "failed", nextRetryAt: null, retryScheduleId: null };
+  }
+
+  const delayMs = SOCIAL_DELIVERY_RETRY_DELAYS_MS[input.attemptCount - 1];
+  const nextRetryAt = Date.now() + delayMs;
+  const retryScheduleId = input.ctx.scheduleSocialDeliveryRetry
+    ? await input.ctx.scheduleSocialDeliveryRetry(input.messageId, nextRetryAt)
+    : null;
+  return {
+    status: "retrying",
+    nextRetryAt,
+    retryScheduleId,
+  };
 }
 
 async function acceptInboundSocialEnvelope(input: {
@@ -1636,6 +1823,7 @@ async function acceptInboundSocialEnvelope(input: {
     text: body.text,
     body: body.body,
     replyToMessageId: body.replyToMessageId,
+    deliveryMethod: input.envelope.method,
     deliveryStatus: "delivered",
     remoteEventId: input.envelope.id,
     now: input.now,
@@ -1841,6 +2029,10 @@ function requireExistingThread(
     throw new Error(`Thread ${threadId} belongs to ${thread.peerHandle}, not ${expectedPeerHandle}`);
   }
   return thread;
+}
+
+function inferDeliveryMethod(message: SocialMessageRecord): SocialRemoteOperation {
+  return message.replyToMessageId ? "social.message.reply" : "social.message.send";
 }
 
 function normalizeDid(value: unknown): SocialDid {
@@ -2448,7 +2640,12 @@ function toMessageRecord(row: MessageRow): SocialMessageRecord {
     text: row.text ?? undefined,
     body: row.body_json ? JSON.parse(row.body_json) as unknown : undefined,
     replyToMessageId: row.reply_to_message_id ?? undefined,
+    deliveryMethod: row.delivery_method ? row.delivery_method as SocialRemoteOperation : undefined,
     deliveryStatus: row.delivery_status as SocialMessageSummary["deliveryStatus"],
+    deliveryAttemptCount: row.delivery_attempt_count ?? 0,
+    nextRetryAt: row.next_retry_at ?? undefined,
+    retryScheduleId: row.retry_schedule_id ?? undefined,
+    lastDeliveryError: row.last_delivery_error ?? undefined,
     remoteEventId: row.remote_event_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

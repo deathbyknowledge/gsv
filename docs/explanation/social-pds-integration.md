@@ -173,12 +173,13 @@ Completed milestones:
   `social.message.send`, and `social.message.reply` are implemented.
 - Outbound messages are signed and posted to the remote GSV inbound endpoint,
   with local delivery status updated from the immediate remote response.
+- Transient outbound failures are retried by Kernel scheduled callbacks with a
+  bounded attempt count; permanent failures are marked `failed`.
 - Accepted inbound messages are idempotently stored before process delivery and
   rendered into the main user's init process conversation.
 
 Next implementation contract:
 
-- Add bounded retry scheduling for transient social delivery failures.
 - Add typed social requests and inbox state.
 - Add friend public-record sync and package-like surfaces.
 - Expand the two-GSV smoke into request/reply and denied-sender cases.
@@ -251,12 +252,11 @@ Next implementation contract:
       `social.message.send`, and `social.message.reply`.
 - [x] Make outbound sends asynchronous with local status:
       `queued`, `sent`, `accepted`, `failed`, `retrying`, `delivered`.
-- [ ] Add bounded retries for transient remote failures.
+- [x] Add bounded retries for transient remote failures.
 - [x] Add idempotency for duplicate inbound message ids.
 - [x] Enforce max message size and allowed content types.
-- [x] Add tests for thread creation, follow-up routing, idempotency, and status
-      transitions.
-- [ ] Add tests for retry scheduling once retries exist.
+- [x] Add tests for thread creation, follow-up routing, retry scheduling,
+      idempotency, and status transitions.
 
 ### 6. Deliver Social Events To Processes
 

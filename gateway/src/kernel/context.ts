@@ -59,6 +59,7 @@ export type KernelContext = {
   scheduleIpcCallTimeout?: (callId: string, delayMs: number) => Promise<string>;
   scheduleScheduleWake?: (scheduleId: string, dueAtMs: number) => Promise<string>;
   cancelScheduleWake?: (wakeScheduleId: string) => Promise<void>;
+  scheduleSocialDeliveryRetry?: (messageId: string, dueAtMs: number) => Promise<string>;
   runSchedules?: (args: SchedulerRunArgs, identity?: ConnectionIdentity) => Promise<SchedulerRunResult>;
   addMcpServerConnection?: (input: McpAddConnectionInput) => Promise<McpAddConnectionResult>;
   removeMcpServerConnection?: (serverId: string) => Promise<void>;

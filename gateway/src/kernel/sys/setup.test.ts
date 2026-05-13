@@ -115,6 +115,9 @@ function createMockSql() {
     if (q.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS")) {
       return cursor<T>([]);
     }
+    if (q.startsWith("ALTER TABLE social_messages ADD COLUMN")) {
+      return cursor<T>([]);
+    }
     throw new Error(`Unhandled SQL: ${q}`);
   }
 
