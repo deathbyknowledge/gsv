@@ -160,10 +160,21 @@ export function buildPermissionSummary(pkg: PackageRecord): string[] {
 export function packageActionLimitations(pkg: PackageRecord): string[] {
   const notes: string[] = [];
   if (!pkg.canMutate) notes.push("You cannot mutate this package from the current viewer.");
+  if (isRequiredSystemConsolePackage(pkg)) notes.push("The GSV console is required and cannot be disabled.");
   if (!pkg.canChangeVisibility) notes.push("Visibility is controlled by the source owner or root.");
   if (!pkg.canPullSource) notes.push("Pulling source updates is unavailable for this package.");
   if (notes.length === 0) notes.push("Lifecycle actions are available for this package.");
   return notes;
+}
+
+export function isRequiredSystemConsolePackage(pkg: PackageRecord): boolean {
+  if (pkg.name === "packages") {
+    return true;
+  }
+  return pkg.name === "gsv"
+    && pkg.packageId.startsWith("builtin:gsv@")
+    && pkg.source.repo === "root/gsv"
+    && pkg.source.subdir.replace(/^\/+|\/+$/g, "") === "builtin-packages/gsv";
 }
 
 export function filteredPackages(

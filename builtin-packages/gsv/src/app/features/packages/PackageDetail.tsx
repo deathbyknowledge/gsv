@@ -3,6 +3,7 @@ import { formatTimestampMs } from "../../utils/format";
 import {
   buildPermissionSummary,
   formatScope,
+  isRequiredSystemConsolePackage,
   packageActionLimitations,
   packageRiskDescription,
   packageRiskLabel,
@@ -47,6 +48,7 @@ export function PackageDetail({
   const pullAction = `package:pull:${packageId}`;
   const pullSourceAction = `source:pull:${packageRepo}`;
   const publicAction = `package:public:${packageId}`;
+  const disableBlocked = isRequiredSystemConsolePackage(pkg);
 
   async function openReview(): Promise<void> {
     const detail = await runtime.startPackageReview(packageId);
@@ -164,7 +166,8 @@ export function PackageDetail({
               <button
                 type="button"
                 class="gsv-action-button is-danger"
-                disabled={busy || !pkg.canMutate}
+                disabled={busy || !pkg.canMutate || disableBlocked}
+                title={disableBlocked ? "The GSV console is required and cannot be disabled." : undefined}
                 onClick={() => void runtime.disablePackage(pkg.packageId)}
               >
                 {runtime.pendingAction === disableAction ? "Disabling" : "Disable"}
