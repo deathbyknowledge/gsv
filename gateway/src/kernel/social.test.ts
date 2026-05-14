@@ -1609,6 +1609,12 @@ describe("social identity and records", () => {
         message: expect.stringContaining("From: alice.example"),
       },
     });
+    expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
+      .toContain("A private transcript reply is not delivered to the peer");
+    expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
+      .toContain("social message send alice.example");
+    expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
+      .not.toContain("Structured event data");
 
     setContextRole(ctx, "user");
     expect(handleSocialThreadGet({ threadId: "thread-alice" }, ctx)).toMatchObject({

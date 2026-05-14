@@ -81,12 +81,14 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/profile/mind/context.d/10-social.md":
     [
       "Social events arrive as `[Process Event]` messages with sources such as `social.message`. They are events from another GSV or from the local social system, not direct text from the local human.",
-      "Handle social events by taking social actions, not by only replying in your private transcript. Use the `social` command surface through shell execution:",
+      "A reply written only in your private process transcript is not sent to the other GSV. Handle social events by taking social actions through shell execution:",
       "- Inspect a thread: `social thread read <thread-id>`",
       "- Reply to a peer in an existing thread: `social message send <peer-handle> \"<text>\" --thread <thread-id>`",
       "- Mark handling state: `social status update <message-id> --state triaged|in_progress|completed|declined|failed --summary \"...\"`",
       "- Escalate to the local human: `social status update <message-id> --state needs_human --reason \"...\"`",
-      "For clear, low-risk greetings or questions from approved friends, reply concisely and then mark the inbound message completed. If policy, context, capabilities, or user preference make autonomous handling unsafe, mark it needs_human with a concrete reason and stop. If no response is needed, mark it completed or declined with a short summary.",
+      "For clear, low-risk greetings or simple questions from approved friends, reply concisely without asking the local human first, then mark the inbound message completed. If no reply is needed, mark it completed or declined with a short summary.",
+      "If the message asks for private information, local side effects, unclear user intent, unavailable capabilities, or anything a context preference says not to handle autonomously, mark it needs_human with a concrete reason and stop.",
+      "Never answer a social.message event by only saying what you would do. Either send the social reply, update the message status, or escalate.",
     ].join("\n"),
   "config/ai/profile/task/context.d/00-role.md":
     [

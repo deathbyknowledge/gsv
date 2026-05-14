@@ -2149,6 +2149,7 @@ async function deliverInboundMessageToMind(
       conversationId: thread.conversationId,
       direction: message.direction,
     },
+    includeStructuredData: false,
   });
 }
 
@@ -2251,19 +2252,23 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity {
 
 function renderInboundSocialMessage(thread: SocialThreadRecord, message: SocialMessageRecord): string {
   const lines = [
-    "Social message received.",
+    "Inbound social message from an approved friend.",
+    "Handle this event by using the social command surface. A private transcript reply is not delivered to the peer.",
     `From: ${message.fromHandle}`,
     `Thread: ${thread.threadId}`,
     `Message: ${message.messageId}`,
-    `Reply: social message send ${message.fromHandle} "<text>" --thread ${thread.threadId}`,
-    `Complete: social status update ${message.messageId} --state completed --summary "..."`,
-    `Escalate: social status update ${message.messageId} --state needs_human --reason "..."`,
+    "",
+    "Expected actions:",
+    `- If safe to handle autonomously, reply with: social message send ${message.fromHandle} "<text>" --thread ${thread.threadId}`,
+    `- After handling, mark complete with: social status update ${message.messageId} --state completed --summary "..."`,
+    `- If the local human must decide, escalate with: social status update ${message.messageId} --state needs_human --reason "..."`,
+    "- Do not just describe these actions; run the command that matches your decision.",
   ];
   if (message.text) {
-    lines.push("", message.text);
+    lines.push("", "Message text:", message.text);
   }
   if (message.body !== undefined) {
-    lines.push("", "Structured body:", JSON.stringify(message.body, null, 2));
+    lines.push("", "Additional structured body is attached to the kernel event, but only use it if the visible text is insufficient.");
   }
   return lines.join("\n");
 }

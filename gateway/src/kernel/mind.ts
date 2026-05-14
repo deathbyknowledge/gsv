@@ -14,6 +14,7 @@ export type MindEventInput = {
   text?: string;
   body?: unknown;
   metadata?: Record<string, unknown>;
+  includeStructuredData?: boolean;
 };
 
 export type MindEventResult =
@@ -111,12 +112,14 @@ function renderMindEvent(input: MindEventInput): string {
   if (input.text?.trim()) {
     lines.push("", input.text.trim());
   }
-  const structured = compactObject({
-    body: input.body,
-    metadata: input.metadata,
-  });
-  if (Object.keys(structured).length > 0) {
-    lines.push("", "Structured event data:", JSON.stringify(structured, null, 2));
+  if (input.includeStructuredData !== false) {
+    const structured = compactObject({
+      body: input.body,
+      metadata: input.metadata,
+    });
+    if (Object.keys(structured).length > 0) {
+      lines.push("", "Structured event data:", JSON.stringify(structured, null, 2));
+    }
   }
   return lines.join("\n");
 }

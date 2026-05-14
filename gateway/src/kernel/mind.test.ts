@@ -125,6 +125,38 @@ describe("dispatchMindEvent", () => {
       call: "proc.mind.deliver",
     });
   });
+
+  it("can omit structured data from delivered process events", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "deliver",
+      ok: true,
+      data: {
+        ok: true,
+        status: "started",
+        pid: "mind:1000:test",
+        conversationId: "mind:social.message:thread-1",
+        runId: "run-3",
+      },
+    } satisfies ResponseFrame);
+
+    const ctx = makeContext({ state: "running" });
+    await dispatchMindEvent(ctx, {
+      identity: IDENTITY,
+      source: "social.message",
+      threadKey: "thread-1",
+      text: "Visible instructions only.",
+      body: { messageId: "msg-1" },
+      metadata: { peerHandle: "alice.example" },
+      includeStructuredData: false,
+    });
+
+    const frame = sendFrameToProcessMock.mock.calls[0]?.[1] as { args?: { message?: string } } | undefined;
+    expect(frame?.args?.message).toContain("Visible instructions only.");
+    expect(frame?.args?.message).not.toContain("Structured event data");
+    expect(frame?.args?.message).not.toContain("msg-1");
+    expect(frame?.args?.message).not.toContain("alice.example");
+  });
 });
 
 function makeContext(existing: { state: string } | null): KernelContext {

@@ -143,6 +143,8 @@ describe("ConfigStore", () => {
       .toContain("social.message");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/context.d/10-social.md"])
       .toContain("social status update");
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/context.d/10-social.md"])
+      .toContain("private process transcript is not sent");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/tools/approval"]).toBeTruthy();
   });
 });
