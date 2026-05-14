@@ -538,6 +538,45 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("delivers GSV Mind messages as mind role messages", async () => {
+      const pid = "mech-mind-message";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.mind.message", {
+          sourcePid: "mind:1000:social",
+          conversationId: "social-thread",
+          message: "I need the local user's input before answering this social message.",
+          metadata: {
+            source: "social.needs_human",
+            threadId: "thread-1",
+          },
+        }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toMatchObject({
+        ok: true,
+        status: "started",
+        pid,
+        conversationId: "social-thread",
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        const msgs = store.getMessages({ conversationId: "social-thread" });
+        expect(msgs).toHaveLength(1);
+        expect(msgs[0].role).toBe("mind");
+        expect(msgs[0].content).toContain("Message from GSV Mind process `mind:1000:social`.");
+        expect(msgs[0].content).toContain("I need the local user's input");
+        expect(msgs[0].content).toContain('"source": "social.needs_human"');
+        const contextMessages = store.toMessages({ conversationId: "social-thread" });
+        expect(contextMessages[0].role).toBe("user");
+        expect(contextMessages[0].content).toContain("[GSV Mind]:");
+        (instance as any).currentRun = null;
+      });
+    });
+
     it("queues message, finishRun dequeues and processes it", async () => {
       const pid = "mech-send-queued";
       const stub = await initProcess(pid, ROOT_IDENTITY);

@@ -1720,14 +1720,21 @@ describe("social identity and records", () => {
     const initDelivery = vi.mocked(sendFrameToProcess).mock.calls.find(([pid, frame]) =>
       pid === "init:1000" &&
       frame.type === "req" &&
-      frame.call === "proc.send"
+      frame.call === "proc.mind.message"
     );
     expect(initDelivery).toBeTruthy();
     expect(initDelivery?.[1]).toMatchObject({
-      call: "proc.send",
+      call: "proc.mind.message",
       args: {
+        sourcePid: "mind:1000:thread-alice",
         conversationId: "social:alice.example:thread-alice",
-        message: expect.stringContaining("[Process Event]: Social message needs local human input."),
+        message: expect.stringContaining("I need the local user's input before answering this social message."),
+        metadata: expect.objectContaining({
+          source: "social.needs_human",
+          peerHandle: "alice.example",
+          threadId: "thread-alice",
+          messageId: "msg-alice",
+        }),
       },
     });
     const initMessage = (initDelivery?.[1] as { args?: { message?: string } }).args?.message ?? "";

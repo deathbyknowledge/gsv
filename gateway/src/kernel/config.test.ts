@@ -150,7 +150,9 @@ describe("ConfigStore", () => {
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/context.d/10-social.md"])
       .toContain("do not send another acknowledgement");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/init/context.d/10-social.md"])
-      .toContain("Social escalation events");
+      .toContain("Social escalation messages");
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/init/context.d/10-social.md"])
+      .toContain("[GSV Mind]:");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/init/context.d/10-social.md"])
       .toContain("social message send");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/init/context.d/10-social.md"])

@@ -74,7 +74,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
     ].join("\n"),
   "config/ai/profile/init/context.d/10-social.md":
     [
-      "Social escalation events arrive as `[Process Event]: Social message needs local human input.` when the GSV Mind cannot safely answer a friend without the local user's preference, permission, schedule, availability, or commitment.",
+      "Social escalation messages arrive as `[GSV Mind]:` coordination when the GSV Mind cannot safely answer a friend without the local user's preference, permission, schedule, availability, or commitment.",
       "Use the normal init conversation to ask the local user for the missing decision. Do not invent or infer personal availability or consent.",
       "When the user answers, send the response through `social message send <peer-handle> \"<reply>\" --thread <thread-id>`, then close the original item with `social status update <message-id> --state completed --summary \"...\"`.",
       "If the user declines, asks not to answer, or the matter should end without a reply, use `social status update <message-id> --state declined --summary \"...\"`.",

@@ -292,6 +292,8 @@ async function dispatchNative(
         return errFrame(frame.id, 403, "proc.ipc.deliver is kernel-only");
       case "proc.mind.deliver":
         return errFrame(frame.id, 403, "proc.mind.deliver is kernel-only");
+      case "proc.mind.message":
+        return errFrame(frame.id, 403, "proc.mind.message is kernel-only");
       case "proc.setidentity":
         return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
 

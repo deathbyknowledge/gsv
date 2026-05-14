@@ -93,6 +93,16 @@ export type ProcMindDeliverResult =
     }
   | { ok: false; error: string };
 
+export type ProcMindMessageArgs = {
+  pid?: string;
+  sourcePid?: string;
+  conversationId?: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type ProcMindMessageResult = ProcMindDeliverResult;
+
 export type ProcAbortArgs = {
   pid?: string;
 };

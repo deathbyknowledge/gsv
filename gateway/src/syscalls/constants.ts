@@ -18,6 +18,7 @@ export const PROC_KILL = "proc.kill";
 export const PROC_LIST = "proc.list";
 export const PROC_SEND = "proc.send";
 export const PROC_MIND_DELIVER = "proc.mind.deliver";
+export const PROC_MIND_MESSAGE = "proc.mind.message";
 export const PROC_IPC_SEND = "proc.ipc.send";
 export const PROC_IPC_CALL = "proc.ipc.call";
 export const PROC_IPC_DELIVER = "proc.ipc.deliver";

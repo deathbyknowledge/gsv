@@ -32,6 +32,8 @@ import type {
   ProcSendResult,
   ProcMindDeliverArgs,
   ProcMindDeliverResult,
+  ProcMindMessageArgs,
+  ProcMindMessageResult,
   ProcIpcDeliverArgs,
   ProcIpcDeliverResult,
   ProcAbortResult,
@@ -381,6 +383,20 @@ function formatIpcMessage(args: ProcIpcDeliverArgs): string {
   return lines.join("\n");
 }
 
+function formatMindMessage(args: ProcMindMessageArgs, message: string): string {
+  const lines: string[] = [];
+  const sourcePid = normalizeOptionalString(args.sourcePid);
+  if (sourcePid) {
+    lines.push(`Message from GSV Mind process \`${sourcePid}\`.`, "");
+  }
+  lines.push(message);
+  const renderedMetadata = renderJsonBlock(args.metadata);
+  if (renderedMetadata) {
+    lines.push("", "Metadata:", "```json", renderedMetadata, "```");
+  }
+  return lines.join("\n");
+}
+
 function formatIpcReplyMessage(signal: string, payload: unknown): string {
   const record = payload && typeof payload === "object"
     ? payload as Record<string, unknown>
@@ -630,7 +646,7 @@ export class Process extends Host<Env> {
 
   /**
    * Handle a request frame from the kernel.
-   * proc.send, proc.history, proc.reset, proc.kill are delivered here.
+   * proc.send, proc.mind.*, proc.history, proc.reset, proc.kill are delivered here.
    */
   private async handleReq(frame: RequestFrame): Promise<ResponseFrame | null> {
     try {
@@ -669,6 +685,11 @@ export class Process extends Host<Env> {
         case "proc.mind.deliver":
           data = this.handleProcMindDeliver(
             frame.args as ProcMindDeliverArgs,
+          );
+          break;
+        case "proc.mind.message":
+          data = this.handleProcMindMessage(
+            frame.args as ProcMindMessageArgs,
           );
           break;
         case "proc.ipc.deliver":
@@ -846,6 +867,56 @@ export class Process extends Host<Env> {
     }
 
     this.store.appendMessage("system", message, { conversationId });
+    this.currentRun = { runId, queued: false, conversationId };
+    this.scheduleTick(runId);
+
+    return {
+      ok: true,
+      status: "started",
+      pid: this.pid,
+      conversationId,
+      runId,
+    };
+  }
+
+  private handleProcMindMessage(args: ProcMindMessageArgs): ProcMindMessageResult {
+    if (!args || typeof args !== "object") {
+      return { ok: false, error: "proc.mind.message requires arguments" };
+    }
+
+    const message = normalizeRequiredText(args.message);
+    if (!message) {
+      return { ok: false, error: "proc.mind.message requires message" };
+    }
+
+    if (
+      args.metadata !== undefined
+      && (!args.metadata || typeof args.metadata !== "object" || Array.isArray(args.metadata))
+    ) {
+      return { ok: false, error: "proc.mind.message metadata must be an object" };
+    }
+
+    const runId = crypto.randomUUID();
+    const conversationId = normalizeConversationId(args.conversationId);
+    const conversation = this.store.ensureConversation(conversationId);
+    if (conversation.status === "closed") {
+      return { ok: false, error: `Conversation is closed: ${conversationId}` };
+    }
+
+    const renderedMessage = formatMindMessage(args, message);
+    if (this.currentRun) {
+      this.store.enqueue(runId, renderedMessage, undefined, undefined, conversationId, "mind");
+      return {
+        ok: true,
+        status: "started",
+        pid: this.pid,
+        conversationId,
+        runId,
+        queued: true,
+      };
+    }
+
+    this.store.appendMessage("mind", renderedMessage, { conversationId });
     this.currentRun = { runId, queued: false, conversationId };
     this.scheduleTick(runId);
 

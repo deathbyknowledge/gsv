@@ -2195,10 +2195,17 @@ async function deliverNeedsHumanToInitSafe(
     await sendFrameToProcess(init.pid, {
       type: "req",
       id: crypto.randomUUID(),
-      call: "proc.send",
+      call: "proc.mind.message",
       args: {
+        sourcePid: ctx.processId,
         conversationId: initSocialEscalationConversationId(message),
         message: renderNeedsHumanInitEvent(ctx, message, nextStatus),
+        metadata: {
+          source: "social.needs_human",
+          peerHandle: message.fromHandle,
+          threadId: message.threadId,
+          messageId: message.messageId,
+        },
       },
     });
   } catch (error) {
@@ -2320,7 +2327,7 @@ function renderNeedsHumanInitEvent(
   const sourcePid = ctx.processId?.trim();
   const mindConversationId = `mind:social.message:${message.threadId}`;
   const lines = [
-    "[Process Event]: Social message needs local human input.",
+    "I need the local user's input before answering this social message.",
     "",
     `From: ${message.fromHandle}`,
     `Thread: ${message.threadId}`,
