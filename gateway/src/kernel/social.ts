@@ -2066,6 +2066,7 @@ export async function handleSocialMessageStatusUpdate(
   if (!message) {
     throw new Error(`Message is not known: ${messageId}`);
   }
+  const previousStatus = store.getMessageStatus(uid, messageId);
   const status = store.upsertMessageStatus({
     uid,
     messageId,
@@ -2075,6 +2076,7 @@ export async function handleSocialMessageStatusUpdate(
     needsHumanReason,
     body,
   });
+  notifyMessageStatusTransition(ctx, message, previousStatus, status);
 
   if (message.direction === "inbound") {
     const peerHandle = message.fromHandle === localHandle ? message.toHandle : message.fromHandle;
@@ -2866,6 +2868,39 @@ function notifySocialRequest(
   ctx.broadcastToUid?.(MAIN_SOCIAL_UID, "notification.created", { notification });
 }
 
+function notifyMessageStatusTransition(
+  ctx: KernelContext,
+  message: SocialMessageRecord,
+  previousStatus: SocialMessageStatusRecord | null,
+  nextStatus: SocialMessageStatusRecord,
+): void {
+  if (!ctx.notifications) {
+    return;
+  }
+  if (message.direction !== "inbound") {
+    return;
+  }
+  if (nextStatus.state !== "needs_human" || previousStatus?.state === "needs_human") {
+    return;
+  }
+  const detail = nextStatus.needsHumanReason ?? nextStatus.summary ?? message.text ?? message.messageId;
+  const notification = ctx.notifications.create({
+    uid: MAIN_SOCIAL_UID,
+    title: `Social message needs human: ${message.fromHandle}`,
+    body: truncateNotificationBody(detail),
+    level: "warning",
+    source: { kind: "user" },
+    actions: [],
+    expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+  });
+  ctx.broadcastToUid?.(MAIN_SOCIAL_UID, "notification.created", { notification });
+}
+
+function truncateNotificationBody(value: string): string {
+  const normalized = value.trim();
+  return normalized.length <= 240 ? normalized : `${normalized.slice(0, 237)}...`;
+}
+
 async function refreshSocialInboxContextSafe(ctx: KernelContext, store: SocialStore): Promise<void> {
   try {
     await refreshSocialInboxContext(ctx, store);
@@ -2936,6 +2971,9 @@ function renderInboundSocialMessage(thread: SocialThreadRecord, message: SocialM
     `From: ${message.fromHandle}`,
     `Thread: ${thread.threadId}`,
     `Message: ${message.messageId}`,
+    `Reply: social message send ${message.fromHandle} "<text>" --thread ${thread.threadId}`,
+    `Complete: social status update ${message.messageId} --state completed --summary "..."`,
+    `Escalate: social status update ${message.messageId} --state needs_human --reason "..."`,
   ];
   if (message.replyToMessageId) {
     lines.push(`Reply-To: ${message.replyToMessageId}`);
@@ -2988,7 +3026,7 @@ function renderSocialInboxContext(entries: Array<{
     "# Social Inbox",
     "",
     "Active friend messages visible to GSV Mind.",
-    "Use the social command to inspect messages and update message status.",
+    "Use the social command to inspect messages, reply, and update message status.",
     "",
   ];
   for (const { status, message } of entries.sort((left, right) => right.status.updatedAt - left.status.updatedAt)) {
@@ -3001,6 +3039,7 @@ function renderSocialInboxContext(entries: Array<{
       `- State: ${status.state}`,
       `- Updated: ${new Date(status.updatedAt).toISOString()}`,
       `- Inspect: social thread get ${message.threadId}`,
+      `- Reply: social message send ${message.fromHandle} "<text>" --thread ${message.threadId}`,
       `- Update: social status update ${message.messageId} --state completed --summary "..."`,
       `- Escalate: social status update ${message.messageId} --state needs_human --reason "..."`,
     );

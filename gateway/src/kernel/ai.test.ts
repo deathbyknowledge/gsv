@@ -99,8 +99,11 @@ describe("handleAiConfig", () => {
 
     expect(result.profile).toBe("mind");
     expect(result.profileContextFiles?.map((file) => file.name)).toContain("00-role.md");
+    expect(result.profileContextFiles?.map((file) => file.name)).toContain("10-social.md");
     expect(result.profileContextFiles?.find((file) => file.name === "00-role.md")?.text)
       .toContain("GSV Mind process");
+    expect(result.profileContextFiles?.find((file) => file.name === "10-social.md")?.text)
+      .toContain("social message send");
     expect(result.profileApprovalPolicy).toContain("\"shell.exec\"");
   });
 });

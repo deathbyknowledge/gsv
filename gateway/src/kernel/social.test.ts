@@ -1726,6 +1726,7 @@ describe("social identity and records", () => {
     const inboxText = await inbox?.text();
     expect(inboxText).toContain("Check the deployment plan");
     expect(inboxText).toContain("social thread get thread-request");
+    expect(inboxText).toContain('social message send alice.example "<text>" --thread thread-request');
     expect(inboxText).toContain("social status update msg-request --state completed --summary");
     expect(inboxText).toContain("social status update msg-request --state needs_human --reason");
     expect(ctx.notifications?.create).toHaveBeenCalledWith(expect.objectContaining({
@@ -1963,6 +1964,85 @@ describe("social identity and records", () => {
       threadId: "thread-alice",
       messageId: "msg-alice",
     });
+  });
+
+  it("notifies once when an inbound message status transitions to needs_human", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+    const remoteInboundBodies: unknown[] = [];
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: (body) => {
+        remoteInboundBodies.push(body);
+        return Response.json({ ok: true, status: "accepted" });
+      },
+    });
+    const envelope = await aliceEnvelope(aliceKeys.privateJwk, {
+      body: {
+        threadId: "thread-alice",
+        messageId: "msg-alice",
+        text: "Please ask Hank before sharing this.",
+      },
+    });
+
+    await expect(handleSocialInbound({
+      envelope,
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: true,
+      status: "accepted",
+      threadId: "thread-alice",
+      messageId: "msg-alice",
+    });
+    expect(ctx.notifications?.create).toHaveBeenCalledTimes(0);
+
+    setContextRole(ctx, "user");
+    const statusUpdate = await handleSocialMessageStatusUpdate({
+      messageId: "msg-alice",
+      state: "needs_human",
+      needsHumanReason: "Needs Hank to approve sharing this.",
+    }, ctx);
+
+    expect(statusUpdate.status).toMatchObject({
+      messageId: "msg-alice",
+      state: "needs_human",
+      needsHumanReason: "Needs Hank to approve sharing this.",
+    });
+    expect(ctx.notifications?.create).toHaveBeenCalledTimes(1);
+    expect(ctx.notifications?.create).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      title: "Social message needs human: alice.example",
+      body: "Needs Hank to approve sharing this.",
+      level: "warning",
+    }));
+    expect(ctx.broadcastToUid).toHaveBeenCalledWith(
+      1000,
+      "notification.created",
+      expect.objectContaining({
+        notification: expect.objectContaining({
+          title: "Social message needs human: alice.example",
+        }),
+      }),
+    );
+    expect((remoteInboundBodies[0] as { envelope: { method: string; body: { messageId: string; state: string } } }).envelope)
+      .toMatchObject({
+        method: "social.message.status.update",
+        body: {
+          messageId: "msg-alice",
+          state: "needs_human",
+        },
+      });
+
+    await handleSocialMessageStatusUpdate({
+      messageId: "msg-alice",
+      state: "needs_human",
+      needsHumanReason: "Needs Hank to approve sharing this.",
+    }, ctx);
+    expect(ctx.notifications?.create).toHaveBeenCalledTimes(1);
+
+    const storage = (ctx as unknown as { __storage: ReturnType<typeof createMockStorage> }).__storage;
+    const inbox = await storage.get("home/hank/context.d/90-social-inbox.md");
+    const inboxText = await inbox?.text();
+    expect(inboxText).toContain('social message send alice.example "<text>" --thread thread-alice');
+    expect(inboxText).toContain("Needs Hank to approve sharing this.");
   });
 
   it("rejects inbound envelopes outside the service-only path", async () => {

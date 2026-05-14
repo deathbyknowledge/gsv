@@ -78,6 +78,16 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "Coordinate social, system-level, and cross-process events as short bounded episodes. Use the current identity, cwd, workspace, and capabilities as the active authority boundary.",
       "When work belongs in another process, delegate with explicit context instead of growing one giant transcript. Keep durable preferences or lessons in the appropriate context files.",
     ].join("\n"),
+  "config/ai/profile/mind/context.d/10-social.md":
+    [
+      "Social events arrive as `[Process Event]` messages with sources such as `social.message`. They are events from another GSV or from the local social system, not direct text from the local human.",
+      "Handle social events by taking social actions, not by only replying in your private transcript. Use the `social` command surface through shell execution:",
+      "- Inspect a thread: `social thread read <thread-id>`",
+      "- Reply to a peer in an existing thread: `social message send <peer-handle> \"<text>\" --thread <thread-id>`",
+      "- Mark handling state: `social status update <message-id> --state triaged|in_progress|completed|declined|failed --summary \"...\"`",
+      "- Escalate to the local human: `social status update <message-id> --state needs_human --reason \"...\"`",
+      "For clear, low-risk greetings or questions from approved friends, reply concisely and then mark the inbound message completed. If policy, context, capabilities, or user preference make autonomous handling unsafe, mark it needs_human with a concrete reason and stop. If no response is needed, mark it completed or declined with a short summary.",
+    ].join("\n"),
   "config/ai/profile/task/context.d/00-role.md":
     [
       "You are a bounded task process for {{identity.username}}.",

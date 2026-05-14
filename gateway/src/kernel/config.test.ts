@@ -138,6 +138,10 @@ describe("ConfigStore", () => {
     for (const profile of ["init", "mind", "task", "review", "cron", "mcp", "app"]) {
       expect(SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/00-role.md`]).toBeTruthy();
     }
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/context.d/10-social.md"])
+      .toContain("social.message");
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/context.d/10-social.md"])
+      .toContain("social status update");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/tools/approval"]).toBeTruthy();
   });
 });
