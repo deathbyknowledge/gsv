@@ -33,6 +33,35 @@ function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
 }
 
+async function prepareScheduleTargetProcess(
+  process: DurableObjectStub<Process>,
+  pid: string,
+  conversationId = "default",
+): Promise<void> {
+  const setIdentity = await process.recvFrame(makeReq("proc.setidentity", {
+    pid,
+    identity: USER_IDENTITY,
+    profile: "task",
+  }));
+  expect(setIdentity?.type).toBe("res");
+  expect(setIdentity && "ok" in setIdentity ? setIdentity.ok : false).toBe(true);
+
+  await runInDurableObject(process, (instance: Process) => {
+    const processStore = (instance as unknown as {
+      store: {
+        ensureConversation(conversationId: string): unknown;
+        setValue(key: string, value: string): void;
+      };
+    }).store;
+    processStore.ensureConversation(conversationId);
+    processStore.setValue("currentRun", JSON.stringify({
+      runId: `test-suppressed-${crypto.randomUUID()}`,
+      queued: false,
+      conversationId,
+    }));
+  });
+}
+
 function schedulePrincipal(pid?: string): SchedulePrincipal {
   return {
     kind: pid ? "process" : "user",
@@ -399,17 +428,7 @@ describe("scheduler", () => {
       });
     });
 
-    const setIdentity = await process.recvFrame(makeReq("proc.setidentity", {
-      pid,
-      identity: USER_IDENTITY,
-      profile: "task",
-    }));
-    expect(setIdentity?.type).toBe("res");
-    expect(setIdentity && "ok" in setIdentity ? setIdentity.ok : false).toBe(true);
-
-    await runInDurableObject(process, (instance: Process) => {
-      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
-    });
+    await prepareScheduleTargetProcess(process, pid, conversationId);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -481,14 +500,7 @@ describe("scheduler", () => {
       });
     });
 
-    await process.recvFrame(makeReq("proc.setidentity", {
-      pid,
-      identity: USER_IDENTITY,
-      profile: "task",
-    }));
-    await runInDurableObject(process, (instance: Process) => {
-      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
-    });
+    await prepareScheduleTargetProcess(process, pid);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as unknown as {
@@ -593,14 +605,7 @@ describe("scheduler", () => {
       });
     });
 
-    await process.recvFrame(makeReq("proc.setidentity", {
-      pid,
-      identity: USER_IDENTITY,
-      profile: "task",
-    }));
-    await runInDurableObject(process, (instance: Process) => {
-      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
-    });
+    await prepareScheduleTargetProcess(process, pid);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as unknown as {
@@ -688,14 +693,7 @@ describe("scheduler", () => {
       });
     });
 
-    await process.recvFrame(makeReq("proc.setidentity", {
-      pid,
-      identity: USER_IDENTITY,
-      profile: "task",
-    }));
-    await runInDurableObject(process, (instance: Process) => {
-      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
-    });
+    await prepareScheduleTargetProcess(process, pid);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as unknown as {
@@ -782,14 +780,7 @@ describe("scheduler", () => {
       });
     });
 
-    await process.recvFrame(makeReq("proc.setidentity", {
-      pid,
-      identity: USER_IDENTITY,
-      profile: "task",
-    }));
-    await runInDurableObject(process, (instance: Process) => {
-      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
-    });
+    await prepareScheduleTargetProcess(process, pid, conversationId);
 
     const { scheduleId, nextRunAtMs } = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as { schedules: ScheduleStore };
@@ -908,14 +899,7 @@ describe("scheduler", () => {
       });
     });
 
-    await process.recvFrame(makeReq("proc.setidentity", {
-      pid,
-      identity: USER_IDENTITY,
-      profile: "task",
-    }));
-    await runInDurableObject(process, (instance: Process) => {
-      (instance as unknown as { scheduleTick: () => void }).scheduleTick = () => {};
-    });
+    await prepareScheduleTargetProcess(process, pid);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
