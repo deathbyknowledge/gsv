@@ -1689,6 +1689,7 @@ describe("social identity and records", () => {
     expect(ctx.notifications?.create).toHaveBeenCalledTimes(0);
 
     setContextRole(ctx, "user");
+    (ctx as KernelContext & { processId?: string }).processId = "mind:1000:thread-alice";
     const statusUpdate = await handleSocialMessageStatusUpdate({
       messageId: "msg-alice",
       state: "needs_human",
@@ -1716,6 +1717,24 @@ describe("social identity and records", () => {
         }),
       }),
     );
+    const initDelivery = vi.mocked(sendFrameToProcess).mock.calls.find(([pid, frame]) =>
+      pid === "init:1000" &&
+      frame.type === "req" &&
+      frame.call === "proc.send"
+    );
+    expect(initDelivery).toBeTruthy();
+    expect(initDelivery?.[1]).toMatchObject({
+      call: "proc.send",
+      args: {
+        conversationId: "social:alice.example:thread-alice",
+        message: expect.stringContaining("[Process Event]: Social message needs local human input."),
+      },
+    });
+    const initMessage = (initDelivery?.[1] as { args?: { message?: string } }).args?.message ?? "";
+    expect(initMessage).toContain("Needs Hank to approve sharing this.");
+    expect(initMessage).toContain("social message send alice.example");
+    expect(initMessage).toContain("social status update msg-alice --state completed");
+    expect(initMessage).toContain("proc send mind:1000:thread-alice --conversation mind:social.message:thread-alice");
     expect((remoteInboundBodies[0] as { envelope: { method: string; body: { messageId: string; state: string } } }).envelope)
       .toMatchObject({
         method: "social.message.status.update",

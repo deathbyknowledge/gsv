@@ -149,6 +149,12 @@ describe("ConfigStore", () => {
       .toContain("preference, permission, schedule, availability");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/context.d/10-social.md"])
       .toContain("do not send another acknowledgement");
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/init/context.d/10-social.md"])
+      .toContain("Social escalation events");
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/init/context.d/10-social.md"])
+      .toContain("social message send");
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/init/context.d/10-social.md"])
+      .toContain("proc send");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/tools/approval"]).toBeTruthy();
   });
 });

@@ -76,6 +76,7 @@ import { isGsvDevMode, socialOriginForHandle } from "../dev";
 import { GsvFs } from "../fs/gsv-fs";
 import { createHomeKnowledgeBackend } from "../fs/backends/home-knowledge";
 import { dispatchMindEvent } from "./mind";
+import { sendFrameToProcess } from "../shared/utils";
 
 const SELF_RKEY = "self";
 const DID_PATTERN = /^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$/;
@@ -1631,6 +1632,7 @@ export async function handleSocialMessageStatusUpdate(
     body,
   });
   notifyMessageStatusTransition(ctx, message, previousStatus, status);
+  await deliverNeedsHumanToInitSafe(ctx, message, previousStatus, status);
 
   if (message.direction === "inbound") {
     const peerHandle = message.fromHandle === localHandle ? message.toHandle : message.fromHandle;
@@ -2162,10 +2164,7 @@ function notifyMessageStatusTransition(
   if (!ctx.notifications) {
     return;
   }
-  if (message.direction !== "inbound") {
-    return;
-  }
-  if (nextStatus.state !== "needs_human" || previousStatus?.state === "needs_human") {
+  if (!isNewNeedsHumanTransition(message, previousStatus, nextStatus)) {
     return;
   }
   const detail = nextStatus.needsHumanReason ?? nextStatus.summary ?? message.text ?? message.messageId;
@@ -2179,6 +2178,42 @@ function notifyMessageStatusTransition(
     expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
   });
   ctx.broadcastToUid?.(MAIN_SOCIAL_UID, "notification.created", { notification });
+}
+
+async function deliverNeedsHumanToInitSafe(
+  ctx: KernelContext,
+  message: SocialMessageRecord,
+  previousStatus: SocialMessageStatusRecord | null,
+  nextStatus: SocialMessageStatusRecord,
+): Promise<void> {
+  if (!isNewNeedsHumanTransition(message, previousStatus, nextStatus)) {
+    return;
+  }
+  try {
+    const identity = identityForUid(MAIN_SOCIAL_UID, ctx);
+    const init = ctx.procs.ensureInit(identity);
+    await sendFrameToProcess(init.pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.send",
+      args: {
+        conversationId: initSocialEscalationConversationId(message),
+        message: renderNeedsHumanInitEvent(ctx, message, nextStatus),
+      },
+    });
+  } catch (error) {
+    console.error("[social] failed to deliver needs_human event to init", error);
+  }
+}
+
+function isNewNeedsHumanTransition(
+  message: SocialMessageRecord,
+  previousStatus: SocialMessageStatusRecord | null,
+  nextStatus: SocialMessageStatusRecord,
+): boolean {
+  return message.direction === "inbound" &&
+    nextStatus.state === "needs_human" &&
+    previousStatus?.state !== "needs_human";
 }
 
 function truncateNotificationBody(value: string): string {
@@ -2268,6 +2303,48 @@ function renderInboundSocialMessage(thread: SocialThreadRecord, message: SocialM
   ];
   if (message.text) {
     lines.push("", "Message text:", message.text);
+  }
+  return lines.join("\n");
+}
+
+function initSocialEscalationConversationId(message: SocialMessageRecord): string {
+  return `social:${message.fromHandle}:${message.threadId}`;
+}
+
+function renderNeedsHumanInitEvent(
+  ctx: KernelContext,
+  message: SocialMessageRecord,
+  status: SocialMessageStatusRecord,
+): string {
+  const reason = status.needsHumanReason ?? status.summary ?? "The GSV Mind needs local human input.";
+  const sourcePid = ctx.processId?.trim();
+  const mindConversationId = `mind:social.message:${message.threadId}`;
+  const lines = [
+    "[Process Event]: Social message needs local human input.",
+    "",
+    `From: ${message.fromHandle}`,
+    `Thread: ${message.threadId}`,
+    `Message: ${message.messageId}`,
+    `Reason: ${reason}`,
+    "",
+    "Original message:",
+    message.text ?? "(no text body)",
+    "",
+    "Use the normal init conversation to ask the local user what to do. Do not guess their preference, permission, schedule, availability, or commitment.",
+    "",
+    "Useful commands:",
+    `- Inspect the thread: social thread read ${message.threadId}`,
+    `- If the user gives an answer to send: social message send ${message.fromHandle} "<reply>" --thread ${message.threadId}`,
+    `- Then mark handled: social status update ${message.messageId} --state completed --summary "Answered via init"`,
+    `- If the user declines or no response should be sent: social status update ${message.messageId} --state declined --summary "..."`,
+  ];
+  if (sourcePid) {
+    lines.push(
+      "",
+      `Escalating process: ${sourcePid}`,
+      `Mind conversation: ${mindConversationId}`,
+      `Optional handoff back to Mind: proc send ${sourcePid} --conversation ${mindConversationId} "<what the user decided>"`,
+    );
   }
   return lines.join("\n");
 }
