@@ -101,6 +101,16 @@ pub fn schema_id(lexicon: &Value) -> Option<&str> {
     lexicon.get("id").and_then(Value::as_str)
 }
 
+pub fn bundled_space_gsv_lexicons() -> Vec<Value> {
+    vec![
+        serde_json::from_str(include_str!("../lexicons/space.gsv.profile.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.instance.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.agent.card.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.package.like.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.status.json")).unwrap(),
+    ]
+}
+
 pub fn referenced_lexicon_ids(lexicon: &Value) -> BTreeSet<String> {
     let mut refs = BTreeSet::new();
     collect_referenced_lexicon_ids(lexicon, &mut refs);
@@ -212,6 +222,30 @@ mod tests {
                 RecordValidationStatus::Valid
             );
         }
+    }
+
+    #[test]
+    fn bundles_space_gsv_lexicons_for_runtime_validation() {
+        let lexicons = bundled_space_gsv_lexicons();
+        assert!(lexicons.iter().any(|lexicon| schema_id(lexicon) == Some("space.gsv.instance")));
+        assert!(validate_record_with_lexicons(
+            "space.gsv.instance",
+            &json!({
+                "$type": "space.gsv.instance",
+                "createdAt": "2026-05-12T12:00:00Z",
+                "endpoint": "https://gsv.example/social",
+                "protocolVersion": 1,
+                "serviceKey": {
+                    "id": "did:web:gsv.example#service-key",
+                    "type": "Multikey",
+                    "publicKeyMultibase": "z6MkiGSVServiceKey"
+                },
+                "acceptedSocialMethods": ["social.message.status.update"]
+            }),
+            true,
+            &lexicons,
+        )
+        .is_ok());
     }
 
     #[test]

@@ -107,6 +107,17 @@ impl RepoObject {
         explicit: bool,
     ) -> Result<Vec<Value>, HttpError> {
         let mut lexicons = extra_lexicons_from_env(&self.env)?;
+        for bundled in lexicon::bundled_space_gsv_lexicons() {
+            let id = bundled.get("id").and_then(Value::as_str).map(str::to_owned);
+            if id.as_deref().is_some_and(|nsid| {
+                lexicons
+                    .iter()
+                    .any(|lexicon| lexicon.get("id").and_then(Value::as_str) == Some(nsid))
+            }) {
+                continue;
+            }
+            lexicons.push(bundled);
+        }
         for (nsid, cached) in self.store().list_lexicons().map_err(HttpError::worker)? {
             if lexicons
                 .iter()
