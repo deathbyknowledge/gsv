@@ -3,6 +3,7 @@ import type { KernelClientLike, PackageCommandContext } from "@gsv/package/cli";
 import type {
   SocialFriendListResult,
   SocialIdentityGetResult,
+  SocialIdentityRepublishResult,
   SocialMessageSendResult,
   SocialMessageStatusListResult,
   SocialMessageStatusState,
@@ -61,6 +62,17 @@ export async function runSocialCommand(ctx: CommandContext): Promise<string> {
 }
 
 async function runIdentityCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
+  const [subcommand] = args;
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    return socialHelp("identity");
+  }
+  if (subcommand === "republish" || subcommand === "repair") {
+    const result = await kernel.request<SocialIdentityRepublishResult>("social.identity.republish", {});
+    if (hasFlag(args, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return `republished social records for ${result.identity.handle}\n`;
+  }
   const result = await kernel.request<SocialIdentityGetResult>("social.identity.get", {});
   if (hasFlag(args, "--json")) {
     return `${JSON.stringify(result, null, 2)}\n`;
@@ -244,6 +256,9 @@ function formatStatusLineWithActions(status: SocialMessageStatusSummary): string
 }
 
 function socialHelp(topic?: string): string {
+  if (topic === "identity") {
+    return "Usage:\n  social identity [--json]\n  social identity republish [--json]\n\n";
+  }
   if (topic === "status") {
     return [
       "Usage:",
@@ -261,6 +276,7 @@ function socialHelp(topic?: string): string {
   return [
     "Usage:",
     "  social identity",
+    "  social identity republish",
     "  social friends",
     "  social inbox [--state STATE] [--limit N]",
     "  social status list|update ...",

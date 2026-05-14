@@ -51,7 +51,9 @@ describe("social protocol contract", () => {
 
     expect(SOCIAL_SYSCALLS).toContain("social.inbound");
     expect(SOCIAL_SYSCALLS).toContain("social.sync.run");
+    expect(SOCIAL_SYSCALLS).toContain("social.identity.republish");
     expect(isSocialSyscallName("social.inbound")).toBe(true);
+    expect(isSocialSyscallName("social.identity.republish")).toBe(true);
     expect(isSocialSyscallName("social.message.send")).toBe(true);
     expect(isSocialSyscallName("social.message.reply")).toBe(false);
     expect(isSocialSyscallName("repo.read")).toBe(false);

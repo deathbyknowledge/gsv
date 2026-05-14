@@ -29,6 +29,7 @@ import {
   handleSocialFriendRemove,
   handleSocialDeliveryRetry,
   handleSocialIdentityGet,
+  handleSocialIdentityRepublish,
   handleSocialIdentitySet,
   handleSocialInbound,
   handleSocialMessageStatusList,
@@ -1032,6 +1033,51 @@ describe("social identity and records", () => {
     expect(instance.serviceKey.type).toBe("Multikey");
     expect(instance.serviceKey.publicKeyMultibase).toMatch(/^z/);
     expect(instance.acceptedSocialMethods).toContain("social.message.send");
+  });
+
+  it("republishes identity records with the current social method set", async () => {
+    const putCalls: PdsPutRecordInput[] = [];
+    const ctx = createCtx({
+      pdsPutRecord: async (input: PdsPutRecordInput) => {
+        putCalls.push(input);
+        return {
+          uri: `at://${input.repo}/${input.collection}/${input.rkey}`,
+          cid: `bafy-${input.collection.replace(/\./g, "-")}`,
+        };
+      },
+    });
+
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+    await handleSocialAgentCardUpdate({
+      record: {
+        $type: SPACE_GSV_AGENT_CARD,
+        createdAt: "2026-05-12T12:00:00Z",
+        displayName: "Custom Mind",
+        summary: "Keeps the current local social posture.",
+        acceptsMessages: true,
+      },
+    }, ctx);
+    putCalls.length = 0;
+
+    const result = await handleSocialIdentityRepublish({}, ctx);
+
+    expect(result.identity.handle).toBe("gsv.example");
+    expect(putCalls.map((call) => call.collection)).toEqual([
+      SPACE_GSV_PROFILE,
+      SPACE_GSV_INSTANCE,
+      SPACE_GSV_AGENT_CARD,
+    ]);
+    const instance = putCalls.find((call) => call.collection === SPACE_GSV_INSTANCE)?.record as SpaceGsvInstanceRecord;
+    expect(instance.acceptedSocialMethods).toContain("social.message.send");
+    expect(instance.acceptedSocialMethods).toContain("social.message.status.update");
+    expect(instance.acceptedSocialMethods).not.toContain("social.message.reply" as never);
+    expect(instance.acceptedSocialMethods).not.toContain("social.request.create" as never);
+    const agentCard = putCalls.find((call) => call.collection === SPACE_GSV_AGENT_CARD)?.record as SpaceGsvAgentCardRecord;
+    expect(agentCard.displayName).toBe("Custom Mind");
+    expect(agentCard).not.toHaveProperty("acceptsRequests");
   });
 
   it("sets up a local dev social identity with a synthetic handle", async () => {

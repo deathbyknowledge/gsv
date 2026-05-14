@@ -116,6 +116,7 @@ import {
   handleSocialMessageStatusUpdate,
   handleSocialSetup,
   handleSocialIdentityGet,
+  handleSocialIdentityRepublish,
   handleSocialIdentitySet,
   handleSocialInstanceGet,
   handleSocialInstanceUpdate,
@@ -508,6 +509,9 @@ async function dispatchNative(
         break;
       case "social.identity.set":
         data = handleSocialIdentitySet(frame.args, ctx);
+        break;
+      case "social.identity.republish":
+        data = await handleSocialIdentityRepublish(frame.args, ctx);
         break;
       case "social.profile.get":
         data = handleSocialProfileGet(frame.args, ctx);

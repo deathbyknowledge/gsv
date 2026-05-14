@@ -13,6 +13,7 @@ export default definePackage({
     capabilities: {
       kernel: [
         "social.identity.get",
+        "social.identity.republish",
         "social.friend.list",
         "social.friend.add",
         "social.friend.remove",

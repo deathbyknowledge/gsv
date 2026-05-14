@@ -17,6 +17,8 @@ import type {
   SocialGrant,
   SocialIdentityGetArgs,
   SocialIdentityGetResult,
+  SocialIdentityRepublishArgs,
+  SocialIdentityRepublishResult,
   SocialIdentitySetArgs,
   SocialIdentitySetResult,
   SocialInboundArgs,
@@ -1187,49 +1189,20 @@ export async function handleSocialSetup(
     handle,
     pdsEndpoint: origin.origin,
   });
-  const settings = await ensureServiceSettings(store, uid);
-  const createdAt = new Date().toISOString();
   const username = ctx.identity?.process.username ?? "GSV";
-
-  const profileRecord = compactRecord({
-    $type: SPACE_GSV_PROFILE,
-    createdAt,
-    displayName: nonEmpty(args.displayName) ?? username,
-    description: nonEmpty(args.description),
-  }) as SpaceGsvProfileRecord;
-  const instanceRecord: SpaceGsvInstanceRecord = {
-    $type: SPACE_GSV_INSTANCE,
-    createdAt,
+  const records = await publishBaselineSocialRecords(ctx, identity, {
     endpoint: origin.origin,
-    protocolVersion: 1,
-    serviceKey: {
-      id: `${did}#gsv-social-key`,
-      type: "Multikey",
-      publicKeyMultibase: settings.servicePublicKeyMultibase,
-    },
-    acceptedSocialMethods: [...SOCIAL_REMOTE_OPERATIONS],
-  };
-  const agentCardRecord = compactRecord({
-    $type: SPACE_GSV_AGENT_CARD,
-    createdAt,
-    displayName: nonEmpty(args.agentDisplayName) ?? `${username}'s GSV`,
-    summary: nonEmpty(args.agentSummary) ?? "Can receive messages from approved friends.",
-    acceptsMessages: true,
-    humanEscalation: "sometimes",
-  }) as SpaceGsvAgentCardRecord;
-
-  const profile = await publishSelfRecord(ctx, identity, SPACE_GSV_PROFILE, profileRecord);
-  const instance = await publishSelfRecord(ctx, identity, SPACE_GSV_INSTANCE, instanceRecord);
-  const agentCard = await publishSelfRecord(ctx, identity, SPACE_GSV_AGENT_CARD, agentCardRecord);
+    profileDisplayName: args.displayName,
+    profileDescription: args.description,
+    agentDisplayName: args.agentDisplayName,
+    agentSummary: args.agentSummary,
+    fallbackDisplayName: username,
+  });
 
   return {
     identity: store.toLocalIdentity(identity),
     createdAccount: account.created,
-    records: {
-      profile: profile.uri as SocialAtUri | undefined,
-      instance: instance.uri as SocialAtUri | undefined,
-      agentCard: agentCard.uri as SocialAtUri | undefined,
-    },
+    records,
   };
 }
 
@@ -1266,6 +1239,34 @@ export function handleSocialIdentitySet(
   });
   return {
     identity: store.toLocalIdentity(identity),
+  };
+}
+
+export async function handleSocialIdentityRepublish(
+  _args: SocialIdentityRepublishArgs,
+  ctx: KernelContext,
+): Promise<SocialIdentityRepublishResult> {
+  const uid = requireMainSocialUserUid(ctx);
+  const store = requireSocialStore(ctx);
+  const identity = requireWritableSocialIdentity(ctx);
+  const profile = store.getPublicRecord<SpaceGsvProfileRecord>(
+    uid,
+    SPACE_GSV_PROFILE,
+  )?.record;
+  const agentCard = store.getPublicRecord<SpaceGsvAgentCardRecord>(
+    uid,
+    SPACE_GSV_AGENT_CARD,
+  )?.record;
+  const username = ctx.identity?.process.username ?? "GSV";
+  const records = await publishBaselineSocialRecords(ctx, identity, {
+    endpoint: identity.pdsEndpoint,
+    profile,
+    agentCard,
+    fallbackDisplayName: username,
+  });
+  return {
+    identity: store.toLocalIdentity(identity),
+    records,
   };
 }
 
@@ -2317,6 +2318,81 @@ function renderSocialInboxContext(entries: Array<{
     lines.push("");
   }
   return lines.join("\n");
+}
+
+type BaselineSocialRecordOptions = {
+  endpoint: string;
+  profile?: SpaceGsvProfileRecord;
+  agentCard?: SpaceGsvAgentCardRecord;
+  profileDisplayName?: string;
+  profileDescription?: string;
+  agentDisplayName?: string;
+  agentSummary?: string;
+  fallbackDisplayName: string;
+};
+
+async function publishBaselineSocialRecords(
+  ctx: KernelContext,
+  identity: SocialIdentityRecord,
+  options: BaselineSocialRecordOptions,
+): Promise<SocialIdentityRepublishResult["records"]> {
+  const store = requireSocialStore(ctx);
+  const settings = await ensureServiceSettings(store, identity.uid);
+  const now = new Date().toISOString();
+  const existingProfile = options.profile;
+  const existingAgentCard = options.agentCard;
+  const profileDisplayName = nonEmpty(options.profileDisplayName)
+    ?? nonEmpty(existingProfile?.displayName)
+    ?? options.fallbackDisplayName;
+  const agentDisplayName = nonEmpty(options.agentDisplayName)
+    ?? nonEmpty(existingAgentCard?.displayName)
+    ?? "GSV Mind";
+
+  const profileRecord = compactRecord({
+    $type: SPACE_GSV_PROFILE,
+    createdAt: existingProfile?.createdAt ?? now,
+    updatedAt: now,
+    displayName: profileDisplayName,
+    description: nonEmpty(options.profileDescription) ?? nonEmpty(existingProfile?.description),
+    avatar: existingProfile?.avatar,
+    avatarAlt: existingProfile?.avatarAlt,
+    links: existingProfile?.links,
+  }) as SpaceGsvProfileRecord;
+  const instanceRecord: SpaceGsvInstanceRecord = {
+    $type: SPACE_GSV_INSTANCE,
+    createdAt: now,
+    updatedAt: now,
+    endpoint: options.endpoint,
+    protocolVersion: 1,
+    serviceKey: {
+      id: `${identity.did}#gsv-social-key`,
+      type: "Multikey",
+      publicKeyMultibase: settings.servicePublicKeyMultibase,
+    },
+    acceptedSocialMethods: [...SOCIAL_REMOTE_OPERATIONS],
+  };
+  const agentCardRecord = compactRecord({
+    $type: SPACE_GSV_AGENT_CARD,
+    createdAt: existingAgentCard?.createdAt ?? now,
+    updatedAt: now,
+    displayName: agentDisplayName,
+    summary: nonEmpty(options.agentSummary)
+      ?? nonEmpty(existingAgentCard?.summary)
+      ?? "Can receive and triage messages from approved friends.",
+    topics: existingAgentCard?.topics,
+    acceptsMessages: true,
+    humanEscalation: existingAgentCard?.humanEscalation ?? "sometimes",
+  }) as SpaceGsvAgentCardRecord;
+
+  const profile = await publishSelfRecord(ctx, identity, SPACE_GSV_PROFILE, profileRecord);
+  const instance = await publishSelfRecord(ctx, identity, SPACE_GSV_INSTANCE, instanceRecord);
+  const agentCard = await publishSelfRecord(ctx, identity, SPACE_GSV_AGENT_CARD, agentCardRecord);
+
+  return {
+    profile: profile.uri as SocialAtUri | undefined,
+    instance: instance.uri as SocialAtUri | undefined,
+    agentCard: agentCard.uri as SocialAtUri | undefined,
+  };
 }
 
 async function publishSelfRecord<TRecord extends SpaceGsvRecord>(

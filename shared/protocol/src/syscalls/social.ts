@@ -122,6 +122,7 @@ export const SOCIAL_SYSCALLS = [
   "social.setup",
   "social.identity.get",
   "social.identity.set",
+  "social.identity.republish",
   "social.profile.get",
   "social.profile.update",
   "social.instance.get",
@@ -287,6 +288,16 @@ export type SocialIdentitySetArgs = {
 };
 export type SocialIdentitySetResult = {
   identity: SocialLocalIdentity;
+};
+
+export type SocialIdentityRepublishArgs = SocialEmptyArgs;
+export type SocialIdentityRepublishResult = {
+  identity: SocialLocalIdentity;
+  records: {
+    profile?: SocialAtUri;
+    instance?: SocialAtUri;
+    agentCard?: SocialAtUri;
+  };
 };
 
 export type SocialProfileGetArgs = {
@@ -489,6 +500,10 @@ export type SocialSyscalls = {
   "social.identity.set": {
     args: SocialIdentitySetArgs;
     result: SocialIdentitySetResult;
+  };
+  "social.identity.republish": {
+    args: SocialIdentityRepublishArgs;
+    result: SocialIdentityRepublishResult;
   };
   "social.profile.get": {
     args: SocialProfileGetArgs;
