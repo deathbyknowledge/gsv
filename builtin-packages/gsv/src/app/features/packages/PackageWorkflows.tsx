@@ -43,10 +43,12 @@ const DEFAULT_CREATE_FORM: CreatePackageForm = {
 export function DiscoverPane({
   runtime,
   selectedCatalog,
+  onBack,
   onSelectCatalog,
 }: {
   runtime: PackagesRuntime;
   selectedCatalog: CatalogRecord | null;
+  onBack: () => void;
   onSelectCatalog(catalogName: string): void;
 }) {
   const [source, setSource] = useState("");
@@ -77,6 +79,7 @@ export function DiscoverPane({
   return (
     <section class="gsv-package-detail" aria-label="Discover and import packages">
       <header class="gsv-package-detail-head">
+        <ActionButton icon="arrow-left" label="Packages" onClick={onBack} />
         <div>
           <span class="gsv-kicker">Discover</span>
           <h3>Import packages</h3>
@@ -215,7 +218,7 @@ export function DiscoverPane({
   );
 }
 
-export function CreatePackagePane({ runtime }: { runtime: PackagesRuntime }) {
+export function CreatePackagePane({ runtime, onBack }: { runtime: PackagesRuntime; onBack: () => void }) {
   const [form, setForm] = useState<CreatePackageForm>(DEFAULT_CREATE_FORM);
   const owner = runtime.state?.viewer.username || "you";
   const busy = runtime.pendingAction !== null;
@@ -245,6 +248,7 @@ export function CreatePackagePane({ runtime }: { runtime: PackagesRuntime }) {
   return (
     <section class="gsv-package-detail" aria-label="Create package">
       <header class="gsv-package-detail-head">
+        <ActionButton icon="arrow-left" label="Packages" onClick={onBack} />
         <div>
           <span class="gsv-kicker">Create</span>
           <h3>Create package source</h3>
@@ -374,9 +378,11 @@ export function CreatePackagePane({ runtime }: { runtime: PackagesRuntime }) {
 
 export function CatalogRemotesPane({
   runtime,
+  onBack,
   onOpenCatalog,
 }: {
   runtime: PackagesRuntime;
+  onBack: () => void;
   onOpenCatalog(catalogName: string): void;
 }) {
   const [name, setName] = useState("");
@@ -393,6 +399,7 @@ export function CatalogRemotesPane({
   return (
     <section class="gsv-package-detail" aria-label="Catalog remotes">
       <header class="gsv-package-detail-head">
+        <ActionButton icon="arrow-left" label="Packages" onClick={onBack} />
         <div>
           <span class="gsv-kicker">Remotes</span>
           <h3>Catalog remotes</h3>

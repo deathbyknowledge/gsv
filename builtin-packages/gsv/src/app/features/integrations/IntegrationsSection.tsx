@@ -2,6 +2,7 @@ import qrcode from "qrcode-generator";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { ActionButton } from "../../components/ui/ActionButton";
+import { Icon, type IconName } from "../../components/ui/Icon";
 import { formatTimestampMs } from "../../utils/format";
 import {
   ADAPTERS,
@@ -82,6 +83,13 @@ export function IntegrationsSection({ backend }: { backend: GsvBackend }) {
     );
   }
 
+  const connectedAccounts = countConnectedAccounts(adaptersRuntime.state.statusByAdapter);
+  const totalAccounts = Object.values(adaptersRuntime.state.statusByAdapter).reduce((total, accounts) => total + accounts.length, 0);
+  const readyServers = readyServerCount(mcpRuntime.state.servers);
+  const totalServers = mcpRuntime.state.servers.length;
+  const connectedAccountsLabel = totalAccounts > 0 ? `of ${totalAccounts} account${totalAccounts === 1 ? "" : "s"}` : "connected";
+  const readyServersLabel = totalServers > 0 ? `of ${totalServers} server${totalServers === 1 ? "" : "s"}` : "ready";
+
   return (
     <section class="gsv-integrations">
       <aside class="gsv-integrations-nav is-list-view" aria-label="Integration categories">
@@ -94,31 +102,55 @@ export function IntegrationsSection({ backend }: { backend: GsvBackend }) {
         </header>
 
         <div class="gsv-integration-kind-list">
-          <button
-            type="button"
-            class={kind === "message-adapters" ? "is-active" : ""}
-            onClick={() => selectKind("message-adapters")}
-          >
-            <span>
-              <strong>Message adapters</strong>
-              <small>WhatsApp and Discord accounts</small>
-            </span>
-            <span class="gsv-row-meta">{countConnectedAccounts(adaptersRuntime.state.statusByAdapter)} connected</span>
-          </button>
-          <button
-            type="button"
-            class={kind === "mcp-servers" ? "is-active" : ""}
-            onClick={() => selectKind("mcp-servers")}
-          >
-            <span>
-              <strong>MCP servers</strong>
-              <small>Tool server configuration</small>
-            </span>
-            <span class="gsv-row-meta">{readyServerCount(mcpRuntime.state.servers)} ready</span>
-          </button>
+          <IntegrationKindCard
+            icon="plug"
+            title="Message adapters"
+            detail="WhatsApp and Discord accounts for inbound and outbound channels."
+            value={String(connectedAccounts)}
+            valueLabel={connectedAccountsLabel}
+            onOpen={() => selectKind("message-adapters")}
+          />
+          <IntegrationKindCard
+            icon="server"
+            title="MCP servers"
+            detail="Tool server configuration and CodeMode tool availability."
+            value={String(readyServers)}
+            valueLabel={readyServersLabel}
+            onOpen={() => selectKind("mcp-servers")}
+          />
         </div>
       </aside>
     </section>
+  );
+}
+
+function IntegrationKindCard({
+  icon,
+  title,
+  detail,
+  value,
+  valueLabel,
+  onOpen,
+}: {
+  icon: IconName;
+  title: string;
+  detail: string;
+  value: string;
+  valueLabel: string;
+  onOpen: () => void;
+}) {
+  return (
+    <button type="button" class="gsv-integration-kind-card" aria-label={`Open ${title}`} onClick={onOpen}>
+      <span class="gsv-integration-kind-icon"><Icon name={icon} /></span>
+      <span class="gsv-row-copy">
+        <strong>{title}</strong>
+        <span>{detail}</span>
+      </span>
+      <span class="gsv-integration-kind-stat">
+        <strong>{value}</strong>
+        <span>{valueLabel}</span>
+      </span>
+    </button>
   );
 }
 

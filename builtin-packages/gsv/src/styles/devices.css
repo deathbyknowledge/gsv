@@ -121,10 +121,6 @@
   gap: 0.45rem;
 }
 
-.gsv-device-compact-back {
-  display: none;
-}
-
 .gsv-local-tabs {
   display: flex;
   gap: 0.35rem;
@@ -373,10 +369,6 @@
 
   .gsv-device-actions {
     width: 100%;
-  }
-
-  .gsv-device-compact-back {
-    display: inline-flex;
   }
 
   .gsv-mini-button,

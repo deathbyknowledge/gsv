@@ -38,9 +38,15 @@ export function DeviceDetailPanel({
 }) {
   if (!device) {
     return (
-      <section class="gsv-device-detail">
+      <section class="gsv-device-detail" aria-label="Device detail">
+        <header class="gsv-device-detail-head">
+          <ActionButton icon="arrow-left" label="Fleet" onClick={onBackToFleet} />
+          <div>
+            <span class="gsv-kicker">Fleet detail</span>
+            <h3>No device selected</h3>
+          </div>
+        </header>
         <div class="gsv-empty-state">
-          <h3>No device selected</h3>
           <p>Choose a device from the fleet list or add a new execution target.</p>
         </div>
       </section>
@@ -50,13 +56,13 @@ export function DeviceDetailPanel({
   return (
     <section class="gsv-device-detail" aria-label="Device detail">
       <header class="gsv-device-detail-head">
+        <ActionButton icon="arrow-left" label="Fleet" onClick={onBackToFleet} />
         <div>
           <span class="gsv-kicker">Fleet detail</span>
           <h3>{device.deviceId}</h3>
           <p>{device.online ? "Online and ready for routing." : "Offline. Review health and access before routing work here."}</p>
         </div>
         <div class="gsv-device-actions">
-          <ActionButton class="gsv-device-compact-back" icon="arrow-left" label="Fleet" onClick={onBackToFleet} />
           <ActionButton
             icon="folder"
             label="Files"

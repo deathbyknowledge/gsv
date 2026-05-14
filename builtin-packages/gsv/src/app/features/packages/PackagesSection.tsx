@@ -63,6 +63,7 @@ export function PackagesSection({
         <DiscoverPane
           runtime={runtime}
           selectedCatalog={selectedCatalog}
+          onBack={() => runtime.setView("inventory")}
           onSelectCatalog={setSelectedCatalogName}
         />
       </section>
@@ -72,7 +73,7 @@ export function PackagesSection({
   if (runtime.view === "create") {
     return (
       <section class="gsv-packages">
-        <CreatePackagePane runtime={runtime} />
+        <CreatePackagePane runtime={runtime} onBack={() => runtime.setView("inventory")} />
       </section>
     );
   }
@@ -82,6 +83,7 @@ export function PackagesSection({
       <section class="gsv-packages">
         <CatalogRemotesPane
           runtime={runtime}
+          onBack={() => runtime.setView("inventory")}
           onOpenCatalog={(catalogName) => {
             setSelectedCatalogName(catalogName);
             runtime.setView("discover");

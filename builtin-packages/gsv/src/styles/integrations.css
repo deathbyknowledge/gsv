@@ -42,6 +42,9 @@
 .gsv-adapter-list {
   display: grid;
   min-width: 0;
+}
+
+.gsv-adapter-list {
   border: 1px solid #dce2ea;
   border-radius: 8px;
   overflow: hidden;
@@ -49,7 +52,8 @@
 }
 
 .gsv-integration-kind-list {
-  gap: 0;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .gsv-integration-kind-list button,
@@ -67,8 +71,12 @@
 }
 
 .gsv-integration-kind-list button {
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.7rem;
+  grid-template-columns: 2.7rem minmax(0, 1fr) auto;
+  min-height: 6rem;
+  gap: 0.8rem;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 .gsv-adapter-row {
@@ -76,7 +84,6 @@
   gap: 0.7rem;
 }
 
-.gsv-integration-kind-list button:last-child,
 .gsv-adapter-row:last-child {
   border-bottom: 0;
 }
@@ -86,6 +93,33 @@
 .gsv-adapter-row:hover,
 .gsv-adapter-row.is-selected {
   background: #f4f7fb;
+}
+
+.gsv-integration-kind-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border: 1px solid #d5deec;
+  border-radius: 8px;
+  background: #f4f7fb;
+  color: #3867d6;
+}
+
+.gsv-integration-kind-stat {
+  display: grid;
+  justify-items: end;
+  gap: 0.15rem;
+  color: #687384;
+  font-size: 0.72rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.gsv-integration-kind-stat strong {
+  color: #1b2028;
+  font-size: 1rem;
 }
 
 .gsv-integration-kind-list strong,
@@ -491,11 +525,29 @@
 }
 
 @media (max-width: 520px) {
-  .gsv-integration-kind-list button,
   .gsv-adapter-row,
   .gsv-mcp-row,
   .gsv-mcp-facts {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-integration-kind-list {
+    grid-template-columns: 1fr;
+  }
+
+  .gsv-integration-kind-list button {
+    grid-template-columns: 2.4rem minmax(0, 1fr) auto;
+    min-height: 5rem;
+    padding: 0.72rem;
+  }
+
+  .gsv-integration-kind-icon {
+    width: 2.35rem;
+    height: 2.35rem;
+  }
+
+  .gsv-integration-kind-stat strong {
+    font-size: 0.92rem;
   }
 
   .gsv-adapter-icon,
