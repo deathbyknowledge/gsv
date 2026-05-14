@@ -11,10 +11,15 @@ import type {
 } from "@gsv/protocol/syscalls/system";
 import type { DeviceRecord } from "../devices";
 
-function toSummary(record: DeviceRecord): SysDeviceSummary {
+function ownerUsername(record: DeviceRecord, ctx: KernelContext): string | null {
+  return ctx.auth?.getPasswdByUid(record.owner_uid)?.username ?? null;
+}
+
+function toSummary(record: DeviceRecord, ctx: KernelContext): SysDeviceSummary {
   return {
     deviceId: record.device_id,
     ownerUid: record.owner_uid,
+    ownerUsername: ownerUsername(record, ctx),
     description: record.description,
     platform: record.platform,
     version: record.version,
@@ -23,8 +28,8 @@ function toSummary(record: DeviceRecord): SysDeviceSummary {
   };
 }
 
-function toDetail(record: DeviceRecord): SysDeviceDetail {
-  const summary = toSummary(record);
+function toDetail(record: DeviceRecord, ctx: KernelContext): SysDeviceDetail {
+  const summary = toSummary(record, ctx);
   return {
     ...summary,
     implements: record.implements,
@@ -49,7 +54,7 @@ export function handleSysDeviceList(
   const visible = includeOffline ? all : all.filter((device) => device.online);
 
   return {
-    devices: visible.map(toSummary),
+    devices: visible.map((device) => toSummary(device, ctx)),
   };
 }
 
@@ -78,7 +83,7 @@ export function handleSysDeviceGet(
   }
 
   return {
-    device: toDetail(record),
+    device: toDetail(record, ctx),
   };
 }
 
@@ -111,6 +116,6 @@ export function handleSysDeviceUpdate(
   ctx.devices.setDescription(deviceId, raw.description);
   const updated = ctx.devices.get(deviceId);
   return {
-    device: updated ? toDetail(updated) : null,
+    device: updated ? toDetail(updated, ctx) : null,
   };
 }

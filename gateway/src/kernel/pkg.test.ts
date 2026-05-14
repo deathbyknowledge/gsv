@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handlePkgCreate } from "./pkg";
+import { handlePkgCreate, handlePkgRemove } from "./pkg";
 import type { KernelContext } from "./context";
 
 type FetchCall = {
@@ -41,7 +41,86 @@ function makeConfig() {
   };
 }
 
+function makeInstalledPackageRecord({
+  packageId,
+  name,
+  sourceSubdir,
+}: {
+  packageId: string;
+  name: string;
+  sourceSubdir: string;
+}) {
+  return {
+    packageId,
+    scope: { kind: "global" },
+    manifest: {
+      name,
+      displayName: name,
+      description: "",
+      version: "0.1.0",
+      runtime: "web-ui",
+      source: {
+        repo: "root/gsv",
+        ref: "main",
+        subdir: sourceSubdir,
+        resolvedCommit: "abc123",
+      },
+      entrypoints: [],
+      capabilities: {},
+    },
+    artifact: {
+      hash: "sha256:test",
+      mainModule: "src/main.ts",
+      modulePaths: [],
+    },
+    grants: {},
+    enabled: true,
+    reviewRequired: false,
+    reviewedAt: null,
+    installedAt: 1,
+    updatedAt: 2,
+  };
+}
+
+function makeRootIdentity() {
+  return {
+    role: "user",
+    capabilities: ["pkg.remove"],
+    process: {
+      uid: 0,
+      gid: 0,
+      gids: [0],
+      username: "root",
+      home: "/root",
+      cwd: "/root",
+      workspaceId: null,
+    },
+  };
+}
+
 describe("pkg syscalls", () => {
+  it("prevents removing the consolidated GSV console package", () => {
+    const record = makeInstalledPackageRecord({
+      packageId: "builtin:gsv@0.1.0",
+      name: "gsv",
+      sourceSubdir: "builtin-packages/gsv",
+    });
+    const setEnabled = vi.fn();
+    const ctx = {
+      config: makeConfig(),
+      packages: {
+        resolve: vi.fn(() => record),
+        setEnabled,
+      },
+      identity: makeRootIdentity(),
+    } as unknown as KernelContext;
+
+    expect(() => handlePkgRemove({ packageId: record.packageId }, ctx)).toThrow(
+      "Cannot remove the system console package",
+    );
+    expect(setEnabled).not.toHaveBeenCalled();
+  });
+
   it("scaffolds a user-owned package repo and installs the resolved package", async () => {
     const fetcher = makeFetcher((url, init) => {
       if (url.pathname === "/hyperspace/repos/alice/weather/refs") {

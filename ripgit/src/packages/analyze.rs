@@ -1206,23 +1206,23 @@ mod tests {
 
     fn sample_source() -> ResolvedPackageSource {
         ResolvedPackageSource {
-            repo: "root/gsv".to_string(),
+            repo: "sam/pkg-test".to_string(),
             requested_ref: "main".to_string(),
             resolved_commit: "abc123".to_string(),
-            subdir: "builtin-packages/doctor".to_string(),
+            subdir: "packages/example-tools".to_string(),
         }
     }
 
     #[test]
     fn normalize_subdir_rejects_parent_segments() {
         assert!(normalize_subdir("../bad").is_err());
-        assert_eq!(normalize_subdir("./builtin-packages//doctor").unwrap(), "builtin-packages/doctor");
+        assert_eq!(normalize_subdir("./packages//example-tools").unwrap(), "packages/example-tools");
     }
 
     #[test]
     fn analyze_package_source_extracts_direct_default_export() {
         let package_json = r#"{
-          "name": "@gsv/doctor",
+          "name": "@gsv/example-tools",
           "version": "0.1.0",
           "type": "module"
         }"#;
@@ -1231,8 +1231,8 @@ mod tests {
 
           export default definePackage({
             meta: {
-              displayName: "Doctor",
-              description: "Status checks",
+              displayName: "Example Tools",
+              description: "Sample tools",
               icon: "./ui/icon.svg",
               window: { width: 800, height: 600, minWidth: 320, minHeight: 240 },
               capabilities: {
@@ -1242,7 +1242,7 @@ mod tests {
             },
             cli: {
               commands: {
-                doctor: "./src/cli/doctor.ts",
+                inspect: "./src/cli/inspect.ts",
               },
             },
             tasks: {
@@ -1254,11 +1254,11 @@ mod tests {
         let analysis = analyze_package_source(sample_source(), package_json.to_string(), package_ts.to_string()).unwrap();
         assert!(analysis.ok);
         let definition = analysis.definition.unwrap();
-        assert_eq!(definition.meta.display_name, "Doctor");
+        assert_eq!(definition.meta.display_name, "Example Tools");
         assert_eq!(definition.commands.len(), 1);
-        assert_eq!(definition.commands[0].name, "doctor");
+        assert_eq!(definition.commands[0].name, "inspect");
         assert_eq!(definition.tasks.len(), 1);
-        assert_eq!(analysis.identity.package_json_name, "@gsv/doctor");
+        assert_eq!(analysis.identity.package_json_name, "@gsv/example-tools");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { defineAppManifest } from "./app-sdk";
-import type { AppIcon, AppManifest, AppWindowDefaults, DesktopIconId } from "./app-sdk";
+import type { AppIcon, AppManifest, AppWindowDefaults } from "./app-sdk";
 import type { PkgSummary } from "@gsv/protocol/syscalls/packages";
 
 const DEFAULT_WINDOW_DEFAULTS: AppWindowDefaults = {
@@ -8,16 +8,6 @@ const DEFAULT_WINDOW_DEFAULTS: AppWindowDefaults = {
   minWidth: 760,
   minHeight: 520,
 };
-
-const DESKTOP_ICON_IDS: readonly DesktopIconId[] = [
-  "chat",
-  "shell",
-  "devices",
-  "files",
-  "control",
-  "processes",
-  "packages",
-] as const;
 
 function toDisplayName(name: string): string {
   const trimmed = name.trim();
@@ -38,24 +28,15 @@ function coerceAppIcon(
     };
   }
 
-  if (value?.kind === "builtin" && DESKTOP_ICON_IDS.includes(value.id as DesktopIconId)) {
-    return {
-      kind: "builtin",
-      id: value.id as DesktopIconId,
-    };
-  }
-
-  if (DESKTOP_ICON_IDS.includes(fallbackName as DesktopIconId)) {
-    return {
-      kind: "builtin",
-      id: fallbackName as DesktopIconId,
-    };
-  }
-
   return {
-    kind: "builtin",
-    id: "packages",
+    kind: "fallback",
+    label: fallbackIconLabel(value?.kind === "builtin" ? value.id : fallbackName),
   };
+}
+
+function fallbackIconLabel(name: string): string {
+  const letters = toDisplayName(name).replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase();
+  return letters || "AP";
 }
 
 function coerceWindowDefaults(value: {

@@ -15,20 +15,20 @@ const IDENTITY: ProcessIdentity = {
 
 function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackageRecord {
   return {
-    packageId: "import:sam/pkg-test:packages/ascii-starfield",
+    packageId: "import:sam/pkg-test:packages/sample-console",
     scope: { kind: "user", uid: 1000 },
     manifest: {
-      name: "ascii-starfield",
-      description: "ASCII starfield",
+      name: "sample-console",
+      description: "Sample console",
       version: "0.1.0",
       runtime: "web-ui",
       source: {
         repo: "sam/pkg-test",
         ref: "main",
-        subdir: "packages/ascii-starfield",
+        subdir: "packages/sample-console",
         resolvedCommit: "base123",
       },
-      entrypoints: [{ name: "Starfield", kind: "ui", module: "main.js", route: "/apps/ascii-starfield" }],
+      entrypoints: [{ name: "Console", kind: "ui", module: "main.js", route: "/apps/sample-console" }],
     },
     artifact: { hash: "hash1", mainModule: "main.js", modulePaths: ["main.js"] },
     enabled: true,
@@ -105,7 +105,7 @@ describe("createProcessSourceBackend", () => {
       ripgit: {
         readPath: async (repo, path) => {
           calls.push({ repo, path });
-          if (path === "packages/ascii-starfield") {
+          if (path === "packages/sample-console") {
             return {
               kind: "tree",
               entries: [{ name: "src", mode: "040000", hash: "tree1", type: "tree" }],
@@ -122,18 +122,18 @@ describe("createProcessSourceBackend", () => {
 
     expect(backend).not.toBeNull();
     await expect(backend!.readdir("/src")).resolves.toEqual(["packages"]);
-    await expect(backend!.readdir("/src/packages")).resolves.toEqual(["ascii-starfield"]);
-    await expect(backend!.readdir("/src/packages/ascii-starfield")).resolves.toEqual(["src"]);
-    await expect(backend!.readFile("/src/packages/ascii-starfield/src/index.ts")).resolves.toContain("ok = true");
+    await expect(backend!.readdir("/src/packages")).resolves.toEqual(["sample-console"]);
+    await expect(backend!.readdir("/src/packages/sample-console")).resolves.toEqual(["src"]);
+    await expect(backend!.readFile("/src/packages/sample-console/src/index.ts")).resolves.toContain("ok = true");
 
     expect(calls).toEqual([
       {
         repo: { owner: "sam", repo: "pkg-test", branch: "base123" },
-        path: "packages/ascii-starfield",
+        path: "packages/sample-console",
       },
       {
         repo: { owner: "sam", repo: "pkg-test", branch: "base123" },
-        path: "packages/ascii-starfield/src/index.ts",
+        path: "packages/sample-console/src/index.ts",
       },
     ]);
   });
@@ -155,7 +155,7 @@ describe("createProcessSourceBackend", () => {
 
     expect(backend).not.toBeNull();
     await expect(backend!.readdir("/src/packages")).resolves.toEqual([]);
-    await expect(backend!.readFile("/src/packages/ascii-starfield/src/index.ts"))
+    await expect(backend!.readFile("/src/packages/sample-console/src/index.ts"))
       .rejects.toThrow("no such package source");
   });
 
@@ -183,11 +183,11 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     });
 
-    await expect(backend!.mkdir("/src/packages/ascii-starfield")).resolves.toBeUndefined();
-    await backend!.writeFile("/src/packages/ascii-starfield/src/index.ts", "export const changed = true;\n");
+    await expect(backend!.mkdir("/src/packages/sample-console")).resolves.toBeUndefined();
+    await backend!.writeFile("/src/packages/sample-console/src/index.ts", "export const changed = true;\n");
 
     expect(applyCalls).toHaveLength(0);
-    await expect(backend!.readFile("/src/packages/ascii-starfield/src/index.ts")).resolves.toContain("changed = true");
+    await expect(backend!.readFile("/src/packages/sample-console/src/index.ts")).resolves.toContain("changed = true");
 
     const result = await commitProcessSourceChanges({
       identity: IDENTITY,
@@ -201,7 +201,7 @@ describe("createProcessSourceBackend", () => {
     expect(result).toMatchObject({
       committed: true,
       baseRef: "base123",
-      branch: "gsv/process/task-source/ascii-starfield",
+      branch: "gsv/process/task-source/sample-console",
       commitHead: "processhead123",
       ops: 1,
       changes: [],
@@ -210,19 +210,19 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[0][0]).toEqual({
       owner: "sam",
       repo: "pkg-test",
-      branch: "gsv/process/task-source/ascii-starfield",
+      branch: "gsv/process/task-source/sample-console",
     });
     expect(applyCalls[0][5]).toEqual({ baseRef: "base123" });
     expect(applyCalls[0][4]).toEqual([
       {
         type: "put",
-        path: "packages/ascii-starfield/src/index.ts",
+        path: "packages/sample-console/src/index.ts",
         contentBytes: Array.from(new TextEncoder().encode("export const changed = true;\n")),
       },
     ]);
 
     const [state] = [...config.values.values()];
-    expect(JSON.parse(state).branch).toBe("gsv/process/task-source/ascii-starfield");
+    expect(JSON.parse(state).branch).toBe("gsv/process/task-source/sample-console");
     await expect(getProcessSourceStatus({
       identity: IDENTITY,
       storage,
@@ -245,7 +245,7 @@ describe("createProcessSourceBackend", () => {
         source: {
           repo: "sam/pkg-test",
           ref: "main",
-          subdir: "packages/ascii-starfield",
+          subdir: "packages/sample-console",
           resolvedCommit: "newbase456",
         },
       },
@@ -277,7 +277,7 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     });
 
-    await backend!.writeFile("/src/packages/ascii-starfield/src/index.ts", "export const changed = true;\n");
+    await backend!.writeFile("/src/packages/sample-console/src/index.ts", "export const changed = true;\n");
     await commitProcessSourceChanges({
       identity: IDENTITY,
       storage,
@@ -290,7 +290,7 @@ describe("createProcessSourceBackend", () => {
     expect(readCalls).toEqual([
       {
         repo: { owner: "sam", repo: "pkg-test", branch: "base123" },
-        path: "packages/ascii-starfield/src/index.ts",
+        path: "packages/sample-console/src/index.ts",
       },
     ]);
     expect(applyCalls[0][5]).toEqual({ baseRef: "base123" });
@@ -451,7 +451,7 @@ describe("createProcessSourceBackend", () => {
   });
 
   it("keeps process source state scoped by installed package record", async () => {
-    const packageId = "import:sam/pkg-test:packages/ascii-starfield";
+    const packageId = "import:sam/pkg-test:packages/sample-console";
     const globalPackage = makePackage({
       packageId,
       scope: { kind: "global" },
@@ -460,7 +460,7 @@ describe("createProcessSourceBackend", () => {
         source: {
           repo: "sam/pkg-test",
           ref: "main",
-          subdir: "packages/ascii-starfield",
+          subdir: "packages/sample-console",
           resolvedCommit: "globalbase123",
         },
       },
@@ -473,7 +473,7 @@ describe("createProcessSourceBackend", () => {
         source: {
           repo: "sam/pkg-test",
           ref: "main",
-          subdir: "packages/ascii-starfield",
+          subdir: "packages/sample-console",
           resolvedCommit: "userbase123",
         },
       },
@@ -499,11 +499,11 @@ describe("createProcessSourceBackend", () => {
     });
 
     await backend!.writeFile(
-      "/src/packages/ascii-starfield--sam-pkg-test-packages-ascii-starfield/src/index.ts",
+      "/src/packages/sample-console--sam-pkg-test-packages-sample-console/src/index.ts",
       "export const scope = 'global';\n",
     );
     await backend!.writeFile(
-      "/src/packages/ascii-starfield--sam-pkg-test-packages-ascii-starfield-2/src/index.ts",
+      "/src/packages/sample-console--sam-pkg-test-packages-sample-console-2/src/index.ts",
       "export const scope = 'user';\n",
     );
     await commitProcessSourceChanges({
@@ -533,8 +533,8 @@ describe("createProcessSourceBackend", () => {
       Array.from(new TextEncoder().encode("export const scope = 'user';\n")),
     );
     expect([...config.values.keys()].sort()).toEqual([
-      "process-source-branches/task%3Asource/global%3Aimport%3Asam%2Fpkg-test%3Apackages%2Fascii-starfield",
-      "process-source-branches/task%3Asource/user%3A1000%3Aimport%3Asam%2Fpkg-test%3Apackages%2Fascii-starfield",
+      "process-source-branches/task%3Asource/global%3Aimport%3Asam%2Fpkg-test%3Apackages%2Fsample-console",
+      "process-source-branches/task%3Asource/user%3A1000%3Aimport%3Asam%2Fpkg-test%3Apackages%2Fsample-console",
     ]);
     expect(storage.objects.size).toBe(0);
   });
@@ -705,7 +705,7 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     });
 
-    await backend!.writeFile("/src/packages/ascii-starfield/src/one.ts", "export const one = true;\n");
+    await backend!.writeFile("/src/packages/sample-console/src/one.ts", "export const one = true;\n");
     await commitProcessSourceChanges({
       identity: IDENTITY,
       storage,
@@ -715,7 +715,7 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     }, makePackage(), { message: "pkg: commit one" });
 
-    await backend!.writeFile("/src/packages/ascii-starfield/src/two.ts", "export const two = true;\n");
+    await backend!.writeFile("/src/packages/sample-console/src/two.ts", "export const two = true;\n");
     await commitProcessSourceChanges({
       identity: IDENTITY,
       storage,
@@ -733,7 +733,7 @@ describe("createProcessSourceBackend", () => {
     });
     expect(applyCalls[1][5]).toEqual({ baseRef: "processhead123" });
 
-    await backend!.writeFile("/src/packages/ascii-starfield/src/three.ts", "export const three = true;\n");
+    await backend!.writeFile("/src/packages/sample-console/src/three.ts", "export const three = true;\n");
     await commitProcessSourceChanges({
       identity: IDENTITY,
       storage,
@@ -788,7 +788,7 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     });
 
-    await backend!.writeFile("/src/packages/ascii-starfield/src/index.ts", "export const changed = true;\n");
+    await backend!.writeFile("/src/packages/sample-console/src/index.ts", "export const changed = true;\n");
     await commitProcessSourceChanges({
       identity: IDENTITY,
       storage,
@@ -801,7 +801,7 @@ describe("createProcessSourceBackend", () => {
     expect(readCalls).toEqual([
       {
         repo: { owner: "sam", repo: "pkg-test", branch: "featurehead456" },
-        path: "packages/ascii-starfield/src/index.ts",
+        path: "packages/sample-console/src/index.ts",
       },
     ]);
     expect(applyCalls).toHaveLength(1);
@@ -813,7 +813,7 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[0][4]).toEqual([
       {
         type: "put",
-        path: "packages/ascii-starfield/src/index.ts",
+        path: "packages/sample-console/src/index.ts",
         contentBytes: Array.from(new TextEncoder().encode("export const changed = true;\n")),
       },
     ]);
@@ -850,7 +850,7 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     });
 
-    await backend!.writeFile("/src/packages/ascii-starfield/src/one.ts", "export const one = true;\n");
+    await backend!.writeFile("/src/packages/sample-console/src/one.ts", "export const one = true;\n");
     await commitProcessSourceChanges({
       identity: IDENTITY,
       storage,
@@ -860,7 +860,7 @@ describe("createProcessSourceBackend", () => {
       ripgit,
     }, makePackage(), { message: "pkg: commit one" });
 
-    await backend!.writeFile("/src/packages/ascii-starfield/src/index.ts", "export const same = true;\n");
+    await backend!.writeFile("/src/packages/sample-console/src/index.ts", "export const same = true;\n");
     const result = await commitProcessSourceChanges({
       identity: IDENTITY,
       storage,
@@ -903,13 +903,13 @@ describe("createProcessSourceBackend", () => {
       config: makeConfig(),
       ripgit: {
         readPath: async (_repo: unknown, path: string) => {
-          if (path === "packages/ascii-starfield") {
+          if (path === "packages/sample-console") {
             return {
               kind: "tree",
               entries: [{ name: "src", mode: "040000", hash: "tree1", type: "tree" }],
             };
           }
-          if (path === "packages/ascii-starfield/src") {
+          if (path === "packages/sample-console/src") {
             return {
               kind: "tree",
               entries: [{ name: "index.ts", mode: "100644", hash: "blob1", type: "blob" }],
@@ -920,12 +920,12 @@ describe("createProcessSourceBackend", () => {
       } as any,
     });
 
-    await expect(backend!.readdir("/src/packages/ascii-starfield/src")).resolves.toEqual(["index.ts"]);
-    await backend!.rm("/src/packages/ascii-starfield/src", { recursive: true });
+    await expect(backend!.readdir("/src/packages/sample-console/src")).resolves.toEqual(["index.ts"]);
+    await backend!.rm("/src/packages/sample-console/src", { recursive: true });
 
-    await expect(backend!.stat("/src/packages/ascii-starfield/src")).rejects.toThrow("ENOENT");
-    await expect(backend!.readdir("/src/packages/ascii-starfield/src")).rejects.toThrow("ENOENT");
-    await expect(backend!.readdir("/src/packages/ascii-starfield")).resolves.toEqual([]);
+    await expect(backend!.stat("/src/packages/sample-console/src")).rejects.toThrow("ENOENT");
+    await expect(backend!.readdir("/src/packages/sample-console/src")).rejects.toThrow("ENOENT");
+    await expect(backend!.readdir("/src/packages/sample-console")).resolves.toEqual([]);
   });
 
   it("preserves parent directories when deleting nested source files", async () => {
@@ -937,13 +937,13 @@ describe("createProcessSourceBackend", () => {
       config: makeConfig(),
       ripgit: {
         readPath: async (_repo: unknown, path: string) => {
-          if (path === "packages/ascii-starfield") {
+          if (path === "packages/sample-console") {
             return {
               kind: "tree",
               entries: [{ name: "src", mode: "040000", hash: "tree1", type: "tree" }],
             };
           }
-          if (path === "packages/ascii-starfield/src") {
+          if (path === "packages/sample-console/src") {
             return {
               kind: "tree",
               entries: [
@@ -952,7 +952,7 @@ describe("createProcessSourceBackend", () => {
               ],
             };
           }
-          if (path === "packages/ascii-starfield/src/index.ts") {
+          if (path === "packages/sample-console/src/index.ts") {
             return {
               kind: "file",
               bytes: new TextEncoder().encode("export const index = true;\n"),
@@ -964,10 +964,10 @@ describe("createProcessSourceBackend", () => {
       } as any,
     });
 
-    await backend!.rm("/src/packages/ascii-starfield/src/index.ts");
+    await backend!.rm("/src/packages/sample-console/src/index.ts");
 
-    await expect(backend!.readdir("/src/packages/ascii-starfield")).resolves.toEqual(["src"]);
-    await expect(backend!.readdir("/src/packages/ascii-starfield/src")).resolves.toEqual(["other.ts"]);
+    await expect(backend!.readdir("/src/packages/sample-console")).resolves.toEqual(["src"]);
+    await expect(backend!.readdir("/src/packages/sample-console/src")).resolves.toEqual(["other.ts"]);
   });
 
   it("rejects source rm for missing paths unless forced", async () => {
@@ -983,11 +983,11 @@ describe("createProcessSourceBackend", () => {
       } as any,
     });
 
-    await expect(backend!.rm("/src/packages/ascii-starfield/missing.ts"))
+    await expect(backend!.rm("/src/packages/sample-console/missing.ts"))
       .rejects.toThrow("ENOENT");
     expect(storage.objects.size).toBe(0);
 
-    await expect(backend!.rm("/src/packages/ascii-starfield/missing.ts", { force: true }))
+    await expect(backend!.rm("/src/packages/sample-console/missing.ts", { force: true }))
       .resolves.toBeUndefined();
     expect(storage.objects.size).toBe(0);
   });
@@ -1002,7 +1002,7 @@ describe("createProcessSourceBackend", () => {
       config: makeConfig(),
       ripgit: {
         readPath: async (_repo: unknown, path: string) => {
-          if (path === "packages/ascii-starfield/src") {
+          if (path === "packages/sample-console/src") {
             return {
               kind: "tree",
               entries: [{ name: "index.ts", mode: "100644", hash: "blob1", type: "blob" }],
@@ -1013,7 +1013,7 @@ describe("createProcessSourceBackend", () => {
       } as any,
     });
 
-    await expect(backend!.rm("/src/packages/ascii-starfield/src"))
+    await expect(backend!.rm("/src/packages/sample-console/src"))
       .rejects.toThrow("ENOTEMPTY");
     expect(storage.objects.size).toBe(0);
   });

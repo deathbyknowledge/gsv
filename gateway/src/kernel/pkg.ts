@@ -427,8 +427,8 @@ export function handlePkgRemove(
 ): PkgRemoveResult {
   const record = requirePackage(args.packageId, ctx);
   assertMutablePackageAccess(record, ctx);
-  if (record.manifest.name === "packages") {
-    throw new Error("Cannot remove the packages manager");
+  if (isRequiredSystemConsolePackage(record)) {
+    throw new Error("Cannot remove the system console package");
   }
   if (record.enabled) {
     const updated = ctx.packages.setEnabled(record.packageId, false, record.scope);
@@ -478,6 +478,16 @@ export function resolveInstalledPackage(packageId: string, ctx: KernelContext): 
 
 function requirePackage(packageId: string, ctx: KernelContext): InstalledPackageRecord {
   return resolveInstalledPackage(packageId, ctx);
+}
+
+function isRequiredSystemConsolePackage(record: InstalledPackageRecord): boolean {
+  if (record.manifest.name === "packages") {
+    return true;
+  }
+  return record.manifest.name === "gsv"
+    && record.packageId.startsWith("builtin:gsv@")
+    && record.manifest.source.repo === "root/gsv"
+    && normalizeRepoPath(record.manifest.source.subdir) === "builtin-packages/gsv";
 }
 
 function resolveUpstream(args: PkgAddArgs): { remoteUrl: string; ref: string; repoSlug: string | null } {

@@ -1,0 +1,10 @@
+{
+  "name": "@gsv/gsv",
+  "version": "0.1.5",
+  "type": "module",
+  "dependencies": {
+    "@gsv/package": "file:../../shared/package",
+    "preact": "^10.27.2",
+    "qrcode-generator": "^2.0.4"
+  }
+}

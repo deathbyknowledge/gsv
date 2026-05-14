@@ -1,0 +1,246 @@
+.gsv-runtime {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.gsv-runtime-list-pane,
+.gsv-runtime-detail {
+  min-width: 0;
+}
+
+.gsv-runtime-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.gsv-runtime-search {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.gsv-runtime-search span {
+  color: #687384;
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.gsv-runtime-search input {
+  width: 100%;
+  min-width: 0;
+  height: 2.35rem;
+  padding: 0 0.65rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 6px;
+  background: #fbfcfd;
+  color: #15191f;
+}
+
+.gsv-mini-button,
+.gsv-action-button {
+  min-height: 2.35rem;
+  padding: 0 0.75rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #253043;
+  font-weight: 700;
+}
+
+.gsv-action-button {
+  width: 100%;
+}
+
+.gsv-action-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 0;
+  min-height: 2.25rem;
+  gap: 0.42rem;
+  padding: 0 0.72rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #253043;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.gsv-action-control.is-full {
+  width: 100%;
+}
+
+.gsv-action-control.is-icon {
+  width: 2.25rem;
+  padding: 0;
+}
+
+.gsv-action-control.is-primary {
+  border-color: #1f883d;
+  background: #1f883d;
+  color: #ffffff;
+}
+
+.gsv-action-control.is-danger {
+  border-color: #e6c5c5;
+  color: #9f2f2f;
+}
+
+.gsv-action-control.is-ghost {
+  background: transparent;
+}
+
+.gsv-action-control:hover:not(:disabled) {
+  background: #f4f7fb;
+}
+
+.gsv-action-control.is-primary:hover:not(:disabled) {
+  background: #1a7f37;
+}
+
+.gsv-action-control:disabled {
+  color: #9aa4b2;
+  cursor: not-allowed;
+}
+
+.gsv-action-control-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gsv-action-button.is-danger {
+  border-color: #e6c5c5;
+  color: #9f2f2f;
+}
+
+.gsv-mini-button:disabled,
+.gsv-action-button:disabled {
+  color: #9aa4b2;
+  cursor: not-allowed;
+}
+
+.gsv-runtime-meta,
+.gsv-inline-error {
+  margin: 0.55rem 0.25rem;
+  color: #687384;
+  font-size: 0.8rem;
+}
+
+.gsv-inline-error {
+  color: #a73232;
+}
+
+.gsv-runtime-list {
+  display: grid;
+  min-width: 0;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.gsv-runtime-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  min-width: 0;
+  min-height: 4.1rem;
+  padding: 0.78rem 0.85rem;
+  border: 0;
+  border-bottom: 1px solid #edf0f4;
+  background: #ffffff;
+  text-align: left;
+}
+
+.gsv-runtime-row:last-child {
+  border-bottom: 0;
+}
+
+.gsv-runtime-row:hover,
+.gsv-runtime-row.is-selected {
+  background: #f4f7fb;
+}
+
+.gsv-runtime-detail {
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.gsv-runtime-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.95rem;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.gsv-runtime-detail-head h3 {
+  margin: 0.25rem 0 0;
+  font-size: 1.08rem;
+}
+
+.gsv-runtime-detail-head p {
+  margin: 0.35rem 0 0;
+  color: #687384;
+  font-size: 0.82rem;
+}
+
+.gsv-detail-list {
+  display: grid;
+  margin: 0;
+}
+
+.gsv-detail-list > div {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0.65rem 0.95rem;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.gsv-detail-list dt {
+  color: #687384;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.gsv-detail-list dd {
+  min-width: 0;
+  margin: 0;
+  color: #202938;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.gsv-detail-actions {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.85rem;
+}
+
+.gsv-empty-state {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+  color: #687384;
+}
+
+.gsv-empty-state h3,
+.gsv-empty-state p {
+  margin: 0;
+}

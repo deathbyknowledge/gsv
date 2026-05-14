@@ -1,22 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { onAppEvent } from "@gsv/package/browser";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { openApp } from "@gsv/package/host";
 import type {
-  ArchiveState,
   Attachment,
   ChatBackend,
   CompactDialogState,
   ContextState,
   ConversationRecord,
-  ConversationSegment,
   HilRequest,
   LogRow,
   PendingAssistantState,
-  Profile,
   ThreadContext,
-  VoiceRecordingState,
   WorkspaceView,
-  WorkspaceEntry,
 } from "./types";
 import {
   ArchiveWorkspace,
@@ -35,10 +29,18 @@ import {
   TerminalIcon,
 } from "./icons";
 import {
-  applyAssistantSignal,
-  applyProcessMessageSignal,
-  applyToolCallSignal,
-  applyToolResultSignal,
+  cleanupAttachmentPreview,
+  revokeAttachmentPreview,
+  stripAttachmentPreview,
+} from "./domain/attachment-previews";
+import { useArchive } from "./hooks/useArchive";
+import { useChatCatalog } from "./hooks/useChatCatalog";
+import { useMediaSources } from "./hooks/useMediaSources";
+import { useProcessSignals } from "./hooks/useProcessSignals";
+import { useTargetProcessEvent } from "./hooks/useTargetProcessEvent";
+import { useTranscriptScroll } from "./hooks/useTranscriptScroll";
+import { useVoiceRecorder } from "./hooks/useVoiceRecorder";
+import {
   asNumber,
   asRecord,
   asString,
@@ -49,36 +51,23 @@ import {
   dropEmptyPlaceholder,
   draftConversationMeta,
   draftConversationTitle,
-  fallbackProfiles,
   flattenHistory,
   formatError,
   getStatusText,
   getStoredThreadContext,
   isInsideChatMenu,
-  isNearBottom,
-  normalizeContextSignal,
   normalizeContextState,
-  normalizeConversation,
-  normalizeConversationSegment,
   normalizeHilRequest,
-  normalizeProfile,
   normalizeThreadContext,
-  normalizeWorkspace,
-  readAttachmentBlob,
   readAttachmentFile,
   safeText,
   setStoredThreadContext,
-  signalMatchesActiveThread,
-  sortConversations,
   systemRow,
   systemRows,
   suggestKeepLast,
   titleForActive,
 } from "./view-helpers";
 
-const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
-const PENDING_TARGETS_KEY = "__gsvPendingChatProcessTargets";
-const WINDOW_ID = new URL(window.location.href).searchParams.get("windowId")?.trim() || "";
 const HISTORY_PAGE_SIZE = 50;
 
 function historyTargetKey(target: Pick<ThreadContext, "pid" | "conversationId">): string {
@@ -101,110 +90,6 @@ const EMPTY_HISTORY_WINDOW: HistoryWindow = {
   loadingOlder: false,
 };
 
-const EMPTY_ARCHIVE: ArchiveState = {
-  loading: false,
-  error: "",
-  segments: [],
-  selectedSegmentId: null,
-  messages: [],
-  messageCount: 0,
-  truncated: false,
-};
-
-const EMPTY_VOICE_RECORDING: VoiceRecordingState = { status: "idle", elapsedMs: 0 };
-const VOICE_AUDIO_BITS_PER_SECOND = 128000;
-const MAX_VOICE_RECORDING_MS = 10 * 60 * 1000;
-const VOICE_RECORDER_MIME_TYPES = [
-  "audio/webm;codecs=opus",
-  "audio/ogg;codecs=opus",
-  "audio/mp4;codecs=mp4a.40.2",
-  "audio/mp4",
-  "audio/webm",
-];
-
-function canUseBrowserVoiceRecorder(): boolean {
-  return typeof navigator !== "undefined"
-    && Boolean(navigator.mediaDevices?.getUserMedia)
-    && typeof MediaRecorder !== "undefined";
-}
-
-async function requestVoiceStream(): Promise<MediaStream> {
-  try {
-    return await navigator.mediaDevices.getUserMedia({
-      audio: {
-        autoGainControl: true,
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-      },
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "OverconstrainedError") {
-      return navigator.mediaDevices.getUserMedia({ audio: true });
-    }
-    throw error;
-  }
-}
-
-function selectVoiceRecorderMimeType(): string {
-  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
-    return "";
-  }
-  return VOICE_RECORDER_MIME_TYPES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || "";
-}
-
-function extensionForVoiceMimeType(mimeType: string): string {
-  const normalized = mimeType.split(";")[0].trim().toLowerCase();
-  if (normalized === "audio/ogg") return "ogg";
-  if (normalized === "audio/mp4" || normalized === "audio/aac") return "m4a";
-  if (normalized === "audio/wav" || normalized === "audio/wave" || normalized === "audio/x-wav") return "wav";
-  if (normalized === "audio/mpeg") return "mp3";
-  return "webm";
-}
-
-function voiceRecordingFilename(mimeType: string): string {
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-  return `voice-${stamp}.${extensionForVoiceMimeType(mimeType)}`;
-}
-
-function stripAttachmentPreview(attachment: Attachment): Attachment {
-  const next = { ...attachment };
-  delete next.previewUrl;
-  return next;
-}
-
-function revokeAttachmentPreview(attachment: Attachment): void {
-  if (attachment.previewUrl) {
-    URL.revokeObjectURL(attachment.previewUrl);
-  }
-}
-
-function cleanupAttachmentPreview(attachment: Attachment, previewUrls: Set<string>): void {
-  revokeAttachmentPreview(attachment);
-  if (attachment.previewUrl) {
-    previewUrls.delete(attachment.previewUrl);
-  }
-}
-
-function mediaSourceKey(media: unknown): string | null {
-  const record = asRecord(media);
-  return asString(record?.key);
-}
-
-function mediaOwnerPidFromKey(key: string): string | null {
-  const match = /^var\/media\/[^/]+\/(.+)\/[^/]+$/.exec(key);
-  return match?.[1] || null;
-}
-
-function removeRecordKey(record: Record<string, string>, key: string): Record<string, string> {
-  if (!(key in record)) {
-    return record;
-  }
-  const next = { ...record };
-  delete next[key];
-  return next;
-}
-
 function historyMessageIds(messages: unknown[]): { first: number | null; last: number | null } {
   const ids = messages
     .map((message) => asNumber(asRecord(message)?.id))
@@ -217,20 +102,10 @@ function historyMessageIds(messages: unknown[]): { first: number | null; last: n
 
 export function App({ backend }: { backend: ChatBackend }) {
   const [active, setActiveState] = useState<ThreadContext | null>(() => getStoredThreadContext());
-  const [profiles, setProfiles] = useState<Profile[]>(() => fallbackProfiles());
-  const [draftProfileId, setDraftProfileId] = useState("task");
-  const [viewerUsername, setViewerUsername] = useState("You");
-  const [threads, setThreads] = useState<WorkspaceEntry[]>([]);
-  const [threadsLoading, setThreadsLoading] = useState(false);
-  const [threadsError, setThreadsError] = useState("");
-  const [conversations, setConversations] = useState<ConversationRecord[]>([]);
-  const [conversationsLoading, setConversationsLoading] = useState(false);
-  const [conversationError, setConversationError] = useState("");
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("chat");
   const [rows, setRows] = useState<LogRow[]>(() => systemRows("Connecting chat backend."));
   const [messageCount, setMessageCount] = useState(0);
   const [historyWindow, setHistoryWindow] = useState<HistoryWindow>(EMPTY_HISTORY_WINDOW);
-  const [hasNewMessages, setHasNewMessages] = useState(false);
   const [contextState, setContextState] = useState<ContextState | null>(null);
   const [contextStatesByConversation, setContextStatesByConversation] = useState<Record<string, ContextState>>({});
   const [pendingAssistant, setPendingAssistant] = useState<PendingAssistantState>(null);
@@ -243,32 +118,39 @@ export function App({ backend }: { backend: ChatBackend }) {
   const [hostError, setHostError] = useState("");
   const [composeText, setComposeText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [voice, setVoice] = useState<VoiceRecordingState>(EMPTY_VOICE_RECORDING);
-  const [mediaSources, setMediaSources] = useState<Record<string, string>>({});
-  const [mediaSourceErrors, setMediaSourceErrors] = useState<Record<string, string>>({});
-  const [archive, setArchive] = useState<ArchiveState>(EMPTY_ARCHIVE);
   const [compactDialog, setCompactDialog] = useState<CompactDialogState>(null);
   const [notice, setNotice] = useState("");
   const [suppressNextAbortedComplete, setSuppressNextAbortedComplete] = useState(false);
-  const transcriptRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active);
   const mountedRef = useRef(true);
   const attachmentsRef = useRef(attachments);
-  const mediaSourcesRef = useRef(mediaSources);
-  const mediaSourceLoadingRef = useRef<Set<string>>(new Set());
-  const mediaSourceFailedRef = useRef<Set<string>>(new Set());
   const previewUrlsRef = useRef<Set<string>>(new Set());
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const recorderStreamRef = useRef<MediaStream | null>(null);
-  const recorderChunksRef = useRef<Blob[]>([]);
-  const recorderStartedAtRef = useRef(0);
-  const recorderElapsedMsRef = useRef(0);
-  const recorderTimerRef = useRef<number | null>(null);
-  const recorderCancelRef = useRef(false);
   const skipNextHistoryLoadRef = useRef<string | null>(null);
   const historyWindowRef = useRef<HistoryWindow>(EMPTY_HISTORY_WINDOW);
-  const hasNewMessagesRef = useRef(false);
-  const stickToBottomRef = useRef(true);
+  const {
+    transcriptRef,
+    hasNewMessages,
+    stickToBottomRef,
+    clearNewMessages,
+    prepareForLiveTranscriptActivity,
+    handleTranscriptScroll,
+    scrollTranscript,
+    jumpToLatest,
+  } = useTranscriptScroll();
+  const {
+    conversations,
+    conversationsLoading,
+    conversationError,
+    draftProfile,
+    loadConversations,
+    loadThreads,
+    newConversationProfiles,
+    setDraftProfileId,
+    threads,
+    threadsError,
+    threadsLoading,
+    viewerUsername,
+  } = useChatCatalog(backend);
 
   useEffect(() => {
     activeRef.current = active;
@@ -277,26 +159,6 @@ export function App({ backend }: { backend: ChatBackend }) {
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
-
-  useEffect(() => {
-    mediaSourcesRef.current = mediaSources;
-  }, [mediaSources]);
-
-  const conversationProfiles = useMemo(
-    () => profiles.filter((profile) => profile.interactive === true && profile.startable === true),
-    [profiles],
-  );
-  const newConversationProfiles = useMemo(
-    () => conversationProfiles.filter((profile) => profile.spawnMode === "new"),
-    [conversationProfiles],
-  );
-  const draftProfile = useMemo(() => {
-    return conversationProfiles.find((profile) => profile.id === draftProfileId || profile.alias === draftProfileId)
-      ?? newConversationProfiles[0]
-      ?? conversationProfiles.find((profile) => profile.id === "task")
-      ?? fallbackProfiles()[1];
-  }, [conversationProfiles, draftProfileId, newConversationProfiles]);
-  const voiceRecorderAvailable = useMemo(() => canUseBrowserVoiceRecorder(), []);
 
   const activeConversationId = active?.conversationId || "default";
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
@@ -312,6 +174,21 @@ export function App({ backend }: { backend: ChatBackend }) {
     hilBusy,
   });
   const interactive = !hostError;
+  const addVoiceAttachment = useCallback((attachment: Attachment) => {
+    setAttachments((current) => current.concat(attachment));
+  }, []);
+  const {
+    voice,
+    startVoiceRecording,
+    stopVoiceRecording,
+    cancelVoiceRecording,
+    clearVoiceError,
+  } = useVoiceRecorder({
+    interactive,
+    messageBusy,
+    previewUrlsRef,
+    onAttachment: addVoiceAttachment,
+  });
   const hasDraft = composeText.trim().length > 0 || attachments.length > 0;
   const voiceActive = voice.status !== "idle";
   const runActive = pendingAssistant !== null || pendingHil !== null;
@@ -326,32 +203,23 @@ export function App({ backend }: { backend: ChatBackend }) {
     setHistoryWindow(next);
   }, []);
 
-  const clearNewMessages = useCallback(() => {
-    if (!hasNewMessagesRef.current) {
-      return;
-    }
-    hasNewMessagesRef.current = false;
-    setHasNewMessages(false);
+  const updateNewestHistoryMessageId = useCallback((target: ThreadContext, newestMessageId: number) => {
+    setHistoryWindow((current) => {
+      if (current.targetKey !== historyTargetKey(target)) {
+        return current;
+      }
+      const updated = { ...current, newestMessageId };
+      historyWindowRef.current = updated;
+      return updated;
+    });
   }, []);
 
-  const prepareForLiveTranscriptActivity = useCallback(() => {
-    const node = transcriptRef.current;
-    const atBottom = !node || isNearBottom(node);
-    stickToBottomRef.current = atBottom;
-    if (atBottom || hasNewMessagesRef.current) {
-      return;
-    }
-    hasNewMessagesRef.current = true;
-    setHasNewMessages(true);
-  }, []);
-
-  const handleTranscriptScroll = useCallback((node: HTMLElement) => {
-    const atBottom = isNearBottom(node);
-    stickToBottomRef.current = atBottom;
-    if (atBottom) {
-      clearNewMessages();
-    }
-  }, [clearNewMessages]);
+  const {
+    archive,
+    loadArchiveSegments,
+    readArchiveSegment,
+    resetArchive,
+  } = useArchive({ backend, activeRef });
 
   const setActive = useCallback((next: ThreadContext | null) => {
     const previous = activeRef.current;
@@ -366,7 +234,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       setMessageCount(0);
       updateHistoryWindow(EMPTY_HISTORY_WINDOW);
       clearNewMessages();
-      setArchive(EMPTY_ARCHIVE);
+      resetArchive();
     } else if (processChanged) {
       setContextState(null);
       setContextStatesByConversation({});
@@ -375,7 +243,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       setMessageCount(0);
       updateHistoryWindow(EMPTY_HISTORY_WINDOW);
       clearNewMessages();
-      setArchive(EMPTY_ARCHIVE);
+      resetArchive();
     } else {
       setContextState((current) => {
         const cached = contextStatesByConversation[normalized.conversationId] ?? null;
@@ -384,253 +252,27 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
     setWorkspaceView("chat");
     setNotice("");
-  }, [clearNewMessages, contextStatesByConversation, updateHistoryWindow]);
+  }, [clearNewMessages, contextStatesByConversation, resetArchive, updateHistoryWindow]);
 
   const appendSystem = useCallback((text: string) => {
     setRows((current) => dropEmptyPlaceholder(current).concat(systemRow(text)));
   }, []);
 
-  const clearVoiceTimer = useCallback(() => {
-    if (recorderTimerRef.current !== null) {
-      window.clearInterval(recorderTimerRef.current);
-      recorderTimerRef.current = null;
-    }
-  }, []);
-
-  const stopVoiceStream = useCallback(() => {
-    const stream = recorderStreamRef.current;
-    recorderStreamRef.current = null;
-    stream?.getTracks().forEach((track) => track.stop());
-  }, []);
-
-  const cleanupVoiceRecorder = useCallback(() => {
-    clearVoiceTimer();
-    const recorder = recorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.ondataavailable = null;
-      recorder.onerror = null;
-      recorder.onstop = null;
-      try {
-        recorder.stop();
-      } catch {
-        // Recorder state can change between the state check and stop call.
-      }
-    }
-    stopVoiceStream();
-    recorderRef.current = null;
-    recorderChunksRef.current = [];
-    recorderStartedAtRef.current = 0;
-    recorderElapsedMsRef.current = 0;
-  }, [clearVoiceTimer, stopVoiceStream]);
-
-  const finishVoiceRecording = useCallback(async () => {
-    clearVoiceTimer();
-    const recorder = recorderRef.current;
-    const chunks = recorderChunksRef.current.slice();
-    const cancelled = recorderCancelRef.current;
-    const startedAt = recorderStartedAtRef.current;
-    const elapsedMs = Math.max(recorderElapsedMsRef.current, startedAt > 0 ? Date.now() - startedAt : 0);
-    const mimeType = recorder?.mimeType || chunks.find((chunk) => chunk.type)?.type || "audio/webm";
-    cleanupVoiceRecorder();
-    recorderCancelRef.current = false;
-
-    if (!mountedRef.current) {
-      return;
-    }
-    if (cancelled) {
-      setVoice(EMPTY_VOICE_RECORDING);
-      return;
-    }
-
-    const blob = new Blob(chunks, { type: mimeType });
-    if (blob.size === 0) {
-      setVoice({ status: "idle", elapsedMs: 0, error: "No audio was captured." });
-      return;
-    }
-
-    const previewUrl = URL.createObjectURL(blob);
-    previewUrlsRef.current.add(previewUrl);
-    try {
-      const attachment = await readAttachmentBlob(blob, voiceRecordingFilename(mimeType), elapsedMs / 1000);
-      if (!mountedRef.current) {
-        URL.revokeObjectURL(previewUrl);
-        previewUrlsRef.current.delete(previewUrl);
-        return;
-      }
-      setAttachments((current) => current.concat({ ...attachment, type: "audio", previewUrl }));
-      setVoice(EMPTY_VOICE_RECORDING);
-    } catch (error) {
-      URL.revokeObjectURL(previewUrl);
-      previewUrlsRef.current.delete(previewUrl);
-      if (mountedRef.current) {
-        setVoice({ status: "idle", elapsedMs: 0, error: "Voice read failed: " + formatError(error) });
-      }
-    }
-  }, [cleanupVoiceRecorder, clearVoiceTimer]);
-
-  const stopVoiceRecording = useCallback(() => {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
-      return;
-    }
-    const startedAt = recorderStartedAtRef.current;
-    const elapsedMs = Math.max(recorderElapsedMsRef.current, startedAt > 0 ? Date.now() - startedAt : 0);
-    recorderElapsedMsRef.current = elapsedMs;
-    setVoice({ status: "processing", elapsedMs });
-    recorder.stop();
-  }, []);
-
-  const cancelVoiceRecording = useCallback(() => {
-    recorderCancelRef.current = true;
-    const recorder = recorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
-      return;
-    }
-    cleanupVoiceRecorder();
-    setVoice(EMPTY_VOICE_RECORDING);
-  }, [cleanupVoiceRecorder]);
-
-  const startVoiceRecording = useCallback(async () => {
-    if (!interactive || messageBusy || voice.status !== "idle") {
-      return;
-    }
-    if (!voiceRecorderAvailable) {
-      setVoice({ status: "idle", elapsedMs: 0, error: "Voice recording is not available in this browser." });
-      return;
-    }
-
-    cleanupVoiceRecorder();
-    recorderCancelRef.current = false;
-    recorderChunksRef.current = [];
-    setVoice({ status: "requesting", elapsedMs: 0 });
-
-    try {
-      const stream = await requestVoiceStream();
-      if (!mountedRef.current || recorderCancelRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        recorderCancelRef.current = false;
-        if (mountedRef.current) {
-          setVoice(EMPTY_VOICE_RECORDING);
-        }
-        return;
-      }
-      const mimeType = selectVoiceRecorderMimeType();
-      const options: MediaRecorderOptions = { audioBitsPerSecond: VOICE_AUDIO_BITS_PER_SECOND };
-      if (mimeType) {
-        options.mimeType = mimeType;
-      }
-      const recorder = new MediaRecorder(stream, options);
-      recorderRef.current = recorder;
-      recorderStreamRef.current = stream;
-      recorderStartedAtRef.current = Date.now();
-      recorderElapsedMsRef.current = 0;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recorderChunksRef.current.push(event.data);
-        }
-      };
-      recorder.onerror = () => {
-        recorderCancelRef.current = true;
-        cleanupVoiceRecorder();
-        setVoice({ status: "idle", elapsedMs: 0, error: "Voice recording failed." });
-      };
-      recorder.onstop = () => {
-        void finishVoiceRecording();
-      };
-
-      recorder.start(1000);
-      recorderTimerRef.current = window.setInterval(() => {
-        const elapsedMs = Date.now() - recorderStartedAtRef.current;
-        recorderElapsedMsRef.current = elapsedMs;
-        setVoice((current) => current.status === "recording" ? { ...current, elapsedMs } : current);
-        if (elapsedMs >= MAX_VOICE_RECORDING_MS && recorderRef.current?.state === "recording") {
-          setVoice({ status: "processing", elapsedMs });
-          recorderRef.current.stop();
-        }
-      }, 250);
-      setVoice({ status: "recording", elapsedMs: 0 });
-    } catch (error) {
-      cleanupVoiceRecorder();
-      recorderCancelRef.current = false;
-      if (mountedRef.current) {
-        setVoice({ status: "idle", elapsedMs: 0, error: "Microphone failed: " + formatError(error) });
-      }
-    }
-  }, [cleanupVoiceRecorder, finishVoiceRecording, interactive, messageBusy, voice.status, voiceRecorderAvailable]);
-
-  const clearVoiceError = useCallback(() => {
-    setVoice(EMPTY_VOICE_RECORDING);
-  }, []);
+  const {
+    mediaSources,
+    mediaSourceErrors,
+    loadMediaSource,
+    retryMediaSource,
+  } = useMediaSources({ backend, activeRef, mountedRef, appendSystem });
 
   useEffect(() => {
     return () => {
       mountedRef.current = false;
-      recorderCancelRef.current = true;
-      cleanupVoiceRecorder();
       attachmentsRef.current.forEach(revokeAttachmentPreview);
       previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       previewUrlsRef.current.clear();
     };
-  }, [cleanupVoiceRecorder]);
-
-  const loadViewer = useCallback(async () => {
-    try {
-      const result = await backend.getViewer({});
-      const username = asString(asRecord(result)?.username)?.trim();
-      setViewerUsername(username || "You");
-    } catch {
-      setViewerUsername("You");
-    }
-  }, [backend]);
-
-  const loadProfiles = useCallback(async () => {
-    try {
-      const result = await backend.listProfiles({});
-      const profileRows = Array.isArray(asRecord(result)?.profiles) ? asRecord(result)?.profiles as unknown[] : [];
-      const normalized = profileRows.map(normalizeProfile).filter(Boolean) as Profile[];
-      setProfiles(normalized.length > 0 ? normalized : fallbackProfiles());
-    } catch {
-      setProfiles(fallbackProfiles());
-    }
-  }, [backend]);
-
-  const loadThreads = useCallback(async () => {
-    setThreadsLoading(true);
-    setThreadsError("");
-    try {
-      const result = await backend.listWorkspaces({ kind: "thread", limit: 64 });
-      const workspaceRows = Array.isArray(asRecord(result)?.workspaces) ? asRecord(result)?.workspaces as unknown[] : [];
-      setThreads(workspaceRows.map(normalizeWorkspace).filter(Boolean) as WorkspaceEntry[]);
-    } catch (error) {
-      setThreads([]);
-      setThreadsError(formatError(error));
-    } finally {
-      setThreadsLoading(false);
-    }
-  }, [backend]);
-
-  const loadConversations = useCallback(async (pid = activeRef.current?.pid || "") => {
-    if (!pid) {
-      setConversations([]);
-      return;
-    }
-    setConversationsLoading(true);
-    setConversationError("");
-    try {
-      const result = await backend.listConversations({ pid });
-      const conversationRows = Array.isArray(asRecord(result)?.conversations)
-        ? asRecord(result)?.conversations as unknown[]
-        : [];
-      setConversations(sortConversations(conversationRows.map(normalizeConversation).filter(Boolean) as ConversationRecord[]));
-    } catch (error) {
-      setConversations([]);
-      setConversationError(formatError(error));
-    } finally {
-      setConversationsLoading(false);
-    }
-  }, [backend]);
+  }, []);
 
   const loadHistory = useCallback(async (target = activeRef.current) => {
     if (!target?.pid) {
@@ -763,102 +405,6 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
   }, [appendSystem, backend, updateHistoryWindow]);
 
-  const loadArchiveSegments = useCallback(async (preserveSelection = true) => {
-    const target = activeRef.current;
-    if (!target?.pid) {
-      setArchive(EMPTY_ARCHIVE);
-      return;
-    }
-    setArchive((current) => ({ ...current, loading: true, error: "" }));
-    try {
-      const result = await backend.listConversationSegments({
-        pid: target.pid,
-        conversationId: target.conversationId || "default",
-      });
-      const record = asRecord(result);
-      if (!record?.ok) {
-        setArchive((current) => ({ ...current, loading: false, error: safeText(record?.error || "archive load failed"), segments: [] }));
-        return;
-      }
-      const segments = (Array.isArray(record.segments) ? record.segments : [])
-        .map(normalizeConversationSegment)
-        .filter(Boolean)
-        .reverse() as ConversationSegment[];
-      let selected = preserveSelection ? archive.selectedSegmentId : null;
-      if (!selected || !segments.some((segment) => segment.id === selected)) {
-        selected = segments[0]?.id ?? null;
-      }
-      setArchive((current) => ({
-        ...current,
-        loading: false,
-        error: "",
-        segments,
-        selectedSegmentId: selected,
-        messages: selected ? current.messages : [],
-        messageCount: selected ? current.messageCount : 0,
-        truncated: selected ? current.truncated : false,
-      }));
-      if (selected) {
-        await readArchiveSegment(selected);
-      }
-    } catch (error) {
-      setArchive((current) => ({ ...current, loading: false, error: formatError(error), segments: [] }));
-    }
-  }, [archive.selectedSegmentId, backend]);
-
-  const readArchiveSegment = useCallback(async (segmentId: string) => {
-    const target = activeRef.current;
-    if (!target?.pid || !segmentId) {
-      return;
-    }
-    setArchive((current) => ({
-      ...current,
-      loading: true,
-      error: "",
-      selectedSegmentId: segmentId,
-      messages: [],
-      messageCount: 0,
-      truncated: false,
-    }));
-    try {
-      const result = await backend.readConversationSegment({
-        pid: target.pid,
-        conversationId: target.conversationId || "default",
-        segmentId,
-        limit: 100,
-      });
-      const record = asRecord(result);
-      if (!record?.ok) {
-        setArchive((current) => ({ ...current, loading: false, error: safeText(record?.error || "segment read failed") }));
-        return;
-      }
-      const messages = Array.isArray(record.messages) ? record.messages : [];
-      setArchive((current) => ({
-        ...current,
-        loading: false,
-        error: "",
-        selectedSegmentId: segmentId,
-        messages,
-        messageCount: asNumber(record.messageCount) ?? messages.length,
-        truncated: record.truncated === true,
-      }));
-    } catch (error) {
-      setArchive((current) => ({ ...current, loading: false, error: formatError(error) }));
-    }
-  }, [backend]);
-
-  useEffect(() => {
-    void loadViewer();
-    void loadProfiles();
-    void loadThreads();
-  }, [loadProfiles, loadThreads, loadViewer]);
-
-  useEffect(() => {
-    if (newConversationProfiles.length > 0 && !newConversationProfiles.some((profile) => profile.id === draftProfileId)) {
-      setDraftProfileId(newConversationProfiles[0].id);
-    }
-  }, [draftProfileId, newConversationProfiles]);
-
   useEffect(() => {
     if (active?.pid) {
       void backend.watchProcessSignals({ pid: active.pid }).catch((error) => setHostError(formatError(error)));
@@ -874,7 +420,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       };
     }
     void backend.unwatchProcessSignals({ pid: "" }).catch(() => {});
-    setConversations([]);
+    void loadConversations("");
     setRows(systemRows(draftConversationMeta(draftProfile)));
     return undefined;
   }, [active?.pid, active?.conversationId, backend, draftProfile, loadConversations, loadHistory]);
@@ -889,157 +435,31 @@ export function App({ backend }: { backend: ChatBackend }) {
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, []);
 
-  useEffect(() => {
-    function handleTargetEvent(event: Event) {
-      const detail = asRecord((event as CustomEvent).detail);
-      if (!detail) {
-        return;
-      }
-      const targetWindowId = asString(detail.windowId)?.trim() || "";
-      if (WINDOW_ID && targetWindowId && targetWindowId !== WINDOW_ID) {
-        return;
-      }
-      const next = normalizeThreadContext(detail);
-      if (next) {
-        setActive(next);
-      }
-    }
+  useTargetProcessEvent(setActive);
 
-    try {
-      const store = window.parent?.[PENDING_TARGETS_KEY as keyof Window];
-      if (WINDOW_ID && store instanceof Map && store.has(WINDOW_ID)) {
-        const pending = normalizeThreadContext(store.get(WINDOW_ID));
-        store.delete(WINDOW_ID);
-        if (pending) {
-          setActive(pending);
-        }
-      }
-      window.parent?.addEventListener(TARGET_CHAT_PROCESS_EVENT, handleTargetEvent);
-    } catch {
-      // Ignore parent access issues outside the desktop shell.
-    }
-    return () => {
-      try {
-        window.parent?.removeEventListener(TARGET_CHAT_PROCESS_EVENT, handleTargetEvent);
-      } catch {}
-    };
-  }, [setActive]);
-
-  useEffect(() => {
-    return onAppEvent((signal, payload) => {
-      const target = activeRef.current;
-      if (!target) {
-        return;
-      }
-      if (signal === "process.message") {
-        if (!signalMatchesActiveThread(payload, target)) {
-          return;
-        }
-        prepareForLiveTranscriptActivity();
-        applyProcessMessageSignal(payload, target, setRows, setPendingAssistant);
-      } else if (signal === "process.context") {
-        const next = normalizeContextSignal(payload, target);
-        if (next) {
-          setContextStatesByConversation((current) => ({ ...current, [next.conversationId]: next }));
-          setContextState(next);
-          setMessageCount((current) => next.messageCount ?? current);
-          setHistoryWindow((current) => {
-            if (current.targetKey !== historyTargetKey(target)) {
-              return current;
-            }
-            const newestMessageId = typeof next.lastMessageId === "number" ? next.lastMessageId : current.newestMessageId;
-            const updated = { ...current, newestMessageId };
-            historyWindowRef.current = updated;
-            return updated;
-          });
-          if (next.runId && typeof next.lastMessageId === "number") {
-            setRows((current) => {
-              for (let index = current.length - 1; index >= 0; index -= 1) {
-                const row = current[index];
-                if (row.kind === "message" && row.role === "assistant" && row.runId === next.runId && !row.messageId) {
-                  const updated = current.slice();
-                  updated[index] = { ...row, messageId: next.lastMessageId };
-                  return updated;
-                }
-              }
-              return current;
-            });
-          }
-        }
-      } else if (signal === "process.lifecycle") {
-        const record = asRecord(payload);
-        const pid = asString(record?.pid);
-        if (pid && pid !== target.pid) {
-          return;
-        }
-        const event = asString(record?.event);
-        if (event === "conversation.compacted" || event === "conversation.forked" || event === "conversation.auto_compacted") {
-          void loadConversations(target.pid);
-          void loadHistory(target);
-          if (event === "conversation.compacted" || event === "conversation.auto_compacted" || workspaceView === "archive") {
-            void loadArchiveSegments(true);
-          }
-        }
-      } else if (signal === "chat.tool_call") {
-        if (!signalMatchesActiveThread(payload, target)) {
-          return;
-        }
-        prepareForLiveTranscriptActivity();
-        setPendingHil(null);
-        setPendingAssistant("tool");
-        applyToolCallSignal(payload, target, setRows);
-      } else if (signal === "chat.tool_result") {
-        if (!signalMatchesActiveThread(payload, target)) {
-          return;
-        }
-        prepareForLiveTranscriptActivity();
-        applyToolResultSignal(payload, target, setRows);
-        setPendingAssistant("thinking");
-      } else if (signal === "chat.text") {
-        if (!signalMatchesActiveThread(payload, target)) {
-          return;
-        }
-        prepareForLiveTranscriptActivity();
-        applyAssistantSignal(payload, target, setRows);
-        setPendingAssistant(null);
-      } else if (signal === "chat.complete") {
-        if (!signalMatchesActiveThread(payload, target)) {
-          return;
-        }
-        const record = asRecord(payload);
-        setPendingHil(null);
-        setPendingAssistant((current) => {
-          if (record?.aborted === true && suppressNextAbortedComplete) {
-            return current;
-          }
-          return null;
-        });
-        setSuppressNextAbortedComplete(false);
-        const errorText = asString(record?.error);
-        if (errorText) {
-          prepareForLiveTranscriptActivity();
-          appendSystem(errorText);
-        }
-        void loadThreads();
-      } else if (signal === "chat.hil") {
-        if (!signalMatchesActiveThread(payload, target)) {
-          return;
-        }
-        prepareForLiveTranscriptActivity();
-        setPendingAssistant(null);
-        setPendingHil(normalizeHilRequest(payload));
-      } else if (signal === "chat.error" || signal === "process.exit") {
-        setPendingAssistant(null);
-        setPendingHil(null);
-        setSuppressNextAbortedComplete(false);
-        void loadThreads();
-      }
-    });
-  }, [appendSystem, loadArchiveSegments, loadConversations, loadHistory, loadThreads, prepareForLiveTranscriptActivity, suppressNextAbortedComplete, workspaceView]);
+  useProcessSignals({
+    activeRef,
+    appendSystem,
+    loadArchiveSegments,
+    loadConversations,
+    loadHistory,
+    loadThreads,
+    onContextMessageId: updateNewestHistoryMessageId,
+    prepareForLiveTranscriptActivity,
+    setContextState,
+    setContextStatesByConversation,
+    setMessageCount,
+    setPendingAssistant,
+    setPendingHil,
+    setRows,
+    setSuppressNextAbortedComplete,
+    suppressNextAbortedComplete,
+    workspaceView,
+  });
 
   useEffect(() => {
     scrollTranscript("near-bottom");
-  }, [rows.length, pendingAssistant, pendingHil]);
+  }, [rows.length, pendingAssistant, pendingHil, scrollTranscript]);
 
   async function openHome(): Promise<void> {
     setNotice("");
@@ -1372,67 +792,6 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
   }
 
-  function loadMediaSource(media: unknown): void {
-    const key = mediaSourceKey(media);
-    if (
-      !key
-      || mediaSourcesRef.current[key]
-      || mediaSourceLoadingRef.current.has(key)
-      || mediaSourceFailedRef.current.has(key)
-    ) {
-      return;
-    }
-    const targetPid = mediaOwnerPidFromKey(key) ?? activeRef.current?.pid ?? "";
-    if (!targetPid) {
-      return;
-    }
-
-    const record = asRecord(media);
-    const mimeType = asString(record?.mimeType) || undefined;
-    mediaSourceLoadingRef.current.add(key);
-    backend.readProcessMedia({ pid: targetPid, key, mimeType })
-      .then((result) => {
-        const response = asRecord(result);
-        const dataUrl = asString(response?.dataUrl);
-        if (!mountedRef.current) {
-          return;
-        }
-        if (!response?.ok || !dataUrl) {
-          const error = safeText(response?.error || "media load failed");
-          mediaSourceFailedRef.current.add(key);
-          setMediaSourceErrors((current) => current[key] === error ? current : { ...current, [key]: error });
-          return;
-        }
-        mediaSourceFailedRef.current.delete(key);
-        setMediaSourceErrors((current) => removeRecordKey(current, key));
-        setMediaSources((current) => {
-          if (current[key] === dataUrl) {
-            return current;
-          }
-          return { ...current, [key]: dataUrl };
-        });
-      })
-      .catch((error) => {
-        const message = formatError(error);
-        mediaSourceFailedRef.current.add(key);
-        setMediaSourceErrors((current) => current[key] === message ? current : { ...current, [key]: message });
-        appendSystem("media load failed: " + message);
-      })
-      .finally(() => {
-        mediaSourceLoadingRef.current.delete(key);
-      });
-  }
-
-  function retryMediaSource(media: unknown): void {
-    const key = mediaSourceKey(media);
-    if (!key) {
-      return;
-    }
-    mediaSourceFailedRef.current.delete(key);
-    setMediaSourceErrors((current) => removeRecordKey(current, key));
-    loadMediaSource(media);
-  }
-
   function removeAttachment(index: number): void {
     setAttachments((current) => {
       const removed = current[index];
@@ -1441,23 +800,6 @@ export function App({ backend }: { backend: ChatBackend }) {
       }
       return current.filter((_, itemIndex) => itemIndex !== index);
     });
-  }
-
-  function scrollTranscript(mode: "bottom" | "near-bottom"): void {
-    const node = transcriptRef.current;
-    if (!node) {
-      return;
-    }
-    if (mode === "near-bottom" && !stickToBottomRef.current && !isNearBottom(node)) {
-      return;
-    }
-    node.scrollTop = node.scrollHeight;
-    stickToBottomRef.current = true;
-    clearNewMessages();
-  }
-
-  function jumpToLatest(): void {
-    scrollTranscript("bottom");
   }
 
   return (

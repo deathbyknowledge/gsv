@@ -1,0 +1,185 @@
+import { useEffect } from "preact/hooks";
+import { onAppEvent } from "@gsv/package/browser";
+import type {
+  ContextState,
+  HilRequest,
+  LogRow,
+  PendingAssistantState,
+  ThreadContext,
+  WorkspaceView,
+} from "../types";
+import {
+  applyAssistantSignal,
+  applyProcessMessageSignal,
+  applyToolCallSignal,
+  applyToolResultSignal,
+  asRecord,
+  asString,
+  normalizeContextSignal,
+  normalizeHilRequest,
+  signalMatchesActiveThread,
+} from "../view-helpers";
+
+type Setter<T> = (value: T | ((current: T) => T)) => void;
+
+export function useProcessSignals({
+  activeRef,
+  appendSystem,
+  loadArchiveSegments,
+  loadConversations,
+  loadHistory,
+  loadThreads,
+  onContextMessageId,
+  prepareForLiveTranscriptActivity,
+  setContextState,
+  setContextStatesByConversation,
+  setMessageCount,
+  setPendingAssistant,
+  setPendingHil,
+  setRows,
+  setSuppressNextAbortedComplete,
+  suppressNextAbortedComplete,
+  workspaceView,
+}: {
+  activeRef: { current: ThreadContext | null };
+  appendSystem(text: string): void;
+  loadArchiveSegments(preserveSelection?: boolean): Promise<void>;
+  loadConversations(pid: string): Promise<void>;
+  loadHistory(target?: ThreadContext | null): Promise<void>;
+  loadThreads(): Promise<void>;
+  onContextMessageId(target: ThreadContext, messageId: number): void;
+  prepareForLiveTranscriptActivity(): void;
+  setContextState: Setter<ContextState | null>;
+  setContextStatesByConversation: Setter<Record<string, ContextState>>;
+  setMessageCount: Setter<number>;
+  setPendingAssistant: Setter<PendingAssistantState>;
+  setPendingHil: Setter<HilRequest | null>;
+  setRows: Setter<LogRow[]>;
+  setSuppressNextAbortedComplete: Setter<boolean>;
+  suppressNextAbortedComplete: boolean;
+  workspaceView: WorkspaceView;
+}) {
+  useEffect(() => {
+    return onAppEvent((signal, payload) => {
+      const target = activeRef.current;
+      if (!target) {
+        return;
+      }
+      if (signal === "process.message") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        prepareForLiveTranscriptActivity();
+        applyProcessMessageSignal(payload, target, setRows, setPendingAssistant);
+      } else if (signal === "process.context") {
+        const next = normalizeContextSignal(payload, target);
+        if (next) {
+          setContextStatesByConversation((current) => ({ ...current, [next.conversationId]: next }));
+          setContextState(next);
+          setMessageCount((current) => next.messageCount ?? current);
+          if (typeof next.lastMessageId === "number") {
+            onContextMessageId(target, next.lastMessageId);
+          }
+          if (next.runId && typeof next.lastMessageId === "number") {
+            setRows((current) => {
+              for (let index = current.length - 1; index >= 0; index -= 1) {
+                const row = current[index];
+                if (row.kind === "message" && row.role === "assistant" && row.runId === next.runId && !row.messageId) {
+                  const updated = current.slice();
+                  updated[index] = { ...row, messageId: next.lastMessageId };
+                  return updated;
+                }
+              }
+              return current;
+            });
+          }
+        }
+      } else if (signal === "process.lifecycle") {
+        const record = asRecord(payload);
+        const pid = asString(record?.pid);
+        if (pid && pid !== target.pid) {
+          return;
+        }
+        const event = asString(record?.event);
+        if (event === "conversation.compacted" || event === "conversation.forked" || event === "conversation.auto_compacted") {
+          void loadConversations(target.pid);
+          void loadHistory(target);
+          if (event === "conversation.compacted" || event === "conversation.auto_compacted" || workspaceView === "archive") {
+            void loadArchiveSegments(true);
+          }
+        }
+      } else if (signal === "chat.tool_call") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        prepareForLiveTranscriptActivity();
+        setPendingHil(null);
+        setPendingAssistant("tool");
+        applyToolCallSignal(payload, target, setRows);
+      } else if (signal === "chat.tool_result") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        prepareForLiveTranscriptActivity();
+        applyToolResultSignal(payload, target, setRows);
+        setPendingAssistant("thinking");
+      } else if (signal === "chat.text") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        prepareForLiveTranscriptActivity();
+        applyAssistantSignal(payload, target, setRows);
+        setPendingAssistant(null);
+      } else if (signal === "chat.complete") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        const record = asRecord(payload);
+        setPendingHil(null);
+        setPendingAssistant((current) => {
+          if (record?.aborted === true && suppressNextAbortedComplete) {
+            return current;
+          }
+          return null;
+        });
+        setSuppressNextAbortedComplete(false);
+        const errorText = asString(record?.error);
+        if (errorText) {
+          prepareForLiveTranscriptActivity();
+          appendSystem(errorText);
+        }
+        void loadThreads();
+      } else if (signal === "chat.hil") {
+        if (!signalMatchesActiveThread(payload, target)) {
+          return;
+        }
+        prepareForLiveTranscriptActivity();
+        setPendingAssistant(null);
+        setPendingHil(normalizeHilRequest(payload));
+      } else if (signal === "chat.error" || signal === "process.exit") {
+        setPendingAssistant(null);
+        setPendingHil(null);
+        setSuppressNextAbortedComplete(false);
+        void loadThreads();
+      }
+    });
+  }, [
+    activeRef,
+    appendSystem,
+    loadArchiveSegments,
+    loadConversations,
+    loadHistory,
+    loadThreads,
+    onContextMessageId,
+    prepareForLiveTranscriptActivity,
+    setContextState,
+    setContextStatesByConversation,
+    setMessageCount,
+    setPendingAssistant,
+    setPendingHil,
+    setRows,
+    setSuppressNextAbortedComplete,
+    suppressNextAbortedComplete,
+    workspaceView,
+  ]);
+}

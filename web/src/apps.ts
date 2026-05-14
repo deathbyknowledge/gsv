@@ -1,1 +1,1 @@
-export type { AppCapability, AppIcon, AppManifest, AppWindowDefaults, DesktopIconId } from "./app-sdk";
+export type { AppCapability, AppIcon, AppManifest, AppWindowDefaults } from "./app-sdk";

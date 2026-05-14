@@ -1,0 +1,442 @@
+.gsv-devices {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.gsv-devices-list-pane,
+.gsv-device-detail {
+  min-width: 0;
+}
+
+.gsv-devices-list-head,
+.gsv-device-detail-head,
+.gsv-device-access-head,
+.gsv-command-block header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.gsv-devices-list-head {
+  padding: 0.75rem;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.gsv-devices-list-head h3,
+.gsv-device-detail-head h3,
+.gsv-command-block h4,
+.gsv-capability-group h4 {
+  margin: 0.25rem 0 0;
+}
+
+.gsv-devices-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8rem;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.gsv-runtime-search select,
+.gsv-provision-form input,
+.gsv-provision-form select {
+  width: 100%;
+  min-width: 0;
+  height: 2.35rem;
+  padding: 0 0.65rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 6px;
+  background: #fbfcfd;
+  color: #15191f;
+}
+
+.gsv-devices-list,
+.gsv-token-list {
+  display: grid;
+  min-width: 0;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.gsv-device-row,
+.gsv-token-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+  min-height: 4.1rem;
+  padding: 0.78rem 0.85rem;
+  border: 0;
+  border-bottom: 1px solid #edf0f4;
+  background: #ffffff;
+  text-align: left;
+}
+
+.gsv-token-row {
+  border-bottom: 1px solid #edf0f4;
+}
+
+.gsv-device-row:last-child,
+.gsv-token-row:last-child {
+  border-bottom: 0;
+}
+
+.gsv-device-row:hover,
+.gsv-device-row.is-selected {
+  background: #f4f7fb;
+}
+
+.gsv-device-detail {
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.gsv-device-detail-head {
+  padding: 0.95rem;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.gsv-device-detail-head p {
+  margin: 0.35rem 0 0;
+  color: #687384;
+  font-size: 0.84rem;
+}
+
+.gsv-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.gsv-local-tabs {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid #edf0f4;
+  overflow-x: auto;
+}
+
+.gsv-local-tabs button {
+  flex: 0 0 auto;
+  min-height: 2rem;
+  padding: 0 0.65rem;
+  border: 1px solid #d6dce5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5565;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.gsv-local-tabs button.is-active {
+  border-color: #bac7e5;
+  background: #e8eefb;
+  color: #172033;
+}
+
+.gsv-device-tab {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+}
+
+.gsv-device-note {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.gsv-device-note label,
+.gsv-provision-form label,
+.gsv-command-block {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.gsv-device-note span,
+.gsv-provision-form span {
+  color: #687384;
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.gsv-device-note textarea,
+.gsv-command-block textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 5.5rem;
+  resize: vertical;
+  padding: 0.65rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 6px;
+  background: #fbfcfd;
+  color: #15191f;
+  font: inherit;
+}
+
+.gsv-device-note-actions,
+.gsv-device-access-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: #687384;
+  font-size: 0.8rem;
+}
+
+.gsv-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.gsv-device-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.gsv-device-fact,
+.gsv-device-capability-indicator {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 1.85rem;
+  gap: 0.35rem;
+  padding: 0.18rem 0.52rem;
+  border: 1px solid #dce2ea;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #566273;
+  font-size: 0.76rem;
+  line-height: 1;
+}
+
+.gsv-device-fact span,
+.gsv-device-capability-indicator span {
+  color: #687384;
+  font-weight: 700;
+}
+
+.gsv-device-fact strong,
+.gsv-device-capability-indicator strong {
+  min-width: 0;
+  color: #1b2028;
+  overflow-wrap: anywhere;
+}
+
+.gsv-device-fact.is-good,
+.gsv-device-capability-indicator.is-available {
+  border-color: #b8ddcf;
+  background: #f0fbf6;
+}
+
+.gsv-device-fact.is-warning,
+.gsv-device-capability-indicator.is-unavailable {
+  border-color: #ecd39c;
+  background: #fff8e9;
+}
+
+.gsv-info-box {
+  min-width: 0;
+  padding: 0.7rem;
+  border: 1px solid #e1e6ee;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.gsv-info-box span {
+  display: block;
+  color: #687384;
+  font-size: 0.72rem;
+  font-weight: 750;
+  margin-bottom: 0.25rem;
+}
+
+.gsv-info-box strong {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gsv-capability-groups {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.gsv-capability-group {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid #e1e6ee;
+  border-radius: 8px;
+}
+
+.gsv-capability-group header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: #687384;
+  font-size: 0.78rem;
+}
+
+.gsv-capability-group div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.gsv-capability-group code,
+.gsv-detail-list code {
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  background: #eef1f5;
+}
+
+.gsv-health-banner {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border: 1px solid #e1e6ee;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.gsv-health-banner.is-ready {
+  border-color: #b8ddcf;
+  background: #f0fbf6;
+}
+
+.gsv-health-banner.is-warning {
+  border-color: #ecd39c;
+  background: #fff8e9;
+}
+
+.gsv-provision-form,
+.gsv-provision-output {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem;
+}
+
+.gsv-command-block {
+  padding: 0.75rem;
+  border: 1px solid #e1e6ee;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.gsv-command-block textarea {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  min-height: 6.5rem;
+}
+
+@media (max-width: 839px) {
+  .gsv-devices {
+    grid-template-columns: 1fr;
+  }
+
+  .gsv-devices.is-fleet-view .gsv-device-detail {
+    display: none;
+  }
+
+  .gsv-devices.is-detail-view .gsv-devices-list-pane {
+    display: none;
+  }
+
+  .gsv-device-detail-head {
+    display: grid;
+  }
+
+  .gsv-device-actions,
+  .gsv-device-access-head {
+    justify-content: flex-start;
+  }
+
+  .gsv-device-actions {
+    width: 100%;
+  }
+
+  .gsv-mini-button,
+  .gsv-action-button,
+  .gsv-action-control,
+  .gsv-runtime-search input,
+  .gsv-runtime-search select,
+  .gsv-provision-form input,
+  .gsv-provision-form select {
+    min-height: 2.75rem;
+    font-size: 16px;
+  }
+
+  .gsv-runtime-search input,
+  .gsv-runtime-search select,
+  .gsv-provision-form input,
+  .gsv-provision-form select {
+    height: 2.75rem;
+  }
+
+  .gsv-local-tabs button {
+    min-height: 2.65rem;
+    padding: 0 0.85rem;
+  }
+
+  .gsv-device-row {
+    min-height: 4.5rem;
+    padding: 0.9rem;
+  }
+
+  .gsv-token-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 0.65rem;
+    padding: 0.9rem;
+  }
+
+  .gsv-token-row > .gsv-mark {
+    display: none;
+  }
+
+  .gsv-token-row .gsv-mini-button,
+  .gsv-token-row .gsv-action-control {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 520px) {
+  .gsv-devices-filters,
+  .gsv-summary-grid,
+  .gsv-detail-list > div {
+    grid-template-columns: 1fr;
+  }
+
+  .gsv-device-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .gsv-token-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-device-fact,
+  .gsv-device-capability-indicator {
+    min-height: 2.25rem;
+  }
+
+  .gsv-row-meta {
+    grid-column: 2;
+  }
+}

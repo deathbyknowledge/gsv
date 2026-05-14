@@ -264,6 +264,7 @@ export type SysDeviceListArgs = {
 export type SysDeviceSummary = {
   deviceId: string;
   ownerUid: number;
+  ownerUsername: string | null;
   description: string;
   platform: string;
   version: string;

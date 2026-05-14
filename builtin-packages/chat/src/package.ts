@@ -4,6 +4,7 @@ export default definePackage({
   meta: {
     displayName: "Chat",
     description: "Conversational workspace with agents.",
+    icon: "icon.svg",
     window: {
       width: 1080,
       height: 760,
@@ -32,7 +33,20 @@ export default definePackage({
   },
   browser: {
     entry: "./src/app/main.tsx",
-    assets: ["./src/styles.css"],
+    assets: [
+      "./src/styles.css",
+      "./src/styles/base.css",
+      "./src/styles/navigation.css",
+      "./src/styles/archive.css",
+      "./src/styles/stage.css",
+      "./src/styles/transcript.css",
+      "./src/styles/media.css",
+      "./src/styles/composer.css",
+      "./src/styles/tools.css",
+      "./src/styles/composer-controls.css",
+      "./src/styles/modal.css",
+      "./src/styles/responsive.css",
+    ],
   },
   backend: {
     entry: "./src/backend.ts",

@@ -9,8 +9,8 @@ can open the Desktop in your browser.
 
 ## 1. Open the Adapter UI
 
-The Desktop is made of package apps. Open **Packages** if you need to verify the
-built-in apps are installed, then open **Adapters**.
+The Desktop is made of package apps. Open **GSV > Packages** if you need to
+verify the built-in apps are installed, then open **GSV > Integrations**.
 
 If adapter Workers were not deployed yet, deploy them from the CLI:
 
@@ -23,7 +23,7 @@ Deploying everything with `gsv infra deploy --all` includes both adapter Workers
 
 ## 2. Connect WhatsApp
 
-In **Adapters**:
+In **GSV > Integrations**:
 
 1. Select **WhatsApp**.
 2. Use account id `primary` unless you need multiple WhatsApp accounts.
@@ -43,7 +43,7 @@ Create a Discord bot in the Discord Developer Portal:
 3. Enable **Message Content Intent** when the bot needs to read message text.
 4. Invite the bot to the server where you want to use it.
 
-In **Adapters**:
+In **GSV > Integrations**:
 
 1. Select **Discord**.
 2. Use account id `main` unless you need multiple bot accounts.
@@ -59,11 +59,11 @@ The normal flow is:
 
 1. Send a message from WhatsApp or Discord.
 2. Copy the one-time link code returned by the adapter.
-3. Open **Control**, then **Access**.
+3. Open **GSV > Access**.
 4. Redeem the code under **Identity links**.
 5. Send another message from the external account.
 
-Root users can also create links manually in the same **Control** panel when
+Root users can also create links manually in the same **Access** section when
 they know the adapter, account id, actor id, and target uid.
 
 ## 5. CLI Fallback
@@ -87,10 +87,9 @@ gsv auth link CODE
 
 ## Troubleshooting
 
-- If **Adapters** is missing, open **Packages** and sync built-in packages, or run
-  `gsv packages sync`.
+- If **GSV** is missing, run `gsv packages sync` from the CLI.
 - If WhatsApp does not show a QR code, reconnect with the force option enabled.
 - If Discord stays offline, check the bot token, invite permissions, Gateway
   status, and Message Content Intent.
-- If messages are ignored, open **Control** and confirm the external actor is
+- If messages are ignored, open **GSV > Access** and confirm the external actor is
   linked to the intended user.

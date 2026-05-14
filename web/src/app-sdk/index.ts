@@ -4,7 +4,6 @@ export type {
   AppIcon,
   AppManifest,
   AppWindowDefaults,
-  DesktopIconId,
 } from "./manifest";
 export { defineAppManifest } from "./manifest";
 

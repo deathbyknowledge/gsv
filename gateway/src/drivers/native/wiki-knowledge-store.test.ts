@@ -385,18 +385,17 @@ describe("WikiKnowledgeStore", () => {
     expect(candidate.exists).toBe(true);
     expect(candidate.markdown).toContain("Suggested target: personal/pages/alice.md");
 
-    const query = await store.query({
+    const search = await store.search({
       query: "alpha adapters",
-      prefixes: ["projects"],
+      prefix: "projects",
     });
 
-    expect(query.refs).toEqual([
+    expect(search.matches.map((match) => ({ path: match.path, title: match.title }))).toEqual([
       {
         path: "projects/alpha.md",
         title: "Project Alpha",
       },
     ]);
-    expect(query.brief).toContain("Project Alpha");
-    expect(query.brief).toContain("Focus is adapters UX");
+    expect(search.matches[0]?.snippet).toContain("Project Alpha");
   });
 });

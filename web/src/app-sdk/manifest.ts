@@ -1,8 +1,6 @@
-export type DesktopIconId = "chat" | "shell" | "devices" | "files" | "control" | "processes" | "packages";
-
 export type AppIcon =
-  | { kind: "builtin"; id: DesktopIconId }
-  | { kind: "svg"; svg: string };
+  | { kind: "svg"; svg: string }
+  | { kind: "fallback"; label: string };
 
 export type AppCapability =
   | "chat.use"
@@ -62,6 +60,9 @@ function assertManifest(manifest: AppManifest): void {
   }
   if (manifest.icon.kind === "svg" && manifest.icon.svg.trim().length === 0) {
     throw new Error(`App manifest "${manifest.id}" has empty svg icon`);
+  }
+  if (manifest.icon.kind === "fallback" && manifest.icon.label.trim().length === 0) {
+    throw new Error(`App manifest "${manifest.id}" has empty fallback icon label`);
   }
 
   if (manifest.entrypoint.kind === "component") {

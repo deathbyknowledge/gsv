@@ -88,20 +88,6 @@ export async function runWikiCommand(ctx: CommandContext): Promise<string> {
       return formatKnowledgeSearch(result.matches);
     }
 
-    case "query": {
-      const query = String(rest[0] ?? "").trim();
-      if (!query) {
-        throw new Error("Usage: wiki query <query> [--prefix PREFIX ...] [--limit N] [--max-bytes N]");
-      }
-      const result = await store.query({
-        query,
-        prefixes: findFlagValues(rest.slice(1), "--prefix"),
-        limit: parseOptionalInteger(findFlagValue(rest.slice(1), "--limit")),
-        maxBytes: parseOptionalInteger(findFlagValue(rest.slice(1), "--max-bytes")),
-      });
-      return formatKnowledgeQuery(result.brief, result.refs);
-    }
-
     case "ingest": {
       const db = String(rest[0] ?? "").trim();
       if (!db) {
@@ -294,13 +280,6 @@ function formatKnowledgeSearch(matches: Array<{ path: string; title?: string; sn
   return `${lines.join("\n")}\n`;
 }
 
-function formatKnowledgeQuery(brief: string, refs: Array<{ path: string; title?: string }>): string {
-  const refLines = refs.length > 0
-    ? `Refs:\n${refs.map((ref) => `- ${ref.path}${ref.title ? ` (${ref.title})` : ""}`).join("\n")}\n`
-    : "";
-  return `${brief.endsWith("\n") ? brief : `${brief}\n`}${refLines}`;
-}
-
 function firstPositional(args: string[]): string | undefined {
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
@@ -433,7 +412,6 @@ function wikiHelp(topic?: string): string {
     "  wiki section <set|append|delete> <path> <heading> [--text TEXT]",
     "  wiki source add <path> --source target:/absolute/path[::Title] [--source ...]",
     "  wiki search <query> [--prefix PREFIX] [--limit N]",
-    "  wiki query <query> [--prefix PREFIX ...] [--limit N] [--max-bytes N]",
     "  wiki ingest <db> --source target:/absolute/path[::Title] [--source ...]",
     "  wiki compile <db> <source-path> [target-path] [--title TITLE] [--keep-source]",
     "  wiki merge <source> <target> [--mode union|prefer-target|prefer-source] [--keep-source]",
@@ -443,7 +421,6 @@ function wikiHelp(topic?: string): string {
     "  wiki db init product --title \"Product Knowledge\"",
     "  wiki write product/pages/auth.md --text \"# Auth\"",
     "  wiki search auth --prefix product",
-    "  wiki query \"adapter routing\" --prefix product/pages",
     "",
   ].join("\n");
 }

@@ -1,0 +1,410 @@
+.gsv-admin {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.gsv-admin-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.gsv-admin-toolbar h3,
+.gsv-admin-panel-head h4,
+.gsv-admin-profile-strip strong,
+.gsv-admin-nav strong {
+  margin: 0;
+}
+
+.gsv-admin-toolbar h3 {
+  margin-top: 0.25rem;
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.gsv-admin-toolbar p,
+.gsv-admin-panel-head p,
+.gsv-admin-note,
+.gsv-admin-setting p,
+.gsv-admin-profile-strip span,
+.gsv-admin-nav span {
+  margin: 0.35rem 0 0;
+  color: #687384;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.gsv-admin-access,
+.gsv-admin-settings {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.gsv-admin-panel {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.gsv-admin-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.gsv-admin-panel-head h4 {
+  font-size: 0.98rem;
+  line-height: 1.25;
+}
+
+.gsv-admin-form-grid,
+.gsv-admin-settings-grid {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.gsv-admin-form-grid label,
+.gsv-admin-setting {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.gsv-admin-form-grid label > span,
+.gsv-admin-setting > label {
+  color: #687384;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.gsv-admin-form-grid input,
+.gsv-admin-form-grid select,
+.gsv-admin-setting input,
+.gsv-admin-setting select,
+.gsv-admin-setting textarea,
+.gsv-admin-inline-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cfd6e1;
+  border-radius: 6px;
+  background: #fbfcfd;
+  color: #15191f;
+}
+
+.gsv-admin-form-grid input,
+.gsv-admin-form-grid select,
+.gsv-admin-setting input,
+.gsv-admin-setting select,
+.gsv-admin-inline-form input {
+  height: 2.35rem;
+  padding: 0 0.65rem;
+}
+
+.gsv-admin-setting textarea,
+.gsv-admin-raw {
+  min-height: 7rem;
+  padding: 0.65rem;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.gsv-admin-setting input:disabled,
+.gsv-admin-setting select:disabled,
+.gsv-admin-setting textarea:disabled {
+  color: #7d8897;
+  background: #eef2f6;
+}
+
+.gsv-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gsv-admin-actions > span {
+  margin-right: auto;
+  color: #687384;
+  font-size: 0.78rem;
+}
+
+.gsv-admin-list {
+  display: grid;
+  min-width: 0;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.gsv-admin-record {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+  padding: 0.8rem;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.gsv-admin-record:last-child {
+  border-bottom: 0;
+}
+
+.gsv-admin-record > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.gsv-admin-record strong,
+.gsv-admin-record span,
+.gsv-admin-record code,
+.gsv-admin-record dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gsv-admin-record strong {
+  color: #202938;
+  font-size: 0.9rem;
+}
+
+.gsv-admin-record span {
+  color: #687384;
+  font-size: 0.8rem;
+}
+
+.gsv-admin-record dl {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.gsv-admin-record dl > div {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+.gsv-admin-record dt {
+  color: #687384;
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.gsv-admin-record dd {
+  margin: 0;
+  color: #202938;
+  font-size: 0.8rem;
+}
+
+.gsv-admin-inline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gsv-admin-secret {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid #c7d5ef;
+  border-radius: 8px;
+  background: #f4f7ff;
+  color: #263c66;
+}
+
+.gsv-admin-secret code {
+  display: block;
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid #d9e2f2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1b2028;
+  overflow-wrap: anywhere;
+}
+
+.gsv-admin-secret span,
+.gsv-admin-field-note {
+  color: #687384;
+  font-size: 0.78rem;
+}
+
+.gsv-admin-nav {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  border: 1px solid #dce2ea;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.gsv-admin-nav button,
+.gsv-admin-profile-strip button {
+  display: grid;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 0;
+  border-bottom: 1px solid #edf0f4;
+  background: #ffffff;
+  text-align: left;
+}
+
+.gsv-admin-nav button:last-child {
+  border-bottom: 0;
+}
+
+.gsv-admin-nav button:hover,
+.gsv-admin-nav button.is-active,
+.gsv-admin-profile-strip button:hover,
+.gsv-admin-profile-strip button.is-active {
+  background: #f4f7fb;
+}
+
+.gsv-admin-profile-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.gsv-admin-profile-strip button {
+  border-right: 1px solid #edf0f4;
+}
+
+.gsv-admin-profile-strip button:nth-child(2n),
+.gsv-admin-profile-strip button:last-child {
+  border-right: 0;
+}
+
+.gsv-admin-editor-stack {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.gsv-admin-raw {
+  width: 100%;
+  min-width: 0;
+  min-height: 18rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 6px;
+  background: #fbfcfd;
+  color: #15191f;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+}
+
+.gsv-admin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #202938;
+  font-size: 0.84rem;
+}
+
+.gsv-admin-toggle input {
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+}
+
+.gsv-admin-readonly {
+  min-height: 2.35rem;
+  padding: 0.6rem 0.65rem;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  background: #f0f3f7;
+  color: #525d6c;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 640px) {
+  .gsv-admin-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+
+  .gsv-admin-form-grid,
+  .gsv-admin-settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .gsv-admin-setting.is-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 920px) {
+  .gsv-admin-access {
+    grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr);
+    align-items: start;
+  }
+
+  .gsv-admin-settings {
+    grid-template-columns: 16rem minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .gsv-admin-nav {
+    position: sticky;
+    top: 0.75rem;
+  }
+
+  .gsv-admin-record {
+    grid-template-columns: minmax(8rem, 0.65fr) minmax(0, 1.35fr) auto;
+    align-items: center;
+  }
+}
+
+@media (max-width: 520px) {
+  .gsv-admin-toolbar,
+  .gsv-admin-panel {
+    padding: 0.75rem;
+  }
+
+  .gsv-admin-actions {
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .gsv-admin-actions > span {
+    margin-right: 0;
+  }
+
+  .gsv-admin-actions .gsv-mini-button,
+  .gsv-admin-actions .gsv-action-button,
+  .gsv-admin-inline-form .gsv-mini-button {
+    width: 100%;
+  }
+
+  .gsv-admin-inline-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gsv-admin-record dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.15rem;
+  }
+}

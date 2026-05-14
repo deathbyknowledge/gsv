@@ -41,7 +41,7 @@ gsv chat "Hello, what can you help me with?"
 ### Connect a Device
 Devices connected to your GSV user are reachable by your agents from anywhere on Earth.
 
-Easily add a device through the **Devices** app in the Web UI or do it directly from the CLI:
+Easily add a device through **GSV > Devices** in the Web UI or do it directly from the CLI:
 
 ```bash
 # Create a token for the device (make a note of it)
@@ -67,7 +67,7 @@ Now GSV can use the shell, read and write files on your machine.
 
 ### Adapters
 
-The easiest way to set up adapters is through the **Adapters** app in the Web UI.
+The easiest way to set up adapters is through **GSV > Integrations** in the Web UI.
 
 ### OS Model
 

@@ -5,6 +5,8 @@
   "dependencies": {
     "@gsv/package": "file:../../shared/package",
     "@gsv/protocol": "file:../../shared/protocol",
+    "dompurify": "^3.4.3",
+    "marked": "^16.3.0",
     "preact": "^10.27.2"
   }
 }

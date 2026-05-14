@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ArticleView } from "./article-view";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { WikiHeader } from "./components/header/wiki-header";
+import { WikiInspector } from "./components/navigation/wiki-inspector";
+import { WikiRail } from "./components/navigation/wiki-rail";
+import { BrowsePane } from "./components/panes/browse-pane";
+import { BuildPane } from "./components/panes/build-pane";
+import { EditPane } from "./components/panes/edit-pane";
+import { InboxPane } from "./components/panes/inbox-pane";
+import { IngestPane } from "./components/panes/ingest-pane";
 import { PreviewCard } from "./preview-card";
-import { buildEntryHref, extractHeadings, extractTitle, normalizePath } from "./markdown";
+import { useWikiPreview } from "./hooks/use-wiki-preview";
+import { extractHeadings, extractTitle, normalizePath } from "./markdown";
+import { readMode, readRoute, writeLocation } from "./domain/route";
+import { formatError, resolveTarget, slugifyDbId, suggestPagePath } from "./domain/wiki-model";
 import type {
   BuildStartArgs,
   WikiBackend,
   WikiMode,
   WikiMutationResult,
-  WikiPreviewPayload,
-  WikiPreviewRequest,
   WikiWorkspaceState,
 } from "./types";
 
@@ -21,8 +29,6 @@ const EMPTY_STATE: WikiWorkspaceState = {
   selectedNote: null,
   searchQuery: "",
   searchMatches: null,
-  queryText: "",
-  queryResult: null,
   errorText: "",
 };
 
@@ -35,10 +41,12 @@ export function App({ backend }: { backend: WikiBackend }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [searchDraft, setSearchDraft] = useState(route.q || "");
-  const [askDraft, setAskDraft] = useState(route.ask || "");
   const [editorPath, setEditorPath] = useState("");
   const [editorMarkdown, setEditorMarkdown] = useState("");
   const [newPageTitle, setNewPageTitle] = useState("");
+  const [newDatabaseOpen, setNewDatabaseOpen] = useState(false);
+  const [newDatabaseTitle, setNewDatabaseTitle] = useState("");
+  const [newDatabaseId, setNewDatabaseId] = useState("");
   const [buildTargetMode, setBuildTargetMode] = useState<"gsv" | "custom">("gsv");
   const [buildTargetCustom, setBuildTargetCustom] = useState("");
   const [buildSourcePath, setBuildSourcePath] = useState("");
@@ -52,14 +60,16 @@ export function App({ backend }: { backend: WikiBackend }) {
   const [ingestSourceTitle, setIngestSourceTitle] = useState("");
   const [ingestSummary, setIngestSummary] = useState("");
   const [ingestDb, setIngestDb] = useState("");
-  const [previewRect, setPreviewRect] = useState<DOMRect | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewPayload, setPreviewPayload] = useState<WikiPreviewPayload | null>(null);
-  const [previewError, setPreviewError] = useState("");
-  const [previewPinned, setPreviewPinned] = useState(false);
-  const previewToken = useRef(0);
-  const previewHideTimer = useRef<number | null>(null);
-  const previewPinnedRef = useRef(false);
+  const {
+    previewRect,
+    previewLoading,
+    previewPayload,
+    previewError,
+    previewPinned,
+    handleArticlePreviewOpen,
+    hidePreview,
+    keepPreviewOpen,
+  } = useWikiPreview(backend);
 
   useEffect(() => {
     void refresh(route);
@@ -71,8 +81,7 @@ export function App({ backend }: { backend: WikiBackend }) {
 
   useEffect(() => {
     setSearchDraft(route.q || "");
-    setAskDraft(route.ask || "");
-  }, [route.q, route.ask]);
+  }, [route.q]);
 
   useEffect(() => {
     if (state.selectedNote) {
@@ -96,8 +105,10 @@ export function App({ backend }: { backend: WikiBackend }) {
   }, [buildDestinationMode, buildDbTitle]);
 
   useEffect(() => {
-    previewPinnedRef.current = previewPinned;
-  }, [previewPinned]);
+    if (newDatabaseOpen && newDatabaseTitle && !newDatabaseId) {
+      setNewDatabaseId(slugifyDbId(newDatabaseTitle));
+    }
+  }, [newDatabaseOpen, newDatabaseTitle, newDatabaseId]);
 
   const currentTitle = state.selectedNote ? extractTitle(state.selectedNote.markdown || "", state.selectedPath || "Untitled") : "";
   const pageHeadings = useMemo(() => state.selectedNote ? extractHeadings(state.selectedNote.markdown || "") : [], [state.selectedNote]);
@@ -181,11 +192,22 @@ export function App({ backend }: { backend: WikiBackend }) {
     void refresh(nextRoute);
   }
 
-  function applyAsk(event: Event): void {
+  async function createDatabaseFlow(event: Event): Promise<void> {
     event.preventDefault();
-    const nextRoute = { ...route, ask: askDraft.trim() || undefined };
-    setRoute(nextRoute);
-    void refresh(nextRoute);
+    const dbTitle = newDatabaseTitle.trim();
+    const dbId = (newDatabaseId.trim() || slugifyDbId(dbTitle)).trim();
+    if (!dbId) {
+      setError("Name the database before creating it.");
+      return;
+    }
+    setMode("browse");
+    await runMutation(async () => {
+      const result = await backend.createDatabase({ dbId, dbTitle: dbTitle || undefined });
+      setNewDatabaseOpen(false);
+      setNewDatabaseTitle("");
+      setNewDatabaseId("");
+      return result;
+    });
   }
 
   async function saveCurrentPage(): Promise<void> {
@@ -281,207 +303,45 @@ export function App({ backend }: { backend: WikiBackend }) {
     await runMutation(() => backend.compileInboxNote({ db: selectedDb, sourcePath: selectedInboxPath }));
   }
 
-  const openPreview = useCallback(async (anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean): Promise<void> => {
-    if (previewHideTimer.current) {
-      window.clearTimeout(previewHideTimer.current);
-      previewHideTimer.current = null;
-    }
-    const token = previewToken.current + 1;
-    previewToken.current = token;
-    setPreviewRect(anchor.getBoundingClientRect());
-    setPreviewLoading(true);
-    setPreviewPayload(null);
-    setPreviewError("");
-    setPreviewPinned(pin);
-    previewPinnedRef.current = pin;
-    try {
-      const payload = await backend.previewContent(request);
-      if (previewToken.current !== token) return;
-      setPreviewPayload(payload);
-      setPreviewError(payload && payload.ok === false ? payload.error : "");
-    } catch (cause) {
-      if (previewToken.current !== token) return;
-      setPreviewError(formatError(cause));
-    } finally {
-      if (previewToken.current === token) {
-        setPreviewLoading(false);
-      }
-    }
-  }, [backend]);
-
-  const hidePreview = useCallback((force: boolean): void => {
-    if (previewHideTimer.current) {
-      window.clearTimeout(previewHideTimer.current);
-      previewHideTimer.current = null;
-    }
-    if (force) {
-      previewToken.current += 1;
-      setPreviewPinned(false);
-      previewPinnedRef.current = false;
-      setPreviewRect(null);
-      setPreviewLoading(false);
-      setPreviewPayload(null);
-      setPreviewError("");
-      return;
-    }
-    if (previewPinnedRef.current) {
-      return;
-    }
-    previewHideTimer.current = window.setTimeout(() => {
-      previewToken.current += 1;
-      setPreviewPinned(false);
-      previewPinnedRef.current = false;
-      setPreviewRect(null);
-      setPreviewLoading(false);
-      setPreviewPayload(null);
-      setPreviewError("");
-    }, 120);
-  }, []);
-
-  const handleArticlePreviewOpen = useCallback((anchor: HTMLElement, request: WikiPreviewRequest, pin: boolean): void => {
-    void openPreview(anchor, request, pin);
-  }, [openPreview]);
-
-  useEffect(() => {
-    if (!previewRect) {
-      return undefined;
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        hidePreview(true);
-      }
-    };
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!previewPinnedRef.current) {
-        return;
-      }
-      const target = event.target instanceof Element ? event.target : null;
-      if (!target || target.closest(".wiki-preview-card") || target.closest("[data-preview-kind]")) {
-        return;
-      }
-      hidePreview(true);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("pointerdown", handlePointerDown, true);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("pointerdown", handlePointerDown, true);
-    };
-  }, [hidePreview, previewRect]);
-
   return (
     <div class="wiki-shell">
-      <header class="wiki-header">
-        <div class="wiki-header-copy">
-          <h1>Wiki</h1>
-          <p>Browse knowledge, edit canonical pages, build from source directories, and review inbox material.</p>
-        </div>
-        <div class="wiki-mode-tabs">
-          {(["browse", "edit", "build", "ingest", "inbox"] as WikiMode[]).map((tab) => (
-            <button key={tab} type="button" class={`wiki-mode-tab${mode === tab ? " is-active" : ""}`} onClick={() => changeMode(tab)}>
-              {labelForMode(tab)}
-            </button>
-          ))}
-        </div>
-      </header>
+      <WikiHeader
+        mode={mode}
+        activeDb={activeDb}
+        selectedDb={selectedDb}
+        selectedPath={state.selectedPath}
+        currentTitle={currentTitle}
+        pageCount={state.pages.length}
+        inboxCount={state.inbox.length}
+      />
 
       <div class="wiki-layout">
-        <aside class="wiki-rail">
-          <section class="wiki-rail-section">
-            <h2>Databases</h2>
-            <div class="wiki-db-list">
-              {state.dbs.map((db) => (
-                <a
-                  key={db.id}
-                  href={buildWikiHref(mode, { ...route, db: db.id, path: db.id ? `${db.id}/index.md` : undefined })}
-                  class={`wiki-db-row${selectedDb === db.id ? " is-active" : ""}`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    openDb(db.id);
-                  }}
-                >
-                  <strong title={db.title || db.id}>{db.title || db.id}</strong>
-                  <span title={db.id}>{db.id}</span>
-                </a>
-              ))}
-              {state.dbs.length === 0 ? <div class="wiki-empty wiki-empty--compact">No databases yet.</div> : null}
-            </div>
-            {selectedDb ? (
-              <div class="wiki-current-context">
-                <span>Active source</span>
-                <strong title={activeDb?.title || selectedDb}>{activeDb?.title || selectedDb}</strong>
-                <code title={state.selectedPath || selectedDb}>{state.selectedPath || selectedDb}</code>
-              </div>
-            ) : null}
-          </section>
-
-          {(mode === "browse" || mode === "edit") ? (
-            <>
-              <section class="wiki-rail-section">
-                <h2>Search</h2>
-                <form class="wiki-inline-form" onSubmit={applySearch}>
-                  <input value={searchDraft} onInput={(event) => setSearchDraft((event.currentTarget as HTMLInputElement).value)} placeholder="Search pages" />
-                  <button type="submit">Search</button>
-                </form>
-                <form class="wiki-inline-form" onSubmit={applyAsk}>
-                  <input value={askDraft} onInput={(event) => setAskDraft((event.currentTarget as HTMLInputElement).value)} placeholder="Ask the wiki" />
-                  <button type="submit">Ask</button>
-                </form>
-              </section>
-              <section class="wiki-rail-section wiki-rail-section--fill">
-                <div class="wiki-section-head">
-                  <h2>{state.searchMatches ? "Matches" : "Pages"}</h2>
-                  <button type="button" class="wiki-link-button" onClick={() => setMode("edit")}>New page</button>
-                </div>
-                <div class="wiki-entry-list">
-                  {visiblePages.map((entry) => (
-                    <a
-                      key={entry.path}
-                      href={buildEntryHref("/apps/wiki", selectedDb, entry.path)}
-                      class={`wiki-entry-row${state.selectedPath === entry.path ? " is-active" : ""}`}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        openPage(entry.path);
-                      }}
-                    >
-                      <strong title={entry.title || displayTitleFromPath(entry.path)}>{entry.title || displayTitleFromPath(entry.path)}</strong>
-                      <span title={entry.path}>{entry.path}</span>
-                    </a>
-                  ))}
-                  {visiblePages.length === 0 ? (
-                    <div class="wiki-empty wiki-empty--compact">{state.searchMatches ? "No pages matched this search." : "No pages in this database yet."}</div>
-                  ) : null}
-                </div>
-              </section>
-            </>
-          ) : null}
-
-          {mode === "inbox" ? (
-            <section class="wiki-rail-section wiki-rail-section--fill">
-              <div class="wiki-section-head">
-                <h2>Inbox</h2>
-                <button type="button" class="wiki-link-button" onClick={() => void compileSelectedInbox()} disabled={mutating || !selectedInboxPath}>Compile</button>
-              </div>
-              <div class="wiki-entry-list">
-                {state.inbox.map((entry) => (
-                  <a
-                    key={entry.path}
-                    href={buildEntryHref("/apps/wiki", selectedDb, entry.path)}
-                    class={`wiki-entry-row${selectedInboxPath === entry.path ? " is-active" : ""}`}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      openInboxNote(entry.path);
-                    }}
-                  >
-                    <strong title={entry.title || displayTitleFromPath(entry.path)}>{entry.title || displayTitleFromPath(entry.path)}</strong>
-                    <span title={entry.path}>{entry.path}</span>
-                  </a>
-                ))}
-                {state.inbox.length === 0 ? <div class="wiki-empty wiki-empty--compact">Inbox is empty.</div> : null}
-              </div>
-            </section>
-          ) : null}
-        </aside>
+        <WikiRail
+          mode={mode}
+          onChangeMode={changeMode}
+          state={state}
+          route={route}
+          selectedDb={selectedDb}
+          activeDb={activeDb}
+          visiblePages={visiblePages}
+          selectedInboxPath={selectedInboxPath}
+          mutating={mutating}
+          searchDraft={searchDraft}
+          newDatabaseOpen={newDatabaseOpen}
+          newDatabaseTitle={newDatabaseTitle}
+          newDatabaseId={newDatabaseId}
+          onOpenDb={openDb}
+          onOpenPage={openPage}
+          onOpenInboxNote={openInboxNote}
+          onCompileSelectedInbox={compileSelectedInbox}
+          onNewPage={() => setMode("edit")}
+          onSearchDraftChange={setSearchDraft}
+          onApplySearch={applySearch}
+          onToggleCreateDatabase={() => setNewDatabaseOpen((open) => !open)}
+          onCreateDatabase={createDatabaseFlow}
+          onNewDatabaseTitleChange={setNewDatabaseTitle}
+          onNewDatabaseIdChange={setNewDatabaseId}
+        />
 
         <main class="wiki-main">
           {loading ? <div class="wiki-empty">Loading wiki…</div> : null}
@@ -491,238 +351,97 @@ export function App({ backend }: { backend: WikiBackend }) {
           {!loading ? (
             <>
               {mode === "browse" ? (
-                <section class="wiki-pane">
-                  <div class="wiki-pane-head">
-                    <div>
-                      <h2>{currentTitle || "Browse"}</h2>
-                      <p title={state.selectedPath || undefined}>{state.selectedPath || "Choose a page from navigation."}</p>
-                    </div>
-                  </div>
-                  {state.queryResult ? (
-                    <div class="wiki-query-result">
-                      <h3>Answer</h3>
-                      <p>{state.queryResult.brief || "No synthesized answer was available."}</p>
-                      {state.queryResult.refs.length > 0 ? (
-                        <div class="wiki-ref-list">
-                          {state.queryResult.refs.map((ref) => (
-                            <button key={ref.path} type="button" class="wiki-ref-row" onClick={() => openPage(ref.path)}>
-                              <strong title={ref.title || displayTitleFromPath(ref.path)}>{ref.title || displayTitleFromPath(ref.path)}</strong>
-                              <span title={ref.path}>{ref.path}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <ArticleView
-                    markdown={state.selectedNote?.markdown || ""}
-                    articleTitle={currentTitle || "Untitled"}
-                    routeBase="/apps/wiki"
-                    selectedDb={selectedDb}
-                    selectedPath={state.selectedPath}
-                    onNavigate={openPage}
-                    onPreviewOpen={handleArticlePreviewOpen}
-                    onPreviewHide={hidePreview}
-                  />
-                </section>
+                <BrowsePane
+                  state={state}
+                  currentTitle={currentTitle}
+                  selectedDb={selectedDb}
+                  onOpenPage={openPage}
+                  onPreviewOpen={handleArticlePreviewOpen}
+                  onPreviewHide={hidePreview}
+                />
               ) : null}
 
               {mode === "edit" ? (
-                <section class="wiki-pane wiki-pane--editor">
-                  <div class="wiki-pane-head">
-                    <div>
-                      <h2>Edit page</h2>
-                      <p>Write canonical pages without hand-building paths unless you want to.</p>
-                    </div>
-                    <div class="wiki-pane-actions">
-                      <button type="button" onClick={() => void saveCurrentPage()} disabled={mutating}>Save page</button>
-                    </div>
-                  </div>
-                  <div class="wiki-form-grid">
-                    <label>
-                      <span>Page title</span>
-                      <input value={newPageTitle} onInput={(event) => setNewPageTitle((event.currentTarget as HTMLInputElement).value)} placeholder="New page title" />
-                    </label>
-                    <label>
-                      <span>Path</span>
-                      <input value={editorPath} onInput={(event) => setEditorPath((event.currentTarget as HTMLInputElement).value)} placeholder="database/pages/page.md" />
-                    </label>
-                  </div>
-                  <div class="wiki-inline-actions">
-                    <button type="button" onClick={() => void createPage()} disabled={mutating || !newPageTitle.trim()}>Create page</button>
-                    <button type="button" class="is-secondary" onClick={() => setEditorPath(suggestPagePath(selectedDb, newPageTitle, state.selectedPath))}>Use suggested path</button>
-                  </div>
-                  <textarea class="wiki-editor" value={editorMarkdown} onInput={(event) => setEditorMarkdown((event.currentTarget as HTMLTextAreaElement).value)} placeholder="Write markdown for the current page." />
-                </section>
+                <EditPane
+                  mutating={mutating}
+                  editorPath={editorPath}
+                  editorMarkdown={editorMarkdown}
+                  newPageTitle={newPageTitle}
+                  onSaveCurrentPage={saveCurrentPage}
+                  onCreatePage={createPage}
+                  onUseSuggestedPath={() => setEditorPath(suggestPagePath(selectedDb, newPageTitle, state.selectedPath))}
+                  onNewPageTitleChange={setNewPageTitle}
+                  onEditorPathChange={setEditorPath}
+                  onEditorMarkdownChange={setEditorMarkdown}
+                />
               ) : null}
 
               {mode === "build" ? (
-                <section class="wiki-pane">
-                  <div class="wiki-pane-head">
-                    <div>
-                      <h2>Build from directory</h2>
-                      <p>Turn a source directory into a first draft wiki without hand-writing database ids and raw prompts.</p>
-                    </div>
-                  </div>
-                  <form class="wiki-workflow" onSubmit={(event) => void startBuildFlow(event)}>
-                    <fieldset>
-                      <legend>Source</legend>
-                      <div class="wiki-form-grid">
-                        <label>
-                          <span>Source target</span>
-                          <select value={buildTargetMode} onChange={(event) => setBuildTargetMode((event.currentTarget as HTMLSelectElement).value as "gsv" | "custom")}>
-                            <option value="gsv">Control plane (gsv)</option>
-                            <option value="custom">Other target</option>
-                          </select>
-                        </label>
-                        {buildTargetMode === "custom" ? (
-                          <label>
-                            <span>Target id</span>
-                            <input value={buildTargetCustom} onInput={(event) => setBuildTargetCustom((event.currentTarget as HTMLInputElement).value)} placeholder="device id" />
-                          </label>
-                        ) : <div class="wiki-form-placeholder">Build reads from the control plane by default.</div>}
-                        <label class="wiki-field-span-2">
-                          <span>Source directory</span>
-                          <input value={buildSourcePath} onInput={(event) => setBuildSourcePath((event.currentTarget as HTMLInputElement).value)} placeholder="/workspaces/project/docs" />
-                        </label>
-                      </div>
-                    </fieldset>
-
-                    <fieldset>
-                      <legend>Destination</legend>
-                      <div class="wiki-toggle-group">
-                        <button type="button" class={buildDestinationMode === "existing" ? "is-active" : ""} onClick={() => setBuildDestinationMode("existing")}>Use existing database</button>
-                        <button type="button" class={buildDestinationMode === "new" ? "is-active" : ""} onClick={() => setBuildDestinationMode("new")}>Create new database</button>
-                      </div>
-                      {buildDestinationMode === "existing" ? (
-                        <label>
-                          <span>Database</span>
-                          <select value={buildSelectedDb || selectedDb} onChange={(event) => setBuildSelectedDb((event.currentTarget as HTMLSelectElement).value)}>
-                            <option value="">Select a database</option>
-                            {state.dbs.map((db) => <option key={db.id} value={db.id}>{db.title || db.id}</option>)}
-                          </select>
-                        </label>
-                      ) : (
-                        <div class="wiki-form-grid">
-                          <label>
-                            <span>Database title</span>
-                            <input value={buildDbTitle} onInput={(event) => setBuildDbTitle((event.currentTarget as HTMLInputElement).value)} placeholder="Product Alpha" />
-                          </label>
-                          <label>
-                            <span>Database id</span>
-                            <input value={buildDbId} onInput={(event) => setBuildDbId((event.currentTarget as HTMLInputElement).value)} placeholder="product-alpha" />
-                          </label>
-                        </div>
-                      )}
-                    </fieldset>
-
-                    <div class="wiki-inline-actions">
-                      <button type="submit" disabled={mutating}>Start background build</button>
-                    </div>
-                  </form>
-                </section>
+                <BuildPane
+                  state={state}
+                  selectedDb={selectedDb}
+                  mutating={mutating}
+                  buildTargetMode={buildTargetMode}
+                  buildTargetCustom={buildTargetCustom}
+                  buildSourcePath={buildSourcePath}
+                  buildDestinationMode={buildDestinationMode}
+                  buildSelectedDb={buildSelectedDb}
+                  buildDbTitle={buildDbTitle}
+                  buildDbId={buildDbId}
+                  onStartBuild={startBuildFlow}
+                  onBuildTargetModeChange={setBuildTargetMode}
+                  onBuildTargetCustomChange={setBuildTargetCustom}
+                  onBuildSourcePathChange={setBuildSourcePath}
+                  onBuildDestinationModeChange={setBuildDestinationMode}
+                  onBuildSelectedDbChange={setBuildSelectedDb}
+                  onBuildDbTitleChange={setBuildDbTitle}
+                  onBuildDbIdChange={setBuildDbId}
+                />
               ) : null}
 
               {mode === "ingest" ? (
-                <section class="wiki-pane">
-                  <div class="wiki-pane-head">
-                    <div>
-                      <h2>Ingest source</h2>
-                      <p>Stage a file or directory into inbox without hand-writing raw source specs.</p>
-                    </div>
-                  </div>
-                  <form class="wiki-workflow" onSubmit={(event) => void ingestSourceFlow(event)}>
-                    <div class="wiki-form-grid">
-                      <label>
-                        <span>Destination database</span>
-                        <select value={ingestDb || selectedDb} onChange={(event) => setIngestDb((event.currentTarget as HTMLSelectElement).value)}>
-                          <option value="">Select a database</option>
-                          {state.dbs.map((db) => <option key={db.id} value={db.id}>{db.title || db.id}</option>)}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Source target</span>
-                        <select value={ingestTargetMode} onChange={(event) => setIngestTargetMode((event.currentTarget as HTMLSelectElement).value as "gsv" | "custom")}>
-                          <option value="gsv">Control plane (gsv)</option>
-                          <option value="custom">Other target</option>
-                        </select>
-                      </label>
-                      {ingestTargetMode === "custom" ? (
-                        <label>
-                          <span>Target id</span>
-                          <input value={ingestTargetCustom} onInput={(event) => setIngestTargetCustom((event.currentTarget as HTMLInputElement).value)} placeholder="device id" />
-                        </label>
-                      ) : <div class="wiki-form-placeholder">Use a custom target only when the source corpus lives outside gsv.</div>}
-                      <label class="wiki-field-span-2">
-                        <span>Source path</span>
-                        <input value={ingestSourcePath} onInput={(event) => setIngestSourcePath((event.currentTarget as HTMLInputElement).value)} placeholder="/workspaces/project/docs/plan.md" />
-                      </label>
-                      <label>
-                        <span>Source title</span>
-                        <input value={ingestSourceTitle} onInput={(event) => setIngestSourceTitle((event.currentTarget as HTMLInputElement).value)} placeholder="Optional title for the staged note" />
-                      </label>
-                      <label>
-                        <span>Summary</span>
-                        <input value={ingestSummary} onInput={(event) => setIngestSummary((event.currentTarget as HTMLInputElement).value)} placeholder="Optional context for the inbox note" />
-                      </label>
-                    </div>
-                    <div class="wiki-inline-actions">
-                      <button type="submit" disabled={mutating}>Stage in inbox</button>
-                    </div>
-                  </form>
-                </section>
+                <IngestPane
+                  state={state}
+                  selectedDb={selectedDb}
+                  mutating={mutating}
+                  ingestDb={ingestDb}
+                  ingestTargetMode={ingestTargetMode}
+                  ingestTargetCustom={ingestTargetCustom}
+                  ingestSourcePath={ingestSourcePath}
+                  ingestSourceTitle={ingestSourceTitle}
+                  ingestSummary={ingestSummary}
+                  onIngestSource={ingestSourceFlow}
+                  onIngestDbChange={setIngestDb}
+                  onIngestTargetModeChange={setIngestTargetMode}
+                  onIngestTargetCustomChange={setIngestTargetCustom}
+                  onIngestSourcePathChange={setIngestSourcePath}
+                  onIngestSourceTitleChange={setIngestSourceTitle}
+                  onIngestSummaryChange={setIngestSummary}
+                />
               ) : null}
 
               {mode === "inbox" ? (
-                <section class="wiki-pane">
-                  <div class="wiki-pane-head">
-                    <div>
-                      <h2>Inbox review</h2>
-                      <p>Preview staged notes and compile them into canonical pages when they are ready.</p>
-                    </div>
-                    <div class="wiki-pane-actions">
-                      <button type="button" onClick={() => void compileSelectedInbox()} disabled={mutating || !selectedInboxPath}>Compile into page</button>
-                    </div>
-                  </div>
-                  {state.selectedNote ? (
-                    <ArticleView
-                      markdown={state.selectedNote.markdown || ""}
-                      articleTitle={extractTitle(state.selectedNote.markdown || "", state.selectedNote.path)}
-                      routeBase="/apps/wiki"
-                      selectedDb={selectedDb}
-                      selectedPath={state.selectedPath}
-                      onNavigate={openPageAndBrowse}
-                      onPreviewOpen={handleArticlePreviewOpen}
-                      onPreviewHide={hidePreview}
-                    />
-                  ) : <div class="wiki-empty">Select an inbox note from navigation.</div>}
-                </section>
+                <InboxPane
+                  state={state}
+                  selectedDb={selectedDb}
+                  selectedInboxPath={selectedInboxPath}
+                  mutating={mutating}
+                  onCompileSelectedInbox={compileSelectedInbox}
+                  onOpenPageAndBrowse={openPageAndBrowse}
+                  onPreviewOpen={handleArticlePreviewOpen}
+                  onPreviewHide={hidePreview}
+                />
               ) : null}
             </>
           ) : null}
         </main>
 
-        <aside class="wiki-inspector">
-          {pageHeadings.length > 0 ? (
-            <section class="wiki-inspector-section">
-              <h2>Outline</h2>
-              <div class="wiki-outline-list">
-                {pageHeadings.map((heading) => (
-                  <a key={heading.id} href={`#${heading.id}`} class={`wiki-outline-row level-${heading.level}`}>{heading.text}</a>
-                ))}
-              </div>
-            </section>
-          ) : null}
-          <section class="wiki-inspector-section">
-            <h2>Quick actions</h2>
-            <div class="wiki-action-stack">
-              <button type="button" onClick={() => setMode("edit")}>Edit current page</button>
-              <button type="button" onClick={() => setMode("build")}>Build from directory</button>
-              <button type="button" onClick={() => setMode("ingest")}>Stage source</button>
-              <button type="button" onClick={() => setMode("inbox")}>Review inbox</button>
-            </div>
-          </section>
-        </aside>
+        <WikiInspector
+          pageHeadings={pageHeadings}
+          currentTitle={currentTitle}
+          selectedDb={selectedDb}
+          selectedPath={state.selectedPath}
+        />
       </div>
 
       {previewRect ? (
@@ -733,97 +452,14 @@ export function App({ backend }: { backend: WikiBackend }) {
           error={previewError}
           pinned={previewPinned}
           onDismiss={() => hidePreview(true)}
-          onMouseEnter={() => {
-            if (previewHideTimer.current) {
-              window.clearTimeout(previewHideTimer.current);
-              previewHideTimer.current = null;
-            }
-          }}
+          onMouseEnter={keepPreviewOpen}
           onMouseLeave={() => hidePreview(false)}
+          onOpenPage={(path) => {
+            hidePreview(true);
+            openPage(path);
+          }}
         />
       ) : null}
     </div>
   );
-}
-
-function readMode(): WikiMode {
-  const value = new URL(window.location.href).searchParams.get("mode");
-  return value === "edit" || value === "build" || value === "ingest" || value === "inbox" ? value : "browse";
-}
-
-function readRoute(): { db?: string; path?: string; q?: string; ask?: string } {
-  const url = new URL(window.location.href);
-  const read = (key: string) => {
-    const value = url.searchParams.get(key);
-    return value && value.trim() ? value.trim() : undefined;
-  };
-  return {
-    db: read("db"),
-    path: read("path"),
-    q: read("q"),
-    ask: read("ask"),
-  };
-}
-
-function writeLocation(mode: WikiMode, route: { db?: string; path?: string; q?: string; ask?: string }): void {
-  const url = new URL(window.location.href);
-  url.searchParams.set("mode", mode);
-  writeParam(url, "db", route.db);
-  writeParam(url, "path", route.path);
-  writeParam(url, "q", route.q);
-  writeParam(url, "ask", route.ask);
-  window.history.replaceState({}, "", `${url.pathname}${url.search}`);
-}
-
-function buildWikiHref(mode: WikiMode, route: { db?: string; path?: string; q?: string; ask?: string }): string {
-  const url = new URL(window.location.href);
-  url.searchParams.set("mode", mode);
-  writeParam(url, "db", route.db);
-  writeParam(url, "path", route.path);
-  writeParam(url, "q", route.q);
-  writeParam(url, "ask", route.ask);
-  return `${url.pathname}${url.search}`;
-}
-
-function writeParam(url: URL, key: string, value: string | undefined): void {
-  if (value && value.trim()) {
-    url.searchParams.set(key, value.trim());
-  } else {
-    url.searchParams.delete(key);
-  }
-}
-
-function resolveTarget(mode: "gsv" | "custom", custom: string): string {
-  return mode === "custom" ? (custom.trim() || "gsv") : "gsv";
-}
-
-function labelForMode(mode: WikiMode): string {
-  if (mode === "browse") return "Browse";
-  if (mode === "edit") return "Edit";
-  if (mode === "build") return "Build";
-  if (mode === "ingest") return "Ingest";
-  return "Inbox";
-}
-
-function formatError(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
-
-function displayTitleFromPath(path: string): string {
-  const name = String(path || "").split("/").pop() || path || "Untitled";
-  return name.replace(/\.md$/i, "").replace(/[-_]+/g, " ");
-}
-
-function slugifyDbId(value: string): string {
-  return value.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
-}
-
-function suggestPagePath(db: string, title: string, currentPath?: string): string {
-  const slug = slugifyDbId(title || "new-page") || "new-page";
-  const normalizedCurrent = normalizePath(currentPath || "");
-  if (normalizedCurrent.includes("/pages/")) {
-    const prefix = normalizedCurrent.slice(0, normalizedCurrent.lastIndexOf("/") + 1);
-    return `${prefix}${slug}.md`;
-  }
-  return `${db}/pages/${slug}.md`;
 }

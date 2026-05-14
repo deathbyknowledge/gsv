@@ -16,16 +16,6 @@ export type WikiNote = {
   markdown: string;
 };
 
-export type WikiQueryRef = {
-  path: string;
-  title?: string;
-};
-
-export type WikiQueryResult = {
-  brief?: string;
-  refs: WikiQueryRef[];
-};
-
 export type WikiWorkspaceState = {
   selectedDb: string;
   selectedPath: string;
@@ -35,8 +25,6 @@ export type WikiWorkspaceState = {
   selectedNote: WikiNote | null;
   searchQuery: string;
   searchMatches: WikiEntry[] | null;
-  queryText: string;
-  queryResult: WikiQueryResult | null;
   errorText: string;
 };
 
@@ -50,7 +38,6 @@ export type WikiLoadArgs = {
   db?: string;
   path?: string;
   q?: string;
-  ask?: string;
 };
 
 export type WikiPreviewRequest =

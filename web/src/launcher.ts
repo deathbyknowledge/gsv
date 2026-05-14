@@ -1,5 +1,4 @@
-import type { AppManifest } from "./apps";
-import { renderDesktopIcon } from "./icons";
+import type { AppIcon, AppManifest } from "./apps";
 import { OPEN_APP_EVENT, resolveOpenAppDetail, type OpenAppEventDetail } from "./app-link";
 import {
   OPEN_CHAT_PROCESS_EVENT,
@@ -51,6 +50,22 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll("\"", "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderDesktopIcon(icon: AppIcon): string {
+  if (icon.kind === "svg") {
+    return `
+      <span class="desktop-glyph is-package-svg" aria-hidden="true">
+        ${icon.svg}
+      </span>
+    `;
+  }
+
+  return `
+    <span class="desktop-glyph is-fallback" aria-hidden="true">
+      <span>${escapeHtml(icon.label)}</span>
+    </span>
+  `;
 }
 
 export function createLauncher(options: LauncherOptions): LauncherController {
@@ -1220,7 +1235,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
         label: summary.title,
         meta: summary.mode === "minimized" ? "Restore window" : `Focus ${summary.appName}`,
         search: `${summary.title} ${summary.appName} ${summary.route} window`,
-        icon: renderDesktopIcon(appById.get(summary.appId)?.icon ?? { kind: "builtin", id: "packages" }),
+        icon: renderDesktopIcon(appById.get(summary.appId)?.icon ?? { kind: "fallback", label: "AP" }),
         run: () => {
           activateWindowSummary(summary);
         },

@@ -1,0 +1,126 @@
+.gsv-app {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  background: #f5f6f8;
+}
+
+.gsv-sidebar {
+  display: none;
+}
+
+.gsv-workspace {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gsv-topbar {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 1rem;
+  padding: 0.9rem 1rem 0.75rem;
+  border-bottom: 1px solid #dbe0e8;
+  background: rgba(245, 246, 248, 0.96);
+  backdrop-filter: blur(12px);
+}
+
+.gsv-topbar h2,
+.gsv-brand h1 {
+  margin: 0.18rem 0 0;
+  font-size: 1.08rem;
+  line-height: 1.15;
+}
+
+.gsv-topbar-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #d9dee7;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #3f4856;
+  font-size: 0.78rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.gsv-main {
+  min-width: 0;
+  min-height: 0;
+  padding: 0.75rem 0.75rem 5.8rem;
+  overflow: auto;
+}
+
+.gsv-mobile-section-nav {
+  display: flex;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid #dbe0e8;
+  overflow-x: auto;
+  background: #f5f6f8;
+}
+
+.gsv-mobile-section-nav button {
+  flex: 0 0 auto;
+  min-height: 2rem;
+  padding: 0 0.65rem;
+  border: 1px solid #d6dce5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5565;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.gsv-mobile-section-nav button.is-active {
+  border-color: #bac7e5;
+  background: #e8eefb;
+  color: #172033;
+}
+
+.gsv-mobile-nav {
+  position: sticky;
+  z-index: 10;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.25rem;
+  padding: 0.45rem 0.5rem calc(0.45rem + env(safe-area-inset-bottom));
+  border-top: 1px solid #d6dce5;
+  background: rgba(250, 251, 252, 0.96);
+  backdrop-filter: blur(14px);
+}
+
+.gsv-mobile-nav-item {
+  display: flex;
+  min-width: 0;
+  min-height: 3rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #5f6978;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.gsv-mobile-nav-item.is-active {
+  background: #e8eefb;
+  color: #172033;
+}

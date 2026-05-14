@@ -120,14 +120,12 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
   let selectedDb = String(args?.db ?? "").trim();
   let selectedPath = normalizeDbScopedPath(args?.path ?? "", selectedDb);
   const searchQuery = String(args?.q ?? "").trim();
-  const queryText = String(args?.ask ?? "").trim();
 
   let dbs: WikiState["dbs"] = [];
   let pages: WikiState["pages"] = [];
   let inbox: WikiState["inbox"] = [];
   let selectedNote: WikiState["selectedNote"] = null;
   let searchMatches: WikiState["searchMatches"] = null;
-  let queryResult: WikiState["queryResult"] = null;
 
   try {
     const listResult = await knowledge.listDbs({ limit: 200 });
@@ -192,19 +190,6 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
     }
   }
 
-  if (queryText && selectedDb) {
-    try {
-      queryResult = await knowledge.query({
-        query: queryText,
-        prefixes: [`${selectedDb}/pages`],
-        limit: 8,
-        maxBytes: 5000,
-      });
-    } catch (error) {
-      errorText ||= error instanceof Error ? error.message : String(error);
-    }
-  }
-
   return {
     selectedDb,
     selectedPath,
@@ -214,8 +199,6 @@ export async function loadState(kernel: any, args: any): Promise<WikiState> {
     selectedNote,
     searchQuery,
     searchMatches,
-    queryText,
-    queryResult,
     errorText,
   };
 }

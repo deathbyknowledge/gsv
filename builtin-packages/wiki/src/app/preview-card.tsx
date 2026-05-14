@@ -10,6 +10,7 @@ type Props = {
   onDismiss(): void;
   onMouseEnter(): void;
   onMouseLeave(): void;
+  onOpenPage(path: string): void;
 };
 
 function positionFromRect(rect: DOMRect) {
@@ -51,6 +52,7 @@ export function PreviewCard(props: Props) {
     : props.error
       ? `<div class="preview-empty">${escapeHtml(props.error)}</div>`
       : renderPreviewBodyHtml(props.payload || { ok: false, error: "Preview unavailable." });
+  const canOpenPage = props.payload?.ok === true && props.payload.kind === "page" && Boolean(props.payload.path);
 
   return (
     <div
@@ -64,7 +66,24 @@ export function PreviewCard(props: Props) {
     >
       <div class="preview-head">
         <h4>{title}</h4>
-        <button type="button" class="preview-close" aria-label="Close preview" onClick={props.onDismiss}>Close</button>
+        <div class="preview-actions">
+          {canOpenPage ? (
+            <button
+              type="button"
+              class="preview-open"
+              title="Open page"
+              aria-label="Open previewed page"
+              onClick={() => {
+                if (props.payload?.ok === true && props.payload.kind === "page") {
+                  props.onOpenPage(props.payload.path);
+                }
+              }}
+            >
+              Open
+            </button>
+          ) : null}
+          <button type="button" class="preview-close" title="Close preview" aria-label="Close preview" onClick={props.onDismiss}>Close</button>
+        </div>
       </div>
       {meta.length > 0 ? <div class="preview-meta">{meta.join(" · ")}</div> : null}
       <div class="preview-body" dangerouslySetInnerHTML={{ __html: html }} />

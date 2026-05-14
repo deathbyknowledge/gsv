@@ -62,11 +62,9 @@ reaching for CLI commands:
 - **Chat** sends messages to your init process.
 - **Files** browses the GSV filesystem.
 - **Shell** runs commands in the gateway OS context.
-- **Processes** shows running agent processes and history.
-- **Devices** lists connected local drivers and can issue device tokens.
-- **Packages** reviews and manages installed package apps.
-- **Adapters** connects WhatsApp and Discord accounts.
-- **Control** manages users, tokens, configuration, and identity links.
+- **GSV** is the system console for processes, devices, integrations, packages, sources, access, and settings.
+- **GSV > Packages** reviews and manages installed package apps.
+- **GSV > Administration** manages tokens, configuration, and identity links.
 
 Open **Chat** and ask:
 
@@ -96,7 +94,7 @@ decides where the work runs.
 
 Recommended path:
 
-1. Open **Devices** in the Desktop.
+1. Open **GSV**, then **Devices**.
 2. Issue a token for a device id such as `macbook` or use the token created
    during setup.
 3. Run the bootstrap command shown by the Web UI.

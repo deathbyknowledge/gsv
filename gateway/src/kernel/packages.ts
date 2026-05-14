@@ -268,43 +268,8 @@ export const BUILTIN_SOURCE_REF = "main";
 
 const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
   createBuiltinRipgitPackageSpec("chat"),
+  createBuiltinRipgitPackageSpec("gsv"),
   createBuiltinRipgitPackageSpec("shell", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("devices", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("adapters", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("processes", {
     bindings: [
       {
         binding: "KERNEL",
@@ -329,32 +294,6 @@ const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
     },
   }),
   createBuiltinRipgitPackageSpec("wiki", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("control", {
-    bindings: [
-      {
-        binding: "KERNEL",
-        providerKind: "kernel-entrypoint",
-        providerRef: "kernel://app/request",
-      },
-    ],
-    egress: {
-      mode: "none",
-    },
-  }),
-  createBuiltinRipgitPackageSpec("ascii-starfield"),
-  createBuiltinRipgitPackageSpec("doctor"),
-  createBuiltinRipgitPackageSpec("packages", {
     bindings: [
       {
         binding: "KERNEL",

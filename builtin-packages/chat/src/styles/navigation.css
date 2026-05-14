@@ -1,0 +1,136 @@
+.new-thread-strip {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.new-thread-strip label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.new-thread-strip select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 9px;
+  color: var(--text);
+  background: var(--panel-strong);
+  text-transform: none;
+  font-weight: 600;
+}
+
+.thread-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+}
+
+.thread-row,
+.conversation-row,
+.archive-row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(24, 32, 40, 0.06);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-row,
+.conversation-row,
+.archive-row {
+  grid-template-columns: 24px minmax(0, 1fr);
+  column-gap: 9px;
+  align-items: center;
+}
+
+.thread-row {
+  padding: 11px 14px;
+  display: grid;
+  gap: 4px;
+}
+
+.conversation-row {
+  padding: 10px 12px;
+  display: grid;
+  gap: 3px;
+}
+
+.archive-row {
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.row-icon {
+  grid-row: span 2;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: rgba(24, 32, 40, 0.05);
+}
+
+.row-icon svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.thread-row:hover,
+.conversation-row:hover,
+.archive-row:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.thread-row.is-active,
+.conversation-row.is-active,
+.archive-row.is-active {
+  background: var(--blue-soft);
+}
+
+.thread-row-title,
+.conversation-title {
+  font-weight: 700;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.thread-row-meta,
+.conversation-meta {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.conversation-list,
+.archive-segments {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.panel-empty {
+  color: var(--muted);
+  padding: 14px;
+  font-size: 12px;
+}

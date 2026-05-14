@@ -4,6 +4,7 @@ export default definePackage({
   meta: {
     displayName: "Files",
     description: "File browser and workspace management.",
+    icon: "icon.svg",
     window: {
       width: 1080,
       height: 760,

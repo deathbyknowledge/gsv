@@ -1714,16 +1714,17 @@ button:disabled {
   pointer-events: none;
 }
 
-.desktop-glyph .desktop-icon-fill {
-  fill: currentColor;
-  fill-opacity: 0.08;
+.desktop-glyph.is-fallback {
+  border: 1px solid rgba(247, 249, 252, 0.42);
+  border-radius: 9px;
+  background: rgba(247, 249, 252, 0.1);
 }
 
-.desktop-glyph .desktop-icon-stroke {
-  stroke: currentColor;
-  stroke-width: 1.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.desktop-glyph.is-fallback span {
+  color: rgba(247, 249, 252, 0.94);
+  font-size: 0.78rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
 }
 
 .desktop-label {
@@ -1843,6 +1844,7 @@ button:disabled {
   -webkit-user-select: none;
   -webkit-user-drag: none;
   touch-action: none;
+  border-bottom: 1px solid #0000000f;
 }
 
 .window-titlebar * {
