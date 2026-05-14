@@ -14,11 +14,12 @@ import {
 import type { McpServer, McpTool, McpTransportType } from "./types";
 import type { McpServersRuntime } from "./useMcpServers";
 
-export function McpServersSummary({ runtime }: { runtime: McpServersRuntime }) {
+export function McpServersSummary({ runtime, onBack }: { runtime: McpServersRuntime; onBack?: () => void }) {
   const addDisabled = runtime.pendingAction === "mcp:add" || !runtime.form.name.trim() || !runtime.form.url.trim();
   return (
     <section class="gsv-mcp-summary">
       <header>
+        {onBack ? <ActionButton icon="arrow-left" label="Integrations" onClick={onBack} /> : null}
         <div>
           <h4>MCP servers</h4>
           <p>Connect tool servers that agents can use through CodeMode.</p>
@@ -114,7 +115,7 @@ export function McpServersSummary({ runtime }: { runtime: McpServersRuntime }) {
   );
 }
 
-export function McpServersDetail({ runtime }: { runtime: McpServersRuntime }) {
+export function McpServersDetail({ runtime, onBack }: { runtime: McpServersRuntime; onBack?: () => void }) {
   const server = runtime.selectedServer;
   if (runtime.loading) {
     return (
@@ -149,6 +150,7 @@ export function McpServersDetail({ runtime }: { runtime: McpServersRuntime }) {
   return (
     <section class="gsv-integration-detail" aria-label={`${server.name} MCP server`}>
       <header class="gsv-integration-detail-head">
+        {onBack ? <ActionButton icon="arrow-left" label="MCP servers" onClick={onBack} /> : null}
         <div>
           <span class="gsv-kicker">MCP</span>
           <h3>{server.name}</h3>

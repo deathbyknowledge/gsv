@@ -1,4 +1,3 @@
-import { useEffect, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { DeviceDetailPanel } from "./DeviceDetail";
 import { DeviceFleetPane } from "./DeviceFleet";
@@ -9,47 +8,37 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
   const devices = useDevices(backend);
   const selected = devices.selectedDevice;
   const viewer = devices.state?.viewer ?? null;
-  const [compactFleetOpen, setCompactFleetOpen] = useState(shouldStartInFleetView);
-  const showFleetOnCompact = devices.mode === "detail" && (compactFleetOpen || (!devices.selectedDeviceId && !selected));
-
-  useEffect(() => {
-    const onPopState = () => setCompactFleetOpen(shouldStartInFleetView());
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
+  const showFleet = devices.mode === "detail" && !devices.selectedDeviceId;
 
   return (
-    <section class={`gsv-devices${showFleetOnCompact ? " is-fleet-view" : " is-detail-view"}`}>
-      <DeviceFleetPane
-        state={devices.state}
-        visibleDevices={devices.visibleDevices}
-        selectedDeviceId={devices.selectedDeviceId}
-        query={devices.query}
-        scope={devices.scope}
-        errorText={devices.errorText}
-        onAdd={() => {
-          devices.setIssuedToken(null);
-          setCompactFleetOpen(false);
-          devices.writeRoute({ mode: "provision" });
-        }}
-        onQuery={devices.setQuery}
-        onScope={devices.setScope}
-        onSelect={(deviceId) => {
-          devices.setIssuedToken(null);
-          setCompactFleetOpen(false);
-          devices.writeRoute({ mode: "detail", deviceId });
-        }}
-      />
-
-      {devices.mode === "provision" ? (
+    <section class={`gsv-devices${showFleet ? " is-fleet-view" : " is-detail-view"}`}>
+      {showFleet ? (
+        <DeviceFleetPane
+          state={devices.state}
+          visibleDevices={devices.visibleDevices}
+          selectedDeviceId={devices.selectedDeviceId}
+          query={devices.query}
+          scope={devices.scope}
+          errorText={devices.errorText}
+          onAdd={() => {
+            devices.setIssuedToken(null);
+            devices.writeRoute({ mode: "provision" });
+          }}
+          onQuery={devices.setQuery}
+          onScope={devices.setScope}
+          onSelect={(deviceId) => {
+            devices.setIssuedToken(null);
+            devices.writeRoute({ mode: "detail", deviceId });
+          }}
+        />
+      ) : devices.mode === "provision" ? (
         <ProvisionPanel
           initialDeviceId={devices.selectedDeviceId ?? ""}
           viewer={viewer}
           pendingAction={devices.pendingAction}
           issuedToken={devices.issuedToken}
           onBack={() => {
-            setCompactFleetOpen(true);
-            devices.writeRoute({ mode: "detail" });
+            devices.writeRoute({ mode: "detail", deviceId: null });
           }}
           onSubmit={(form) => void devices.createToken(form)}
         />
@@ -61,10 +50,9 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
           tokens={devices.state?.deviceTokens ?? []}
           pendingAction={devices.pendingAction}
           onTab={(tab) => devices.writeRoute({ tab })}
-          onBackToFleet={() => setCompactFleetOpen(true)}
+          onBackToFleet={() => devices.writeRoute({ mode: "detail", deviceId: null })}
           onProvision={(deviceId) => {
             devices.setIssuedToken(null);
-            setCompactFleetOpen(false);
             devices.writeRoute({ mode: "provision", deviceId });
           }}
           onRevoke={(tokenId) => void devices.revokeToken(tokenId)}
@@ -73,9 +61,4 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
       )}
     </section>
   );
-}
-
-function shouldStartInFleetView(): boolean {
-  const url = new URL(window.location.href);
-  return url.searchParams.get("mode") !== "provision" && !url.searchParams.get("device");
 }

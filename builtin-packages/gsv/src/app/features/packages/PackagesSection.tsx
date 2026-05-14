@@ -43,6 +43,53 @@ export function PackagesSection({
     const catalogs = runtime.state?.catalogs ?? [];
     return catalogs.find((catalog) => catalog.name === selectedCatalogName) ?? catalogs[0] ?? null;
   }, [runtime.state?.catalogs, selectedCatalogName]);
+  const packageListView = runtime.view === "inventory" || runtime.view === "updates" || runtime.view === "review";
+
+  if (packageListView && runtime.selectedPackage) {
+    return (
+      <section class="gsv-packages">
+        <PackageDetail
+          runtime={runtime}
+          onBack={() => runtime.selectPackage(null)}
+          onOpenSources={onOpenSources}
+        />
+      </section>
+    );
+  }
+
+  if (runtime.view === "discover") {
+    return (
+      <section class="gsv-packages">
+        <DiscoverPane
+          runtime={runtime}
+          selectedCatalog={selectedCatalog}
+          onSelectCatalog={setSelectedCatalogName}
+        />
+      </section>
+    );
+  }
+
+  if (runtime.view === "create") {
+    return (
+      <section class="gsv-packages">
+        <CreatePackagePane runtime={runtime} />
+      </section>
+    );
+  }
+
+  if (runtime.view === "remotes") {
+    return (
+      <section class="gsv-packages">
+        <CatalogRemotesPane
+          runtime={runtime}
+          onOpenCatalog={(catalogName) => {
+            setSelectedCatalogName(catalogName);
+            runtime.setView("discover");
+          }}
+        />
+      </section>
+    );
+  }
 
   return (
     <section class="gsv-packages">
@@ -119,7 +166,7 @@ export function PackagesSection({
               <PackageRow
                 key={pkg.packageId}
                 pkg={pkg}
-                selected={runtime.selectedPackageId === pkg.packageId}
+                selected={false}
                 viewerUsername={runtime.state?.viewer.username ?? ""}
                 onSelect={() => runtime.selectPackage(pkg.packageId)}
               />
@@ -127,26 +174,6 @@ export function PackagesSection({
           )}
         </div>
       </div>
-
-      {runtime.view === "discover" ? (
-        <DiscoverPane
-          runtime={runtime}
-          selectedCatalog={selectedCatalog}
-          onSelectCatalog={setSelectedCatalogName}
-        />
-      ) : runtime.view === "create" ? (
-        <CreatePackagePane runtime={runtime} />
-      ) : runtime.view === "remotes" ? (
-        <CatalogRemotesPane
-          runtime={runtime}
-          onOpenCatalog={(catalogName) => {
-            setSelectedCatalogName(catalogName);
-            runtime.setView("discover");
-          }}
-        />
-      ) : (
-        <PackageDetail runtime={runtime} onOpenSources={onOpenSources} />
-      )}
     </section>
   );
 }

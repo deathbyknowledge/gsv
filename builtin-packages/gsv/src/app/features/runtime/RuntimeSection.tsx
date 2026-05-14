@@ -19,6 +19,19 @@ export function RuntimeSection({ backend }: { backend: GsvBackend }) {
     ? `Refreshing. Showing ${runtime.filteredProcesses.length} of ${runtime.totalCount} processes.`
     : `Showing ${runtime.filteredProcesses.length} of ${runtime.totalCount} processes.`;
 
+  if (selectedProcess) {
+    return (
+      <section class="gsv-runtime">
+        <ProcessDetail
+          process={selectedProcess}
+          killingPid={runtime.killingPid}
+          onBack={runtime.clearSelection}
+          onKill={(pid) => void runtime.killProcess(pid)}
+        />
+      </section>
+    );
+  }
+
   return (
     <section class="gsv-runtime">
       <section class="gsv-runtime-list-pane" aria-label="Runtime processes">
@@ -64,18 +77,12 @@ export function RuntimeSection({ backend }: { backend: GsvBackend }) {
             <ProcessRow
               key={process.pid}
               process={process}
-              selected={selectedProcess?.pid === process.pid}
+              selected={false}
               onSelect={() => runtime.selectProcess(process)}
             />
           ))}
         </div>
       </section>
-
-      <ProcessDetail
-        process={selectedProcess}
-        killingPid={runtime.killingPid}
-        onKill={(pid) => void runtime.killProcess(pid)}
-      />
     </section>
   );
 }
@@ -109,10 +116,12 @@ function ProcessRow({
 function ProcessDetail({
   process,
   killingPid,
+  onBack,
   onKill,
 }: {
   process: ProcessEntry | null;
   killingPid: string;
+  onBack: () => void;
   onKill: (pid: string) => void;
 }) {
   if (!process) {
@@ -135,9 +144,12 @@ function ProcessDetail({
   return (
     <section class="gsv-runtime-detail" aria-label="Process detail">
       <header class="gsv-runtime-detail-head">
-        <span class="gsv-kicker">Process detail</span>
-        <h3>{title}</h3>
-        <p>{pid}</p>
+        <ActionButton icon="arrow-left" label="Processes" onClick={onBack} />
+        <div>
+          <span class="gsv-kicker">Process detail</span>
+          <h3>{title}</h3>
+          <p>{pid}</p>
+        </div>
       </header>
 
       <dl class="gsv-detail-list">

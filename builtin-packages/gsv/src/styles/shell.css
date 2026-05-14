@@ -2,8 +2,9 @@
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
-  height: 100%;
-  min-height: 100dvh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   background: #f5f6f8;
 }
 
@@ -16,6 +17,7 @@
   grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .gsv-topbar {

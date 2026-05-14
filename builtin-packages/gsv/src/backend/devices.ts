@@ -58,7 +58,7 @@ export async function loadDevicesState(
     : null;
   const selectedDeviceId = requestedDeviceId && devices.some((device) => device.deviceId === requestedDeviceId)
     ? requestedDeviceId
-    : devices[0]?.deviceId ?? null;
+    : null;
 
   const detail = selectedDeviceId
     ? await kernel.request("sys.device.get", { deviceId: selectedDeviceId }) as DeviceDetailPayload

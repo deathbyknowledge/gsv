@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import {
+  pushPackagesLocation,
   readPackageFromLocation,
   readPackagesViewFromLocation,
-  replacePackagesLocation,
 } from "../../navigation/route-state";
 import { errorToText } from "../../utils/format";
 import { filteredPackages } from "./packages-domain";
@@ -79,22 +79,13 @@ export function usePackages(backend: GsvBackend): PackagesRuntime {
   }, []);
 
   useEffect(() => {
-    if (!state || state.packages.length === 0) {
-      if (selectedPackageId !== null) {
-        selectPackage(null);
-      }
-      return;
-    }
-    if (visiblePackages.length === 0) {
-      if (selectedPackageId !== null) {
-        selectPackage(null);
-      }
-      return;
-    }
-    if (!selectedPackageId || !visiblePackages.some((pkg) => pkg.packageId === selectedPackageId)) {
-      selectPackage(visiblePackages[0].packageId);
-    }
-  }, [selectedPackageId, state, visiblePackages]);
+    const onPopState = () => {
+      setViewState(readViewFromLocation());
+      setSelectedPackageId(readPackageFromLocation());
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   async function refresh(packageId = selectedPackageId ?? undefined): Promise<void> {
     setLoading(true);
@@ -237,7 +228,8 @@ export function usePackages(backend: GsvBackend): PackagesRuntime {
 
   function setView(nextView: PackagesView): void {
     setViewState(nextView);
-    replacePackagesLocation({ view: nextView });
+    setSelectedPackageId(null);
+    pushPackagesLocation({ view: nextView, packageId: null });
   }
 
   function setScope(nextScope: PackageScopeFilter): void {
@@ -246,7 +238,7 @@ export function usePackages(backend: GsvBackend): PackagesRuntime {
 
   function selectPackage(packageId: string | null): void {
     setSelectedPackageId(packageId);
-    replacePackagesLocation({ packageId });
+    pushPackagesLocation({ packageId, view });
     if (packageId) {
       void refresh(packageId);
     }

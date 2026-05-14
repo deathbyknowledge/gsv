@@ -52,21 +52,11 @@ export function useRuntimeProcesses(backend: GsvBackend) {
   }, [query, state?.processes]);
 
   const selectedProcess = useMemo(() => {
-    if (filteredProcesses.length === 0) {
+    if (!selectedPid || filteredProcesses.length === 0) {
       return null;
     }
-    const selected = selectedPid
-      ? filteredProcesses.find((process) => process.pid === selectedPid)
-      : null;
-    return selected ?? filteredProcesses[0] ?? null;
+    return filteredProcesses.find((process) => process.pid === selectedPid) ?? null;
   }, [filteredProcesses, selectedPid]);
-
-  useEffect(() => {
-    if (selectedProcess && selectedProcess.pid !== selectedPid) {
-      setSelectedPid(selectedProcess.pid);
-      writeRuntimeRoute({ pid: selectedProcess.pid }, true);
-    }
-  }, [selectedPid, selectedProcess]);
 
   const setQuery = useCallback((nextQuery: string) => {
     setQueryState(nextQuery);
@@ -76,6 +66,11 @@ export function useRuntimeProcesses(backend: GsvBackend) {
   const selectProcess = useCallback((process: ProcessEntry) => {
     setSelectedPid(process.pid);
     writeRuntimeRoute({ pid: process.pid });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedPid(null);
+    writeRuntimeRoute({ pid: null });
   }, []);
 
   const killProcess = useCallback(async (pid: string) => {
@@ -110,6 +105,7 @@ export function useRuntimeProcesses(backend: GsvBackend) {
     totalCount: state?.processes.length ?? 0,
     setQuery,
     selectProcess,
+    clearSelection,
     loadState,
     killProcess,
   };

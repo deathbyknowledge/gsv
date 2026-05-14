@@ -140,7 +140,7 @@ export function useDevices(backend: GsvBackend) {
     issuedToken,
     visibleDevices,
     selectedDevice: state?.selectedDevice ?? null,
-    selectedDeviceId: state?.selectedDeviceId ?? selectedDeviceId,
+    selectedDeviceId: state ? state.selectedDeviceId : selectedDeviceId,
     setQuery,
     setScope,
     setIssuedToken,

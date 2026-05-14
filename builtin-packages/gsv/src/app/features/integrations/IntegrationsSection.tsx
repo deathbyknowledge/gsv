@@ -1,5 +1,5 @@
 import qrcode from "qrcode-generator";
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { GsvBackend } from "../../backend-contract";
 import { ActionButton } from "../../components/ui/ActionButton";
 import { formatTimestampMs } from "../../utils/format";
@@ -19,30 +19,72 @@ import { useMessageAdapters } from "./useMessageAdapters";
 export function IntegrationsSection({ backend }: { backend: GsvBackend }) {
   const adaptersRuntime = useMessageAdapters(backend);
   const mcpRuntime = useMcpServers(backend);
-  const [kind, setKind] = useState<IntegrationKind>(readIntegrationKindFromLocation);
-  const busy = kind === "message-adapters"
+  const [kind, setKind] = useState<IntegrationKind | null>(readIntegrationKindFromLocation);
+  const busy = kind === null
+    ? adaptersRuntime.loading || adaptersRuntime.busy || mcpRuntime.loading || mcpRuntime.pendingAction !== null
+    : kind === "message-adapters"
     ? adaptersRuntime.loading || adaptersRuntime.busy
     : mcpRuntime.loading || mcpRuntime.pendingAction !== null;
+
+  useEffect(() => {
+    const onPopState = () => setKind(readIntegrationKindFromLocation());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   function selectKind(nextKind: IntegrationKind): void {
     setKind(nextKind);
     const url = new URL(window.location.href);
     url.searchParams.set("section", "integrations");
     url.searchParams.set("type", nextKind);
-    window.history.replaceState({}, "", url);
+    window.history.pushState({}, "", url);
+  }
+
+  function showIntegrationList(): void {
+    setKind(null);
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", "integrations");
+    url.searchParams.delete("type");
+    url.searchParams.delete("adapter");
+    url.searchParams.delete("account");
+    url.searchParams.delete("mcpServer");
+    window.history.pushState({}, "", url);
   }
 
   function refreshActiveKind(): void {
-    if (kind === "message-adapters") {
+    if (kind === null) {
+      void adaptersRuntime.refresh();
+      void mcpRuntime.refresh();
+    } else if (kind === "message-adapters") {
       void adaptersRuntime.refresh();
     } else {
       void mcpRuntime.refresh();
     }
   }
 
+  if (kind === "message-adapters") {
+    return (
+      <section class="gsv-integrations">
+        <MessageAdapterDetail runtime={adaptersRuntime} onBack={showIntegrationList} />
+      </section>
+    );
+  }
+
+  if (kind === "mcp-servers") {
+    return (
+      <section class="gsv-integrations">
+        {mcpRuntime.selectedServer ? (
+          <McpServersDetail runtime={mcpRuntime} onBack={() => mcpRuntime.setSelectedServerId(null)} />
+        ) : (
+          <McpServersSummary runtime={mcpRuntime} onBack={showIntegrationList} />
+        )}
+      </section>
+    );
+  }
+
   return (
     <section class="gsv-integrations">
-      <aside class="gsv-integrations-nav" aria-label="Integration categories">
+      <aside class="gsv-integrations-nav is-list-view" aria-label="Integration categories">
         <header class="gsv-integrations-nav-head">
           <div>
             <span class="gsv-kicker">Extensions</span>
@@ -75,46 +117,16 @@ export function IntegrationsSection({ backend }: { backend: GsvBackend }) {
             <span class="gsv-row-meta">{readyServerCount(mcpRuntime.state.servers)} ready</span>
           </button>
         </div>
-
-        {kind === "message-adapters" ? (
-          <div class="gsv-adapter-list" aria-label="Message adapters">
-            {ADAPTERS.map((adapter) => {
-              const accounts = adaptersRuntime.state.statusByAdapter[adapter.id] ?? [];
-              return (
-                <button
-                  key={adapter.id}
-                  type="button"
-                  class={`gsv-adapter-row${adaptersRuntime.selectedAdapter === adapter.id ? " is-selected" : ""}`}
-                  onClick={() => adaptersRuntime.selectAdapter(adapter.id)}
-                >
-                  <span class="gsv-adapter-icon">{adapter.shortName}</span>
-                  <span class="gsv-row-copy">
-                    <strong>{adapter.name}</strong>
-                    <span>{adapter.summary}</span>
-                  </span>
-                  <span class={`gsv-adapter-dot ${getAdapterTone(accounts)}`} aria-hidden="true"></span>
-                </button>
-              );
-            })}
-          </div>
-        ) : (
-          <McpServersSummary runtime={mcpRuntime} />
-        )}
       </aside>
-
-      {kind === "message-adapters" ? (
-        <MessageAdapterDetail runtime={adaptersRuntime} />
-      ) : (
-        <McpServersDetail runtime={mcpRuntime} />
-      )}
     </section>
   );
 }
 
-function MessageAdapterDetail({ runtime }: { runtime: ReturnType<typeof useMessageAdapters> }) {
+function MessageAdapterDetail({ runtime, onBack }: { runtime: ReturnType<typeof useMessageAdapters>; onBack: () => void }) {
   return (
     <section class="gsv-integration-detail" aria-label={`${runtime.adapterMeta.name} accounts`}>
       <header class="gsv-integration-detail-head">
+        <ActionButton icon="arrow-left" label="Integrations" onClick={onBack} />
         <div>
           <span class="gsv-kicker">{runtime.adapterMeta.name}</span>
           <h3>{runtime.currentAccount ? runtime.currentAccount.accountId : "New connection"}</h3>
@@ -134,6 +146,27 @@ function MessageAdapterDetail({ runtime }: { runtime: ReturnType<typeof useMessa
       {runtime.loading ? <p class="gsv-runtime-meta">Loading adapter status...</p> : null}
       {!runtime.loading && runtime.error ? <p class="gsv-inline-error">{runtime.error}</p> : null}
       {!runtime.loading && runtime.notice ? <p class="gsv-inline-status">{runtime.notice}</p> : null}
+
+      <div class="gsv-adapter-list" aria-label="Message adapters">
+        {ADAPTERS.map((adapter) => {
+          const accounts = runtime.state.statusByAdapter[adapter.id] ?? [];
+          return (
+            <button
+              key={adapter.id}
+              type="button"
+              class={`gsv-adapter-row${runtime.selectedAdapter === adapter.id ? " is-selected" : ""}`}
+              onClick={() => runtime.selectAdapter(adapter.id)}
+            >
+              <span class="gsv-adapter-icon">{adapter.shortName}</span>
+              <span class="gsv-row-copy">
+                <strong>{adapter.name}</strong>
+                <span>{adapter.summary}</span>
+              </span>
+              <span class={`gsv-adapter-dot ${getAdapterTone(accounts)}`} aria-hidden="true"></span>
+            </button>
+          );
+        })}
+      </div>
 
       <div class="gsv-account-strip" aria-label={`${runtime.adapterMeta.name} accounts`}>
         <button
@@ -351,10 +384,11 @@ function countConnectedAccounts(statusByAdapter: Record<AdapterKind, AdapterAcco
   );
 }
 
-function readIntegrationKindFromLocation(): IntegrationKind {
-  return new URL(window.location.href).searchParams.get("type") === "mcp-servers"
-    ? "mcp-servers"
-    : "message-adapters";
+function readIntegrationKindFromLocation(): IntegrationKind | null {
+  const value = new URL(window.location.href).searchParams.get("type");
+  if (value === "mcp-servers") return "mcp-servers";
+  if (value === "message-adapters") return "message-adapters";
+  return null;
 }
 
 function createQrChallengeGraphic(value: string):

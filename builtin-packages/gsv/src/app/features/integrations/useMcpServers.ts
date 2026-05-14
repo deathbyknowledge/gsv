@@ -48,25 +48,13 @@ export function useMcpServers(backend: GsvBackend): McpServersRuntime {
   });
 
   const selectedServer = useMemo(
-    () => state.servers.find((server) => server.serverId === selectedServerId) ?? state.servers[0] ?? null,
+    () => selectedServerId ? state.servers.find((server) => server.serverId === selectedServerId) ?? null : null,
     [selectedServerId, state.servers],
   );
 
   useEffect(() => {
     void refresh();
   }, []);
-
-  useEffect(() => {
-    if (state.servers.length === 0) {
-      if (selectedServerId !== null) {
-        selectServer(null);
-      }
-      return;
-    }
-    if (!selectedServerId || !state.servers.some((server) => server.serverId === selectedServerId)) {
-      selectServer(state.servers[0].serverId);
-    }
-  }, [selectedServerId, state.servers]);
 
   useEffect(() => {
     if (!signInOpenedFor) {

@@ -18,9 +18,11 @@ import type { PackagesRuntime } from "./usePackages";
 
 export function PackageDetail({
   runtime,
+  onBack,
   onOpenSources,
 }: {
   runtime: PackagesRuntime;
+  onBack?: () => void;
   onOpenSources?: (repo: string, ref?: string, path?: string) => void;
 }) {
   const { selectedPackage: pkg, state } = runtime;
@@ -61,6 +63,7 @@ export function PackageDetail({
   return (
     <section class="gsv-package-detail" aria-label={`${pkg.name} package detail`}>
       <header class="gsv-package-detail-head">
+        {onBack ? <ActionButton icon="arrow-left" label="Packages" onClick={onBack} /> : null}
         <div>
           <span class="gsv-kicker">{formatScope(pkg)}</span>
           <h3>{pkg.name}</h3>
