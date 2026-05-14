@@ -13,11 +13,9 @@ Named after the planet-scale sentient ships from Iain M. Banks' *Culture* series
 - **Communicate Natively** - Talk to your agents via the built-in Web UI, the command-line interface, or bridge them to external channels like WhatsApp and Discord.
 - **A Self-Hosting Ecosystem** - Write native apps with the GSV SDK and distribute them via the built-in git remote. Because agents can own repositories and host their own packages, GSV functions as a distributed, peer-to-peer app store.
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deathbyknowledge/gsv)
-
 ## Documentation
-
-link
+- [Documentation page](https://gsv.space/)
+- [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deathbyknowledge/gsv)
 
 ## 🤝 Get Involved
 
