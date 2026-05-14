@@ -119,7 +119,6 @@ Examples:
 - `files`
 - `shell`
 - `wiki`
-- `doctor`
 
 Runtime operations for processes, devices, message adapters, access, settings, packages, and source repositories belong in the consolidated `gsv` builtin app, not separate standalone builtin apps.
 

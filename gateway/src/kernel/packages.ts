@@ -305,8 +305,6 @@ const BUILTIN_RIPGIT_PACKAGE_SPECS: readonly BuiltinRipgitPackageSpec[] = [
       mode: "none",
     },
   }),
-  createBuiltinRipgitPackageSpec("ascii-starfield"),
-  createBuiltinRipgitPackageSpec("doctor"),
 ] as const;
 
 const TEXT_DECODER = new TextDecoder();

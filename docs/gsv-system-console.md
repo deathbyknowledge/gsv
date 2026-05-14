@@ -21,7 +21,7 @@ It should not absorb the main work surfaces:
 - `Files` remains the filesystem browser/editor.
 - `Shell` remains the terminal surface.
 - `Wiki` remains the knowledge product.
-- demos such as `ascii-starfield` remain outside the console.
+- small demos and diagnostics remain outside the console unless they become maintained builtin apps.
 
 ## UX References
 

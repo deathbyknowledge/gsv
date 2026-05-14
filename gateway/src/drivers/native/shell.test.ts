@@ -20,8 +20,8 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
     packageId: "import:root/pkg-test:.",
     scope: { kind: "global" },
     manifest: {
-      name: "ascii-starfield",
-      description: "ASCII starfield",
+      name: "sample-console",
+      description: "Sample console",
       version: "0.1.0",
       runtime: "web-ui",
       source: {
@@ -30,7 +30,7 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
         subdir: ".",
         resolvedCommit: "abc123",
       },
-      entrypoints: [{ name: "Starfield", kind: "ui" }],
+      entrypoints: [{ name: "Console", kind: "ui" }],
       capabilities: {
         bindings: [],
         egress: {
@@ -532,12 +532,12 @@ describe("pkg shell command", () => {
 
   it("defaults to the current package source for manifest inspection", async () => {
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/packages/ascii-starfield" },
+      { input: "pkg manifest", cwd: "/src/packages/sample-console" },
       makeContext(),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain('"name": "ascii-starfield"');
+    expect(result.stdout).toContain('"name": "sample-console"');
     expect(result.stderr).toBe("");
   });
 
@@ -571,7 +571,7 @@ describe("pkg shell command", () => {
     });
 
     const result = await handleShellExec(
-      { input: "pkg manifest", cwd: "/src/packages/ascii-starfield--root-pkg-test" },
+      { input: "pkg manifest", cwd: "/src/packages/sample-console--root-pkg-test" },
       makeContext({ packages: [userPackage, globalPackage] }),
     );
 
@@ -600,7 +600,7 @@ describe("pkg shell command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain('"name": "ascii-starfield"');
+    expect(result.stdout).toContain('"name": "sample-console"');
     expect(result.stderr).toBe("");
   });
 
@@ -611,13 +611,13 @@ describe("pkg shell command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("ascii-starfield");
+    expect(result.stdout).toContain("sample-console");
     expect(result.stdout).toContain("pending");
   });
 
   it("enables an approved package through pkg enable", async () => {
     const result = await handleShellExec(
-      { input: "pkg enable", cwd: "/src/packages/ascii-starfield" },
+      { input: "pkg enable", cwd: "/src/packages/sample-console" },
       makeContext({
         capabilities: ["pkg.install"],
         pkg: makePackage({
@@ -629,7 +629,7 @@ describe("pkg shell command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toContain("enabled ascii-starfield");
+    expect(result.stdout).toContain("enabled sample-console");
     expect(result.stderr).toBe("");
   });
 
