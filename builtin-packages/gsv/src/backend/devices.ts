@@ -66,7 +66,7 @@ export async function loadDevicesState(
 
   const tokens = Array.isArray(tokenList.tokens) ? tokenList.tokens : [];
   const deviceTokens = tokens
-    .filter((token) => token.kind === "node" && token.allowedDeviceId === selectedDeviceId)
+    .filter((token) => token.kind === "node" && (selectedDeviceId === null || token.allowedDeviceId === selectedDeviceId))
     .map(normalizeToken)
     .sort((left, right) => right.createdAt - left.createdAt);
 
