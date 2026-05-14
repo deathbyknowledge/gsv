@@ -27,8 +27,6 @@ import type {
   SocialInstanceUpdateResult,
   SocialLocalIdentity,
   SocialMessageDirection,
-  SocialMessageReplyArgs,
-  SocialMessageReplyResult,
   SocialMessageSendArgs,
   SocialMessageSendResult,
   SocialMessageStatusGetArgs,
@@ -44,18 +42,6 @@ import type {
   SocialProfileGetResult,
   SocialProfileUpdateArgs,
   SocialProfileUpdateResult,
-  SocialRequestCreateArgs,
-  SocialRequestCreateResult,
-  SocialRequestDirection,
-  SocialRequestGetArgs,
-  SocialRequestGetResult,
-  SocialRequestKind,
-  SocialRequestListArgs,
-  SocialRequestListResult,
-  SocialRequestRespondArgs,
-  SocialRequestRespondResult,
-  SocialRequestStatus,
-  SocialRequestSummary,
   SocialSetupArgs,
   SocialSetupResult,
   SocialSignedRequestEnvelope,
@@ -96,7 +82,6 @@ const FRIEND_SELF_RKEY = "self";
 const SOCIAL_ID_PATTERN = /^[A-Za-z0-9._-]{1,200}$/;
 const MAX_SOCIAL_TEXT_BYTES = 16 * 1024;
 const MAX_SOCIAL_BODY_BYTES = 64 * 1024;
-const MAX_SOCIAL_REQUEST_TITLE_BYTES = 512;
 const SOCIAL_ENVELOPE_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_DELIVERY_RETRY_DELAYS_MS = [
   10_000,
@@ -178,7 +163,6 @@ type ThreadRow = {
   peer_handle: string;
   conversation_id: string;
   status: string;
-  topic: string | null;
   created_at: number;
   updated_at: number;
   expires_at: string | null;
@@ -193,7 +177,6 @@ type MessageRow = {
   to_handle: string;
   text: string | null;
   body_json: string | null;
-  reply_to_message_id: string | null;
   delivery_method: string | null;
   delivery_status: string;
   delivery_attempt_count: number | null;
@@ -216,22 +199,6 @@ type MessageStatusRow = {
   remote_event_id: string | null;
   created_at: number;
   updated_at: number;
-};
-
-type RequestRow = {
-  uid: number;
-  request_id: string;
-  thread_id: string | null;
-  kind: string;
-  status: string;
-  from_handle: string;
-  to_handle: string;
-  title: string;
-  body_json: string | null;
-  remote_event_id: string | null;
-  created_at: number;
-  updated_at: number;
-  expires_at: string | null;
 };
 
 export type SocialIdentityRecord = {
@@ -282,7 +249,6 @@ export type SocialThreadRecord = {
   peerHandle: string;
   conversationId: string;
   status: SocialThreadStatus;
-  topic?: string;
   createdAt: number;
   updatedAt: number;
   expiresAt?: string;
@@ -297,7 +263,6 @@ export type SocialMessageRecord = {
   toHandle: string;
   text?: string;
   body?: unknown;
-  replyToMessageId?: string;
   deliveryMethod?: SocialRemoteOperation;
   deliveryStatus: SocialMessageSummary["deliveryStatus"];
   deliveryAttemptCount: number;
@@ -320,22 +285,6 @@ export type SocialMessageStatusRecord = {
   remoteEventId?: string;
   createdAt: number;
   updatedAt: number;
-};
-
-export type SocialRequestRecord = {
-  uid: number;
-  requestId: string;
-  threadId?: string;
-  kind: SocialRequestKind;
-  status: SocialRequestStatus;
-  fromHandle: string;
-  toHandle: string;
-  title: string;
-  body?: unknown;
-  remoteEventId?: string;
-  createdAt: number;
-  updatedAt: number;
-  expiresAt?: string;
 };
 
 export type SocialDeliveryRetryResult =
@@ -437,7 +386,6 @@ export class SocialStore {
         peer_handle TEXT NOT NULL,
         conversation_id TEXT NOT NULL,
         status TEXT NOT NULL,
-        topic TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         expires_at TEXT,
@@ -460,7 +408,6 @@ export class SocialStore {
         to_handle TEXT NOT NULL,
         text TEXT,
         body_json TEXT,
-        reply_to_message_id TEXT,
         delivery_method TEXT,
         delivery_status TEXT NOT NULL,
         delivery_attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -516,33 +463,6 @@ export class SocialStore {
     );
     this.sql.exec(
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_social_message_statuses_remote_event ON social_message_statuses (uid, remote_event_id)",
-    );
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS social_requests (
-        uid INTEGER NOT NULL,
-        request_id TEXT NOT NULL,
-        thread_id TEXT,
-        kind TEXT NOT NULL,
-        status TEXT NOT NULL,
-        from_handle TEXT NOT NULL,
-        to_handle TEXT NOT NULL,
-        title TEXT NOT NULL,
-        body_json TEXT,
-        remote_event_id TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        expires_at TEXT,
-        PRIMARY KEY (uid, request_id)
-      )
-    `);
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_social_requests_thread ON social_requests (uid, thread_id, created_at ASC)",
-    );
-    this.sql.exec(
-      "CREATE INDEX IF NOT EXISTS idx_social_requests_status ON social_requests (uid, status, updated_at DESC)",
-    );
-    this.sql.exec(
-      "CREATE UNIQUE INDEX IF NOT EXISTS idx_social_requests_remote_event ON social_requests (uid, remote_event_id)",
     );
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS social_delivery_attempts (
@@ -921,7 +841,6 @@ export class SocialStore {
     threadId: string;
     peerHandle: string;
     status?: SocialThreadStatus;
-    topic?: string;
     expiresAt?: string;
     now?: number;
   }): SocialThreadRecord {
@@ -929,19 +848,17 @@ export class SocialStore {
     const now = input.now ?? Date.now();
     const createdAt = existing?.createdAt ?? now;
     const status = input.status ?? existing?.status ?? "active";
-    const topic = input.topic ?? existing?.topic;
     const expiresAt = input.expiresAt ?? existing?.expiresAt;
     const conversationId = existing?.conversationId ?? socialConversationId(input.peerHandle, input.threadId);
     this.sql.exec(
       `INSERT OR REPLACE INTO social_threads
-        (uid, thread_id, peer_handle, conversation_id, status, topic, created_at, updated_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (uid, thread_id, peer_handle, conversation_id, status, created_at, updated_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       input.uid,
       input.threadId,
       input.peerHandle,
       conversationId,
       status,
-      topic ?? null,
       createdAt,
       now,
       expiresAt ?? null,
@@ -952,7 +869,6 @@ export class SocialStore {
       peerHandle: input.peerHandle,
       conversationId,
       status,
-      topic,
       createdAt,
       updatedAt: now,
       expiresAt,
@@ -994,7 +910,6 @@ export class SocialStore {
     toHandle: string;
     text?: string;
     body?: unknown;
-    replyToMessageId?: string;
     deliveryMethod?: SocialRemoteOperation;
     deliveryStatus: SocialMessageSummary["deliveryStatus"];
     deliveryAttemptCount?: number;
@@ -1010,9 +925,9 @@ export class SocialStore {
     this.sql.exec(
       `INSERT OR REPLACE INTO social_messages
         (uid, message_id, thread_id, direction, from_handle, to_handle, text, body_json,
-         reply_to_message_id, delivery_method, delivery_status, delivery_attempt_count,
+         delivery_method, delivery_status, delivery_attempt_count,
          next_retry_at, retry_schedule_id, last_delivery_error, remote_event_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.uid,
       input.messageId,
       input.threadId,
@@ -1023,7 +938,6 @@ export class SocialStore {
       input.body === undefined
         ? existing?.body === undefined ? null : JSON.stringify(existing.body)
         : JSON.stringify(input.body),
-      input.replyToMessageId ?? null,
       input.deliveryMethod ?? existing?.deliveryMethod ?? null,
       input.deliveryStatus,
       input.deliveryAttemptCount ?? existing?.deliveryAttemptCount ?? 0,
@@ -1043,7 +957,6 @@ export class SocialStore {
       toHandle: input.toHandle,
       text: input.text,
       body: input.body === undefined ? existing?.body : input.body,
-      replyToMessageId: input.replyToMessageId,
       deliveryMethod: input.deliveryMethod ?? existing?.deliveryMethod,
       deliveryStatus: input.deliveryStatus,
       deliveryAttemptCount: input.deliveryAttemptCount ?? existing?.deliveryAttemptCount ?? 0,
@@ -1192,119 +1105,6 @@ export class SocialStore {
     };
   }
 
-  getRequest(uid: number, requestId: string): SocialRequestRecord | null {
-    const rows = this.sql.exec<RequestRow>(
-      "SELECT * FROM social_requests WHERE uid = ? AND request_id = ? LIMIT 1",
-      uid,
-      requestId,
-    ).toArray();
-    return rows[0] ? toRequestRecord(rows[0]) : null;
-  }
-
-  getRequestByRemoteEventId(uid: number, remoteEventId: string): SocialRequestRecord | null {
-    const rows = this.sql.exec<RequestRow>(
-      "SELECT * FROM social_requests WHERE uid = ? AND remote_event_id = ? LIMIT 1",
-      uid,
-      remoteEventId,
-    ).toArray();
-    return rows[0] ? toRequestRecord(rows[0]) : null;
-  }
-
-  listRequests(input: {
-    uid: number;
-    peerHandle?: string;
-    status?: SocialRequestStatus;
-    direction?: SocialRequestDirection;
-    limit: number;
-  }): SocialRequestRecord[] {
-    const clauses = ["uid = ?"];
-    const bindings: Array<string | number> = [input.uid];
-    if (input.peerHandle) {
-      clauses.push("(from_handle = ? OR to_handle = ?)");
-      bindings.push(input.peerHandle, input.peerHandle);
-    }
-    if (input.status) {
-      clauses.push("status = ?");
-      bindings.push(input.status);
-    }
-    if (input.direction === "inbound") {
-      clauses.push("remote_event_id IS NOT NULL");
-    } else if (input.direction === "outbound") {
-      clauses.push("remote_event_id IS NULL");
-    }
-    bindings.push(input.limit);
-    const rows = this.sql.exec<RequestRow>(
-      `SELECT * FROM social_requests
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY updated_at DESC LIMIT ?`,
-      ...bindings,
-    ).toArray();
-    return rows.map(toRequestRecord);
-  }
-
-  listRequestsForThread(uid: number, threadId: string): SocialRequestRecord[] {
-    return this.sql.exec<RequestRow>(
-      "SELECT * FROM social_requests WHERE uid = ? AND thread_id = ? ORDER BY created_at ASC",
-      uid,
-      threadId,
-    ).toArray().map(toRequestRecord);
-  }
-
-  upsertRequest(input: {
-    uid: number;
-    requestId: string;
-    threadId?: string;
-    kind: SocialRequestKind;
-    status: SocialRequestStatus;
-    fromHandle: string;
-    toHandle: string;
-    title: string;
-    body?: unknown;
-    remoteEventId?: string;
-    expiresAt?: string;
-    now?: number;
-  }): SocialRequestRecord {
-    const existing = this.getRequest(input.uid, input.requestId);
-    const now = input.now ?? Date.now();
-    const createdAt = existing?.createdAt ?? now;
-    this.sql.exec(
-      `INSERT OR REPLACE INTO social_requests
-        (uid, request_id, thread_id, kind, status, from_handle, to_handle, title,
-         body_json, remote_event_id, created_at, updated_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      input.uid,
-      input.requestId,
-      input.threadId ?? existing?.threadId ?? null,
-      input.kind,
-      input.status,
-      input.fromHandle,
-      input.toHandle,
-      input.title,
-      input.body === undefined
-        ? existing?.body === undefined ? null : JSON.stringify(existing.body)
-        : JSON.stringify(input.body),
-      input.remoteEventId ?? existing?.remoteEventId ?? null,
-      createdAt,
-      now,
-      input.expiresAt ?? existing?.expiresAt ?? null,
-    );
-    return {
-      uid: input.uid,
-      requestId: input.requestId,
-      threadId: input.threadId ?? existing?.threadId,
-      kind: input.kind,
-      status: input.status,
-      fromHandle: input.fromHandle,
-      toHandle: input.toHandle,
-      title: input.title,
-      body: input.body === undefined ? existing?.body : input.body,
-      remoteEventId: input.remoteEventId ?? existing?.remoteEventId,
-      createdAt,
-      updatedAt: now,
-      expiresAt: input.expiresAt ?? existing?.expiresAt,
-    };
-  }
-
   recordDeliveryAttempt(input: {
     uid: number;
     messageId: string;
@@ -1413,9 +1213,8 @@ export async function handleSocialSetup(
     $type: SPACE_GSV_AGENT_CARD,
     createdAt,
     displayName: nonEmpty(args.agentDisplayName) ?? `${username}'s GSV`,
-    summary: nonEmpty(args.agentSummary) ?? "Can receive messages and requests from approved friends.",
+    summary: nonEmpty(args.agentSummary) ?? "Can receive messages from approved friends.",
     acceptsMessages: true,
-    acceptsRequests: true,
     humanEscalation: "sometimes",
   }) as SpaceGsvAgentCardRecord;
 
@@ -1649,7 +1448,6 @@ export async function handleSocialThreadCreate(
     uid,
     threadId: newSocialId("thread"),
     peerHandle,
-    topic: normalizeOptionalText(args.topic, "topic", 512),
     expiresAt: args.expiresAt,
   });
 
@@ -1712,193 +1510,6 @@ export function handleSocialThreadGet(
     thread: thread ? toThreadSummary(thread) : null,
     messages: thread ? store.listMessages(uid, threadId).map(toMessageSummary) : [],
     statuses: thread ? summarizeMessageStatusesForThread(store, uid, threadId) : [],
-    requests: thread ? store.listRequestsForThread(uid, threadId).map(toRequestSummary) : [],
-  };
-}
-
-export async function handleSocialRequestCreate(
-  args: SocialRequestCreateArgs,
-  ctx: KernelContext,
-): Promise<SocialRequestCreateResult> {
-  const uid = requireMainSocialUserUid(ctx);
-  const localIdentity = requireWritableSocialIdentity(ctx);
-  const localHandle = requireLocalHandle(localIdentity);
-  const toHandle = normalizeHandle(args.toHandle, "toHandle");
-  const kind = normalizeRequestKind(args.kind, "kind");
-  const title = normalizeRequestTitle(args.title, "title");
-  const body = args.body === undefined ? undefined : normalizeRequestBody(args.body, "body");
-  const expiresAt = args.expiresAt === undefined
-    ? undefined
-    : requireIsoStringValue(args.expiresAt, "expiresAt");
-  const store = requireSocialStore(ctx);
-  const friend = requireFriend(store, uid, toHandle);
-  requireRemoteMethod(friend, "social.request.create");
-
-  const thread = args.threadId === undefined
-    ? store.upsertThread({
-        uid,
-        threadId: newSocialId("thread"),
-        peerHandle: toHandle,
-        topic: title,
-        expiresAt,
-      })
-    : requireExistingThread(store, uid, args.threadId, toHandle);
-  const request = store.upsertRequest({
-    uid,
-    requestId: newSocialId("req"),
-    threadId: thread.threadId,
-    kind,
-    status: "pending",
-    fromHandle: localHandle,
-    toHandle,
-    title,
-    body,
-    expiresAt,
-  });
-  const deliveryMessage = store.upsertMessage({
-    uid,
-    messageId: newSocialId("msg"),
-    threadId: thread.threadId,
-    direction: "outbound",
-    fromHandle: localHandle,
-    toHandle,
-    text: title,
-    body,
-    deliveryMethod: "social.request.create",
-    deliveryStatus: "queued",
-  });
-  await attemptOutboundDelivery({
-    ctx,
-    store,
-    localIdentity,
-    friend,
-    thread,
-    message: deliveryMessage,
-    method: "social.request.create",
-    bodyOverride: compactRecord({
-      threadId: thread.threadId,
-      messageId: deliveryMessage.messageId,
-      requestId: request.requestId,
-      kind: request.kind,
-      title: request.title,
-      body: request.body,
-      expiresAt: request.expiresAt,
-    }),
-  });
-  await refreshSocialInboxContextSafe(ctx, store);
-
-  return {
-    request: toRequestSummary(request),
-    thread: toThreadSummary(thread),
-  };
-}
-
-export function handleSocialRequestList(
-  args: SocialRequestListArgs,
-  ctx: KernelContext,
-): SocialRequestListResult {
-  const uid = requireMainSocialUserUid(ctx);
-  return {
-    requests: requireSocialStore(ctx).listRequests({
-      uid,
-      peerHandle: args.peerHandle === undefined ? undefined : normalizeHandle(args.peerHandle, "peerHandle"),
-      status: args.status === undefined ? undefined : normalizeRequestStatus(args.status, "status"),
-      direction: args.direction === undefined ? undefined : normalizeRequestDirection(args.direction, "direction"),
-      limit: normalizeLimit(args.limit, 50),
-    }).map(toRequestSummary),
-  };
-}
-
-export function handleSocialRequestGet(
-  args: SocialRequestGetArgs,
-  ctx: KernelContext,
-): SocialRequestGetResult {
-  const uid = requireMainSocialUserUid(ctx);
-  const requestId = normalizeSocialId(args.requestId, "requestId");
-  const request = requireSocialStore(ctx).getRequest(uid, requestId);
-  return {
-    request: request ? toRequestSummary(request) : null,
-  };
-}
-
-export async function handleSocialRequestRespond(
-  args: SocialRequestRespondArgs,
-  ctx: KernelContext,
-): Promise<SocialRequestRespondResult> {
-  const uid = requireMainSocialUserUid(ctx);
-  const localIdentity = requireWritableSocialIdentity(ctx);
-  const localHandle = requireLocalHandle(localIdentity);
-  const requestId = normalizeSocialId(args.requestId, "requestId");
-  const status = normalizeRequestResponseStatus(args.status, "status");
-  const payload = args.text === undefined && args.body === undefined
-    ? undefined
-    : normalizeMessagePayload(args, "response");
-  const store = requireSocialStore(ctx);
-  const existing = store.getRequest(uid, requestId);
-  if (!existing) {
-    throw new Error(`Request is not known: ${requestId}`);
-  }
-  const thread = existing.threadId
-    ? requireExistingThread(store, uid, existing.threadId)
-    : undefined;
-  const peerHandle = existing.fromHandle === localHandle ? existing.toHandle : existing.fromHandle;
-  const friend = requireFriend(store, uid, peerHandle);
-  requireRemoteMethod(friend, "social.request.respond");
-
-  const updated = store.upsertRequest({
-    uid,
-    requestId: existing.requestId,
-    threadId: existing.threadId,
-    kind: existing.kind,
-    status,
-    fromHandle: existing.fromHandle,
-    toHandle: existing.toHandle,
-    title: existing.title,
-    body: existing.body,
-    remoteEventId: existing.remoteEventId,
-    expiresAt: existing.expiresAt,
-  });
-  const responseThread = thread ?? store.upsertThread({
-    uid,
-    threadId: newSocialId("thread"),
-    peerHandle,
-    topic: existing.title,
-    expiresAt: existing.expiresAt,
-  });
-  const message = store.upsertMessage({
-    uid,
-    messageId: newSocialId("msg"),
-    threadId: responseThread.threadId,
-    direction: "outbound",
-    fromHandle: localHandle,
-    toHandle: peerHandle,
-    text: payload?.text ?? `Request status: ${status}`,
-    body: payload?.body,
-    deliveryMethod: "social.request.respond",
-    deliveryStatus: "queued",
-  });
-  const delivered = await attemptOutboundDelivery({
-    ctx,
-    store,
-    localIdentity,
-    friend,
-    thread: responseThread,
-    message,
-    method: "social.request.respond",
-    bodyOverride: compactRecord({
-      threadId: responseThread.threadId,
-      messageId: message.messageId,
-      requestId: existing.requestId,
-      status,
-      text: payload?.text,
-      body: payload?.body,
-    }),
-  });
-  await refreshSocialInboxContextSafe(ctx, store);
-
-  return {
-    request: toRequestSummary(updated),
-    message: toMessageSummary(delivered),
   };
 }
 
@@ -1923,12 +1534,9 @@ export async function handleSocialMessageSend(
         threadId: newSocialId("thread"),
         peerHandle: toHandle,
         expiresAt: args.expiresAt,
-      })
+    })
     : requireExistingThread(store, uid, args.threadId, toHandle);
   const messageInput = normalizeMessagePayload(args, "message");
-  const replyToMessageId = args.replyToMessageId === undefined
-    ? undefined
-    : normalizeSocialId(args.replyToMessageId, "replyToMessageId");
   const message = store.upsertMessage({
     uid,
     messageId: newSocialId("msg"),
@@ -1938,7 +1546,6 @@ export async function handleSocialMessageSend(
     toHandle,
     text: messageInput.text,
     body: messageInput.body,
-    replyToMessageId,
     deliveryMethod: "social.message.send",
     deliveryStatus: "queued",
   });
@@ -1954,49 +1561,6 @@ export async function handleSocialMessageSend(
 
   return {
     thread: toThreadSummary(thread),
-    message: toMessageSummary(delivered),
-  };
-}
-
-export async function handleSocialMessageReply(
-  args: SocialMessageReplyArgs,
-  ctx: KernelContext,
-): Promise<SocialMessageReplyResult> {
-  const uid = requireMainSocialUserUid(ctx);
-  const localIdentity = requireWritableSocialIdentity(ctx);
-  const localHandle = requireLocalHandle(localIdentity);
-  const store = requireSocialStore(ctx);
-  const thread = requireExistingThread(store, uid, args.threadId);
-  const friend = requireFriend(store, uid, thread.peerHandle);
-  requireRemoteMethod(friend, "social.message.reply");
-  const messageInput = normalizeMessagePayload(args, "message");
-  const replyToMessageId = args.replyToMessageId === undefined
-    ? undefined
-    : normalizeSocialId(args.replyToMessageId, "replyToMessageId");
-  const message = store.upsertMessage({
-    uid,
-    messageId: newSocialId("msg"),
-    threadId: thread.threadId,
-    direction: "outbound",
-    fromHandle: localHandle,
-    toHandle: thread.peerHandle,
-    text: messageInput.text,
-    body: messageInput.body,
-    replyToMessageId,
-    deliveryMethod: "social.message.reply",
-    deliveryStatus: "queued",
-  });
-  const delivered = await attemptOutboundDelivery({
-    ctx,
-    store,
-    localIdentity,
-    friend,
-    thread,
-    message,
-    method: "social.message.reply",
-  });
-
-  return {
     message: toMessageSummary(delivered),
   };
 }
@@ -2060,7 +1624,7 @@ export async function handleSocialMessageStatusUpdate(
   const needsHumanReason = args.needsHumanReason === undefined
     ? undefined
     : normalizeOptionalText(args.needsHumanReason, "needsHumanReason", 2048);
-  const body = args.body === undefined ? undefined : normalizeRequestBody(args.body, "body");
+  const body = args.body === undefined ? undefined : normalizeSocialBody(args.body, "body");
   const store = requireSocialStore(ctx);
   const message = store.getMessage(uid, messageId);
   if (!message) {
@@ -2276,26 +1840,7 @@ type NormalizedMessagePayload = {
 type InboundMessageBody = NormalizedMessagePayload & {
   threadId?: string;
   messageId?: string;
-  replyToMessageId?: string;
-  topic?: string;
   expiresAt?: string;
-};
-
-type InboundRequestCreateBody = {
-  threadId: string;
-  messageId?: string;
-  requestId: string;
-  kind: SocialRequestKind;
-  title: string;
-  body?: unknown;
-  expiresAt?: string;
-};
-
-type InboundRequestRespondBody = NormalizedMessagePayload & {
-  threadId?: string;
-  messageId?: string;
-  requestId: string;
-  status: Extract<SocialRequestStatus, "agent-replied" | "needs-human" | "accepted" | "declined" | "completed">;
 };
 
 type InboundMessageStatusUpdateBody = {
@@ -2331,10 +1876,8 @@ async function attemptOutboundDelivery(input: {
     body: input.bodyOverride ?? compactRecord({
       threadId: input.thread.threadId,
       messageId: input.message.messageId,
-      topic: input.thread.topic,
       text: input.message.text,
       body: input.message.body,
-      replyToMessageId: input.message.replyToMessageId,
       expiresAt: input.thread.expiresAt,
     }),
   }, settings.servicePrivateJwk);
@@ -2472,19 +2015,12 @@ async function acceptInboundSocialEnvelope(input: {
   envelope: SocialSignedRequestEnvelope;
   now: number;
 }): Promise<SocialInboundResult> {
-  if (input.envelope.method === "social.request.create") {
-    return acceptInboundRequestCreate(input);
-  }
-  if (input.envelope.method === "social.request.respond") {
-    return acceptInboundRequestRespond(input);
-  }
   if (input.envelope.method === "social.message.status.update") {
     return acceptInboundMessageStatusUpdate(input);
   }
   if (
     input.envelope.method !== "social.thread.create" &&
-    input.envelope.method !== "social.message.send" &&
-    input.envelope.method !== "social.message.reply"
+    input.envelope.method !== "social.message.send"
   ) {
     throw new Error(`Inbound method is not implemented: ${input.envelope.method}`);
   }
@@ -2499,13 +2035,12 @@ async function acceptInboundSocialEnvelope(input: {
     };
   }
 
-  const body = normalizeInboundMessageBody(input.envelope.body, input.envelope.method);
+  const body = normalizeInboundMessageBody(input.envelope.body);
   const threadId = body.threadId ?? newSocialId("thread");
   const thread = input.store.upsertThread({
     uid: MAIN_SOCIAL_UID,
     threadId,
     peerHandle: input.friend.handle,
-    topic: body.topic,
     expiresAt: body.expiresAt,
     now: input.now,
   });
@@ -2530,7 +2065,6 @@ async function acceptInboundSocialEnvelope(input: {
     toHandle: localHandle,
     text: body.text,
     body: body.body,
-    replyToMessageId: body.replyToMessageId,
     deliveryMethod: input.envelope.method,
     deliveryStatus: "delivered",
     remoteEventId: input.envelope.id,
@@ -2604,172 +2138,6 @@ async function acceptInboundMessageStatusUpdate(input: {
   };
 }
 
-async function acceptInboundRequestCreate(input: {
-  ctx: KernelContext;
-  store: SocialStore;
-  localIdentity: SocialIdentityRecord;
-  friend: SocialFriendRecord;
-  envelope: SocialSignedRequestEnvelope;
-  now: number;
-}): Promise<SocialInboundResult> {
-  const body = normalizeInboundRequestCreateBody(input.envelope.body);
-  const existingRequest = input.store.getRequest(MAIN_SOCIAL_UID, body.requestId)
-    ?? input.store.getRequestByRemoteEventId(MAIN_SOCIAL_UID, input.envelope.id);
-  if (existingRequest) {
-    return {
-      ok: true,
-      status: "accepted",
-      threadId: existingRequest.threadId,
-      requestId: existingRequest.requestId,
-    };
-  }
-
-  const thread = input.store.upsertThread({
-    uid: MAIN_SOCIAL_UID,
-    threadId: body.threadId,
-    peerHandle: input.friend.handle,
-    topic: body.title,
-    expiresAt: body.expiresAt,
-    now: input.now,
-  });
-  const localHandle = requireLocalHandle(input.localIdentity);
-  const request = input.store.upsertRequest({
-    uid: MAIN_SOCIAL_UID,
-    requestId: body.requestId,
-    threadId: thread.threadId,
-    kind: body.kind,
-    status: "pending",
-    fromHandle: input.friend.handle,
-    toHandle: localHandle,
-    title: body.title,
-    body: body.body,
-    remoteEventId: input.envelope.id,
-    expiresAt: body.expiresAt,
-    now: input.now,
-  });
-  const messageId = body.messageId ?? newSocialId("msg");
-  const existingMessage = input.store.getMessage(MAIN_SOCIAL_UID, messageId);
-  const message = existingMessage ?? input.store.upsertMessage({
-    uid: MAIN_SOCIAL_UID,
-    messageId,
-    threadId: thread.threadId,
-    direction: "inbound",
-    fromHandle: input.friend.handle,
-    toHandle: localHandle,
-    text: body.title,
-    body: body.body,
-    deliveryMethod: input.envelope.method,
-    deliveryStatus: "delivered",
-    remoteEventId: input.envelope.id,
-    now: input.now,
-  });
-  input.store.upsertMessageStatus({
-    uid: MAIN_SOCIAL_UID,
-    messageId: message.messageId,
-    threadId: thread.threadId,
-    state: "received",
-    summary: request.title,
-    body: request.body,
-    remoteEventId: input.envelope.id,
-    now: input.now,
-  });
-
-  await afterInboundRequestChanged(input.ctx, input.store, thread, request, message, "create");
-
-  return {
-    ok: true,
-    status: "accepted",
-    threadId: thread.threadId,
-    messageId: message.messageId,
-    requestId: request.requestId,
-  };
-}
-
-async function acceptInboundRequestRespond(input: {
-  ctx: KernelContext;
-  store: SocialStore;
-  localIdentity: SocialIdentityRecord;
-  friend: SocialFriendRecord;
-  envelope: SocialSignedRequestEnvelope;
-  now: number;
-}): Promise<SocialInboundResult> {
-  const body = normalizeInboundRequestRespondBody(input.envelope.body);
-  const existingRequest = input.store.getRequest(MAIN_SOCIAL_UID, body.requestId);
-  if (!existingRequest) {
-    throw new Error(`Request is not known: ${body.requestId}`);
-  }
-  const thread = body.threadId
-    ? input.store.upsertThread({
-        uid: MAIN_SOCIAL_UID,
-        threadId: body.threadId,
-        peerHandle: input.friend.handle,
-        topic: existingRequest.title,
-        expiresAt: existingRequest.expiresAt,
-        now: input.now,
-      })
-    : existingRequest.threadId
-      ? requireExistingThread(input.store, MAIN_SOCIAL_UID, existingRequest.threadId)
-      : input.store.upsertThread({
-          uid: MAIN_SOCIAL_UID,
-          threadId: newSocialId("thread"),
-          peerHandle: input.friend.handle,
-          topic: existingRequest.title,
-          expiresAt: existingRequest.expiresAt,
-          now: input.now,
-        });
-  const updated = input.store.upsertRequest({
-    uid: MAIN_SOCIAL_UID,
-    requestId: existingRequest.requestId,
-    threadId: thread.threadId,
-    kind: existingRequest.kind,
-    status: body.status,
-    fromHandle: existingRequest.fromHandle,
-    toHandle: existingRequest.toHandle,
-    title: existingRequest.title,
-    body: existingRequest.body,
-    remoteEventId: existingRequest.remoteEventId,
-    expiresAt: existingRequest.expiresAt,
-    now: input.now,
-  });
-  const localHandle = requireLocalHandle(input.localIdentity);
-  const messageId = body.messageId ?? newSocialId("msg");
-  const existingMessage = input.store.getMessage(MAIN_SOCIAL_UID, messageId);
-  const message = existingMessage ?? input.store.upsertMessage({
-    uid: MAIN_SOCIAL_UID,
-    messageId,
-    threadId: thread.threadId,
-    direction: "inbound",
-    fromHandle: input.friend.handle,
-    toHandle: localHandle,
-    text: body.text ?? `Request status: ${body.status}`,
-    body: body.body,
-    deliveryMethod: input.envelope.method,
-    deliveryStatus: "delivered",
-    remoteEventId: input.envelope.id,
-    now: input.now,
-  });
-  input.store.upsertMessageStatus({
-    uid: MAIN_SOCIAL_UID,
-    messageId: message.messageId,
-    threadId: thread.threadId,
-    state: mapLegacyRequestStatusToMessageStatus(body.status),
-    summary: body.text,
-    body: body.body,
-    remoteEventId: input.envelope.id,
-    now: input.now,
-  });
-
-  await afterInboundRequestChanged(input.ctx, input.store, thread, updated, message, "respond");
-
-  return {
-    ok: true,
-    status: "accepted",
-    threadId: thread.threadId,
-    messageId: message.messageId,
-    requestId: updated.requestId,
-  };
-}
-
 async function deliverInboundMessageToMind(
   ctx: KernelContext,
   thread: SocialThreadRecord,
@@ -2792,80 +2160,6 @@ async function deliverInboundMessageToMind(
       direction: message.direction,
     },
   });
-}
-
-async function deliverInboundRequestToMind(
-  ctx: KernelContext,
-  thread: SocialThreadRecord,
-  request: SocialRequestRecord,
-  message: SocialMessageRecord,
-  event: "create" | "respond",
-): Promise<void> {
-  const identity = identityForUid(MAIN_SOCIAL_UID, ctx);
-  await dispatchMindEvent(ctx, {
-    identity,
-    source: "social.message",
-    threadKey: thread.threadId,
-    title: event === "create"
-      ? `Social message from ${message.fromHandle}`
-      : `Social status update from ${message.fromHandle}`,
-    text: renderInboundSocialRequest(thread, request, message, event),
-    body: {
-      thread: toThreadSummary(thread),
-      legacyRequest: toRequestSummary(request),
-      message: toMessageSummary(message),
-    },
-    metadata: {
-      peerHandle: message.fromHandle,
-      conversationId: thread.conversationId,
-      direction: message.direction,
-      legacyRequestEvent: event,
-    },
-  });
-}
-
-async function afterInboundRequestChanged(
-  ctx: KernelContext,
-  store: SocialStore,
-  thread: SocialThreadRecord,
-  request: SocialRequestRecord,
-  message: SocialMessageRecord,
-  event: "create" | "respond",
-): Promise<void> {
-  try {
-    await deliverInboundRequestToMind(ctx, thread, request, message, event);
-  } catch (error) {
-    console.error("[social.inbound] failed to deliver request to mind process", error);
-  }
-  try {
-    notifySocialRequest(ctx, request, message.fromHandle, event);
-  } catch (error) {
-    console.error("[social.inbound] failed to create request notification", error);
-  }
-  await refreshSocialInboxContextSafe(ctx, store);
-}
-
-function notifySocialRequest(
-  ctx: KernelContext,
-  request: SocialRequestRecord,
-  actorHandle: string,
-  event: "create" | "respond",
-): void {
-  if (!ctx.notifications) {
-    return;
-  }
-  const notification = ctx.notifications.create({
-    uid: MAIN_SOCIAL_UID,
-    title: event === "create"
-      ? `Social request from ${actorHandle}`
-      : `Social request updated by ${actorHandle}`,
-    body: `${request.title} (${request.status})`,
-    level: request.status === "needs-human" ? "warning" : "info",
-    source: { kind: "user" },
-    actions: [],
-    expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-  });
-  ctx.broadcastToUid?.(MAIN_SOCIAL_UID, "notification.created", { notification });
 }
 
 function notifyMessageStatusTransition(
@@ -2975,45 +2269,11 @@ function renderInboundSocialMessage(thread: SocialThreadRecord, message: SocialM
     `Complete: social status update ${message.messageId} --state completed --summary "..."`,
     `Escalate: social status update ${message.messageId} --state needs_human --reason "..."`,
   ];
-  if (message.replyToMessageId) {
-    lines.push(`Reply-To: ${message.replyToMessageId}`);
-  }
-  if (thread.topic) {
-    lines.push(`Topic: ${thread.topic}`);
-  }
   if (message.text) {
     lines.push("", message.text);
   }
   if (message.body !== undefined) {
     lines.push("", "Structured body:", JSON.stringify(message.body, null, 2));
-  }
-  return lines.join("\n");
-}
-
-function renderInboundSocialRequest(
-  thread: SocialThreadRecord,
-  request: SocialRequestRecord,
-  message: SocialMessageRecord,
-  event: "create" | "respond",
-): string {
-  const lines = [
-    event === "create" ? "Social request received." : "Social request updated.",
-    `From: ${message.fromHandle}`,
-    `Thread: ${thread.threadId}`,
-    `Request: ${request.requestId}`,
-    `Kind: ${request.kind}`,
-    `Status: ${request.status}`,
-    `Title: ${request.title}`,
-  ];
-  if (request.expiresAt) {
-    lines.push(`Expires: ${request.expiresAt}`);
-  }
-  if (message.text && message.text !== request.title) {
-    lines.push("", message.text);
-  }
-  const structured = message.body ?? request.body;
-  if (structured !== undefined) {
-    lines.push("", "Structured body:", JSON.stringify(structured, null, 2));
   }
   return lines.join("\n");
 }
@@ -3180,7 +2440,7 @@ function requireExistingThread(
 }
 
 function inferDeliveryMethod(message: SocialMessageRecord): SocialRemoteOperation {
-  return message.replyToMessageId ? "social.message.reply" : "social.message.send";
+  return message.deliveryMethod ?? "social.message.send";
 }
 
 function normalizeDid(value: unknown): SocialDid {
@@ -3221,8 +2481,11 @@ function normalizeSocialId(value: unknown, field: string): string {
   return id;
 }
 
-function newSocialId(prefix: string): string {
-  return `${prefix}-${crypto.randomUUID()}`;
+function newSocialId(_prefix: string): string {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  const suffix = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${Date.now()}-${suffix}`;
 }
 
 function socialConversationId(peerHandle: string, threadId: string): string {
@@ -3264,87 +2527,7 @@ function normalizeMessageStatusState(value: unknown, field: string): SocialMessa
   return value;
 }
 
-function mapLegacyRequestStatusToMessageStatus(
-  status: Extract<SocialRequestStatus, "agent-replied" | "needs-human" | "accepted" | "declined" | "completed">,
-): SocialMessageStatusState {
-  switch (status) {
-    case "needs-human":
-      return "needs_human";
-    case "accepted":
-    case "agent-replied":
-      return "in_progress";
-    case "declined":
-      return "declined";
-    case "completed":
-      return "completed";
-  }
-}
-
-function normalizeRequestKind(value: unknown, field: string): SocialRequestKind {
-  if (
-    value !== "question" &&
-    value !== "task" &&
-    value !== "collaboration" &&
-    value !== "workspace-invite" &&
-    value !== "package-review" &&
-    value !== "other"
-  ) {
-    throw new Error(`invalid ${field}`);
-  }
-  return value;
-}
-
-function normalizeRequestStatus(value: unknown, field: string): SocialRequestStatus {
-  if (
-    value !== "pending" &&
-    value !== "agent-replied" &&
-    value !== "needs-human" &&
-    value !== "accepted" &&
-    value !== "declined" &&
-    value !== "completed" &&
-    value !== "expired"
-  ) {
-    throw new Error(`invalid ${field}`);
-  }
-  return value;
-}
-
-function normalizeRequestDirection(value: unknown, field: string): SocialRequestDirection | undefined {
-  if (value === undefined || value === "all") {
-    return undefined;
-  }
-  if (value !== "inbound" && value !== "outbound") {
-    throw new Error(`${field} must be inbound, outbound, or all`);
-  }
-  return value;
-}
-
-function normalizeRequestResponseStatus(
-  value: unknown,
-  field: string,
-): Extract<SocialRequestStatus, "agent-replied" | "needs-human" | "accepted" | "declined" | "completed"> {
-  const status = normalizeRequestStatus(value, field);
-  if (status === "pending" || status === "expired") {
-    throw new Error(`${field} cannot be ${status}`);
-  }
-  return status;
-}
-
-function normalizeRequestTitle(value: unknown, field: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`${field} must be a string`);
-  }
-  const title = value.trim();
-  if (!title) {
-    throw new Error(`${field} must not be empty`);
-  }
-  if (byteLength(title) > MAX_SOCIAL_REQUEST_TITLE_BYTES) {
-    throw new Error(`${field} exceeds ${MAX_SOCIAL_REQUEST_TITLE_BYTES} bytes`);
-  }
-  return title;
-}
-
-function normalizeRequestBody(value: unknown, field: string): unknown {
+function normalizeSocialBody(value: unknown, field: string): unknown {
   assertCanonicalJsonValue(value, field);
   const encoded = canonicalJson(value);
   if (byteLength(encoded) > MAX_SOCIAL_BODY_BYTES) {
@@ -3414,25 +2597,15 @@ function normalizeMessagePayload(value: {
   return { text, body };
 }
 
-function normalizeInboundMessageBody(
-  value: unknown,
-  method: SocialRemoteOperation,
-): InboundMessageBody {
+function normalizeInboundMessageBody(value: unknown): InboundMessageBody {
   const object = requireObject(value, "envelope.body");
   const payload = normalizeMessagePayload(object, "envelope.body");
   const threadId = object.threadId === undefined
     ? undefined
     : normalizeSocialId(object.threadId, "envelope.body.threadId");
-  if (method === "social.message.reply" && !threadId) {
-    throw new Error("envelope.body.threadId is required for social.message.reply");
-  }
   const messageId = object.messageId === undefined
     ? undefined
     : normalizeSocialId(object.messageId, "envelope.body.messageId");
-  const replyToMessageId = object.replyToMessageId === undefined
-    ? undefined
-    : normalizeSocialId(object.replyToMessageId, "envelope.body.replyToMessageId");
-  const topic = normalizeOptionalText(object.topic, "envelope.body.topic", 512);
   const expiresAt = object.expiresAt === undefined
     ? undefined
     : requireIsoStringValue(object.expiresAt, "envelope.body.expiresAt");
@@ -3440,57 +2613,7 @@ function normalizeInboundMessageBody(
     ...payload,
     threadId,
     messageId,
-    replyToMessageId,
-    topic,
     expiresAt,
-  };
-}
-
-function normalizeInboundRequestCreateBody(value: unknown): InboundRequestCreateBody {
-  const object = requireObject(value, "envelope.body");
-  const threadId = normalizeSocialId(object.threadId, "envelope.body.threadId");
-  const requestId = normalizeSocialId(object.requestId, "envelope.body.requestId");
-  const messageId = object.messageId === undefined
-    ? undefined
-    : normalizeSocialId(object.messageId, "envelope.body.messageId");
-  const kind = normalizeRequestKind(object.kind, "envelope.body.kind");
-  const title = normalizeRequestTitle(object.title, "envelope.body.title");
-  const body = object.body === undefined
-    ? undefined
-    : normalizeRequestBody(object.body, "envelope.body.body");
-  const expiresAt = object.expiresAt === undefined
-    ? undefined
-    : requireIsoStringValue(object.expiresAt, "envelope.body.expiresAt");
-  return {
-    threadId,
-    messageId,
-    requestId,
-    kind,
-    title,
-    body,
-    expiresAt,
-  };
-}
-
-function normalizeInboundRequestRespondBody(value: unknown): InboundRequestRespondBody {
-  const object = requireObject(value, "envelope.body");
-  const threadId = object.threadId === undefined
-    ? undefined
-    : normalizeSocialId(object.threadId, "envelope.body.threadId");
-  const messageId = object.messageId === undefined
-    ? undefined
-    : normalizeSocialId(object.messageId, "envelope.body.messageId");
-  const requestId = normalizeSocialId(object.requestId, "envelope.body.requestId");
-  const status = normalizeRequestResponseStatus(object.status, "envelope.body.status");
-  const payload = object.text === undefined && object.body === undefined
-    ? { text: undefined, body: undefined }
-    : normalizeMessagePayload(object, "envelope.body");
-  return {
-    threadId,
-    messageId,
-    requestId,
-    status,
-    ...payload,
   };
 }
 
@@ -3509,7 +2632,7 @@ function normalizeInboundMessageStatusUpdateBody(value: unknown): InboundMessage
     : normalizeOptionalText(object.needsHumanReason, "envelope.body.needsHumanReason", 2048);
   const body = object.body === undefined
     ? undefined
-    : normalizeRequestBody(object.body, "envelope.body.body");
+    : normalizeSocialBody(object.body, "envelope.body.body");
   return {
     threadId,
     messageId,
@@ -3661,9 +2784,6 @@ function validateAgentCardRecord(record: unknown): SpaceGsvAgentCardRecord {
   }
   if (typeof value.acceptsMessages !== "boolean") {
     throw new Error("acceptsMessages must be a boolean");
-  }
-  if (typeof value.acceptsRequests !== "boolean") {
-    throw new Error("acceptsRequests must be a boolean");
   }
   if (
     value.humanEscalation !== undefined &&
@@ -3937,7 +3057,6 @@ function toFriendSummary(friend: SocialFriendRecord, grants: SocialGrant[]): Soc
     agentDisplayName: friend.agentCard?.displayName,
     agentSummary: friend.agentCard?.summary,
     acceptsMessages: friend.agentCard?.acceptsMessages ?? false,
-    acceptsRequests: friend.agentCard?.acceptsRequests ?? false,
     acceptedSocialMethods: friend.instance.acceptedSocialMethods,
     grants,
     createdAt: new Date(friend.createdAt).toISOString(),
@@ -3953,7 +3072,6 @@ function toThreadRecord(row: ThreadRow): SocialThreadRecord {
     peerHandle: row.peer_handle,
     conversationId: row.conversation_id,
     status: row.status as SocialThreadStatus,
-    topic: row.topic ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     expiresAt: row.expires_at ?? undefined,
@@ -3966,7 +3084,6 @@ function toThreadSummary(thread: SocialThreadRecord): SocialThreadSummary {
     peerHandle: thread.peerHandle,
     conversationId: thread.conversationId,
     status: thread.status,
-    topic: thread.topic,
     createdAt: new Date(thread.createdAt).toISOString(),
     updatedAt: new Date(thread.updatedAt).toISOString(),
     expiresAt: thread.expiresAt,
@@ -3983,7 +3100,6 @@ function toMessageRecord(row: MessageRow): SocialMessageRecord {
     toHandle: row.to_handle,
     text: row.text ?? undefined,
     body: row.body_json ? JSON.parse(row.body_json) as unknown : undefined,
-    replyToMessageId: row.reply_to_message_id ?? undefined,
     deliveryMethod: row.delivery_method ? row.delivery_method as SocialRemoteOperation : undefined,
     deliveryStatus: row.delivery_status as SocialMessageSummary["deliveryStatus"],
     deliveryAttemptCount: row.delivery_attempt_count ?? 0,
@@ -4005,7 +3121,6 @@ function toMessageSummary(message: SocialMessageRecord): SocialMessageSummary {
     toHandle: message.toHandle,
     text: message.text,
     body: message.body,
-    replyToMessageId: message.replyToMessageId,
     deliveryStatus: message.deliveryStatus,
     createdAt: new Date(message.createdAt).toISOString(),
     updatedAt: new Date(message.updatedAt).toISOString(),
@@ -4055,45 +3170,6 @@ function summarizeMessageStatusesForThread(
     const message = store.getMessage(uid, status.messageId);
     return message ? [toMessageStatusSummary(status, message)] : [];
   });
-}
-
-function toRequestRecord(row: RequestRow): SocialRequestRecord {
-  return {
-    uid: row.uid,
-    requestId: row.request_id,
-    threadId: row.thread_id ?? undefined,
-    kind: row.kind as SocialRequestKind,
-    status: row.status as SocialRequestStatus,
-    fromHandle: row.from_handle,
-    toHandle: row.to_handle,
-    title: row.title,
-    body: row.body_json ? JSON.parse(row.body_json) as unknown : undefined,
-    remoteEventId: row.remote_event_id ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    expiresAt: row.expires_at ?? undefined,
-  };
-}
-
-function toRequestSummary(request: SocialRequestRecord): SocialRequestSummary {
-  return {
-    requestId: request.requestId,
-    threadId: request.threadId,
-    direction: requestDirection(request),
-    kind: request.kind,
-    status: request.status,
-    fromHandle: request.fromHandle,
-    toHandle: request.toHandle,
-    title: request.title,
-    body: request.body,
-    createdAt: new Date(request.createdAt).toISOString(),
-    updatedAt: new Date(request.updatedAt).toISOString(),
-    expiresAt: request.expiresAt,
-  };
-}
-
-function requestDirection(request: SocialRequestRecord): SocialRequestDirection {
-  return request.remoteEventId ? "inbound" : "outbound";
 }
 
 function toPublicRecord<TRecord extends SpaceGsvRecord>(row: RecordRow): SocialPublicRecord<TRecord> {

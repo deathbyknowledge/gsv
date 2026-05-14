@@ -71,7 +71,6 @@ export type SpaceGsvAgentCardRecord = SpaceGsvRecordBase<typeof SPACE_GSV_AGENT_
   summary?: string;
   topics?: string[];
   acceptsMessages: boolean;
-  acceptsRequests: boolean;
   humanEscalation?: "never" | "sometimes" | "required";
 };
 
@@ -108,10 +107,7 @@ export const SOCIAL_REMOTE_OPERATIONS = [
   "social.package.like.read",
   "social.thread.create",
   "social.message.send",
-  "social.message.reply",
   "social.message.status.update",
-  "social.request.create",
-  "social.request.respond",
 ] as const;
 
 export type SocialRemoteOperation = typeof SOCIAL_REMOTE_OPERATIONS[number];
@@ -140,14 +136,9 @@ export const SOCIAL_SYSCALLS = [
   "social.thread.list",
   "social.thread.get",
   "social.message.send",
-  "social.message.reply",
   "social.message.status.list",
   "social.message.status.get",
   "social.message.status.update",
-  "social.request.create",
-  "social.request.list",
-  "social.request.get",
-  "social.request.respond",
   "social.package.like.create",
   "social.package.like.delete",
   "social.package.like.list",
@@ -176,7 +167,6 @@ export type SocialFriendSummary = {
   agentDisplayName?: string;
   agentSummary?: string;
   acceptsMessages: boolean;
-  acceptsRequests: boolean;
   acceptedSocialMethods: SocialRemoteOperation[];
   grants: SocialGrant[];
   createdAt: SocialIsoDateString;
@@ -218,7 +208,6 @@ export type SocialThreadSummary = {
   peerHandle: string;
   conversationId: string;
   status: SocialThreadStatus;
-  topic?: string;
   createdAt: SocialIsoDateString;
   updatedAt: SocialIsoDateString;
   expiresAt?: SocialIsoDateString;
@@ -241,7 +230,6 @@ export type SocialMessageSummary = {
   toHandle: string;
   text?: string;
   body?: unknown;
-  replyToMessageId?: string;
   deliveryStatus: SocialDeliveryStatus;
   createdAt: SocialIsoDateString;
   updatedAt: SocialIsoDateString;
@@ -268,40 +256,6 @@ export type SocialMessageStatusSummary = {
   body?: unknown;
   createdAt: SocialIsoDateString;
   updatedAt: SocialIsoDateString;
-};
-
-export type SocialRequestKind =
-  | "question"
-  | "task"
-  | "collaboration"
-  | "workspace-invite"
-  | "package-review"
-  | "other";
-
-export type SocialRequestStatus =
-  | "pending"
-  | "agent-replied"
-  | "needs-human"
-  | "accepted"
-  | "declined"
-  | "completed"
-  | "expired";
-
-export type SocialRequestDirection = "inbound" | "outbound";
-
-export type SocialRequestSummary = {
-  requestId: string;
-  threadId?: string;
-  direction: SocialRequestDirection;
-  kind: SocialRequestKind;
-  status: SocialRequestStatus;
-  fromHandle: string;
-  toHandle: string;
-  title: string;
-  body?: unknown;
-  createdAt: SocialIsoDateString;
-  updatedAt: SocialIsoDateString;
-  expiresAt?: SocialIsoDateString;
 };
 
 export type SocialSetupArgs = {
@@ -412,7 +366,6 @@ export type SocialFriendGrantsSetResult = {
 
 export type SocialThreadCreateArgs = {
   peerHandle: string;
-  topic?: string;
   initialMessage?: string;
   expiresAt?: SocialIsoDateString;
 };
@@ -437,7 +390,6 @@ export type SocialThreadGetResult = {
   thread: SocialThreadSummary | null;
   messages: SocialMessageSummary[];
   statuses: SocialMessageStatusSummary[];
-  requests: SocialRequestSummary[];
 };
 
 export type SocialMessageSendArgs = {
@@ -445,21 +397,10 @@ export type SocialMessageSendArgs = {
   threadId?: string;
   text?: string;
   body?: unknown;
-  replyToMessageId?: string;
   expiresAt?: SocialIsoDateString;
 };
 export type SocialMessageSendResult = {
   thread: SocialThreadSummary;
-  message: SocialMessageSummary;
-};
-
-export type SocialMessageReplyArgs = {
-  threadId: string;
-  text?: string;
-  body?: unknown;
-  replyToMessageId?: string;
-};
-export type SocialMessageReplyResult = {
   message: SocialMessageSummary;
 };
 
@@ -489,50 +430,6 @@ export type SocialMessageStatusUpdateArgs = {
 };
 export type SocialMessageStatusUpdateResult = {
   status: SocialMessageStatusSummary;
-};
-
-export type SocialRequestCreateArgs = {
-  toHandle: string;
-  threadId?: string;
-  kind: SocialRequestKind;
-  title: string;
-  body?: unknown;
-  expiresAt?: SocialIsoDateString;
-};
-export type SocialRequestCreateResult = {
-  request: SocialRequestSummary;
-  thread: SocialThreadSummary;
-};
-
-export type SocialRequestListArgs = {
-  status?: SocialRequestStatus;
-  peerHandle?: string;
-  direction?: SocialRequestDirection | "all";
-  limit?: number;
-};
-export type SocialRequestListResult = {
-  requests: SocialRequestSummary[];
-};
-
-export type SocialRequestGetArgs = {
-  requestId: string;
-};
-export type SocialRequestGetResult = {
-  request: SocialRequestSummary | null;
-};
-
-export type SocialRequestRespondArgs = {
-  requestId: string;
-  status: Extract<
-    SocialRequestStatus,
-    "agent-replied" | "needs-human" | "accepted" | "declined" | "completed"
-  >;
-  text?: string;
-  body?: unknown;
-};
-export type SocialRequestRespondResult = {
-  request: SocialRequestSummary;
-  message?: SocialMessageSummary;
 };
 
 export type SocialPackageLikeCreateArgs = {
@@ -577,7 +474,7 @@ export type SocialInboundArgs = {
   receivedAt?: SocialIsoDateString;
 };
 export type SocialInboundResult =
-  | { ok: true; status: "accepted"; threadId?: string; messageId?: string; requestId?: string }
+  | { ok: true; status: "accepted"; threadId?: string; messageId?: string }
   | { ok: false; status: "rejected"; error: string };
 
 export type SocialSyscalls = {
@@ -649,10 +546,6 @@ export type SocialSyscalls = {
     args: SocialMessageSendArgs;
     result: SocialMessageSendResult;
   };
-  "social.message.reply": {
-    args: SocialMessageReplyArgs;
-    result: SocialMessageReplyResult;
-  };
   "social.message.status.list": {
     args: SocialMessageStatusListArgs;
     result: SocialMessageStatusListResult;
@@ -664,22 +557,6 @@ export type SocialSyscalls = {
   "social.message.status.update": {
     args: SocialMessageStatusUpdateArgs;
     result: SocialMessageStatusUpdateResult;
-  };
-  "social.request.create": {
-    args: SocialRequestCreateArgs;
-    result: SocialRequestCreateResult;
-  };
-  "social.request.list": {
-    args: SocialRequestListArgs;
-    result: SocialRequestListResult;
-  };
-  "social.request.get": {
-    args: SocialRequestGetArgs;
-    result: SocialRequestGetResult;
-  };
-  "social.request.respond": {
-    args: SocialRequestRespondArgs;
-    result: SocialRequestRespondResult;
   };
   "social.package.like.create": {
     args: SocialPackageLikeCreateArgs;

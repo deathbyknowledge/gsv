@@ -228,8 +228,8 @@ describe("createHomeContextProvider", () => {
             if (path === "mind.d/20-policy.md") {
               return {
                 kind: "file",
-                bytes: new TextEncoder().encode("Autonomously triage low-risk social requests."),
-                size: 47,
+                bytes: new TextEncoder().encode("Autonomously triage low-risk social messages."),
+                size: 45,
               };
             }
             return { kind: "missing" };
@@ -241,7 +241,7 @@ describe("createHomeContextProvider", () => {
     expect(sections).toEqual([
       {
         name: "mind.context:20-policy.md",
-        text: "Autonomously triage low-risk social requests.",
+        text: "Autonomously triage low-risk social messages.",
       },
     ]);
   });

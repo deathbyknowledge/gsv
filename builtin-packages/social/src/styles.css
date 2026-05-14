@@ -101,7 +101,7 @@ pre {
 .social-message header span,
 .social-list-item span,
 .social-list-item small,
-.social-request-meta,
+.social-status-meta,
 .social-structured-text {
   color: var(--social-muted);
 }
@@ -328,13 +328,13 @@ pre {
 }
 
 .social-message-stream,
-.social-request-rail {
+.social-status-rail {
   min-height: 0;
   overflow: auto;
   padding: 16px;
 }
 
-.social-request-rail {
+.social-status-rail {
   border-left: 1px solid var(--social-line);
   background: var(--social-panel-soft);
 }
@@ -360,7 +360,7 @@ pre {
 }
 
 .social-message,
-.social-request-card,
+.social-status-card,
 .social-add-friend,
 .social-composer {
   border: 1px solid var(--social-line);
@@ -369,7 +369,7 @@ pre {
 }
 
 .social-message,
-.social-request-card {
+.social-status-card {
   margin: 0 0 12px;
   padding: 12px;
 }
@@ -384,7 +384,7 @@ pre {
 }
 
 .social-message header,
-.social-request-card header {
+.social-status-card header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -407,22 +407,22 @@ pre {
   font-size: 12px;
 }
 
-.social-request-card h3 {
+.social-status-card h3 {
   margin: 0;
   overflow-wrap: anywhere;
   font-size: 15px;
   line-height: 1.25;
 }
 
-.social-request-card.is-inbound {
+.social-status-card.is-inbound {
   border-color: rgba(40, 92, 143, 0.25);
 }
 
-.social-request-card.is-outbound {
+.social-status-card.is-outbound {
   opacity: 0.88;
 }
 
-.social-request-meta {
+.social-status-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -430,7 +430,7 @@ pre {
   font-size: 12px;
 }
 
-.social-request-meta span {
+.social-status-meta span {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -730,7 +730,7 @@ textarea {
     border-bottom: 1px solid var(--social-line);
   }
 
-  .social-request-rail,
+  .social-status-rail,
   .social-friends-list {
     border-left: 0;
     border-right: 0;

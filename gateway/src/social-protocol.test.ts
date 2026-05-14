@@ -39,10 +39,12 @@ describe("social protocol contract", () => {
 
   it("separates remote social operations from local social syscalls", () => {
     expect(SOCIAL_REMOTE_OPERATIONS).toContain("social.message.send");
-    expect(SOCIAL_REMOTE_OPERATIONS).toContain("social.request.create");
     expect(SOCIAL_REMOTE_OPERATIONS).toContain("social.package.like.read");
+    expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.message.reply" as never);
+    expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.request.create" as never);
 
     expect(isSocialRemoteOperation("social.message.send")).toBe(true);
+    expect(isSocialRemoteOperation("social.message.reply")).toBe(false);
     expect(isSocialRemoteOperation("social.inbound")).toBe(false);
     expect(isSocialRemoteOperation("social.sync.run")).toBe(false);
     expect(isSocialRemoteOperation("fs.read")).toBe(false);
@@ -51,6 +53,7 @@ describe("social protocol contract", () => {
     expect(SOCIAL_SYSCALLS).toContain("social.sync.run");
     expect(isSocialSyscallName("social.inbound")).toBe(true);
     expect(isSocialSyscallName("social.message.send")).toBe(true);
+    expect(isSocialSyscallName("social.message.reply")).toBe(false);
     expect(isSocialSyscallName("repo.read")).toBe(false);
   });
 
@@ -87,7 +90,6 @@ describe("social protocol contract", () => {
       $type: SPACE_GSV_AGENT_CARD,
       createdAt: "2026-05-12T12:00:00Z",
       acceptsMessages: true,
-      acceptsRequests: true,
       topics: ["packages", "planning"],
     };
 

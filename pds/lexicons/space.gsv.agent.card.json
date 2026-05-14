@@ -8,7 +8,7 @@
       "key": "literal:self",
       "record": {
         "type": "object",
-        "required": ["$type", "createdAt", "acceptsMessages", "acceptsRequests"],
+        "required": ["$type", "createdAt", "acceptsMessages"],
         "properties": {
           "$type": {
             "type": "string",
@@ -42,9 +42,6 @@
             }
           },
           "acceptsMessages": {
-            "type": "boolean"
-          },
-          "acceptsRequests": {
             "type": "boolean"
           },
           "humanEscalation": {

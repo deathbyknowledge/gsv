@@ -53,10 +53,7 @@
                 "social.package.like.read",
                 "social.thread.create",
                 "social.message.send",
-                "social.message.reply",
-                "social.message.status.update",
-                "social.request.create",
-                "social.request.respond"
+                "social.message.status.update"
               ]
             }
           }

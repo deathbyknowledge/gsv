@@ -3,7 +3,6 @@ import type {
   SocialFriendListResult,
   SocialGrant,
   SocialIdentityGetResult,
-  SocialMessageReplyArgs,
   SocialMessageSendArgs,
   SocialMessageStatusListResult,
   SocialMessageStatusSummary,
@@ -103,21 +102,13 @@ export async function sendMessage(
 ): Promise<SocialState> {
   const text = normalizeRequired(args.text, "message");
   const threadId = normalizeOptional(args.threadId);
-  if (threadId) {
-    const replyArgs: SocialMessageReplyArgs = {
-      threadId,
-      text,
-    };
-    await kernel.request("social.message.reply", replyArgs);
-    return loadState({ threadId }, kernel);
-  }
-
   const sendArgs: SocialMessageSendArgs = {
     toHandle: normalizeRequired(args.toHandle, "toHandle"),
     text,
+    ...(threadId ? { threadId } : {}),
   };
   const created = await kernel.request("social.message.send", sendArgs) as { thread?: { threadId?: string } };
-  return loadState({ threadId: created.thread?.threadId }, kernel);
+  return loadState({ threadId: created.thread?.threadId ?? threadId }, kernel);
 }
 
 export async function updateMessageStatus(
@@ -140,7 +131,6 @@ function normalizeFriend(friend: SocialFriendListResult["friends"][number]): Soc
     displayName: friend.displayName,
     agentDisplayName: friend.agentDisplayName,
     acceptsMessages: friend.acceptsMessages,
-    acceptsRequests: friend.acceptsRequests,
     acceptedSocialMethods: friend.acceptedSocialMethods,
     grants: friend.grants,
     updatedAt: friend.updatedAt,
@@ -153,7 +143,6 @@ function normalizeThread(thread: SocialThreadSummary): SocialThreadItem {
     peerHandle: thread.peerHandle,
     conversationId: thread.conversationId,
     status: thread.status,
-    topic: thread.topic,
     updatedAt: thread.updatedAt,
     statusCount: 0,
   };

@@ -110,7 +110,6 @@ import {
   handleSocialFriendList,
   handleSocialFriendRemove,
   handleSocialInbound,
-  handleSocialMessageReply,
   handleSocialMessageSend,
   handleSocialMessageStatusGet,
   handleSocialMessageStatusList,
@@ -122,10 +121,6 @@ import {
   handleSocialInstanceUpdate,
   handleSocialProfileGet,
   handleSocialProfileUpdate,
-  handleSocialRequestCreate,
-  handleSocialRequestGet,
-  handleSocialRequestList,
-  handleSocialRequestRespond,
   handleSocialThreadCreate,
   handleSocialThreadGet,
   handleSocialThreadList,
@@ -556,9 +551,6 @@ async function dispatchNative(
       case "social.message.send":
         data = await handleSocialMessageSend(frame.args, ctx);
         break;
-      case "social.message.reply":
-        data = await handleSocialMessageReply(frame.args, ctx);
-        break;
       case "social.message.status.list":
         data = handleSocialMessageStatusList(frame.args, ctx);
         break;
@@ -567,18 +559,6 @@ async function dispatchNative(
         break;
       case "social.message.status.update":
         data = await handleSocialMessageStatusUpdate(frame.args, ctx);
-        break;
-      case "social.request.create":
-        data = await handleSocialRequestCreate(frame.args, ctx);
-        break;
-      case "social.request.list":
-        data = handleSocialRequestList(frame.args, ctx);
-        break;
-      case "social.request.get":
-        data = handleSocialRequestGet(frame.args, ctx);
-        break;
-      case "social.request.respond":
-        data = await handleSocialRequestRespond(frame.args, ctx);
         break;
       case "social.inbound":
         data = await handleSocialInbound(frame.args, ctx);

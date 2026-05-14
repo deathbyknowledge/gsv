@@ -15,7 +15,6 @@ export type SocialPeerSummary = {
   displayName?: string;
   agentDisplayName?: string;
   acceptsMessages: boolean;
-  acceptsRequests: boolean;
   acceptedSocialMethods: SocialRemoteOperation[];
   grants: SocialGrant[];
   updatedAt: string;
@@ -26,7 +25,6 @@ export type SocialThreadItem = {
   peerHandle: string;
   conversationId: string;
   status: SocialThreadStatus;
-  topic?: string;
   updatedAt: string;
   statusCount: number;
 };
@@ -117,6 +115,5 @@ export interface SocialBackend {
 export const SOCIAL_GRANT_OPTIONS: Array<{ operation: SocialRemoteOperation; label: string }> = [
   { operation: "social.thread.create", label: "Start threads" },
   { operation: "social.message.send", label: "Send messages" },
-  { operation: "social.message.reply", label: "Reply to messages" },
   { operation: "social.message.status.update", label: "Update message status" },
 ];

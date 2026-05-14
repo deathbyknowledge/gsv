@@ -280,7 +280,7 @@ function Sidebar(props: {
               onClick={() => props.onSelectThread(thread.threadId)}
             >
               <StatusDot status={thread.status} />
-              <strong>{thread.topic || thread.peerHandle}</strong>
+              <strong>{thread.peerHandle}</strong>
               <span>{thread.peerHandle}</span>
               <small>{thread.statusCount} tracked · {formatShortDate(thread.updatedAt)}</small>
             </button>
@@ -326,7 +326,7 @@ function ThreadPanel(props: {
       <header class="social-detail-head">
         <div>
           <p class="social-eyebrow">Conversation</p>
-          <h2>{thread.topic || thread.peerHandle}</h2>
+          <h2>{thread.peerHandle}</h2>
           <p>{thread.peerHandle}</p>
         </div>
         <div class="social-head-actions">
@@ -347,7 +347,7 @@ function ThreadPanel(props: {
           )) : <div class="social-list-note">No messages in this thread.</div>}
         </section>
 
-        <aside class="social-request-rail">
+        <aside class="social-status-rail">
           <header class="social-rail-head">
             <h3>Status</h3>
             <span>{statuses.length}</span>
@@ -407,7 +407,7 @@ function StatusCard(props: {
   const peer = props.status.direction === "inbound" ? props.status.fromHandle : props.status.toHandle;
   const canUpdate = props.status.direction === "inbound" && props.status.toHandle === props.identityHandle;
   return (
-    <article class={`social-request-card is-${props.status.direction}`}>
+    <article class={`social-status-card is-${props.status.direction}`}>
       <header>
         <div>
           <p class="social-eyebrow">{props.status.direction === "inbound" ? "Inbound message" : "Remote status"}</p>
@@ -415,7 +415,7 @@ function StatusCard(props: {
         </div>
         <span class={`social-pill is-${props.status.state}`}>{props.status.state}</span>
       </header>
-      <div class="social-request-meta">
+      <div class="social-status-meta">
         <span>{peer}</span>
         <span>{formatShortDate(props.status.updatedAt)}</span>
       </div>

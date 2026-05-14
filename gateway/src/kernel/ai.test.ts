@@ -85,7 +85,7 @@ describe("handleAiTools", () => {
 });
 
 describe("handleAiConfig", () => {
-  it("resolves the mind system profile context and approval policy", async () => {
+  it("resolves the mind system profile context and automatic approval policy", async () => {
     const ctx = {
       ...makeContext("ready"),
       env: {},
@@ -101,10 +101,10 @@ describe("handleAiConfig", () => {
     expect(result.profileContextFiles?.map((file) => file.name)).toContain("00-role.md");
     expect(result.profileContextFiles?.map((file) => file.name)).toContain("10-social.md");
     expect(result.profileContextFiles?.find((file) => file.name === "00-role.md")?.text)
-      .toContain("GSV Mind process");
+      .toContain("Mind");
     expect(result.profileContextFiles?.find((file) => file.name === "10-social.md")?.text)
       .toContain("social message send");
-    expect(result.profileApprovalPolicy).toContain("\"shell.exec\"");
+    expect(result.profileApprovalPolicy).toBe("{\"default\":\"auto\",\"rules\":[]}");
   });
 });
 

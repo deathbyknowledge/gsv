@@ -145,7 +145,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/profile/review/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
   "config/ai/profile/app/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
   "config/ai/profile/mcp/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
-  "config/ai/profile/mind/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
+  "config/ai/profile/mind/tools/approval": "{\"default\":\"auto\",\"rules\":[]}",
   "config/ai/profile/cron/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"sys.mcp.call\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
 };
 

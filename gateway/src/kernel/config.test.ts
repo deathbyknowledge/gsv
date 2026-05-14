@@ -131,7 +131,8 @@ describe("ConfigStore", () => {
 
   it("defines common process context once for all profiles", () => {
     const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-gsv.md"];
-    expect(context).toContain("You are running inside GSV, a Linux-shaped cloud computer");
+    expect(context).toContain("You are running inside GSV");
+    expect(context).toContain("Linux-shaped");
     expect(context).toContain("[Process Event]:");
     expect(context).toContain("[GSV Mind]:");
 

@@ -199,7 +199,7 @@ async function runThreadCommand(kernel: KernelClientLike, args: string[]): Promi
       return "No social threads.\n";
     }
     return `${result.threads.map((thread) =>
-      `- ${thread.threadId}: ${thread.peerHandle}${thread.topic ? ` - ${thread.topic}` : ""}`
+      `- ${thread.threadId}: ${thread.peerHandle}`
     ).join("\n")}\n`;
   }
   if (subcommand === "read" || subcommand === "get") {
@@ -216,7 +216,7 @@ async function runThreadCommand(kernel: KernelClientLike, args: string[]): Promi
     }
     const statusByMessage = new Map(result.statuses.map((status) => [status.messageId, status]));
     const lines = [
-      `${result.thread.threadId}: ${result.thread.peerHandle}${result.thread.topic ? ` - ${result.thread.topic}` : ""}`,
+      `${result.thread.threadId}: ${result.thread.peerHandle}`,
       "",
       ...result.messages.map((message) => {
         const text = message.text ?? (message.body === undefined ? "" : JSON.stringify(message.body));

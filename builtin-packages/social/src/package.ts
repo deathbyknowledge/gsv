@@ -20,7 +20,6 @@ export default definePackage({
         "social.thread.list",
         "social.thread.get",
         "social.message.send",
-        "social.message.reply",
         "social.message.status.list",
         "social.message.status.get",
         "social.message.status.update",
