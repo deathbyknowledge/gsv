@@ -35,12 +35,16 @@ import {
   handleSocialMessageStatusList,
   handleSocialMessageStatusUpdate,
   handleSocialMessageSend,
+  handleSocialPackageLikeCreate,
+  handleSocialPackageLikeDelete,
+  handleSocialPackageLikeList,
   handleSocialSetup,
   handleSocialProfileGet,
   handleSocialProfileUpdate,
   handleSocialThreadCreate,
   handleSocialThreadGet,
   handleSocialThreadList,
+  handleSocialUserList,
   generateP256ServiceKey,
   signSocialEnvelope,
   SocialStore,
@@ -49,7 +53,9 @@ import type { KernelContext } from "./context";
 import {
   SPACE_GSV_AGENT_CARD,
   SPACE_GSV_INSTANCE,
+  SPACE_GSV_PACKAGE_LIKE,
   SPACE_GSV_PROFILE,
+  SPACE_GSV_USER,
   type SocialRemoteOperation,
   type SocialSignedRequestEnvelope,
   type SpaceGsvAgentCardRecord,
@@ -95,6 +101,16 @@ function createMockSql() {
 
     if (q.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS")) {
       return cursor<T>([]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_records") && q.includes("ORDER BY updated_at DESC")) {
+      const [uid, collection, limit] = bindings as [number, string, number];
+      return cursor(
+        getTable("social_records")
+          .filter((row) => row.uid === uid && row.collection === collection)
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
     }
 
     if (q.startsWith("SELECT * FROM social_identities WHERE uid = ?")) {
@@ -166,6 +182,15 @@ function createMockSql() {
       return cursor<T>([]);
     }
 
+    if (q.startsWith("DELETE FROM social_records WHERE uid = ? AND collection = ? AND rkey = ?")) {
+      const [uid, collection, rkey] = bindings as [number, string, string];
+      const table = getTable("social_records");
+      tables.set("social_records", table.filter((row) =>
+        !(row.uid === uid && row.collection === collection && row.rkey === rkey)
+      ));
+      return cursor<T>([]);
+    }
+
     if (q.startsWith("SELECT * FROM social_settings WHERE uid = ?")) {
       const [uid] = bindings as [number];
       return cursor(getTable("social_settings").filter((row) => row.uid === uid) as T[]);
@@ -225,6 +250,7 @@ function createMockSql() {
         handle,
         did,
         pds_endpoint,
+        note,
         display_name,
         profile_json,
         instance_json,
@@ -234,6 +260,7 @@ function createMockSql() {
         synced_at,
       ] = bindings as [
         number,
+        string,
         string,
         string,
         string,
@@ -252,6 +279,7 @@ function createMockSql() {
         handle,
         did,
         pds_endpoint,
+        note,
         display_name,
         profile_json,
         instance_json,
@@ -283,6 +311,75 @@ function createMockSql() {
       tables.set("social_friends", table.filter((row) =>
         !(row.uid === uid && row.handle === handle)
       ));
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_friend_records")) {
+      const [uid, friend_handle, collection, limit] = bindings as [number, string, string, number];
+      return cursor(
+        getTable("social_friend_records")
+          .filter((row) =>
+            row.uid === uid && row.friend_handle === friend_handle && row.collection === collection
+          )
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("DELETE FROM social_friend_records WHERE uid = ? AND friend_handle = ? AND collection = ?")) {
+      const [uid, friend_handle, collection] = bindings as [number, string, string];
+      const table = getTable("social_friend_records");
+      tables.set("social_friend_records", table.filter((row) =>
+        !(row.uid === uid && row.friend_handle === friend_handle && row.collection === collection)
+      ));
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("DELETE FROM social_friend_records WHERE uid = ? AND friend_handle = ?")) {
+      const [uid, friend_handle] = bindings as [number, string];
+      const table = getTable("social_friend_records");
+      tables.set("social_friend_records", table.filter((row) =>
+        !(row.uid === uid && row.friend_handle === friend_handle)
+      ));
+      return cursor<T>([]);
+    }
+
+    if (q.startsWith("INSERT INTO social_friend_records")) {
+      const [
+        uid,
+        friend_handle,
+        collection,
+        rkey,
+        uri,
+        cid,
+        record_json,
+        created_at,
+        updated_at,
+        synced_at,
+      ] = bindings as [
+        number,
+        string,
+        string,
+        string,
+        string | null,
+        string | null,
+        string,
+        number,
+        number,
+        number,
+      ];
+      getTable("social_friend_records").push({
+        uid,
+        friend_handle,
+        collection,
+        rkey,
+        uri,
+        cid,
+        record_json,
+        created_at,
+        updated_at,
+        synced_at,
+      });
       return cursor<T>([]);
     }
 
@@ -472,6 +569,7 @@ function createMockSql() {
         to_handle,
         text,
         body_json,
+        sender_json,
         delivery_method,
         delivery_status,
         delivery_attempt_count,
@@ -488,6 +586,7 @@ function createMockSql() {
         string,
         string,
         string,
+        string | null,
         string | null,
         string | null,
         string | null,
@@ -511,6 +610,7 @@ function createMockSql() {
         to_handle,
         text,
         body_json,
+        sender_json,
         delivery_method,
         delivery_status,
         delivery_attempt_count,
@@ -801,12 +901,22 @@ function createCtx(
     },
     social,
     auth: {
+      getPasswdEntries: vi.fn(() => [
+        {
+          username,
+          uid,
+          gid: 100,
+          gecos: username === "hank" ? "Hank" : username,
+          home: `/home/${username}`,
+          shell: "/bin/gsv",
+        },
+      ]),
       getPasswdByUid: vi.fn((requestedUid: number) => requestedUid === uid
         ? {
             username,
             uid,
             gid: 100,
-            gecos: "",
+            gecos: username === "hank" ? "Hank" : username,
             home: `/home/${username}`,
             shell: "/bin/gsv",
           }
@@ -892,6 +1002,8 @@ function stubAlicePublicIdentity(
               publicKeyMultibase,
             },
             acceptedSocialMethods: [
+              "social.user.read",
+              "social.package.like.read",
               "social.thread.create",
               "social.message.send",
               "social.message.status.update",
@@ -909,6 +1021,45 @@ function stubAlicePublicIdentity(
             displayName: "Alice's GSV",
             acceptsMessages: true,
           },
+        });
+      }
+    }
+    if (parsed.origin === "https://alice.example" && parsed.pathname === "/xrpc/com.atproto.repo.listRecords") {
+      if (collection === SPACE_GSV_USER) {
+        return Response.json({
+          records: [
+            {
+              uri: "at://did:web:alice.example/space.gsv.user/alice",
+              cid: "bafy-user-alice",
+              value: {
+                $type: SPACE_GSV_USER,
+                createdAt: "2026-05-12T12:00:00Z",
+                username: "alice",
+                displayName: "Alice",
+                acceptsMessages: true,
+              },
+            },
+          ],
+        });
+      }
+      if (collection === SPACE_GSV_PACKAGE_LIKE) {
+        return Response.json({
+          records: [
+            {
+              uri: "at://did:web:alice.example/space.gsv.package.like/like-1",
+              cid: "bafy-like-1",
+              value: {
+                $type: SPACE_GSV_PACKAGE_LIKE,
+                createdAt: "2026-05-12T12:00:00Z",
+                subject: {
+                  kind: "gsv-package",
+                  name: "planner",
+                  repo: "alice/planner",
+                },
+                note: "Useful for shared planning.",
+              },
+            },
+          ],
         });
       }
     }
@@ -946,6 +1097,7 @@ async function setupSignedInboundFriend(grants: Array<{ operation: SocialRemoteO
   stubAlicePublicIdentity(aliceKeys.publicKeyMultibase);
   await handleSocialFriendAdd({
     handle: "alice.example",
+    note: "Alice's household GSV",
     grants,
   }, ctx);
   setContextRole(ctx, "service");
@@ -1014,15 +1166,24 @@ describe("social identity and records", () => {
       SPACE_GSV_PROFILE,
       SPACE_GSV_INSTANCE,
       SPACE_GSV_AGENT_CARD,
+      SPACE_GSV_USER,
     ]);
     for (const call of putCalls) {
       expect(call).toMatchObject({
         host: "gsv.example",
         repo: "did:web:gsv.example",
-        rkey: "self",
         validate: true,
       });
     }
+    expect(putCalls.filter((call) => call.collection !== SPACE_GSV_USER).map((call) => call.rkey))
+      .toEqual(["self", "self", "self"]);
+    const user = putCalls.find((call) => call.collection === SPACE_GSV_USER)?.record;
+    expect(user).toMatchObject({
+      $type: SPACE_GSV_USER,
+      username: "hank",
+      displayName: "Hank",
+      acceptsMessages: true,
+    });
     const instance = putCalls.find((call) => call.collection === SPACE_GSV_INSTANCE)?.record as SpaceGsvInstanceRecord;
     expect(instance.endpoint).toBe("https://gsv.example");
     expect(instance.serviceKey.id).toBe("did:web:gsv.example#gsv-social-key");
@@ -1065,6 +1226,7 @@ describe("social identity and records", () => {
       SPACE_GSV_PROFILE,
       SPACE_GSV_INSTANCE,
       SPACE_GSV_AGENT_CARD,
+      SPACE_GSV_USER,
     ]);
     const instance = putCalls.find((call) => call.collection === SPACE_GSV_INSTANCE)?.record as SpaceGsvInstanceRecord;
     expect(instance.acceptedSocialMethods).toContain("social.message.send");
@@ -1317,11 +1479,13 @@ describe("social identity and records", () => {
 
     await expect(handleSocialFriendAdd({
       handle: "Alice.Example",
+      note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
     }, ctx)).resolves.toMatchObject({
       created: true,
       friend: {
         handle: "alice.example",
+        note: "Alice's household GSV",
         displayName: "Alice",
         description: "Builds small agents.",
         agentDisplayName: "Alice's GSV",
@@ -1355,6 +1519,134 @@ describe("social identity and records", () => {
     expect(handleSocialFriendList({}, ctx).friends).toEqual([]);
   });
 
+  it("lists local and remote GSV users through typed social user discovery", async () => {
+    const ctx = createCtx();
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+    const aliceKeys = await generateP256ServiceKey();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase);
+    await handleSocialFriendAdd({
+      handle: "alice.example",
+      note: "Alice's household GSV",
+      grants: [{ operation: "social.user.read" }],
+    }, ctx);
+
+    await expect(handleSocialUserList({}, ctx)).resolves.toMatchObject({
+      users: [
+        {
+          handle: "gsv.example",
+          record: {
+            $type: SPACE_GSV_USER,
+            username: "hank",
+            displayName: "Hank",
+            acceptsMessages: true,
+          },
+        },
+      ],
+    });
+
+    await expect(handleSocialUserList({ handle: "alice.example" }, ctx)).resolves.toMatchObject({
+      users: [
+        {
+          handle: "alice.example",
+          uri: "at://did:web:alice.example/space.gsv.user/alice",
+          record: {
+            $type: SPACE_GSV_USER,
+            username: "alice",
+            displayName: "Alice",
+            acceptsMessages: true,
+          },
+        },
+      ],
+    });
+  });
+
+  it("publishes, lists, deletes, and reads package likes through typed discovery", async () => {
+    const putCalls: PdsPutRecordInput[] = [];
+    const deletedRkeys: string[] = [];
+    const ctx = createCtx({
+      pdsPutRecord: async (input: PdsPutRecordInput) => {
+        putCalls.push(input);
+        return {
+          uri: `at://${input.repo}/${input.collection}/${input.rkey}`,
+          cid: "bafy-like-local",
+        };
+      },
+      pdsDeleteRecord: async (input: { rkey: string }) => {
+        deletedRkeys.push(input.rkey);
+        return {
+          uri: `at://did:web:gsv.example/${SPACE_GSV_PACKAGE_LIKE}/${input.rkey}`,
+        };
+      },
+    });
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+
+    const created = await handleSocialPackageLikeCreate({
+      record: {
+        $type: SPACE_GSV_PACKAGE_LIKE,
+        createdAt: "2026-05-12T12:00:00Z",
+        subject: {
+          kind: "gsv-package",
+          name: "planner",
+          repo: "gsv/planner",
+        },
+        note: "Good shared planning surface.",
+      },
+    }, ctx);
+
+    expect(created.uri).toMatch(/^at:\/\/did:web:gsv\.example\/space\.gsv\.package\.like\/\d+-[0-9a-f]{8}$/);
+    expect(putCalls[0]).toMatchObject({
+      repo: "did:web:gsv.example",
+      collection: SPACE_GSV_PACKAGE_LIKE,
+      validate: true,
+    });
+    await expect(handleSocialPackageLikeList({}, ctx)).resolves.toMatchObject({
+      likes: [
+        {
+          handle: "gsv.example",
+          uri: created.uri,
+          record: {
+            $type: SPACE_GSV_PACKAGE_LIKE,
+            subject: {
+              name: "planner",
+            },
+          },
+        },
+      ],
+    });
+
+    await expect(handleSocialPackageLikeDelete({ uri: created.uri! }, ctx)).resolves.toEqual({ deleted: true });
+    expect(deletedRkeys).toEqual([putCalls[0].rkey]);
+    await expect(handleSocialPackageLikeList({}, ctx)).resolves.toEqual({ likes: [] });
+
+    const aliceKeys = await generateP256ServiceKey();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase);
+    await handleSocialFriendAdd({
+      handle: "alice.example",
+      note: "Alice's household GSV",
+      grants: [{ operation: "social.package.like.read" }],
+    }, ctx);
+    await expect(handleSocialPackageLikeList({ handle: "alice.example" }, ctx)).resolves.toMatchObject({
+      likes: [
+        {
+          handle: "alice.example",
+          uri: "at://did:web:alice.example/space.gsv.package.like/like-1",
+          record: {
+            $type: SPACE_GSV_PACKAGE_LIKE,
+            subject: {
+              name: "planner",
+            },
+          },
+        },
+      ],
+    });
+  });
+
   it("rejects duplicate or unsupported friend grants", async () => {
     const ctx = createCtx();
     expect(() => handleSocialFriendGrantsSet({
@@ -1379,6 +1671,7 @@ describe("social identity and records", () => {
 
     await expect(handleSocialFriendAdd({
       handle: "gsv.example",
+      note: "The local GSV",
     }, ctx)).rejects.toThrow("Cannot add the local GSV identity as a friend");
   });
 
@@ -1398,6 +1691,7 @@ describe("social identity and records", () => {
     });
     await handleSocialFriendAdd({
       handle: "alice.example",
+      note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
     }, ctx);
 
@@ -1416,13 +1710,25 @@ describe("social identity and records", () => {
       direction: "outbound",
       fromHandle: "gsv.example",
       toHandle: "alice.example",
+      sender: {
+        kind: "user",
+        username: "hank",
+        displayName: "Hank",
+      },
       text: "Can your agent look at this plan?",
       deliveryStatus: "accepted",
     });
     expect(inboundBodies).toHaveLength(1);
     expect((inboundBodies[0] as { envelope: { method: string; body: { threadId: string } } }).envelope).toMatchObject({
       method: "social.thread.create",
-      body: { threadId: created.thread.threadId },
+      body: {
+        threadId: created.thread.threadId,
+        sender: {
+          kind: "user",
+          username: "hank",
+          displayName: "Hank",
+        },
+      },
     });
 
     expect(handleSocialThreadList({}, ctx).threads.map((thread) => thread.threadId)).toEqual([
@@ -1454,6 +1760,7 @@ describe("social identity and records", () => {
     });
     await handleSocialFriendAdd({
       handle: "alice.example",
+      note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
     }, ctx);
 
@@ -1503,6 +1810,7 @@ describe("social identity and records", () => {
     });
     await handleSocialFriendAdd({
       handle: "alice.example",
+      note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
     }, ctx);
 
@@ -1550,6 +1858,7 @@ describe("social identity and records", () => {
     });
     await handleSocialFriendAdd({
       handle: "alice.example",
+      note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
     }, ctx);
 
@@ -1614,11 +1923,9 @@ describe("social identity and records", () => {
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
       .toContain("social message send alice.example");
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
-      .toContain("Human decision needed");
+      .toContain("social status update msg-alice --state needs_human");
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
-      .toContain("No reply needed");
-    expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
-      .toContain("Do not send acknowledgements of acknowledgements");
+      .toContain("mark complete");
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
       .not.toContain("Structured event data");
 
@@ -1763,7 +2070,6 @@ describe("social identity and records", () => {
     const inboxText = await inbox?.text();
     expect(inboxText).toContain('social message send alice.example "<text>" --thread thread-alice');
     expect(inboxText).toContain("Escalate human preference, permission, schedule, availability");
-    expect(inboxText).toContain("Complete pure acknowledgements");
     expect(inboxText).toContain("Needs Hank to approve sharing this.");
   });
 

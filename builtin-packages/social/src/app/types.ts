@@ -6,12 +6,15 @@ import type {
   SocialMessageStatusState,
   SocialRemoteOperation,
   SocialThreadStatus,
+  SpaceGsvPackageLikeRecord,
+  SpaceGsvUserRecord,
 } from "@gsv/protocol/syscalls/social";
 
 export type SocialView = "inbox" | "threads" | "friends";
 
 export type SocialPeerSummary = {
   handle: string;
+  note: string;
   displayName?: string;
   agentDisplayName?: string;
   acceptsMessages: boolean;
@@ -61,20 +64,41 @@ export type SocialThreadDetail = {
   statuses: SocialMessageStatusItem[];
 };
 
+export type SocialRemoteUserItem = {
+  handle: string;
+  uri?: string;
+  record: SpaceGsvUserRecord;
+};
+
+export type SocialPackageLikeItem = {
+  handle: string;
+  uri: string;
+  record: SpaceGsvPackageLikeRecord;
+};
+
+export type SocialFriendDirectory = {
+  handle: string;
+  users: SocialRemoteUserItem[];
+  packageLikes: SocialPackageLikeItem[];
+};
+
 export type SocialState = {
   identity: SocialLocalIdentity | null;
   friends: SocialPeerSummary[];
   threads: SocialThreadItem[];
   statuses: SocialMessageStatusItem[];
   selectedThread: SocialThreadDetail | null;
+  friendDirectory: SocialFriendDirectory | null;
 };
 
 export type LoadSocialStateArgs = {
   threadId?: string | null;
+  friendHandle?: string | null;
 };
 
 export type AddFriendArgs = {
   handle: string;
+  note: string;
   grants: SocialGrant[];
 };
 

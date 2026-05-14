@@ -31,6 +31,7 @@ import type {
   SocialMessageDirection,
   SocialMessageSendArgs,
   SocialMessageSendResult,
+  SocialMessageSender,
   SocialMessageStatusGetArgs,
   SocialMessageStatusGetResult,
   SocialMessageStatusListArgs,
@@ -40,6 +41,12 @@ import type {
   SocialMessageStatusUpdateArgs,
   SocialMessageStatusUpdateResult,
   SocialMessageSummary,
+  SocialPackageLikeCreateArgs,
+  SocialPackageLikeCreateResult,
+  SocialPackageLikeDeleteArgs,
+  SocialPackageLikeDeleteResult,
+  SocialPackageLikeListArgs,
+  SocialPackageLikeListResult,
   SocialProfileGetArgs,
   SocialProfileGetResult,
   SocialProfileUpdateArgs,
@@ -56,18 +63,24 @@ import type {
   SocialRemoteOperation,
   SocialThreadSummary,
   SocialThreadStatus,
+  SocialUserListArgs,
+  SocialUserListResult,
   SpaceGsvAgentCardRecord,
   SpaceGsvCollection,
   SpaceGsvInstanceRecord,
+  SpaceGsvPackageLikeRecord,
   SpaceGsvProfileRecord,
   SpaceGsvRecord,
+  SpaceGsvUserRecord,
 } from "@gsv/protocol/syscalls/social";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import {
   isSocialRemoteOperation,
   SPACE_GSV_AGENT_CARD,
   SPACE_GSV_INSTANCE,
+  SPACE_GSV_PACKAGE_LIKE,
   SPACE_GSV_PROFILE,
+  SPACE_GSV_USER,
   SOCIAL_REMOTE_OPERATIONS,
 } from "@gsv/protocol/syscalls/social";
 import type { KernelContext } from "./context";
@@ -131,6 +144,7 @@ type FriendRow = {
   handle: string;
   did: string;
   pds_endpoint: string;
+  note: string | null;
   display_name: string | null;
   profile_json: string | null;
   instance_json: string;
@@ -138,6 +152,19 @@ type FriendRow = {
   created_at: number;
   updated_at: number;
   synced_at: number | null;
+};
+
+type FriendRecordRow = {
+  uid: number;
+  friend_handle: string;
+  collection: string;
+  rkey: string;
+  uri: string | null;
+  cid: string | null;
+  record_json: string;
+  created_at: number;
+  updated_at: number;
+  synced_at: number;
 };
 
 type FriendGrantRow = {
@@ -180,6 +207,7 @@ type MessageRow = {
   to_handle: string;
   text: string | null;
   body_json: string | null;
+  sender_json: string | null;
   delivery_method: string | null;
   delivery_status: string;
   delivery_attempt_count: number | null;
@@ -232,11 +260,25 @@ export type SocialPublicRecord<TRecord extends SpaceGsvRecord = SpaceGsvRecord> 
   updatedAt: number;
 };
 
+export type SocialFriendPublicRecord<TRecord extends SpaceGsvRecord = SpaceGsvRecord> = {
+  uid: number;
+  friendHandle: string;
+  collection: SpaceGsvCollection;
+  rkey: string;
+  uri?: string;
+  cid?: string;
+  record: TRecord;
+  createdAt: number;
+  updatedAt: number;
+  syncedAt: number;
+};
+
 export type SocialFriendRecord = {
   uid: number;
   handle: string;
   did: SocialDid;
   pdsEndpoint: string;
+  note: string;
   displayName?: string;
   profile?: SpaceGsvProfileRecord;
   instance: SpaceGsvInstanceRecord;
@@ -264,6 +306,7 @@ export type SocialMessageRecord = {
   direction: SocialMessageDirection;
   fromHandle: string;
   toHandle: string;
+  sender?: SocialMessageSender;
   text?: string;
   body?: unknown;
   deliveryMethod?: SocialRemoteOperation;
@@ -293,6 +336,27 @@ export type SocialMessageStatusRecord = {
 export type SocialDeliveryRetryResult =
   | { retried: true; message: SocialMessageSummary }
   | { retried: false; reason: string };
+
+export type SocialPromptContext = {
+  remoteGSVs: string;
+  localGsvUsers: string;
+};
+
+export function buildSocialPromptContext(ctx: KernelContext): SocialPromptContext {
+  const users = listLocalSocialUsers(ctx);
+  const localGsvUsers = users.length === 0
+    ? "- (none)"
+    : users.map((user) =>
+        user.displayName && user.displayName !== user.username
+          ? `- ${user.username}: ${user.displayName}`
+          : `- ${user.username}`
+      ).join("\n");
+  const friends = ctx.social?.listFriends(MAIN_SOCIAL_UID) ?? [];
+  const remoteGSVs = friends.length === 0
+    ? "- (none)"
+    : friends.map((friend) => `- ${friend.handle}: ${friend.note || "(no note)"}`).join("\n");
+  return { remoteGSVs, localGsvUsers };
+}
 
 export class SocialStore {
   constructor(private readonly sql: SqlStorage) {}
@@ -342,6 +406,7 @@ export class SocialStore {
         handle TEXT NOT NULL,
         did TEXT NOT NULL,
         pds_endpoint TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
         display_name TEXT,
         profile_json TEXT,
         instance_json TEXT NOT NULL,
@@ -354,6 +419,24 @@ export class SocialStore {
     `);
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_social_friends_did ON social_friends (uid, did)",
+    );
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS social_friend_records (
+        uid INTEGER NOT NULL,
+        friend_handle TEXT NOT NULL,
+        collection TEXT NOT NULL,
+        rkey TEXT NOT NULL,
+        uri TEXT,
+        cid TEXT,
+        record_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        synced_at INTEGER NOT NULL,
+        PRIMARY KEY (uid, friend_handle, collection, rkey)
+      )
+    `);
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_social_friend_records_collection ON social_friend_records (uid, friend_handle, collection, updated_at DESC)",
     );
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS social_friend_grants (
@@ -411,6 +494,7 @@ export class SocialStore {
         to_handle TEXT NOT NULL,
         text TEXT,
         body_json TEXT,
+        sender_json TEXT,
         delivery_method TEXT,
         delivery_status TEXT NOT NULL,
         delivery_attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -577,6 +661,36 @@ export class SocialStore {
     };
   }
 
+  listPublicRecords<TRecord extends SpaceGsvRecord>(
+    uid: number,
+    collection: SpaceGsvCollection,
+    limit: number,
+  ): SocialPublicRecord<TRecord>[] {
+    return this.sql.exec<RecordRow>(
+      `SELECT * FROM social_records
+       WHERE uid = ? AND collection = ?
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+      uid,
+      collection,
+      limit,
+    ).toArray().map(toPublicRecord<TRecord>);
+  }
+
+  deletePublicRecord(uid: number, collection: SpaceGsvCollection, rkey: string): boolean {
+    const existing = this.getPublicRecord(uid, collection, rkey);
+    if (!existing) {
+      return false;
+    }
+    this.sql.exec(
+      "DELETE FROM social_records WHERE uid = ? AND collection = ? AND rkey = ?",
+      uid,
+      collection,
+      rkey,
+    );
+    return true;
+  }
+
   getSettings(uid: number): SocialServiceSettings | null {
     const rows = this.sql.exec<SettingsRow>(
       "SELECT * FROM social_settings WHERE uid = ? LIMIT 1",
@@ -642,6 +756,7 @@ export class SocialStore {
     handle: string;
     did: SocialDid;
     pdsEndpoint: string;
+    note: string;
     displayName?: string;
     profile?: SpaceGsvProfileRecord;
     instance: SpaceGsvInstanceRecord;
@@ -652,12 +767,13 @@ export class SocialStore {
     const createdAt = existing?.createdAt ?? now;
     this.sql.exec(
       `INSERT OR REPLACE INTO social_friends
-        (uid, handle, did, pds_endpoint, display_name, profile_json, instance_json, agent_card_json, created_at, updated_at, synced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (uid, handle, did, pds_endpoint, note, display_name, profile_json, instance_json, agent_card_json, created_at, updated_at, synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.uid,
       input.handle,
       input.did,
       input.pdsEndpoint,
+      input.note,
       input.displayName ?? null,
       input.profile ? JSON.stringify(input.profile) : null,
       JSON.stringify(input.instance),
@@ -672,6 +788,7 @@ export class SocialStore {
         handle: input.handle,
         did: input.did,
         pdsEndpoint: input.pdsEndpoint,
+        note: input.note,
         displayName: input.displayName,
         profile: input.profile,
         instance: input.instance,
@@ -691,6 +808,11 @@ export class SocialStore {
     }
     this.sql.exec(
       "DELETE FROM social_friend_grants WHERE uid = ? AND friend_handle = ?",
+      uid,
+      handle,
+    );
+    this.sql.exec(
+      "DELETE FROM social_friend_records WHERE uid = ? AND friend_handle = ?",
       uid,
       handle,
     );
@@ -737,6 +859,70 @@ export class SocialStore {
   toFriendSummary(friend: SocialFriendRecord): SocialFriendSummary {
     const grants = this.getFriendGrants(friend.uid, friend.handle);
     return toFriendSummary(friend, grants);
+  }
+
+  listFriendPublicRecords<TRecord extends SpaceGsvRecord>(input: {
+    uid: number;
+    friendHandle: string;
+    collection: SpaceGsvCollection;
+    limit: number;
+  }): SocialFriendPublicRecord<TRecord>[] {
+    return this.sql.exec<FriendRecordRow>(
+      `SELECT * FROM social_friend_records
+       WHERE uid = ? AND friend_handle = ? AND collection = ?
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+      input.uid,
+      input.friendHandle,
+      input.collection,
+      input.limit,
+    ).toArray().map(toFriendPublicRecord<TRecord>);
+  }
+
+  replaceFriendPublicRecords<TRecord extends SpaceGsvRecord>(input: {
+    uid: number;
+    friendHandle: string;
+    collection: SpaceGsvCollection;
+    records: Array<{
+      rkey: string;
+      uri?: string;
+      cid?: string;
+      record: TRecord;
+      createdAt?: number;
+      updatedAt?: number;
+    }>;
+    now?: number;
+  }): SocialFriendPublicRecord<TRecord>[] {
+    const now = input.now ?? Date.now();
+    this.sql.exec(
+      "DELETE FROM social_friend_records WHERE uid = ? AND friend_handle = ? AND collection = ?",
+      input.uid,
+      input.friendHandle,
+      input.collection,
+    );
+    for (const record of input.records) {
+      this.sql.exec(
+        `INSERT INTO social_friend_records
+          (uid, friend_handle, collection, rkey, uri, cid, record_json, created_at, updated_at, synced_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        input.uid,
+        input.friendHandle,
+        input.collection,
+        record.rkey,
+        record.uri ?? null,
+        record.cid ?? null,
+        JSON.stringify(record.record),
+        record.createdAt ?? now,
+        record.updatedAt ?? now,
+        now,
+      );
+    }
+    return this.listFriendPublicRecords<TRecord>({
+      uid: input.uid,
+      friendHandle: input.friendHandle,
+      collection: input.collection,
+      limit: Math.max(input.records.length, 1),
+    });
   }
 
   pruneExpiredInboundReplays(uid: number, now: number): void {
@@ -900,6 +1086,7 @@ export class SocialStore {
     direction: SocialMessageDirection;
     fromHandle: string;
     toHandle: string;
+    sender?: SocialMessageSender;
     text?: string;
     body?: unknown;
     deliveryMethod?: SocialRemoteOperation;
@@ -917,9 +1104,9 @@ export class SocialStore {
     this.sql.exec(
       `INSERT OR REPLACE INTO social_messages
         (uid, message_id, thread_id, direction, from_handle, to_handle, text, body_json,
-         delivery_method, delivery_status, delivery_attempt_count,
+         sender_json, delivery_method, delivery_status, delivery_attempt_count,
          next_retry_at, retry_schedule_id, last_delivery_error, remote_event_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.uid,
       input.messageId,
       input.threadId,
@@ -930,6 +1117,9 @@ export class SocialStore {
       input.body === undefined
         ? existing?.body === undefined ? null : JSON.stringify(existing.body)
         : JSON.stringify(input.body),
+      input.sender === undefined
+        ? existing?.sender === undefined ? null : JSON.stringify(existing.sender)
+        : JSON.stringify(input.sender),
       input.deliveryMethod ?? existing?.deliveryMethod ?? null,
       input.deliveryStatus,
       input.deliveryAttemptCount ?? existing?.deliveryAttemptCount ?? 0,
@@ -947,6 +1137,7 @@ export class SocialStore {
       direction: input.direction,
       fromHandle: input.fromHandle,
       toHandle: input.toHandle,
+      sender: input.sender === undefined ? existing?.sender : input.sender,
       text: input.text,
       body: input.body === undefined ? existing?.body : input.body,
       deliveryMethod: input.deliveryMethod ?? existing?.deliveryMethod,
@@ -1200,7 +1391,7 @@ export function handleSocialIdentityGet(
   _args: SocialIdentityGetArgs,
   ctx: KernelContext,
 ): SocialIdentityGetResult {
-  const uid = requireUserUid(ctx);
+  const uid = requireSocialOwnerUid(ctx);
   const identity = requireSocialStore(ctx).getIdentity(uid);
   return {
     identity: identity ? requireSocialStore(ctx).toLocalIdentity(identity) : null,
@@ -1348,7 +1539,7 @@ export function handleSocialFriendList(
   _args: SocialFriendListArgs,
   ctx: KernelContext,
 ): SocialFriendListResult {
-  const uid = requireMainSocialUserUid(ctx);
+  const uid = requireSocialOwnerUid(ctx);
   const store = requireSocialStore(ctx);
   return {
     friends: store.listFriends(uid).map((friend) => store.toFriendSummary(friend)),
@@ -1365,6 +1556,7 @@ export async function handleSocialFriendAdd(
   if (identity.handle === handle) {
     throw new Error("Cannot add the local GSV identity as a friend");
   }
+  const note = normalizeFriendNote(args.note);
   const grants = args.grants === undefined ? undefined : validateGrants(args.grants);
   const publicIdentity = await resolveFriendPublicIdentity(handle, ctx.env);
   const displayName = nonEmpty(args.displayName)
@@ -1377,6 +1569,7 @@ export async function handleSocialFriendAdd(
     handle,
     did: publicIdentity.did,
     pdsEndpoint: publicIdentity.instance.endpoint,
+    note,
     displayName,
     profile: publicIdentity.profile,
     instance: publicIdentity.instance,
@@ -1420,13 +1613,157 @@ export function handleSocialFriendGrantsSet(
   };
 }
 
+export async function handleSocialUserList(
+  args: SocialUserListArgs,
+  ctx: KernelContext,
+): Promise<SocialUserListResult> {
+  const uid = requireSocialOwnerUid(ctx);
+  const store = requireSocialStore(ctx);
+  const limit = normalizeLimit(args.limit, 50);
+  if (args.handle === undefined) {
+    const published = store.listPublicRecords<SpaceGsvUserRecord>(uid, SPACE_GSV_USER, limit);
+    const records = published.length > 0
+      ? published
+      : listLocalSocialUsers(ctx).slice(0, limit).map((user) => ({
+          uid,
+          collection: SPACE_GSV_USER,
+          rkey: user.username,
+          uri: undefined,
+          cid: undefined,
+          record: compactRecord({
+            $type: SPACE_GSV_USER,
+            createdAt: new Date().toISOString(),
+            username: user.username,
+            displayName: user.displayName,
+            acceptsMessages: true,
+          }) as SpaceGsvUserRecord,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }));
+    const handle = requireLocalHandle(requireWritableSocialIdentity(ctx));
+    return {
+      users: records.map((entry) => ({
+        handle,
+        uri: entry.uri as SocialAtUri | undefined,
+        record: entry.record,
+      })),
+    };
+  }
+
+  const handle = normalizeHandle(args.handle, "handle");
+  const friend = requireFriend(store, uid, handle);
+  requireRemoteMethod(friend, "social.user.read");
+  const records = await syncFriendPublicRecords<SpaceGsvUserRecord>({
+    ctx,
+    store,
+    uid,
+    friend,
+    collection: SPACE_GSV_USER,
+    limit,
+    validate: validateUserRecord,
+  });
+  return {
+    users: records.map((entry) => ({
+      handle,
+      uri: entry.uri as SocialAtUri | undefined,
+      record: entry.record,
+    })),
+  };
+}
+
+export async function handleSocialPackageLikeCreate(
+  args: SocialPackageLikeCreateArgs,
+  ctx: KernelContext,
+): Promise<SocialPackageLikeCreateResult> {
+  const uid = requireSocialOwnerUid(ctx);
+  const identity = requireWritableSocialIdentity(ctx);
+  const now = new Date().toISOString();
+  const record = validatePackageLikeRecord(compactRecord({
+    ...args.record,
+    $type: SPACE_GSV_PACKAGE_LIKE,
+    createdAt: args.record.createdAt ?? now,
+    updatedAt: now,
+  }));
+  const rkey = newSocialId("like");
+  const published = await publishSelfRecord(ctx, identity, SPACE_GSV_PACKAGE_LIKE, record, rkey);
+  return {
+    record,
+    uri: published.uri as SocialAtUri | undefined,
+  };
+}
+
+export async function handleSocialPackageLikeDelete(
+  args: SocialPackageLikeDeleteArgs,
+  ctx: KernelContext,
+): Promise<SocialPackageLikeDeleteResult> {
+  const uid = requireSocialOwnerUid(ctx);
+  const identity = requireWritableSocialIdentity(ctx);
+  const parsed = parseSocialAtUri(args.uri, SPACE_GSV_PACKAGE_LIKE);
+  if (parsed.did !== identity.did) {
+    throw new Error("package like uri does not belong to the local social identity");
+  }
+  const host = pdsHostForIdentity(ctx.env, identity);
+  await requirePdsClient(ctx.env).deleteRecord({
+    host,
+    repo: identity.did,
+    collection: SPACE_GSV_PACKAGE_LIKE,
+    rkey: parsed.rkey,
+  });
+  const deleted = requireSocialStore(ctx).deletePublicRecord(uid, SPACE_GSV_PACKAGE_LIKE, parsed.rkey);
+  return { deleted };
+}
+
+export async function handleSocialPackageLikeList(
+  args: SocialPackageLikeListArgs,
+  ctx: KernelContext,
+): Promise<SocialPackageLikeListResult> {
+  const uid = requireSocialOwnerUid(ctx);
+  const store = requireSocialStore(ctx);
+  const limit = normalizeLimit(args.limit, 50);
+  if (args.handle === undefined) {
+    const identity = requireWritableSocialIdentity(ctx);
+    const handle = requireLocalHandle(identity);
+    const records = store.listPublicRecords<SpaceGsvPackageLikeRecord>(uid, SPACE_GSV_PACKAGE_LIKE, limit);
+    return {
+      likes: records.map((entry) => ({
+        handle,
+        uri: (entry.uri ?? `at://${identity.did}/${SPACE_GSV_PACKAGE_LIKE}/${entry.rkey}`) as SocialAtUri,
+        record: entry.record,
+      })),
+    };
+  }
+
+  const handle = normalizeHandle(args.handle, "handle");
+  const friend = requireFriend(store, uid, handle);
+  requireRemoteMethod(friend, "social.package.like.read");
+  const records = await syncFriendPublicRecords<SpaceGsvPackageLikeRecord>({
+    ctx,
+    store,
+    uid,
+    friend,
+    collection: SPACE_GSV_PACKAGE_LIKE,
+    limit,
+    validate: validatePackageLikeRecord,
+  });
+  return {
+    likes: records.flatMap((entry) => entry.uri
+      ? [{
+          handle,
+          uri: entry.uri as SocialAtUri,
+          record: entry.record,
+        }]
+      : []),
+  };
+}
+
 export async function handleSocialThreadCreate(
   args: SocialThreadCreateArgs,
   ctx: KernelContext,
 ): Promise<SocialThreadCreateResult> {
-  const uid = requireMainSocialUserUid(ctx);
+  const uid = requireSocialOwnerUid(ctx);
   const localIdentity = requireWritableSocialIdentity(ctx);
   const localHandle = requireLocalHandle(localIdentity);
+  const sender = socialSenderForCaller(ctx);
   const peerHandle = normalizeHandle(args.peerHandle, "peerHandle");
   const store = requireSocialStore(ctx);
   const friend = requireFriend(store, uid, peerHandle);
@@ -1452,6 +1789,7 @@ export async function handleSocialThreadCreate(
       direction: "outbound",
       fromHandle: localHandle,
       toHandle: peerHandle,
+      sender,
       text,
       deliveryMethod: "social.thread.create",
       deliveryStatus: "queued",
@@ -1477,7 +1815,7 @@ export function handleSocialThreadList(
   args: SocialThreadListArgs,
   ctx: KernelContext,
 ): SocialThreadListResult {
-  const uid = requireMainSocialUserUid(ctx);
+  const uid = requireSocialOwnerUid(ctx);
   const store = requireSocialStore(ctx);
   return {
     threads: store.listThreads({
@@ -1493,7 +1831,7 @@ export function handleSocialThreadGet(
   args: SocialThreadGetArgs,
   ctx: KernelContext,
 ): SocialThreadGetResult {
-  const uid = requireMainSocialUserUid(ctx);
+  const uid = requireSocialOwnerUid(ctx);
   const threadId = normalizeSocialId(args.threadId, "threadId");
   const store = requireSocialStore(ctx);
   const thread = store.getThread(uid, threadId);
@@ -1508,9 +1846,10 @@ export async function handleSocialMessageSend(
   args: SocialMessageSendArgs,
   ctx: KernelContext,
 ): Promise<SocialMessageSendResult> {
-  const uid = requireMainSocialUserUid(ctx);
+  const uid = requireSocialOwnerUid(ctx);
   const localIdentity = requireWritableSocialIdentity(ctx);
   const localHandle = requireLocalHandle(localIdentity);
+  const sender = socialSenderForCaller(ctx);
   const toHandle = normalizeHandle(args.toHandle, "toHandle");
   const store = requireSocialStore(ctx);
   const friend = requireFriend(store, uid, toHandle);
@@ -1535,6 +1874,7 @@ export async function handleSocialMessageSend(
     direction: "outbound",
     fromHandle: localHandle,
     toHandle,
+    sender,
     text: messageInput.text,
     body: messageInput.body,
     deliveryMethod: "social.message.send",
@@ -1560,7 +1900,7 @@ export function handleSocialMessageStatusList(
   args: SocialMessageStatusListArgs,
   ctx: KernelContext,
 ): SocialMessageStatusListResult {
-  const uid = requireMainSocialUserUid(ctx);
+  const uid = requireSocialOwnerUid(ctx);
   const store = requireSocialStore(ctx);
   const peerHandle = args.peerHandle === undefined ? undefined : normalizeHandle(args.peerHandle, "peerHandle");
   const direction = args.direction === undefined || args.direction === "all"
@@ -1592,7 +1932,7 @@ export function handleSocialMessageStatusGet(
   args: SocialMessageStatusGetArgs,
   ctx: KernelContext,
 ): SocialMessageStatusGetResult {
-  const uid = requireMainSocialUserUid(ctx);
+  const uid = requireSocialOwnerUid(ctx);
   const messageId = normalizeSocialId(args.messageId, "messageId");
   const store = requireSocialStore(ctx);
   const status = store.getMessageStatus(uid, messageId);
@@ -1606,7 +1946,7 @@ export async function handleSocialMessageStatusUpdate(
   args: SocialMessageStatusUpdateArgs,
   ctx: KernelContext,
 ): Promise<SocialMessageStatusUpdateResult> {
-  const uid = requireMainSocialUserUid(ctx);
+  const uid = requireSocialOwnerUid(ctx);
   const localIdentity = requireWritableSocialIdentity(ctx);
   const localHandle = requireLocalHandle(localIdentity);
   const messageId = normalizeSocialId(args.messageId, "messageId");
@@ -1832,6 +2172,7 @@ type NormalizedMessagePayload = {
 type InboundMessageBody = NormalizedMessagePayload & {
   threadId?: string;
   messageId?: string;
+  sender?: SocialMessageSender;
   expiresAt?: string;
 };
 
@@ -1868,6 +2209,7 @@ async function attemptOutboundDelivery(input: {
     body: input.bodyOverride ?? compactRecord({
       threadId: input.thread.threadId,
       messageId: input.message.messageId,
+      sender: input.message.sender,
       text: input.message.text,
       body: input.message.body,
       expiresAt: input.thread.expiresAt,
@@ -2055,6 +2397,7 @@ async function acceptInboundSocialEnvelope(input: {
     direction: "inbound",
     fromHandle: input.friend.handle,
     toHandle: localHandle,
+    sender: body.sender,
     text: body.text,
     body: body.body,
     deliveryMethod: input.envelope.method,
@@ -2292,26 +2635,123 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity {
   };
 }
 
+function listLocalSocialUsers(ctx: KernelContext): Array<{ username: string; displayName?: string }> {
+  return ctx.auth.getPasswdEntries()
+    .filter((entry) => entry.uid >= 1000)
+    .map((entry) => {
+      const username = socialUserRkey(entry.username);
+      const gecos = nonEmpty(entry.gecos);
+      return {
+        username,
+        displayName: gecos && gecos !== username ? gecos : undefined,
+      };
+    });
+}
+
+function socialUserRkey(username: string): string {
+  const rkey = username.trim().toLowerCase();
+  if (!SOCIAL_ID_PATTERN.test(rkey)) {
+    throw new Error(`local username cannot be published as a social user rkey: ${username}`);
+  }
+  return rkey;
+}
+
+function socialSenderForCaller(ctx: KernelContext): SocialMessageSender {
+  const identity = ctx.identity?.process;
+  if (!identity) {
+    return { kind: "gsv", displayName: "GSV" };
+  }
+  const username = socialUserRkey(identity.username);
+  const userRecord = ctx.social?.getPublicRecord<SpaceGsvUserRecord>(
+    MAIN_SOCIAL_UID,
+    SPACE_GSV_USER,
+    username,
+  )?.record;
+  const displayName = userRecord?.displayName ?? displayNameForUid(ctx, identity.uid);
+  const processId = ctx.processId;
+  const process = processId ? ctx.procs.get(processId) : null;
+  if (process?.profile === "mind") {
+    return compactRecord({
+      kind: "mind",
+      username,
+      displayName: "GSV Mind",
+      publicHandle: userRecord?.publicHandle,
+      processId,
+    }) as SocialMessageSender;
+  }
+  if (process) {
+    return compactRecord({
+      kind: "process",
+      username,
+      displayName,
+      publicHandle: userRecord?.publicHandle,
+      processId,
+      processLabel: process.label ?? undefined,
+      profile: process.profile,
+    }) as SocialMessageSender;
+  }
+  return compactRecord({
+    kind: "user",
+    username,
+    displayName,
+    publicHandle: userRecord?.publicHandle,
+  }) as SocialMessageSender;
+}
+
+function displayNameForUid(ctx: KernelContext, uid: number): string | undefined {
+  const user = ctx.auth.getPasswdByUid(uid);
+  if (!user) {
+    return undefined;
+  }
+  const gecos = nonEmpty(user.gecos);
+  return gecos && gecos !== user.username ? gecos : undefined;
+}
+
 function renderInboundSocialMessage(thread: SocialThreadRecord, message: SocialMessageRecord): string {
   const lines = [
     "Inbound social message from an approved friend.",
     "Handle this event by using the social command surface. A private transcript reply is not delivered to the peer.",
     `From: ${message.fromHandle}`,
+    ...(message.sender ? [`Sender: ${formatSocialSender(message.sender)}`] : []),
     `Thread: ${thread.threadId}`,
     `Message: ${message.messageId}`,
     "",
     "Expected actions:",
-    `- Human decision needed: if this asks for the local human's preference, permission, schedule, availability, or commitment, run: social status update ${message.messageId} --state needs_human --reason "..."`,
-    `- No reply needed: if this is only thanks, no-rush, patience, well-wishes, or a conversational closer, run: social status update ${message.messageId} --state completed --summary "No reply needed: ..."`,
-    `- Safe substantive reply: send with: social message send ${message.fromHandle} "<text>" --thread ${thread.threadId}`,
-    `- After a substantive reply, mark complete with: social status update ${message.messageId} --state completed --summary "..."`,
+    `- If safe and useful to answer autonomously, reply with: social message send ${message.fromHandle} "<text>" --thread ${thread.threadId}`,
+    `- After handling, mark complete with: social status update ${message.messageId} --state completed --summary "..."`,
+    `- If the local human must decide, escalate with: social status update ${message.messageId} --state needs_human --reason "..."`,
     "- Do not just describe these actions; run the command that matches your decision.",
-    "- Do not send acknowledgements of acknowledgements or repeated promises to update later.",
   ];
   if (message.text) {
     lines.push("", "Message text:", message.text);
   }
   return lines.join("\n");
+}
+
+function formatSocialSender(sender: SocialMessageSender): string {
+  switch (sender.kind) {
+    case "gsv":
+      return sender.displayName ?? "GSV";
+    case "mind":
+      return sender.username
+        ? `${sender.displayName ?? "GSV Mind"} acting for ${sender.username}`
+        : sender.displayName ?? "GSV Mind";
+    case "process": {
+      const display = sender.displayName && sender.displayName !== sender.username
+        ? `${sender.displayName} (${sender.username})`
+        : sender.username;
+      const details = [
+        sender.processLabel,
+        sender.profile,
+        sender.processId,
+      ].filter((value): value is string => Boolean(value));
+      return details.length > 0 ? `${display} process ${details.join(" / ")}` : `${display} process`;
+    }
+    case "user":
+      return sender.displayName && sender.displayName !== sender.username
+        ? `${sender.displayName} (${sender.username})`
+        : sender.username;
+  }
 }
 
 function initSocialEscalationConversationId(message: SocialMessageRecord): string {
@@ -2330,6 +2770,7 @@ function renderNeedsHumanInitEvent(
     "I need the local user's input before answering this social message.",
     "",
     `From: ${message.fromHandle}`,
+    ...(message.sender ? [`Sender: ${formatSocialSender(message.sender)}`] : []),
     `Thread: ${message.threadId}`,
     `Message: ${message.messageId}`,
     `Reason: ${reason}`,
@@ -2366,7 +2807,6 @@ function renderSocialInboxContext(entries: Array<{
     "Active friend messages visible to GSV Mind.",
     "Use the social command to inspect messages, reply, and update message status.",
     "Escalate human preference, permission, schedule, availability, or commitment requests with needs_human.",
-    "Complete pure acknowledgements, no-rush notes, well-wishes, and conversational closers without replying.",
     "",
   ];
   for (const { status, message } of entries.sort((left, right) => right.status.updatedAt - left.status.updatedAt)) {
@@ -2375,6 +2815,7 @@ function renderSocialInboxContext(entries: Array<{
       "",
       `- Message: ${message.messageId}`,
       `- From: ${message.fromHandle}`,
+      ...(message.sender ? [`- Sender: ${formatSocialSender(message.sender)}`] : []),
       `- To: ${message.toHandle}`,
       `- State: ${status.state}`,
       `- Updated: ${new Date(status.updatedAt).toISOString()}`,
@@ -2466,11 +2907,13 @@ async function publishBaselineSocialRecords(
   const profile = await publishSelfRecord(ctx, identity, SPACE_GSV_PROFILE, profileRecord);
   const instance = await publishSelfRecord(ctx, identity, SPACE_GSV_INSTANCE, instanceRecord);
   const agentCard = await publishSelfRecord(ctx, identity, SPACE_GSV_AGENT_CARD, agentCardRecord);
+  const users = await publishLocalUserDirectoryRecords(ctx, identity, now);
 
   return {
     profile: profile.uri as SocialAtUri | undefined,
     instance: instance.uri as SocialAtUri | undefined,
     agentCard: agentCard.uri as SocialAtUri | undefined,
+    users: users.flatMap((record) => record.uri ? [record.uri as SocialAtUri] : []),
   };
 }
 
@@ -2479,24 +2922,52 @@ async function publishSelfRecord<TRecord extends SpaceGsvRecord>(
   identity: SocialIdentityRecord,
   collection: SpaceGsvCollection,
   record: TRecord,
+  rkey: string = SELF_RKEY,
 ): Promise<SocialPublicRecord<TRecord>> {
   const host = pdsHostForIdentity(ctx.env, identity);
   const response = await requirePdsClient(ctx.env).putRecord({
     host,
     repo: identity.did,
     collection,
-    rkey: SELF_RKEY,
+    rkey,
     record,
     validate: true,
   });
   return requireSocialStore(ctx).upsertPublicRecord({
     uid: identity.uid,
     collection,
-    rkey: SELF_RKEY,
+    rkey,
     record,
     uri: response.uri,
     cid: response.cid,
   });
+}
+
+async function publishLocalUserDirectoryRecords(
+  ctx: KernelContext,
+  identity: SocialIdentityRecord,
+  now: string,
+): Promise<Array<SocialPublicRecord<SpaceGsvUserRecord>>> {
+  const records: Array<SocialPublicRecord<SpaceGsvUserRecord>> = [];
+  for (const user of listLocalSocialUsers(ctx)) {
+    const existing = requireSocialStore(ctx).getPublicRecord<SpaceGsvUserRecord>(
+      identity.uid,
+      SPACE_GSV_USER,
+      user.username,
+    )?.record;
+    const record = compactRecord({
+      $type: SPACE_GSV_USER,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      username: user.username,
+      displayName: user.displayName,
+      description: existing?.description,
+      publicHandle: existing?.publicHandle,
+      acceptsMessages: existing?.acceptsMessages ?? true,
+    }) as SpaceGsvUserRecord;
+    records.push(await publishSelfRecord(ctx, identity, SPACE_GSV_USER, record, user.username));
+  }
+  return records;
 }
 
 function pdsHostForIdentity(env: Env, identity: SocialIdentityRecord): string {
@@ -2533,6 +3004,11 @@ function requireMainSocialUserUid(ctx: KernelContext): number {
   return uid;
 }
 
+function requireSocialOwnerUid(ctx: KernelContext): number {
+  requireUserUid(ctx);
+  return MAIN_SOCIAL_UID;
+}
+
 function ensureInstanceIdentityOwner(store: SocialStore, uid: number): void {
   const existing = store.getInstanceIdentity();
   if (existing && existing.uid !== uid) {
@@ -2548,11 +3024,11 @@ function resolveReadableIdentity(
   if (handle) {
     return store.getIdentityByHandle(normalizeHandle(handle, "handle"));
   }
-  return store.getIdentity(requireUserUid(ctx));
+  return store.getIdentity(requireSocialOwnerUid(ctx));
 }
 
 function requireWritableSocialIdentity(ctx: KernelContext): SocialIdentityRecord {
-  const identity = requireSocialStore(ctx).getIdentity(requireUserUid(ctx));
+  const identity = requireSocialStore(ctx).getIdentity(requireSocialOwnerUid(ctx));
   if (!identity) {
     throw new Error("Social identity is not linked");
   }
@@ -2732,6 +3208,62 @@ function normalizeMessageText(value: unknown, field: string): string {
   return text;
 }
 
+function normalizeFriendNote(value: unknown): string {
+  const note = normalizeMessageText(value, "note");
+  if (byteLength(note) > 1024) {
+    throw new Error("note exceeds 1024 bytes");
+  }
+  return note;
+}
+
+function normalizeSocialMessageSender(value: unknown, field: string): SocialMessageSender {
+  const object = requireObject(value, field);
+  const kind = requireString(object.kind, `${field}.kind`);
+  if (kind === "gsv") {
+    return compactRecord({
+      kind,
+      displayName: normalizeOptionalText(object.displayName, `${field}.displayName`, 256),
+    }) as SocialMessageSender;
+  }
+  if (kind === "mind") {
+    return compactRecord({
+      kind,
+      username: object.username === undefined
+        ? undefined
+        : socialUserRkey(requireString(object.username, `${field}.username`)),
+      displayName: normalizeOptionalText(object.displayName, `${field}.displayName`, 256),
+      publicHandle: object.publicHandle === undefined
+        ? undefined
+        : normalizeHandle(object.publicHandle, `${field}.publicHandle`),
+      processId: normalizeOptionalText(object.processId, `${field}.processId`, 240),
+    }) as SocialMessageSender;
+  }
+  if (kind === "user") {
+    return compactRecord({
+      kind,
+      username: socialUserRkey(requireString(object.username, `${field}.username`)),
+      displayName: normalizeOptionalText(object.displayName, `${field}.displayName`, 256),
+      publicHandle: object.publicHandle === undefined
+        ? undefined
+        : normalizeHandle(object.publicHandle, `${field}.publicHandle`),
+    }) as SocialMessageSender;
+  }
+  if (kind === "process") {
+    return compactRecord({
+      kind,
+      username: socialUserRkey(requireString(object.username, `${field}.username`)),
+      displayName: normalizeOptionalText(object.displayName, `${field}.displayName`, 256),
+      publicHandle: object.publicHandle === undefined
+        ? undefined
+        : normalizeHandle(object.publicHandle, `${field}.publicHandle`),
+      processId: normalizeOptionalText(object.processId, `${field}.processId`, 240),
+      processLabel: normalizeOptionalText(object.processLabel, `${field}.processLabel`, 256),
+      profile: normalizeOptionalText(object.profile, `${field}.profile`, 128),
+    }) as SocialMessageSender;
+  }
+  throw new Error(`${field}.kind must be gsv, mind, user, or process`);
+}
+
 function normalizeMessagePayload(value: {
   text?: unknown;
   body?: unknown;
@@ -2761,6 +3293,9 @@ function normalizeInboundMessageBody(value: unknown): InboundMessageBody {
   const messageId = object.messageId === undefined
     ? undefined
     : normalizeSocialId(object.messageId, "envelope.body.messageId");
+  const sender = object.sender === undefined
+    ? undefined
+    : normalizeSocialMessageSender(object.sender, "envelope.body.sender");
   const expiresAt = object.expiresAt === undefined
     ? undefined
     : requireIsoStringValue(object.expiresAt, "envelope.body.expiresAt");
@@ -2768,6 +3303,7 @@ function normalizeInboundMessageBody(value: unknown): InboundMessageBody {
     ...payload,
     threadId,
     messageId,
+    sender,
     expiresAt,
   };
 }
@@ -2951,6 +3487,41 @@ function validateAgentCardRecord(record: unknown): SpaceGsvAgentCardRecord {
   return value as SpaceGsvAgentCardRecord;
 }
 
+function validateUserRecord(record: unknown): SpaceGsvUserRecord {
+  const value = requireRecordObject(record, SPACE_GSV_USER);
+  requireIsoString(value.createdAt, "createdAt");
+  optionalString(value.updatedAt, "updatedAt");
+  socialUserRkey(requireString(value.username, "username"));
+  optionalString(value.displayName, "displayName");
+  optionalString(value.description, "description");
+  if (value.publicHandle !== undefined) {
+    normalizeHandle(value.publicHandle, "publicHandle");
+  }
+  if (value.acceptsMessages !== undefined && typeof value.acceptsMessages !== "boolean") {
+    throw new Error("acceptsMessages must be a boolean");
+  }
+  return value as SpaceGsvUserRecord;
+}
+
+function validatePackageLikeRecord(record: unknown): SpaceGsvPackageLikeRecord {
+  const value = requireRecordObject(record, SPACE_GSV_PACKAGE_LIKE);
+  requireIsoString(value.createdAt, "createdAt");
+  optionalString(value.updatedAt, "updatedAt");
+  const subject = requireObject(value.subject, "subject");
+  if (subject.kind !== "gsv-package") {
+    throw new Error("subject.kind must be gsv-package");
+  }
+  requireBoundedString(subject.name, "subject.name", 256);
+  optionalBoundedString(subject.repo, "subject.repo", 512);
+  optionalBoundedString(subject.ref, "subject.ref", 256);
+  optionalBoundedString(subject.subdir, "subject.subdir", 512);
+  if (subject.uri !== undefined) {
+    requireUrlString(subject.uri, "subject.uri");
+  }
+  optionalBoundedString(value.note, "note", 1200);
+  return value as SpaceGsvPackageLikeRecord;
+}
+
 function requireRecordObject(
   record: unknown,
   type: SpaceGsvCollection,
@@ -2990,10 +3561,25 @@ function requireString(value: unknown, field: string): string {
   return value;
 }
 
+function requireBoundedString(value: unknown, field: string, maxBytes: number): string {
+  const text = requireString(value, field).trim();
+  if (byteLength(text) > maxBytes) {
+    throw new Error(`${field} exceeds ${maxBytes} bytes`);
+  }
+  return text;
+}
+
 function optionalString(value: unknown, field: string): void {
   if (value !== undefined && typeof value !== "string") {
     throw new Error(`${field} must be a string`);
   }
+}
+
+function optionalBoundedString(value: unknown, field: string, maxBytes: number): void {
+  if (value === undefined) {
+    return;
+  }
+  requireBoundedString(value, field, maxBytes);
 }
 
 function requireIsoString(value: unknown, field: string): void {
@@ -3133,6 +3719,96 @@ async function fetchOptionalRecord<TRecord extends SpaceGsvRecord>(
   return object.value as TRecord;
 }
 
+async function syncFriendPublicRecords<TRecord extends SpaceGsvRecord>(input: {
+  ctx: KernelContext;
+  store: SocialStore;
+  uid: number;
+  friend: SocialFriendRecord;
+  collection: SpaceGsvCollection;
+  limit: number;
+  validate: (record: unknown) => TRecord;
+}): Promise<SocialFriendPublicRecord<TRecord>[]> {
+  const listed = await fetchListRecords<TRecord>(
+    input.friend.handle,
+    input.friend.did,
+    input.collection,
+    input.ctx.env,
+    input.limit,
+  );
+  const records = listed.map((entry) => {
+    const record = input.validate(entry.record);
+    return {
+      rkey: entry.rkey,
+      uri: entry.uri,
+      cid: entry.cid,
+      record,
+      createdAt: Date.parse(record.createdAt),
+      updatedAt: Date.parse(record.updatedAt ?? record.createdAt),
+    };
+  });
+  return input.store.replaceFriendPublicRecords<TRecord>({
+    uid: input.uid,
+    friendHandle: input.friend.handle,
+    collection: input.collection,
+    records,
+  });
+}
+
+async function fetchListRecords<TRecord extends SpaceGsvRecord>(
+  handle: string,
+  did: SocialDid,
+  collection: SpaceGsvCollection,
+  env: Env,
+  limit: number,
+): Promise<Array<{ uri?: string; cid?: string; rkey: string; record: TRecord }>> {
+  const url = new URL(`${socialOriginForHandle(env, handle)}/xrpc/com.atproto.repo.listRecords`);
+  url.searchParams.set("repo", did);
+  url.searchParams.set("collection", collection);
+  url.searchParams.set("limit", String(limit));
+  const response = await fetch(url.toString());
+  const body = await parseFetchBody(response);
+  if (!response.ok) {
+    throw new Error(`${handle} ${collection} list failed status=${response.status}: ${formatFetchBody(body)}`);
+  }
+  const object = requireObject(body, `${collection} list response`);
+  if (!Array.isArray(object.records)) {
+    throw new Error(`${collection} list response records must be an array`);
+  }
+  return object.records.map((item, index) => {
+    const entry = requireObject(item, `${collection} list response.records[${index}]`);
+    const uri = entry.uri === undefined ? undefined : requireString(entry.uri, `${collection}.records[${index}].uri`);
+    return {
+      uri,
+      cid: entry.cid === undefined ? undefined : requireString(entry.cid, `${collection}.records[${index}].cid`),
+      rkey: uri ? rkeyFromAtUri(uri, collection) : normalizeSocialId(entry.rkey, `${collection}.records[${index}].rkey`),
+      record: (entry.value ?? entry.record) as TRecord,
+    };
+  });
+}
+
+function rkeyFromAtUri(uri: string, collection: SpaceGsvCollection): string {
+  const parts = uri.split("/");
+  const collectionIndex = parts.findIndex((part) => part === collection);
+  const rkey = collectionIndex >= 0 ? parts[collectionIndex + 1] : parts.at(-1);
+  return normalizeSocialId(rkey, "uri rkey");
+}
+
+function parseSocialAtUri(uri: unknown, collection: SpaceGsvCollection): { did: SocialDid; rkey: string } {
+  const text = requireString(uri, "uri");
+  const prefix = "at://";
+  if (!text.startsWith(prefix)) {
+    throw new Error("uri must be an at:// URI");
+  }
+  const parts = text.slice(prefix.length).split("/");
+  if (parts.length !== 3 || parts[1] !== collection) {
+    throw new Error(`uri must point to ${collection}`);
+  }
+  return {
+    did: normalizeDid(parts[0]),
+    rkey: normalizeSocialId(parts[2], "uri rkey"),
+  };
+}
+
 async function fetchRequiredText(url: string, label: string): Promise<string> {
   const response = await fetch(url);
   const body = await response.text();
@@ -3186,6 +3862,7 @@ function toFriendRecord(row: FriendRow): SocialFriendRecord {
     handle: row.handle,
     did: row.did as SocialDid,
     pdsEndpoint: row.pds_endpoint,
+    note: row.note ?? "",
     displayName: row.display_name ?? undefined,
     profile: row.profile_json ? JSON.parse(row.profile_json) as SpaceGsvProfileRecord : undefined,
     instance: JSON.parse(row.instance_json) as SpaceGsvInstanceRecord,
@@ -3193,6 +3870,21 @@ function toFriendRecord(row: FriendRow): SocialFriendRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     syncedAt: row.synced_at ?? undefined,
+  };
+}
+
+function toFriendPublicRecord<TRecord extends SpaceGsvRecord>(row: FriendRecordRow): SocialFriendPublicRecord<TRecord> {
+  return {
+    uid: row.uid,
+    friendHandle: row.friend_handle,
+    collection: row.collection as SpaceGsvCollection,
+    rkey: row.rkey,
+    uri: row.uri ?? undefined,
+    cid: row.cid ?? undefined,
+    record: JSON.parse(row.record_json) as TRecord,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    syncedAt: row.synced_at,
   };
 }
 
@@ -3207,6 +3899,7 @@ function toGrantRecord(row: FriendGrantRow): SocialGrant {
 function toFriendSummary(friend: SocialFriendRecord, grants: SocialGrant[]): SocialFriendSummary {
   return {
     handle: friend.handle,
+    note: friend.note,
     displayName: friend.displayName,
     description: friend.profile?.description,
     agentDisplayName: friend.agentCard?.displayName,
@@ -3253,6 +3946,7 @@ function toMessageRecord(row: MessageRow): SocialMessageRecord {
     direction: row.direction as SocialMessageDirection,
     fromHandle: row.from_handle,
     toHandle: row.to_handle,
+    sender: row.sender_json ? JSON.parse(row.sender_json) as SocialMessageSender : undefined,
     text: row.text ?? undefined,
     body: row.body_json ? JSON.parse(row.body_json) as unknown : undefined,
     deliveryMethod: row.delivery_method ? row.delivery_method as SocialRemoteOperation : undefined,
@@ -3274,6 +3968,7 @@ function toMessageSummary(message: SocialMessageRecord): SocialMessageSummary {
     direction: message.direction,
     fromHandle: message.fromHandle,
     toHandle: message.toHandle,
+    sender: message.sender,
     text: message.text,
     body: message.body,
     deliveryStatus: message.deliveryStatus,

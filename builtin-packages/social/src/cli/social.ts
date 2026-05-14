@@ -2,14 +2,20 @@ import { defineCommand } from "@gsv/package/cli";
 import type { KernelClientLike, PackageCommandContext } from "@gsv/package/cli";
 import type {
   SocialFriendListResult,
+  SocialFriendAddResult,
   SocialIdentityGetResult,
   SocialIdentityRepublishResult,
   SocialMessageSendResult,
   SocialMessageStatusListResult,
   SocialMessageStatusState,
   SocialMessageStatusSummary,
+  SocialPackageLikeCreateResult,
+  SocialPackageLikeDeleteResult,
+  SocialPackageLikeListResult,
   SocialThreadGetResult,
   SocialThreadListResult,
+  SocialUserListResult,
+  SpaceGsvPackageLikeRecord,
 } from "@gsv/protocol/syscalls/social";
 
 type CommandContext = Pick<PackageCommandContext, "argv" | "kernel" | "stdout">;
@@ -55,6 +61,9 @@ export async function runSocialCommand(ctx: CommandContext): Promise<string> {
   if (command === "message" || command === "messages") {
     return runMessageCommand(ctx.kernel, rest);
   }
+  if (command === "package" || command === "packages" || command === "pkg") {
+    return runPackageCommand(ctx.kernel, rest);
+  }
   if (command === "thread" || command === "threads") {
     return runThreadCommand(ctx.kernel, rest);
   }
@@ -91,8 +100,49 @@ async function runIdentityCommand(kernel: KernelClientLike, args: string[]): Pro
 }
 
 async function runFriendsCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    return socialHelp("friend");
+  }
+  if (subcommand === "add") {
+    const handle = firstPositional(rest);
+    const note = findFlagValue(rest, "--note");
+    if (!handle || !note?.trim()) {
+      throw new Error("Usage: social friend add <handle> --note TEXT");
+    }
+    const result = await kernel.request<SocialFriendAddResult>("social.friend.add", {
+      handle,
+      note: note.trim(),
+    });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return `${result.created ? "added" : "updated"} ${result.friend.handle}: ${result.friend.note}\n`;
+  }
+  if (subcommand === "users") {
+    const handle = firstPositional(rest);
+    if (!handle) {
+      throw new Error("Usage: social friend users <handle> [--json]");
+    }
+    const result = await kernel.request<SocialUserListResult>("social.user.list", { handle });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    if (result.users.length === 0) {
+      return `No published users for ${handle}.\n`;
+    }
+    return `${result.users.map(({ record }) => {
+      const label = record.displayName && record.displayName !== record.username
+        ? `${record.username}: ${record.displayName}`
+        : record.username;
+      return `- ${label}`;
+    }).join("\n")}\n`;
+  }
+  if (subcommand !== "list") {
+    throw new Error(`Unknown social friend subcommand: ${subcommand}`);
+  }
   const result = await kernel.request<SocialFriendListResult>("social.friend.list", {});
-  if (hasFlag(args, "--json")) {
+  if (hasFlag(rest, "--json")) {
     return `${JSON.stringify(result, null, 2)}\n`;
   }
   if (result.friends.length === 0) {
@@ -100,8 +150,65 @@ async function runFriendsCommand(kernel: KernelClientLike, args: string[]): Prom
   }
   return `${result.friends.map((friend) => {
     const grants = friend.grants.map((grant) => grant.operation).join(", ") || "none";
-    return `- ${friend.handle}: grants=${grants}`;
+    return `- ${friend.handle}: ${friend.note} (grants=${grants})`;
   }).join("\n")}\n`;
+}
+
+async function runPackageCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
+  const [subcommand = "likes", ...rest] = args;
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    return socialHelp("package");
+  }
+  if (subcommand === "likes" || subcommand === "list") {
+    const handle = findFlagValue(rest, "--handle") ?? firstPositional(rest);
+    const result = await kernel.request<SocialPackageLikeListResult>("social.package.like.list", {
+      ...(handle ? { handle } : {}),
+      limit: parseLimit(rest, 50),
+    });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    if (result.likes.length === 0) {
+      return handle ? `No package likes for ${handle}.\n` : "No local package likes.\n";
+    }
+    return `${result.likes.map(formatPackageLikeLine).join("\n")}\n`;
+  }
+  if (subcommand === "like" || subcommand === "add") {
+    const name = firstPositional(rest);
+    if (!name) {
+      throw new Error("Usage: social package like <name> [--repo REPO] [--ref REF] [--subdir DIR] [--uri URI] [--note TEXT]");
+    }
+    const record: SpaceGsvPackageLikeRecord = {
+      $type: "space.gsv.package.like",
+      createdAt: new Date().toISOString(),
+      subject: {
+        kind: "gsv-package",
+        name,
+        ...(findFlagValue(rest, "--repo") ? { repo: findFlagValue(rest, "--repo") } : {}),
+        ...(findFlagValue(rest, "--ref") ? { ref: findFlagValue(rest, "--ref") } : {}),
+        ...(findFlagValue(rest, "--subdir") ? { subdir: findFlagValue(rest, "--subdir") } : {}),
+        ...(findFlagValue(rest, "--uri") ? { uri: findFlagValue(rest, "--uri") } : {}),
+      },
+      ...(findFlagValue(rest, "--note") ? { note: findFlagValue(rest, "--note") } : {}),
+    };
+    const result = await kernel.request<SocialPackageLikeCreateResult>("social.package.like.create", { record });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return `liked ${result.record.subject.name}${result.uri ? `: ${result.uri}` : ""}\n`;
+  }
+  if (subcommand === "unlike" || subcommand === "delete" || subcommand === "remove") {
+    const uri = firstPositional(rest);
+    if (!uri) {
+      throw new Error("Usage: social package unlike <at-uri> [--json]");
+    }
+    const result = await kernel.request<SocialPackageLikeDeleteResult>("social.package.like.delete", { uri });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return `${result.deleted ? "deleted" : "not found"} ${uri}\n`;
+  }
+  throw new Error(`Unknown social package subcommand: ${subcommand}`);
 }
 
 async function runInboxCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
@@ -255,6 +362,13 @@ function formatStatusLineWithActions(status: SocialMessageStatusSummary): string
   ].join("\n");
 }
 
+function formatPackageLikeLine(like: SocialPackageLikeListResult["likes"][number]): string {
+  const subject = like.record.subject;
+  const source = subject.repo ?? subject.uri ?? subject.name;
+  const note = like.record.note ? ` - ${like.record.note}` : "";
+  return `- ${like.handle}: ${subject.name} (${source})${note}`;
+}
+
 function socialHelp(topic?: string): string {
   if (topic === "identity") {
     return "Usage:\n  social identity [--json]\n  social identity republish [--json]\n\n";
@@ -270,6 +384,24 @@ function socialHelp(topic?: string): string {
   if (topic === "message") {
     return "Usage:\n  social message send <handle> <text> [--thread THREAD] [--body JSON]\n\n";
   }
+  if (topic === "package" || topic === "packages" || topic === "pkg") {
+    return [
+      "Usage:",
+      "  social package likes [handle|--handle HANDLE] [--limit N] [--json]",
+      "  social package like <name> [--repo REPO] [--ref REF] [--subdir DIR] [--uri URI] [--note TEXT] [--json]",
+      "  social package unlike <at-uri> [--json]",
+      "",
+    ].join("\n");
+  }
+  if (topic === "friend" || topic === "friends") {
+    return [
+      "Usage:",
+      "  social friend list [--json]",
+      "  social friend add <handle> --note TEXT [--json]",
+      "  social friend users <handle> [--json]",
+      "",
+    ].join("\n");
+  }
   if (topic === "thread") {
     return "Usage:\n  social thread list [--limit N]\n  social thread read <thread-id> [--json]\n\n";
   }
@@ -277,10 +409,11 @@ function socialHelp(topic?: string): string {
     "Usage:",
     "  social identity",
     "  social identity republish",
-    "  social friends",
+    "  social friend list|add|users ...",
     "  social inbox [--state STATE] [--limit N]",
     "  social status list|update ...",
     "  social message send <handle> <text>",
+    "  social package likes|like|unlike ...",
     "  social thread list|read ...",
     "",
   ].join("\n");
@@ -368,13 +501,19 @@ function positionalArgs(args: string[]): string[] {
     "--direction",
     "-d",
     "--limit",
+    "--handle",
+    "--note",
     "--peer",
     "--reason",
+    "--ref",
+    "--repo",
     "--state",
+    "--subdir",
     "--summary",
     "--text",
     "--thread",
     "--to",
+    "--uri",
   ]);
   const result: string[] = [];
   for (let index = 0; index < args.length; index += 1) {

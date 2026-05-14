@@ -694,6 +694,18 @@ textarea {
   background: rgba(40, 92, 143, 0.08);
 }
 
+.social-directory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.social-directory-grid h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--social-muted);
+}
+
 .social-empty-state,
 .social-boot-error,
 .social-error-banner,

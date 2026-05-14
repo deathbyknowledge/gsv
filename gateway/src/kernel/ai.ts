@@ -46,6 +46,7 @@ import {
   resolveWorkersAiModelContextWindow,
 } from "../inference/workers-ai";
 import { collectPromptSkillIndex } from "./skills";
+import { buildSocialPromptContext } from "./social";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -212,6 +213,7 @@ export async function handleAiConfig(
     systemContextFiles,
     profileContextFiles,
     skillIndex,
+    socialContext: buildSocialPromptContext(ctx),
     profileApprovalPolicy,
     maxContextBytes,
   };

@@ -114,6 +114,9 @@ import {
   handleSocialMessageStatusGet,
   handleSocialMessageStatusList,
   handleSocialMessageStatusUpdate,
+  handleSocialPackageLikeCreate,
+  handleSocialPackageLikeDelete,
+  handleSocialPackageLikeList,
   handleSocialSetup,
   handleSocialIdentityGet,
   handleSocialIdentityRepublish,
@@ -125,6 +128,7 @@ import {
   handleSocialThreadCreate,
   handleSocialThreadGet,
   handleSocialThreadList,
+  handleSocialUserList,
 } from "./social";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import {
@@ -544,6 +548,18 @@ async function dispatchNative(
         break;
       case "social.friend.grants.set":
         data = handleSocialFriendGrantsSet(frame.args, ctx);
+        break;
+      case "social.user.list":
+        data = await handleSocialUserList(frame.args, ctx);
+        break;
+      case "social.package.like.create":
+        data = await handleSocialPackageLikeCreate(frame.args, ctx);
+        break;
+      case "social.package.like.delete":
+        data = await handleSocialPackageLikeDelete(frame.args, ctx);
+        break;
+      case "social.package.like.list":
+        data = await handleSocialPackageLikeList(frame.args, ctx);
         break;
       case "social.thread.create":
         data = await handleSocialThreadCreate(frame.args, ctx);

@@ -3,6 +3,7 @@ import type {
   AddFriendArgs,
   SendMessageArgs,
   SocialBackend,
+  SocialFriendDirectory,
   SocialMessageItem,
   SocialMessageStatusItem,
   SocialPeerSummary,
@@ -67,10 +68,10 @@ export function App({ backend }: AppProps) {
     setSelectedThreadId(nextThreadId ?? null);
   }, [selectedThreadId, view]);
 
-  const refresh = useCallback(async (threadId: string | null) => {
+  const refresh = useCallback(async (threadId: string | null, friendHandle: string | null) => {
     setPendingAction("load");
     try {
-      const nextState = await backend.loadState({ threadId });
+      const nextState = await backend.loadState({ threadId, friendHandle });
       setState(nextState);
       if (nextState.selectedThread?.thread?.threadId && nextState.selectedThread.thread.threadId !== selectedThreadId) {
         setSelectedThreadId(nextState.selectedThread.thread.threadId);
@@ -84,8 +85,8 @@ export function App({ backend }: AppProps) {
   }, [backend, selectedThreadId]);
 
   useEffect(() => {
-    void refresh(selectedThreadId);
-  }, [refresh, selectedThreadId]);
+    void refresh(selectedThreadId, selectedFriendHandle);
+  }, [refresh, selectedFriendHandle, selectedThreadId]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -103,6 +104,12 @@ export function App({ backend }: AppProps) {
     return state.friends.find((friend) => friend.handle === selectedFriendHandle) ?? state.friends[0] ?? null;
   }, [selectedFriendHandle, state?.friends]);
 
+  useEffect(() => {
+    if (!selectedFriendHandle && state?.friends[0]) {
+      setSelectedFriendHandle(state.friends[0].handle);
+    }
+  }, [selectedFriendHandle, state?.friends]);
+
   const runStateAction = useCallback(async (
     actionId: PendingAction,
     action: () => Promise<SocialState>,
@@ -110,8 +117,14 @@ export function App({ backend }: AppProps) {
     setPendingAction(actionId);
     try {
       const nextState = await action();
-      setState(nextState);
       const nextThreadId = nextState.selectedThread?.thread?.threadId ?? selectedThreadId;
+      const nextFriendHandle = selectedFriendHandle && nextState.friends.some((friend) => friend.handle === selectedFriendHandle)
+        ? selectedFriendHandle
+        : null;
+      const hydratedState = nextFriendHandle
+        ? await backend.loadState({ threadId: nextThreadId, friendHandle: nextFriendHandle })
+        : nextState;
+      setState(hydratedState);
       setSelectedThreadId(nextThreadId ?? null);
       setError(null);
     } catch (cause) {
@@ -119,7 +132,7 @@ export function App({ backend }: AppProps) {
     } finally {
       setPendingAction(null);
     }
-  }, [selectedThreadId]);
+  }, [backend, selectedFriendHandle, selectedThreadId]);
 
   function selectThread(threadId: string | null, nextView: SocialView = view): void {
     updateRoute({ view: nextView, threadId });
@@ -131,6 +144,7 @@ export function App({ backend }: AppProps) {
         <FriendsPanel
           friends={state.friends}
           selectedFriend={selectedFriend}
+          friendDirectory={state.friendDirectory?.handle === selectedFriend?.handle ? state.friendDirectory : null}
           pendingAction={pendingAction}
           onSelectFriend={setSelectedFriendHandle}
           onAddFriend={(args) => runStateAction("add-friend", () => backend.addFriend(args))}
@@ -435,6 +449,7 @@ function StatusCard(props: {
 function FriendsPanel(props: {
   friends: SocialPeerSummary[];
   selectedFriend: SocialPeerSummary | null;
+  friendDirectory: SocialFriendDirectory | null;
   pendingAction: PendingAction | null;
   onSelectFriend: (handle: string) => void;
   onAddFriend: (args: AddFriendArgs) => void;
@@ -460,6 +475,7 @@ function FriendsPanel(props: {
               <StatusDot status={friend.acceptsMessages ? "active" : "inactive"} />
               <strong>{friend.displayName || friend.handle}</strong>
               <span>{friend.handle}</span>
+              <span>{friend.note}</span>
               <small>{friend.grants.length} grants · {formatShortDate(friend.updatedAt)}</small>
             </button>
           )) : <div class="social-list-note">No friends.</div>}
@@ -468,6 +484,7 @@ function FriendsPanel(props: {
 
       <FriendDetail
         friend={props.selectedFriend}
+        directory={props.friendDirectory}
         pendingAction={props.pendingAction}
         onSaveGrants={props.onSaveGrants}
         onRemoveFriend={props.onRemoveFriend}
@@ -479,6 +496,7 @@ function FriendsPanel(props: {
 
 function FriendDetail(props: {
   friend: SocialPeerSummary | null;
+  directory: SocialFriendDirectory | null;
   pendingAction: PendingAction | null;
   onSaveGrants: (args: { handle: string; grants: AddFriendArgs["grants"] }) => void;
   onRemoveFriend: (handle: string) => void;
@@ -505,6 +523,7 @@ function FriendDetail(props: {
           <p class="social-eyebrow">Friend</p>
           <h2>{props.friend.displayName || props.friend.handle}</h2>
           <p>{props.friend.agentDisplayName || props.friend.handle}</p>
+          <p>{props.friend.note}</p>
         </div>
         <button
           type="button"
@@ -550,6 +569,8 @@ function FriendDetail(props: {
         </div>
       </section>
 
+      <FriendDirectory directory={props.directory} />
+
       <section class="social-detail-section">
         <h3>Start</h3>
         <MessageForm
@@ -562,11 +583,53 @@ function FriendDetail(props: {
   );
 }
 
+function FriendDirectory(props: { directory: SocialFriendDirectory | null }) {
+  const users = props.directory?.users ?? [];
+  const packageLikes = props.directory?.packageLikes ?? [];
+  return (
+    <section class="social-detail-section">
+      <div class="social-section-head">
+        <h3>Directory</h3>
+        <span>{users.length} users · {packageLikes.length} likes</span>
+      </div>
+      <div class="social-directory-grid">
+        <section>
+          <h4>Users</h4>
+          {users.length ? (
+            <div class="social-detail-list">
+              {users.map((user) => (
+                <div key={user.uri ?? `${user.handle}:${user.record.username}`}>
+                  <dt>{user.record.username}</dt>
+                  <dd>{user.record.displayName || user.record.publicHandle || "Published user"}</dd>
+                </div>
+              ))}
+            </div>
+          ) : <p class="social-list-note">No published users.</p>}
+        </section>
+        <section>
+          <h4>Package likes</h4>
+          {packageLikes.length ? (
+            <div class="social-detail-list">
+              {packageLikes.map((like) => (
+                <div key={like.uri}>
+                  <dt>{like.record.subject.name}</dt>
+                  <dd>{formatPackageSubject(like.record)}{like.record.note ? ` - ${like.record.note}` : ""}</dd>
+                </div>
+              ))}
+            </div>
+          ) : <p class="social-list-note">No published package likes.</p>}
+        </section>
+      </div>
+    </section>
+  );
+}
+
 function AddFriendForm(props: {
   pending: boolean;
   onAddFriend: (args: AddFriendArgs) => void;
 }) {
   const [handle, setHandle] = useState("");
+  const [note, setNote] = useState("");
   const [selected, setSelected] = useState<Set<string>>(() => new Set(SOCIAL_GRANT_OPTIONS.map((option) => option.operation)));
   return (
     <form
@@ -575,19 +638,25 @@ function AddFriendForm(props: {
         event.preventDefault();
         props.onAddFriend({
           handle,
+          note,
           grants: Array.from(selected).map((operation) => ({
             operation: operation as AddFriendArgs["grants"][number]["operation"],
           })),
         });
         setHandle("");
+        setNote("");
       }}
     >
       <label>
         <span>Friend handle</span>
         <input value={handle} onInput={(event) => setHandle(event.currentTarget.value)} placeholder="alice.example" />
       </label>
+      <label>
+        <span>Relationship note</span>
+        <input value={note} onInput={(event) => setNote(event.currentTarget.value)} placeholder="Alice's household GSV" />
+      </label>
       <GrantChecklist selected={selected} onChange={setSelected} compact />
-      <button class="social-button social-button--primary" type="submit" disabled={props.pending || !handle.trim()}>
+      <button class="social-button social-button--primary" type="submit" disabled={props.pending || !handle.trim() || !note.trim()}>
         Add
       </button>
     </form>
@@ -782,6 +851,11 @@ function formatShortDate(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatPackageSubject(record: SocialFriendDirectory["packageLikes"][number]["record"]): string {
+  const subject = record.subject;
+  return subject.repo ?? subject.uri ?? subject.subdir ?? subject.ref ?? "GSV package";
 }
 
 function plainObjectEntries(value: unknown): Array<[string, unknown]> {

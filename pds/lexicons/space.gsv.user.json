@@ -1,0 +1,51 @@
+{
+  "lexicon": 1,
+  "id": "space.gsv.user",
+  "description": "Public GSV local user directory record.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "any",
+      "record": {
+        "type": "object",
+        "required": ["$type", "createdAt", "username"],
+        "properties": {
+          "$type": {
+            "type": "string",
+            "const": "space.gsv.user"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "displayName": {
+            "type": "string",
+            "maxGraphemes": 64,
+            "maxLength": 256
+          },
+          "description": {
+            "type": "string",
+            "maxGraphemes": 300,
+            "maxLength": 1200
+          },
+          "publicHandle": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "acceptsMessages": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

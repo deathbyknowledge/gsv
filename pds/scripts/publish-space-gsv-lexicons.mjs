@@ -8,6 +8,7 @@ const LEXICON_IDS = [
   "space.gsv.profile",
   "space.gsv.instance",
   "space.gsv.agent.card",
+  "space.gsv.user",
   "space.gsv.package.like",
   "space.gsv.status",
 ];
@@ -313,6 +314,7 @@ function sampleRecords(avatarBlob) {
         acceptedSocialMethods: [
           "social.profile.read",
           "social.agent.card.read",
+          "social.user.read",
           "social.message.send",
           "social.message.status.update",
         ],
@@ -331,6 +333,19 @@ function sampleRecords(avatarBlob) {
         acceptsMessages: true,
         acceptsRequests: true,
         humanEscalation: "sometimes",
+      },
+    },
+    {
+      mode: "put",
+      collection: "space.gsv.user",
+      rkey: "alice",
+      value: {
+        $type: "space.gsv.user",
+        createdAt: new Date().toISOString(),
+        username: "alice",
+        displayName: "Alice",
+        description: "Example GSV resident.",
+        acceptsMessages: true,
       },
     },
     {

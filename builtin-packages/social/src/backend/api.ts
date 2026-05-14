@@ -8,10 +8,12 @@ import type {
   SocialMessageStatusSummary,
   SocialMessageStatusUpdateArgs,
   SocialMessageSummary,
+  SocialPackageLikeListResult,
   SocialRemoteOperation,
   SocialThreadGetResult,
   SocialThreadListResult,
   SocialThreadSummary,
+  SocialUserListResult,
 } from "@gsv/protocol/syscalls/social";
 import type {
   AddFriendArgs,
@@ -44,6 +46,7 @@ export async function loadState(
 
   const threads = threadResult.threads.map(normalizeThread);
   const statuses = statusResult.statuses.map(normalizeStatus);
+  const friends = friendResult.friends.map(normalizeFriend);
   const requestedThreadId = normalizeOptional(args?.threadId);
   const selectedThreadId = requestedThreadId && threads.some((thread) => thread.threadId === requestedThreadId)
     ? requestedThreadId
@@ -51,16 +54,37 @@ export async function loadState(
   const selectedThread = selectedThreadId
     ? normalizeThreadDetail(await kernel.request("social.thread.get", { threadId: selectedThreadId }) as SocialThreadGetResult)
     : null;
+  const requestedFriendHandle = normalizeOptional(args?.friendHandle);
+  const selectedFriend = requestedFriendHandle
+    ? friends.find((friend) => friend.handle === requestedFriendHandle) ?? null
+    : null;
+  const [usersResult, packageLikesResult] = selectedFriend
+    ? await Promise.all([
+        selectedFriend.acceptedSocialMethods.includes("social.user.read")
+          ? kernel.request("social.user.list", { handle: selectedFriend.handle }) as Promise<SocialUserListResult>
+          : Promise.resolve({ users: [] }),
+        selectedFriend.acceptedSocialMethods.includes("social.package.like.read")
+          ? kernel.request("social.package.like.list", { handle: selectedFriend.handle }) as Promise<SocialPackageLikeListResult>
+          : Promise.resolve({ likes: [] }),
+      ])
+    : [{ users: [] }, { likes: [] }];
 
   return {
     identity: identityResult.identity,
-    friends: friendResult.friends.map(normalizeFriend),
+    friends,
     threads: threads.map((thread) => ({
       ...thread,
       statusCount: statuses.filter((status) => status.threadId === thread.threadId).length,
     })),
     statuses,
     selectedThread,
+    friendDirectory: selectedFriend
+      ? {
+          handle: selectedFriend.handle,
+          users: usersResult.users,
+          packageLikes: packageLikesResult.likes,
+        }
+      : null,
   };
 }
 
@@ -70,6 +94,7 @@ export async function addFriend(
 ): Promise<SocialState> {
   await kernel.request("social.friend.add", {
     handle: normalizeRequired(args.handle, "handle"),
+    note: normalizeRequired(args.note, "note"),
     grants: normalizeGrants(args.grants),
   });
   return loadState({}, kernel);
@@ -128,6 +153,7 @@ export async function updateMessageStatus(
 function normalizeFriend(friend: SocialFriendListResult["friends"][number]): SocialPeerSummary {
   return {
     handle: friend.handle,
+    note: friend.note,
     displayName: friend.displayName,
     agentDisplayName: friend.agentDisplayName,
     acceptsMessages: friend.acceptsMessages,

@@ -50,6 +50,7 @@
               "enum": [
                 "social.profile.read",
                 "social.agent.card.read",
+                "social.user.read",
                 "social.package.like.read",
                 "social.thread.create",
                 "social.message.send",

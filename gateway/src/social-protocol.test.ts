@@ -11,11 +11,13 @@ import {
   SPACE_GSV_PACKAGE_LIKE,
   SPACE_GSV_PROFILE,
   SPACE_GSV_STATUS,
+  SPACE_GSV_USER,
   type SpaceGsvAgentCardRecord,
   type SpaceGsvInstanceRecord,
   type SpaceGsvPackageLikeRecord,
   type SpaceGsvProfileRecord,
   type SpaceGsvStatusRecord,
+  type SpaceGsvUserRecord,
 } from "@gsv/protocol/syscalls/social";
 
 describe("social protocol contract", () => {
@@ -24,6 +26,7 @@ describe("social protocol contract", () => {
       "space.gsv.profile",
       "space.gsv.instance",
       "space.gsv.agent.card",
+      "space.gsv.user",
       "space.gsv.package.like",
       "space.gsv.status",
     ]);
@@ -39,6 +42,7 @@ describe("social protocol contract", () => {
 
   it("separates remote social operations from local social syscalls", () => {
     expect(SOCIAL_REMOTE_OPERATIONS).toContain("social.message.send");
+    expect(SOCIAL_REMOTE_OPERATIONS).toContain("social.user.read");
     expect(SOCIAL_REMOTE_OPERATIONS).toContain("social.package.like.read");
     expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.message.reply" as never);
     expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.request.create" as never);
@@ -51,6 +55,7 @@ describe("social protocol contract", () => {
 
     expect(SOCIAL_SYSCALLS).toContain("social.inbound");
     expect(SOCIAL_SYSCALLS).toContain("social.sync.run");
+    expect(SOCIAL_SYSCALLS).toContain("social.user.list");
     expect(SOCIAL_SYSCALLS).toContain("social.identity.republish");
     expect(isSocialSyscallName("social.inbound")).toBe(true);
     expect(isSocialSyscallName("social.identity.republish")).toBe(true);
@@ -105,6 +110,14 @@ describe("social protocol contract", () => {
       },
     };
 
+    const user: SpaceGsvUserRecord = {
+      $type: SPACE_GSV_USER,
+      createdAt: "2026-05-12T12:00:00Z",
+      username: "hank",
+      displayName: "Hank",
+      acceptsMessages: true,
+    };
+
     const status: SpaceGsvStatusRecord = {
       $type: SPACE_GSV_STATUS,
       createdAt: "2026-05-12T12:00:00Z",
@@ -115,6 +128,7 @@ describe("social protocol contract", () => {
     expect(instance).not.toHaveProperty("devices");
     expect(instance).not.toHaveProperty("deviceIds");
     expect(agentCard).not.toHaveProperty("syscalls");
+    expect(user).not.toHaveProperty("devices");
     expect(like.subject.kind).toBe("gsv-package");
     expect(status.text).toContain("social");
   });

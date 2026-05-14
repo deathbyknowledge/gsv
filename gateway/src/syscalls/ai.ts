@@ -94,6 +94,10 @@ export type AiConfigResult = {
     text: string;
   }>;
   skillIndex?: AiSkillIndexEntry[];
+  socialContext?: {
+    remoteGSVs: string;
+    localGsvUsers: string;
+  };
   profileApprovalPolicy?: string | null;
   maxContextBytes: number;
 };

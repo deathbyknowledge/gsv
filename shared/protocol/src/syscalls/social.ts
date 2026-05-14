@@ -6,6 +6,7 @@ export type SocialEmptyArgs = Record<string, never>;
 export const SPACE_GSV_PROFILE = "space.gsv.profile" as const;
 export const SPACE_GSV_INSTANCE = "space.gsv.instance" as const;
 export const SPACE_GSV_AGENT_CARD = "space.gsv.agent.card" as const;
+export const SPACE_GSV_USER = "space.gsv.user" as const;
 export const SPACE_GSV_PACKAGE_LIKE = "space.gsv.package.like" as const;
 export const SPACE_GSV_STATUS = "space.gsv.status" as const;
 
@@ -13,6 +14,7 @@ export const SPACE_GSV_COLLECTIONS = [
   SPACE_GSV_PROFILE,
   SPACE_GSV_INSTANCE,
   SPACE_GSV_AGENT_CARD,
+  SPACE_GSV_USER,
   SPACE_GSV_PACKAGE_LIKE,
   SPACE_GSV_STATUS,
 ] as const;
@@ -74,6 +76,14 @@ export type SpaceGsvAgentCardRecord = SpaceGsvRecordBase<typeof SPACE_GSV_AGENT_
   humanEscalation?: "never" | "sometimes" | "required";
 };
 
+export type SpaceGsvUserRecord = SpaceGsvRecordBase<typeof SPACE_GSV_USER> & {
+  username: string;
+  displayName?: string;
+  description?: string;
+  publicHandle?: string;
+  acceptsMessages?: boolean;
+};
+
 export type SpaceGsvPackageSubject = {
   kind: "gsv-package";
   name: string;
@@ -98,12 +108,14 @@ export type SpaceGsvRecord =
   | SpaceGsvProfileRecord
   | SpaceGsvInstanceRecord
   | SpaceGsvAgentCardRecord
+  | SpaceGsvUserRecord
   | SpaceGsvPackageLikeRecord
   | SpaceGsvStatusRecord;
 
 export const SOCIAL_REMOTE_OPERATIONS = [
   "social.profile.read",
   "social.agent.card.read",
+  "social.user.read",
   "social.package.like.read",
   "social.thread.create",
   "social.message.send",
@@ -133,6 +145,7 @@ export const SOCIAL_SYSCALLS = [
   "social.friend.add",
   "social.friend.remove",
   "social.friend.grants.set",
+  "social.user.list",
   "social.thread.create",
   "social.thread.list",
   "social.thread.get",
@@ -163,6 +176,7 @@ export type SocialGrant = {
 
 export type SocialFriendSummary = {
   handle: string;
+  note: string;
   displayName?: string;
   description?: string;
   agentDisplayName?: string;
@@ -223,12 +237,41 @@ export type SocialDeliveryStatus =
   | "retrying"
   | "delivered";
 
+export type SocialMessageSender =
+  | {
+    kind: "gsv";
+    displayName?: string;
+  }
+  | {
+    kind: "mind";
+    username?: string;
+    displayName?: string;
+    publicHandle?: string;
+    processId?: string;
+  }
+  | {
+    kind: "user";
+    username: string;
+    displayName?: string;
+    publicHandle?: string;
+  }
+  | {
+    kind: "process";
+    username: string;
+    displayName?: string;
+    publicHandle?: string;
+    processId?: string;
+    processLabel?: string;
+    profile?: string;
+  };
+
 export type SocialMessageSummary = {
   messageId: string;
   threadId: string;
   direction: SocialMessageDirection;
   fromHandle: string;
   toHandle: string;
+  sender?: SocialMessageSender;
   text?: string;
   body?: unknown;
   deliveryStatus: SocialDeliveryStatus;
@@ -274,6 +317,7 @@ export type SocialSetupResult = {
     profile?: SocialAtUri;
     instance?: SocialAtUri;
     agentCard?: SocialAtUri;
+    users?: SocialAtUri[];
   };
 };
 
@@ -297,6 +341,7 @@ export type SocialIdentityRepublishResult = {
     profile?: SocialAtUri;
     instance?: SocialAtUri;
     agentCard?: SocialAtUri;
+    users?: SocialAtUri[];
   };
 };
 
@@ -352,6 +397,7 @@ export type SocialFriendListResult = {
 
 export type SocialFriendAddArgs = {
   handle: string;
+  note: string;
   displayName?: string;
   grants?: SocialGrant[];
 };
@@ -441,6 +487,18 @@ export type SocialMessageStatusUpdateArgs = {
 };
 export type SocialMessageStatusUpdateResult = {
   status: SocialMessageStatusSummary;
+};
+
+export type SocialUserListArgs = {
+  handle?: string;
+  limit?: number;
+};
+export type SocialUserListResult = {
+  users: Array<{
+    handle: string;
+    uri?: SocialAtUri;
+    record: SpaceGsvUserRecord;
+  }>;
 };
 
 export type SocialPackageLikeCreateArgs = {
@@ -544,6 +602,10 @@ export type SocialSyscalls = {
   "social.friend.grants.set": {
     args: SocialFriendGrantsSetArgs;
     result: SocialFriendGrantsSetResult;
+  };
+  "social.user.list": {
+    args: SocialUserListArgs;
+    result: SocialUserListResult;
   };
   "social.thread.create": {
     args: SocialThreadCreateArgs;

@@ -106,6 +106,7 @@ pub fn bundled_space_gsv_lexicons() -> Vec<Value> {
         serde_json::from_str(include_str!("../lexicons/space.gsv.profile.json")).unwrap(),
         serde_json::from_str(include_str!("../lexicons/space.gsv.instance.json")).unwrap(),
         serde_json::from_str(include_str!("../lexicons/space.gsv.agent.card.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.user.json")).unwrap(),
         serde_json::from_str(include_str!("../lexicons/space.gsv.package.like.json")).unwrap(),
         serde_json::from_str(include_str!("../lexicons/space.gsv.status.json")).unwrap(),
     ]
@@ -350,6 +351,7 @@ mod tests {
                     "acceptedSocialMethods": [
                         "social.profile.read",
                         "social.agent.card.read",
+                        "social.user.read",
                         "social.message.send",
                         "social.message.status.update"
                     ]
@@ -368,6 +370,20 @@ mod tests {
                     "acceptsMessages": true,
                     "acceptsRequests": true,
                     "humanEscalation": "sometimes"
+                }),
+            ),
+            (
+                "space.gsv.user",
+                serde_json::from_str(include_str!("../lexicons/space.gsv.user.json")).unwrap(),
+                json!({
+                    "$type": "space.gsv.user",
+                    "createdAt": "2026-05-12T12:00:00Z",
+                    "updatedAt": "2026-05-12T12:01:00Z",
+                    "username": "alice",
+                    "displayName": "Alice",
+                    "description": "Example resident.",
+                    "publicHandle": "alice.example.com",
+                    "acceptsMessages": true
                 }),
             ),
             (

@@ -41,6 +41,12 @@ function renderContextFiles(
 function renderContextTemplate(
   template: string,
   input: {
+    config?: {
+      socialContext?: {
+        remoteGSVs: string;
+        localGsvUsers: string;
+      };
+    };
     profile: string;
     identity: {
       uid: number;
@@ -66,6 +72,8 @@ function renderContextTemplate(
     ["devices", formatDevices(input.devices)],
     ["mcpServers", formatMcpServers(input.mcpServers)],
     ["known_paths", formatKnownPaths(input.identity.home)],
+    ["remoteGSVs", input.config?.socialContext?.remoteGSVs ?? "- (none)"],
+    ["localGsvUsers", input.config?.socialContext?.localGsvUsers ?? "- (none)"],
   ]);
 
   return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, key: string) => {
