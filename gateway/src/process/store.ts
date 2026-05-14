@@ -73,7 +73,7 @@ export type QueuedMessage = {
   runId: string;
   conversationId: string;
   generation: number;
-  role: Extract<MessageRole, "user" | "mind">;
+  role: Extract<MessageRole, "user" | "system" | "mind">;
   message: string;
   media: string | null;
   overrides: string | null;
@@ -1273,7 +1273,7 @@ export class ProcessStore {
     media?: string,
     overrides?: string,
     conversationId: string = DEFAULT_CONVERSATION_ID,
-    role: Extract<MessageRole, "user" | "mind"> = "user",
+    role: Extract<MessageRole, "user" | "system" | "mind"> = "user",
   ): void {
     const normalizedConversationId = normalizeConversationId(conversationId);
     const generation = this.getConversationGeneration(normalizedConversationId);
@@ -1478,8 +1478,11 @@ function buildFallbackUserContent(
   return content;
 }
 
-function queuedMessageRole(value: string): Extract<MessageRole, "user" | "mind"> {
-  return value === "mind" ? "mind" : "user";
+function queuedMessageRole(value: string): Extract<MessageRole, "user" | "system" | "mind"> {
+  if (value === "mind" || value === "system") {
+    return value;
+  }
+  return "user";
 }
 
 export function stringifyAssistantMessageMeta(

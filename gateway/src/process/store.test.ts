@@ -598,6 +598,17 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("preserves queued system event role", async () => {
+      const stub = await getProcessByPid("queue-system-role");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.enqueue("r1", "process event", undefined, undefined, "social", "system");
+        const item = store.dequeue();
+        expect(item!.role).toBe("system");
+        expect(item!.message).toBe("process event");
+      });
+    });
+
     it("drains only the requested conversation", async () => {
       const stub = await getProcessByPid("queue-conversation-scope");
       await runInDurableObject(stub, (instance: Process) => {

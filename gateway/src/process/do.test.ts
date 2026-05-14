@@ -509,7 +509,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("delivers mind messages without storing them as user text", async () => {
+    it("delivers mind events as process events", async () => {
       const pid = "mech-mind-deliver";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -532,7 +532,7 @@ describe("Process DO — mechanical", () => {
         const store = (instance as any).store;
         const msgs = store.getMessages({ conversationId: "social-thread" });
         expect(msgs).toHaveLength(1);
-        expect(msgs[0].role).toBe("mind");
+        expect(msgs[0].role).toBe("system");
         expect(msgs[0].content).toContain("Handle this friend message.");
         (instance as any).currentRun = null;
       });
@@ -575,7 +575,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("preserves mind role when queued behind an active run", async () => {
+    it("preserves mind events as process events when queued behind an active run", async () => {
       const pid = "mech-mind-deliver-queued";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -600,7 +600,7 @@ describe("Process DO — mechanical", () => {
         process.currentRun = null;
         process.promoteNextQueuedRun();
         const messages = process.store.getMessages({ conversationId: "social-thread" });
-        expect(messages.map((message: any) => message.role)).toEqual(["user", "mind"]);
+        expect(messages.map((message: any) => message.role)).toEqual(["user", "system"]);
         expect(messages[1].content).toBe("Queued mind event");
         process.currentRun = null;
       });

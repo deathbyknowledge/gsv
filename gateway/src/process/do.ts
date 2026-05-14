@@ -834,7 +834,7 @@ export class Process extends Host<Env> {
     }
 
     if (this.currentRun) {
-      this.store.enqueue(runId, message, undefined, undefined, conversationId, "mind");
+      this.store.enqueue(runId, message, undefined, undefined, conversationId, "system");
       return {
         ok: true,
         status: "started",
@@ -845,7 +845,7 @@ export class Process extends Host<Env> {
       };
     }
 
-    this.store.appendMessage("mind", message, { conversationId });
+    this.store.appendMessage("system", message, { conversationId });
     this.currentRun = { runId, queued: false, conversationId };
     this.scheduleTick(runId);
 
