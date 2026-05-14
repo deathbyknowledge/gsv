@@ -109,6 +109,7 @@ export const SOCIAL_REMOTE_OPERATIONS = [
   "social.thread.create",
   "social.message.send",
   "social.message.reply",
+  "social.message.status.update",
   "social.request.create",
   "social.request.respond",
 ] as const;
@@ -140,6 +141,9 @@ export const SOCIAL_SYSCALLS = [
   "social.thread.get",
   "social.message.send",
   "social.message.reply",
+  "social.message.status.list",
+  "social.message.status.get",
+  "social.message.status.update",
   "social.request.create",
   "social.request.list",
   "social.request.get",
@@ -239,6 +243,29 @@ export type SocialMessageSummary = {
   body?: unknown;
   replyToMessageId?: string;
   deliveryStatus: SocialDeliveryStatus;
+  createdAt: SocialIsoDateString;
+  updatedAt: SocialIsoDateString;
+};
+
+export type SocialMessageStatusState =
+  | "received"
+  | "triaged"
+  | "in_progress"
+  | "needs_human"
+  | "completed"
+  | "declined"
+  | "failed";
+
+export type SocialMessageStatusSummary = {
+  messageId: string;
+  threadId: string;
+  direction: SocialMessageDirection;
+  fromHandle: string;
+  toHandle: string;
+  state: SocialMessageStatusState;
+  summary?: string;
+  needsHumanReason?: string;
+  body?: unknown;
   createdAt: SocialIsoDateString;
   updatedAt: SocialIsoDateString;
 };
@@ -409,6 +436,7 @@ export type SocialThreadGetArgs = {
 export type SocialThreadGetResult = {
   thread: SocialThreadSummary | null;
   messages: SocialMessageSummary[];
+  statuses: SocialMessageStatusSummary[];
   requests: SocialRequestSummary[];
 };
 
@@ -433,6 +461,34 @@ export type SocialMessageReplyArgs = {
 };
 export type SocialMessageReplyResult = {
   message: SocialMessageSummary;
+};
+
+export type SocialMessageStatusListArgs = {
+  state?: SocialMessageStatusState;
+  peerHandle?: string;
+  direction?: SocialMessageDirection | "all";
+  limit?: number;
+};
+export type SocialMessageStatusListResult = {
+  statuses: SocialMessageStatusSummary[];
+};
+
+export type SocialMessageStatusGetArgs = {
+  messageId: string;
+};
+export type SocialMessageStatusGetResult = {
+  status: SocialMessageStatusSummary | null;
+};
+
+export type SocialMessageStatusUpdateArgs = {
+  messageId: string;
+  state: SocialMessageStatusState;
+  summary?: string;
+  needsHumanReason?: string;
+  body?: unknown;
+};
+export type SocialMessageStatusUpdateResult = {
+  status: SocialMessageStatusSummary;
 };
 
 export type SocialRequestCreateArgs = {
@@ -596,6 +652,18 @@ export type SocialSyscalls = {
   "social.message.reply": {
     args: SocialMessageReplyArgs;
     result: SocialMessageReplyResult;
+  };
+  "social.message.status.list": {
+    args: SocialMessageStatusListArgs;
+    result: SocialMessageStatusListResult;
+  };
+  "social.message.status.get": {
+    args: SocialMessageStatusGetArgs;
+    result: SocialMessageStatusGetResult;
+  };
+  "social.message.status.update": {
+    args: SocialMessageStatusUpdateArgs;
+    result: SocialMessageStatusUpdateResult;
   };
   "social.request.create": {
     args: SocialRequestCreateArgs;

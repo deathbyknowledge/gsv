@@ -266,12 +266,16 @@ pre {
 .social-status-dot.is-active,
 .social-status-dot.is-pending,
 .social-status-dot.is-accepted,
-.social-status-dot.is-open {
+.social-status-dot.is-open,
+.social-status-dot.is-received,
+.social-status-dot.is-triaged {
   background: var(--social-primary);
 }
 
 .social-status-dot.is-needs-human,
+.social-status-dot.is-needs_human,
 .social-status-dot.is-agent-replied,
+.social-status-dot.is-in_progress,
 .social-status-dot.is-retrying {
   background: var(--social-warning);
 }
@@ -393,6 +397,16 @@ pre {
   white-space: pre-wrap;
 }
 
+.social-message-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
 .social-request-card h3 {
   margin: 0;
   overflow-wrap: anywhere;
@@ -487,6 +501,8 @@ pre {
 
 .social-pill.is-attention,
 .social-pill.is-needs-human,
+.social-pill.is-needs_human,
+.social-pill.is-in_progress,
 .social-pill.is-agent-replied {
   color: var(--social-warning);
   border-color: rgba(149, 98, 15, 0.3);
@@ -494,14 +510,17 @@ pre {
 }
 
 .social-pill.is-completed,
-.social-pill.is-accepted {
+.social-pill.is-accepted,
+.social-pill.is-received,
+.social-pill.is-triaged {
   color: var(--social-primary-strong);
   border-color: rgba(18, 97, 81, 0.3);
   background: rgba(18, 97, 81, 0.08);
 }
 
 .social-pill.is-declined,
-.social-pill.is-expired {
+.social-pill.is-expired,
+.social-pill.is-failed {
   color: var(--social-danger);
   border-color: rgba(140, 52, 52, 0.3);
   background: rgba(140, 52, 52, 0.08);

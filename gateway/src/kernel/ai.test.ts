@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
-import { handleAiTools } from "./ai";
+import { handleAiConfig, handleAiTools } from "./ai";
+import { SYSTEM_CONFIG_DEFAULTS } from "./config";
 
 function makeContext(connectionState: string): KernelContext {
   return {
@@ -82,3 +83,39 @@ describe("handleAiTools", () => {
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 });
+
+describe("handleAiConfig", () => {
+  it("resolves the mind system profile context and approval policy", async () => {
+    const ctx = {
+      ...makeContext("ready"),
+      env: {},
+      config: makeDefaultConfig(),
+      packages: {
+        list: vi.fn(() => []),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleAiConfig({ profile: "mind" }, ctx);
+
+    expect(result.profile).toBe("mind");
+    expect(result.profileContextFiles?.map((file) => file.name)).toContain("00-role.md");
+    expect(result.profileContextFiles?.find((file) => file.name === "00-role.md")?.text)
+      .toContain("GSV Mind process");
+    expect(result.profileApprovalPolicy).toContain("\"shell.exec\"");
+  });
+});
+
+function makeDefaultConfig() {
+  return {
+    get(key: string) {
+      return SYSTEM_CONFIG_DEFAULTS[key] ?? null;
+    },
+    list(prefix: string) {
+      const normalized = prefix.replace(/\/+$/, "");
+      return Object.entries(SYSTEM_CONFIG_DEFAULTS)
+        .filter(([key]) => key === normalized || key.startsWith(`${normalized}/`))
+        .map(([key, value]) => ({ key, value }))
+        .sort((left, right) => left.key.localeCompare(right.key));
+    },
+  };
+}

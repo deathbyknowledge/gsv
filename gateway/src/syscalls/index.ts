@@ -19,6 +19,8 @@ import type {
   ProcKillArgs,
   ProcKillResult,
   ProcSendArgs,
+  ProcMindDeliverArgs,
+  ProcMindDeliverResult,
   ProcIpcDeliverArgs,
   ProcIpcDeliverResult,
   ProcIpcCallArgs,
@@ -243,6 +245,7 @@ export type SyscallDomains = {
   "proc.list": { args: ProcListArgs; result: ProcListResult };
   "proc.profile.list": { args: ProcProfileListArgs; result: ProcProfileListResult };
   "proc.send": { args: ProcSendArgs; result: ProcSendResult };
+  "proc.mind.deliver": { args: ProcMindDeliverArgs; result: ProcMindDeliverResult };
   "proc.ipc.send": { args: ProcIpcSendArgs; result: ProcIpcSendResult };
   "proc.ipc.call": { args: ProcIpcCallArgs; result: ProcIpcCallResult };
   "proc.ipc.deliver": { args: ProcIpcDeliverArgs; result: ProcIpcDeliverResult };

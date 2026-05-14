@@ -76,7 +76,13 @@ function flattenHistory(messages: unknown[]): LogRow[] {
       }
       continue;
     }
-    const role = record?.role === "user" ? "user" : record?.role === "assistant" ? "assistant" : "system";
+    const role = record?.role === "user"
+      ? "user"
+      : record?.role === "assistant"
+        ? "assistant"
+        : record?.role === "mind"
+          ? "mind"
+          : "system";
     const contentRecord = asRecord(record?.content);
     const media = Array.isArray(contentRecord?.media) ? contentRecord.media : [];
     const text = contentRecord && "text" in contentRecord
@@ -102,7 +108,9 @@ function applyProcessMessageSignal(
     if (messageId && current.some((row) => row.kind === "message" && row.messageId === messageId)) {
       return current;
     }
-    const role = record?.role === "user" || record?.role === "assistant" ? record.role : "system";
+    const role = record?.role === "user" || record?.role === "assistant" || record?.role === "mind"
+      ? record.role
+      : "system";
     return dropEmptyPlaceholder(current).concat({
       kind: "message",
       role,
@@ -539,6 +547,7 @@ function deriveThreadLabel(message: string): string | undefined {
 function labelForRole(role: string, userLabel = "You"): string {
   if (role === "user") return userLabel.trim() || "You";
   if (role === "assistant") return "Assistant";
+  if (role === "mind") return "GSV Mind";
   return "System";
 }
 

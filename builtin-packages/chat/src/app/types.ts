@@ -96,7 +96,7 @@ export type VoiceRecordingState = {
 
 export type MessageRow = {
   kind: "message";
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "mind";
   text: string;
   timestamp: number;
   messageId?: number | null;

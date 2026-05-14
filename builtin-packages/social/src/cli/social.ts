@@ -4,43 +4,30 @@ import type {
   SocialFriendListResult,
   SocialIdentityGetResult,
   SocialMessageSendResult,
-  SocialRequestCreateResult,
-  SocialRequestDirection,
-  SocialRequestGetResult,
-  SocialRequestKind,
-  SocialRequestListResult,
-  SocialRequestRespondArgs,
-  SocialRequestRespondResult,
-  SocialRequestStatus,
-  SocialRequestSummary,
+  SocialMessageStatusListResult,
+  SocialMessageStatusState,
+  SocialMessageStatusSummary,
   SocialThreadGetResult,
   SocialThreadListResult,
 } from "@gsv/protocol/syscalls/social";
 
 type CommandContext = Pick<PackageCommandContext, "argv" | "kernel" | "stdout">;
 
-const ACTIVE_INBOX_STATUSES = new Set<SocialRequestStatus>([
-  "pending",
-  "agent-replied",
-  "needs-human",
-  "accepted",
+const ACTIVE_STATUS_STATES = new Set<SocialMessageStatusState>([
+  "received",
+  "triaged",
+  "in_progress",
+  "needs_human",
 ]);
 
-const REQUEST_KINDS = new Set<SocialRequestKind>([
-  "question",
-  "task",
-  "collaboration",
-  "workspace-invite",
-  "package-review",
-  "other",
-]);
-
-const RESPONSE_STATUSES = new Set<SocialRequestRespondArgs["status"]>([
-  "agent-replied",
-  "needs-human",
-  "accepted",
-  "declined",
+const STATUS_STATES = new Set<SocialMessageStatusState>([
+  "received",
+  "triaged",
+  "in_progress",
+  "needs_human",
   "completed",
+  "declined",
+  "failed",
 ]);
 
 export default defineCommand(async (ctx) => {
@@ -61,8 +48,8 @@ export async function runSocialCommand(ctx: CommandContext): Promise<string> {
   if (command === "inbox") {
     return runInboxCommand(ctx.kernel, rest);
   }
-  if (command === "request" || command === "requests") {
-    return runRequestCommand(ctx.kernel, rest);
+  if (command === "status" || command === "statuses") {
+    return runStatusCommand(ctx.kernel, rest);
   }
   if (command === "message" || command === "messages") {
     return runMessageCommand(ctx.kernel, rest);
@@ -106,96 +93,66 @@ async function runFriendsCommand(kernel: KernelClientLike, args: string[]): Prom
 }
 
 async function runInboxCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
-  const limit = parseLimit(args, 25);
-  const result = await kernel.request<SocialRequestListResult>("social.request.list", {
+  const result = await kernel.request<SocialMessageStatusListResult>("social.message.status.list", {
     direction: "inbound",
-    limit,
+    limit: parseLimit(args, 25),
   });
-  const active = result.requests.filter((request) => ACTIVE_INBOX_STATUSES.has(request.status));
+  const requestedState = parseOptionalStatusState(findFlagValue(args, "--state"));
+  const statuses = result.statuses.filter((status) =>
+    requestedState ? status.state === requestedState : ACTIVE_STATUS_STATES.has(status.state)
+  );
   if (hasFlag(args, "--json")) {
-    return `${JSON.stringify({ requests: active }, null, 2)}\n`;
+    return `${JSON.stringify({ statuses }, null, 2)}\n`;
   }
-  if (active.length === 0) {
-    return "No inbound active social requests.\n";
+  if (statuses.length === 0) {
+    return "No active inbound social messages.\n";
   }
-  return `${active.map(formatRequestLineWithActions).join("\n")}\n`;
+  return `${statuses.map(formatStatusLineWithActions).join("\n")}\n`;
 }
 
-async function runRequestCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
+async function runStatusCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
   const [subcommand = "list", ...rest] = args;
   if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
-    return socialHelp("request");
+    return socialHelp("status");
   }
   if (subcommand === "list") {
-    const direction = parseDirection(findFlagValue(rest, "--direction") ?? findFlagValue(rest, "-d"));
-    const status = parseRequestStatus(findFlagValue(rest, "--status"));
+    const state = parseOptionalStatusState(findFlagValue(rest, "--state"));
     const peerHandle = findFlagValue(rest, "--peer");
-    const result = await kernel.request<SocialRequestListResult>("social.request.list", {
-      ...(direction ? { direction } : {}),
-      ...(status ? { status } : {}),
+    const direction = parseDirection(findFlagValue(rest, "--direction") ?? findFlagValue(rest, "-d"));
+    const result = await kernel.request<SocialMessageStatusListResult>("social.message.status.list", {
+      ...(state ? { state } : {}),
       ...(peerHandle ? { peerHandle } : {}),
+      ...(direction ? { direction } : {}),
       limit: parseLimit(rest, 50),
     });
     if (hasFlag(rest, "--json")) {
       return `${JSON.stringify(result, null, 2)}\n`;
     }
-    if (result.requests.length === 0) {
-      return "No social requests.\n";
+    if (result.statuses.length === 0) {
+      return "No social message statuses.\n";
     }
-    return `${result.requests.map(formatRequestLine).join("\n")}\n`;
+    return `${result.statuses.map(formatStatusLine).join("\n")}\n`;
   }
-  if (subcommand === "get") {
-    const requestId = firstPositional(rest);
-    if (!requestId) {
-      throw new Error("Usage: social request get <request-id> [--json]");
+  if (subcommand === "update") {
+    const messageId = firstPositional(rest);
+    const state = parseRequiredStatusState(requireFlagValue(rest, "--state", "social status update requires --state"));
+    const summary = findFlagValue(rest, "--summary");
+    const needsHumanReason = findFlagValue(rest, "--reason");
+    if (!messageId) {
+      throw new Error("Usage: social status update <message-id> --state STATE [--summary TEXT] [--reason TEXT]");
     }
-    const result = await kernel.request<SocialRequestGetResult>("social.request.get", { requestId });
-    if (hasFlag(rest, "--json")) {
-      return `${JSON.stringify(result, null, 2)}\n`;
-    }
-    if (!result.request) {
-      return `Request not found: ${requestId}\n`;
-    }
-    return formatRequestDetail(result.request);
-  }
-  if (subcommand === "respond") {
-    const requestId = firstPositional(rest);
-    const status = parseResponseStatus(requireFlagValue(rest, "--status", "social request respond requires --status"));
-    const text = findFlagValue(rest, "--text");
-    const body = parseOptionalJsonFlag(rest, "--body");
-    if (!requestId) {
-      throw new Error("Usage: social request respond <request-id> --status STATUS [--text TEXT] [--body JSON]");
-    }
-    const result = await kernel.request<SocialRequestRespondResult>("social.request.respond", {
-      requestId,
-      status,
-      ...(text ? { text } : {}),
-      ...(body === undefined ? {} : { body }),
+    const result = await kernel.request("social.message.status.update", {
+      messageId,
+      state,
+      ...(summary ? { summary } : {}),
+      ...(needsHumanReason ? { needsHumanReason } : {}),
     });
     if (hasFlag(rest, "--json")) {
       return `${JSON.stringify(result, null, 2)}\n`;
     }
-    return `updated ${result.request.requestId}: ${result.request.status}\n`;
+    return `updated ${messageId}: ${state}\n`;
   }
-  if (subcommand === "create") {
-    const toHandle = firstPositional(rest) ?? requireFlagValue(rest, "--to", "social request create requires a handle");
-    const kind = parseRequestKind(findFlagValue(rest, "--kind") ?? "question");
-    const title = requireFlagValue(rest, "--title", "social request create requires --title");
-    const body = parseOptionalJsonFlag(rest, "--body");
-    const threadId = findFlagValue(rest, "--thread");
-    const result = await kernel.request<SocialRequestCreateResult>("social.request.create", {
-      toHandle,
-      kind,
-      title,
-      ...(threadId ? { threadId } : {}),
-      ...(body === undefined ? {} : { body }),
-    });
-    if (hasFlag(rest, "--json")) {
-      return `${JSON.stringify(result, null, 2)}\n`;
-    }
-    return `created ${result.request.requestId} in ${result.thread.threadId}\n`;
-  }
-  throw new Error(`Unknown social request subcommand: ${subcommand}`);
+  throw new Error(`Unknown social status subcommand: ${subcommand}`);
 }
 
 async function runMessageCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
@@ -210,12 +167,14 @@ async function runMessageCommand(kernel: KernelClientLike, args: string[]): Prom
   const toHandle = findFlagValue(rest, "--to") ?? positionals[0];
   const text = findFlagValue(rest, "--text") ?? positionals.slice(1).join(" ");
   const body = parseOptionalJsonFlag(rest, "--body");
+  const threadId = findFlagValue(rest, "--thread");
   if (!toHandle || !text.trim()) {
-    throw new Error("Usage: social message send <handle> <text> [--body JSON]");
+    throw new Error("Usage: social message send <handle> <text> [--thread THREAD] [--body JSON]");
   }
   const result = await kernel.request<SocialMessageSendResult>("social.message.send", {
     toHandle,
     text: text.trim(),
+    ...(threadId ? { threadId } : {}),
     ...(body === undefined ? {} : { body }),
   });
   if (hasFlag(rest, "--json")) {
@@ -255,12 +214,14 @@ async function runThreadCommand(kernel: KernelClientLike, args: string[]): Promi
     if (!result.thread) {
       return `Thread not found: ${threadId}\n`;
     }
+    const statusByMessage = new Map(result.statuses.map((status) => [status.messageId, status]));
     const lines = [
       `${result.thread.threadId}: ${result.thread.peerHandle}${result.thread.topic ? ` - ${result.thread.topic}` : ""}`,
       "",
       ...result.messages.map((message) => {
         const text = message.text ?? (message.body === undefined ? "" : JSON.stringify(message.body));
-        return `[${message.direction}] ${message.fromHandle}: ${text}`;
+        const status = statusByMessage.get(message.messageId);
+        return `[${message.direction}] ${message.fromHandle}: ${text}${status ? ` (${status.state})` : ""}`;
       }),
     ];
     return `${lines.join("\n")}\n`;
@@ -268,61 +229,31 @@ async function runThreadCommand(kernel: KernelClientLike, args: string[]): Promi
   throw new Error(`Unknown social thread subcommand: ${subcommand}`);
 }
 
-function formatRequestLine(request: SocialRequestSummary): string {
-  return `- ${request.requestId} [${request.direction}/${request.status}] ${request.kind} ${request.fromHandle} -> ${request.toHandle}: ${request.title}`;
+function formatStatusLine(status: SocialMessageStatusSummary): string {
+  const peer = status.direction === "inbound" ? status.fromHandle : status.toHandle;
+  return `- ${status.messageId} [${status.direction}/${status.state}] ${peer}: ${status.summary ?? ""}`.trimEnd();
 }
 
-function formatRequestLineWithActions(request: SocialRequestSummary): string {
+function formatStatusLineWithActions(status: SocialMessageStatusSummary): string {
   return [
-    formatRequestLine(request),
-    `  inspect: social request get ${request.requestId}`,
-    `  respond: social request respond ${request.requestId} --status agent-replied --text "..."`,
-    `  escalate: social request respond ${request.requestId} --status needs-human --text "..."`,
+    formatStatusLine(status),
+    `  inspect: social thread read ${status.threadId}`,
+    `  done: social status update ${status.messageId} --state completed --summary "..."`,
+    `  escalate: social status update ${status.messageId} --state needs_human --reason "..."`,
   ].join("\n");
 }
 
-function formatRequestDetail(request: SocialRequestSummary): string {
-  const lines = [
-    `Request: ${request.requestId}`,
-    `Direction: ${request.direction}`,
-    `Status: ${request.status}`,
-    `Kind: ${request.kind}`,
-    `From: ${request.fromHandle}`,
-    `To: ${request.toHandle}`,
-    `Title: ${request.title}`,
-  ];
-  if (request.threadId) {
-    lines.push(`Thread: ${request.threadId}`);
-  }
-  if (request.expiresAt) {
-    lines.push(`Expires: ${request.expiresAt}`);
-  }
-  if (request.body !== undefined) {
-    lines.push("", JSON.stringify(request.body, null, 2));
-  }
-  if (request.direction === "inbound" && ACTIVE_INBOX_STATUSES.has(request.status)) {
-    lines.push(
-      "",
-      `Respond: social request respond ${request.requestId} --status agent-replied --text "..."`,
-      `Escalate: social request respond ${request.requestId} --status needs-human --text "..."`,
-    );
-  }
-  return `${lines.join("\n")}\n`;
-}
-
 function socialHelp(topic?: string): string {
-  if (topic === "request") {
+  if (topic === "status") {
     return [
       "Usage:",
-      "  social request list [--direction inbound|outbound|all] [--status STATUS] [--peer HANDLE] [--limit N]",
-      "  social request get <request-id> [--json]",
-      "  social request create <handle> --kind question --title TEXT [--body JSON] [--thread THREAD]",
-      "  social request respond <request-id> --status STATUS [--text TEXT] [--body JSON]",
+      "  social status list [--direction inbound|outbound|all] [--state STATE] [--peer HANDLE] [--limit N]",
+      "  social status update <message-id> --state STATE [--summary TEXT] [--reason TEXT]",
       "",
     ].join("\n");
   }
   if (topic === "message") {
-    return "Usage:\n  social message send <handle> <text> [--body JSON]\n\n";
+    return "Usage:\n  social message send <handle> <text> [--thread THREAD] [--body JSON]\n\n";
   }
   if (topic === "thread") {
     return "Usage:\n  social thread list [--limit N]\n  social thread read <thread-id> [--json]\n\n";
@@ -331,15 +262,15 @@ function socialHelp(topic?: string): string {
     "Usage:",
     "  social identity",
     "  social friends",
-    "  social inbox [--limit N]",
-    "  social request list|get|create|respond ...",
+    "  social inbox [--state STATE] [--limit N]",
+    "  social status list|update ...",
     "  social message send <handle> <text>",
     "  social thread list|read ...",
     "",
   ].join("\n");
 }
 
-function parseDirection(value: string | undefined): SocialRequestDirection | "all" | undefined {
+function parseDirection(value: string | undefined): "inbound" | "outbound" | "all" | undefined {
   if (!value || value === "all") {
     return value === "all" ? "all" : undefined;
   }
@@ -349,37 +280,18 @@ function parseDirection(value: string | undefined): SocialRequestDirection | "al
   return value;
 }
 
-function parseRequestKind(value: string): SocialRequestKind {
-  if (!REQUEST_KINDS.has(value as SocialRequestKind)) {
-    throw new Error(`Invalid request kind: ${value}`);
-  }
-  return value as SocialRequestKind;
-}
-
-function parseRequestStatus(value: string | undefined): SocialRequestStatus | undefined {
+function parseOptionalStatusState(value: string | undefined): SocialMessageStatusState | undefined {
   if (!value) {
     return undefined;
   }
-  const allowed: SocialRequestStatus[] = [
-    "pending",
-    "agent-replied",
-    "needs-human",
-    "accepted",
-    "declined",
-    "completed",
-    "expired",
-  ];
-  if (!allowed.includes(value as SocialRequestStatus)) {
-    throw new Error(`Invalid request status: ${value}`);
-  }
-  return value as SocialRequestStatus;
+  return parseRequiredStatusState(value);
 }
 
-function parseResponseStatus(value: string): SocialRequestRespondArgs["status"] {
-  if (!RESPONSE_STATUSES.has(value as SocialRequestRespondArgs["status"])) {
-    throw new Error(`Invalid response status: ${value}`);
+function parseRequiredStatusState(value: string): SocialMessageStatusState {
+  if (!STATUS_STATES.has(value as SocialMessageStatusState)) {
+    throw new Error(`Invalid message status state: ${value}`);
   }
-  return value as SocialRequestRespondArgs["status"];
+  return value as SocialMessageStatusState;
 }
 
 function parseLimit(args: string[], fallback: number): number {
@@ -435,7 +347,19 @@ function firstPositional(args: string[]): string | undefined {
 }
 
 function positionalArgs(args: string[]): string[] {
-  const valueFlags = new Set(["--body", "--direction", "-d", "--kind", "--limit", "--peer", "--status", "--text", "--thread", "--title", "--to"]);
+  const valueFlags = new Set([
+    "--body",
+    "--direction",
+    "-d",
+    "--limit",
+    "--peer",
+    "--reason",
+    "--state",
+    "--summary",
+    "--text",
+    "--thread",
+    "--to",
+  ]);
   const result: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];

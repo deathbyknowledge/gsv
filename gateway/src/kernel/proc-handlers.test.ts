@@ -9,7 +9,7 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import { sendFrameToProcess } from "../shared/utils";
-import { handleProcIpcCall, handleProcSpawn } from "./proc-handlers";
+import { handleProcIpcCall, handleProcProfileList, handleProcSpawn } from "./proc-handlers";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -26,6 +26,28 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 describe("proc handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+  });
+
+  it("lists the internal mind profile as non-startable background coordination", () => {
+    const ctx = {
+      identity: {
+        process: IDENTITY,
+        capabilities: ["*"],
+      },
+      packages: {
+        list: vi.fn(() => []),
+      },
+    } as unknown as KernelContext;
+
+    const result = handleProcProfileList({}, ctx);
+    const mind = result.profiles.find((profile) => profile.id === "mind");
+    expect(mind).toMatchObject({
+      kind: "system",
+      displayName: "GSV Mind",
+      interactive: false,
+      startable: false,
+      background: true,
+    });
   });
 
   it("cleans up pending IPC call when delivery returns an error response", async () => {

@@ -49,7 +49,7 @@ export type ToolCallRecord = {
   error: string | null;
 };
 
-export type MessageRole = "user" | "assistant" | "system" | "toolResult";
+export type MessageRole = "user" | "assistant" | "system" | "mind" | "toolResult";
 
 export type MessageRecord = {
   id: number;
@@ -73,6 +73,7 @@ export type QueuedMessage = {
   runId: string;
   conversationId: string;
   generation: number;
+  role: Extract<MessageRole, "user" | "mind">;
   message: string;
   media: string | null;
   overrides: string | null;
@@ -153,6 +154,7 @@ export class ProcessStore {
         run_id TEXT NOT NULL,
         conversation_id TEXT NOT NULL DEFAULT 'default',
         generation INTEGER NOT NULL DEFAULT 1,
+        role TEXT NOT NULL DEFAULT 'user',
         message TEXT NOT NULL,
         media_json TEXT,
         overrides_json TEXT,
@@ -234,6 +236,11 @@ export class ProcessStore {
       "message_queue",
       "generation",
       "ALTER TABLE message_queue ADD COLUMN generation INTEGER NOT NULL DEFAULT 1",
+    );
+    this.ensureColumn(
+      "message_queue",
+      "role",
+      "ALTER TABLE message_queue ADD COLUMN role TEXT NOT NULL DEFAULT 'user'",
     );
     this.ensureColumn(
       "pending_hil",
@@ -1186,6 +1193,15 @@ export class ProcessStore {
           break;
         }
 
+        case "mind": {
+          messages.push({
+            role: "user",
+            content: `[GSV Mind]:\n${r.content}`,
+            timestamp: r.createdAt,
+          } satisfies UserMessage);
+          break;
+        }
+
         case "assistant": {
           const content: (TextContent | ThinkingContent | ToolCall)[] = [];
           const meta = parseAssistantMessageMeta(r.toolCalls);
@@ -1257,16 +1273,18 @@ export class ProcessStore {
     media?: string,
     overrides?: string,
     conversationId: string = DEFAULT_CONVERSATION_ID,
+    role: Extract<MessageRole, "user" | "mind"> = "user",
   ): void {
     const normalizedConversationId = normalizeConversationId(conversationId);
     const generation = this.getConversationGeneration(normalizedConversationId);
     this.sql.exec(
       `INSERT INTO message_queue (
-        run_id, conversation_id, generation, message, media_json, overrides_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        run_id, conversation_id, generation, role, message, media_json, overrides_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       runId,
       normalizedConversationId,
       generation,
+      role,
       message,
       media ?? null,
       overrides ?? null,
@@ -1284,17 +1302,18 @@ export class ProcessStore {
         run_id: string;
         conversation_id: string;
         generation: number;
+        role: string;
         message: string;
         media_json: string | null;
         overrides_json: string | null;
       }>(
         normalizedConversationId
-          ? `SELECT id, run_id, conversation_id, generation, message, media_json, overrides_json
+          ? `SELECT id, run_id, conversation_id, generation, role, message, media_json, overrides_json
                FROM message_queue
               WHERE conversation_id = ?
               ORDER BY id ASC
               LIMIT 1`
-          : `SELECT id, run_id, conversation_id, generation, message, media_json, overrides_json
+          : `SELECT id, run_id, conversation_id, generation, role, message, media_json, overrides_json
                FROM message_queue
               ORDER BY id ASC
               LIMIT 1`,
@@ -1309,6 +1328,7 @@ export class ProcessStore {
       runId: row.run_id,
       conversationId: row.conversation_id,
       generation: row.generation,
+      role: queuedMessageRole(row.role),
       message: row.message,
       media: row.media_json,
       overrides: row.overrides_json,
@@ -1325,16 +1345,17 @@ export class ProcessStore {
         run_id: string;
         conversation_id: string;
         generation: number;
+        role: string;
         message: string;
         media_json: string | null;
         overrides_json: string | null;
       }>(
         normalizedConversationId
-          ? `SELECT id, run_id, conversation_id, generation, message, media_json, overrides_json
+          ? `SELECT id, run_id, conversation_id, generation, role, message, media_json, overrides_json
                FROM message_queue
               WHERE conversation_id = ?
               ORDER BY id ASC`
-          : `SELECT id, run_id, conversation_id, generation, message, media_json, overrides_json
+          : `SELECT id, run_id, conversation_id, generation, role, message, media_json, overrides_json
                FROM message_queue
               ORDER BY id ASC`,
         ...(normalizedConversationId ? [normalizedConversationId] : []),
@@ -1351,6 +1372,7 @@ export class ProcessStore {
       runId: row.run_id,
       conversationId: row.conversation_id,
       generation: row.generation,
+      role: queuedMessageRole(row.role),
       message: row.message,
       media: row.media_json,
       overrides: row.overrides_json,
@@ -1454,6 +1476,10 @@ function buildFallbackUserContent(
   }
 
   return content;
+}
+
+function queuedMessageRole(value: string): Extract<MessageRole, "user" | "mind"> {
+  return value === "mind" ? "mind" : "user";
 }
 
 export function stringifyAssistantMessageMeta(

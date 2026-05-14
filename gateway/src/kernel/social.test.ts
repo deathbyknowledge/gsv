@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../shared/utils", () => ({
-  sendFrameToProcess: vi.fn(async (_pid: string, frame: { id?: string }) => ({
+  sendFrameToProcess: vi.fn(async (pid: string, frame: {
+    id?: string;
+    call?: string;
+    args?: { conversationId?: string };
+  }) => ({
     type: "res",
     id: frame.id ?? "mock-response",
     ok: true,
-    data: { ok: true },
+    data: frame.call === "proc.mind.deliver"
+      ? {
+          ok: true,
+          status: "started",
+          pid,
+          conversationId: frame.args?.conversationId ?? "mind:test",
+          runId: "run-test",
+        }
+      : { ok: true },
   })),
 }));
 
@@ -19,6 +31,8 @@ import {
   handleSocialIdentityGet,
   handleSocialIdentitySet,
   handleSocialInbound,
+  handleSocialMessageStatusList,
+  handleSocialMessageStatusUpdate,
   handleSocialMessageReply,
   handleSocialMessageSend,
   handleSocialSetup,
@@ -563,6 +577,95 @@ function createMockSql() {
       return cursor<T>([]);
     }
 
+    if (q.startsWith("SELECT * FROM social_message_statuses WHERE uid = ? AND message_id = ?")) {
+      const [uid, message_id] = bindings as [number, string];
+      return cursor(getTable("social_message_statuses").filter((row) =>
+        row.uid === uid && row.message_id === message_id
+      ) as T[]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_message_statuses WHERE uid = ? AND remote_event_id = ?")) {
+      const [uid, remote_event_id] = bindings as [number, string];
+      return cursor(getTable("social_message_statuses").filter((row) =>
+        row.uid === uid && row.remote_event_id === remote_event_id
+      ) as T[]);
+    }
+
+    if (q.startsWith("SELECT * FROM social_message_statuses WHERE uid = ? AND state = ?")) {
+      const [uid, state, limit] = bindings as [number, string, number];
+      return cursor(
+        getTable("social_message_statuses")
+          .filter((row) => row.uid === uid && row.state === state)
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_message_statuses WHERE uid = ? AND thread_id = ?")) {
+      const [uid, thread_id] = bindings as [number, string];
+      return cursor(
+        getTable("social_message_statuses")
+          .filter((row) => row.uid === uid && row.thread_id === thread_id)
+          .sort((left, right) => Number(left.updated_at) - Number(right.updated_at)) as T[],
+      );
+    }
+
+    if (q.startsWith("SELECT * FROM social_message_statuses WHERE uid = ? ORDER BY updated_at DESC LIMIT ?")) {
+      const [uid, limit] = bindings as [number, number];
+      return cursor(
+        getTable("social_message_statuses")
+          .filter((row) => row.uid === uid)
+          .sort((left, right) => Number(right.updated_at) - Number(left.updated_at))
+          .slice(0, limit) as T[],
+      );
+    }
+
+    if (q.startsWith("INSERT OR REPLACE INTO social_message_statuses")) {
+      const [
+        uid,
+        message_id,
+        thread_id,
+        state,
+        summary,
+        needs_human_reason,
+        body_json,
+        remote_event_id,
+        created_at,
+        updated_at,
+      ] = bindings as [
+        number,
+        string,
+        string,
+        string,
+        string | null,
+        string | null,
+        string | null,
+        string | null,
+        number,
+        number,
+      ];
+      const table = getTable("social_message_statuses");
+      const existing = table.findIndex((row) => row.uid === uid && row.message_id === message_id);
+      const row = {
+        uid,
+        message_id,
+        thread_id,
+        state,
+        summary,
+        needs_human_reason,
+        body_json,
+        remote_event_id,
+        created_at,
+        updated_at,
+      };
+      if (existing >= 0) {
+        table[existing] = row;
+      } else {
+        table.push(row);
+      }
+      return cursor<T>([]);
+    }
+
     if (q.startsWith("SELECT * FROM social_requests WHERE uid = ? AND request_id = ?")) {
       const [uid, request_id] = bindings as [number, string];
       return cursor(getTable("social_requests").filter((row) =>
@@ -836,6 +939,7 @@ function createCtx(
     workspaceId: null,
   };
   const processIdentities = new Map<string, typeof processIdentity>();
+  const processStates = new Map<string, { state: string }>();
   const scheduledSocialRetries: Array<{ messageId: string; dueAtMs: number; scheduleId: string }> = [];
   const storage = createMockStorage();
   const notifications = {
@@ -874,12 +978,19 @@ function createCtx(
       resolveGids: vi.fn(() => [100]),
     },
     procs: {
+      get: vi.fn((pid: string) => processStates.get(pid) ?? null),
       getIdentity: vi.fn((pid: string) => processIdentities.get(pid) ?? null),
       ensureInit: vi.fn((identity: typeof processIdentity) => {
         const pid = `init:${identity.uid}`;
         const created = !processIdentities.has(pid);
         processIdentities.set(pid, identity);
+        processStates.set(pid, { state: "running" });
         return { pid, created };
+      }),
+      spawn: vi.fn((pid: string, identity: typeof processIdentity) => {
+        processIdentities.set(pid, identity);
+        processStates.set(pid, { state: "running" });
+        return { pid, created: true };
       }),
     },
     scheduleSocialDeliveryRetry: vi.fn(async (messageId: string, dueAtMs: number) => {
@@ -948,6 +1059,7 @@ function stubAlicePublicIdentity(
               "social.thread.create",
               "social.message.send",
               "social.message.reply",
+              "social.message.status.update",
               "social.request.create",
               "social.request.respond",
             ],
@@ -1613,8 +1725,9 @@ describe("social identity and records", () => {
     const inbox = await storage.get("home/hank/context.d/90-social-inbox.md");
     const inboxText = await inbox?.text();
     expect(inboxText).toContain("Check the deployment plan");
-    expect(inboxText).toContain("social request get req-alice");
-    expect(inboxText).toContain("social request respond req-alice --status agent-replied --text");
+    expect(inboxText).toContain("social thread get thread-request");
+    expect(inboxText).toContain("social status update msg-request --state completed --summary");
+    expect(inboxText).toContain("social status update msg-request --state needs_human --reason");
     expect(ctx.notifications?.create).toHaveBeenCalledWith(expect.objectContaining({
       uid: 1000,
       title: "Social request from alice.example",
@@ -1631,6 +1744,29 @@ describe("social identity and records", () => {
       }),
     ]);
     expect(handleSocialRequestList({ direction: "outbound" }, ctx).requests).toHaveLength(0);
+    expect(handleSocialMessageStatusList({ state: "received" }, ctx).statuses).toEqual([
+      expect.objectContaining({
+        messageId: "msg-request",
+        threadId: "thread-request",
+        direction: "inbound",
+        fromHandle: "alice.example",
+        toHandle: "gsv.example",
+        state: "received",
+        summary: "Check the deployment plan",
+      }),
+    ]);
+
+    const statusUpdate = await handleSocialMessageStatusUpdate({
+      messageId: "msg-request",
+      state: "completed",
+      summary: "Reviewed. The plan is good.",
+    }, ctx);
+    expect(statusUpdate.status).toMatchObject({
+      messageId: "msg-request",
+      state: "completed",
+      summary: "Reviewed. The plan is good.",
+    });
+    expect(await storage.get("home/hank/context.d/90-social-inbox.md")).toBeNull();
 
     const response = await handleSocialRequestRespond({
       requestId: "req-alice",
@@ -1646,8 +1782,15 @@ describe("social identity and records", () => {
       deliveryStatus: "accepted",
       text: "Reviewed. The plan is good.",
     });
-    expect(await storage.get("home/hank/context.d/90-social-inbox.md")).toBeNull();
-    expect((remoteInboundBodies[0] as { envelope: { method: string; body: { requestId: string; status: string } } }).envelope)
+    expect((remoteInboundBodies[0] as { envelope: { method: string; body: { messageId: string; state: string } } }).envelope)
+      .toMatchObject({
+        method: "social.message.status.update",
+        body: {
+          messageId: "msg-request",
+          state: "completed",
+        },
+      });
+    expect((remoteInboundBodies[1] as { envelope: { method: string; body: { requestId: string; status: string } } }).envelope)
       .toMatchObject({
         method: "social.request.respond",
         body: {
@@ -1750,7 +1893,7 @@ describe("social identity and records", () => {
     });
   });
 
-  it("accepts signed inbound envelopes from granted friends idempotently and delivers to init", async () => {
+  it("accepts signed inbound envelopes from granted friends idempotently and delivers to the Mind process", async () => {
     const { ctx, aliceKeys } = await setupSignedInboundFriend();
     const envelope = await aliceEnvelope(aliceKeys.privateJwk, {
       body: {
@@ -1770,16 +1913,16 @@ describe("social identity and records", () => {
       messageId: "msg-alice",
     });
 
-    const processSend = vi.mocked(sendFrameToProcess).mock.calls.find(([, frame]) =>
-      frame.type === "req" && frame.call === "proc.send"
+    const mindDeliver = vi.mocked(sendFrameToProcess).mock.calls.find(([, frame]) =>
+      frame.type === "req" && frame.call === "proc.mind.deliver"
     );
-    expect(processSend).toBeTruthy();
-    expect(processSend?.[0]).toBe("init:1000");
-    expect(processSend?.[1]).toMatchObject({
+    expect(mindDeliver).toBeTruthy();
+    expect(mindDeliver?.[0]).toMatch(/^mind:1000:/);
+    expect(mindDeliver?.[1]).toMatchObject({
       type: "req",
-      call: "proc.send",
+      call: "proc.mind.deliver",
       args: {
-        conversationId: "social:alice.example:thread-alice",
+        conversationId: "mind:social.message:thread-alice",
         message: expect.stringContaining("From: alice.example"),
       },
     });
@@ -1799,6 +1942,13 @@ describe("social identity and records", () => {
           toHandle: "gsv.example",
           text: "hello",
           deliveryStatus: "delivered",
+        },
+      ],
+      statuses: [
+        {
+          messageId: "msg-alice",
+          direction: "inbound",
+          state: "received",
         },
       ],
     });

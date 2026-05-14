@@ -1,12 +1,11 @@
 import { PackageBackendEntrypoint } from "@gsv/package/backend";
 import {
   addFriend,
-  createRequest,
   loadState,
   removeFriend,
-  respondRequest,
   sendMessage,
   setFriendGrants,
+  updateMessageStatus,
 } from "./backend/api";
 
 export default class SocialBackend extends PackageBackendEntrypoint {
@@ -30,11 +29,7 @@ export default class SocialBackend extends PackageBackendEntrypoint {
     return sendMessage(args as never, this.kernel);
   }
 
-  async createRequest(args: unknown): Promise<unknown> {
-    return createRequest(args as never, this.kernel);
-  }
-
-  async respondRequest(args: unknown): Promise<unknown> {
-    return respondRequest(args as never, this.kernel);
+  async updateMessageStatus(args: unknown): Promise<unknown> {
+    return updateMessageStatus(args as never, this.kernel);
   }
 }

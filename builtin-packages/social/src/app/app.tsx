@@ -1,21 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import type {
   AddFriendArgs,
-  CreateRequestArgs,
-  RespondRequestArgs,
   SendMessageArgs,
   SocialBackend,
   SocialMessageItem,
+  SocialMessageStatusItem,
   SocialPeerSummary,
-  SocialRequestItem,
   SocialState,
   SocialThreadDetail,
   SocialView,
+  UpdateMessageStatusArgs,
 } from "./types";
-import {
-  REQUEST_KIND_OPTIONS as REQUEST_KINDS,
-  SOCIAL_GRANT_OPTIONS,
-} from "./types";
+import { SOCIAL_GRANT_OPTIONS } from "./types";
 
 type AppProps = {
   backend: SocialBackend;
@@ -27,18 +23,32 @@ type PendingAction =
   | "save-grants"
   | "remove-friend"
   | "send-message"
-  | "create-request"
-  | "respond-request";
+  | "update-status";
 
-type RequestFilter = "inbox" | "sent" | "all";
-type ComposerMode = "message" | "request";
+type InboxFilter = "active" | "needs-human" | "all";
+
+const ACTIVE_STATUS_STATES = new Set<SocialMessageStatusItem["state"]>([
+  "received",
+  "triaged",
+  "in_progress",
+  "needs_human",
+]);
+
+const STATUS_OPTIONS: Array<{ state: UpdateMessageStatusArgs["state"]; label: string }> = [
+  { state: "triaged", label: "Triaged" },
+  { state: "in_progress", label: "In progress" },
+  { state: "needs_human", label: "Needs human" },
+  { state: "completed", label: "Completed" },
+  { state: "declined", label: "Declined" },
+  { state: "failed", label: "Failed" },
+];
 
 export function App({ backend }: AppProps) {
   const [state, setState] = useState<SocialState | null>(null);
   const [view, setView] = useState<SocialView>(readViewFromLocation());
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(readThreadFromLocation());
   const [selectedFriendHandle, setSelectedFriendHandle] = useState<string | null>(null);
-  const [requestFilter, setRequestFilter] = useState<RequestFilter>("inbox");
+  const [inboxFilter, setInboxFilter] = useState<InboxFilter>("active");
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -133,18 +143,16 @@ export function App({ backend }: AppProps) {
             threadId: selectedThreadId,
           }))}
           onSendMessage={(args) => runStateAction("send-message", () => backend.sendMessage(args))}
-          onCreateRequest={(args) => runStateAction("create-request", () => backend.createRequest(args))}
         />
       ) : (
         <ThreadPanel
           identityHandle={state.identity.handle}
           detail={state.selectedThread}
           pendingAction={pendingAction}
-          emptyTitle={view === "requests" ? "No request selected" : "No thread selected"}
-          emptyBody={view === "requests" ? "Choose a request from the inbox." : "Choose a conversation or start one from Friends."}
+          emptyTitle={view === "inbox" ? "No inbox item selected" : "No thread selected"}
+          emptyBody={view === "inbox" ? "Choose an active message from the inbox." : "Choose a conversation or start one from Friends."}
           onSendMessage={(args) => runStateAction("send-message", () => backend.sendMessage(args))}
-          onCreateRequest={(args) => runStateAction("create-request", () => backend.createRequest(args))}
-          onRespondRequest={(args) => runStateAction("respond-request", () => backend.respondRequest(args))}
+          onUpdateStatus={(args) => runStateAction("update-status", () => backend.updateMessageStatus(args))}
         />
       )}
     </main>
@@ -164,13 +172,13 @@ export function App({ backend }: AppProps) {
         <Sidebar
           state={state}
           view={view}
-          requestFilter={requestFilter}
+          inboxFilter={inboxFilter}
           selectedThreadId={selectedThreadId}
           pending={pendingAction === "load"}
           onSelectView={(nextView) => updateRoute({ view: nextView })}
           onSelectThread={(threadId) => selectThread(threadId, "threads")}
-          onSelectRequest={(request) => selectThread(request.threadId ?? null, "requests")}
-          onRequestFilterChange={setRequestFilter}
+          onSelectStatus={(status) => selectThread(status.threadId, "inbox")}
+          onInboxFilterChange={setInboxFilter}
         />
         {content}
       </div>
@@ -181,21 +189,21 @@ export function App({ backend }: AppProps) {
 function Sidebar(props: {
   state: SocialState | null;
   view: SocialView;
-  requestFilter: RequestFilter;
+  inboxFilter: InboxFilter;
   selectedThreadId: string | null;
   pending: boolean;
   onSelectView: (view: SocialView) => void;
   onSelectThread: (threadId: string) => void;
-  onSelectRequest: (request: SocialRequestItem) => void;
-  onRequestFilterChange: (filter: RequestFilter) => void;
+  onSelectStatus: (status: SocialMessageStatusItem) => void;
+  onInboxFilterChange: (filter: InboxFilter) => void;
 }) {
   const { state, view } = props;
-  const requests = state?.requests ?? [];
-  const inboxRequests = requests.filter((request) => request.direction === "inbound" && isActiveRequest(request.status));
-  const sentRequests = requests.filter((request) => request.direction === "outbound" && isActiveRequest(request.status));
-  const visibleRequests = filterRequests(requests, props.requestFilter);
+  const statuses = state?.statuses ?? [];
+  const activeInbox = statuses.filter((status) => status.direction === "inbound" && isActiveStatus(status.state));
+  const needsHuman = activeInbox.filter((status) => status.state === "needs_human");
+  const visibleStatuses = filterStatuses(statuses, props.inboxFilter);
   const tabs: Array<[SocialView, string, number]> = [
-    ["requests", "Inbox", inboxRequests.length],
+    ["inbox", "Inbox", activeInbox.length],
     ["threads", "Threads", state?.threads.length ?? 0],
     ["friends", "Friends", state?.friends.length ?? 0],
   ];
@@ -207,8 +215,8 @@ function Sidebar(props: {
         <h1>{state?.identity?.handle ?? "Not linked"}</h1>
         {state?.identity ? (
           <div class="social-metric-strip" aria-label="Social overview">
-            <Metric label="Inbox" value={inboxRequests.length} />
-            <Metric label="Sent" value={sentRequests.length} />
+            <Metric label="Inbox" value={activeInbox.length} />
+            <Metric label="Human" value={needsHuman.length} />
             <Metric label="Friends" value={state.friends.length} />
           </div>
         ) : null}
@@ -228,18 +236,18 @@ function Sidebar(props: {
         ))}
       </nav>
 
-      {view === "requests" ? (
-        <div class="social-filter-row" aria-label="Request filters">
+      {view === "inbox" ? (
+        <div class="social-filter-row" aria-label="Inbox filters">
           {([
-            ["inbox", "Inbound"],
-            ["sent", "Sent"],
+            ["active", "Active"],
+            ["needs-human", "Human"],
             ["all", "All"],
-          ] as Array<[RequestFilter, string]>).map(([filter, label]) => (
+          ] as Array<[InboxFilter, string]>).map(([filter, label]) => (
             <button
               key={filter}
               type="button"
-              class={`social-filter${props.requestFilter === filter ? " is-active" : ""}`}
-              onClick={() => props.onRequestFilterChange(filter)}
+              class={`social-filter${props.inboxFilter === filter ? " is-active" : ""}`}
+              onClick={() => props.onInboxFilterChange(filter)}
             >
               {label}
             </button>
@@ -249,20 +257,20 @@ function Sidebar(props: {
 
       <div class="social-sidebar-list">
         {props.pending ? <div class="social-list-note">Loading...</div> : null}
-        {view === "requests" ? (
-          visibleRequests.length ? visibleRequests.map((request) => (
+        {view === "inbox" ? (
+          visibleStatuses.length ? visibleStatuses.map((status) => (
             <button
-              key={request.requestId}
+              key={status.messageId}
               type="button"
-              class={`social-list-item${request.threadId === props.selectedThreadId ? " is-active" : ""}`}
-              onClick={() => props.onSelectRequest(request)}
+              class={`social-list-item${status.threadId === props.selectedThreadId ? " is-active" : ""}`}
+              onClick={() => props.onSelectStatus(status)}
             >
-              <StatusDot status={request.status} />
-              <strong>{request.title}</strong>
-              <span>{request.direction === "inbound" ? request.fromHandle : request.toHandle}</span>
-              <small>{request.kind} · {request.status} · {formatShortDate(request.updatedAt)}</small>
+              <StatusDot status={status.state} />
+              <strong>{status.summary || "Message"}</strong>
+              <span>{status.direction === "inbound" ? status.fromHandle : status.toHandle}</span>
+              <small>{status.state} · {formatShortDate(status.updatedAt)}</small>
             </button>
-          )) : <div class="social-list-note">No matching requests.</div>
+          )) : <div class="social-list-note">No matching inbox items.</div>
         ) : (
           state?.threads.length ? state.threads.map((thread) => (
             <button
@@ -274,7 +282,7 @@ function Sidebar(props: {
               <StatusDot status={thread.status} />
               <strong>{thread.topic || thread.peerHandle}</strong>
               <span>{thread.peerHandle}</span>
-              <small>{thread.requestCount} requests · {formatShortDate(thread.updatedAt)}</small>
+              <small>{thread.statusCount} tracked · {formatShortDate(thread.updatedAt)}</small>
             </button>
           )) : <div class="social-list-note">No threads.</div>
         )}
@@ -299,8 +307,7 @@ function ThreadPanel(props: {
   emptyTitle: string;
   emptyBody: string;
   onSendMessage: (args: SendMessageArgs) => void;
-  onCreateRequest: (args: CreateRequestArgs) => void;
-  onRespondRequest: (args: RespondRequestArgs) => void;
+  onUpdateStatus: (args: UpdateMessageStatusArgs) => void;
 }) {
   const thread = props.detail?.thread ?? null;
   if (!thread) {
@@ -311,8 +318,9 @@ function ThreadPanel(props: {
       </section>
     );
   }
-  const requests = props.detail?.requests ?? [];
-  const activeRequests = requests.filter((request) => isActiveRequest(request.status));
+  const statuses = props.detail?.statuses ?? [];
+  const statusByMessage = new Map(statuses.map((status) => [status.messageId, status]));
+  const activeStatuses = statuses.filter((status) => status.direction === "inbound" && isActiveStatus(status.state));
   return (
     <section class="social-thread-pane">
       <header class="social-detail-head">
@@ -323,41 +331,44 @@ function ThreadPanel(props: {
         </div>
         <div class="social-head-actions">
           <span class={`social-pill is-${thread.status}`}>{thread.status}</span>
-          {activeRequests.length ? <span class="social-pill is-attention">{activeRequests.length} active</span> : null}
+          {activeStatuses.length ? <span class="social-pill is-attention">{activeStatuses.length} active</span> : null}
         </div>
       </header>
 
       <div class="social-thread-grid">
         <section class="social-message-stream" aria-label="Messages">
           {(props.detail?.messages ?? []).length ? props.detail!.messages.map((message) => (
-            <MessageBubble key={message.messageId} message={message} identityHandle={props.identityHandle} />
+            <MessageBubble
+              key={message.messageId}
+              message={message}
+              identityHandle={props.identityHandle}
+              status={statusByMessage.get(message.messageId)}
+            />
           )) : <div class="social-list-note">No messages in this thread.</div>}
         </section>
 
         <aside class="social-request-rail">
           <header class="social-rail-head">
-            <h3>Work</h3>
-            <span>{requests.length}</span>
+            <h3>Status</h3>
+            <span>{statuses.length}</span>
           </header>
-          {requests.length ? requests.map((request) => (
-            <RequestCard
-              key={request.requestId}
+          {statuses.length ? statuses.map((status) => (
+            <StatusCard
+              key={status.messageId}
               identityHandle={props.identityHandle}
-              request={request}
-              pendingAction={props.pendingAction}
-              onRespondRequest={props.onRespondRequest}
+              status={status}
+              pending={props.pendingAction === "update-status"}
+              onUpdateStatus={props.onUpdateStatus}
             />
-          )) : <div class="social-list-note">No requests in this conversation.</div>}
+          )) : <div class="social-list-note">No tracked messages in this conversation.</div>}
         </aside>
       </div>
 
-      <InteractionComposer
+      <MessageForm
         peerHandle={thread.peerHandle}
         threadId={thread.threadId}
-        sendPending={props.pendingAction === "send-message"}
-        requestPending={props.pendingAction === "create-request"}
+        pending={props.pendingAction === "send-message"}
         onSendMessage={props.onSendMessage}
-        onCreateRequest={props.onCreateRequest}
       />
     </section>
   );
@@ -366,6 +377,7 @@ function ThreadPanel(props: {
 function MessageBubble(props: {
   message: SocialMessageItem;
   identityHandle: string;
+  status?: SocialMessageStatusItem;
 }) {
   const fromMe = props.message.fromHandle === props.identityHandle;
   return (
@@ -376,41 +388,44 @@ function MessageBubble(props: {
       </header>
       {props.message.text ? <p>{props.message.text}</p> : null}
       <StructuredDetails value={props.message.body} />
+      {props.status ? (
+        <footer class="social-message-status">
+          <span class={`social-pill is-${props.status.state}`}>{props.status.state}</span>
+          {props.status.summary ? <span>{props.status.summary}</span> : null}
+        </footer>
+      ) : null}
     </article>
   );
 }
 
-function RequestCard(props: {
+function StatusCard(props: {
   identityHandle: string;
-  request: SocialRequestItem;
-  pendingAction: PendingAction | null;
-  onRespondRequest: (args: RespondRequestArgs) => void;
+  status: SocialMessageStatusItem;
+  pending: boolean;
+  onUpdateStatus: (args: UpdateMessageStatusArgs) => void;
 }) {
-  const canRespond = props.request.direction === "inbound" &&
-    props.request.toHandle === props.identityHandle &&
-    props.request.status !== "completed" &&
-    props.request.status !== "declined" &&
-    props.request.status !== "expired";
+  const peer = props.status.direction === "inbound" ? props.status.fromHandle : props.status.toHandle;
+  const canUpdate = props.status.direction === "inbound" && props.status.toHandle === props.identityHandle;
   return (
-    <article class={`social-request-card is-${props.request.direction}`}>
+    <article class={`social-request-card is-${props.status.direction}`}>
       <header>
         <div>
-          <p class="social-eyebrow">{props.request.direction === "inbound" ? "Inbound request" : "Sent request"}</p>
-          <h3>{props.request.title}</h3>
+          <p class="social-eyebrow">{props.status.direction === "inbound" ? "Inbound message" : "Remote status"}</p>
+          <h3>{props.status.summary || props.status.messageId}</h3>
         </div>
-        <span class={`social-pill is-${props.request.status}`}>{props.request.status}</span>
+        <span class={`social-pill is-${props.status.state}`}>{props.status.state}</span>
       </header>
       <div class="social-request-meta">
-        <span>{props.request.kind}</span>
-        <span>{props.request.direction === "inbound" ? props.request.fromHandle : props.request.toHandle}</span>
-        <span>{formatShortDate(props.request.updatedAt)}</span>
+        <span>{peer}</span>
+        <span>{formatShortDate(props.status.updatedAt)}</span>
       </div>
-      <StructuredDetails value={props.request.body} />
-      {canRespond ? (
-        <RequestResponseForm
-          request={props.request}
-          pending={props.pendingAction === "respond-request"}
-          onRespondRequest={props.onRespondRequest}
+      {props.status.needsHumanReason ? <p class="social-structured-text">{props.status.needsHumanReason}</p> : null}
+      <StructuredDetails value={props.status.body} />
+      {canUpdate ? (
+        <StatusUpdateForm
+          status={props.status}
+          pending={props.pending}
+          onUpdateStatus={props.onUpdateStatus}
         />
       ) : null}
     </article>
@@ -426,7 +441,6 @@ function FriendsPanel(props: {
   onSaveGrants: (args: { handle: string; grants: AddFriendArgs["grants"] }) => void;
   onRemoveFriend: (handle: string) => void;
   onSendMessage: (args: SendMessageArgs) => void;
-  onCreateRequest: (args: CreateRequestArgs) => void;
 }) {
   return (
     <section class="social-friends-pane">
@@ -443,7 +457,7 @@ function FriendsPanel(props: {
               class={`social-list-item${props.selectedFriend?.handle === friend.handle ? " is-active" : ""}`}
               onClick={() => props.onSelectFriend(friend.handle)}
             >
-              <StatusDot status={friend.acceptsRequests ? "active" : "inactive"} />
+              <StatusDot status={friend.acceptsMessages ? "active" : "inactive"} />
               <strong>{friend.displayName || friend.handle}</strong>
               <span>{friend.handle}</span>
               <small>{friend.grants.length} grants · {formatShortDate(friend.updatedAt)}</small>
@@ -458,7 +472,6 @@ function FriendsPanel(props: {
         onSaveGrants={props.onSaveGrants}
         onRemoveFriend={props.onRemoveFriend}
         onSendMessage={props.onSendMessage}
-        onCreateRequest={props.onCreateRequest}
       />
     </section>
   );
@@ -470,7 +483,6 @@ function FriendDetail(props: {
   onSaveGrants: (args: { handle: string; grants: AddFriendArgs["grants"] }) => void;
   onRemoveFriend: (handle: string) => void;
   onSendMessage: (args: SendMessageArgs) => void;
-  onCreateRequest: (args: CreateRequestArgs) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -540,12 +552,10 @@ function FriendDetail(props: {
 
       <section class="social-detail-section">
         <h3>Start</h3>
-        <InteractionComposer
+        <MessageForm
           peerHandle={props.friend.handle}
-          sendPending={props.pendingAction === "send-message"}
-          requestPending={props.pendingAction === "create-request"}
+          pending={props.pendingAction === "send-message"}
           onSendMessage={props.onSendMessage}
-          onCreateRequest={props.onCreateRequest}
         />
       </section>
     </section>
@@ -613,51 +623,6 @@ function GrantChecklist(props: {
   );
 }
 
-function InteractionComposer(props: {
-  peerHandle: string;
-  threadId?: string;
-  sendPending: boolean;
-  requestPending: boolean;
-  onSendMessage: (args: SendMessageArgs) => void;
-  onCreateRequest: (args: CreateRequestArgs) => void;
-}) {
-  const [mode, setMode] = useState<ComposerMode>("message");
-  return (
-    <section class="social-composer">
-      <div class="social-mode-tabs" aria-label="Interaction type">
-        {([
-          ["message", "Message"],
-          ["request", "Request"],
-        ] as Array<[ComposerMode, string]>).map(([nextMode, label]) => (
-          <button
-            key={nextMode}
-            type="button"
-            class={mode === nextMode ? "is-active" : ""}
-            onClick={() => setMode(nextMode)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {mode === "message" ? (
-        <MessageForm
-          peerHandle={props.peerHandle}
-          threadId={props.threadId}
-          pending={props.sendPending}
-          onSendMessage={props.onSendMessage}
-        />
-      ) : (
-        <RequestForm
-          peerHandle={props.peerHandle}
-          threadId={props.threadId}
-          pending={props.requestPending}
-          onCreateRequest={props.onCreateRequest}
-        />
-      )}
-    </section>
-  );
-}
-
 function MessageForm(props: {
   peerHandle: string;
   threadId?: string;
@@ -692,90 +657,50 @@ function MessageForm(props: {
   );
 }
 
-function RequestForm(props: {
-  peerHandle: string;
-  threadId?: string;
+function StatusUpdateForm(props: {
+  status: SocialMessageStatusItem;
   pending: boolean;
-  onCreateRequest: (args: CreateRequestArgs) => void;
+  onUpdateStatus: (args: UpdateMessageStatusArgs) => void;
 }) {
-  const [kind, setKind] = useState<(typeof REQUEST_KINDS)[number]["kind"]>("question");
-  const [title, setTitle] = useState("");
-  const [bodyText, setBodyText] = useState("");
-  return (
-    <form
-      class="social-compose"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const args: CreateRequestArgs = {
-          toHandle: props.peerHandle,
-          kind,
-          title,
-          bodyText,
-        };
-        if (props.threadId) {
-          args.threadId = props.threadId;
-        }
-        props.onCreateRequest(args);
-        setTitle("");
-        setBodyText("");
-      }}
-    >
-      <div class="social-inline-fields">
-        <label>
-          <span>Kind</span>
-          <select value={kind} onChange={(event) => setKind(event.currentTarget.value as typeof kind)}>
-            {REQUEST_KINDS.map((option) => (
-              <option key={option.kind} value={option.kind}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Title</span>
-          <input value={title} onInput={(event) => setTitle(event.currentTarget.value)} />
-        </label>
-      </div>
-      <label>
-        <span>Details</span>
-        <textarea value={bodyText} onInput={(event) => setBodyText(event.currentTarget.value)} rows={3} />
-      </label>
-      <button class="social-button social-button--primary" type="submit" disabled={props.pending || !title.trim()}>
-        Create
-      </button>
-    </form>
-  );
-}
-
-function RequestResponseForm(props: {
-  request: SocialRequestItem;
-  pending: boolean;
-  onRespondRequest: (args: RespondRequestArgs) => void;
-}) {
-  const [status, setStatus] = useState<RespondRequestArgs["status"]>("agent-replied");
-  const [text, setText] = useState("");
+  const [state, setState] = useState<UpdateMessageStatusArgs["state"]>("completed");
+  const [summary, setSummary] = useState("");
+  const [reason, setReason] = useState("");
   return (
     <form
       class="social-response-form"
       onSubmit={(event) => {
         event.preventDefault();
-        props.onRespondRequest({
-          requestId: props.request.requestId,
-          status,
-          text,
-          threadId: props.request.threadId,
+        props.onUpdateStatus({
+          messageId: props.status.messageId,
+          threadId: props.status.threadId,
+          state,
+          summary,
+          needsHumanReason: state === "needs_human" ? reason : undefined,
         });
-        setText("");
+        setSummary("");
+        setReason("");
       }}
     >
-      <select value={status} onChange={(event) => setStatus(event.currentTarget.value as typeof status)}>
-        <option value="agent-replied">Agent replied</option>
-        <option value="needs-human">Needs human</option>
-        <option value="accepted">Accepted</option>
-        <option value="declined">Declined</option>
-        <option value="completed">Completed</option>
+      <select value={state} onChange={(event) => setState(event.currentTarget.value as typeof state)}>
+        {STATUS_OPTIONS.map((option) => (
+          <option key={option.state} value={option.state}>{option.label}</option>
+        ))}
       </select>
-      <textarea value={text} onInput={(event) => setText(event.currentTarget.value)} rows={2} />
+      <textarea
+        value={summary}
+        onInput={(event) => setSummary(event.currentTarget.value)}
+        rows={2}
+        placeholder="Summary"
+      />
+      {state === "needs_human" ? (
+        <input
+          value={reason}
+          onInput={(event) => setReason(event.currentTarget.value)}
+          placeholder="Reason"
+        />
+      ) : null}
       <button class="social-button social-button--primary" type="submit" disabled={props.pending}>
-        Respond
+        Update
       </button>
     </form>
   );
@@ -819,27 +744,31 @@ function StatusDot(props: { status: string }) {
   return <span class={`social-status-dot is-${props.status}`} />;
 }
 
-function filterRequests(requests: SocialRequestItem[], filter: RequestFilter): SocialRequestItem[] {
-  if (filter === "inbox") {
-    return requests.filter((request) => request.direction === "inbound" && isActiveRequest(request.status));
+function filterStatuses(statuses: SocialMessageStatusItem[], filter: InboxFilter): SocialMessageStatusItem[] {
+  const inbound = statuses.filter((status) => status.direction === "inbound");
+  if (filter === "active") {
+    return inbound.filter((status) => isActiveStatus(status.state));
   }
-  if (filter === "sent") {
-    return requests.filter((request) => request.direction === "outbound");
+  if (filter === "needs-human") {
+    return inbound.filter((status) => status.state === "needs_human");
   }
-  return requests;
+  return inbound;
 }
 
 function readViewFromLocation(): SocialView {
   const value = new URL(window.location.href).searchParams.get("view");
-  return value === "requests" || value === "friends" ? value : "threads";
+  if (value === "friends" || value === "threads") {
+    return value;
+  }
+  return "inbox";
 }
 
 function readThreadFromLocation(): string | null {
   return new URL(window.location.href).searchParams.get("thread")?.trim() || null;
 }
 
-function isActiveRequest(status: SocialRequestItem["status"]): boolean {
-  return status === "pending" || status === "agent-replied" || status === "needs-human" || status === "accepted";
+function isActiveStatus(state: SocialMessageStatusItem["state"]): boolean {
+  return ACTIVE_STATUS_STATES.has(state);
 }
 
 function formatShortDate(value: string): string {

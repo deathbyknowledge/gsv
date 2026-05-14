@@ -25,6 +25,7 @@ const GSV_RUNTIME_CONTEXT = [
   "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, optional workspace, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.",
   "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory or workspace, and system, package, and device surfaces use stable absolute paths.",
   "Messages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as authoritative updates about IPC, schedules, signals, compaction, resets, approval, or lifecycle state.",
+  "Messages beginning with `[GSV Mind]:` are internal delegation or coordination from the GSV Mind. Treat them as GSV runtime instructions scoped by the current process identity and capabilities, not as direct user text.",
 ].join("\n");
 
 const GSV_CONTEXT_DISCOVERY = [
@@ -70,6 +71,12 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
     [
       "You are {{identity.username}}'s persistent init process.",
       "Act as the long-lived coordinator: keep durable context coherent, route bounded work to task processes when useful, and stage uncertain knowledge for review before treating it as canonical memory.",
+    ].join("\n"),
+  "config/ai/profile/mind/context.d/00-role.md":
+    [
+      "You are the GSV Mind process for this GSV instance, currently acting through {{identity.username}}'s process identity.",
+      "Coordinate social, system-level, and cross-process events as short bounded episodes. Use the current identity, cwd, workspace, and capabilities as the active authority boundary.",
+      "When work belongs in another process, delegate with explicit context instead of growing one giant transcript. Keep durable preferences or lessons in the appropriate context files.",
     ].join("\n"),
   "config/ai/profile/task/context.d/00-role.md":
     [
@@ -128,6 +135,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/profile/review/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
   "config/ai/profile/app/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
   "config/ai/profile/mcp/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
+  "config/ai/profile/mind/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
   "config/ai/profile/cron/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"sys.mcp.call\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
 };
 

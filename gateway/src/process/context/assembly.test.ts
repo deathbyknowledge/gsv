@@ -124,6 +124,21 @@ describe("selection", () => {
       "process.context",
     ]);
   });
+
+  it("includes mind-only context only for the mind profile", () => {
+    expect(resolvePromptProviders("task", "chat.reply").map((provider) => provider.name)).not.toContain(
+      "mind.context",
+    );
+    expect(resolvePromptProviders("mind", "chat.reply").map((provider) => provider.name)).toEqual([
+      "system.context",
+      "profile.context",
+      "home.context",
+      "mind.context",
+      "workspace.context",
+      "available.skills",
+      "process.context",
+    ]);
+  });
 });
 
 describe("createSkillIndexProvider", () => {
@@ -184,6 +199,50 @@ describe("createHomeContextProvider", () => {
     ]);
     expect(sections.map((section) => section.text)).toEqual([
       "alpha",
+    ]);
+  });
+
+  it("loads mind.d files only for the mind profile", async () => {
+    const provider = resolvePromptProviders("mind", "chat.reply")
+      .find((candidate) => candidate.name === "mind.context");
+    expect(provider).toBeTruthy();
+    const homeRepo = homeKnowledgeRepoRef(IDENTITY.username);
+
+    const sections = await provider!.collect(
+      makeInput({
+        profile: "mind",
+        ripgit: {
+          async readPath(repo, path) {
+            if (repo.owner !== homeRepo.owner || repo.repo !== homeRepo.repo) {
+              return { kind: "missing" };
+            }
+            if (path === "mind.d") {
+              return {
+                kind: "tree",
+                entries: [
+                  { name: "20-policy.md", mode: "100644", hash: "a", type: "blob" },
+                  { name: "ignored.txt", mode: "100644", hash: "b", type: "blob" },
+                ],
+              };
+            }
+            if (path === "mind.d/20-policy.md") {
+              return {
+                kind: "file",
+                bytes: new TextEncoder().encode("Autonomously triage low-risk social requests."),
+                size: 47,
+              };
+            }
+            return { kind: "missing" };
+          },
+        },
+      }),
+    );
+
+    expect(sections).toEqual([
+      {
+        name: "mind.context:20-policy.md",
+        text: "Autonomously triage low-risk social requests.",
+      },
     ]);
   });
 });

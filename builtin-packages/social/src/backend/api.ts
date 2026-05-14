@@ -5,31 +5,28 @@ import type {
   SocialIdentityGetResult,
   SocialMessageReplyArgs,
   SocialMessageSendArgs,
+  SocialMessageStatusListResult,
+  SocialMessageStatusSummary,
+  SocialMessageStatusUpdateArgs,
   SocialMessageSummary,
   SocialRemoteOperation,
-  SocialRequestCreateArgs,
-  SocialRequestKind,
-  SocialRequestListResult,
-  SocialRequestRespondArgs,
-  SocialRequestSummary,
   SocialThreadGetResult,
   SocialThreadListResult,
   SocialThreadSummary,
 } from "@gsv/protocol/syscalls/social";
 import type {
   AddFriendArgs,
-  CreateRequestArgs,
   LoadSocialStateArgs,
   RemoveFriendArgs,
-  RespondRequestArgs,
   SendMessageArgs,
   SetFriendGrantsArgs,
   SocialMessageItem,
+  SocialMessageStatusItem,
   SocialPeerSummary,
-  SocialRequestItem,
   SocialState,
   SocialThreadDetail,
   SocialThreadItem,
+  UpdateMessageStatusArgs,
 } from "../app/types";
 import { SOCIAL_GRANT_OPTIONS } from "../app/types";
 
@@ -39,14 +36,15 @@ export async function loadState(
   args: LoadSocialStateArgs | undefined,
   kernel: KernelClientLike,
 ): Promise<SocialState> {
-  const [identityResult, friendResult, threadResult, requestResult] = await Promise.all([
+  const [identityResult, friendResult, threadResult, statusResult] = await Promise.all([
     kernel.request("social.identity.get", {}) as Promise<SocialIdentityGetResult>,
     kernel.request("social.friend.list", {}) as Promise<SocialFriendListResult>,
     kernel.request("social.thread.list", { limit: 100 }) as Promise<SocialThreadListResult>,
-    kernel.request("social.request.list", { limit: 100 }) as Promise<SocialRequestListResult>,
+    kernel.request("social.message.status.list", { limit: 100 }) as Promise<SocialMessageStatusListResult>,
   ]);
 
   const threads = threadResult.threads.map(normalizeThread);
+  const statuses = statusResult.statuses.map(normalizeStatus);
   const requestedThreadId = normalizeOptional(args?.threadId);
   const selectedThreadId = requestedThreadId && threads.some((thread) => thread.threadId === requestedThreadId)
     ? requestedThreadId
@@ -60,9 +58,9 @@ export async function loadState(
     friends: friendResult.friends.map(normalizeFriend),
     threads: threads.map((thread) => ({
       ...thread,
-      requestCount: requestResult.requests.filter((request) => request.threadId === thread.threadId).length,
+      statusCount: statuses.filter((status) => status.threadId === thread.threadId).length,
     })),
-    requests: requestResult.requests.map(normalizeRequest),
+    statuses,
     selectedThread,
   };
 }
@@ -122,32 +120,17 @@ export async function sendMessage(
   return loadState({ threadId: created.thread?.threadId }, kernel);
 }
 
-export async function createRequest(
-  args: CreateRequestArgs,
+export async function updateMessageStatus(
+  args: UpdateMessageStatusArgs,
   kernel: KernelClientLike,
 ): Promise<SocialState> {
-  const body = parseBodyText(args.bodyText);
-  const requestArgs: SocialRequestCreateArgs = {
-    toHandle: normalizeRequired(args.toHandle, "toHandle"),
-    kind: normalizeRequestKind(args.kind),
-    title: normalizeRequired(args.title, "title"),
-    ...(normalizeOptional(args.threadId) ? { threadId: normalizeOptional(args.threadId) } : {}),
-    ...(body === undefined ? {} : { body }),
+  const statusArgs: SocialMessageStatusUpdateArgs = {
+    messageId: normalizeRequired(args.messageId, "messageId"),
+    state: args.state,
+    ...(normalizeOptional(args.summary) ? { summary: normalizeOptional(args.summary) } : {}),
+    ...(normalizeOptional(args.needsHumanReason) ? { needsHumanReason: normalizeOptional(args.needsHumanReason) } : {}),
   };
-  const created = await kernel.request("social.request.create", requestArgs) as { thread?: { threadId?: string } };
-  return loadState({ threadId: created.thread?.threadId ?? normalizeOptional(args.threadId) }, kernel);
-}
-
-export async function respondRequest(
-  args: RespondRequestArgs,
-  kernel: KernelClientLike,
-): Promise<SocialState> {
-  const requestArgs: SocialRequestRespondArgs = {
-    requestId: normalizeRequired(args.requestId, "requestId"),
-    status: normalizeRequestResponseStatus(args.status),
-    ...(normalizeOptional(args.text) ? { text: normalizeOptional(args.text) } : {}),
-  };
-  await kernel.request("social.request.respond", requestArgs);
+  await kernel.request("social.message.status.update", statusArgs);
   return loadState({ threadId: normalizeOptional(args.threadId) }, kernel);
 }
 
@@ -172,7 +155,7 @@ function normalizeThread(thread: SocialThreadSummary): SocialThreadItem {
     status: thread.status,
     topic: thread.topic,
     updatedAt: thread.updatedAt,
-    requestCount: 0,
+    statusCount: 0,
   };
 }
 
@@ -190,19 +173,19 @@ function normalizeMessage(message: SocialMessageSummary): SocialMessageItem {
   };
 }
 
-function normalizeRequest(request: SocialRequestSummary): SocialRequestItem {
+function normalizeStatus(status: SocialMessageStatusSummary): SocialMessageStatusItem {
   return {
-    requestId: request.requestId,
-    threadId: request.threadId,
-    direction: request.direction,
-    kind: request.kind,
-    status: request.status,
-    fromHandle: request.fromHandle,
-    toHandle: request.toHandle,
-    title: request.title,
-    body: request.body,
-    updatedAt: request.updatedAt,
-    expiresAt: request.expiresAt,
+    messageId: status.messageId,
+    threadId: status.threadId,
+    direction: status.direction,
+    fromHandle: status.fromHandle,
+    toHandle: status.toHandle,
+    state: status.state,
+    summary: status.summary,
+    needsHumanReason: status.needsHumanReason,
+    body: status.body,
+    createdAt: status.createdAt,
+    updatedAt: status.updatedAt,
   };
 }
 
@@ -210,7 +193,7 @@ function normalizeThreadDetail(detail: SocialThreadGetResult): SocialThreadDetai
   return {
     thread: detail.thread ? normalizeThread(detail.thread) : null,
     messages: detail.messages.map(normalizeMessage),
-    requests: detail.requests.map(normalizeRequest),
+    statuses: detail.statuses.map(normalizeStatus),
   };
 }
 
@@ -229,37 +212,6 @@ function normalizeGrants(grants: SocialGrant[] | undefined): SocialGrant[] {
     normalized.push({ operation });
   }
   return normalized;
-}
-
-function parseBodyText(value: string | undefined): unknown {
-  const text = normalizeOptional(value);
-  if (!text) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { text };
-  }
-}
-
-function normalizeRequestKind(value: SocialRequestKind | undefined): SocialRequestKind {
-  return value ?? "question";
-}
-
-function normalizeRequestResponseStatus(
-  value: RespondRequestArgs["status"] | undefined,
-): RespondRequestArgs["status"] {
-  if (
-    value === "agent-replied" ||
-    value === "needs-human" ||
-    value === "accepted" ||
-    value === "declined" ||
-    value === "completed"
-  ) {
-    return value;
-  }
-  return "agent-replied";
 }
 
 function normalizeRequired(value: string | undefined, field: string): string {

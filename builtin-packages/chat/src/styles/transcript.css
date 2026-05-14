@@ -93,8 +93,13 @@
 }
 
 .message-assistant,
+.message-mind,
 .tool-card {
   justify-self: start;
+}
+
+.message-mind {
+  background: rgba(248, 244, 234, 0.92);
 }
 
 .message-system {

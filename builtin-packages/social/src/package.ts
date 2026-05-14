@@ -3,7 +3,7 @@ import { definePackage } from "@gsv/package/manifest";
 export default definePackage({
   meta: {
     displayName: "Social",
-    description: "Friends, grants, social threads, and typed requests between GSV instances.",
+    description: "Friends, grants, inbox status, and message threads between GSV instances.",
     window: {
       width: 1180,
       height: 760,
@@ -21,10 +21,9 @@ export default definePackage({
         "social.thread.get",
         "social.message.send",
         "social.message.reply",
-        "social.request.create",
-        "social.request.list",
-        "social.request.get",
-        "social.request.respond",
+        "social.message.status.list",
+        "social.message.status.get",
+        "social.message.status.update",
       ],
     },
   },

@@ -30,6 +30,8 @@ import { isAiContextProfile } from "../syscalls/ai";
 import type {
   ProcSendArgs,
   ProcSendResult,
+  ProcMindDeliverArgs,
+  ProcMindDeliverResult,
   ProcIpcDeliverArgs,
   ProcIpcDeliverResult,
   ProcAbortResult,
@@ -664,6 +666,11 @@ export class Process extends Host<Env> {
             frame.args as ProcSendArgs,
           );
           break;
+        case "proc.mind.deliver":
+          data = this.handleProcMindDeliver(
+            frame.args as ProcMindDeliverArgs,
+          );
+          break;
         case "proc.ipc.deliver":
           data = this.handleProcIpcDeliver(
             frame.args as ProcIpcDeliverArgs,
@@ -807,6 +814,48 @@ export class Process extends Host<Env> {
     this.scheduleTick(runId);
 
     return { ok: true, status: "started", runId };
+  }
+
+  private handleProcMindDeliver(args: ProcMindDeliverArgs): ProcMindDeliverResult {
+    if (!args || typeof args !== "object") {
+      return { ok: false, error: "proc.mind.deliver requires arguments" };
+    }
+
+    const message = normalizeRequiredText(args.message);
+    if (!message) {
+      return { ok: false, error: "proc.mind.deliver requires message" };
+    }
+
+    const runId = crypto.randomUUID();
+    const conversationId = normalizeConversationId(args.conversationId);
+    const conversation = this.store.ensureConversation(conversationId);
+    if (conversation.status === "closed") {
+      return { ok: false, error: `Conversation is closed: ${conversationId}` };
+    }
+
+    if (this.currentRun) {
+      this.store.enqueue(runId, message, undefined, undefined, conversationId, "mind");
+      return {
+        ok: true,
+        status: "started",
+        pid: this.pid,
+        conversationId,
+        runId,
+        queued: true,
+      };
+    }
+
+    this.store.appendMessage("mind", message, { conversationId });
+    this.currentRun = { runId, queued: false, conversationId };
+    this.scheduleTick(runId);
+
+    return {
+      ok: true,
+      status: "started",
+      pid: this.pid,
+      conversationId,
+      runId,
+    };
   }
 
   private handleProcIpcDeliver(args: ProcIpcDeliverArgs): ProcIpcDeliverResult {
@@ -2067,7 +2116,7 @@ export class Process extends Host<Env> {
     if (hadPendingToolCalls) {
       const queued = this.store.drainQueue(conversationId);
       for (const qm of queued) {
-        this.store.appendMessage("user", qm.message, {
+        this.store.appendMessage(qm.role, qm.message, {
           conversationId: qm.conversationId,
           generation: qm.generation,
           media: qm.media ?? undefined,
@@ -3485,7 +3534,7 @@ export class Process extends Host<Env> {
     if (!next) {
       return null;
     }
-    this.store.appendMessage("user", next.message, {
+    this.store.appendMessage(next.role, next.message, {
       conversationId: next.conversationId,
       generation: next.generation,
       media: next.media ?? undefined,
@@ -3567,6 +3616,7 @@ function parseArchivedMessageRole(value: unknown): MessageRole {
     value === "user" ||
     value === "assistant" ||
     value === "system" ||
+    value === "mind" ||
     value === "toolResult"
   ) {
     return value;

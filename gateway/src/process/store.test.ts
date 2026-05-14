@@ -410,6 +410,18 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("converts mind messages to model-visible GSV Mind events", async () => {
+      const stub = await getProcessByPid("to-msg-mind");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("mind", "Delegate this social request to a bounded task.");
+        const msgs = store.toMessages();
+        expect(msgs).toHaveLength(1);
+        expect(msgs[0].role).toBe("user");
+        expect(msgs[0].content).toBe("[GSV Mind]:\nDelegate this social request to a bounded task.");
+      });
+    });
+
     it("converts assistant messages with text", async () => {
       const stub = await getProcessByPid("to-msg-assistant-text");
       await runInDurableObject(stub, (instance: Process) => {
@@ -523,6 +535,7 @@ describe("ProcessStore", () => {
         expect(first).not.toBeNull();
         expect(first!.message).toBe("first message");
         expect(first!.runId).toBe("run-1");
+        expect(first!.role).toBe("user");
 
         const second = store.dequeue();
         expect(second!.message).toBe("second message");
@@ -571,6 +584,17 @@ describe("ProcessStore", () => {
         const item = store.dequeue();
         expect(item!.media).toBe('["img.png"]');
         expect(item!.overrides).toBe('{"model":"gpt-4"}');
+      });
+    });
+
+    it("preserves queued mind message role", async () => {
+      const stub = await getProcessByPid("queue-mind-role");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.enqueue("r1", "mind event", undefined, undefined, "social", "mind");
+        const item = store.dequeue();
+        expect(item!.role).toBe("mind");
+        expect(item!.message).toBe("mind event");
       });
     });
 

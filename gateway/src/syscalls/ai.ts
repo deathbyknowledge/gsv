@@ -10,6 +10,7 @@ import type { ToolDefinition } from "./index";
 
 export type SystemAiContextProfile =
   | "init"
+  | "mind"
   | "task"
   | "review"
   | "cron"
@@ -22,6 +23,7 @@ export type AiContextProfile = SystemAiContextProfile | PackageAiContextProfile;
 
 export function isSystemAiContextProfile(value: unknown): value is SystemAiContextProfile {
   return value === "init"
+    || value === "mind"
     || value === "task"
     || value === "review"
     || value === "cron"

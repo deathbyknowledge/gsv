@@ -41,6 +41,7 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
 
 export const PROFILE_OPTIONS: Array<{ id: ProfileId; label: string; description: string }> = [
   { id: "init", label: "Init", description: "Persistent system coordinator." },
+  { id: "mind", label: "GSV Mind", description: "Internal social and cross-process coordinator." },
   { id: "task", label: "Task", description: "Primary interactive task runner." },
   { id: "review", label: "Review", description: "Package and code review specialist." },
   { id: "cron", label: "Cron", description: "Scheduled background work." },

@@ -133,9 +133,11 @@ describe("ConfigStore", () => {
     const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-gsv.md"];
     expect(context).toContain("You are running inside GSV, a Linux-shaped cloud computer");
     expect(context).toContain("[Process Event]:");
+    expect(context).toContain("[GSV Mind]:");
 
-    for (const profile of ["init", "task", "review", "cron", "mcp", "app"]) {
+    for (const profile of ["init", "mind", "task", "review", "cron", "mcp", "app"]) {
       expect(SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/00-role.md`]).toBeTruthy();
     }
+    expect(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/mind/tools/approval"]).toBeTruthy();
   });
 });

@@ -31,6 +31,14 @@ import type {
   SocialMessageReplyResult,
   SocialMessageSendArgs,
   SocialMessageSendResult,
+  SocialMessageStatusGetArgs,
+  SocialMessageStatusGetResult,
+  SocialMessageStatusListArgs,
+  SocialMessageStatusListResult,
+  SocialMessageStatusState,
+  SocialMessageStatusSummary,
+  SocialMessageStatusUpdateArgs,
+  SocialMessageStatusUpdateResult,
   SocialMessageSummary,
   SocialProfileGetArgs,
   SocialProfileGetResult,
@@ -74,13 +82,12 @@ import {
   SPACE_GSV_PROFILE,
   SOCIAL_REMOTE_OPERATIONS,
 } from "@gsv/protocol/syscalls/social";
-import type { RequestFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
 import { requirePdsClient } from "../pds/client";
 import { isGsvDevMode, socialOriginForHandle } from "../dev";
-import { sendFrameToProcess } from "../shared/utils";
 import { GsvFs } from "../fs/gsv-fs";
 import { createHomeKnowledgeBackend } from "../fs/backends/home-knowledge";
+import { dispatchMindEvent } from "./mind";
 
 const SELF_RKEY = "self";
 const DID_PATTERN = /^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$/;
@@ -198,6 +205,19 @@ type MessageRow = {
   updated_at: number;
 };
 
+type MessageStatusRow = {
+  uid: number;
+  message_id: string;
+  thread_id: string;
+  state: string;
+  summary: string | null;
+  needs_human_reason: string | null;
+  body_json: string | null;
+  remote_event_id: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
 type RequestRow = {
   uid: number;
   request_id: string;
@@ -284,6 +304,19 @@ export type SocialMessageRecord = {
   nextRetryAt?: number;
   retryScheduleId?: string;
   lastDeliveryError?: string;
+  remoteEventId?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SocialMessageStatusRecord = {
+  uid: number;
+  messageId: string;
+  threadId: string;
+  state: SocialMessageStatusState;
+  summary?: string;
+  needsHumanReason?: string;
+  body?: unknown;
   remoteEventId?: string;
   createdAt: number;
   updatedAt: number;
@@ -459,6 +492,30 @@ export class SocialStore {
     );
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_social_messages_retry ON social_messages (delivery_status, next_retry_at)",
+    );
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS social_message_statuses (
+        uid INTEGER NOT NULL,
+        message_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        state TEXT NOT NULL,
+        summary TEXT,
+        needs_human_reason TEXT,
+        body_json TEXT,
+        remote_event_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (uid, message_id)
+      )
+    `);
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_social_message_statuses_thread ON social_message_statuses (uid, thread_id, updated_at DESC)",
+    );
+    this.sql.exec(
+      "CREATE INDEX IF NOT EXISTS idx_social_message_statuses_state ON social_message_statuses (uid, state, updated_at DESC)",
+    );
+    this.sql.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_social_message_statuses_remote_event ON social_message_statuses (uid, remote_event_id)",
     );
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS social_requests (
@@ -1043,6 +1100,98 @@ export class SocialStore {
     };
   }
 
+  getMessageStatus(uid: number, messageId: string): SocialMessageStatusRecord | null {
+    const rows = this.sql.exec<MessageStatusRow>(
+      "SELECT * FROM social_message_statuses WHERE uid = ? AND message_id = ? LIMIT 1",
+      uid,
+      messageId,
+    ).toArray();
+    return rows[0] ? toMessageStatusRecord(rows[0]) : null;
+  }
+
+  getMessageStatusByRemoteEventId(uid: number, remoteEventId: string): SocialMessageStatusRecord | null {
+    const rows = this.sql.exec<MessageStatusRow>(
+      "SELECT * FROM social_message_statuses WHERE uid = ? AND remote_event_id = ? LIMIT 1",
+      uid,
+      remoteEventId,
+    ).toArray();
+    return rows[0] ? toMessageStatusRecord(rows[0]) : null;
+  }
+
+  listMessageStatuses(input: {
+    uid: number;
+    state?: SocialMessageStatusState;
+    limit: number;
+  }): SocialMessageStatusRecord[] {
+    const rows = input.state
+      ? this.sql.exec<MessageStatusRow>(
+          "SELECT * FROM social_message_statuses WHERE uid = ? AND state = ? ORDER BY updated_at DESC LIMIT ?",
+          input.uid,
+          input.state,
+          input.limit,
+        ).toArray()
+      : this.sql.exec<MessageStatusRow>(
+          "SELECT * FROM social_message_statuses WHERE uid = ? ORDER BY updated_at DESC LIMIT ?",
+          input.uid,
+          input.limit,
+        ).toArray();
+    return rows.map(toMessageStatusRecord);
+  }
+
+  listMessageStatusesForThread(uid: number, threadId: string): SocialMessageStatusRecord[] {
+    return this.sql.exec<MessageStatusRow>(
+      "SELECT * FROM social_message_statuses WHERE uid = ? AND thread_id = ? ORDER BY updated_at ASC",
+      uid,
+      threadId,
+    ).toArray().map(toMessageStatusRecord);
+  }
+
+  upsertMessageStatus(input: {
+    uid: number;
+    messageId: string;
+    threadId: string;
+    state: SocialMessageStatusState;
+    summary?: string;
+    needsHumanReason?: string;
+    body?: unknown;
+    remoteEventId?: string;
+    now?: number;
+  }): SocialMessageStatusRecord {
+    const existing = this.getMessageStatus(input.uid, input.messageId);
+    const now = input.now ?? Date.now();
+    const createdAt = existing?.createdAt ?? now;
+    this.sql.exec(
+      `INSERT OR REPLACE INTO social_message_statuses
+        (uid, message_id, thread_id, state, summary, needs_human_reason, body_json,
+         remote_event_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      input.uid,
+      input.messageId,
+      input.threadId,
+      input.state,
+      input.summary ?? existing?.summary ?? null,
+      input.needsHumanReason ?? existing?.needsHumanReason ?? null,
+      input.body === undefined
+        ? existing?.body === undefined ? null : JSON.stringify(existing.body)
+        : JSON.stringify(input.body),
+      input.remoteEventId ?? existing?.remoteEventId ?? null,
+      createdAt,
+      now,
+    );
+    return {
+      uid: input.uid,
+      messageId: input.messageId,
+      threadId: input.threadId,
+      state: input.state,
+      summary: input.summary ?? existing?.summary,
+      needsHumanReason: input.needsHumanReason ?? existing?.needsHumanReason,
+      body: input.body === undefined ? existing?.body : input.body,
+      remoteEventId: input.remoteEventId ?? existing?.remoteEventId,
+      createdAt,
+      updatedAt: now,
+    };
+  }
+
   getRequest(uid: number, requestId: string): SocialRequestRecord | null {
     const rows = this.sql.exec<RequestRow>(
       "SELECT * FROM social_requests WHERE uid = ? AND request_id = ? LIMIT 1",
@@ -1562,6 +1711,7 @@ export function handleSocialThreadGet(
   return {
     thread: thread ? toThreadSummary(thread) : null,
     messages: thread ? store.listMessages(uid, threadId).map(toMessageSummary) : [],
+    statuses: thread ? summarizeMessageStatusesForThread(store, uid, threadId) : [],
     requests: thread ? store.listRequestsForThread(uid, threadId).map(toRequestSummary) : [],
   };
 }
@@ -1851,6 +2001,103 @@ export async function handleSocialMessageReply(
   };
 }
 
+export function handleSocialMessageStatusList(
+  args: SocialMessageStatusListArgs,
+  ctx: KernelContext,
+): SocialMessageStatusListResult {
+  const uid = requireMainSocialUserUid(ctx);
+  const store = requireSocialStore(ctx);
+  const peerHandle = args.peerHandle === undefined ? undefined : normalizeHandle(args.peerHandle, "peerHandle");
+  const direction = args.direction === undefined || args.direction === "all"
+    ? undefined
+    : normalizeMessageDirection(args.direction, "direction");
+  const statuses = store.listMessageStatuses({
+    uid,
+    state: args.state === undefined ? undefined : normalizeMessageStatusState(args.state, "state"),
+    limit: normalizeLimit(args.limit, 100),
+  });
+  return {
+    statuses: statuses.flatMap((status) => {
+      const message = store.getMessage(uid, status.messageId);
+      if (!message) {
+        return [];
+      }
+      if (peerHandle && message.fromHandle !== peerHandle && message.toHandle !== peerHandle) {
+        return [];
+      }
+      if (direction && message.direction !== direction) {
+        return [];
+      }
+      return [toMessageStatusSummary(status, message)];
+    }),
+  };
+}
+
+export function handleSocialMessageStatusGet(
+  args: SocialMessageStatusGetArgs,
+  ctx: KernelContext,
+): SocialMessageStatusGetResult {
+  const uid = requireMainSocialUserUid(ctx);
+  const messageId = normalizeSocialId(args.messageId, "messageId");
+  const store = requireSocialStore(ctx);
+  const status = store.getMessageStatus(uid, messageId);
+  const message = status ? store.getMessage(uid, status.messageId) : null;
+  return {
+    status: status && message ? toMessageStatusSummary(status, message) : null,
+  };
+}
+
+export async function handleSocialMessageStatusUpdate(
+  args: SocialMessageStatusUpdateArgs,
+  ctx: KernelContext,
+): Promise<SocialMessageStatusUpdateResult> {
+  const uid = requireMainSocialUserUid(ctx);
+  const localIdentity = requireWritableSocialIdentity(ctx);
+  const localHandle = requireLocalHandle(localIdentity);
+  const messageId = normalizeSocialId(args.messageId, "messageId");
+  const state = normalizeMessageStatusState(args.state, "state");
+  const summary = args.summary === undefined ? undefined : normalizeOptionalText(args.summary, "summary", 2048);
+  const needsHumanReason = args.needsHumanReason === undefined
+    ? undefined
+    : normalizeOptionalText(args.needsHumanReason, "needsHumanReason", 2048);
+  const body = args.body === undefined ? undefined : normalizeRequestBody(args.body, "body");
+  const store = requireSocialStore(ctx);
+  const message = store.getMessage(uid, messageId);
+  if (!message) {
+    throw new Error(`Message is not known: ${messageId}`);
+  }
+  const status = store.upsertMessageStatus({
+    uid,
+    messageId,
+    threadId: message.threadId,
+    state,
+    summary,
+    needsHumanReason,
+    body,
+  });
+
+  if (message.direction === "inbound") {
+    const peerHandle = message.fromHandle === localHandle ? message.toHandle : message.fromHandle;
+    const friend = requireFriend(store, uid, peerHandle);
+    if (friend.instance.acceptedSocialMethods.includes("social.message.status.update")) {
+      await sendMessageStatusUpdateEnvelope({
+        ctx,
+        store,
+        localIdentity,
+        friend,
+        status,
+        message,
+      });
+    }
+  }
+
+  await refreshSocialInboxContextSafe(ctx, store);
+
+  return {
+    status: toMessageStatusSummary(status, message),
+  };
+}
+
 export async function handleSocialInbound(
   args: SocialInboundArgs,
   ctx: KernelContext,
@@ -2049,6 +2296,15 @@ type InboundRequestRespondBody = NormalizedMessagePayload & {
   status: Extract<SocialRequestStatus, "agent-replied" | "needs-human" | "accepted" | "declined" | "completed">;
 };
 
+type InboundMessageStatusUpdateBody = {
+  threadId?: string;
+  messageId: string;
+  state: SocialMessageStatusState;
+  summary?: string;
+  needsHumanReason?: string;
+  body?: unknown;
+};
+
 async function attemptOutboundDelivery(input: {
   ctx: KernelContext;
   store: SocialStore;
@@ -2138,6 +2394,48 @@ async function attemptOutboundDelivery(input: {
   }) ?? input.message;
 }
 
+async function sendMessageStatusUpdateEnvelope(input: {
+  ctx: KernelContext;
+  store: SocialStore;
+  localIdentity: SocialIdentityRecord;
+  friend: SocialFriendRecord;
+  status: SocialMessageStatusRecord;
+  message: SocialMessageRecord;
+}): Promise<void> {
+  const settings = await ensureServiceSettings(input.store, input.localIdentity.uid);
+  const createdAt = new Date().toISOString();
+  const envelope = await signSocialEnvelope({
+    id: newSocialId("env"),
+    method: "social.message.status.update",
+    fromDid: input.localIdentity.did,
+    toDid: input.friend.did,
+    createdAt,
+    expiresAt: new Date(Date.parse(createdAt) + SOCIAL_ENVELOPE_TTL_MS).toISOString(),
+    nonce: newSocialId("nonce"),
+    keyId: `${input.localIdentity.did}#gsv-social-key`,
+    body: compactRecord({
+      threadId: input.message.threadId,
+      messageId: input.message.messageId,
+      state: input.status.state,
+      summary: input.status.summary,
+      needsHumanReason: input.status.needsHumanReason,
+      body: input.status.body,
+    }),
+  }, settings.servicePrivateJwk);
+
+  const response = await fetch(new URL("/social/inbound", input.friend.pdsEndpoint).toString(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ envelope }),
+  });
+  const responseBody = await parseFetchBody(response);
+  const accepted = responseBody && typeof responseBody === "object"
+    && (responseBody as { ok?: unknown }).ok === true;
+  if (!response.ok || !accepted) {
+    throw new Error(`remote status=${response.status}: ${formatFetchBody(responseBody)}`);
+  }
+}
+
 async function scheduleDeliveryRetry(input: {
   ctx: KernelContext;
   messageId: string;
@@ -2177,6 +2475,9 @@ async function acceptInboundSocialEnvelope(input: {
   }
   if (input.envelope.method === "social.request.respond") {
     return acceptInboundRequestRespond(input);
+  }
+  if (input.envelope.method === "social.message.status.update") {
+    return acceptInboundMessageStatusUpdate(input);
   }
   if (
     input.envelope.method !== "social.thread.create" &&
@@ -2233,11 +2534,19 @@ async function acceptInboundSocialEnvelope(input: {
     remoteEventId: input.envelope.id,
     now: input.now,
   });
+  input.store.upsertMessageStatus({
+    uid: MAIN_SOCIAL_UID,
+    messageId: message.messageId,
+    threadId: thread.threadId,
+    state: "received",
+    remoteEventId: input.envelope.id,
+    now: input.now,
+  });
 
   try {
-    await deliverInboundMessageToInit(input.ctx, thread, message);
+    await deliverInboundMessageToMind(input.ctx, thread, message);
   } catch (error) {
-    console.error("[social.inbound] failed to deliver message to init process", error);
+    console.error("[social.inbound] failed to deliver message to mind process", error);
   }
 
   return {
@@ -2245,6 +2554,51 @@ async function acceptInboundSocialEnvelope(input: {
     status: "accepted",
     threadId: thread.threadId,
     messageId: message.messageId,
+  };
+}
+
+async function acceptInboundMessageStatusUpdate(input: {
+  ctx: KernelContext;
+  store: SocialStore;
+  localIdentity: SocialIdentityRecord;
+  friend: SocialFriendRecord;
+  envelope: SocialSignedRequestEnvelope;
+  now: number;
+}): Promise<SocialInboundResult> {
+  const existingStatus = input.store.getMessageStatusByRemoteEventId(MAIN_SOCIAL_UID, input.envelope.id);
+  if (existingStatus) {
+    return {
+      ok: true,
+      status: "accepted",
+      threadId: existingStatus.threadId,
+      messageId: existingStatus.messageId,
+    };
+  }
+
+  const body = normalizeInboundMessageStatusUpdateBody(input.envelope.body);
+  const message = input.store.getMessage(MAIN_SOCIAL_UID, body.messageId);
+  if (!message) {
+    throw new Error(`Message is not known: ${body.messageId}`);
+  }
+  const status = input.store.upsertMessageStatus({
+    uid: MAIN_SOCIAL_UID,
+    messageId: message.messageId,
+    threadId: body.threadId ?? message.threadId,
+    state: body.state,
+    summary: body.summary,
+    needsHumanReason: body.needsHumanReason,
+    body: body.body,
+    remoteEventId: input.envelope.id,
+    now: input.now,
+  });
+
+  await refreshSocialInboxContextSafe(input.ctx, input.store);
+
+  return {
+    ok: true,
+    status: "accepted",
+    threadId: status.threadId,
+    messageId: status.messageId,
   };
 }
 
@@ -2304,6 +2658,16 @@ async function acceptInboundRequestCreate(input: {
     body: body.body,
     deliveryMethod: input.envelope.method,
     deliveryStatus: "delivered",
+    remoteEventId: input.envelope.id,
+    now: input.now,
+  });
+  input.store.upsertMessageStatus({
+    uid: MAIN_SOCIAL_UID,
+    messageId: message.messageId,
+    threadId: thread.threadId,
+    state: "received",
+    summary: request.title,
+    body: request.body,
     remoteEventId: input.envelope.id,
     now: input.now,
   });
@@ -2382,6 +2746,16 @@ async function acceptInboundRequestRespond(input: {
     remoteEventId: input.envelope.id,
     now: input.now,
   });
+  input.store.upsertMessageStatus({
+    uid: MAIN_SOCIAL_UID,
+    messageId: message.messageId,
+    threadId: thread.threadId,
+    state: mapLegacyRequestStatusToMessageStatus(body.status),
+    summary: body.text,
+    body: body.body,
+    remoteEventId: input.envelope.id,
+    now: input.now,
+  });
 
   await afterInboundRequestChanged(input.ctx, input.store, thread, updated, message, "respond");
 
@@ -2394,24 +2768,58 @@ async function acceptInboundRequestRespond(input: {
   };
 }
 
-async function deliverInboundMessageToInit(
+async function deliverInboundMessageToMind(
   ctx: KernelContext,
   thread: SocialThreadRecord,
   message: SocialMessageRecord,
 ): Promise<void> {
   const identity = identityForUid(MAIN_SOCIAL_UID, ctx);
-  const pid = await ensureUserInitProcess(identity, ctx);
-  const frame: RequestFrame<"proc.send"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.send",
-    args: {
-      pid,
-      conversationId: thread.conversationId,
-      message: renderInboundSocialMessage(thread, message),
+  await dispatchMindEvent(ctx, {
+    identity,
+    source: "social.message",
+    threadKey: thread.threadId,
+    title: `Social message from ${message.fromHandle}`,
+    text: renderInboundSocialMessage(thread, message),
+    body: {
+      thread: toThreadSummary(thread),
+      message: toMessageSummary(message),
     },
-  };
-  await sendFrameToProcess(pid, frame);
+    metadata: {
+      peerHandle: message.fromHandle,
+      conversationId: thread.conversationId,
+      direction: message.direction,
+    },
+  });
+}
+
+async function deliverInboundRequestToMind(
+  ctx: KernelContext,
+  thread: SocialThreadRecord,
+  request: SocialRequestRecord,
+  message: SocialMessageRecord,
+  event: "create" | "respond",
+): Promise<void> {
+  const identity = identityForUid(MAIN_SOCIAL_UID, ctx);
+  await dispatchMindEvent(ctx, {
+    identity,
+    source: "social.message",
+    threadKey: thread.threadId,
+    title: event === "create"
+      ? `Social message from ${message.fromHandle}`
+      : `Social status update from ${message.fromHandle}`,
+    text: renderInboundSocialRequest(thread, request, message, event),
+    body: {
+      thread: toThreadSummary(thread),
+      legacyRequest: toRequestSummary(request),
+      message: toMessageSummary(message),
+    },
+    metadata: {
+      peerHandle: message.fromHandle,
+      conversationId: thread.conversationId,
+      direction: message.direction,
+      legacyRequestEvent: event,
+    },
+  });
 }
 
 async function afterInboundRequestChanged(
@@ -2423,9 +2831,9 @@ async function afterInboundRequestChanged(
   event: "create" | "respond",
 ): Promise<void> {
   try {
-    await deliverInboundRequestToInit(ctx, thread, request, message, event);
+    await deliverInboundRequestToMind(ctx, thread, request, message, event);
   } catch (error) {
-    console.error("[social.inbound] failed to deliver request to init process", error);
+    console.error("[social.inbound] failed to deliver request to mind process", error);
   }
   try {
     notifySocialRequest(ctx, request, message.fromHandle, event);
@@ -2433,28 +2841,6 @@ async function afterInboundRequestChanged(
     console.error("[social.inbound] failed to create request notification", error);
   }
   await refreshSocialInboxContextSafe(ctx, store);
-}
-
-async function deliverInboundRequestToInit(
-  ctx: KernelContext,
-  thread: SocialThreadRecord,
-  request: SocialRequestRecord,
-  message: SocialMessageRecord,
-  event: "create" | "respond",
-): Promise<void> {
-  const identity = identityForUid(MAIN_SOCIAL_UID, ctx);
-  const pid = await ensureUserInitProcess(identity, ctx);
-  const frame: RequestFrame<"proc.send"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.send",
-    args: {
-      pid,
-      conversationId: thread.conversationId,
-      message: renderInboundSocialRequest(thread, request, message, event),
-    },
-  };
-  await sendFrameToProcess(pid, frame);
 }
 
 function notifySocialRequest(
@@ -2501,8 +2887,14 @@ async function refreshSocialInboxContext(ctx: KernelContext, store: SocialStore)
     undefined,
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
   );
-  const active = store.listRequests({ uid: MAIN_SOCIAL_UID, direction: "inbound", limit: 100 })
-    .filter((request) => isActiveInboxRequest(request.status));
+  const active = store.listMessageStatuses({ uid: MAIN_SOCIAL_UID, limit: 100 })
+    .flatMap((status) => {
+      if (!isActiveInboxMessageStatus(status.state)) {
+        return [];
+      }
+      const message = store.getMessage(MAIN_SOCIAL_UID, status.messageId);
+      return message?.direction === "inbound" ? [{ status, message }] : [];
+    });
   const path = `${identity.home}/context.d/90-social-inbox.md`;
   if (active.length === 0) {
     await fs.rm(path, { force: true });
@@ -2511,11 +2903,11 @@ async function refreshSocialInboxContext(ctx: KernelContext, store: SocialStore)
   await fs.writeFile(path, renderSocialInboxContext(active));
 }
 
-function isActiveInboxRequest(status: SocialRequestStatus): boolean {
-  return status === "pending" ||
-    status === "agent-replied" ||
-    status === "needs-human" ||
-    status === "accepted";
+function isActiveInboxMessageStatus(state: SocialMessageStatusState): boolean {
+  return state === "received" ||
+    state === "triaged" ||
+    state === "in_progress" ||
+    state === "needs_human";
 }
 
 function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity {
@@ -2536,23 +2928,6 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity {
     cwd: user.home,
     workspaceId: null,
   };
-}
-
-async function ensureUserInitProcess(identity: ProcessIdentity, ctx: KernelContext): Promise<string> {
-  const { pid, created } = ctx.procs.ensureInit(identity);
-  if (created) {
-    const frame: RequestFrame<"proc.setidentity"> = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.setidentity",
-      args: { pid, identity, profile: "init" },
-    };
-    const response = await sendFrameToProcess(pid, frame);
-    if (!response || response.type !== "res" || !response.ok) {
-      throw new Error("Failed to initialize init process");
-    }
-  }
-  return pid;
 }
 
 function renderInboundSocialMessage(thread: SocialThreadRecord, message: SocialMessageRecord): string {
@@ -2605,36 +2980,40 @@ function renderInboundSocialRequest(
   return lines.join("\n");
 }
 
-function renderSocialInboxContext(requests: SocialRequestRecord[]): string {
+function renderSocialInboxContext(entries: Array<{
+  status: SocialMessageStatusRecord;
+  message: SocialMessageRecord;
+}>): string {
   const lines = [
     "# Social Inbox",
     "",
-    "Active friend requests visible to the GSV init process.",
-    "Use the social command to inspect and respond to these requests.",
+    "Active friend messages visible to GSV Mind.",
+    "Use the social command to inspect messages and update message status.",
     "",
   ];
-  for (const request of requests.sort((left, right) => right.updatedAt - left.updatedAt)) {
+  for (const { status, message } of entries.sort((left, right) => right.status.updatedAt - left.status.updatedAt)) {
     lines.push(
-      `## ${request.title}`,
+      `## ${status.summary ?? message.text ?? message.messageId}`,
       "",
-      `- Request: ${request.requestId}`,
-      `- From: ${request.fromHandle}`,
-      `- To: ${request.toHandle}`,
-      `- Kind: ${request.kind}`,
-      `- Status: ${request.status}`,
-      `- Updated: ${new Date(request.updatedAt).toISOString()}`,
-      `- Inspect: social request get ${request.requestId}`,
-      `- Respond: social request respond ${request.requestId} --status agent-replied --text "..."`,
-      `- Escalate: social request respond ${request.requestId} --status needs-human --text "..."`,
+      `- Message: ${message.messageId}`,
+      `- From: ${message.fromHandle}`,
+      `- To: ${message.toHandle}`,
+      `- State: ${status.state}`,
+      `- Updated: ${new Date(status.updatedAt).toISOString()}`,
+      `- Inspect: social thread get ${message.threadId}`,
+      `- Update: social status update ${message.messageId} --state completed --summary "..."`,
+      `- Escalate: social status update ${message.messageId} --state needs_human --reason "..."`,
     );
-    if (request.threadId) {
-      lines.push(`- Thread: ${request.threadId}`);
+    if (status.needsHumanReason) {
+      lines.push(`- Needs human: ${status.needsHumanReason}`);
     }
-    if (request.expiresAt) {
-      lines.push(`- Expires: ${request.expiresAt}`);
+    lines.push(`- Thread: ${message.threadId}`);
+    if (message.text) {
+      lines.push("", message.text);
     }
-    if (request.body !== undefined) {
-      lines.push("", "```json", JSON.stringify(request.body, null, 2), "```");
+    const structured = status.body ?? message.body;
+    if (structured !== undefined) {
+      lines.push("", "```json", JSON.stringify(structured, null, 2), "```");
     }
     lines.push("");
   }
@@ -2822,6 +3201,44 @@ function normalizeThreadStatus(value: unknown, field: string): SocialThreadStatu
     throw new Error(`invalid ${field}`);
   }
   return value;
+}
+
+function normalizeMessageDirection(value: unknown, field: string): SocialMessageDirection {
+  if (value !== "inbound" && value !== "outbound") {
+    throw new Error(`${field} must be inbound or outbound`);
+  }
+  return value;
+}
+
+function normalizeMessageStatusState(value: unknown, field: string): SocialMessageStatusState {
+  if (
+    value !== "received" &&
+    value !== "triaged" &&
+    value !== "in_progress" &&
+    value !== "needs_human" &&
+    value !== "completed" &&
+    value !== "declined" &&
+    value !== "failed"
+  ) {
+    throw new Error(`invalid ${field}`);
+  }
+  return value;
+}
+
+function mapLegacyRequestStatusToMessageStatus(
+  status: Extract<SocialRequestStatus, "agent-replied" | "needs-human" | "accepted" | "declined" | "completed">,
+): SocialMessageStatusState {
+  switch (status) {
+    case "needs-human":
+      return "needs_human";
+    case "accepted":
+    case "agent-replied":
+      return "in_progress";
+    case "declined":
+      return "declined";
+    case "completed":
+      return "completed";
+  }
 }
 
 function normalizeRequestKind(value: unknown, field: string): SocialRequestKind {
@@ -3035,6 +3452,32 @@ function normalizeInboundRequestRespondBody(value: unknown): InboundRequestRespo
     requestId,
     status,
     ...payload,
+  };
+}
+
+function normalizeInboundMessageStatusUpdateBody(value: unknown): InboundMessageStatusUpdateBody {
+  const object = requireObject(value, "envelope.body");
+  const threadId = object.threadId === undefined
+    ? undefined
+    : normalizeSocialId(object.threadId, "envelope.body.threadId");
+  const messageId = normalizeSocialId(object.messageId, "envelope.body.messageId");
+  const state = normalizeMessageStatusState(object.state, "envelope.body.state");
+  const summary = object.summary === undefined
+    ? undefined
+    : normalizeOptionalText(object.summary, "envelope.body.summary", 2048);
+  const needsHumanReason = object.needsHumanReason === undefined
+    ? undefined
+    : normalizeOptionalText(object.needsHumanReason, "envelope.body.needsHumanReason", 2048);
+  const body = object.body === undefined
+    ? undefined
+    : normalizeRequestBody(object.body, "envelope.body.body");
+  return {
+    threadId,
+    messageId,
+    state,
+    summary,
+    needsHumanReason,
+    body,
   };
 }
 
@@ -3528,6 +3971,51 @@ function toMessageSummary(message: SocialMessageRecord): SocialMessageSummary {
     createdAt: new Date(message.createdAt).toISOString(),
     updatedAt: new Date(message.updatedAt).toISOString(),
   };
+}
+
+function toMessageStatusRecord(row: MessageStatusRow): SocialMessageStatusRecord {
+  return {
+    uid: row.uid,
+    messageId: row.message_id,
+    threadId: row.thread_id,
+    state: row.state as SocialMessageStatusState,
+    summary: row.summary ?? undefined,
+    needsHumanReason: row.needs_human_reason ?? undefined,
+    body: row.body_json ? JSON.parse(row.body_json) as unknown : undefined,
+    remoteEventId: row.remote_event_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toMessageStatusSummary(
+  status: SocialMessageStatusRecord,
+  message: SocialMessageRecord,
+): SocialMessageStatusSummary {
+  return {
+    messageId: status.messageId,
+    threadId: status.threadId,
+    direction: message.direction,
+    fromHandle: message.fromHandle,
+    toHandle: message.toHandle,
+    state: status.state,
+    summary: status.summary,
+    needsHumanReason: status.needsHumanReason,
+    body: status.body,
+    createdAt: new Date(status.createdAt).toISOString(),
+    updatedAt: new Date(status.updatedAt).toISOString(),
+  };
+}
+
+function summarizeMessageStatusesForThread(
+  store: SocialStore,
+  uid: number,
+  threadId: string,
+): SocialMessageStatusSummary[] {
+  return store.listMessageStatusesForThread(uid, threadId).flatMap((status) => {
+    const message = store.getMessage(uid, status.messageId);
+    return message ? [toMessageStatusSummary(status, message)] : [];
+  });
 }
 
 function toRequestRecord(row: RequestRow): SocialRequestRecord {

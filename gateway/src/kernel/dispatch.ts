@@ -112,6 +112,9 @@ import {
   handleSocialInbound,
   handleSocialMessageReply,
   handleSocialMessageSend,
+  handleSocialMessageStatusGet,
+  handleSocialMessageStatusList,
+  handleSocialMessageStatusUpdate,
   handleSocialSetup,
   handleSocialIdentityGet,
   handleSocialIdentitySet,
@@ -291,6 +294,8 @@ async function dispatchNative(
         break;
       case "proc.ipc.deliver":
         return errFrame(frame.id, 403, "proc.ipc.deliver is kernel-only");
+      case "proc.mind.deliver":
+        return errFrame(frame.id, 403, "proc.mind.deliver is kernel-only");
       case "proc.setidentity":
         return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
 
@@ -553,6 +558,15 @@ async function dispatchNative(
         break;
       case "social.message.reply":
         data = await handleSocialMessageReply(frame.args, ctx);
+        break;
+      case "social.message.status.list":
+        data = handleSocialMessageStatusList(frame.args, ctx);
+        break;
+      case "social.message.status.get":
+        data = handleSocialMessageStatusGet(frame.args, ctx);
+        break;
+      case "social.message.status.update":
+        data = await handleSocialMessageStatusUpdate(frame.args, ctx);
         break;
       case "social.request.create":
         data = await handleSocialRequestCreate(frame.args, ctx);

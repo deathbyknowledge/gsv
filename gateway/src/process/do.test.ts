@@ -202,6 +202,27 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("includes mind messages as model-visible GSV Mind events", async () => {
+      const pid = "mech-mind-context-1";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("mind", "Incoming friend request needs a concise reply.");
+        process.store.appendMessage("user", "What should I do?");
+
+        const messages = await process.buildContextMessages("default");
+        expect(messages).toHaveLength(2);
+        expect(messages[0]).toMatchObject({ role: "user" });
+        expect((messages[0] as any).content).toContain("[GSV Mind]:");
+        expect((messages[0] as any).content).toContain("Incoming friend request needs a concise reply.");
+        expect(messages[1]).toMatchObject({
+          role: "user",
+          content: "What should I do?",
+        });
+      });
+    });
+
     it("does not drop tool results after 200 stored messages", async () => {
       const pid = "mech-context-tool-result-after-200";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -488,6 +509,35 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("delivers mind messages without storing them as user text", async () => {
+      const pid = "mech-mind-deliver";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.mind.deliver", {
+          conversationId: "social-thread",
+          message: "Source: social.message\nThread: thread-1\n\nHandle this friend message.",
+        }),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toMatchObject({
+        ok: true,
+        status: "started",
+        pid,
+        conversationId: "social-thread",
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        const msgs = store.getMessages({ conversationId: "social-thread" });
+        expect(msgs).toHaveLength(1);
+        expect(msgs[0].role).toBe("mind");
+        expect(msgs[0].content).toContain("Handle this friend message.");
+        (instance as any).currentRun = null;
+      });
+    });
+
     it("queues message, finishRun dequeues and processes it", async () => {
       const pid = "mech-send-queued";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -522,6 +572,37 @@ describe("Process DO — mechanical", () => {
         expect(userMsgs[1].content).toBe("Second message");
         expect(store.queueSize()).toBe(0);
         expect(store.getValue("currentRun")).toBeNull();
+      });
+    });
+
+    it("preserves mind role when queued behind an active run", async () => {
+      const pid = "mech-mind-deliver-queued";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.scheduleTick = () => {};
+      });
+
+      await stub.recvFrame(makeReq("proc.send", {
+        conversationId: "social-thread",
+        message: "First user message",
+      }));
+      const res = (await stub.recvFrame(makeReq("proc.mind.deliver", {
+        conversationId: "social-thread",
+        message: "Queued mind event",
+      }))) as ResponseOkFrame;
+
+      expect(res.data).toMatchObject({ ok: true, queued: true });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = null;
+        process.promoteNextQueuedRun();
+        const messages = process.store.getMessages({ conversationId: "social-thread" });
+        expect(messages.map((message: any) => message.role)).toEqual(["user", "mind"]);
+        expect(messages[1].content).toBe("Queued mind event");
+        process.currentRun = null;
       });
     });
 
@@ -1869,6 +1950,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         store.appendMessage("user", "What is 2+2?");
+        store.appendMessage("mind", "This is an internal coordination note.");
         store.appendMessage("assistant", "4");
         store.appendMessage("user", "Thanks!");
       });
@@ -1881,12 +1963,14 @@ describe("Process DO — mechanical", () => {
       const data = res.data as any;
       expect(data.ok).toBe(true);
       expect(data.pid).toBe(pid);
-      expect(data.messageCount).toBe(3);
-      expect(data.messages).toHaveLength(3);
+      expect(data.messageCount).toBe(4);
+      expect(data.messages).toHaveLength(4);
       expect(data.messages[0].role).toBe("user");
       expect(data.messages[0].content).toBe("What is 2+2?");
-      expect(data.messages[1].role).toBe("assistant");
-      expect(data.messages[1].content).toBe("4");
+      expect(data.messages[1].role).toBe("mind");
+      expect(data.messages[1].content).toBe("This is an internal coordination note.");
+      expect(data.messages[2].role).toBe("assistant");
+      expect(data.messages[2].content).toBe("4");
     });
 
     it("respects limit and offset", async () => {

@@ -69,6 +69,16 @@ const SYSTEM_PROFILE_ENTRIES: ProcProfileListEntry[] = [
     spawnMode: "new",
   },
   {
+    id: "mind",
+    kind: "system",
+    displayName: "GSV Mind",
+    description: "Internal GSV coordination profile for social and cross-process events.",
+    interactive: false,
+    startable: false,
+    background: true,
+    spawnMode: "new",
+  },
+  {
     id: "review",
     kind: "system",
     displayName: "Review",

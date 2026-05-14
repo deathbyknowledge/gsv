@@ -76,6 +76,23 @@ export type ProcSendArgs = {
   media?: ProcMediaInput[];
 };
 
+export type ProcMindDeliverArgs = {
+  pid?: string;
+  conversationId?: string;
+  message: string;
+};
+
+export type ProcMindDeliverResult =
+  | {
+      ok: true;
+      status: "started";
+      pid: string;
+      conversationId: string;
+      runId: string;
+      queued?: boolean;
+    }
+  | { ok: false; error: string };
+
 export type ProcAbortArgs = {
   pid?: string;
 };
@@ -194,7 +211,7 @@ export type ProcHistoryArgs = {
 
 export type ProcHistoryMessage = {
   id?: number;
-  role: "user" | "assistant" | "system" | "toolResult";
+  role: "user" | "assistant" | "system" | "mind" | "toolResult";
   content: unknown;
   timestamp?: number;
 };
