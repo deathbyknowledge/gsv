@@ -1,14 +1,34 @@
 # GSV
-![gsv](https://github.com/user-attachments/assets/dba02d8f-3a3a-40c5-b38f-5eea3b2ea99d)
-**GSV** is a distributed operating system for humans, machines, and agents. In simpler terms, it is a personal cloud AI computer built on Cloudflare's global infrastructure.
+![gsv](https://github.com/user-attachments/assets/d2e598a6-7523-4be3-b8ea-7cda939991b9)
+> ***A distributed operating system for humans, machines, and agents.***
 
-GSV unifies your devices (laptops, servers, phones, etc.) in a cloud OS with AI built into the kernel. Agents are modeled as processes: they have identities, durable history, permissions, parent/child relationships, and a syscall surface for using OS capabilities.
+Imagine a personal cloud computer where AI is built directly into the kernel. **GSV (General Systems Vehicle)** unifies your laptops, servers, and phones into a single cohesive system where agents operate as native background processes.
 
-It offers an SDK for native applications and comes with a built-in git remote that can host GSV itself. That means agents can own repositories, packages can be self-hosted, and apps can be shared with other GSV instances like a distributed app store.
+Named after the planet-scale sentient ships from Iain M. Banks' *Culture* series, GSV provides the foundation for self-aware personal AI that lives, breathes, and spawns across the edge of the internet.
 
-Named after the planet-scale sentient ships from Iain M. Banks' Culture series, GSV (General Systems Vehicle) provides a foundation for self-aware personal AI that exists as ephemeral beings spawning across the Earth's edge network.
+## What can GSV do?
+
+- **Treat Agents like Linux Processes** - Agents have identities, durable history, permissions, and a syscall surface. You can spawn, kill, and manage them just like traditional OS processes.
+- **Unify Your Hardware** - Connect your Macbook, Linux server, or phone. Your agents can securely reach your devices, use the shell, and read/write files from anywhere on Earth or beyond.
+- **Communicate Natively** - Talk to your agents via the built-in Web UI, the command-line interface, or bridge them to external channels like WhatsApp and Discord.
+- **A Self-Hosting Ecosystem** - Write native apps with the GSV SDK and distribute them via the built-in git remote. Because agents can own repositories and host their own packages, GSV functions as a distributed, peer-to-peer app store.
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deathbyknowledge/gsv)
+
+## Documentation
+
+link
+
+## 🤝 Get Involved
+
+GSV is actively evolving, and we want you to be part of the network! We welcome contributions of all sizes.
+Whether you want to submit a pull request, share a wild idea, or just say hi, please don't hesitate to reach out. :)
+
+- **Found a bug or have a feature request?** - [Open an issue](https://github.com/deathbyknowledge/gsv/issues).
+- **Just want to chat?** - Reach out directly on Twitter/X: [@deathbyknowledg](https://twitter.com/deathbyknowledg)
+
+*(A community Discord server is in the works—stay tuned!)*
+
 ## Quick Start
 
 ### Prerequisites
@@ -24,7 +44,7 @@ curl -sSL https://install.gsv.space | bash
 gsv infra deploy --api-token <CLOUDFLARE-API-TOKEN>
 ```
 
-Once the deployment finishes open the URL to finish your onboarding through the Web UI.
+Once the deployment finishes, open the URL to finish your onboarding through the Web UI.
 
 ### Chat
 
@@ -65,27 +85,16 @@ Node logs are structured JSON at `~/.gsv/logs/node.log` with app-side rotation
 
 Now GSV can use the shell, read and write files on your machine.
 
-### Adapters
+## Adapters
 
 The easiest way to set up adapters is through the **Adapters** app in the Web UI.
 
-### OS Model
-
-GSV intentionally feels Linux-like so agents can reason about it with familiar operating-system patterns. This is a mental model, not POSIX compatibility.
-
-- **Kernel**: the Gateway runs on Cloudflare and exposes authenticated syscalls such as `proc.*`, `pkg.*`, and `sys.*`.
-- **Processes**: agents are durable processes with PIDs. They can be listed, spawned, messaged, reset, or killed with `gsv proc list`, `gsv proc spawn`, `gsv proc send`, and `gsv proc kill`.
-- **Init process**: each user has a default long-lived process, similar to an interactive login shell for that user.
-- **Devices**: connected machines act like execution nodes. They provide shell and filesystem tools scoped to the configured workspace.
-- **Packages and apps**: built-in and user packages behave like OS applications that call the Gateway through the app SDK.
-- **Adapters**: WhatsApp, Discord, and other channel workers act like device drivers for external message surfaces.
-
-### Components
+## Components
 
 - **Gateway** - Central brain running on Cloudflare, serves as the OS kernel. Manages auth, filesystem state, routing, and exposes system calls that processes and apps use to access GSV capabilities.
 - **Processes** - Each agent is a process in the GSV OS with persistent history and its own agent loop.
 - **Devices** - Your devices connected to GSV, providing remote tool access (Bash, Read, Write, Edit, Search).
-- **Adapters** - Bridges to WhatsApp, Discord, etc. Each runs as a separate Worker.
+- **Adapters** - Bridges to WhatsApp, Discord, etc. each runs as a separate Worker.
 
 ## Development
 
@@ -113,6 +122,9 @@ gsv deploy up --bundle-dir ./release/local --version local-dev --all --force-fet
 ./scripts/deploy-local.sh -c gateway --force-fetch
 ```
 
+
 ## License
 
 MIT
+
+![gsv](https://github.com/user-attachments/assets/dba02d8f-3a3a-40c5-b38f-5eea3b2ea99d)
