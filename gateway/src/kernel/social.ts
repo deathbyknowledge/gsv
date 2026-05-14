@@ -422,17 +422,6 @@ export class SocialStore {
         PRIMARY KEY (uid, message_id)
       )
     `);
-    for (const statement of [
-      "ALTER TABLE social_messages ADD COLUMN delivery_method TEXT",
-      "ALTER TABLE social_messages ADD COLUMN delivery_attempt_count INTEGER NOT NULL DEFAULT 0",
-      "ALTER TABLE social_messages ADD COLUMN next_retry_at INTEGER",
-      "ALTER TABLE social_messages ADD COLUMN retry_schedule_id TEXT",
-      "ALTER TABLE social_messages ADD COLUMN last_delivery_error TEXT",
-    ]) {
-      try {
-        this.sql.exec(statement);
-      } catch {}
-    }
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_social_messages_thread ON social_messages (uid, thread_id, created_at ASC)",
     );

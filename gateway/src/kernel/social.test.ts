@@ -97,10 +97,6 @@ function createMockSql() {
       return cursor<T>([]);
     }
 
-    if (q.startsWith("ALTER TABLE social_messages ADD COLUMN")) {
-      return cursor<T>([]);
-    }
-
     if (q.startsWith("SELECT * FROM social_identities WHERE uid = ?")) {
       const [uid] = bindings as [number];
       return cursor(getTable("social_identities").filter((row) => row.uid === uid) as T[]);
