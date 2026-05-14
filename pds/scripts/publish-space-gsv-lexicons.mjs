@@ -314,6 +314,7 @@ function sampleRecords(avatarBlob) {
           "social.profile.read",
           "social.agent.card.read",
           "social.message.send",
+          "social.message.status.update",
         ],
       },
     },

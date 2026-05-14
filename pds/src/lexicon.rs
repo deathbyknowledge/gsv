@@ -316,7 +316,8 @@ mod tests {
                     "acceptedSocialMethods": [
                         "social.profile.read",
                         "social.agent.card.read",
-                        "social.message.send"
+                        "social.message.send",
+                        "social.message.status.update"
                     ]
                 }),
             ),
