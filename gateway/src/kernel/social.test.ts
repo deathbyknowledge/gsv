@@ -1614,6 +1614,12 @@ describe("social identity and records", () => {
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
       .toContain("social message send alice.example");
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
+      .toContain("Human decision needed");
+    expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
+      .toContain("No reply needed");
+    expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
+      .toContain("Do not send acknowledgements of acknowledgements");
+    expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
       .not.toContain("Structured event data");
 
     setContextRole(ctx, "user");
@@ -1730,6 +1736,8 @@ describe("social identity and records", () => {
     const inbox = await storage.get("home/hank/context.d/90-social-inbox.md");
     const inboxText = await inbox?.text();
     expect(inboxText).toContain('social message send alice.example "<text>" --thread thread-alice');
+    expect(inboxText).toContain("Escalate human preference, permission, schedule, availability");
+    expect(inboxText).toContain("Complete pure acknowledgements");
     expect(inboxText).toContain("Needs Hank to approve sharing this.");
   });
 

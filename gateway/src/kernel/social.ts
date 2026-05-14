@@ -2259,16 +2259,15 @@ function renderInboundSocialMessage(thread: SocialThreadRecord, message: SocialM
     `Message: ${message.messageId}`,
     "",
     "Expected actions:",
-    `- If safe to handle autonomously, reply with: social message send ${message.fromHandle} "<text>" --thread ${thread.threadId}`,
-    `- After handling, mark complete with: social status update ${message.messageId} --state completed --summary "..."`,
-    `- If the local human must decide, escalate with: social status update ${message.messageId} --state needs_human --reason "..."`,
+    `- Human decision needed: if this asks for the local human's preference, permission, schedule, availability, or commitment, run: social status update ${message.messageId} --state needs_human --reason "..."`,
+    `- No reply needed: if this is only thanks, no-rush, patience, well-wishes, or a conversational closer, run: social status update ${message.messageId} --state completed --summary "No reply needed: ..."`,
+    `- Safe substantive reply: send with: social message send ${message.fromHandle} "<text>" --thread ${thread.threadId}`,
+    `- After a substantive reply, mark complete with: social status update ${message.messageId} --state completed --summary "..."`,
     "- Do not just describe these actions; run the command that matches your decision.",
+    "- Do not send acknowledgements of acknowledgements or repeated promises to update later.",
   ];
   if (message.text) {
     lines.push("", "Message text:", message.text);
-  }
-  if (message.body !== undefined) {
-    lines.push("", "Additional structured body is attached to the kernel event, but only use it if the visible text is insufficient.");
   }
   return lines.join("\n");
 }
@@ -2282,6 +2281,8 @@ function renderSocialInboxContext(entries: Array<{
     "",
     "Active friend messages visible to GSV Mind.",
     "Use the social command to inspect messages, reply, and update message status.",
+    "Escalate human preference, permission, schedule, availability, or commitment requests with needs_human.",
+    "Complete pure acknowledgements, no-rush notes, well-wishes, and conversational closers without replying.",
     "",
   ];
   for (const { status, message } of entries.sort((left, right) => right.status.updatedAt - left.status.updatedAt)) {

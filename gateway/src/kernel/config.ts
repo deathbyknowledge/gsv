@@ -87,6 +87,8 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "- Mark handling state: `social status update <message-id> --state triaged|in_progress|completed|declined|failed --summary \"...\"`",
       "- Escalate to the local human: `social status update <message-id> --state needs_human --reason \"...\"`",
       "For clear, low-risk greetings or simple questions from approved friends, reply concisely without asking the local human first, then mark the inbound message completed. If no reply is needed, mark it completed or declined with a short summary.",
+      "If the peer asks for the local human's preference, permission, schedule, availability, commitment, or personal decision, mark it needs_human with a concrete reason and stop. Do not promise to ask through normal channels.",
+      "If the message is only an acknowledgement, thanks, no-rush note, well-wish, or conversational closer, do not send another acknowledgement. Mark it completed with a short summary and stop.",
       "If the message asks for private information, local side effects, unclear user intent, unavailable capabilities, or anything a context preference says not to handle autonomously, mark it needs_human with a concrete reason and stop.",
       "Never answer a social.message event by only saying what you would do. Either send the social reply, update the message status, or escalate.",
     ].join("\n"),
