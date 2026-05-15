@@ -165,7 +165,9 @@ function buildBuiltinSocialSetup(
   } catch {
     return undefined;
   }
-  const devHandle = runtimeConfig?.dev ? devHandleForOrigin(url) : undefined;
+  const localDevHandle = devHandleForOrigin(url);
+  const useDevHandle = runtimeConfig?.dev === true || localDevHandle !== undefined;
+  const devHandle = useDevHandle ? localDevHandle : undefined;
   const handle = devHandle ?? (url.hostname.includes(".") ? url.hostname.toLowerCase() : undefined);
   const allowedOrigin = url.protocol === "https:" || devHandle !== undefined;
   if (!allowedOrigin || !handle) {
@@ -175,7 +177,6 @@ function buildBuiltinSocialSetup(
     origin: url.origin,
     handle,
     displayName: username,
-    agentDisplayName: `${username}'s GSV`,
   };
 }
 

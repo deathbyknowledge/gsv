@@ -3,7 +3,7 @@ import type { KernelContext } from "../context";
 import { handleSysSetup } from "./setup";
 import { SocialStore } from "../social";
 import type { PdsEnsureAccountInput, PdsPutRecordInput, PdsServiceBinding } from "../../pds/client";
-import { SPACE_GSV_AGENT_CARD, SPACE_GSV_INSTANCE, SPACE_GSV_PROFILE } from "@gsv/protocol/syscalls/social";
+import { SPACE_GSV_INSTANCE, SPACE_GSV_PROFILE, SPACE_GSV_USER } from "@gsv/protocol/syscalls/social";
 
 type Row = Record<string, unknown>;
 
@@ -296,7 +296,7 @@ describe("handleSysSetup", () => {
     expect(putCalls.map((call) => call.collection)).toEqual([
       SPACE_GSV_PROFILE,
       SPACE_GSV_INSTANCE,
-      SPACE_GSV_AGENT_CARD,
+      SPACE_GSV_USER,
     ]);
   });
 
