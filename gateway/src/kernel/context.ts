@@ -28,6 +28,7 @@ import type { SocialStore } from "./social";
 import type { AppFrameContext } from "../protocol/app-frame";
 import type { SchedulerRunArgs, SchedulerRunResult } from "../syscalls/scheduler";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
+import type { ProcessAuthority } from "./authority";
 
 export type KernelContext = {
   env: Env;
@@ -51,6 +52,7 @@ export type KernelContext = {
   social?: SocialStore;
   connection: Connection;
   identity?: ConnectionIdentity;
+  authority?: ProcessAuthority;
   processId?: string;
   appFrame?: AppFrameContext;
   serverVersion: string;

@@ -1,7 +1,7 @@
 {
   "lexicon": 1,
-  "id": "space.gsv.package.like",
-  "description": "Public GSV package like record.",
+  "id": "space.gsv.contact",
+  "description": "Public GSV contact graph edge record.",
   "defs": {
     "main": {
       "type": "record",
@@ -12,7 +12,7 @@
         "properties": {
           "$type": {
             "type": "string",
-            "const": "space.gsv.package.like"
+            "const": "space.gsv.contact"
           },
           "createdAt": {
             "type": "string",
@@ -24,44 +24,42 @@
           },
           "subject": {
             "type": "ref",
-            "ref": "#packageSubject"
+            "ref": "#subject"
           },
-          "note": {
+          "label": {
             "type": "string",
-            "maxGraphemes": 300,
-            "maxLength": 1200
+            "maxGraphemes": 64,
+            "maxLength": 256
+          },
+          "tags": {
+            "type": "array",
+            "maxLength": 20,
+            "items": {
+              "type": "string",
+              "maxGraphemes": 64,
+              "maxLength": 256
+            }
           }
         }
       }
     },
-    "packageSubject": {
+    "subject": {
       "type": "object",
-      "required": ["kind", "name"],
+      "required": ["did"],
       "properties": {
-        "kind": {
+        "did": {
           "type": "string",
-          "const": "gsv-package"
+          "format": "did",
+          "maxLength": 2048
         },
-        "name": {
+        "handle": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "repo": {
-          "type": "string",
-          "maxLength": 512
-        },
-        "ref": {
-          "type": "string",
-          "maxLength": 256
-        },
-        "subdir": {
-          "type": "string",
-          "maxLength": 512
+          "format": "handle",
+          "maxLength": 253
         },
         "uri": {
           "type": "string",
-          "format": "uri",
+          "format": "at-uri",
           "maxLength": 2048
         }
       }

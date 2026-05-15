@@ -1,19 +1,21 @@
 import type {
-  SocialAgentCardGetArgs,
-  SocialAgentCardGetResult,
-  SocialAgentCardUpdateArgs,
-  SocialAgentCardUpdateResult,
   SocialAtUri,
+  SocialContactAddArgs,
+  SocialContactAddResult,
+  SocialContactGrantsSetArgs,
+  SocialContactGrantsSetResult,
+  SocialContactListArgs,
+  SocialContactListResult,
+  SocialContactPublicListArgs,
+  SocialContactPublicListResult,
+  SocialContactPublishArgs,
+  SocialContactPublishResult,
+  SocialContactRemoveArgs,
+  SocialContactRemoveResult,
+  SocialContactSummary,
+  SocialContactUnpublishArgs,
+  SocialContactUnpublishResult,
   SocialDid,
-  SocialFriendAddArgs,
-  SocialFriendAddResult,
-  SocialFriendGrantsSetArgs,
-  SocialFriendGrantsSetResult,
-  SocialFriendListArgs,
-  SocialFriendListResult,
-  SocialFriendRemoveArgs,
-  SocialFriendRemoveResult,
-  SocialFriendSummary,
   SocialGrant,
   SocialIdentityGetArgs,
   SocialIdentityGetResult,
@@ -41,16 +43,21 @@ import type {
   SocialMessageStatusUpdateArgs,
   SocialMessageStatusUpdateResult,
   SocialMessageSummary,
-  SocialPackageLikeCreateArgs,
-  SocialPackageLikeCreateResult,
-  SocialPackageLikeDeleteArgs,
-  SocialPackageLikeDeleteResult,
-  SocialPackageLikeListArgs,
-  SocialPackageLikeListResult,
+  SocialNewsCreateArgs,
+  SocialNewsCreateResult,
+  SocialNewsDeleteArgs,
+  SocialNewsDeleteResult,
+  SocialNewsListArgs,
+  SocialNewsListResult,
+  SocialPackageListArgs,
+  SocialPackageListResult,
+  SocialPackageReleaseListArgs,
+  SocialPackageReleaseListResult,
   SocialProfileGetArgs,
   SocialProfileGetResult,
   SocialProfileUpdateArgs,
   SocialProfileUpdateResult,
+  SocialPublicRecordEntry,
   SocialSetupArgs,
   SocialSetupResult,
   SocialSignedRequestEnvelope,
@@ -65,22 +72,35 @@ import type {
   SocialThreadStatus,
   SocialUserListArgs,
   SocialUserListResult,
-  SpaceGsvAgentCardRecord,
+  SocialVouchCreateArgs,
+  SocialVouchCreateResult,
+  SocialVouchDeleteArgs,
+  SocialVouchDeleteResult,
+  SocialVouchListArgs,
+  SocialVouchListResult,
   SpaceGsvCollection,
+  SpaceGsvContactRecord,
   SpaceGsvInstanceRecord,
-  SpaceGsvPackageLikeRecord,
+  SpaceGsvNewsRecord,
+  SpaceGsvPackageRecord,
+  SpaceGsvPackageReleaseRecord,
   SpaceGsvProfileRecord,
   SpaceGsvRecord,
   SpaceGsvUserRecord,
+  SpaceGsvVouchRecord,
 } from "@gsv/protocol/syscalls/social";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
+import type { InstalledPackageRecord } from "./packages";
 import {
   isSocialRemoteOperation,
-  SPACE_GSV_AGENT_CARD,
+  SPACE_GSV_CONTACT,
   SPACE_GSV_INSTANCE,
-  SPACE_GSV_PACKAGE_LIKE,
+  SPACE_GSV_NEWS,
+  SPACE_GSV_PACKAGE,
+  SPACE_GSV_PACKAGE_RELEASE,
   SPACE_GSV_PROFILE,
   SPACE_GSV_USER,
+  SPACE_GSV_VOUCH,
   SOCIAL_REMOTE_OPERATIONS,
 } from "@gsv/protocol/syscalls/social";
 import type { KernelContext } from "./context";
@@ -89,6 +109,7 @@ import { isGsvDevMode, socialOriginForHandle } from "../dev";
 import { GsvFs } from "../fs/gsv-fs";
 import { createHomeKnowledgeBackend } from "../fs/backends/home-knowledge";
 import { dispatchMindEvent } from "./mind";
+import { remoteSocialProcessAuthority } from "./authority";
 import { sendFrameToProcess } from "../shared/utils";
 
 const SELF_RKEY = "self";
@@ -107,6 +128,11 @@ const SOCIAL_DELIVERY_RETRY_DELAYS_MS = [
   2 * 60 * 60_000,
 ] as const;
 const SOCIAL_MAX_DELIVERY_ATTEMPTS = 1 + SOCIAL_DELIVERY_RETRY_DELAYS_MS.length;
+const SOCIAL_INBOUND_METHODS = new Set<SocialRemoteOperation>([
+  "social.thread.create",
+  "social.message.send",
+  "social.message.status.update",
+]);
 const P256_MULTICODEC_PREFIX = [0x80, 0x24] as const;
 const P256_FIELD_PRIME = BigInt("0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
 const P256_B = BigInt("0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
@@ -282,7 +308,6 @@ export type SocialFriendRecord = {
   displayName?: string;
   profile?: SpaceGsvProfileRecord;
   instance: SpaceGsvInstanceRecord;
-  agentCard?: SpaceGsvAgentCardRecord;
   createdAt: number;
   updatedAt: number;
   syncedAt?: number;
@@ -760,7 +785,6 @@ export class SocialStore {
     displayName?: string;
     profile?: SpaceGsvProfileRecord;
     instance: SpaceGsvInstanceRecord;
-    agentCard?: SpaceGsvAgentCardRecord;
   }): { friend: SocialFriendRecord; created: boolean } {
     const existing = this.getFriend(input.uid, input.handle);
     const now = Date.now();
@@ -777,7 +801,7 @@ export class SocialStore {
       input.displayName ?? null,
       input.profile ? JSON.stringify(input.profile) : null,
       JSON.stringify(input.instance),
-      input.agentCard ? JSON.stringify(input.agentCard) : null,
+      null,
       createdAt,
       now,
       now,
@@ -792,7 +816,6 @@ export class SocialStore {
         displayName: input.displayName,
         profile: input.profile,
         instance: input.instance,
-        agentCard: input.agentCard,
         createdAt,
         updatedAt: now,
         syncedAt: now,
@@ -856,7 +879,7 @@ export class SocialStore {
     return this.getFriendGrants(uid, handle);
   }
 
-  toFriendSummary(friend: SocialFriendRecord): SocialFriendSummary {
+  toFriendSummary(friend: SocialFriendRecord): SocialContactSummary {
     const grants = this.getFriendGrants(friend.uid, friend.handle);
     return toFriendSummary(friend, grants);
   }
@@ -1323,10 +1346,6 @@ export class SocialStore {
         identity.uid,
         SPACE_GSV_INSTANCE,
       )?.record,
-      agentCard: this.getPublicRecord<SpaceGsvAgentCardRecord>(
-        identity.uid,
-        SPACE_GSV_AGENT_CARD,
-      )?.record,
     };
   }
 }
@@ -1375,8 +1394,6 @@ export async function handleSocialSetup(
     endpoint: origin.origin,
     profileDisplayName: args.displayName,
     profileDescription: args.description,
-    agentDisplayName: args.agentDisplayName,
-    agentSummary: args.agentSummary,
     fallbackDisplayName: username,
   });
 
@@ -1434,15 +1451,10 @@ export async function handleSocialIdentityRepublish(
     uid,
     SPACE_GSV_PROFILE,
   )?.record;
-  const agentCard = store.getPublicRecord<SpaceGsvAgentCardRecord>(
-    uid,
-    SPACE_GSV_AGENT_CARD,
-  )?.record;
   const username = ctx.identity?.process.username ?? "GSV";
   const records = await publishBaselineSocialRecords(ctx, identity, {
     endpoint: identity.pdsEndpoint,
     profile,
-    agentCard,
     fallbackDisplayName: username,
   });
   return {
@@ -1507,61 +1519,32 @@ export async function handleSocialInstanceUpdate(
   };
 }
 
-export function handleSocialAgentCardGet(
-  args: SocialAgentCardGetArgs,
+export function handleSocialContactList(
+  _args: SocialContactListArgs,
   ctx: KernelContext,
-): SocialAgentCardGetResult {
-  const resolved = resolveReadableIdentity(args.handle, ctx);
-  return {
-    agentCard: resolved
-      ? requireSocialStore(ctx).getPublicRecord<SpaceGsvAgentCardRecord>(
-          resolved.uid,
-          SPACE_GSV_AGENT_CARD,
-        )?.record ?? null
-      : null,
-  };
-}
-
-export async function handleSocialAgentCardUpdate(
-  args: SocialAgentCardUpdateArgs,
-  ctx: KernelContext,
-): Promise<SocialAgentCardUpdateResult> {
-  const identity = requireWritableSocialIdentity(ctx);
-  const record = validateAgentCardRecord(args.record);
-  const result = await publishSelfRecord(ctx, identity, SPACE_GSV_AGENT_CARD, record);
-  return {
-    record: result.record,
-    uri: result.uri as SocialAtUri | undefined,
-  };
-}
-
-export function handleSocialFriendList(
-  _args: SocialFriendListArgs,
-  ctx: KernelContext,
-): SocialFriendListResult {
+): SocialContactListResult {
   const uid = requireSocialOwnerUid(ctx);
   const store = requireSocialStore(ctx);
   return {
-    friends: store.listFriends(uid).map((friend) => store.toFriendSummary(friend)),
+    contacts: store.listFriends(uid).map((friend) => store.toFriendSummary(friend)),
   };
 }
 
-export async function handleSocialFriendAdd(
-  args: SocialFriendAddArgs,
+export async function handleSocialContactAdd(
+  args: SocialContactAddArgs,
   ctx: KernelContext,
-): Promise<SocialFriendAddResult> {
+): Promise<SocialContactAddResult> {
   const uid = requireMainSocialUserUid(ctx);
   const identity = requireWritableSocialIdentity(ctx);
   const handle = normalizeHandle(args.handle, "handle");
   if (identity.handle === handle) {
-    throw new Error("Cannot add the local GSV identity as a friend");
+    throw new Error("Cannot add the local GSV identity as a contact");
   }
   const note = normalizeFriendNote(args.note);
   const grants = args.grants === undefined ? undefined : validateGrants(args.grants);
   const publicIdentity = await resolveFriendPublicIdentity(handle, ctx.env);
   const displayName = nonEmpty(args.displayName)
     ?? nonEmpty(publicIdentity.profile?.displayName)
-    ?? nonEmpty(publicIdentity.agentCard?.displayName)
     ?? handle;
   const store = requireSocialStore(ctx);
   const { friend, created } = store.upsertFriend({
@@ -1573,21 +1556,20 @@ export async function handleSocialFriendAdd(
     displayName,
     profile: publicIdentity.profile,
     instance: publicIdentity.instance,
-    agentCard: publicIdentity.agentCard,
   });
   if (grants !== undefined) {
     store.replaceFriendGrants(uid, handle, grants);
   }
   return {
-    friend: store.toFriendSummary(friend),
+    contact: store.toFriendSummary(friend),
     created,
   };
 }
 
-export function handleSocialFriendRemove(
-  args: SocialFriendRemoveArgs,
+export function handleSocialContactRemove(
+  args: SocialContactRemoveArgs,
   ctx: KernelContext,
-): SocialFriendRemoveResult {
+): SocialContactRemoveResult {
   const uid = requireMainSocialUserUid(ctx);
   const handle = normalizeHandle(args.handle, "handle");
   return {
@@ -1595,21 +1577,21 @@ export function handleSocialFriendRemove(
   };
 }
 
-export function handleSocialFriendGrantsSet(
-  args: SocialFriendGrantsSetArgs,
+export function handleSocialContactGrantsSet(
+  args: SocialContactGrantsSetArgs,
   ctx: KernelContext,
-): SocialFriendGrantsSetResult {
+): SocialContactGrantsSetResult {
   const uid = requireMainSocialUserUid(ctx);
   const handle = normalizeHandle(args.handle, "handle");
   const grants = validateGrants(args.grants);
   const store = requireSocialStore(ctx);
   const friend = store.getFriend(uid, handle);
   if (!friend) {
-    throw new Error(`Friend is not known: ${handle}`);
+    throw new Error(`Contact is not known: ${handle}`);
   }
   store.replaceFriendGrants(uid, handle, grants);
   return {
-    friend: store.toFriendSummary(friend),
+    contact: store.toFriendSummary(friend),
   };
 }
 
@@ -1635,7 +1617,7 @@ export async function handleSocialUserList(
             createdAt: new Date().toISOString(),
             username: user.username,
             displayName: user.displayName,
-            acceptsMessages: true,
+            acceptsContact: true,
           }) as SpaceGsvUserRecord,
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -1671,89 +1653,176 @@ export async function handleSocialUserList(
   };
 }
 
-export async function handleSocialPackageLikeCreate(
-  args: SocialPackageLikeCreateArgs,
+export async function handleSocialContactPublicList(
+  args: SocialContactPublicListArgs,
   ctx: KernelContext,
-): Promise<SocialPackageLikeCreateResult> {
-  const uid = requireSocialOwnerUid(ctx);
-  const identity = requireWritableSocialIdentity(ctx);
+): Promise<SocialContactPublicListResult> {
+  const contacts = await listSocialPublicRecords<SpaceGsvContactRecord>({
+    args,
+    ctx,
+    collection: SPACE_GSV_CONTACT,
+    method: "social.contact.read",
+    validate: validateContactRecord,
+  });
+  return { contacts };
+}
+
+export async function handleSocialContactPublish(
+  args: SocialContactPublishArgs,
+  ctx: KernelContext,
+): Promise<SocialContactPublishResult> {
   const now = new Date().toISOString();
-  const record = validatePackageLikeRecord(compactRecord({
+  const record = validateContactRecord(compactRecord({
     ...args.record,
-    $type: SPACE_GSV_PACKAGE_LIKE,
+    $type: SPACE_GSV_CONTACT,
     createdAt: args.record.createdAt ?? now,
     updatedAt: now,
   }));
-  const rkey = newSocialId("like");
-  const published = await publishSelfRecord(ctx, identity, SPACE_GSV_PACKAGE_LIKE, record, rkey);
-  return {
-    record,
-    uri: published.uri as SocialAtUri | undefined,
-  };
+  const rkey = normalizeOptionalRkey(args.rkey) ?? contactRkey(record);
+  const published = await publishSelfRecord(ctx, requireWritableSocialIdentity(ctx), SPACE_GSV_CONTACT, record, rkey);
+  return { record: published.record, uri: published.uri as SocialAtUri | undefined };
 }
 
-export async function handleSocialPackageLikeDelete(
-  args: SocialPackageLikeDeleteArgs,
+export async function handleSocialContactUnpublish(
+  args: SocialContactUnpublishArgs,
   ctx: KernelContext,
-): Promise<SocialPackageLikeDeleteResult> {
-  const uid = requireSocialOwnerUid(ctx);
-  const identity = requireWritableSocialIdentity(ctx);
-  const parsed = parseSocialAtUri(args.uri, SPACE_GSV_PACKAGE_LIKE);
-  if (parsed.did !== identity.did) {
-    throw new Error("package like uri does not belong to the local social identity");
-  }
-  const host = pdsHostForIdentity(ctx.env, identity);
-  await requirePdsClient(ctx.env).deleteRecord({
-    host,
-    repo: identity.did,
-    collection: SPACE_GSV_PACKAGE_LIKE,
-    rkey: parsed.rkey,
-  });
-  const deleted = requireSocialStore(ctx).deletePublicRecord(uid, SPACE_GSV_PACKAGE_LIKE, parsed.rkey);
-  return { deleted };
+): Promise<SocialContactUnpublishResult> {
+  return deleteSelfPublicRecord(ctx, SPACE_GSV_CONTACT, args.uri, "contact record");
 }
 
-export async function handleSocialPackageLikeList(
-  args: SocialPackageLikeListArgs,
+export async function handleSocialPackageList(
+  args: SocialPackageListArgs,
   ctx: KernelContext,
-): Promise<SocialPackageLikeListResult> {
-  const uid = requireSocialOwnerUid(ctx);
-  const store = requireSocialStore(ctx);
-  const limit = normalizeLimit(args.limit, 50);
-  if (args.handle === undefined) {
-    const identity = requireWritableSocialIdentity(ctx);
-    const handle = requireLocalHandle(identity);
-    const records = store.listPublicRecords<SpaceGsvPackageLikeRecord>(uid, SPACE_GSV_PACKAGE_LIKE, limit);
-    return {
-      likes: records.map((entry) => ({
-        handle,
-        uri: (entry.uri ?? `at://${identity.did}/${SPACE_GSV_PACKAGE_LIKE}/${entry.rkey}`) as SocialAtUri,
-        record: entry.record,
-      })),
-    };
-  }
-
-  const handle = normalizeHandle(args.handle, "handle");
-  const friend = requireFriend(store, uid, handle);
-  requireRemoteMethod(friend, "social.package.like.read");
-  const records = await syncFriendPublicRecords<SpaceGsvPackageLikeRecord>({
+): Promise<SocialPackageListResult> {
+  const packages = await listSocialPublicRecords<SpaceGsvPackageRecord>({
+    args,
     ctx,
-    store,
-    uid,
-    friend,
-    collection: SPACE_GSV_PACKAGE_LIKE,
-    limit,
-    validate: validatePackageLikeRecord,
+    collection: SPACE_GSV_PACKAGE,
+    method: "social.package.read",
+    validate: validatePackageRecord,
+  });
+  return { packages };
+}
+
+export async function handleSocialPackageReleaseList(
+  args: SocialPackageReleaseListArgs,
+  ctx: KernelContext,
+): Promise<SocialPackageReleaseListResult> {
+  const releases = await listSocialPublicRecords<SpaceGsvPackageReleaseRecord>({
+    args,
+    ctx,
+    collection: SPACE_GSV_PACKAGE_RELEASE,
+    method: "social.package.release.read",
+    validate: validatePackageReleaseRecord,
   });
   return {
-    likes: records.flatMap((entry) => entry.uri
-      ? [{
-          handle,
-          uri: entry.uri as SocialAtUri,
-          record: entry.record,
-        }]
-      : []),
+    releases: args.packageUri
+      ? releases.filter((entry) => entry.record.package.uri === args.packageUri)
+      : releases,
   };
+}
+
+export async function handleSocialVouchCreate(
+  args: SocialVouchCreateArgs,
+  ctx: KernelContext,
+): Promise<SocialVouchCreateResult> {
+  const now = new Date().toISOString();
+  const record = validateVouchRecord(compactRecord({
+    ...args.record,
+    $type: SPACE_GSV_VOUCH,
+    createdAt: args.record.createdAt ?? now,
+    updatedAt: now,
+  }));
+  const rkey = normalizeOptionalRkey(args.rkey) ?? newSocialId("vouch");
+  const published = await publishSelfRecord(ctx, requireWritableSocialIdentity(ctx), SPACE_GSV_VOUCH, record, rkey);
+  return { record: published.record, uri: published.uri as SocialAtUri | undefined };
+}
+
+export async function handleSocialVouchDelete(
+  args: SocialVouchDeleteArgs,
+  ctx: KernelContext,
+): Promise<SocialVouchDeleteResult> {
+  return deleteSelfPublicRecord(ctx, SPACE_GSV_VOUCH, args.uri, "vouch");
+}
+
+export async function handleSocialVouchList(
+  args: SocialVouchListArgs,
+  ctx: KernelContext,
+): Promise<SocialVouchListResult> {
+  const vouches = await listSocialPublicRecords<SpaceGsvVouchRecord>({
+    args,
+    ctx,
+    collection: SPACE_GSV_VOUCH,
+    method: "social.vouch.read",
+    validate: validateVouchRecord,
+  });
+  return { vouches };
+}
+
+export async function handleSocialNewsCreate(
+  args: SocialNewsCreateArgs,
+  ctx: KernelContext,
+): Promise<SocialNewsCreateResult> {
+  const now = new Date().toISOString();
+  const record = validateNewsRecord(compactRecord({
+    ...args.record,
+    $type: SPACE_GSV_NEWS,
+    createdAt: args.record.createdAt ?? now,
+    updatedAt: now,
+  }));
+  const rkey = normalizeOptionalRkey(args.rkey) ?? newSocialId("news");
+  const published = await publishSelfRecord(ctx, requireWritableSocialIdentity(ctx), SPACE_GSV_NEWS, record, rkey);
+  return { record: published.record, uri: published.uri as SocialAtUri | undefined };
+}
+
+export async function handleSocialNewsDelete(
+  args: SocialNewsDeleteArgs,
+  ctx: KernelContext,
+): Promise<SocialNewsDeleteResult> {
+  return deleteSelfPublicRecord(ctx, SPACE_GSV_NEWS, args.uri, "news");
+}
+
+export async function handleSocialNewsList(
+  args: SocialNewsListArgs,
+  ctx: KernelContext,
+): Promise<SocialNewsListResult> {
+  const news = await listSocialPublicRecords<SpaceGsvNewsRecord>({
+    args,
+    ctx,
+    collection: SPACE_GSV_NEWS,
+    method: "social.news.read",
+    validate: validateNewsRecord,
+  });
+  return { news };
+}
+
+export async function syncPublicPackageSocialRecordsForRepo(
+  ctx: KernelContext,
+  repo: string,
+  isPublic: boolean,
+): Promise<SocialAtUri[]> {
+  if (!ctx.social) {
+    return [];
+  }
+  const identity = ctx.social.getIdentity(MAIN_SOCIAL_UID);
+  if (!identity) {
+    return [];
+  }
+  const records = ctx.packages.list({})
+    .filter((pkg) => pkg.manifest.source.repo === repo);
+  const uris: SocialAtUri[] = [];
+  for (const pkg of records) {
+    const rkey = packageRecordRkey(pkg);
+    if (!isPublic) {
+      await deletePublicPackageRecordIfPresent(ctx, identity, rkey);
+      continue;
+    }
+    const published = await publishPackageRecord(ctx, identity, pkg, rkey);
+    if (published.uri) {
+      uris.push(published.uri as SocialAtUri);
+    }
+  }
+  return uris;
 }
 
 export async function handleSocialThreadCreate(
@@ -2046,8 +2115,8 @@ export async function handleSocialInbound(
   if (publicIdentity.instance.serviceKey.id !== envelope.keyId) {
     return rejectInbound("Envelope key does not match sender service key");
   }
-  if (!publicIdentity.instance.acceptedSocialMethods.includes(envelope.method)) {
-    return rejectInbound(`Sender does not accept ${envelope.method}`);
+  if (!SOCIAL_INBOUND_METHODS.has(envelope.method)) {
+    return rejectInbound(`Inbound method is not implemented: ${envelope.method}`);
   }
 
   const grant = store.getFriendGrants(MAIN_SOCIAL_UID, friend.handle)
@@ -2146,7 +2215,7 @@ export async function handleSocialDeliveryRetry(
   }
   const friend = store.getFriend(MAIN_SOCIAL_UID, message.toHandle);
   if (!friend) {
-    return { retried: false, reason: "friend not found" };
+    return { retried: false, reason: "contact not found" };
   }
   const method = message.deliveryMethod ?? inferDeliveryMethod(message);
   const retried = await attemptOutboundDelivery({
@@ -2415,7 +2484,7 @@ async function acceptInboundSocialEnvelope(input: {
   });
 
   try {
-    await deliverInboundMessageToMind(input.ctx, thread, message);
+    await deliverInboundMessageToMind(input.ctx, input.friend, thread, message);
   } catch (error) {
     console.error("[social.inbound] failed to deliver message to mind process", error);
   }
@@ -2475,6 +2544,7 @@ async function acceptInboundMessageStatusUpdate(input: {
 
 async function deliverInboundMessageToMind(
   ctx: KernelContext,
+  friend: SocialFriendRecord,
   thread: SocialThreadRecord,
   message: SocialMessageRecord,
 ): Promise<void> {
@@ -2495,6 +2565,12 @@ async function deliverInboundMessageToMind(
       direction: message.direction,
     },
     includeStructuredData: false,
+    authority: remoteSocialProcessAuthority({
+      peerHandle: friend.handle,
+      peerDid: friend.did,
+      threadId: thread.threadId,
+      messageId: message.messageId,
+    }),
   });
 }
 
@@ -2709,7 +2785,7 @@ function displayNameForUid(ctx: KernelContext, uid: number): string | undefined 
 
 function renderInboundSocialMessage(thread: SocialThreadRecord, message: SocialMessageRecord): string {
   const lines = [
-    "Inbound social message from an approved friend.",
+    "Inbound social message from an approved Contact.",
     "Handle this event by using the social command surface. A private transcript reply is not delivered to the peer.",
     `From: ${message.fromHandle}`,
     ...(message.sender ? [`Sender: ${formatSocialSender(message.sender)}`] : []),
@@ -2804,7 +2880,7 @@ function renderSocialInboxContext(entries: Array<{
   const lines = [
     "# Social Inbox",
     "",
-    "Active friend messages visible to GSV Mind.",
+    "Active Contact messages visible to GSV Mind.",
     "Use the social command to inspect messages, reply, and update message status.",
     "Escalate human preference, permission, schedule, availability, or commitment requests with needs_human.",
     "",
@@ -2843,11 +2919,8 @@ function renderSocialInboxContext(entries: Array<{
 type BaselineSocialRecordOptions = {
   endpoint: string;
   profile?: SpaceGsvProfileRecord;
-  agentCard?: SpaceGsvAgentCardRecord;
   profileDisplayName?: string;
   profileDescription?: string;
-  agentDisplayName?: string;
-  agentSummary?: string;
   fallbackDisplayName: string;
 };
 
@@ -2860,13 +2933,9 @@ async function publishBaselineSocialRecords(
   const settings = await ensureServiceSettings(store, identity.uid);
   const now = new Date().toISOString();
   const existingProfile = options.profile;
-  const existingAgentCard = options.agentCard;
   const profileDisplayName = nonEmpty(options.profileDisplayName)
     ?? nonEmpty(existingProfile?.displayName)
     ?? options.fallbackDisplayName;
-  const agentDisplayName = nonEmpty(options.agentDisplayName)
-    ?? nonEmpty(existingAgentCard?.displayName)
-    ?? "GSV Mind";
 
   const profileRecord = compactRecord({
     $type: SPACE_GSV_PROFILE,
@@ -2891,28 +2960,14 @@ async function publishBaselineSocialRecords(
     },
     acceptedSocialMethods: [...SOCIAL_REMOTE_OPERATIONS],
   };
-  const agentCardRecord = compactRecord({
-    $type: SPACE_GSV_AGENT_CARD,
-    createdAt: existingAgentCard?.createdAt ?? now,
-    updatedAt: now,
-    displayName: agentDisplayName,
-    summary: nonEmpty(options.agentSummary)
-      ?? nonEmpty(existingAgentCard?.summary)
-      ?? "Can receive and triage messages from approved friends.",
-    topics: existingAgentCard?.topics,
-    acceptsMessages: true,
-    humanEscalation: existingAgentCard?.humanEscalation ?? "sometimes",
-  }) as SpaceGsvAgentCardRecord;
 
   const profile = await publishSelfRecord(ctx, identity, SPACE_GSV_PROFILE, profileRecord);
   const instance = await publishSelfRecord(ctx, identity, SPACE_GSV_INSTANCE, instanceRecord);
-  const agentCard = await publishSelfRecord(ctx, identity, SPACE_GSV_AGENT_CARD, agentCardRecord);
   const users = await publishLocalUserDirectoryRecords(ctx, identity, now);
 
   return {
     profile: profile.uri as SocialAtUri | undefined,
     instance: instance.uri as SocialAtUri | undefined,
-    agentCard: agentCard.uri as SocialAtUri | undefined,
     users: users.flatMap((record) => record.uri ? [record.uri as SocialAtUri] : []),
   };
 }
@@ -2943,6 +2998,156 @@ async function publishSelfRecord<TRecord extends SpaceGsvRecord>(
   });
 }
 
+async function deleteSelfPublicRecord(
+  ctx: KernelContext,
+  collection: SpaceGsvCollection,
+  uri: SocialAtUri,
+  label: string,
+): Promise<{ deleted: boolean }> {
+  const uid = requireSocialOwnerUid(ctx);
+  const identity = requireWritableSocialIdentity(ctx);
+  const parsed = parseSocialAtUri(uri, collection);
+  if (parsed.did !== identity.did) {
+    throw new Error(`${label} uri does not belong to the local social identity`);
+  }
+  await requirePdsClient(ctx.env).deleteRecord({
+    host: pdsHostForIdentity(ctx.env, identity),
+    repo: identity.did,
+    collection,
+    rkey: parsed.rkey,
+  });
+  return {
+    deleted: requireSocialStore(ctx).deletePublicRecord(uid, collection, parsed.rkey),
+  };
+}
+
+async function listSocialPublicRecords<TRecord extends SpaceGsvRecord>(input: {
+  args: { handle?: string; limit?: number };
+  ctx: KernelContext;
+  collection: SpaceGsvCollection;
+  method: SocialRemoteOperation;
+  validate: (record: unknown) => TRecord;
+}): Promise<Array<SocialPublicRecordEntry<TRecord>>> {
+  const uid = requireSocialOwnerUid(input.ctx);
+  const store = requireSocialStore(input.ctx);
+  const limit = normalizeLimit(input.args.limit, 50);
+  if (input.args.handle === undefined) {
+    const identity = requireWritableSocialIdentity(input.ctx);
+    const handle = requireLocalHandle(identity);
+    return store.listPublicRecords<TRecord>(uid, input.collection, limit).map((entry) =>
+      toSocialPublicRecordEntry(handle, identity.did, input.collection, entry)
+    );
+  }
+
+  const handle = normalizeHandle(input.args.handle, "handle");
+  const friend = requireFriend(store, uid, handle);
+  requireRemoteMethod(friend, input.method);
+  const records = await syncFriendPublicRecords<TRecord>({
+    ctx: input.ctx,
+    store,
+    uid,
+    friend,
+    collection: input.collection,
+    limit,
+    validate: input.validate,
+  });
+  return records.flatMap((entry) => entry.uri
+    ? [{
+        handle,
+        uri: entry.uri as SocialAtUri,
+        cid: entry.cid,
+        record: entry.record,
+      }]
+    : []);
+}
+
+function toSocialPublicRecordEntry<TRecord extends SpaceGsvRecord>(
+  handle: string,
+  did: SocialDid,
+  collection: SpaceGsvCollection,
+  entry: SocialPublicRecord<TRecord>,
+): SocialPublicRecordEntry<TRecord> {
+  return {
+    handle,
+    uri: (entry.uri ?? `at://${did}/${collection}/${entry.rkey}`) as SocialAtUri,
+    cid: entry.cid,
+    record: entry.record,
+  };
+}
+
+function normalizeOptionalRkey(value: unknown): string | undefined {
+  return value === undefined ? undefined : normalizeSocialId(value, "rkey");
+}
+
+function contactRkey(record: SpaceGsvContactRecord): string {
+  return record.subject.handle
+    ? sanitizeSocialRkey(record.subject.handle)
+    : sanitizeSocialRkey(record.subject.did.replace(/^did:/, ""));
+}
+
+function sanitizeSocialRkey(value: string): string {
+  const sanitized = value.toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 200);
+  return sanitized || newSocialId("record");
+}
+
+async function publishPackageRecord(
+  ctx: KernelContext,
+  identity: SocialIdentityRecord,
+  pkg: InstalledPackageRecord,
+  rkey: string,
+): Promise<SocialPublicRecord<SpaceGsvPackageRecord>> {
+  const existing = requireSocialStore(ctx).getPublicRecord<SpaceGsvPackageRecord>(
+    identity.uid,
+    SPACE_GSV_PACKAGE,
+    rkey,
+  )?.record;
+  const now = new Date().toISOString();
+  const record = validatePackageRecord(compactRecord({
+    $type: SPACE_GSV_PACKAGE,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    name: pkg.manifest.name,
+    displayName: packageDisplayName(pkg),
+    description: pkg.manifest.description,
+    source: {
+      repo: pkg.manifest.source.repo,
+      ref: pkg.manifest.source.ref,
+      subdir: pkg.manifest.source.subdir,
+    },
+  }) as SpaceGsvPackageRecord);
+  return publishSelfRecord(ctx, identity, SPACE_GSV_PACKAGE, record, rkey);
+}
+
+async function deletePublicPackageRecordIfPresent(
+  ctx: KernelContext,
+  identity: SocialIdentityRecord,
+  rkey: string,
+): Promise<void> {
+  const store = requireSocialStore(ctx);
+  const existing = store.getPublicRecord<SpaceGsvPackageRecord>(identity.uid, SPACE_GSV_PACKAGE, rkey);
+  if (!existing) {
+    return;
+  }
+  await requirePdsClient(ctx.env).deleteRecord({
+    host: pdsHostForIdentity(ctx.env, identity),
+    repo: identity.did,
+    collection: SPACE_GSV_PACKAGE,
+    rkey,
+  });
+  store.deletePublicRecord(identity.uid, SPACE_GSV_PACKAGE, rkey);
+}
+
+function packageRecordRkey(pkg: InstalledPackageRecord): string {
+  return sanitizeSocialRkey(pkg.manifest.name);
+}
+
+function packageDisplayName(pkg: InstalledPackageRecord): string | undefined {
+  return pkg.manifest.entrypoints.find((entry) => entry.kind === "ui" && entry.name.trim())?.name;
+}
+
 async function publishLocalUserDirectoryRecords(
   ctx: KernelContext,
   identity: SocialIdentityRecord,
@@ -2963,7 +3168,7 @@ async function publishLocalUserDirectoryRecords(
       displayName: user.displayName,
       description: existing?.description,
       publicHandle: existing?.publicHandle,
-      acceptsMessages: existing?.acceptsMessages ?? true,
+      acceptsContact: existing?.acceptsContact ?? true,
     }) as SpaceGsvUserRecord;
     records.push(await publishSelfRecord(ctx, identity, SPACE_GSV_USER, record, user.username));
   }
@@ -3042,7 +3247,7 @@ function requireLocalHandle(identity: SocialIdentityRecord): string {
 function requireFriend(store: SocialStore, uid: number, handle: string): SocialFriendRecord {
   const friend = store.getFriend(uid, handle);
   if (!friend) {
-    throw new Error(`Friend is not known: ${handle}`);
+    throw new Error(`Contact is not known: ${handle}`);
   }
   return friend;
 }
@@ -3462,31 +3667,6 @@ function validateInstanceRecord(record: unknown): SpaceGsvInstanceRecord {
   return value as SpaceGsvInstanceRecord;
 }
 
-function validateAgentCardRecord(record: unknown): SpaceGsvAgentCardRecord {
-  const value = requireRecordObject(record, SPACE_GSV_AGENT_CARD);
-  requireIsoString(value.createdAt, "createdAt");
-  optionalString(value.updatedAt, "updatedAt");
-  optionalString(value.displayName, "displayName");
-  optionalString(value.summary, "summary");
-  if (value.topics !== undefined) {
-    if (!Array.isArray(value.topics) || !value.topics.every((item) => typeof item === "string")) {
-      throw new Error("topics must be an array of strings");
-    }
-  }
-  if (typeof value.acceptsMessages !== "boolean") {
-    throw new Error("acceptsMessages must be a boolean");
-  }
-  if (
-    value.humanEscalation !== undefined &&
-    value.humanEscalation !== "never" &&
-    value.humanEscalation !== "sometimes" &&
-    value.humanEscalation !== "required"
-  ) {
-    throw new Error("invalid humanEscalation");
-  }
-  return value as SpaceGsvAgentCardRecord;
-}
-
 function validateUserRecord(record: unknown): SpaceGsvUserRecord {
   const value = requireRecordObject(record, SPACE_GSV_USER);
   requireIsoString(value.createdAt, "createdAt");
@@ -3497,29 +3677,124 @@ function validateUserRecord(record: unknown): SpaceGsvUserRecord {
   if (value.publicHandle !== undefined) {
     normalizeHandle(value.publicHandle, "publicHandle");
   }
-  if (value.acceptsMessages !== undefined && typeof value.acceptsMessages !== "boolean") {
-    throw new Error("acceptsMessages must be a boolean");
+  if (value.acceptsContact !== undefined && typeof value.acceptsContact !== "boolean") {
+    throw new Error("acceptsContact must be a boolean");
   }
   return value as SpaceGsvUserRecord;
 }
 
-function validatePackageLikeRecord(record: unknown): SpaceGsvPackageLikeRecord {
-  const value = requireRecordObject(record, SPACE_GSV_PACKAGE_LIKE);
+function validateContactRecord(record: unknown): SpaceGsvContactRecord {
+  const value = requireRecordObject(record, SPACE_GSV_CONTACT);
   requireIsoString(value.createdAt, "createdAt");
   optionalString(value.updatedAt, "updatedAt");
   const subject = requireObject(value.subject, "subject");
-  if (subject.kind !== "gsv-package") {
-    throw new Error("subject.kind must be gsv-package");
+  normalizeDid(subject.did);
+  if (subject.handle !== undefined) {
+    normalizeHandle(subject.handle, "subject.handle");
   }
-  requireBoundedString(subject.name, "subject.name", 256);
-  optionalBoundedString(subject.repo, "subject.repo", 512);
-  optionalBoundedString(subject.ref, "subject.ref", 256);
-  optionalBoundedString(subject.subdir, "subject.subdir", 512);
   if (subject.uri !== undefined) {
-    requireUrlString(subject.uri, "subject.uri");
+    requireAtUri(subject.uri, "subject.uri");
   }
+  optionalBoundedString(value.label, "label", 256);
+  validateStringArray(value.tags, "tags", 20, 256);
+  return value as SpaceGsvContactRecord;
+}
+
+function validatePackageRecord(record: unknown): SpaceGsvPackageRecord {
+  const value = requireRecordObject(record, SPACE_GSV_PACKAGE);
+  requireIsoString(value.createdAt, "createdAt");
+  optionalString(value.updatedAt, "updatedAt");
+  requireBoundedString(value.name, "name", 256);
+  optionalBoundedString(value.displayName, "displayName", 256);
+  optionalBoundedString(value.description, "description", 4096);
+  validatePackageSource(value.source, "source");
+  if (value.homepage !== undefined) {
+    requireUrlString(value.homepage, "homepage");
+  }
+  validateStringArray(value.tags, "tags", 20, 256);
+  return value as SpaceGsvPackageRecord;
+}
+
+function validatePackageReleaseRecord(record: unknown): SpaceGsvPackageReleaseRecord {
+  const value = requireRecordObject(record, SPACE_GSV_PACKAGE_RELEASE);
+  requireIsoString(value.createdAt, "createdAt");
+  optionalString(value.updatedAt, "updatedAt");
+  validateRecordReference(value.package, "package");
+  requireBoundedString(value.version, "version", 128);
+  optionalBoundedString(value.title, "title", 256);
+  optionalBoundedString(value.description, "description", 4096);
+  validatePackageSource(value.source, "source");
+  if (value.releasedAt !== undefined) {
+    requireIsoString(value.releasedAt, "releasedAt");
+  }
+  validateStringArray(value.tags, "tags", 20, 256);
+  return value as SpaceGsvPackageReleaseRecord;
+}
+
+function validateVouchRecord(record: unknown): SpaceGsvVouchRecord {
+  const value = requireRecordObject(record, SPACE_GSV_VOUCH);
+  requireIsoString(value.createdAt, "createdAt");
+  optionalString(value.updatedAt, "updatedAt");
+  validateRecordReference(value.subject, "subject");
   optionalBoundedString(value.note, "note", 1200);
-  return value as SpaceGsvPackageLikeRecord;
+  validateStringArray(value.tags, "tags", 20, 256);
+  return value as SpaceGsvVouchRecord;
+}
+
+function validateNewsRecord(record: unknown): SpaceGsvNewsRecord {
+  const value = requireRecordObject(record, SPACE_GSV_NEWS);
+  requireIsoString(value.createdAt, "createdAt");
+  optionalString(value.updatedAt, "updatedAt");
+  optionalBoundedString(value.title, "title", 256);
+  requireBoundedString(value.text, "text", MAX_SOCIAL_TEXT_BYTES);
+  validateStringArray(value.tags, "tags", 20, 256);
+  if (value.startsAt !== undefined) {
+    requireIsoString(value.startsAt, "startsAt");
+  }
+  if (value.endsAt !== undefined) {
+    requireIsoString(value.endsAt, "endsAt");
+  }
+  validateRecordReferenceArray(value.subjects, "subjects");
+  return value as SpaceGsvNewsRecord;
+}
+
+function validatePackageSource(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+  const source = requireObject(value, field);
+  optionalBoundedString(source.repo, `${field}.repo`, 512);
+  optionalBoundedString(source.ref, `${field}.ref`, 256);
+  optionalBoundedString(source.subdir, `${field}.subdir`, 512);
+  if (source.uri !== undefined) {
+    requireUrlString(source.uri, `${field}.uri`);
+  }
+}
+
+function validateRecordReference(value: unknown, field: string): void {
+  const reference = requireObject(value, field);
+  requireAtUri(reference.uri, `${field}.uri`);
+  optionalBoundedString(reference.cid, `${field}.cid`, 256);
+}
+
+function validateRecordReferenceArray(value: unknown, field: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value) || value.length > 20) {
+    throw new Error(`${field} must be an array with at most 20 items`);
+  }
+  value.forEach((item, index) => validateRecordReference(item, `${field}[${index}]`));
+}
+
+function validateStringArray(value: unknown, field: string, maxItems: number, maxBytes: number): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value) || value.length > maxItems) {
+    throw new Error(`${field} must be an array with at most ${maxItems} items`);
+  }
+  value.forEach((item, index) => requireBoundedString(item, `${field}[${index}]`, maxBytes));
 }
 
 function requireRecordObject(
@@ -3601,6 +3876,13 @@ function requireUrlString(value: unknown, field: string): void {
   }
 }
 
+function requireAtUri(value: unknown, field: string): void {
+  const text = requireString(value, field);
+  if (!text.startsWith("at://")) {
+    throw new Error(`${field} must be an at:// URI`);
+  }
+}
+
 function normalizeSignedEnvelope(value: unknown): SocialSignedRequestEnvelope {
   const envelope = requireObject(value, "envelope");
   const method = requireString(envelope.method, "envelope.method");
@@ -3662,7 +3944,6 @@ async function resolveFriendPublicIdentity(handle: string, env: Env): Promise<{
   did: SocialDid;
   profile?: SpaceGsvProfileRecord;
   instance: SpaceGsvInstanceRecord;
-  agentCard?: SpaceGsvAgentCardRecord;
 }> {
   const origin = socialOriginForHandle(env, handle);
   const did = normalizeDid((await fetchRequiredText(
@@ -3670,17 +3951,15 @@ async function resolveFriendPublicIdentity(handle: string, env: Env): Promise<{
     `${handle} handle DID`,
   )).trim());
 
-  const [profile, instance, agentCard] = await Promise.all([
+  const [profile, instance] = await Promise.all([
     fetchOptionalRecord<SpaceGsvProfileRecord>(handle, did, SPACE_GSV_PROFILE, env),
     fetchRequiredRecord<SpaceGsvInstanceRecord>(handle, did, SPACE_GSV_INSTANCE, env),
-    fetchOptionalRecord<SpaceGsvAgentCardRecord>(handle, did, SPACE_GSV_AGENT_CARD, env),
   ]);
 
   return {
     did,
     profile: profile ? validateProfileRecord(profile) : undefined,
     instance: validateInstanceRecord(instance),
-    agentCard: agentCard ? validateAgentCardRecord(agentCard) : undefined,
   };
 }
 
@@ -3866,7 +4145,6 @@ function toFriendRecord(row: FriendRow): SocialFriendRecord {
     displayName: row.display_name ?? undefined,
     profile: row.profile_json ? JSON.parse(row.profile_json) as SpaceGsvProfileRecord : undefined,
     instance: JSON.parse(row.instance_json) as SpaceGsvInstanceRecord,
-    agentCard: row.agent_card_json ? JSON.parse(row.agent_card_json) as SpaceGsvAgentCardRecord : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     syncedAt: row.synced_at ?? undefined,
@@ -3896,15 +4174,13 @@ function toGrantRecord(row: FriendGrantRow): SocialGrant {
   };
 }
 
-function toFriendSummary(friend: SocialFriendRecord, grants: SocialGrant[]): SocialFriendSummary {
+function toFriendSummary(friend: SocialFriendRecord, grants: SocialGrant[]): SocialContactSummary {
   return {
     handle: friend.handle,
     note: friend.note,
     displayName: friend.displayName,
     description: friend.profile?.description,
-    agentDisplayName: friend.agentCard?.displayName,
-    agentSummary: friend.agentCard?.summary,
-    acceptsMessages: friend.agentCard?.acceptsMessages ?? false,
+    acceptsContact: true,
     acceptedSocialMethods: friend.instance.acceptedSocialMethods,
     grants,
     createdAt: new Date(friend.createdAt).toISOString(),

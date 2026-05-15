@@ -7,10 +7,12 @@ import { fileURLToPath } from "node:url";
 const LEXICON_IDS = [
   "space.gsv.profile",
   "space.gsv.instance",
-  "space.gsv.agent.card",
   "space.gsv.user",
-  "space.gsv.package.like",
-  "space.gsv.status",
+  "space.gsv.contact",
+  "space.gsv.package",
+  "space.gsv.package.release",
+  "space.gsv.vouch",
+  "space.gsv.news",
 ];
 
 const config = {
@@ -282,6 +284,9 @@ async function maybeCreateAccount(label, handle, did, password) {
 }
 
 function sampleRecords(avatarBlob) {
+  const now = new Date().toISOString();
+  const packageUri = `at://${targetDid}/space.gsv.package/notes`;
+
   return [
     {
       mode: "put",
@@ -289,7 +294,7 @@ function sampleRecords(avatarBlob) {
       rkey: "self",
       value: {
         $type: "space.gsv.profile",
-        createdAt: new Date().toISOString(),
+        createdAt: now,
         displayName: "Space GSV Smoke",
         description: "Strictly validated profile smoke record.",
         avatar: avatarBlob,
@@ -303,7 +308,7 @@ function sampleRecords(avatarBlob) {
       rkey: "self",
       value: {
         $type: "space.gsv.instance",
-        createdAt: new Date().toISOString(),
+        createdAt: now,
         endpoint: "https://gsv.space/social",
         protocolVersion: 1,
         serviceKey: {
@@ -313,26 +318,15 @@ function sampleRecords(avatarBlob) {
         },
         acceptedSocialMethods: [
           "social.profile.read",
-          "social.agent.card.read",
           "social.user.read",
+          "social.contact.read",
+          "social.package.read",
+          "social.package.release.read",
+          "social.vouch.read",
+          "social.news.read",
           "social.message.send",
           "social.message.status.update",
         ],
-      },
-    },
-    {
-      mode: "put",
-      collection: "space.gsv.agent.card",
-      rkey: "self",
-      value: {
-        $type: "space.gsv.agent.card",
-        createdAt: new Date().toISOString(),
-        displayName: "Space GSV Smoke Agent",
-        summary: "Answers smoke-test messages.",
-        topics: ["social", "pds"],
-        acceptsMessages: true,
-        acceptsRequests: true,
-        humanEscalation: "sometimes",
       },
     },
     {
@@ -341,39 +335,99 @@ function sampleRecords(avatarBlob) {
       rkey: "alice",
       value: {
         $type: "space.gsv.user",
-        createdAt: new Date().toISOString(),
+        createdAt: now,
         username: "alice",
         displayName: "Alice",
         description: "Example GSV resident.",
-        acceptsMessages: true,
+        publicHandle: "alice.example.com",
+        acceptsContact: true,
       },
     },
     {
       mode: "create",
-      collection: "space.gsv.package.like",
+      collection: "space.gsv.contact",
       value: {
-        $type: "space.gsv.package.like",
-        createdAt: new Date().toISOString(),
+        $type: "space.gsv.contact",
+        createdAt: now,
         subject: {
-          kind: "gsv-package",
-          name: "notes",
+          did: authorityDid,
+          handle: authorityHandle,
+          uri: `at://${authorityDid}/space.gsv.profile/self`,
+        },
+        label: "Space GSV authority",
+        tags: ["authority", "smoke"],
+      },
+    },
+    {
+      mode: "put",
+      collection: "space.gsv.package",
+      rkey: "notes",
+      value: {
+        $type: "space.gsv.package",
+        createdAt: now,
+        name: "notes",
+        displayName: "Notes",
+        description: "Strictly validated package smoke record.",
+        source: {
           repo: "theagentscompany/gsv",
           ref: "main",
           subdir: "builtin-packages/notes",
           uri: "https://github.com/theagentscompany/gsv/tree/main/builtin-packages/notes",
         },
-        note: "Useful package.",
+        homepage: "https://gsv.space/packages/notes",
+        tags: ["notes", "smoke"],
       },
     },
     {
       mode: "create",
-      collection: "space.gsv.status",
+      collection: "space.gsv.package.release",
       value: {
-        $type: "space.gsv.status",
-        createdAt: new Date().toISOString(),
+        $type: "space.gsv.package.release",
+        createdAt: now,
+        package: {
+          uri: packageUri,
+        },
+        version: "1.0.0-smoke",
+        title: "Smoke release",
+        description: "Strictly validated package release smoke record.",
+        source: {
+          repo: "theagentscompany/gsv",
+          ref: "main",
+          subdir: "builtin-packages/notes",
+        },
+        releasedAt: now,
+        tags: ["release", "smoke"],
+      },
+    },
+    {
+      mode: "create",
+      collection: "space.gsv.vouch",
+      value: {
+        $type: "space.gsv.vouch",
+        createdAt: now,
+        subject: {
+          uri: packageUri,
+        },
+        note: "Useful package.",
+        tags: ["trusted", "smoke"],
+      },
+    },
+    {
+      mode: "create",
+      collection: "space.gsv.news",
+      value: {
+        $type: "space.gsv.news",
+        createdAt: now,
+        title: "Space GSV lexicons published",
         text: `Publishing space.gsv Lexicons ${stamp}`,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        startsAt: now,
+        endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         tags: ["space-gsv", "lexicon"],
+        subjects: [
+          {
+            uri: packageUri,
+          },
+        ],
       },
     },
   ];

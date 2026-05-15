@@ -1,18 +1,18 @@
 {
   "lexicon": 1,
-  "id": "space.gsv.status",
-  "description": "Public GSV short status record.",
+  "id": "space.gsv.vouch",
+  "description": "Public GSV endorsement record.",
   "defs": {
     "main": {
       "type": "record",
       "key": "tid",
       "record": {
         "type": "object",
-        "required": ["$type", "createdAt", "text"],
+        "required": ["$type", "createdAt", "subject"],
         "properties": {
           "$type": {
             "type": "string",
-            "const": "space.gsv.status"
+            "const": "space.gsv.vouch"
           },
           "createdAt": {
             "type": "string",
@@ -22,14 +22,14 @@
             "type": "string",
             "format": "datetime"
           },
-          "text": {
+          "subject": {
+            "type": "ref",
+            "ref": "#recordRef"
+          },
+          "note": {
             "type": "string",
             "maxGraphemes": 300,
             "maxLength": 1200
-          },
-          "expiresAt": {
-            "type": "string",
-            "format": "datetime"
           },
           "tags": {
             "type": "array",
@@ -40,6 +40,22 @@
               "maxLength": 256
             }
           }
+        }
+      }
+    },
+    "recordRef": {
+      "type": "object",
+      "required": ["uri"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "at-uri",
+          "maxLength": 2048
+        },
+        "cid": {
+          "type": "string",
+          "format": "cid",
+          "maxLength": 256
         }
       }
     }

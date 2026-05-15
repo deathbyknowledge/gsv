@@ -1,0 +1,207 @@
+.social-app {
+  width: 100%;
+  height: 100%;
+  min-height: 100dvh;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--social-surface);
+}
+
+.social-mobile-topbar {
+  display: none;
+}
+
+.social-main-frame {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--social-surface);
+}
+
+.social-main-frame > .social-section,
+.social-main-frame > .social-single-pane {
+  grid-row: 1 / -1;
+  min-height: 0;
+}
+
+.social-main-frame > .social-error-banner + .social-section,
+.social-main-frame > .social-error-banner + .social-single-pane {
+  grid-row: 2;
+}
+
+.social-section {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(300px, 372px) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.social-single-pane {
+  min-height: 0;
+  overflow: hidden;
+  background: var(--social-surface);
+}
+
+.social-list-pane {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border-right: 1px solid var(--social-line);
+  background: var(--social-surface-soft);
+  overflow: hidden;
+}
+
+.social-contacts-section .social-list-pane,
+.social-directory-section .social-list-pane {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.social-detail-pane {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--social-surface);
+}
+
+.social-channel-detail {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.social-list-header,
+.social-pane-header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--social-line);
+  padding: 16px 18px;
+}
+
+.social-list-header h1,
+.social-pane-title h2,
+.social-empty-state h2 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 20px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.social-list-header > span {
+  min-width: 34px;
+  min-height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--social-line);
+  border-radius: 999px;
+  background: var(--social-surface-strong);
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-pane-title,
+.social-pane-actions {
+  min-width: 0;
+}
+
+.social-pane-meta,
+.social-pane-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.social-pane-meta {
+  margin-top: 7px;
+  font-size: 12px;
+}
+
+.social-pane-actions {
+  justify-content: flex-end;
+}
+
+.social-scroll-list,
+.social-detail-scroll,
+.social-message-stream,
+.social-workflow-rail {
+  min-height: 0;
+  overflow: auto;
+}
+
+.social-scroll-list {
+  padding: 10px;
+}
+
+.social-detail-scroll {
+  padding: 16px;
+}
+
+.social-channel-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(290px, 34%);
+  overflow: hidden;
+}
+
+.social-message-stream,
+.social-workflow-rail {
+  padding: 16px;
+}
+
+.social-workflow-rail {
+  border-left: 1px solid var(--social-line);
+  background: var(--social-surface-soft);
+}
+
+.social-error-banner {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(148, 61, 61, 0.28);
+  background: var(--social-danger-soft);
+  color: var(--social-danger);
+  padding: 8px 10px 8px 16px;
+}
+
+.social-error-banner span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.social-empty-state {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+  color: var(--social-muted);
+}
+
+.social-empty-state p {
+  max-width: 32rem;
+  margin: 0;
+}
+
+.social-boot-error {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  background: var(--social-danger-soft);
+  color: var(--social-danger);
+}

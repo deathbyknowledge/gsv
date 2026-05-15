@@ -1,0 +1,103 @@
+{
+  "lexicon": 1,
+  "id": "space.gsv.package.release",
+  "description": "Public GSV package release record.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["$type", "createdAt", "package", "version"],
+        "properties": {
+          "$type": {
+            "type": "string",
+            "const": "space.gsv.package.release"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "package": {
+            "type": "ref",
+            "ref": "#recordRef"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "title": {
+            "type": "string",
+            "maxGraphemes": 140,
+            "maxLength": 560
+          },
+          "description": {
+            "type": "string",
+            "maxGraphemes": 1024,
+            "maxLength": 8192
+          },
+          "source": {
+            "type": "ref",
+            "ref": "#source"
+          },
+          "releasedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "tags": {
+            "type": "array",
+            "maxLength": 20,
+            "items": {
+              "type": "string",
+              "maxGraphemes": 64,
+              "maxLength": 256
+            }
+          }
+        }
+      }
+    },
+    "recordRef": {
+      "type": "object",
+      "required": ["uri"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "at-uri",
+          "maxLength": 2048
+        },
+        "cid": {
+          "type": "string",
+          "format": "cid",
+          "maxLength": 256
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "ref": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "subdir": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "uri": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048
+        }
+      }
+    }
+  }
+}

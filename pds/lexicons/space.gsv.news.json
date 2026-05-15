@@ -1,0 +1,80 @@
+{
+  "lexicon": 1,
+  "id": "space.gsv.news",
+  "description": "Public GSV news feed record.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["$type", "createdAt", "text"],
+        "properties": {
+          "$type": {
+            "type": "string",
+            "const": "space.gsv.news"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "title": {
+            "type": "string",
+            "maxGraphemes": 140,
+            "maxLength": 560
+          },
+          "text": {
+            "type": "string",
+            "maxGraphemes": 1024,
+            "maxLength": 8192
+          },
+          "tags": {
+            "type": "array",
+            "maxLength": 20,
+            "items": {
+              "type": "string",
+              "maxGraphemes": 64,
+              "maxLength": 256
+            }
+          },
+          "startsAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "endsAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "subjects": {
+            "type": "array",
+            "maxLength": 20,
+            "items": {
+              "type": "ref",
+              "ref": "#recordRef"
+            }
+          }
+        }
+      }
+    },
+    "recordRef": {
+      "type": "object",
+      "required": ["uri"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "at-uri",
+          "maxLength": 2048
+        },
+        "cid": {
+          "type": "string",
+          "format": "cid",
+          "maxLength": 256
+        }
+      }
+    }
+  }
+}

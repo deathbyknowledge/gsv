@@ -33,6 +33,10 @@ import {
   resolvePackageProfileReference,
   visiblePackageScopesForActor,
 } from "./packages";
+import {
+  isRemoteSocialAuthority,
+  isSyscallToolVisibleForAuthority,
+} from "./authority";
 
 import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
@@ -73,20 +77,25 @@ export async function handleAiTools(
   const onlineDevices: AiToolsDevice[] = [];
   const deviceIds: string[] = [];
 
-  for (const device of ctx.devices.listForUser(uid, gids)) {
-    if (!device.online) continue;
-    deviceIds.push(device.device_id);
-    onlineDevices.push({
-      id: device.device_id,
-      implements: device.implements,
-      ...(device.description ? { description: device.description } : {}),
-      platform: device.platform || undefined,
-    });
+  if (!isRemoteSocialAuthority(ctx.authority)) {
+    for (const device of ctx.devices.listForUser(uid, gids)) {
+      if (!device.online) continue;
+      deviceIds.push(device.device_id);
+      onlineDevices.push({
+        id: device.device_id,
+        implements: device.implements,
+        ...(device.description ? { description: device.description } : {}),
+        platform: device.platform || undefined,
+      });
+    }
   }
 
   const tools: ToolDefinition[] = [];
 
   for (const [syscall, baseDef] of Object.entries(SYSCALL_TOOLS)) {
+    if (!isSyscallToolVisibleForAuthority(ctx.authority, syscall)) {
+      continue;
+    }
     const allowed = capabilities.includes("*") || capabilities.some((cap) => {
       if (cap === syscall) return true;
       const domain = syscall.split(".")[0];

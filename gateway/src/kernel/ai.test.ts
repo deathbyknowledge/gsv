@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import { handleAiConfig, handleAiTools } from "./ai";
 import { SYSTEM_CONFIG_DEFAULTS } from "./config";
+import { remoteSocialProcessAuthority } from "./authority";
 
 function makeContext(connectionState: string): KernelContext {
   return {
@@ -82,6 +83,29 @@ describe("handleAiTools", () => {
     expect(result.mcpServers).toEqual([]);
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
+
+  it("hides user devices and high-power tools from remote social minds", async () => {
+    const ctx = makeContext("ready");
+    ctx.authority = remoteSocialProcessAuthority({ peerHandle: "alice.example" });
+    ctx.devices.listForUser = vi.fn(() => [{
+      device_id: "macbook",
+      uid: 1000,
+      description: "Sam's Mac",
+      online: true,
+      platform: "darwin",
+      implements: ["shell.exec", "fs.read"],
+      last_seen: Date.now(),
+    }]) as unknown as KernelContext["devices"]["listForUser"];
+
+    const result = await handleAiTools(ctx);
+
+    expect(result.devices).toEqual([]);
+    expect(result.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["Read", "Write", "Edit", "Search", "Shell"]),
+    );
+    expect(result.tools.map((tool) => tool.name)).not.toContain("Delete");
+    expect(result.tools.map((tool) => tool.name)).not.toContain("CodeMode");
+  });
 });
 
 describe("handleAiConfig", () => {
@@ -90,6 +114,12 @@ describe("handleAiConfig", () => {
       ...makeContext("ready"),
       env: {},
       config: makeDefaultConfig(),
+      auth: {
+        getPasswdEntries: vi.fn(() => []),
+      },
+      social: {
+        listFriends: vi.fn(() => []),
+      },
       packages: {
         list: vi.fn(() => []),
       },

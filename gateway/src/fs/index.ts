@@ -3,7 +3,7 @@
  */
 
 export { GsvFs } from "./gsv-fs";
-export type { ExtendedStat } from "./gsv-fs";
+export type { ExtendedStat, FsAccessPolicy, FsWriteOperation } from "./gsv-fs";
 export type { KernelRefs } from "./refs";
 export type {
   MountBackend,

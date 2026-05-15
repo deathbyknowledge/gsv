@@ -46,6 +46,7 @@ import {
   resolvePackageFromRipgitSource,
   visiblePackageScopesForActor,
 } from "./packages";
+import { syncPublicPackageSocialRecordsForRepo } from "./social";
 import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 
 const DEFAULT_PACKAGE_CREATE_REF = "main";
@@ -187,10 +188,10 @@ export async function handlePkgPublicList(
   };
 }
 
-export function handlePkgPublicSet(
+export async function handlePkgPublicSet(
   args: PkgPublicSetArgs,
   ctx: KernelContext,
-): PkgPublicSetResult {
+): Promise<PkgPublicSetResult> {
   const identity = requireIdentity(ctx);
   const repo = resolvePublicRepoTarget(args, ctx);
   assertRepoOwnerOrRoot(repo, identity);
@@ -202,10 +203,12 @@ export function handlePkgPublicSet(
   } else {
     ctx.config.delete(key);
   }
+  const socialUris = await syncPublicPackageSocialRecordsForRepo(ctx, repo, nextPublic);
   return {
     changed: wasPublic !== nextPublic,
     repo,
     public: nextPublic,
+    socialUris,
   };
 }
 

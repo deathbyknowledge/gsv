@@ -150,8 +150,6 @@ function parseSocialSetup(args: SysSetupArgs): SocialSetupArgs | undefined {
     handle: readOptionalString(social.handle),
     displayName: readOptionalString(social.displayName),
     description: readOptionalString(social.description),
-    agentDisplayName: readOptionalString(social.agentDisplayName),
-    agentSummary: readOptionalString(social.agentSummary),
   };
 }
 

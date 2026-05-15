@@ -224,4 +224,5 @@ export type PkgPublicSetResult = {
   changed: boolean;
   repo: string;
   public: boolean;
+  socialUris?: string[];
 };

@@ -1,0 +1,201 @@
+:root {
+  color-scheme: light;
+  --social-bg: #edf0f2;
+  --social-surface: #fbfcfd;
+  --social-surface-soft: #f4f6f7;
+  --social-surface-strong: #ffffff;
+  --social-line: rgba(25, 34, 39, 0.13);
+  --social-line-strong: rgba(25, 34, 39, 0.24);
+  --social-text: #162026;
+  --social-muted: #62717a;
+  --social-primary: #176555;
+  --social-primary-soft: rgba(23, 101, 85, 0.1);
+  --social-blue: #2e5f93;
+  --social-blue-soft: rgba(46, 95, 147, 0.1);
+  --social-warning: #946315;
+  --social-warning-soft: rgba(148, 99, 21, 0.1);
+  --social-danger: #943d3d;
+  --social-danger-soft: rgba(148, 61, 61, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--social-bg);
+  color: var(--social-text);
+}
+
+body {
+  font: 14px/1.45 Inter, Manrope, system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+code,
+pre {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.social-eyebrow {
+  margin: 0 0 4px;
+  color: var(--social-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.social-list-note,
+.social-pane-meta,
+.social-workflow-meta,
+.social-structured-text {
+  color: var(--social-muted);
+}
+
+.social-button {
+  min-height: 34px;
+  border: 1px solid var(--social-line);
+  border-radius: 7px;
+  background: var(--social-surface-strong);
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.social-button--primary {
+  border-color: var(--social-primary);
+  background: var(--social-primary);
+  color: #ffffff;
+}
+
+.social-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.social-icon-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--social-line);
+  border-radius: 7px;
+  background: var(--social-surface-strong);
+  color: var(--social-text);
+  cursor: pointer;
+}
+
+.social-icon-button.is-danger {
+  color: var(--social-danger);
+  border-color: rgba(148, 61, 61, 0.36);
+}
+
+.social-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.social-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--social-muted);
+}
+
+.social-status-dot.is-active,
+.social-status-dot.is-accepted,
+.social-status-dot.is-open,
+.social-status-dot.is-received,
+.social-status-dot.is-triaged,
+.social-status-dot.is-completed {
+  background: var(--social-primary);
+}
+
+.social-status-dot.is-attention,
+.social-status-dot.is-needs-human,
+.social-status-dot.is-needs_human,
+.social-status-dot.is-in_progress,
+.social-status-dot.is-waiting-on-human,
+.social-status-dot.is-retrying {
+  background: var(--social-warning);
+}
+
+.social-status-dot.is-failed,
+.social-status-dot.is-declined,
+.social-status-dot.is-expired,
+.social-status-dot.is-inactive {
+  background: var(--social-danger);
+}
+
+.social-pill {
+  min-height: 24px;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--social-line);
+  border-radius: 999px;
+  background: var(--social-surface-strong);
+  color: var(--social-muted);
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-pill.is-active,
+.social-pill.is-accepted,
+.social-pill.is-received,
+.social-pill.is-triaged,
+.social-pill.is-completed {
+  border-color: rgba(23, 101, 85, 0.3);
+  background: var(--social-primary-soft);
+  color: var(--social-primary);
+}
+
+.social-pill.is-attention,
+.social-pill.is-needs-human,
+.social-pill.is-needs_human,
+.social-pill.is-in_progress,
+.social-pill.is-waiting-on-human,
+.social-pill.is-retrying {
+  border-color: rgba(148, 99, 21, 0.32);
+  background: var(--social-warning-soft);
+  color: var(--social-warning);
+}
+
+.social-pill.is-failed,
+.social-pill.is-declined,
+.social-pill.is-expired,
+.social-pill.is-inactive {
+  border-color: rgba(148, 61, 61, 0.32);
+  background: var(--social-danger-soft);
+  color: var(--social-danger);
+}

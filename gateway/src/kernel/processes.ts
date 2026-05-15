@@ -13,6 +13,12 @@ import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { AiContextProfile } from "../syscalls/ai";
 import type { ProcContextFile } from "../syscalls/proc";
 import type { PackageInstallScope } from "./packages";
+import {
+  LOCAL_PROCESS_AUTHORITY_JSON,
+  parseProcessAuthorityJson,
+  serializeProcessAuthority,
+  type ProcessAuthority,
+} from "./authority";
 
 export type ProcessState = "running" | "paused" | "killed";
 
@@ -43,6 +49,7 @@ export type ProcessRecord = {
   createdAt: number;
   mounts: ProcessMount[];
   contextFiles: ProcContextFile[];
+  authority: ProcessAuthority;
 };
 
 export class ProcessRegistry {
@@ -63,6 +70,7 @@ export class ProcessRegistry {
         workspace_id TEXT,
         mounts TEXT NOT NULL DEFAULT '[]',
         context_files_json TEXT NOT NULL DEFAULT '[]',
+        authority_json TEXT NOT NULL DEFAULT '{"kind":"local-user"}',
         state TEXT NOT NULL DEFAULT 'running',
         label TEXT,
         created_at INTEGER NOT NULL
@@ -89,9 +97,14 @@ export class ProcessRegistry {
       this.sql.exec("ALTER TABLE processes ADD COLUMN context_files_json TEXT");
     } catch {}
 
+    try {
+      this.sql.exec(`ALTER TABLE processes ADD COLUMN authority_json TEXT NOT NULL DEFAULT '${LOCAL_PROCESS_AUTHORITY_JSON}'`);
+    } catch {}
+
     this.sql.exec("UPDATE processes SET cwd = home WHERE cwd IS NULL OR cwd = ''");
     this.sql.exec("UPDATE processes SET mounts = '[]' WHERE mounts IS NULL OR mounts = ''");
     this.sql.exec("UPDATE processes SET context_files_json = '[]' WHERE context_files_json IS NULL OR context_files_json = ''");
+    this.sql.exec(`UPDATE processes SET authority_json = '${LOCAL_PROCESS_AUTHORITY_JSON}' WHERE authority_json IS NULL OR authority_json = ''`);
     this.sql.exec("UPDATE processes SET profile = 'init' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'init:%'");
     this.sql.exec("UPDATE processes SET profile = 'task' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'task:%'");
     this.sql.exec("UPDATE processes SET profile = 'review' WHERE (profile IS NULL OR profile = '') AND process_id LIKE 'review:%'");
@@ -112,12 +125,13 @@ export class ProcessRegistry {
       workspaceId?: string | null;
       mounts?: ProcessMount[];
       contextFiles?: ProcContextFile[];
+      authority?: ProcessAuthority;
     },
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, workspace_id, mounts, context_files_json, state, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
+        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, workspace_id, mounts, context_files_json, authority_json, state, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
@@ -130,6 +144,7 @@ export class ProcessRegistry {
       opts.workspaceId ?? identity.workspaceId,
       JSON.stringify(opts.mounts ?? []),
       JSON.stringify(opts.contextFiles ?? []),
+      serializeProcessAuthority(opts.authority),
       opts.label ?? null,
       Date.now(),
     );
@@ -207,6 +222,14 @@ export class ProcessRegistry {
       processId,
     )];
     return parseMounts(rows[0]?.mounts ?? null);
+  }
+
+  getAuthority(processId: string): ProcessAuthority {
+    const rows = [...this.sql.exec<{ authority_json: string | null }>(
+      "SELECT authority_json FROM processes WHERE process_id = ?",
+      processId,
+    )];
+    return parseProcessAuthorityJson(rows[0]?.authority_json ?? null);
   }
 
   getContextFiles(processId: string): ProcContextFile[] {
@@ -300,6 +323,7 @@ type RowShape = {
   workspace_id: string | null;
   mounts: string | null;
   context_files_json: string | null;
+  authority_json: string | null;
   state: string;
   label: string | null;
   created_at: number;
@@ -322,6 +346,7 @@ function toRecord(row: RowShape): ProcessRecord {
     createdAt: row.created_at,
     mounts: parseMounts(row.mounts),
     contextFiles: parseContextFiles(row.context_files_json),
+    authority: parseProcessAuthorityJson(row.authority_json),
   };
 }
 

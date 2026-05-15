@@ -33,6 +33,10 @@ import { isWorkspaceMountPath } from "./backends/workspace";
 import { normalizePath } from "./utils";
 
 export type ExtendedStat = ExtendedMountStat;
+export type FsWriteOperation = "write" | "delete" | "move" | "metadata";
+export type FsAccessPolicy = {
+  canWrite?: (path: string, operation: FsWriteOperation) => string | null;
+};
 
 export class GsvFs implements IFileSystem {
   private readonly identity: ProcessIdentity;
@@ -43,6 +47,7 @@ export class GsvFs implements IFileSystem {
   private readonly homeKnowledgeBackend: MountBackend | null;
   private readonly workspaceBackend: MountBackend | null;
   private readonly packageBackend: MountBackend | null;
+  private readonly accessPolicy: FsAccessPolicy | null;
 
   constructor(
     bucket: R2Bucket,
@@ -53,6 +58,7 @@ export class GsvFs implements IFileSystem {
     homeKnowledgeBackend?: MountBackend | null,
     workspaceBackend?: MountBackend | null,
     packageBackend?: MountBackend | null,
+    accessPolicy?: FsAccessPolicy | null,
   ) {
     this.identity = identity;
     this.kernel = kernel ?? null;
@@ -62,6 +68,7 @@ export class GsvFs implements IFileSystem {
     this.homeKnowledgeBackend = homeKnowledgeBackend ?? null;
     this.workspaceBackend = workspaceBackend ?? null;
     this.packageBackend = packageBackend ?? null;
+    this.accessPolicy = accessPolicy ?? null;
   }
 
   async readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string> {
@@ -76,11 +83,13 @@ export class GsvFs implements IFileSystem {
 
   async writeFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void> {
     const p = normalizePath(path);
+    this.assertCanWrite(p, "write");
     await this.backendForPath(p).writeFile(p, content, options);
   }
 
   async appendFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void> {
     const p = normalizePath(path);
+    this.assertCanWrite(p, "write");
     await this.backendForPath(p).appendFile(p, content, options);
   }
 
@@ -141,6 +150,7 @@ export class GsvFs implements IFileSystem {
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
     const p = normalizePath(path);
+    this.assertCanWrite(p, "write");
     await this.backendForPath(p).mkdir(p, options);
   }
 
@@ -175,12 +185,14 @@ export class GsvFs implements IFileSystem {
 
   async rm(path: string, options?: RmOptions): Promise<void> {
     const p = normalizePath(path);
+    this.assertCanWrite(p, "delete");
     await this.backendForPath(p).rm(p, options);
   }
 
   async cp(src: string, dest: string, _options?: CpOptions): Promise<void> {
     const sp = normalizePath(src);
     const dp = normalizePath(dest);
+    this.assertCanWrite(dp, "write");
     const srcStat = await this.stat(sp);
     if (srcStat.isDirectory) {
       throw new Error(`EISDIR: illegal operation on a directory, cp '${sp}'`);
@@ -190,12 +202,15 @@ export class GsvFs implements IFileSystem {
   }
 
   async mv(src: string, dest: string): Promise<void> {
+    this.assertCanWrite(normalizePath(src), "move");
+    this.assertCanWrite(normalizePath(dest), "write");
     await this.cp(src, dest);
     await this.rm(src, { force: true });
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     const p = normalizePath(path);
+    this.assertCanWrite(p, "metadata");
     const backend = this.backendForPath(p);
     if (!backend.chmod) {
       throw new Error(`ENOSYS: chmod not supported for '${p}'`);
@@ -205,6 +220,7 @@ export class GsvFs implements IFileSystem {
 
   async chown(path: string, newUid?: number, newGid?: number): Promise<void> {
     const p = normalizePath(path);
+    this.assertCanWrite(p, "metadata");
     const backend = this.backendForPath(p);
     if (!backend.chown) {
       throw new Error(`ENOSYS: chown not supported for '${p}'`);
@@ -230,6 +246,7 @@ export class GsvFs implements IFileSystem {
 
   async utimes(path: string, atime: Date, mtime: Date): Promise<void> {
     const p = normalizePath(path);
+    this.assertCanWrite(p, "metadata");
     const backend = this.backendForPath(p);
     if (!backend.utimes) {
       const exists = await backend.exists(p);
@@ -289,6 +306,13 @@ export class GsvFs implements IFileSystem {
     }
 
     return this.r2Backend;
+  }
+
+  private assertCanWrite(path: string, operation: FsWriteOperation): void {
+    const denied = this.accessPolicy?.canWrite?.(path, operation);
+    if (denied) {
+      throw new Error(`EACCES: ${denied}`);
+    }
   }
 
   private async readdirRoot(): Promise<string[]> {

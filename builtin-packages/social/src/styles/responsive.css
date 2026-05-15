@@ -1,0 +1,153 @@
+@media (max-width: 880px) {
+  .social-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .social-mobile-topbar {
+    min-width: 0;
+    min-height: 46px;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    align-items: center;
+    gap: 4px;
+    border-bottom: 1px solid var(--social-line);
+    background: var(--social-surface);
+    padding: 6px 8px;
+  }
+
+  .social-mobile-topbar strong {
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .social-mobile-spacer {
+    width: 34px;
+    height: 34px;
+  }
+
+  .social-main-frame {
+    grid-row: 2;
+  }
+
+  .social-global-nav {
+    grid-row: 3;
+    grid-template-rows: 1fr;
+    border-top: 1px solid var(--social-line);
+    border-right: 0;
+    background: #e8ecef;
+  }
+
+  .social-nav-identity,
+  .social-nav-group h2 {
+    display: none;
+  }
+
+  .social-nav-groups {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+    padding: 6px;
+  }
+
+  .social-nav-group,
+  .social-nav-group + .social-nav-group {
+    display: contents;
+    margin: 0;
+  }
+
+  .social-nav-item {
+    min-height: 48px;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: 2px;
+    border-radius: 7px;
+    padding: 5px 4px;
+    text-align: center;
+    font-size: 11px;
+  }
+
+  .social-nav-item strong {
+    min-width: 20px;
+    min-height: 18px;
+    font-size: 10px;
+  }
+
+  .social-section {
+    grid-template-columns: 1fr;
+  }
+
+  .social-section.is-detail-open .social-list-pane {
+    display: none;
+  }
+
+  .social-section:not(.is-detail-open) .social-detail-pane {
+    display: none;
+  }
+
+  .social-list-pane,
+  .social-detail-pane {
+    border-right: 0;
+  }
+
+  .social-list-header,
+  .social-pane-header {
+    padding: 14px;
+  }
+
+  .social-list-header h1,
+  .social-pane-title h2,
+  .social-empty-state h2 {
+    font-size: 18px;
+  }
+
+  .social-channel-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .social-workflow-rail {
+    max-height: 38vh;
+    border-left: 0;
+    border-top: 1px solid var(--social-line);
+  }
+
+  .social-directory-grid,
+  .social-record-table > div,
+  .social-field-list > div {
+    grid-template-columns: 1fr;
+  }
+
+  .social-record-table > div {
+    gap: 3px;
+  }
+}
+
+@media (max-width: 520px) {
+  .social-pane-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .social-pane-header {
+    flex-wrap: wrap;
+  }
+
+  .social-grant-list {
+    grid-template-columns: 1fr;
+  }
+
+  .social-row-button {
+    grid-template-columns: 12px minmax(0, 1fr);
+  }
+
+  .social-row-button > .social-pill,
+  .social-row-count {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

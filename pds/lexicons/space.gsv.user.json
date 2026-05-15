@@ -1,7 +1,7 @@
 {
   "lexicon": 1,
   "id": "space.gsv.user",
-  "description": "Public GSV local user directory record.",
+  "description": "Public GSV opt-in routing directory record.",
   "defs": {
     "main": {
       "type": "record",
@@ -41,7 +41,7 @@
             "type": "string",
             "maxLength": 253
           },
-          "acceptsMessages": {
+          "acceptsContact": {
             "type": "boolean"
           }
         }

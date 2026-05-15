@@ -22,11 +22,10 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import {
-  handleSocialAgentCardUpdate,
-  handleSocialFriendAdd,
-  handleSocialFriendGrantsSet,
-  handleSocialFriendList,
-  handleSocialFriendRemove,
+  handleSocialContactAdd,
+  handleSocialContactGrantsSet,
+  handleSocialContactList,
+  handleSocialContactRemove,
   handleSocialDeliveryRetry,
   handleSocialIdentityGet,
   handleSocialIdentityRepublish,
@@ -35,9 +34,7 @@ import {
   handleSocialMessageStatusList,
   handleSocialMessageStatusUpdate,
   handleSocialMessageSend,
-  handleSocialPackageLikeCreate,
-  handleSocialPackageLikeDelete,
-  handleSocialPackageLikeList,
+  handleSocialPackageList,
   handleSocialSetup,
   handleSocialProfileGet,
   handleSocialProfileUpdate,
@@ -45,20 +42,24 @@ import {
   handleSocialThreadGet,
   handleSocialThreadList,
   handleSocialUserList,
+  handleSocialVouchCreate,
+  handleSocialVouchDelete,
+  handleSocialVouchList,
   generateP256ServiceKey,
   signSocialEnvelope,
   SocialStore,
+  syncPublicPackageSocialRecordsForRepo,
 } from "./social";
 import type { KernelContext } from "./context";
+import type { InstalledPackageRecord } from "./packages";
 import {
-  SPACE_GSV_AGENT_CARD,
   SPACE_GSV_INSTANCE,
-  SPACE_GSV_PACKAGE_LIKE,
+  SPACE_GSV_PACKAGE,
   SPACE_GSV_PROFILE,
   SPACE_GSV_USER,
+  SPACE_GSV_VOUCH,
   type SocialRemoteOperation,
   type SocialSignedRequestEnvelope,
-  type SpaceGsvAgentCardRecord,
   type SpaceGsvInstanceRecord,
   type SpaceGsvProfileRecord,
 } from "@gsv/protocol/syscalls/social";
@@ -956,13 +957,57 @@ function createCtx(
   } as unknown as KernelContext;
 }
 
+function testPackage(
+  name: string,
+  description: string,
+  repo: string,
+  subdir: string,
+): InstalledPackageRecord {
+  return {
+    packageId: name,
+    scope: { kind: "global" },
+    manifest: {
+      name,
+      description,
+      version: "0.1.0",
+      runtime: { kind: "gsv" },
+      source: {
+        repo,
+        ref: "main",
+        subdir,
+      },
+      entrypoints: [
+        {
+          kind: "ui",
+          name: name[0]!.toUpperCase() + name.slice(1),
+          path: "./src/main.tsx",
+        },
+      ],
+    },
+    artifact: {
+      kind: "source",
+      version: "0.1.0",
+      digest: `sha256:${name}`,
+      size: 0,
+    },
+    enabled: true,
+    reviewRequired: false,
+    reviewedAt: null,
+    installedAt: 1,
+    updatedAt: 1,
+  } as InstalledPackageRecord;
+}
+
 function setContextRole(ctx: KernelContext, role: "user" | "service"): void {
   (ctx.identity as { role: "user" | "service" }).role = role;
 }
 
 function stubAlicePublicIdentity(
   publicKeyMultibase: string,
-  options: { inbound?: (body: unknown) => Response | Promise<Response> } = {},
+  options: {
+    acceptedSocialMethods?: SocialRemoteOperation[];
+    inbound?: (body: unknown) => Response | Promise<Response>;
+  } = {},
 ): void {
   vi.stubGlobal("fetch", vi.fn(async (url: string | URL, init?: RequestInit) => {
     const href = String(url);
@@ -1001,25 +1046,13 @@ function stubAlicePublicIdentity(
               type: "Multikey",
               publicKeyMultibase,
             },
-            acceptedSocialMethods: [
+            acceptedSocialMethods: options.acceptedSocialMethods ?? [
               "social.user.read",
-              "social.package.like.read",
+              "social.package.read",
               "social.thread.create",
               "social.message.send",
               "social.message.status.update",
             ],
-          },
-        });
-      }
-      if (collection === SPACE_GSV_AGENT_CARD) {
-        return Response.json({
-          uri: "at://did:web:alice.example/space.gsv.agent.card/self",
-          cid: "bafy-agent-card",
-          value: {
-            $type: SPACE_GSV_AGENT_CARD,
-            createdAt: "2026-05-12T12:00:00Z",
-            displayName: "Alice's GSV",
-            acceptsMessages: true,
           },
         });
       }
@@ -1036,27 +1069,26 @@ function stubAlicePublicIdentity(
                 createdAt: "2026-05-12T12:00:00Z",
                 username: "alice",
                 displayName: "Alice",
-                acceptsMessages: true,
+                acceptsContact: true,
               },
             },
           ],
         });
       }
-      if (collection === SPACE_GSV_PACKAGE_LIKE) {
+      if (collection === SPACE_GSV_PACKAGE) {
         return Response.json({
           records: [
             {
-              uri: "at://did:web:alice.example/space.gsv.package.like/like-1",
-              cid: "bafy-like-1",
+              uri: "at://did:web:alice.example/space.gsv.package/planner",
+              cid: "bafy-package-planner",
               value: {
-                $type: SPACE_GSV_PACKAGE_LIKE,
+                $type: SPACE_GSV_PACKAGE,
                 createdAt: "2026-05-12T12:00:00Z",
-                subject: {
-                  kind: "gsv-package",
-                  name: "planner",
+                name: "planner",
+                description: "Shared planning surface.",
+                source: {
                   repo: "alice/planner",
                 },
-                note: "Useful for shared planning.",
               },
             },
           ],
@@ -1095,7 +1127,7 @@ async function setupSignedInboundFriend(grants: Array<{ operation: SocialRemoteO
   }, ctx);
   const aliceKeys = await generateP256ServiceKey();
   stubAlicePublicIdentity(aliceKeys.publicKeyMultibase);
-  await handleSocialFriendAdd({
+  await handleSocialContactAdd({
     handle: "alice.example",
     note: "Alice's household GSV",
     grants,
@@ -1155,17 +1187,12 @@ describe("social identity and records", () => {
         displayName: "Hank",
         description: "GSV builder",
       },
-      agentCard: {
-        $type: SPACE_GSV_AGENT_CARD,
-        acceptsMessages: true,
-      },
     });
     expect(result.identity).not.toHaveProperty("did");
 
     expect(putCalls.map((call) => call.collection)).toEqual([
       SPACE_GSV_PROFILE,
       SPACE_GSV_INSTANCE,
-      SPACE_GSV_AGENT_CARD,
       SPACE_GSV_USER,
     ]);
     for (const call of putCalls) {
@@ -1176,13 +1203,13 @@ describe("social identity and records", () => {
       });
     }
     expect(putCalls.filter((call) => call.collection !== SPACE_GSV_USER).map((call) => call.rkey))
-      .toEqual(["self", "self", "self"]);
+      .toEqual(["self", "self"]);
     const user = putCalls.find((call) => call.collection === SPACE_GSV_USER)?.record;
     expect(user).toMatchObject({
       $type: SPACE_GSV_USER,
       username: "hank",
       displayName: "Hank",
-      acceptsMessages: true,
+      acceptsContact: true,
     });
     const instance = putCalls.find((call) => call.collection === SPACE_GSV_INSTANCE)?.record as SpaceGsvInstanceRecord;
     expect(instance.endpoint).toBe("https://gsv.example");
@@ -1208,15 +1235,6 @@ describe("social identity and records", () => {
       handle: "gsv.example",
       pdsEndpoint: "https://gsv.example",
     }, ctx);
-    await handleSocialAgentCardUpdate({
-      record: {
-        $type: SPACE_GSV_AGENT_CARD,
-        createdAt: "2026-05-12T12:00:00Z",
-        displayName: "Custom Mind",
-        summary: "Keeps the current local social posture.",
-        acceptsMessages: true,
-      },
-    }, ctx);
     putCalls.length = 0;
 
     const result = await handleSocialIdentityRepublish({}, ctx);
@@ -1225,7 +1243,6 @@ describe("social identity and records", () => {
     expect(putCalls.map((call) => call.collection)).toEqual([
       SPACE_GSV_PROFILE,
       SPACE_GSV_INSTANCE,
-      SPACE_GSV_AGENT_CARD,
       SPACE_GSV_USER,
     ]);
     const instance = putCalls.find((call) => call.collection === SPACE_GSV_INSTANCE)?.record as SpaceGsvInstanceRecord;
@@ -1233,9 +1250,6 @@ describe("social identity and records", () => {
     expect(instance.acceptedSocialMethods).toContain("social.message.status.update");
     expect(instance.acceptedSocialMethods).not.toContain("social.message.reply" as never);
     expect(instance.acceptedSocialMethods).not.toContain("social.request.create" as never);
-    const agentCard = putCalls.find((call) => call.collection === SPACE_GSV_AGENT_CARD)?.record as SpaceGsvAgentCardRecord;
-    expect(agentCard.displayName).toBe("Custom Mind");
-    expect(agentCard).not.toHaveProperty("acceptsRequests");
   });
 
   it("sets up a local dev social identity with a synthetic handle", async () => {
@@ -1384,38 +1398,7 @@ describe("social identity and records", () => {
     }, ctx)).rejects.toThrow("Social identity is not linked");
   });
 
-  it("validates agent card records before publishing", async () => {
-    const ctx = createCtx({
-      pdsPutRecord: async () => ({
-        uri: "at://did:web:gsv.example/space.gsv.agent.card/self",
-        cid: "bafy-card",
-      }),
-    });
-    handleSocialIdentitySet({
-      handle: "gsv.example",
-      pdsEndpoint: "https://gsv.example",
-    }, ctx);
-
-    const record: SpaceGsvAgentCardRecord = {
-      $type: SPACE_GSV_AGENT_CARD,
-      createdAt: "2026-05-12T12:00:00Z",
-      acceptsMessages: true,
-      humanEscalation: "sometimes",
-    };
-
-    await expect(handleSocialAgentCardUpdate({ record }, ctx)).resolves.toEqual({
-      record,
-      uri: "at://did:web:gsv.example/space.gsv.agent.card/self",
-    });
-    await expect(handleSocialAgentCardUpdate({
-      record: {
-        ...record,
-        acceptsMessages: "yes",
-      } as unknown as SpaceGsvAgentCardRecord,
-    }, ctx)).rejects.toThrow("acceptsMessages must be a boolean");
-  });
-
-  it("adds friends by handle, stores public records privately, and manages grants", async () => {
+  it("adds contacts by handle, stores public records privately, and manages grants", async () => {
     const ctx = createCtx();
     handleSocialIdentitySet({
       handle: "gsv.example",
@@ -1460,44 +1443,30 @@ describe("social identity and records", () => {
             },
           });
         }
-        if (collection === SPACE_GSV_AGENT_CARD) {
-          return Response.json({
-            uri: "at://did:web:alice.example/space.gsv.agent.card/self",
-            cid: "bafy-agent-card",
-            value: {
-              $type: SPACE_GSV_AGENT_CARD,
-              createdAt: "2026-05-12T12:00:00Z",
-              displayName: "Alice's GSV",
-              summary: "Can talk about projects.",
-              acceptsMessages: true,
-            },
-          });
-        }
       }
       return Response.json({ error: "not found" }, { status: 404 });
     }));
 
-    await expect(handleSocialFriendAdd({
+    await expect(handleSocialContactAdd({
       handle: "Alice.Example",
       note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
     }, ctx)).resolves.toMatchObject({
       created: true,
-      friend: {
+      contact: {
         handle: "alice.example",
         note: "Alice's household GSV",
         displayName: "Alice",
         description: "Builds small agents.",
-        agentDisplayName: "Alice's GSV",
-        acceptsMessages: true,
+        acceptsContact: true,
         acceptedSocialMethods: ["social.message.send", "social.message.status.update"],
         grants: [{ operation: "social.message.send" }],
       },
     });
 
-    expect(handleSocialFriendList({}, ctx).friends).toHaveLength(1);
+    expect(handleSocialContactList({}, ctx).contacts).toHaveLength(1);
 
-    const updated = handleSocialFriendGrantsSet({
+    const updated = handleSocialContactGrantsSet({
       handle: "alice.example",
       grants: [
         {
@@ -1507,7 +1476,7 @@ describe("social identity and records", () => {
         },
       ],
     }, ctx);
-    expect(updated.friend.grants).toEqual([
+    expect(updated.contact.grants).toEqual([
       {
         operation: "social.message.status.update",
         scope: { state: "needs_human" },
@@ -1515,8 +1484,8 @@ describe("social identity and records", () => {
       },
     ]);
 
-    expect(handleSocialFriendRemove({ handle: "alice.example" }, ctx)).toEqual({ removed: true });
-    expect(handleSocialFriendList({}, ctx).friends).toEqual([]);
+    expect(handleSocialContactRemove({ handle: "alice.example" }, ctx)).toEqual({ removed: true });
+    expect(handleSocialContactList({}, ctx).contacts).toEqual([]);
   });
 
   it("lists local and remote GSV users through typed social user discovery", async () => {
@@ -1527,7 +1496,7 @@ describe("social identity and records", () => {
     }, ctx);
     const aliceKeys = await generateP256ServiceKey();
     stubAlicePublicIdentity(aliceKeys.publicKeyMultibase);
-    await handleSocialFriendAdd({
+    await handleSocialContactAdd({
       handle: "alice.example",
       note: "Alice's household GSV",
       grants: [{ operation: "social.user.read" }],
@@ -1541,7 +1510,7 @@ describe("social identity and records", () => {
             $type: SPACE_GSV_USER,
             username: "hank",
             displayName: "Hank",
-            acceptsMessages: true,
+            acceptsContact: true,
           },
         },
       ],
@@ -1556,14 +1525,14 @@ describe("social identity and records", () => {
             $type: SPACE_GSV_USER,
             username: "alice",
             displayName: "Alice",
-            acceptsMessages: true,
+            acceptsContact: true,
           },
         },
       ],
     });
   });
 
-  it("publishes, lists, deletes, and reads package likes through typed discovery", async () => {
+  it("publishes, lists, deletes, and reads vouches through typed discovery", async () => {
     const putCalls: PdsPutRecordInput[] = [];
     const deletedRkeys: string[] = [];
     const ctx = createCtx({
@@ -1577,7 +1546,7 @@ describe("social identity and records", () => {
       pdsDeleteRecord: async (input: { rkey: string }) => {
         deletedRkeys.push(input.rkey);
         return {
-          uri: `at://did:web:gsv.example/${SPACE_GSV_PACKAGE_LIKE}/${input.rkey}`,
+          uri: `at://did:web:gsv.example/${SPACE_GSV_VOUCH}/${input.rkey}`,
         };
       },
     });
@@ -1586,93 +1555,144 @@ describe("social identity and records", () => {
       pdsEndpoint: "https://gsv.example",
     }, ctx);
 
-    const created = await handleSocialPackageLikeCreate({
+    const created = await handleSocialVouchCreate({
       record: {
-        $type: SPACE_GSV_PACKAGE_LIKE,
+        $type: SPACE_GSV_VOUCH,
         createdAt: "2026-05-12T12:00:00Z",
         subject: {
-          kind: "gsv-package",
-          name: "planner",
-          repo: "gsv/planner",
+          uri: "at://did:web:gsv.example/space.gsv.package/planner",
         },
         note: "Good shared planning surface.",
       },
     }, ctx);
 
-    expect(created.uri).toMatch(/^at:\/\/did:web:gsv\.example\/space\.gsv\.package\.like\/\d+-[0-9a-f]{8}$/);
+    expect(created.uri).toMatch(/^at:\/\/did:web:gsv\.example\/space\.gsv\.vouch\/\d+-[0-9a-f]{8}$/);
     expect(putCalls[0]).toMatchObject({
       repo: "did:web:gsv.example",
-      collection: SPACE_GSV_PACKAGE_LIKE,
+      collection: SPACE_GSV_VOUCH,
       validate: true,
     });
-    await expect(handleSocialPackageLikeList({}, ctx)).resolves.toMatchObject({
-      likes: [
+    await expect(handleSocialVouchList({}, ctx)).resolves.toMatchObject({
+      vouches: [
         {
           handle: "gsv.example",
           uri: created.uri,
           record: {
-            $type: SPACE_GSV_PACKAGE_LIKE,
+            $type: SPACE_GSV_VOUCH,
             subject: {
-              name: "planner",
+              uri: "at://did:web:gsv.example/space.gsv.package/planner",
             },
           },
         },
       ],
     });
 
-    await expect(handleSocialPackageLikeDelete({ uri: created.uri! }, ctx)).resolves.toEqual({ deleted: true });
+    await expect(handleSocialVouchDelete({ uri: created.uri! }, ctx)).resolves.toEqual({ deleted: true });
     expect(deletedRkeys).toEqual([putCalls[0].rkey]);
-    await expect(handleSocialPackageLikeList({}, ctx)).resolves.toEqual({ likes: [] });
+    await expect(handleSocialVouchList({}, ctx)).resolves.toEqual({ vouches: [] });
 
     const aliceKeys = await generateP256ServiceKey();
     stubAlicePublicIdentity(aliceKeys.publicKeyMultibase);
-    await handleSocialFriendAdd({
+    await handleSocialContactAdd({
       handle: "alice.example",
       note: "Alice's household GSV",
-      grants: [{ operation: "social.package.like.read" }],
+      grants: [{ operation: "social.package.read" }],
     }, ctx);
-    await expect(handleSocialPackageLikeList({ handle: "alice.example" }, ctx)).resolves.toMatchObject({
-      likes: [
+    await expect(handleSocialPackageList({ handle: "alice.example" }, ctx)).resolves.toMatchObject({
+      packages: [
         {
           handle: "alice.example",
-          uri: "at://did:web:alice.example/space.gsv.package.like/like-1",
+          uri: "at://did:web:alice.example/space.gsv.package/planner",
           record: {
-            $type: SPACE_GSV_PACKAGE_LIKE,
-            subject: {
-              name: "planner",
-            },
+            $type: SPACE_GSV_PACKAGE,
+            name: "planner",
           },
         },
       ],
     });
   });
 
-  it("rejects duplicate or unsupported friend grants", async () => {
+  it("projects public package sources into space.gsv.package records", async () => {
+    const putCalls: PdsPutRecordInput[] = [];
+    const deleteCalls: Array<{ collection: string; rkey: string }> = [];
+    const ctx = createCtx({
+      pdsPutRecord: async (input: PdsPutRecordInput) => {
+        putCalls.push(input);
+        return {
+          uri: `at://${input.repo}/${input.collection}/${input.rkey}`,
+          cid: `bafy-${input.rkey}`,
+        };
+      },
+      pdsDeleteRecord: async (input: { collection: string; rkey: string }) => {
+        deleteCalls.push(input);
+        return {
+          uri: `at://did:web:gsv.example/${input.collection}/${input.rkey}`,
+        };
+      },
+    });
+    handleSocialIdentitySet({
+      handle: "gsv.example",
+      pdsEndpoint: "https://gsv.example",
+    }, ctx);
+    (ctx as unknown as {
+      packages: { list: () => InstalledPackageRecord[] };
+    }).packages = {
+      list: () => [
+        testPackage("planner", "Shared planning surface.", "root/gsv", "builtin-packages/planner"),
+        testPackage("wiki", "Knowledge surface.", "root/gsv", "builtin-packages/wiki"),
+        testPackage("private", "Private package.", "root/private", "builtin-packages/private"),
+      ],
+    };
+
+    await expect(syncPublicPackageSocialRecordsForRepo(ctx, "root/gsv", true)).resolves.toEqual([
+      "at://did:web:gsv.example/space.gsv.package/planner",
+      "at://did:web:gsv.example/space.gsv.package/wiki",
+    ]);
+    expect(putCalls.map((call) => [call.collection, call.rkey, call.record])).toMatchObject([
+      [SPACE_GSV_PACKAGE, "planner", { $type: SPACE_GSV_PACKAGE, name: "planner", displayName: "Planner" }],
+      [SPACE_GSV_PACKAGE, "wiki", { $type: SPACE_GSV_PACKAGE, name: "wiki", displayName: "Wiki" }],
+    ]);
+    await expect(handleSocialPackageList({}, ctx)).resolves.toMatchObject({
+      packages: [
+        { record: { name: "planner" } },
+        { record: { name: "wiki" } },
+      ],
+    });
+
+    await expect(syncPublicPackageSocialRecordsForRepo(ctx, "root/gsv", false)).resolves.toEqual([]);
+    expect(deleteCalls.map((call) => [call.collection, call.rkey])).toEqual([
+      [SPACE_GSV_PACKAGE, "planner"],
+      [SPACE_GSV_PACKAGE, "wiki"],
+    ]);
+    await expect(handleSocialPackageList({}, ctx)).resolves.toEqual({ packages: [] });
+  });
+
+  it("rejects duplicate or unsupported contact grants", async () => {
     const ctx = createCtx();
-    expect(() => handleSocialFriendGrantsSet({
+    expect(() => handleSocialContactGrantsSet({
       handle: "alice.example",
       grants: [
         { operation: "social.message.send" },
         { operation: "social.message.send" },
       ],
     }, ctx)).toThrow("duplicate grant operation");
-    expect(() => handleSocialFriendGrantsSet({
+    expect(() => handleSocialContactGrantsSet({
       handle: "alice.example",
       grants: [{ operation: "fs.read" as never }],
     }, ctx)).toThrow("unsupported grant operation");
   });
 
-  it("does not allow adding the local identity as a friend", async () => {
+  it("does not allow adding the local identity as a contact", async () => {
     const ctx = createCtx();
     handleSocialIdentitySet({
       handle: "gsv.example",
       pdsEndpoint: "https://gsv.example",
     }, ctx);
 
-    await expect(handleSocialFriendAdd({
+    await expect(handleSocialContactAdd({
       handle: "gsv.example",
       note: "The local GSV",
-    }, ctx)).rejects.toThrow("Cannot add the local GSV identity as a friend");
+    }, ctx)).rejects.toThrow("Cannot add the local GSV identity as a contact");
   });
 
   it("creates, lists, and reads social threads with outbound delivery state", async () => {
@@ -1689,7 +1709,7 @@ describe("social identity and records", () => {
         return Response.json({ ok: true, status: "accepted" });
       },
     });
-    await handleSocialFriendAdd({
+    await handleSocialContactAdd({
       handle: "alice.example",
       note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
@@ -1758,7 +1778,7 @@ describe("social identity and records", () => {
     stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
       inbound: () => Response.json({ ok: true, status: "accepted" }),
     });
-    await handleSocialFriendAdd({
+    await handleSocialContactAdd({
       handle: "alice.example",
       note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
@@ -1808,7 +1828,7 @@ describe("social identity and records", () => {
           : Response.json({ ok: true, status: "accepted" });
       },
     });
-    await handleSocialFriendAdd({
+    await handleSocialContactAdd({
       handle: "alice.example",
       note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
@@ -1856,7 +1876,7 @@ describe("social identity and records", () => {
     stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
       inbound: () => Response.json({ ok: false, status: "unavailable" }, { status: 503 }),
     });
-    await handleSocialFriendAdd({
+    await handleSocialContactAdd({
       handle: "alice.example",
       note: "Alice's household GSV",
       grants: [{ operation: "social.message.send" }],
@@ -1885,7 +1905,7 @@ describe("social identity and records", () => {
     });
   });
 
-  it("accepts signed inbound envelopes from granted friends idempotently and delivers to the Mind process", async () => {
+  it("accepts signed inbound envelopes from granted contacts idempotently and delivers to the Mind process", async () => {
     const { ctx, aliceKeys } = await setupSignedInboundFriend();
     const envelope = await aliceEnvelope(aliceKeys.privateJwk, {
       body: {
@@ -1928,6 +1948,20 @@ describe("social identity and records", () => {
       .toContain("mark complete");
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
       .not.toContain("Structured event data");
+    expect(ctx.procs.spawn).toHaveBeenCalledWith(
+      expect.stringMatching(/^mind:1000:[a-f0-9]{32}$/),
+      expect.any(Object),
+      expect.objectContaining({
+        authority: expect.objectContaining({
+          kind: "remote-social",
+          peerHandle: "alice.example",
+          peerDid: "did:web:alice.example",
+          sandboxRoot: "/var/social/alice.example",
+          threadId: "thread-alice",
+          messageId: "msg-alice",
+        }),
+      }),
+    );
 
     setContextRole(ctx, "user");
     expect(handleSocialThreadGet({ threadId: "thread-alice" }, ctx)).toMatchObject({
@@ -1964,6 +1998,31 @@ describe("social identity and records", () => {
       status: "accepted",
       threadId: "thread-alice",
       messageId: "msg-alice",
+    });
+  });
+
+  it("accepts locally granted inbound methods regardless of sender advertisement", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      acceptedSocialMethods: ["social.message.status.update"],
+    });
+
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        id: "env-unadvertised-send",
+        nonce: "nonce-unadvertised-send",
+        body: {
+          threadId: "thread-alice",
+          messageId: "msg-alice-unadvertised",
+          text: "hello anyway",
+        },
+      }),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toEqual({
+      ok: true,
+      status: "accepted",
+      threadId: "thread-alice",
+      messageId: "msg-alice-unadvertised",
     });
   });
 
@@ -2143,7 +2202,7 @@ describe("social identity and records", () => {
     });
   });
 
-  it("rejects inbound envelopes from unknown or ungranted friends", async () => {
+  it("rejects inbound envelopes from unknown or ungranted contacts", async () => {
     const ctx = createCtx();
     handleSocialIdentitySet({
       handle: "gsv.example",

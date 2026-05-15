@@ -103,20 +103,23 @@ import {
   handleNotificationMarkRead,
 } from "./notifications";
 import {
-  handleSocialAgentCardGet,
-  handleSocialAgentCardUpdate,
-  handleSocialFriendAdd,
-  handleSocialFriendGrantsSet,
-  handleSocialFriendList,
-  handleSocialFriendRemove,
+  handleSocialContactAdd,
+  handleSocialContactGrantsSet,
+  handleSocialContactList,
+  handleSocialContactPublicList,
+  handleSocialContactPublish,
+  handleSocialContactRemove,
+  handleSocialContactUnpublish,
   handleSocialInbound,
   handleSocialMessageSend,
   handleSocialMessageStatusGet,
   handleSocialMessageStatusList,
   handleSocialMessageStatusUpdate,
-  handleSocialPackageLikeCreate,
-  handleSocialPackageLikeDelete,
-  handleSocialPackageLikeList,
+  handleSocialNewsCreate,
+  handleSocialNewsDelete,
+  handleSocialNewsList,
+  handleSocialPackageList,
+  handleSocialPackageReleaseList,
   handleSocialSetup,
   handleSocialIdentityGet,
   handleSocialIdentityRepublish,
@@ -129,6 +132,9 @@ import {
   handleSocialThreadGet,
   handleSocialThreadList,
   handleSocialUserList,
+  handleSocialVouchCreate,
+  handleSocialVouchDelete,
+  handleSocialVouchList,
 } from "./social";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import {
@@ -339,7 +345,7 @@ async function dispatchNative(
         data = await handlePkgPublicList(frame.args, ctx);
         break;
       case "pkg.public.set":
-        data = handlePkgPublicSet(frame.args, ctx);
+        data = await handlePkgPublicSet(frame.args, ctx);
         break;
 
       // --- repo.* ---
@@ -531,35 +537,53 @@ async function dispatchNative(
       case "social.instance.update":
         data = await handleSocialInstanceUpdate(frame.args, ctx);
         break;
-      case "social.agent.card.get":
-        data = handleSocialAgentCardGet(frame.args, ctx);
+      case "social.contact.list":
+        data = handleSocialContactList(frame.args, ctx);
         break;
-      case "social.agent.card.update":
-        data = await handleSocialAgentCardUpdate(frame.args, ctx);
+      case "social.contact.add":
+        data = await handleSocialContactAdd(frame.args, ctx);
         break;
-      case "social.friend.list":
-        data = handleSocialFriendList(frame.args, ctx);
+      case "social.contact.remove":
+        data = handleSocialContactRemove(frame.args, ctx);
         break;
-      case "social.friend.add":
-        data = await handleSocialFriendAdd(frame.args, ctx);
+      case "social.contact.grants.set":
+        data = handleSocialContactGrantsSet(frame.args, ctx);
         break;
-      case "social.friend.remove":
-        data = handleSocialFriendRemove(frame.args, ctx);
+      case "social.contact.public.list":
+        data = await handleSocialContactPublicList(frame.args, ctx);
         break;
-      case "social.friend.grants.set":
-        data = handleSocialFriendGrantsSet(frame.args, ctx);
+      case "social.contact.publish":
+        data = await handleSocialContactPublish(frame.args, ctx);
+        break;
+      case "social.contact.unpublish":
+        data = await handleSocialContactUnpublish(frame.args, ctx);
         break;
       case "social.user.list":
         data = await handleSocialUserList(frame.args, ctx);
         break;
-      case "social.package.like.create":
-        data = await handleSocialPackageLikeCreate(frame.args, ctx);
+      case "social.package.list":
+        data = await handleSocialPackageList(frame.args, ctx);
         break;
-      case "social.package.like.delete":
-        data = await handleSocialPackageLikeDelete(frame.args, ctx);
+      case "social.package.release.list":
+        data = await handleSocialPackageReleaseList(frame.args, ctx);
         break;
-      case "social.package.like.list":
-        data = await handleSocialPackageLikeList(frame.args, ctx);
+      case "social.vouch.create":
+        data = await handleSocialVouchCreate(frame.args, ctx);
+        break;
+      case "social.vouch.delete":
+        data = await handleSocialVouchDelete(frame.args, ctx);
+        break;
+      case "social.vouch.list":
+        data = await handleSocialVouchList(frame.args, ctx);
+        break;
+      case "social.news.create":
+        data = await handleSocialNewsCreate(frame.args, ctx);
+        break;
+      case "social.news.delete":
+        data = await handleSocialNewsDelete(frame.args, ctx);
+        break;
+      case "social.news.list":
+        data = await handleSocialNewsList(frame.args, ctx);
         break;
       case "social.thread.create":
         data = await handleSocialThreadCreate(frame.args, ctx);

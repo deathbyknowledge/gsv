@@ -80,7 +80,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
     ].join("\n"),
   "config/ai/profile/init/context.d/10-social.md":
     [
-      "Social escalation messages arrive as `[GSV Mind]:` coordination when the GSV Mind cannot safely answer a friend without the local user's preference, permission, schedule, availability, or commitment.",
+      "Social escalation messages arrive as `[GSV Mind]:` coordination when the GSV Mind cannot safely answer a Contact without the local user's preference, permission, schedule, availability, or commitment.",
       "Use the normal init conversation to ask the local user for the missing decision. Do not invent or infer personal availability or consent.",
       "When the user answers, send the response through `social message send <peer-handle> \"<reply>\" --thread <thread-id>`, then close the original item with `social status update <message-id> --state completed --summary \"...\"`.",
       "If the user declines, asks not to answer, or the matter should end without a reply, use `social status update <message-id> --state declined --summary \"...\"`.",
@@ -100,7 +100,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
       "- Reply to a peer in an existing thread: `social message send <peer-handle> \"<text>\" --thread <thread-id>`",
       "- Mark handling state: `social status update <message-id> --state triaged|in_progress|completed|declined|failed --summary \"...\"`",
       "- Escalate to the local human: `social status update <message-id> --state needs_human --reason \"...\"`",
-      "For clear, low-risk greetings or simple questions from approved friends, reply concisely without asking the local human first, then mark the inbound message completed. If no reply is needed, mark it completed or declined with a short summary.",
+      "For clear, low-risk greetings or simple questions from approved Contacts, reply concisely without asking the local human first, then mark the inbound message completed. If no reply is needed, mark it completed or declined with a short summary.",
       "If the peer asks for the local human's preference, permission, schedule, availability, commitment, or personal decision, mark it needs_human with a concrete reason and stop. Do not promise to ask through normal channels.",
       "If the message is only an acknowledgement, thanks, no-rush note, well-wish, or conversational closer, do not send another acknowledgement. Mark it completed with a short summary and stop.",
       "If the message asks for private information, local side effects, unclear user intent, unavailable capabilities, or anything a context preference says not to handle autonomously, mark it needs_human with a concrete reason and stop.",

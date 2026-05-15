@@ -5,18 +5,22 @@ export type SocialEmptyArgs = Record<string, never>;
 
 export const SPACE_GSV_PROFILE = "space.gsv.profile" as const;
 export const SPACE_GSV_INSTANCE = "space.gsv.instance" as const;
-export const SPACE_GSV_AGENT_CARD = "space.gsv.agent.card" as const;
 export const SPACE_GSV_USER = "space.gsv.user" as const;
-export const SPACE_GSV_PACKAGE_LIKE = "space.gsv.package.like" as const;
-export const SPACE_GSV_STATUS = "space.gsv.status" as const;
+export const SPACE_GSV_CONTACT = "space.gsv.contact" as const;
+export const SPACE_GSV_PACKAGE = "space.gsv.package" as const;
+export const SPACE_GSV_PACKAGE_RELEASE = "space.gsv.package.release" as const;
+export const SPACE_GSV_VOUCH = "space.gsv.vouch" as const;
+export const SPACE_GSV_NEWS = "space.gsv.news" as const;
 
 export const SPACE_GSV_COLLECTIONS = [
   SPACE_GSV_PROFILE,
   SPACE_GSV_INSTANCE,
-  SPACE_GSV_AGENT_CARD,
   SPACE_GSV_USER,
-  SPACE_GSV_PACKAGE_LIKE,
-  SPACE_GSV_STATUS,
+  SPACE_GSV_CONTACT,
+  SPACE_GSV_PACKAGE,
+  SPACE_GSV_PACKAGE_RELEASE,
+  SPACE_GSV_VOUCH,
+  SPACE_GSV_NEWS,
 ] as const;
 
 export type SpaceGsvCollection = typeof SPACE_GSV_COLLECTIONS[number];
@@ -68,55 +72,90 @@ export type SpaceGsvInstanceRecord = SpaceGsvRecordBase<typeof SPACE_GSV_INSTANC
   acceptedSocialMethods: SocialRemoteOperation[];
 };
 
-export type SpaceGsvAgentCardRecord = SpaceGsvRecordBase<typeof SPACE_GSV_AGENT_CARD> & {
-  displayName?: string;
-  summary?: string;
-  topics?: string[];
-  acceptsMessages: boolean;
-  humanEscalation?: "never" | "sometimes" | "required";
-};
-
 export type SpaceGsvUserRecord = SpaceGsvRecordBase<typeof SPACE_GSV_USER> & {
   username: string;
   displayName?: string;
   description?: string;
   publicHandle?: string;
-  acceptsMessages?: boolean;
+  acceptsContact?: boolean;
 };
 
-export type SpaceGsvPackageSubject = {
-  kind: "gsv-package";
-  name: string;
+export type SpaceGsvContactSubject = {
+  did: SocialDid;
+  handle?: string;
+  uri?: SocialAtUri;
+};
+
+export type SpaceGsvContactRecord = SpaceGsvRecordBase<typeof SPACE_GSV_CONTACT> & {
+  subject: SpaceGsvContactSubject;
+  label?: string;
+  tags?: string[];
+};
+
+export type SpaceGsvRecordReference = {
+  uri: SocialAtUri;
+  cid?: string;
+};
+
+export type SpaceGsvPackageSource = {
   repo?: string;
   ref?: string;
   subdir?: string;
   uri?: string;
 };
 
-export type SpaceGsvPackageLikeRecord = SpaceGsvRecordBase<typeof SPACE_GSV_PACKAGE_LIKE> & {
-  subject: SpaceGsvPackageSubject;
-  note?: string;
+export type SpaceGsvPackageRecord = SpaceGsvRecordBase<typeof SPACE_GSV_PACKAGE> & {
+  name: string;
+  displayName?: string;
+  description?: string;
+  source?: SpaceGsvPackageSource;
+  homepage?: string;
+  tags?: string[];
 };
 
-export type SpaceGsvStatusRecord = SpaceGsvRecordBase<typeof SPACE_GSV_STATUS> & {
-  text: string;
-  expiresAt?: SocialIsoDateString;
+export type SpaceGsvPackageReleaseRecord = SpaceGsvRecordBase<typeof SPACE_GSV_PACKAGE_RELEASE> & {
+  package: SpaceGsvRecordReference;
+  version: string;
+  title?: string;
+  description?: string;
+  source?: SpaceGsvPackageSource;
+  releasedAt?: SocialIsoDateString;
   tags?: string[];
+};
+
+export type SpaceGsvVouchRecord = SpaceGsvRecordBase<typeof SPACE_GSV_VOUCH> & {
+  subject: SpaceGsvRecordReference;
+  note?: string;
+  tags?: string[];
+};
+
+export type SpaceGsvNewsRecord = SpaceGsvRecordBase<typeof SPACE_GSV_NEWS> & {
+  title?: string;
+  text: string;
+  tags?: string[];
+  startsAt?: SocialIsoDateString;
+  endsAt?: SocialIsoDateString;
+  subjects?: SpaceGsvRecordReference[];
 };
 
 export type SpaceGsvRecord =
   | SpaceGsvProfileRecord
   | SpaceGsvInstanceRecord
-  | SpaceGsvAgentCardRecord
   | SpaceGsvUserRecord
-  | SpaceGsvPackageLikeRecord
-  | SpaceGsvStatusRecord;
+  | SpaceGsvContactRecord
+  | SpaceGsvPackageRecord
+  | SpaceGsvPackageReleaseRecord
+  | SpaceGsvVouchRecord
+  | SpaceGsvNewsRecord;
 
 export const SOCIAL_REMOTE_OPERATIONS = [
   "social.profile.read",
-  "social.agent.card.read",
   "social.user.read",
-  "social.package.like.read",
+  "social.contact.read",
+  "social.package.read",
+  "social.package.release.read",
+  "social.vouch.read",
+  "social.news.read",
   "social.thread.create",
   "social.message.send",
   "social.message.status.update",
@@ -139,13 +178,22 @@ export const SOCIAL_SYSCALLS = [
   "social.profile.update",
   "social.instance.get",
   "social.instance.update",
-  "social.agent.card.get",
-  "social.agent.card.update",
-  "social.friend.list",
-  "social.friend.add",
-  "social.friend.remove",
-  "social.friend.grants.set",
+  "social.contact.list",
+  "social.contact.add",
+  "social.contact.remove",
+  "social.contact.grants.set",
+  "social.contact.public.list",
+  "social.contact.publish",
+  "social.contact.unpublish",
   "social.user.list",
+  "social.package.list",
+  "social.package.release.list",
+  "social.vouch.create",
+  "social.vouch.delete",
+  "social.vouch.list",
+  "social.news.create",
+  "social.news.delete",
+  "social.news.list",
   "social.thread.create",
   "social.thread.list",
   "social.thread.get",
@@ -153,10 +201,6 @@ export const SOCIAL_SYSCALLS = [
   "social.message.status.list",
   "social.message.status.get",
   "social.message.status.update",
-  "social.package.like.create",
-  "social.package.like.delete",
-  "social.package.like.list",
-  "social.sync.run",
   "social.inbound",
 ] as const;
 
@@ -174,14 +218,13 @@ export type SocialGrant = {
   expiresAt?: SocialIsoDateString;
 };
 
-export type SocialFriendSummary = {
+export type SocialContactSummary = {
   handle: string;
   note: string;
   displayName?: string;
   description?: string;
-  agentDisplayName?: string;
-  agentSummary?: string;
-  acceptsMessages: boolean;
+  publicHandle?: string;
+  acceptsContact: boolean;
   acceptedSocialMethods: SocialRemoteOperation[];
   grants: SocialGrant[];
   createdAt: SocialIsoDateString;
@@ -195,7 +238,6 @@ export type SocialLocalIdentity = {
   pdsEndpoint: string;
   profile?: SpaceGsvProfileRecord;
   instance?: SpaceGsvInstanceRecord;
-  agentCard?: SpaceGsvAgentCardRecord;
 };
 
 export type SocialSignedRequestEnvelope = {
@@ -307,8 +349,7 @@ export type SocialSetupArgs = {
   handle?: string;
   displayName?: string;
   description?: string;
-  agentDisplayName?: string;
-  agentSummary?: string;
+  acceptsContact?: boolean;
 };
 export type SocialSetupResult = {
   identity: SocialLocalIdentity;
@@ -316,7 +357,6 @@ export type SocialSetupResult = {
   records: {
     profile?: SocialAtUri;
     instance?: SocialAtUri;
-    agentCard?: SocialAtUri;
     users?: SocialAtUri[];
   };
 };
@@ -340,7 +380,6 @@ export type SocialIdentityRepublishResult = {
   records: {
     profile?: SocialAtUri;
     instance?: SocialAtUri;
-    agentCard?: SocialAtUri;
     users?: SocialAtUri[];
   };
 };
@@ -375,50 +414,35 @@ export type SocialInstanceUpdateResult = {
   uri?: SocialAtUri;
 };
 
-export type SocialAgentCardGetArgs = {
-  handle?: string;
-};
-export type SocialAgentCardGetResult = {
-  agentCard: SpaceGsvAgentCardRecord | null;
+export type SocialContactListArgs = SocialEmptyArgs;
+export type SocialContactListResult = {
+  contacts: SocialContactSummary[];
 };
 
-export type SocialAgentCardUpdateArgs = {
-  record: SpaceGsvAgentCardRecord;
-};
-export type SocialAgentCardUpdateResult = {
-  record: SpaceGsvAgentCardRecord;
-  uri?: SocialAtUri;
-};
-
-export type SocialFriendListArgs = SocialEmptyArgs;
-export type SocialFriendListResult = {
-  friends: SocialFriendSummary[];
-};
-
-export type SocialFriendAddArgs = {
+export type SocialContactAddArgs = {
   handle: string;
   note: string;
   displayName?: string;
   grants?: SocialGrant[];
 };
-export type SocialFriendAddResult = {
-  friend: SocialFriendSummary;
+export type SocialContactAddResult = {
+  contact: SocialContactSummary;
   created: boolean;
 };
 
-export type SocialFriendRemoveArgs = {
+export type SocialContactRemoveArgs = {
   handle: string;
 };
-export type SocialFriendRemoveResult = {
+export type SocialContactRemoveResult = {
   removed: boolean;
 };
 
-export type SocialFriendGrantsSetArgs = {
+export type SocialContactGrantsSetArgs = {
   handle: string;
   grants: SocialGrant[];
 };
-export type SocialFriendGrantsSetResult = {
-  friend: SocialFriendSummary;
+export type SocialContactGrantsSetResult = {
+  contact: SocialContactSummary;
 };
 
 export type SocialThreadCreateArgs = {
@@ -501,41 +525,100 @@ export type SocialUserListResult = {
   }>;
 };
 
-export type SocialPackageLikeCreateArgs = {
-  record: SpaceGsvPackageLikeRecord;
+export type SocialPublicRecordEntry<TRecord extends SpaceGsvRecord> = {
+  handle: string;
+  uri: SocialAtUri;
+  cid?: string;
+  record: TRecord;
 };
-export type SocialPackageLikeCreateResult = {
-  record: SpaceGsvPackageLikeRecord;
+
+export type SocialContactPublicListArgs = {
+  handle?: string;
+  limit?: number;
+};
+export type SocialContactPublicListResult = {
+  contacts: Array<SocialPublicRecordEntry<SpaceGsvContactRecord>>;
+};
+
+export type SocialContactPublishArgs = {
+  record: SpaceGsvContactRecord;
+  rkey?: string;
+};
+export type SocialContactPublishResult = {
+  record: SpaceGsvContactRecord;
   uri?: SocialAtUri;
 };
 
-export type SocialPackageLikeDeleteArgs = {
+export type SocialContactUnpublishArgs = {
   uri: SocialAtUri;
 };
-export type SocialPackageLikeDeleteResult = {
+export type SocialContactUnpublishResult = {
   deleted: boolean;
 };
 
-export type SocialPackageLikeListArgs = {
+export type SocialPackageListArgs = {
   handle?: string;
   limit?: number;
 };
-export type SocialPackageLikeListResult = {
-  likes: Array<{
-    handle: string;
-    uri: SocialAtUri;
-    record: SpaceGsvPackageLikeRecord;
-  }>;
+export type SocialPackageListResult = {
+  packages: Array<SocialPublicRecordEntry<SpaceGsvPackageRecord>>;
 };
 
-export type SocialSyncRunArgs = {
+export type SocialPackageReleaseListArgs = {
+  handle?: string;
+  packageUri?: SocialAtUri;
+  limit?: number;
+};
+export type SocialPackageReleaseListResult = {
+  releases: Array<SocialPublicRecordEntry<SpaceGsvPackageReleaseRecord>>;
+};
+
+export type SocialVouchCreateArgs = {
+  record: SpaceGsvVouchRecord;
+  rkey?: string;
+};
+export type SocialVouchCreateResult = {
+  record: SpaceGsvVouchRecord;
+  uri?: SocialAtUri;
+};
+
+export type SocialVouchDeleteArgs = {
+  uri: SocialAtUri;
+};
+export type SocialVouchDeleteResult = {
+  deleted: boolean;
+};
+
+export type SocialVouchListArgs = {
   handle?: string;
   limit?: number;
 };
-export type SocialSyncRunResult = {
-  checked: number;
-  updated: number;
-  failed: number;
+export type SocialVouchListResult = {
+  vouches: Array<SocialPublicRecordEntry<SpaceGsvVouchRecord>>;
+};
+
+export type SocialNewsCreateArgs = {
+  record: SpaceGsvNewsRecord;
+  rkey?: string;
+};
+export type SocialNewsCreateResult = {
+  record: SpaceGsvNewsRecord;
+  uri?: SocialAtUri;
+};
+
+export type SocialNewsDeleteArgs = {
+  uri: SocialAtUri;
+};
+export type SocialNewsDeleteResult = {
+  deleted: boolean;
+};
+
+export type SocialNewsListArgs = {
+  handle?: string;
+  limit?: number;
+};
+export type SocialNewsListResult = {
+  news: Array<SocialPublicRecordEntry<SpaceGsvNewsRecord>>;
 };
 
 export type SocialInboundArgs = {
@@ -579,33 +662,69 @@ export type SocialSyscalls = {
     args: SocialInstanceUpdateArgs;
     result: SocialInstanceUpdateResult;
   };
-  "social.agent.card.get": {
-    args: SocialAgentCardGetArgs;
-    result: SocialAgentCardGetResult;
+  "social.contact.list": {
+    args: SocialContactListArgs;
+    result: SocialContactListResult;
   };
-  "social.agent.card.update": {
-    args: SocialAgentCardUpdateArgs;
-    result: SocialAgentCardUpdateResult;
+  "social.contact.add": {
+    args: SocialContactAddArgs;
+    result: SocialContactAddResult;
   };
-  "social.friend.list": {
-    args: SocialFriendListArgs;
-    result: SocialFriendListResult;
+  "social.contact.remove": {
+    args: SocialContactRemoveArgs;
+    result: SocialContactRemoveResult;
   };
-  "social.friend.add": {
-    args: SocialFriendAddArgs;
-    result: SocialFriendAddResult;
+  "social.contact.grants.set": {
+    args: SocialContactGrantsSetArgs;
+    result: SocialContactGrantsSetResult;
   };
-  "social.friend.remove": {
-    args: SocialFriendRemoveArgs;
-    result: SocialFriendRemoveResult;
+  "social.contact.public.list": {
+    args: SocialContactPublicListArgs;
+    result: SocialContactPublicListResult;
   };
-  "social.friend.grants.set": {
-    args: SocialFriendGrantsSetArgs;
-    result: SocialFriendGrantsSetResult;
+  "social.contact.publish": {
+    args: SocialContactPublishArgs;
+    result: SocialContactPublishResult;
+  };
+  "social.contact.unpublish": {
+    args: SocialContactUnpublishArgs;
+    result: SocialContactUnpublishResult;
   };
   "social.user.list": {
     args: SocialUserListArgs;
     result: SocialUserListResult;
+  };
+  "social.package.list": {
+    args: SocialPackageListArgs;
+    result: SocialPackageListResult;
+  };
+  "social.package.release.list": {
+    args: SocialPackageReleaseListArgs;
+    result: SocialPackageReleaseListResult;
+  };
+  "social.vouch.create": {
+    args: SocialVouchCreateArgs;
+    result: SocialVouchCreateResult;
+  };
+  "social.vouch.delete": {
+    args: SocialVouchDeleteArgs;
+    result: SocialVouchDeleteResult;
+  };
+  "social.vouch.list": {
+    args: SocialVouchListArgs;
+    result: SocialVouchListResult;
+  };
+  "social.news.create": {
+    args: SocialNewsCreateArgs;
+    result: SocialNewsCreateResult;
+  };
+  "social.news.delete": {
+    args: SocialNewsDeleteArgs;
+    result: SocialNewsDeleteResult;
+  };
+  "social.news.list": {
+    args: SocialNewsListArgs;
+    result: SocialNewsListResult;
   };
   "social.thread.create": {
     args: SocialThreadCreateArgs;
@@ -634,22 +753,6 @@ export type SocialSyscalls = {
   "social.message.status.update": {
     args: SocialMessageStatusUpdateArgs;
     result: SocialMessageStatusUpdateResult;
-  };
-  "social.package.like.create": {
-    args: SocialPackageLikeCreateArgs;
-    result: SocialPackageLikeCreateResult;
-  };
-  "social.package.like.delete": {
-    args: SocialPackageLikeDeleteArgs;
-    result: SocialPackageLikeDeleteResult;
-  };
-  "social.package.like.list": {
-    args: SocialPackageLikeListArgs;
-    result: SocialPackageLikeListResult;
-  };
-  "social.sync.run": {
-    args: SocialSyncRunArgs;
-    result: SocialSyncRunResult;
   };
   "social.inbound": {
     args: SocialInboundArgs;

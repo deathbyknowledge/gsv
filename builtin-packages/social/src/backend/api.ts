@@ -1,98 +1,115 @@
 import type { KernelClientLike } from "@gsv/package/backend";
 import type {
-  SocialFriendListResult,
+  SocialContactPublicListResult,
+  SocialContactListResult,
+  SocialContactSummary as ProtocolContactSummary,
   SocialGrant,
   SocialIdentityGetResult,
+  SocialIdentityRepublishResult,
   SocialMessageSendArgs,
   SocialMessageStatusListResult,
   SocialMessageStatusSummary,
   SocialMessageStatusUpdateArgs,
   SocialMessageSummary,
-  SocialPackageLikeListResult,
+  SocialNewsListResult,
+  SocialPackageReleaseListResult,
+  SocialPackageListResult,
   SocialRemoteOperation,
   SocialThreadGetResult,
   SocialThreadListResult,
   SocialThreadSummary,
   SocialUserListResult,
+  SocialVouchListResult,
 } from "@gsv/protocol/syscalls/social";
 import type {
-  AddFriendArgs,
+  EstablishContactArgs,
   LoadSocialStateArgs,
-  RemoveFriendArgs,
+  RemoveContactArgs,
   SendMessageArgs,
-  SetFriendGrantsArgs,
+  SetContactGrantsArgs,
+  SocialChannelDetail,
+  SocialChannelItem,
+  SocialContactSummary,
   SocialMessageItem,
-  SocialMessageStatusItem,
-  SocialPeerSummary,
+  SocialMessageWorkflowItem,
   SocialState,
-  SocialThreadDetail,
-  SocialThreadItem,
-  UpdateMessageStatusArgs,
+  UpdateMessageWorkflowArgs,
 } from "../app/types";
 import { SOCIAL_GRANT_OPTIONS } from "../app/types";
 
-const DEFAULT_GRANTS = SOCIAL_GRANT_OPTIONS.map((option) => option.operation);
+type LegacyLoadSocialStateArgs = LoadSocialStateArgs & {
+  threadId?: string | null;
+};
+
+type ContactDirectory = NonNullable<SocialState["contactDirectory"]>;
 
 export async function loadState(
   args: LoadSocialStateArgs | undefined,
   kernel: KernelClientLike,
 ): Promise<SocialState> {
-  const [identityResult, friendResult, threadResult, statusResult] = await Promise.all([
+  const loadArgs = args as LegacyLoadSocialStateArgs | undefined;
+  const [identityResult, contactResult, threadResult, statusResult] = await Promise.all([
     kernel.request("social.identity.get", {}) as Promise<SocialIdentityGetResult>,
-    kernel.request("social.friend.list", {}) as Promise<SocialFriendListResult>,
+    listContacts(kernel),
     kernel.request("social.thread.list", { limit: 100 }) as Promise<SocialThreadListResult>,
     kernel.request("social.message.status.list", { limit: 100 }) as Promise<SocialMessageStatusListResult>,
   ]);
 
-  const threads = threadResult.threads.map(normalizeThread);
-  const statuses = statusResult.statuses.map(normalizeStatus);
-  const friends = friendResult.friends.map(normalizeFriend);
-  const requestedThreadId = normalizeOptional(args?.threadId);
-  const selectedThreadId = requestedThreadId && threads.some((thread) => thread.threadId === requestedThreadId)
-    ? requestedThreadId
-    : threads[0]?.threadId ?? null;
-  const selectedThread = selectedThreadId
-    ? normalizeThreadDetail(await kernel.request("social.thread.get", { threadId: selectedThreadId }) as SocialThreadGetResult)
+  const channels = threadResult.threads.map(normalizeChannel);
+  const messageWorkflows = statusResult.statuses.map(normalizeWorkflow);
+  const contacts = contactResult.map(normalizeContact);
+  const requestedChannelId = normalizeOptional(loadArgs?.channelId ?? loadArgs?.threadId);
+  const selectedChannelId = requestedChannelId && channels.some((channel) => channel.channelId === requestedChannelId)
+    ? requestedChannelId
+    : channels[0]?.channelId ?? null;
+  const selectedChannel = selectedChannelId
+    ? normalizeChannelDetail(await kernel.request("social.thread.get", { threadId: selectedChannelId }) as SocialThreadGetResult)
     : null;
-  const requestedFriendHandle = normalizeOptional(args?.friendHandle);
-  const selectedFriend = requestedFriendHandle
-    ? friends.find((friend) => friend.handle === requestedFriendHandle) ?? null
+  const requestedContactHandle = normalizeOptional(loadArgs?.contactHandle);
+  const selectedContact = requestedContactHandle
+    ? contacts.find((contact) => contact.handle === requestedContactHandle) ?? null
     : null;
-  const [usersResult, packageLikesResult] = selectedFriend
+  const [usersResult, publicContactRecords, packageRecords, packageReleaseRecords, vouchRecords, newsRecords] = selectedContact
     ? await Promise.all([
-        selectedFriend.acceptedSocialMethods.includes("social.user.read")
-          ? kernel.request("social.user.list", { handle: selectedFriend.handle }) as Promise<SocialUserListResult>
+        hasAcceptedMethod(selectedContact, "social.user.read")
+          ? kernel.request("social.user.list", { handle: selectedContact.handle }) as Promise<SocialUserListResult>
           : Promise.resolve({ users: [] }),
-        selectedFriend.acceptedSocialMethods.includes("social.package.like.read")
-          ? kernel.request("social.package.like.list", { handle: selectedFriend.handle }) as Promise<SocialPackageLikeListResult>
-          : Promise.resolve({ likes: [] }),
+        loadPublicContactRecords(kernel, selectedContact),
+        loadContactPackages(kernel, selectedContact),
+        loadPackageReleases(kernel, selectedContact),
+        loadVouches(kernel, selectedContact),
+        loadContactNews(kernel, selectedContact),
       ])
-    : [{ users: [] }, { likes: [] }];
+    : [{ users: [] }, [], [], [], [], []];
 
   return {
     identity: identityResult.identity,
-    friends,
-    threads: threads.map((thread) => ({
-      ...thread,
-      statusCount: statuses.filter((status) => status.threadId === thread.threadId).length,
+    contacts,
+    channels: channels.map((channel) => ({
+      ...channel,
+      workflowCount: messageWorkflows.filter((workflow) => workflow.channelId === channel.channelId).length,
     })),
-    statuses,
-    selectedThread,
-    friendDirectory: selectedFriend
+    messageWorkflows,
+    selectedChannel,
+    contactDirectory: selectedContact
       ? {
-          handle: selectedFriend.handle,
+          contactHandle: selectedContact.handle,
           users: usersResult.users,
-          packageLikes: packageLikesResult.likes,
+          contacts: publicContactRecords,
+          news: newsRecords,
+          packages: packageRecords,
+          packageReleases: packageReleaseRecords,
+          vouches: vouchRecords,
         }
       : null,
   };
 }
 
-export async function addFriend(
-  args: AddFriendArgs,
+export async function establishContact(
+  args: EstablishContactArgs,
   kernel: KernelClientLike,
 ): Promise<SocialState> {
-  await kernel.request("social.friend.add", {
+  await kernel.request("social.contact.add", {
     handle: normalizeRequired(args.handle, "handle"),
     note: normalizeRequired(args.note, "note"),
     grants: normalizeGrants(args.grants),
@@ -100,25 +117,25 @@ export async function addFriend(
   return loadState({}, kernel);
 }
 
-export async function setFriendGrants(
-  args: SetFriendGrantsArgs,
+export async function setContactGrants(
+  args: SetContactGrantsArgs,
   kernel: KernelClientLike,
 ): Promise<SocialState> {
-  await kernel.request("social.friend.grants.set", {
+  await kernel.request("social.contact.grants.set", {
     handle: normalizeRequired(args.handle, "handle"),
     grants: normalizeGrants(args.grants),
   });
-  return loadState({ threadId: normalizeOptional(args.threadId) }, kernel);
+  return loadState({ channelId: normalizeOptional(args.channelId) }, kernel);
 }
 
-export async function removeFriend(
-  args: RemoveFriendArgs,
+export async function removeContact(
+  args: RemoveContactArgs,
   kernel: KernelClientLike,
 ): Promise<SocialState> {
-  await kernel.request("social.friend.remove", {
+  await kernel.request("social.contact.remove", {
     handle: normalizeRequired(args.handle, "handle"),
   });
-  return loadState({ threadId: normalizeOptional(args.threadId) }, kernel);
+  return loadState({ channelId: normalizeOptional(args.channelId) }, kernel);
 }
 
 export async function sendMessage(
@@ -126,18 +143,19 @@ export async function sendMessage(
   kernel: KernelClientLike,
 ): Promise<SocialState> {
   const text = normalizeRequired(args.text, "message");
-  const threadId = normalizeOptional(args.threadId);
+  const sendArgsInput = args as SendMessageArgs & { threadId?: string };
+  const threadId = normalizeOptional(sendArgsInput.channelId ?? sendArgsInput.threadId);
   const sendArgs: SocialMessageSendArgs = {
     toHandle: normalizeRequired(args.toHandle, "toHandle"),
     text,
     ...(threadId ? { threadId } : {}),
   };
   const created = await kernel.request("social.message.send", sendArgs) as { thread?: { threadId?: string } };
-  return loadState({ threadId: created.thread?.threadId ?? threadId }, kernel);
+  return loadState({ channelId: created.thread?.threadId ?? threadId }, kernel);
 }
 
-export async function updateMessageStatus(
-  args: UpdateMessageStatusArgs,
+export async function updateMessageWorkflow(
+  args: UpdateMessageWorkflowArgs,
   kernel: KernelClientLike,
 ): Promise<SocialState> {
   const statusArgs: SocialMessageStatusUpdateArgs = {
@@ -147,37 +165,140 @@ export async function updateMessageStatus(
     ...(normalizeOptional(args.needsHumanReason) ? { needsHumanReason: normalizeOptional(args.needsHumanReason) } : {}),
   };
   await kernel.request("social.message.status.update", statusArgs);
-  return loadState({ threadId: normalizeOptional(args.threadId) }, kernel);
+  return loadState({ channelId: normalizeOptional(args.channelId) }, kernel);
 }
 
-function normalizeFriend(friend: SocialFriendListResult["friends"][number]): SocialPeerSummary {
+export async function republishPublicRecords(kernel: KernelClientLike): Promise<SocialState> {
+  await kernel.request("social.identity.republish", {}) as SocialIdentityRepublishResult;
+  return loadState({}, kernel);
+}
+
+async function listContacts(kernel: KernelClientLike): Promise<ProtocolContactSummary[]> {
+  const result = await kernel.request("social.contact.list", {}) as SocialContactListResult;
+  return result.contacts;
+}
+
+async function loadContactPackages(
+  kernel: KernelClientLike,
+  contact: SocialContactSummary,
+): Promise<ContactDirectory["packages"]> {
+  if (!hasAcceptedMethod(contact, "social.package.read")) {
+    return [];
+  }
+  try {
+    const result = await kernel.request("social.package.list", {
+      handle: contact.handle,
+      limit: 100,
+    }) as SocialPackageListResult;
+    return result.packages;
+  } catch {
+    return [];
+  }
+}
+
+async function loadPublicContactRecords(
+  kernel: KernelClientLike,
+  contact: SocialContactSummary,
+): Promise<ContactDirectory["contacts"]> {
+  if (!hasAcceptedMethod(contact, "social.contact.read")) {
+    return [];
+  }
+  try {
+    const result = await kernel.request("social.contact.public.list", {
+      handle: contact.handle,
+      limit: 100,
+    }) as SocialContactPublicListResult;
+    return result.contacts;
+  } catch {
+    return [];
+  }
+}
+
+async function loadPackageReleases(
+  kernel: KernelClientLike,
+  contact: SocialContactSummary,
+): Promise<ContactDirectory["packageReleases"]> {
+  if (!hasAcceptedMethod(contact, "social.package.release.read")) {
+    return [];
+  }
+  try {
+    const result = await kernel.request("social.package.release.list", {
+      handle: contact.handle,
+      limit: 100,
+    }) as SocialPackageReleaseListResult;
+    return result.releases;
+  } catch {
+    return [];
+  }
+}
+
+async function loadVouches(
+  kernel: KernelClientLike,
+  contact: SocialContactSummary,
+): Promise<ContactDirectory["vouches"]> {
+  if (!hasAcceptedMethod(contact, "social.vouch.read")) {
+    return [];
+  }
+  try {
+    const result = await kernel.request("social.vouch.list", {
+      handle: contact.handle,
+      limit: 100,
+    }) as SocialVouchListResult;
+    return result.vouches;
+  } catch {
+    return [];
+  }
+}
+
+async function loadContactNews(
+  kernel: KernelClientLike,
+  contact: SocialContactSummary,
+): Promise<ContactDirectory["news"]> {
+  if (!hasAcceptedMethod(contact, "social.news.read")) {
+    return [];
+  }
+  try {
+    const result = await kernel.request("social.news.list", {
+      handle: contact.handle,
+      limit: 100,
+    }) as SocialNewsListResult;
+    return result.news;
+  } catch {
+    return [];
+  }
+}
+
+function normalizeContact(contact: ProtocolContactSummary): SocialContactSummary {
   return {
-    handle: friend.handle,
-    note: friend.note,
-    displayName: friend.displayName,
-    agentDisplayName: friend.agentDisplayName,
-    acceptsMessages: friend.acceptsMessages,
-    acceptedSocialMethods: friend.acceptedSocialMethods,
-    grants: friend.grants,
-    updatedAt: friend.updatedAt,
+    handle: contact.handle,
+    note: contact.note,
+    displayName: contact.displayName,
+    description: contact.description,
+    publicHandle: contact.publicHandle,
+    acceptsContact: contact.acceptsContact,
+    acceptedSocialMethods: contact.acceptedSocialMethods,
+    grants: contact.grants,
+    createdAt: contact.createdAt,
+    updatedAt: contact.updatedAt,
+    syncedAt: contact.syncedAt,
   };
 }
 
-function normalizeThread(thread: SocialThreadSummary): SocialThreadItem {
+function normalizeChannel(thread: SocialThreadSummary): SocialChannelItem {
   return {
-    threadId: thread.threadId,
-    peerHandle: thread.peerHandle,
+    channelId: thread.threadId,
+    contactHandle: thread.peerHandle,
     conversationId: thread.conversationId,
     status: thread.status,
     updatedAt: thread.updatedAt,
-    statusCount: 0,
+    workflowCount: 0,
   };
 }
 
 function normalizeMessage(message: SocialMessageSummary): SocialMessageItem {
   return {
     messageId: message.messageId,
-    threadId: message.threadId,
+    channelId: message.threadId,
     direction: message.direction,
     fromHandle: message.fromHandle,
     toHandle: message.toHandle,
@@ -188,10 +309,10 @@ function normalizeMessage(message: SocialMessageSummary): SocialMessageItem {
   };
 }
 
-function normalizeStatus(status: SocialMessageStatusSummary): SocialMessageStatusItem {
+function normalizeWorkflow(status: SocialMessageStatusSummary): SocialMessageWorkflowItem {
   return {
     messageId: status.messageId,
-    threadId: status.threadId,
+    channelId: status.threadId,
     direction: status.direction,
     fromHandle: status.fromHandle,
     toHandle: status.toHandle,
@@ -204,18 +325,16 @@ function normalizeStatus(status: SocialMessageStatusSummary): SocialMessageStatu
   };
 }
 
-function normalizeThreadDetail(detail: SocialThreadGetResult): SocialThreadDetail {
+function normalizeChannelDetail(detail: SocialThreadGetResult): SocialChannelDetail {
   return {
-    thread: detail.thread ? normalizeThread(detail.thread) : null,
+    channel: detail.thread ? normalizeChannel(detail.thread) : null,
     messages: detail.messages.map(normalizeMessage),
-    statuses: detail.statuses.map(normalizeStatus),
+    workflows: detail.statuses.map(normalizeWorkflow),
   };
 }
 
 function normalizeGrants(grants: SocialGrant[] | undefined): SocialGrant[] {
-  const raw = grants && grants.length > 0
-    ? grants.map((grant) => grant.operation)
-    : DEFAULT_GRANTS;
+  const raw = grants?.map((grant) => grant.operation) ?? [];
   const allowed = new Set(SOCIAL_GRANT_OPTIONS.map((option) => option.operation));
   const seen = new Set<string>();
   const normalized: SocialGrant[] = [];
@@ -227,6 +346,10 @@ function normalizeGrants(grants: SocialGrant[] | undefined): SocialGrant[] {
     normalized.push({ operation });
   }
   return normalized;
+}
+
+function hasAcceptedMethod(contact: SocialContactSummary, method: string): boolean {
+  return contact.acceptedSocialMethods.includes(method);
 }
 
 function normalizeRequired(value: string | undefined, field: string): string {

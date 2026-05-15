@@ -1,11 +1,12 @@
 import { PackageBackendEntrypoint } from "@gsv/package/backend";
 import {
-  addFriend,
+  establishContact,
   loadState,
-  removeFriend,
+  republishPublicRecords,
+  removeContact,
   sendMessage,
-  setFriendGrants,
-  updateMessageStatus,
+  setContactGrants,
+  updateMessageWorkflow,
 } from "./backend/api";
 
 export default class SocialBackend extends PackageBackendEntrypoint {
@@ -13,23 +14,35 @@ export default class SocialBackend extends PackageBackendEntrypoint {
     return loadState(args as never, this.kernel);
   }
 
-  async addFriend(args: unknown): Promise<unknown> {
-    return addFriend(args as never, this.kernel);
+  async establishContact(args: unknown): Promise<unknown> {
+    return establishContact(args as never, this.kernel);
   }
 
-  async setFriendGrants(args: unknown): Promise<unknown> {
-    return setFriendGrants(args as never, this.kernel);
+  async setContactGrants(args: unknown): Promise<unknown> {
+    return setContactGrants(args as never, this.kernel);
   }
 
-  async removeFriend(args: unknown): Promise<unknown> {
-    return removeFriend(args as never, this.kernel);
+  async removeContact(args: unknown): Promise<unknown> {
+    return removeContact(args as never, this.kernel);
   }
 
   async sendMessage(args: unknown): Promise<unknown> {
     return sendMessage(args as never, this.kernel);
   }
 
+  async updateMessageWorkflow(args: unknown): Promise<unknown> {
+    return updateMessageWorkflow(args as never, this.kernel);
+  }
+
+  async republishPublicRecords(): Promise<unknown> {
+    return republishPublicRecords(this.kernel);
+  }
+
   async updateMessageStatus(args: unknown): Promise<unknown> {
-    return updateMessageStatus(args as never, this.kernel);
+    return updateMessageWorkflow(args as never, this.kernel);
+  }
+
+  async republishIdentity(): Promise<unknown> {
+    return republishPublicRecords(this.kernel);
   }
 }

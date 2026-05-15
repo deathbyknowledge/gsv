@@ -1,0 +1,109 @@
+.social-global-nav {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-right: 1px solid var(--social-line);
+  background: #e8ecef;
+  overflow: hidden;
+}
+
+.social-nav-identity {
+  min-width: 0;
+  border-bottom: 1px solid var(--social-line);
+  padding: 18px;
+}
+
+.social-nav-identity strong,
+.social-nav-identity span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-nav-identity strong {
+  font-size: 16px;
+}
+
+.social-nav-identity span {
+  margin-top: 4px;
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-nav-groups {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.social-nav-group + .social-nav-group {
+  margin-top: 16px;
+}
+
+.social-nav-group h2,
+.social-subheader h2 {
+  margin: 0 0 7px;
+  color: var(--social-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.social-nav-item {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  padding: 7px 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.social-nav-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-nav-item strong {
+  min-width: 24px;
+  min-height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--social-surface-strong);
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-nav-item.is-active {
+  border-color: rgba(46, 95, 147, 0.24);
+  background: var(--social-blue-soft);
+  color: var(--social-blue);
+}
+
+.social-subheader {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--social-line);
+  border-bottom: 1px solid var(--social-line);
+  padding: 12px 18px 8px;
+}
+
+.social-subheader span {
+  color: var(--social-muted);
+  font-size: 12px;
+}

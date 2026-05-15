@@ -90,6 +90,10 @@ import {
 import type { AppClientSessionContext } from "../protocol/app-session";
 import { listLocalPublicPackages } from "./pkg";
 import { handleProcSpawn } from "./proc-handlers";
+import {
+  authorizeProcessSyscall,
+  LOCAL_PROCESS_AUTHORITY,
+} from "./authority";
 import type {
   ScheduleRecord,
   ScheduleRunResult,
@@ -1065,6 +1069,7 @@ export class Kernel extends Host<Env> {
     if (!identity) {
       return errFrame(frame.id, 404, "Unknown process");
     }
+    const authority = this.procs.getAuthority(processId);
 
     const connIdentity: ConnectionIdentity = {
       role: "user",
@@ -1077,6 +1082,15 @@ export class Kernel extends Host<Env> {
       !hasCapability(connIdentity.capabilities, frame.call)
     ) {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+    const deniedByAuthority = authorizeProcessSyscall(
+      authority,
+      frame.call,
+      frame.args,
+      identity,
+    );
+    if (deniedByAuthority) {
+      return errFrame(frame.id, 403, deniedByAuthority);
     }
 
     const ctx: KernelContext = {
@@ -1101,6 +1115,7 @@ export class Kernel extends Host<Env> {
       social: this.social,
       connection: null as unknown as Connection,
       identity: connIdentity,
+      authority,
       processId,
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
@@ -1179,6 +1194,7 @@ export class Kernel extends Host<Env> {
       social: this.social,
       connection,
       identity: state.identity as ConnectionIdentity,
+      authority: LOCAL_PROCESS_AUTHORITY,
       processId: undefined,
       appFrame: undefined,
       serverVersion: SERVER_VERSION,
@@ -1219,6 +1235,7 @@ export class Kernel extends Host<Env> {
       social: this.social,
       connection: null as unknown as Connection,
       identity,
+      authority: LOCAL_PROCESS_AUTHORITY,
       processId: undefined,
       appFrame,
       serverVersion: SERVER_VERSION,
@@ -2067,6 +2084,7 @@ export class Kernel extends Host<Env> {
       social: this.social,
       connection: null as unknown as Connection,
       identity,
+      authority: LOCAL_PROCESS_AUTHORITY,
       processId: record.runAs.kind === "process" ? record.runAs.pid : undefined,
       appFrame: undefined,
       serverVersion: SERVER_VERSION,

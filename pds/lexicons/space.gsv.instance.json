@@ -49,9 +49,12 @@
               "type": "string",
               "enum": [
                 "social.profile.read",
-                "social.agent.card.read",
                 "social.user.read",
-                "social.package.like.read",
+                "social.contact.read",
+                "social.package.read",
+                "social.package.release.read",
+                "social.vouch.read",
+                "social.news.read",
                 "social.thread.create",
                 "social.message.send",
                 "social.message.status.update"

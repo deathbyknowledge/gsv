@@ -1,7 +1,7 @@
 {
   "lexicon": 1,
   "id": "space.gsv.profile",
-  "description": "Public GSV human profile record.",
+  "description": "Public GSV profile record.",
   "defs": {
     "main": {
       "type": "record",

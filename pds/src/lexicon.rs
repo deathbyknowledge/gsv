@@ -105,10 +105,12 @@ pub fn bundled_space_gsv_lexicons() -> Vec<Value> {
     vec![
         serde_json::from_str(include_str!("../lexicons/space.gsv.profile.json")).unwrap(),
         serde_json::from_str(include_str!("../lexicons/space.gsv.instance.json")).unwrap(),
-        serde_json::from_str(include_str!("../lexicons/space.gsv.agent.card.json")).unwrap(),
         serde_json::from_str(include_str!("../lexicons/space.gsv.user.json")).unwrap(),
-        serde_json::from_str(include_str!("../lexicons/space.gsv.package.like.json")).unwrap(),
-        serde_json::from_str(include_str!("../lexicons/space.gsv.status.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.contact.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.package.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.package.release.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.vouch.json")).unwrap(),
+        serde_json::from_str(include_str!("../lexicons/space.gsv.news.json")).unwrap(),
     ]
 }
 
@@ -228,7 +230,12 @@ mod tests {
     #[test]
     fn bundles_space_gsv_lexicons_for_runtime_validation() {
         let lexicons = bundled_space_gsv_lexicons();
-        assert!(lexicons.iter().any(|lexicon| schema_id(lexicon) == Some("space.gsv.instance")));
+        assert!(lexicons
+            .iter()
+            .any(|lexicon| schema_id(lexicon) == Some("space.gsv.instance")));
+        assert!(lexicons
+            .iter()
+            .any(|lexicon| schema_id(lexicon) == Some("space.gsv.news")));
         assert!(validate_record_with_lexicons(
             "space.gsv.instance",
             &json!({
@@ -350,26 +357,15 @@ mod tests {
                     },
                     "acceptedSocialMethods": [
                         "social.profile.read",
-                        "social.agent.card.read",
                         "social.user.read",
+                        "social.contact.read",
+                        "social.package.read",
+                        "social.package.release.read",
+                        "social.vouch.read",
+                        "social.news.read",
                         "social.message.send",
                         "social.message.status.update"
                     ]
-                }),
-            ),
-            (
-                "space.gsv.agent.card",
-                serde_json::from_str(include_str!("../lexicons/space.gsv.agent.card.json"))
-                    .unwrap(),
-                json!({
-                    "$type": "space.gsv.agent.card",
-                    "createdAt": "2026-05-12T12:00:00Z",
-                    "displayName": "Hank's GSV",
-                    "summary": "Can answer messages and triage requests.",
-                    "topics": ["coding", "planning"],
-                    "acceptsMessages": true,
-                    "acceptsRequests": true,
-                    "humanEscalation": "sometimes"
                 }),
             ),
             (
@@ -383,36 +379,95 @@ mod tests {
                     "displayName": "Alice",
                     "description": "Example resident.",
                     "publicHandle": "alice.example.com",
-                    "acceptsMessages": true
+                    "acceptsContact": true
                 }),
             ),
             (
-                "space.gsv.package.like",
-                serde_json::from_str(include_str!("../lexicons/space.gsv.package.like.json"))
-                    .unwrap(),
+                "space.gsv.contact",
+                serde_json::from_str(include_str!("../lexicons/space.gsv.contact.json")).unwrap(),
                 json!({
-                    "$type": "space.gsv.package.like",
+                    "$type": "space.gsv.contact",
                     "createdAt": "2026-05-12T12:00:00Z",
                     "subject": {
-                        "kind": "gsv-package",
-                        "name": "notes",
+                        "did": "did:web:alice.example.com",
+                        "handle": "alice.example.com",
+                        "uri": "at://did:web:alice.example.com/space.gsv.profile/self"
+                    },
+                    "label": "Alice",
+                    "tags": ["collaborator"]
+                }),
+            ),
+            (
+                "space.gsv.package",
+                serde_json::from_str(include_str!("../lexicons/space.gsv.package.json")).unwrap(),
+                json!({
+                    "$type": "space.gsv.package",
+                    "createdAt": "2026-05-12T12:00:00Z",
+                    "name": "notes",
+                    "displayName": "Notes",
+                    "description": "A note-taking package.",
+                    "source": {
                         "repo": "theagentscompany/gsv",
                         "ref": "main",
                         "subdir": "builtin-packages/notes",
                         "uri": "https://github.com/theagentscompany/gsv/tree/main/builtin-packages/notes"
                     },
-                    "note": "Useful package."
+                    "homepage": "https://gsv.space/packages/notes",
+                    "tags": ["notes"]
                 }),
             ),
             (
-                "space.gsv.status",
-                serde_json::from_str(include_str!("../lexicons/space.gsv.status.json")).unwrap(),
+                "space.gsv.package.release",
+                serde_json::from_str(include_str!("../lexicons/space.gsv.package.release.json"))
+                    .unwrap(),
                 json!({
-                    "$type": "space.gsv.status",
+                    "$type": "space.gsv.package.release",
                     "createdAt": "2026-05-12T12:00:00Z",
-                    "text": "Working on social sync.",
-                    "expiresAt": "2026-05-13T12:00:00Z",
-                    "tags": ["social", "pds"]
+                    "package": {
+                        "uri": "at://did:web:gsv.example/space.gsv.package/notes"
+                    },
+                    "version": "1.0.0",
+                    "title": "Initial release",
+                    "description": "First public release.",
+                    "source": {
+                        "repo": "theagentscompany/gsv",
+                        "ref": "main",
+                        "subdir": "builtin-packages/notes"
+                    },
+                    "releasedAt": "2026-05-12T12:00:00Z",
+                    "tags": ["release"]
+                }),
+            ),
+            (
+                "space.gsv.vouch",
+                serde_json::from_str(include_str!("../lexicons/space.gsv.vouch.json")).unwrap(),
+                json!({
+                    "$type": "space.gsv.vouch",
+                    "createdAt": "2026-05-12T12:00:00Z",
+                    "subject": {
+                        "uri": "at://did:web:gsv.example/space.gsv.package/notes",
+                        "cid": "bafkreibm6jgkwx5ztbnodjrbazecinj63znepv3izjrb6ztscgzaemkhti"
+                    },
+                    "note": "Useful package.",
+                    "tags": ["trusted"]
+                }),
+            ),
+            (
+                "space.gsv.news",
+                serde_json::from_str(include_str!("../lexicons/space.gsv.news.json")).unwrap(),
+                json!({
+                    "$type": "space.gsv.news",
+                    "createdAt": "2026-05-12T12:00:00Z",
+                    "title": "Notes release",
+                    "text": "Notes 1.0.0 is available.",
+                    "tags": ["package", "release"],
+                    "startsAt": "2026-05-12T12:00:00Z",
+                    "endsAt": "2026-05-13T12:00:00Z",
+                    "subjects": [
+                        {
+                            "uri": "at://did:web:gsv.example/space.gsv.package.release/3kqonw7e3fs2a"
+                        }
+                    ]
                 }),
             ),
         ]

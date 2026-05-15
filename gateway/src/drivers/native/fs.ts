@@ -19,6 +19,7 @@ import {
   isTextContentType,
   inferContentType,
 } from "../../fs";
+import { fsAccessPolicyForAuthority } from "../../kernel/authority";
 import type { KernelContext } from "../../kernel/context";
 import { visiblePackageScopesForActor } from "../../kernel/packages";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
@@ -56,6 +57,7 @@ function makeFs(ctx: KernelContext): GsvFs {
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
     createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
     createPackageBackend(identity, ctx.packages),
+    fsAccessPolicyForAuthority(ctx.authority, identity),
   );
 }
 

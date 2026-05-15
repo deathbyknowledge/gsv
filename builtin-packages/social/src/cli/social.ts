@@ -1,21 +1,29 @@
 import { defineCommand } from "@gsv/package/cli";
 import type { KernelClientLike, PackageCommandContext } from "@gsv/package/cli";
 import type {
-  SocialFriendListResult,
-  SocialFriendAddResult,
+  SocialContactListResult,
+  SocialContactAddResult,
+  SocialContactRemoveResult,
+  SocialContactPublicListResult,
   SocialIdentityGetResult,
   SocialIdentityRepublishResult,
   SocialMessageSendResult,
   SocialMessageStatusListResult,
   SocialMessageStatusState,
   SocialMessageStatusSummary,
-  SocialPackageLikeCreateResult,
-  SocialPackageLikeDeleteResult,
-  SocialPackageLikeListResult,
+  SocialNewsCreateResult,
+  SocialNewsDeleteResult,
+  SocialNewsListResult,
+  SocialPackageListResult,
+  SocialPackageReleaseListResult,
   SocialThreadGetResult,
   SocialThreadListResult,
   SocialUserListResult,
-  SpaceGsvPackageLikeRecord,
+  SocialVouchCreateResult,
+  SocialVouchDeleteResult,
+  SocialVouchListResult,
+  SpaceGsvNewsRecord,
+  SpaceGsvVouchRecord,
 } from "@gsv/protocol/syscalls/social";
 
 type CommandContext = Pick<PackageCommandContext, "argv" | "kernel" | "stdout">;
@@ -49,8 +57,8 @@ export async function runSocialCommand(ctx: CommandContext): Promise<string> {
   if (command === "identity") {
     return runIdentityCommand(ctx.kernel, rest);
   }
-  if (command === "friends" || command === "friend") {
-    return runFriendsCommand(ctx.kernel, rest);
+  if (command === "contacts" || command === "contact") {
+    return runContactsCommand(ctx.kernel, rest);
   }
   if (command === "inbox") {
     return runInboxCommand(ctx.kernel, rest);
@@ -63,6 +71,12 @@ export async function runSocialCommand(ctx: CommandContext): Promise<string> {
   }
   if (command === "package" || command === "packages" || command === "pkg") {
     return runPackageCommand(ctx.kernel, rest);
+  }
+  if (command === "vouch" || command === "vouches") {
+    return runVouchCommand(ctx.kernel, rest);
+  }
+  if (command === "news") {
+    return runNewsCommand(ctx.kernel, rest);
   }
   if (command === "thread" || command === "threads") {
     return runThreadCommand(ctx.kernel, rest);
@@ -99,30 +113,41 @@ async function runIdentityCommand(kernel: KernelClientLike, args: string[]): Pro
   return `${lines.join("\n")}\n`;
 }
 
-async function runFriendsCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
+async function runContactsCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
   const [subcommand = "list", ...rest] = args;
   if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
-    return socialHelp("friend");
+    return socialHelp("contact");
   }
   if (subcommand === "add") {
     const handle = firstPositional(rest);
     const note = findFlagValue(rest, "--note");
     if (!handle || !note?.trim()) {
-      throw new Error("Usage: social friend add <handle> --note TEXT");
+      throw new Error("Usage: social contact add <handle> --note TEXT");
     }
-    const result = await kernel.request<SocialFriendAddResult>("social.friend.add", {
+    const result = await kernel.request<SocialContactAddResult>("social.contact.add", {
       handle,
       note: note.trim(),
     });
     if (hasFlag(rest, "--json")) {
       return `${JSON.stringify(result, null, 2)}\n`;
     }
-    return `${result.created ? "added" : "updated"} ${result.friend.handle}: ${result.friend.note}\n`;
+    return `${result.created ? "added" : "updated"} ${result.contact.handle}: ${result.contact.note}\n`;
+  }
+  if (subcommand === "remove" || subcommand === "delete") {
+    const handle = firstPositional(rest);
+    if (!handle) {
+      throw new Error("Usage: social contact remove <handle> [--json]");
+    }
+    const result = await kernel.request<SocialContactRemoveResult>("social.contact.remove", { handle });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return `${result.removed ? "removed" : "not found"} ${handle}\n`;
   }
   if (subcommand === "users") {
     const handle = firstPositional(rest);
     if (!handle) {
-      throw new Error("Usage: social friend users <handle> [--json]");
+      throw new Error("Usage: social contact users <handle> [--json]");
     }
     const result = await kernel.request<SocialUserListResult>("social.user.list", { handle });
     if (hasFlag(rest, "--json")) {
@@ -138,77 +163,178 @@ async function runFriendsCommand(kernel: KernelClientLike, args: string[]): Prom
       return `- ${label}`;
     }).join("\n")}\n`;
   }
-  if (subcommand !== "list") {
-    throw new Error(`Unknown social friend subcommand: ${subcommand}`);
-  }
-  const result = await kernel.request<SocialFriendListResult>("social.friend.list", {});
-  if (hasFlag(rest, "--json")) {
-    return `${JSON.stringify(result, null, 2)}\n`;
-  }
-  if (result.friends.length === 0) {
-    return "No friends.\n";
-  }
-  return `${result.friends.map((friend) => {
-    const grants = friend.grants.map((grant) => grant.operation).join(", ") || "none";
-    return `- ${friend.handle}: ${friend.note} (grants=${grants})`;
-  }).join("\n")}\n`;
-}
-
-async function runPackageCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
-  const [subcommand = "likes", ...rest] = args;
-  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
-    return socialHelp("package");
-  }
-  if (subcommand === "likes" || subcommand === "list") {
+  if (subcommand === "public") {
     const handle = findFlagValue(rest, "--handle") ?? firstPositional(rest);
-    const result = await kernel.request<SocialPackageLikeListResult>("social.package.like.list", {
+    const result = await kernel.request<SocialContactPublicListResult>("social.contact.public.list", {
       ...(handle ? { handle } : {}),
       limit: parseLimit(rest, 50),
     });
     if (hasFlag(rest, "--json")) {
       return `${JSON.stringify(result, null, 2)}\n`;
     }
-    if (result.likes.length === 0) {
-      return handle ? `No package likes for ${handle}.\n` : "No local package likes.\n";
+    if (result.contacts.length === 0) {
+      return handle ? `No public contacts for ${handle}.\n` : "No public contact records.\n";
     }
-    return `${result.likes.map(formatPackageLikeLine).join("\n")}\n`;
+    return `${result.contacts.map((entry) => {
+      const subject = entry.record.subject.handle ?? entry.record.subject.did;
+      const label = entry.record.label ? ` - ${entry.record.label}` : "";
+      return `- ${entry.handle}: ${subject}${label}`;
+    }).join("\n")}\n`;
   }
-  if (subcommand === "like" || subcommand === "add") {
-    const name = firstPositional(rest);
-    if (!name) {
-      throw new Error("Usage: social package like <name> [--repo REPO] [--ref REF] [--subdir DIR] [--uri URI] [--note TEXT]");
-    }
-    const record: SpaceGsvPackageLikeRecord = {
-      $type: "space.gsv.package.like",
-      createdAt: new Date().toISOString(),
-      subject: {
-        kind: "gsv-package",
-        name,
-        ...(findFlagValue(rest, "--repo") ? { repo: findFlagValue(rest, "--repo") } : {}),
-        ...(findFlagValue(rest, "--ref") ? { ref: findFlagValue(rest, "--ref") } : {}),
-        ...(findFlagValue(rest, "--subdir") ? { subdir: findFlagValue(rest, "--subdir") } : {}),
-        ...(findFlagValue(rest, "--uri") ? { uri: findFlagValue(rest, "--uri") } : {}),
-      },
-      ...(findFlagValue(rest, "--note") ? { note: findFlagValue(rest, "--note") } : {}),
-    };
-    const result = await kernel.request<SocialPackageLikeCreateResult>("social.package.like.create", { record });
+  if (subcommand !== "list") {
+    throw new Error(`Unknown social contact subcommand: ${subcommand}`);
+  }
+  const result = await kernel.request<SocialContactListResult>("social.contact.list", {});
+  if (hasFlag(rest, "--json")) {
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  if (result.contacts.length === 0) {
+    return "No contacts.\n";
+  }
+  return `${result.contacts.map((contact) => {
+    const grants = contact.grants.map((grant) => grant.operation).join(", ") || "none";
+    return `- ${contact.handle}: ${contact.note} (grants=${grants})`;
+  }).join("\n")}\n`;
+}
+
+async function runPackageCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    return socialHelp("package");
+  }
+  if (subcommand === "list") {
+    const handle = findFlagValue(rest, "--handle") ?? firstPositional(rest);
+    const result = await kernel.request<SocialPackageListResult>("social.package.list", {
+      ...(handle ? { handle } : {}),
+      limit: parseLimit(rest, 50),
+    });
     if (hasFlag(rest, "--json")) {
       return `${JSON.stringify(result, null, 2)}\n`;
     }
-    return `liked ${result.record.subject.name}${result.uri ? `: ${result.uri}` : ""}\n`;
+    if (result.packages.length === 0) {
+      return handle ? `No public packages for ${handle}.\n` : "No public packages.\n";
+    }
+    return `${result.packages.map(formatPackageLine).join("\n")}\n`;
   }
-  if (subcommand === "unlike" || subcommand === "delete" || subcommand === "remove") {
+  if (subcommand === "releases" || subcommand === "release") {
+    const handle = findFlagValue(rest, "--handle") ?? firstPositional(rest);
+    const packageUri = findFlagValue(rest, "--package");
+    const result = await kernel.request<SocialPackageReleaseListResult>("social.package.release.list", {
+      ...(handle ? { handle } : {}),
+      ...(packageUri ? { packageUri } : {}),
+      limit: parseLimit(rest, 50),
+    });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    if (result.releases.length === 0) {
+      return handle ? `No package releases for ${handle}.\n` : "No package releases.\n";
+    }
+    return `${result.releases.map(formatPackageReleaseLine).join("\n")}\n`;
+  }
+  throw new Error(`Unknown social package subcommand: ${subcommand}`);
+}
+
+async function runVouchCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    return socialHelp("vouch");
+  }
+  if (subcommand === "list") {
+    const handle = findFlagValue(rest, "--handle") ?? firstPositional(rest);
+    const result = await kernel.request<SocialVouchListResult>("social.vouch.list", {
+      ...(handle ? { handle } : {}),
+      limit: parseLimit(rest, 50),
+    });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    if (result.vouches.length === 0) {
+      return handle ? `No vouches for ${handle}.\n` : "No vouches.\n";
+    }
+    return `${result.vouches.map(formatVouchLine).join("\n")}\n`;
+  }
+  if (subcommand === "create" || subcommand === "add") {
+    const uri = findFlagValue(rest, "--uri") ?? firstPositional(rest);
+    if (!uri) {
+      throw new Error("Usage: social vouch create <at-uri> [--note TEXT] [--json]");
+    }
+    const record: SpaceGsvVouchRecord = {
+      $type: "space.gsv.vouch",
+      createdAt: new Date().toISOString(),
+      subject: { uri: toAtUri(uri, "vouch subject") },
+      ...(findFlagValue(rest, "--note") ? { note: findFlagValue(rest, "--note") } : {}),
+      ...(flagValues(rest, "--tag").length > 0 ? { tags: flagValues(rest, "--tag") } : {}),
+    };
+    const result = await kernel.request<SocialVouchCreateResult>("social.vouch.create", { record });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return `vouched for ${record.subject.uri}${result.uri ? `: ${result.uri}` : ""}\n`;
+  }
+  if (subcommand === "delete" || subcommand === "remove") {
     const uri = firstPositional(rest);
     if (!uri) {
-      throw new Error("Usage: social package unlike <at-uri> [--json]");
+      throw new Error("Usage: social vouch delete <at-uri> [--json]");
     }
-    const result = await kernel.request<SocialPackageLikeDeleteResult>("social.package.like.delete", { uri });
+    const result = await kernel.request<SocialVouchDeleteResult>("social.vouch.delete", { uri: toAtUri(uri, "vouch uri") });
     if (hasFlag(rest, "--json")) {
       return `${JSON.stringify(result, null, 2)}\n`;
     }
     return `${result.deleted ? "deleted" : "not found"} ${uri}\n`;
   }
-  throw new Error(`Unknown social package subcommand: ${subcommand}`);
+  throw new Error(`Unknown social vouch subcommand: ${subcommand}`);
+}
+
+async function runNewsCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    return socialHelp("news");
+  }
+  if (subcommand === "list") {
+    const handle = findFlagValue(rest, "--handle") ?? firstPositional(rest);
+    const result = await kernel.request<SocialNewsListResult>("social.news.list", {
+      ...(handle ? { handle } : {}),
+      limit: parseLimit(rest, 50),
+    });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    if (result.news.length === 0) {
+      return handle ? `No news for ${handle}.\n` : "No news.\n";
+    }
+    return `${result.news.map(formatNewsLine).join("\n")}\n`;
+  }
+  if (subcommand === "create" || subcommand === "post") {
+    const text = findFlagValue(rest, "--text") ?? positionalArgs(rest).join(" ");
+    if (!text.trim()) {
+      throw new Error("Usage: social news create <text> [--title TEXT] [--tag TAG] [--json]");
+    }
+    const record: SpaceGsvNewsRecord = {
+      $type: "space.gsv.news",
+      createdAt: new Date().toISOString(),
+      text: text.trim(),
+      ...(findFlagValue(rest, "--title") ? { title: findFlagValue(rest, "--title") } : {}),
+      ...(flagValues(rest, "--tag").length > 0 ? { tags: flagValues(rest, "--tag") } : {}),
+    };
+    const result = await kernel.request<SocialNewsCreateResult>("social.news.create", { record });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return `published news${result.uri ? `: ${result.uri}` : ""}\n`;
+  }
+  if (subcommand === "delete" || subcommand === "remove") {
+    const uri = firstPositional(rest);
+    if (!uri) {
+      throw new Error("Usage: social news delete <at-uri> [--json]");
+    }
+    const result = await kernel.request<SocialNewsDeleteResult>("social.news.delete", { uri: toAtUri(uri, "news uri") });
+    if (hasFlag(rest, "--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return `${result.deleted ? "deleted" : "not found"} ${uri}\n`;
+  }
+  throw new Error(`Unknown social news subcommand: ${subcommand}`);
 }
 
 async function runInboxCommand(kernel: KernelClientLike, args: string[]): Promise<string> {
@@ -362,11 +488,28 @@ function formatStatusLineWithActions(status: SocialMessageStatusSummary): string
   ].join("\n");
 }
 
-function formatPackageLikeLine(like: SocialPackageLikeListResult["likes"][number]): string {
-  const subject = like.record.subject;
-  const source = subject.repo ?? subject.uri ?? subject.name;
-  const note = like.record.note ? ` - ${like.record.note}` : "";
-  return `- ${like.handle}: ${subject.name} (${source})${note}`;
+function formatPackageLine(entry: SocialPackageListResult["packages"][number]): string {
+  const record = entry.record;
+  const label = record.displayName && record.displayName !== record.name
+    ? `${record.name}: ${record.displayName}`
+    : record.name;
+  const source = record.source?.repo ?? record.source?.uri ?? record.homepage;
+  return `- ${entry.handle}: ${label}${source ? ` (${source})` : ""}`;
+}
+
+function formatPackageReleaseLine(entry: SocialPackageReleaseListResult["releases"][number]): string {
+  const title = entry.record.title ? ` - ${entry.record.title}` : "";
+  return `- ${entry.handle}: ${entry.record.version}${title} (${entry.record.package.uri})`;
+}
+
+function formatVouchLine(entry: SocialVouchListResult["vouches"][number]): string {
+  const note = entry.record.note ? ` - ${entry.record.note}` : "";
+  return `- ${entry.handle}: ${entry.record.subject.uri}${note}`;
+}
+
+function formatNewsLine(entry: SocialNewsListResult["news"][number]): string {
+  const title = entry.record.title ? `${entry.record.title}: ` : "";
+  return `- ${entry.handle}: ${title}${entry.record.text}`;
 }
 
 function socialHelp(topic?: string): string {
@@ -387,18 +530,37 @@ function socialHelp(topic?: string): string {
   if (topic === "package" || topic === "packages" || topic === "pkg") {
     return [
       "Usage:",
-      "  social package likes [handle|--handle HANDLE] [--limit N] [--json]",
-      "  social package like <name> [--repo REPO] [--ref REF] [--subdir DIR] [--uri URI] [--note TEXT] [--json]",
-      "  social package unlike <at-uri> [--json]",
+      "  social package list [handle|--handle HANDLE] [--limit N] [--json]",
+      "  social package releases [handle|--handle HANDLE] [--package AT_URI] [--limit N] [--json]",
       "",
     ].join("\n");
   }
-  if (topic === "friend" || topic === "friends") {
+  if (topic === "contact" || topic === "contacts") {
     return [
       "Usage:",
-      "  social friend list [--json]",
-      "  social friend add <handle> --note TEXT [--json]",
-      "  social friend users <handle> [--json]",
+      "  social contact list [--json]",
+      "  social contact add <handle> --note TEXT [--json]",
+      "  social contact remove <handle> [--json]",
+      "  social contact users <handle> [--json]",
+      "  social contact public [handle|--handle HANDLE] [--limit N] [--json]",
+      "",
+    ].join("\n");
+  }
+  if (topic === "vouch" || topic === "vouches") {
+    return [
+      "Usage:",
+      "  social vouch list [handle|--handle HANDLE] [--limit N] [--json]",
+      "  social vouch create <at-uri> [--note TEXT] [--tag TAG] [--json]",
+      "  social vouch delete <at-uri> [--json]",
+      "",
+    ].join("\n");
+  }
+  if (topic === "news") {
+    return [
+      "Usage:",
+      "  social news list [handle|--handle HANDLE] [--limit N] [--json]",
+      "  social news create <text> [--title TEXT] [--tag TAG] [--json]",
+      "  social news delete <at-uri> [--json]",
       "",
     ].join("\n");
   }
@@ -409,11 +571,13 @@ function socialHelp(topic?: string): string {
     "Usage:",
     "  social identity",
     "  social identity republish",
-    "  social friend list|add|users ...",
+    "  social contact list|add|remove|users|public ...",
     "  social inbox [--state STATE] [--limit N]",
     "  social status list|update ...",
     "  social message send <handle> <text>",
-    "  social package likes|like|unlike ...",
+    "  social package list|releases ...",
+    "  social vouch list|create|delete ...",
+    "  social news list|create|delete ...",
     "  social thread list|read ...",
     "",
   ].join("\n");
@@ -483,6 +647,29 @@ function findFlagValue(args: string[], flag: string): string | undefined {
   return value;
 }
 
+function flagValues(args: string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== flag) {
+      continue;
+    }
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      throw new Error(`${flag} requires a value`);
+    }
+    values.push(value);
+    index += 1;
+  }
+  return values;
+}
+
+function toAtUri(value: string, label: string): `at://${string}` {
+  if (!value.startsWith("at://")) {
+    throw new Error(`${label} must be an at:// URI`);
+  }
+  return value as `at://${string}`;
+}
+
 function requireFlagValue(args: string[], flag: string, message: string): string {
   const value = findFlagValue(args, flag);
   if (!value) {
@@ -510,7 +697,9 @@ function positionalArgs(args: string[]): string[] {
     "--state",
     "--subdir",
     "--summary",
+    "--tag",
     "--text",
+    "--title",
     "--thread",
     "--to",
     "--uri",

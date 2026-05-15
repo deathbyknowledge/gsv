@@ -3,6 +3,11 @@ import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ProcMindDeliverResult } from "../syscalls/proc";
 import type { KernelContext } from "./context";
+import {
+  LOCAL_PROCESS_AUTHORITY,
+  processAuthorityKey,
+  type ProcessAuthority,
+} from "./authority";
 
 const MIND_PROCESS_HASH_BYTES = 16;
 
@@ -15,6 +20,7 @@ export type MindEventInput = {
   body?: unknown;
   metadata?: Record<string, unknown>;
   includeStructuredData?: boolean;
+  authority?: ProcessAuthority;
 };
 
 export type MindEventResult =
@@ -31,7 +37,8 @@ export async function dispatchMindEvent(
   ctx: KernelContext,
   input: MindEventInput,
 ): Promise<MindEventResult> {
-  const pid = await mindPid(input.identity.uid, input.source, input.threadKey);
+  const authority = input.authority ?? LOCAL_PROCESS_AUTHORITY;
+  const pid = await mindPid(input.identity.uid, input.source, input.threadKey, authority);
   const conversationId = mindConversationId(input.source, input.threadKey);
   const existing = ctx.procs.get(pid);
   const shouldSpawn = !existing || existing.state !== "running";
@@ -45,8 +52,9 @@ export async function dispatchMindEvent(
       parentPid: parent.pid,
       profile: "mind",
       label,
-      cwd: input.identity.cwd,
+      cwd: authority.kind === "remote-social" ? authority.sandboxRoot : input.identity.cwd,
       workspaceId: input.identity.workspaceId,
+      authority,
     });
 
     const setIdentityFrame: RequestFrame<"proc.setidentity"> = {
@@ -124,10 +132,15 @@ function renderMindEvent(input: MindEventInput): string {
   return lines.join("\n");
 }
 
-async function mindPid(uid: number, source: string, threadKey: string): Promise<string> {
+async function mindPid(
+  uid: number,
+  source: string,
+  threadKey: string,
+  authority: ProcessAuthority,
+): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(`${source}\n${threadKey}`),
+    new TextEncoder().encode(`${processAuthorityKey(authority)}\n${source}\n${threadKey}`),
   );
   const bytes = [...new Uint8Array(digest)].slice(0, MIND_PROCESS_HASH_BYTES);
   return `mind:${uid}:${bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;

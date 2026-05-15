@@ -1,0 +1,326 @@
+.social-segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  border-bottom: 1px solid var(--social-line);
+  padding: 10px;
+}
+
+.social-segmented button {
+  min-height: 32px;
+  border: 1px solid var(--social-line);
+  border-radius: 7px;
+  background: var(--social-surface-strong);
+  cursor: pointer;
+}
+
+.social-segmented button.is-active {
+  border-color: rgba(23, 101, 85, 0.34);
+  background: var(--social-primary-soft);
+  color: var(--social-primary);
+}
+
+.social-row-button {
+  width: 100%;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--social-line);
+  border-radius: 7px;
+  background: var(--social-surface-strong);
+  padding: 10px;
+  margin: 0 0 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.social-row-button.is-active {
+  border-color: rgba(46, 95, 147, 0.38);
+  background: var(--social-blue-soft);
+}
+
+.social-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.social-row-main strong,
+.social-row-main small,
+.social-row-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-row-main small {
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-row-count {
+  min-width: 24px;
+  color: var(--social-muted);
+  text-align: right;
+  font-size: 12px;
+}
+
+.social-rail-head,
+.social-section-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.social-rail-head h3,
+.social-section-head h3,
+.social-work-section h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.social-rail-head span,
+.social-section-head span {
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-work-section {
+  margin: 0 0 16px;
+}
+
+.social-work-section:last-child {
+  margin-bottom: 0;
+}
+
+.social-message,
+.social-workflow-card {
+  border: 1px solid var(--social-line);
+  border-radius: 7px;
+  background: var(--social-surface-strong);
+  padding: 12px;
+  margin: 0 0 12px;
+}
+
+.social-message.is-mine {
+  border-color: rgba(23, 101, 85, 0.24);
+  background: var(--social-primary-soft);
+}
+
+.social-message.is-theirs,
+.social-workflow-card.is-inbound {
+  border-color: rgba(46, 95, 147, 0.22);
+}
+
+.social-workflow-card.is-highlighted {
+  border-color: rgba(148, 99, 21, 0.48);
+  box-shadow: inset 3px 0 0 var(--social-warning);
+}
+
+.social-workflow-card.is-outbound {
+  opacity: 0.9;
+}
+
+.social-message header,
+.social-workflow-card header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.social-message header strong,
+.social-workflow-card h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.social-message header span,
+.social-workflow-meta {
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-message p,
+.social-structured-text {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+}
+
+.social-message-workflow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-workflow-card h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.social-workflow-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.social-field-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  border: 1px solid var(--social-line);
+  border-radius: 7px;
+  background: var(--social-surface-soft);
+  padding: 10px;
+}
+
+.social-field-list.is-compact {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.social-field-list > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(96px, 30%) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.social-field-list dt,
+.social-field-list dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.social-field-list dt {
+  color: var(--social-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.social-directory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.social-directory-grid h4 {
+  margin: 0 0 8px;
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-compact-list,
+.social-record-table {
+  display: grid;
+  gap: 8px;
+}
+
+.social-compact-list > div,
+.social-record-table > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--social-line);
+  border-radius: 7px;
+  background: var(--social-surface-strong);
+  padding: 10px;
+}
+
+.social-record-table > div {
+  grid-template-columns: minmax(150px, 28%) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.social-compact-list strong,
+.social-compact-list span,
+.social-record-table strong,
+.social-record-table span,
+.social-record-table small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-compact-list span,
+.social-record-table span,
+.social-record-table small {
+  color: var(--social-muted);
+  font-size: 12px;
+}
+
+.social-directory-summary {
+  padding: 10px 12px 14px;
+}
+
+.social-method-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.social-method {
+  min-height: 28px;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--social-line);
+  border-radius: 999px;
+  background: var(--social-surface-soft);
+  color: var(--social-muted);
+  padding: 4px 8px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-method.is-on {
+  border-color: rgba(46, 95, 147, 0.3);
+  background: var(--social-blue-soft);
+  color: var(--social-blue);
+}
+
+.social-raw-details {
+  margin-top: 10px;
+}
+
+.social-raw-details summary {
+  color: var(--social-muted);
+  cursor: pointer;
+}
+
+.social-raw-details pre {
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 7px;
+  background: #e6eaed;
+  padding: 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.social-advanced-section .social-detail-scroll {
+  max-width: 1180px;
+}

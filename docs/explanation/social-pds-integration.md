@@ -4,30 +4,32 @@ This document tracks the work needed to make GSV social through PDS and
 ATProto repositories.
 
 The target is not a social feed bolted onto GSV. The target is GSV-to-GSV
-coordination: people can friend each other by handle, their agents can exchange
-bounded asynchronous messages, and public social records can make packages,
-profiles, and agent contact cards discoverable. DIDs remain an internal
-verification detail that the Kernel resolves from handles.
+coordination: sovereign systems can establish Contact by handle, their agents
+can exchange bounded asynchronous messages, and public social records can make
+profiles, Contacts, packages, vouches, and local news discoverable. DIDs remain
+an internal verification detail that the Kernel resolves from handles.
 
 ## Finish Line
 
 A complete first version should support this journey:
 
 1. Alice and Hank each have a GSV user linked to a handle-backed PDS repo.
-2. Each GSV publishes a public profile, instance contact record, agent card, and
-   package-like records.
+2. Each GSV publishes a public profile, instance record, user directory, local
+   news, and package records for public packages.
 3. Alice grants Hank's handle permission to use a narrow set of social
    operations.
 4. Hank asks Alice's agent a question while Alice is offline.
 5. Hank's GSV signs and sends an asynchronous service-to-service social message.
-6. Alice's GSV resolves Hank's handle, verifies the underlying DID and request
-   signature, checks Alice's local grants, stores the inbound message, and opens
-   or reuses a social conversation on Alice's init process.
-7. Alice's agent can reply from that conversation using a social reply syscall.
-8. Hank's GSV receives the signed reply asynchronously and delivers it into
-   Hank's local social thread.
-9. Both users can inspect the thread, its status, and any request state from
-   their own GSV.
+6. Alice's GSV resolves Hank's handle, verifies the underlying DID and envelope
+   signature, checks Alice's local grants, stores the inbound message, creates a
+   message status, and opens or reuses a social conversation on Alice's init
+   process.
+7. Alice's agent can update message status and reply from that conversation by
+   sending another `social.message.send` on the same thread.
+8. Hank's GSV receives signed status updates and the signed reply
+   asynchronously and delivers them into Hank's local social thread.
+9. Both users can inspect the thread, messages, and message statuses from their
+   own GSV.
 
 ## Boundaries
 
@@ -39,7 +41,7 @@ add per-user subdomain or DID PLC support.
 PDS and ATProto repos provide identity, discovery, public records, and signed
 social state. The GSV Kernel remains the authority boundary.
 
-Remote friends must not receive direct access to these syscall domains:
+Remote Contacts must not receive direct access to these syscall domains:
 
 - `fs.*`
 - `shell.exec`
@@ -57,9 +59,10 @@ remote GSV should never call process, filesystem, shell, device, or ripgit
 syscalls directly.
 
 Do not publish device inventory by default. Public records may say that the GSV
-accepts social messages or package likes, but should not reveal device ids,
-platforms, online state, target names, file paths, shell capability, local
-network information, or OS details.
+accepts social messages, publishes packages, vouches for ATProto records, or
+posts local news, but should not reveal device ids, platforms, online state,
+target names, file paths, shell capability, local network information, or OS
+details.
 
 ## Architecture Decisions
 
@@ -70,7 +73,7 @@ network information, or OS details.
 - Bind the PDS Worker into Gateway twice by behavior: public `/xrpc/*` traffic
   is forwarded with `fetch`, while internal GSV code uses the PDS Worker
   Entrypoint RPC methods.
-- Treat direct signed HTTP requests as the interaction transport for the first
+- Treat direct signed HTTP envelopes as the interaction transport for the first
   version. PDS records discover endpoints and keys; they are not the only
   message transport.
 - Make social messages asynchronous by default. Outbound sends return accepted,
@@ -79,9 +82,9 @@ network information, or OS details.
   `social:<peer-handle>:<thread-id>`.
 - Store protocol state in Kernel social tables, and store agent-visible
   conversation state in the Process DO.
-- Start with scheduled or manual friend-record sync. Live firehose ingestion can
+- Start with scheduled or manual Contact-record sync. Live firehose ingestion can
   come later.
-- Keep friend grants local to the Kernel. Public follow records are not
+- Keep Contact grants local to the Kernel. Public Contact records are not
   authority.
 
 ## Local Two-GSV Smoke
@@ -119,11 +122,13 @@ npm run smoke:social:local
 ```
 
 This verifies identity, DID documents, public `space.gsv.profile`,
-`space.gsv.instance`, and `space.gsv.agent.card` records, handle-based
-friend/grant setup in both directions, one signed async message from GSV A to
-GSV B, and one typed request from GSV A that GSV B completes. The receiver
-stores inbound social events in its Kernel social thread state and delivers
-them to the receiver's init process conversation.
+`space.gsv.instance`, local news records, and vouch records, handle-based
+Contact/grant setup in both directions, one signed async message
+from GSV A to GSV B, B's inbound message status, B's signed status update back
+to A, a same-thread reply from B to A using `social.message.send`, and a
+temporary denied-sender case. The receiver stores inbound social events in its
+Kernel social thread state and delivers them to the receiver's init process
+conversation.
 
 ## Subagent Handoff Context
 
@@ -132,13 +137,13 @@ initial social Kernel state. A subagent should start by reading this document,
 then inspect these files:
 
 - `shared/protocol/src/syscalls/social.ts`: shared record and syscall contracts.
-- `gateway/src/kernel/social.ts`: social storage, setup, friend/grant logic,
+- `gateway/src/kernel/social.ts`: social storage, setup, Contact/grant logic,
   public record publishing, and signed inbound auth.
 - `gateway/src/kernel/social.test.ts`: the highest-signal behavioral examples.
 - `gateway/src/pds/client.ts`: Gateway-to-PDS binding and XRPC proxy client.
 - `gateway/src/index.ts`: public PDS/XRPC proxy routes and `/social/inbound`.
-- `builtin-packages/social/`: builtin UI for friends, local grants, social
-  threads, messages, and typed requests.
+- `builtin-packages/social/`: builtin UI for Contacts, local grants, social
+  threads, messages, message statuses, public packages, vouches, and news.
 - `pds/src/worker_entry.rs` and `pds/src/entrypoint.ts`: PDS Worker HTTP and
   Worker Entrypoint surface.
 - `scripts/dev-stack.sh`: local multi-worker dev setup.
@@ -149,7 +154,7 @@ Hard invariants:
 - Handles are user-facing. DIDs are internal verification details resolved by
   the Kernel.
 - PDS records are discovery and public state. Kernel tables are the authority
-  for grants, local delivery state, and friend trust.
+  for grants, local delivery state, and Contact trust.
 - Public records must not expose device inventory, local paths, OS details,
   network topology, shell capability, or remote syscall capability.
 - Remote GSVs never call `proc.*`, `fs.*`, `shell.exec`, `repo.*`, device,
@@ -167,31 +172,40 @@ Completed milestones:
 - GSV onboarding can create the builtin PDS account for the main non-root user.
 - Gateway exposes public PDS routes and uses the PDS Worker over service
   binding RPC internally.
-- Local social identity/profile/instance/agent-card records can be published.
-- Friends can be added by handle and assigned narrow local grants.
+- Local social identity/profile/instance/user records can be published.
+- Contacts can be added by handle and assigned narrow local grants.
 - Signed inbound social envelopes can be accepted or rejected with replay
   protection.
 - Social threads and messages are stored in Kernel tables.
 - `social.thread.create`, `social.thread.list`, `social.thread.get`,
-  `social.message.send`, and `social.message.reply` are implemented.
+  `social.message.send`, `social.message.status.list`,
+  `social.message.status.get`, and `social.message.status.update` are
+  implemented.
 - Outbound messages are signed and posted to the remote GSV inbound endpoint,
   with local delivery status updated from the immediate remote response.
 - Transient outbound failures are retried by Kernel scheduled callbacks with a
   bounded attempt count; permanent failures are marked `failed`.
 - Accepted inbound messages are idempotently stored before process delivery and
-  rendered into the main user's init process conversation.
-- The builtin Social app can manage friends, edit local grants, inspect
-  threads, send messages, create typed requests, and respond to inbound
-  requests.
+  rendered into the main user's init process conversation with an initial
+  `received` message status.
+- Inbound message status updates are signed, accepted idempotently, and stored
+  against the corresponding local message.
+- Public packages, vouches, and news can be listed through the social
+  command/syscall surface. Public package records are projected when package
+  sources are made public.
+- The builtin Social app can manage Contacts, edit local grants, inspect
+  threads, send messages, update message statuses, inspect the inbox, and view
+  public Contact records, packages, package releases, vouches, and news.
 
 Next implementation contract:
 
 - Sync the builtin package into a local GSV and use the Social app against two
   dev-stack instances.
-- Add friend public-record sync and package-like surfaces after the app-driven
-  local workflow is verified.
-- Expand the two-GSV smoke into app-relevant request/reply and denied-sender
-  cases.
+- Add broader Contact public-record sync after the on-demand public-package and
+  user-directory reads are verified.
+- Extend smoke coverage only where it maps to implemented protocol surfaces,
+  especially status transitions, vouch/news discovery, and denied sender
+  authorization.
 
 ## TODOs
 
@@ -202,10 +216,12 @@ Next implementation contract:
 - [x] `space.gsv.profile`: display name, avatar, short bio, links.
 - [x] `space.gsv.instance`: GSV endpoint, protocol version, service signing key,
       accepted social methods.
-- [x] `space.gsv.agent.card`: what the user's public or friend-visible agent can
-      help with.
-- [x] `space.gsv.package.like`: package/source liked by the user.
-- [x] Optional `space.gsv.status`: short current activity or collaboration status.
+- [x] `space.gsv.contact`: public Contact relationships without private grants
+      or notes.
+- [x] `space.gsv.package`: package/source published by the GSV.
+- [x] `space.gsv.package.release`: release metadata for published packages.
+- [x] `space.gsv.vouch`: a public vouch for an ATProto record URI.
+- [x] `space.gsv.news`: local news items published by the GSV.
 - [x] Explicitly exclude device inventory from public schemas.
 - [x] Add fixtures for valid and invalid records.
 
@@ -219,50 +235,54 @@ Next implementation contract:
 - [x] Limit the gateway-host social identity to the main non-root user.
 - [x] Add syscalls to read and update the local user's public social profile.
 - [x] Publish or update `space.gsv.profile`, `space.gsv.instance`, and
-      `space.gsv.agent.card` records from GSV.
+      `space.gsv.user` records from GSV.
 - [x] Add tests for ownership, validation, and update behavior.
 
-### 3. Add Local Friend And Grant State
+### 3. Add Local Contact And Grant State
 
 - [x] Add Kernel tables for known social identities.
 - [x] Add Kernel tables for social grants keyed by remote handle.
 - [x] Model grants as social operations, not broad trust:
       `social.message.send`, `social.thread.create`,
-      `social.request.create`, `social.package.like.read`, and similar.
-- [x] Add `social.friend.list`, `social.friend.add`, `social.friend.remove`,
+      `social.message.status.update`, `social.package.read`,
+      `social.vouch.read`, `social.news.read`, and similar.
+- [x] Add `social.contact.list`, `social.contact.add`,
+      `social.contact.remove`,
       and grant update syscalls.
-- [x] Ensure public follow/friend records never grant authority by themselves.
+- [x] Ensure public Contact records never grant authority by themselves.
 - [ ] Add authorization tests for allowed, denied, revoked, expired, and unknown
       remote handles.
 
 ### 4. Implement Service-To-Service Auth
 
-- [x] Define signed social request envelopes with id, method, internal sender
+- [x] Define signed social envelopes with id, method, internal sender
       DID, internal recipient DID, created time, expiry, nonce, body, key id,
       and signature.
 - [x] Resolve the sender handle and verify its DID and advertised GSV service
       key.
-- [x] Reject expired requests.
+- [x] Reject expired envelopes.
 - [x] Reject replayed ids or nonces.
-- [x] Reject requests whose internal recipient DID does not match the local
+- [x] Reject envelopes whose internal recipient DID does not match the local
       user.
-- [x] Route verified inbound requests through a service-only
+- [x] Route verified inbound envelopes through a service-only
       `social.inbound` syscall.
 - [x] Add negative tests for bad signature, wrong DID, wrong key, replay,
       expiry, missing grant, and malformed body.
 
-### 5. Add Social Threads And Messages
+### 5. Add Social Threads, Messages, And Statuses
 
-- [x] Add Kernel tables for social threads, messages, delivery attempts, and
-      remote event ids.
+- [x] Add Kernel tables for social threads, messages, message statuses,
+      delivery attempts, and remote event ids.
 - [x] Define shared protocol types for social threads, messages, delivery
-      status, and request status.
+      status, and message status.
 - [x] Add `social.thread.create`, `social.thread.list`, `social.thread.get`,
-      `social.message.send`, and `social.message.reply`.
+      `social.message.send`, `social.message.status.list`,
+      `social.message.status.get`, and `social.message.status.update`.
 - [x] Make outbound sends asynchronous with local status:
       `queued`, `sent`, `accepted`, `failed`, `retrying`, `delivered`.
 - [x] Add bounded retries for transient remote failures.
 - [x] Add idempotency for duplicate inbound message ids.
+- [x] Add idempotency for duplicate inbound message status update ids.
 - [x] Enforce max message size and allowed content types.
 - [x] Add tests for thread creation, follow-up routing, retry scheduling,
       idempotency, and status transitions.
@@ -273,71 +293,79 @@ Next implementation contract:
 - [x] Open or reuse `conversationId =
       social:<peer-handle>:<thread-id>` on the user's init process.
 - [x] Render inbound social messages as explicit process events, preserving
-      peer handle, thread id, message id, and request metadata.
-- [x] Add an agent-visible way to reply through `social.message.reply`.
+      peer handle, thread id, message id, and message status metadata.
+- [x] Add an agent-visible way to reply through `social.message.send` with the
+      existing `threadId`.
 - [x] Do not expose remote peers as callers of `proc.send`.
 - [x] Add tests proving inbound social messages create or reuse the expected
       Process DO conversation.
 
-### 7. Add Social Requests And Inbox State
+### 7. Add Social Message Status And Inbox State
 
-- [x] Add `social.request.create`, `social.request.list`,
-      `social.request.get`, and `social.request.respond`.
-- [x] Track request status:
-      `pending`, `agent-replied`, `needs-human`, `accepted`, `declined`,
-      `completed`, `expired`.
-- [x] Integrate notifications for inbound requests and request updates that
-      need user attention.
+- [x] Add `social.message.status.list`, `social.message.status.get`, and
+      `social.message.status.update`.
+- [x] Track message status:
+      `received`, `triaged`, `in_progress`, `needs_human`, `completed`,
+      `declined`, `failed`.
+- [x] Integrate notifications for inbound messages that need user attention.
 - [x] Maintain a generated inbox index at `~/context.d/90-social-inbox.md` when
-      there are active requests.
+      there are active inbound message statuses.
 - [x] Keep the context file as an index only; Kernel tables remain the source of
       truth.
-- [x] Add tests for outbound request creation, inbound request storage,
-      notifications, response delivery, and context index generation/removal.
-- [ ] Add focused tests for `needs-human` request notifications and explicit
-      expiry transitions.
+- [x] Add tests for inbound message storage, status notifications, status
+      delivery, and context index generation.
+- [ ] Add focused tests for status filtering, status removal from the inbox, and
+      explicit thread expiry transitions.
 
-### 8. Sync Friend Public Records
+### 8. Sync Contact Public Records
 
-- [ ] Store per-friend repo cursors or latest revisions.
-- [ ] Add `social.sync.run` to poll known friends' public PDS records.
-- [ ] Cache public profile, instance, agent-card, package-like, and status
+- [x] Fetch and cache Contact `space.gsv.user` records on demand through
+      `social.user.list`.
+- [x] Fetch and cache Contact `space.gsv.contact`, `space.gsv.package`,
+      `space.gsv.package.release`, `space.gsv.vouch`, and `space.gsv.news`
+      records on demand through the matching social list syscalls.
+- [ ] Store per-Contact repo cursors or latest revisions.
+- [ ] Add a general sync handler to poll known Contacts' public PDS
       records.
-- [ ] Emit internal signals such as `social.friend.updated` and
-      `social.package.like.created`.
+- [ ] Cache refreshed profile, instance, user, contact, package, vouch, and news
+      records beyond Contact add and on-demand list flows.
+- [ ] Emit internal signals such as `social.contact.updated` and
+      `social.news.created`.
 - [ ] Start with scheduled polling or manual sync; do not depend on live
       outgoing WebSocket firehose connections from Durable Objects.
 - [ ] Add tests for updated, deleted, malformed, and stale records.
 
-### 9. Surface Package Likes
+### 9. Surface Public Packages And Signals
 
-- [ ] Publish local package likes as `space.gsv.package.like` records.
-- [ ] Show friend package likes in the package UI or package CLI.
-- [ ] Connect liked packages to existing package flows:
+- [x] Publish `space.gsv.package` records when package sources are made public.
+- [x] List Contact packages, package releases, vouches, and news.
+- [x] Show Contact public records in the Social app and social command surface
+      when the Contact advertises and is granted the matching read operation.
+- [ ] Connect public packages to existing package flows:
       `pkg.public.list`, `pkg.add`, `pkg.review.approve`, and `pkg.install`.
-- [ ] Add tests for visibility, package identity normalization, and install
-      handoff.
+- [x] Add tests for local publish/list/delete and remote public-record reads.
+- [ ] Add tests for package install/review handoff once that flow exists.
 
 ### 10. Build End-To-End Smoke Tests
 
 - [x] Add a two-GSV test harness or smoke script.
 - [x] Create two users with linked handles.
-- [ ] Publish package-like records.
-- [x] Publish profile, instance, and agent-card records.
-- [x] Add a friend grant from Alice to Hank.
+- [x] Publish vouch and news records.
+- [x] Publish profile and instance records.
+- [x] Add current Contact grants in both directions.
 - [x] Send a signed async message from Hank to Alice.
-- [x] Verify Alice stores the social conversation.
-- [x] Send a typed request from Hank to Alice and respond from Alice to Hank.
-- [x] Verify Hank receives the completed request status.
-- [ ] Reply from Alice back to Hank.
-- [ ] Verify Hank receives the reply in the original thread.
-- [ ] Verify denied handles cannot send messages.
+- [x] Verify Alice stores the social conversation and inbound message status.
+- [x] Update Alice's inbound message status and verify Hank receives the status.
+- [x] Reply from Alice back to Hank with `social.message.send` on the original
+      thread.
+- [x] Verify Hank receives the reply and reply status in the original thread.
+- [x] Verify denied handles cannot send messages.
 - [ ] Verify no public record contains device inventory.
 
 ## Deferred
 
-- Human browser login with a friend's GSV identity.
-- Shared workspace collaboration beyond curated summaries and social requests.
+- Human browser login with a Contact's GSV identity.
+- Shared workspace collaboration beyond curated summaries and social messages.
 - Private context capsules.
 - Live firehose ingestion.
 - Remote device exposure.

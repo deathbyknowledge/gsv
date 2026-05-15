@@ -29,6 +29,11 @@ import {
   resolveUserPath,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
+import {
+  authorizeProcessSyscall,
+  fsAccessPolicyForAuthority,
+  isRemoteSocialAuthority,
+} from "../../kernel/authority";
 import { hasCapability } from "../../kernel/capabilities";
 import {
   handlePkgAdd,
@@ -61,6 +66,24 @@ import {
   handleSchedulerRun,
   handleSchedulerUpdate,
 } from "../../kernel/scheduler";
+import {
+  handleSocialIdentityGet,
+  handleSocialInstanceGet,
+  handleSocialMessageSend,
+  handleSocialMessageStatusGet,
+  handleSocialMessageStatusList,
+  handleSocialMessageStatusUpdate,
+  handleSocialContactPublicList,
+  handleSocialNewsList,
+  handleSocialPackageList,
+  handleSocialPackageReleaseList,
+  handleSocialProfileGet,
+  handleSocialThreadCreate,
+  handleSocialThreadGet,
+  handleSocialThreadList,
+  handleSocialUserList,
+  handleSocialVouchList,
+} from "../../kernel/social";
 import {
   handleSysMcpAdd,
   handleSysMcpCall,
@@ -221,6 +244,7 @@ function createBash(ctx: KernelContext, identity: ProcessIdentity, cwd: string):
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
     createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
     createPackageBackend(identity, ctx.packages),
+    fsAccessPolicyForAuthority(ctx.authority, identity),
   );
 
   const serverName = ctx.config.get("config/server/name") ?? "gsv";
@@ -1645,6 +1669,20 @@ function buildCustomCommands(
   const sched = buildSchedCommand(ctx);
   const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
+  if (isRemoteSocialAuthority(ctx.authority)) {
+    const social = buildRemoteSocialCommand(ctx);
+    return [
+      whoami,
+      id,
+      hostname,
+      uname,
+      man,
+      ls,
+      stat,
+      skills,
+      social,
+    ];
+  }
 
   return [
     whoami,
@@ -3031,7 +3069,7 @@ async function runPkgCommand(args: string[], ctx: KernelContext, cwd: string): P
       }
       if (publicSubcommand === "on" || publicSubcommand === "off") {
         requireCommandCapability(ctx, "pkg.public.set");
-        const result = handlePkgPublicSet({
+        const result = await handlePkgPublicSet({
           ...resolvePkgPublicTarget(rest[1], ctx, cwd),
           public: publicSubcommand === "on",
         }, ctx);
@@ -3312,11 +3350,330 @@ function processSourceOptions(ctx: KernelContext) {
   };
 }
 
-function requireCommandCapability(ctx: KernelContext, capability: string): void {
+function requireCommandCapability(ctx: KernelContext, capability: string, args?: Record<string, unknown>): void {
   const capabilities = ctx.identity?.capabilities ?? [];
   if (!hasCapability(capabilities, capability)) {
     throw new Error(`Permission denied: ${capability}`);
   }
+  const denied = authorizeProcessSyscall(
+    ctx.authority,
+    capability,
+    args ?? {},
+    ctx.identity?.process,
+  );
+  if (denied) {
+    throw new Error(`Permission denied: ${denied}`);
+  }
+}
+
+function buildRemoteSocialCommand(ctx: KernelContext) {
+  return defineCommand("social", async (args): Promise<ExecResult> => {
+    try {
+      const output = await runRemoteSocialCommand(args, ctx);
+      return { stdout: output, stderr: "", exitCode: 0 };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { stdout: "", stderr: `social: ${message}\n`, exitCode: 1 };
+    }
+  });
+}
+
+async function runRemoteSocialCommand(args: string[], ctx: KernelContext): Promise<string> {
+  const [command = "help", ...rest] = args;
+  if (command === "help" || command === "--help" || command === "-h") {
+    return remoteSocialHelp(rest[0]);
+  }
+  if (command === "identity") {
+    const result = await requestKernelForRemoteSocial(ctx, "social.identity.get", {});
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  if (command === "inbox") {
+    const result = await requestKernelForRemoteSocial(ctx, "social.message.status.list", {
+      direction: "inbound",
+      peerHandle: ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined,
+      limit: parseShellLimit(rest, 25),
+    });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  if (command === "status" || command === "statuses") {
+    return runRemoteSocialStatusCommand(rest, ctx);
+  }
+  if (command === "message" || command === "messages") {
+    return runRemoteSocialMessageCommand(rest, ctx);
+  }
+  if (command === "thread" || command === "threads") {
+    return runRemoteSocialThreadCommand(rest, ctx);
+  }
+  if (command === "contact" || command === "contacts") {
+    return runRemoteSocialContactCommand(rest, ctx);
+  }
+  if (command === "package" || command === "packages" || command === "pkg") {
+    return runRemoteSocialPackageCommand(rest, ctx);
+  }
+  throw new Error(`Unknown remote-social subcommand: ${command}`);
+}
+
+async function runRemoteSocialStatusCommand(args: string[], ctx: KernelContext): Promise<string> {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "list") {
+    const result = await requestKernelForRemoteSocial(ctx, "social.message.status.list", {
+      peerHandle: ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined,
+      ...(findShellFlagValue(rest, "--state") ? { state: findShellFlagValue(rest, "--state") } : {}),
+      ...(findShellFlagValue(rest, "--direction") ? { direction: findShellFlagValue(rest, "--direction") } : {}),
+      limit: parseShellLimit(rest, 50),
+    });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  if (subcommand === "update") {
+    const messageId = firstShellPositional(rest);
+    const state = requireShellFlagValue(rest, "--state", "social status update requires --state");
+    if (!messageId) {
+      throw new Error("Usage: social status update <message-id> --state STATE [--summary TEXT] [--reason TEXT]");
+    }
+    const result = await requestKernelForRemoteSocial(ctx, "social.message.status.update", {
+      messageId,
+      state,
+      ...(findShellFlagValue(rest, "--summary") ? { summary: findShellFlagValue(rest, "--summary") } : {}),
+      ...(findShellFlagValue(rest, "--reason") ? { needsHumanReason: findShellFlagValue(rest, "--reason") } : {}),
+    });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  throw new Error(`Unknown social status subcommand: ${subcommand}`);
+}
+
+async function runRemoteSocialMessageCommand(args: string[], ctx: KernelContext): Promise<string> {
+  const [subcommand = "send", ...rest] = args;
+  if (subcommand !== "send") {
+    throw new Error(`Unknown social message subcommand: ${subcommand}`);
+  }
+  const peerHandle = ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined;
+  const positionals = shellPositionals(rest);
+  const toHandle = findShellFlagValue(rest, "--to") ?? positionals[0] ?? peerHandle;
+  const text = findShellFlagValue(rest, "--text") ?? positionals.slice(toHandle === positionals[0] ? 1 : 0).join(" ");
+  if (!toHandle || !text.trim()) {
+    throw new Error("Usage: social message send <handle> <text> [--thread THREAD]");
+  }
+  const result = await requestKernelForRemoteSocial(ctx, "social.message.send", {
+    toHandle,
+    text: text.trim(),
+    ...(findShellFlagValue(rest, "--thread") ? { threadId: findShellFlagValue(rest, "--thread") } : {}),
+  });
+  return `${JSON.stringify(result, null, 2)}\n`;
+}
+
+async function runRemoteSocialThreadCommand(args: string[], ctx: KernelContext): Promise<string> {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "list") {
+    const result = await requestKernelForRemoteSocial(ctx, "social.thread.list", {
+      peerHandle: ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined,
+      limit: parseShellLimit(rest, 50),
+    });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  if (subcommand === "read" || subcommand === "get") {
+    const threadId = firstShellPositional(rest);
+    if (!threadId) {
+      throw new Error("Usage: social thread read <thread-id>");
+    }
+    const result = await requestKernelForRemoteSocial(ctx, "social.thread.get", { threadId });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  if (subcommand === "create") {
+    const peerHandle = findShellFlagValue(rest, "--peer")
+      ?? firstShellPositional(rest)
+      ?? (ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined);
+    const initialMessage = findShellFlagValue(rest, "--message") ?? findShellFlagValue(rest, "--text");
+    if (!peerHandle) {
+      throw new Error("Usage: social thread create <handle> [--message TEXT]");
+    }
+    const result = await requestKernelForRemoteSocial(ctx, "social.thread.create", {
+      peerHandle,
+      ...(initialMessage ? { initialMessage } : {}),
+    });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  throw new Error(`Unknown social thread subcommand: ${subcommand}`);
+}
+
+async function runRemoteSocialContactCommand(args: string[], ctx: KernelContext): Promise<string> {
+  const [subcommand = "users", ...rest] = args;
+  if (subcommand === "users") {
+    const handle = firstShellPositional(rest)
+      ?? (ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined);
+    if (!handle) {
+      throw new Error("Usage: social contact users <handle>");
+    }
+    const result = await requestKernelForRemoteSocial(ctx, "social.user.list", { handle });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  if (subcommand === "public" || subcommand === "list") {
+    const handle = firstShellPositional(rest)
+      ?? (ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined);
+    const result = await requestKernelForRemoteSocial(ctx, "social.contact.public.list", {
+      ...(handle ? { handle } : {}),
+      limit: parseShellLimit(rest, 50),
+    });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  throw new Error(`Unknown social contact subcommand: ${subcommand}`);
+}
+
+async function runRemoteSocialPackageCommand(args: string[], ctx: KernelContext): Promise<string> {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "list") {
+    const handle = findShellFlagValue(rest, "--handle")
+      ?? firstShellPositional(rest)
+      ?? (ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined);
+    const result = await requestKernelForRemoteSocial(ctx, "social.package.list", {
+      ...(handle ? { handle } : {}),
+      limit: parseShellLimit(rest, 50),
+    });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  if (subcommand === "releases") {
+    const handle = findShellFlagValue(rest, "--handle")
+      ?? firstShellPositional(rest)
+      ?? (ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined);
+    const result = await requestKernelForRemoteSocial(ctx, "social.package.release.list", {
+      ...(handle ? { handle } : {}),
+      limit: parseShellLimit(rest, 50),
+    });
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  throw new Error(`Unknown social package subcommand: ${subcommand}`);
+}
+
+async function requestKernelForRemoteSocial(
+  ctx: KernelContext,
+  syscall: SyscallName,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  requireCommandCapability(ctx, syscall, args);
+  switch (syscall) {
+    case "social.identity.get":
+      return handleSocialIdentityGet(args as never, ctx);
+    case "social.profile.get":
+      return handleSocialProfileGet(args as never, ctx);
+    case "social.instance.get":
+      return handleSocialInstanceGet(args as never, ctx);
+    case "social.user.list":
+      return handleSocialUserList(args as never, ctx);
+    case "social.contact.public.list":
+      return handleSocialContactPublicList(args as never, ctx);
+    case "social.package.list":
+      return handleSocialPackageList(args as never, ctx);
+    case "social.package.release.list":
+      return handleSocialPackageReleaseList(args as never, ctx);
+    case "social.vouch.list":
+      return handleSocialVouchList(args as never, ctx);
+    case "social.news.list":
+      return handleSocialNewsList(args as never, ctx);
+    case "social.thread.create":
+      return handleSocialThreadCreate(args as never, ctx);
+    case "social.thread.list":
+      return handleSocialThreadList(args as never, ctx);
+    case "social.thread.get":
+      return handleSocialThreadGet(args as never, ctx);
+    case "social.message.send":
+      return handleSocialMessageSend(args as never, ctx);
+    case "social.message.status.list":
+      return handleSocialMessageStatusList(args as never, ctx);
+    case "social.message.status.get":
+      return handleSocialMessageStatusGet(args as never, ctx);
+    case "social.message.status.update":
+      return handleSocialMessageStatusUpdate(args as never, ctx);
+    default:
+      throw new Error(`Unsupported remote social command syscall: ${syscall}`);
+  }
+}
+
+function remoteSocialHelp(topic?: string): string {
+  if (topic === "message") {
+    return "Usage:\n  social message send <handle> <text> [--thread THREAD]\n\n";
+  }
+  if (topic === "status") {
+    return "Usage:\n  social status list [--state STATE] [--limit N]\n  social status update <message-id> --state STATE [--summary TEXT] [--reason TEXT]\n\n";
+  }
+  if (topic === "thread") {
+    return "Usage:\n  social thread list [--limit N]\n  social thread read <thread-id>\n  social thread create <handle> [--message TEXT]\n\n";
+  }
+  return [
+    "Usage:",
+    "  social identity",
+    "  social contact users ...",
+    "  social contact public [handle]",
+    "  social inbox [--limit N]",
+    "  social status list|update ...",
+    "  social message send <handle> <text>",
+    "  social package list [handle]",
+    "  social package releases [handle]",
+    "  social thread list|read|create ...",
+    "",
+  ].join("\n");
+}
+
+function parseShellLimit(args: string[], fallback: number): number {
+  const raw = findShellFlagValue(args, "--limit");
+  if (!raw) {
+    return fallback;
+  }
+  const limit = Number.parseInt(raw, 10);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    throw new Error("--limit must be an integer between 1 and 200");
+  }
+  return limit;
+}
+
+function findShellFlagValue(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index === -1) {
+    return undefined;
+  }
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
+function requireShellFlagValue(args: string[], flag: string, message: string): string {
+  const value = findShellFlagValue(args, flag);
+  if (!value) {
+    throw new Error(message);
+  }
+  return value;
+}
+
+function firstShellPositional(args: string[]): string | undefined {
+  return shellPositionals(args)[0];
+}
+
+function shellPositionals(args: string[]): string[] {
+  const valueFlags = new Set([
+    "--direction",
+    "--handle",
+    "--limit",
+    "--message",
+    "--peer",
+    "--reason",
+    "--state",
+    "--summary",
+    "--text",
+    "--thread",
+    "--to",
+  ]);
+  const result: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg.startsWith("-")) {
+      if (valueFlags.has(arg)) {
+        index += 1;
+      }
+      continue;
+    }
+    result.push(arg);
+  }
+  return result;
 }
 
 function formatPkgList(packages: Array<{

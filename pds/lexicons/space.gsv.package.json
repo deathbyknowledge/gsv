@@ -1,0 +1,84 @@
+{
+  "lexicon": 1,
+  "id": "space.gsv.package",
+  "description": "Public GSV package metadata record.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "any",
+      "record": {
+        "type": "object",
+        "required": ["$type", "createdAt", "name"],
+        "properties": {
+          "$type": {
+            "type": "string",
+            "const": "space.gsv.package"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "displayName": {
+            "type": "string",
+            "maxGraphemes": 64,
+            "maxLength": 256
+          },
+          "description": {
+            "type": "string",
+            "maxGraphemes": 512,
+            "maxLength": 4096
+          },
+          "source": {
+            "type": "ref",
+            "ref": "#source"
+          },
+          "homepage": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "tags": {
+            "type": "array",
+            "maxLength": 20,
+            "items": {
+              "type": "string",
+              "maxGraphemes": 64,
+              "maxLength": 256
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "ref": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "subdir": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "uri": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048
+        }
+      }
+    }
+  }
+}

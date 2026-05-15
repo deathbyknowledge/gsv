@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn entries_for_collection_does_not_leak_later_collections() {
         block_on(async {
-            let collection = Nsid::new("space.gsv.package.like").unwrap();
+            let collection = Nsid::new("space.gsv.package").unwrap();
             let mut tree = MerkleSearchTree::from_entries(
                 MemoryRepoStore::new(),
                 vec![

@@ -8,6 +8,7 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import { sendFrameToProcess } from "../shared/utils";
+import { remoteSocialProcessAuthority } from "./authority";
 import { dispatchMindEvent } from "./mind";
 
 const IDENTITY: ProcessIdentity = {
@@ -156,6 +157,53 @@ describe("dispatchMindEvent", () => {
     expect(frame?.args?.message).not.toContain("Structured event data");
     expect(frame?.args?.message).not.toContain("msg-1");
     expect(frame?.args?.message).not.toContain("alice.example");
+  });
+
+  it("stores remote social authority and isolates it from local mind processes", async () => {
+    sendFrameToProcessMock.mockResolvedValue({
+      type: "res",
+      id: "ok",
+      ok: true,
+      data: {
+        ok: true,
+        status: "started",
+        pid: "mind:1000:test",
+        conversationId: "mind:social.message:thread-1",
+        runId: "run-remote",
+      },
+    } satisfies ResponseFrame);
+
+    const remoteAuthority = remoteSocialProcessAuthority({
+      peerHandle: "alice.example",
+      peerDid: "did:web:alice.example",
+      threadId: "thread-1",
+    });
+    const remoteCtx = makeContext(null);
+    await dispatchMindEvent(remoteCtx, {
+      identity: IDENTITY,
+      source: "social.message",
+      threadKey: "thread-1",
+      text: "Remote event",
+      authority: remoteAuthority,
+    });
+    const remotePid = vi.mocked(remoteCtx.procs.spawn).mock.calls[0]?.[0];
+    expect(vi.mocked(remoteCtx.procs.spawn).mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+      authority: remoteAuthority,
+      cwd: "/var/social/alice.example",
+    }));
+
+    const localCtx = makeContext(null);
+    await dispatchMindEvent(localCtx, {
+      identity: IDENTITY,
+      source: "social.message",
+      threadKey: "thread-1",
+      text: "Local event",
+    });
+    const localPid = vi.mocked(localCtx.procs.spawn).mock.calls[0]?.[0];
+
+    expect(remotePid).toMatch(/^mind:1000:[a-f0-9]{32}$/);
+    expect(localPid).toMatch(/^mind:1000:[a-f0-9]{32}$/);
+    expect(remotePid).not.toBe(localPid);
   });
 });
 

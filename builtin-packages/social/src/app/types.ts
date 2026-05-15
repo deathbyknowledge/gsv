@@ -1,40 +1,65 @@
 import type {
   SocialDeliveryStatus,
   SocialGrant,
+  SocialIdentityRepublishResult,
   SocialLocalIdentity,
   SocialMessageDirection,
   SocialMessageStatusState,
   SocialRemoteOperation,
   SocialThreadStatus,
-  SpaceGsvPackageLikeRecord,
+  SpaceGsvContactRecord,
+  SpaceGsvNewsRecord,
+  SpaceGsvPackageReleaseRecord,
+  SpaceGsvPackageRecord,
   SpaceGsvUserRecord,
+  SpaceGsvVouchRecord,
 } from "@gsv/protocol/syscalls/social";
 
-export type SocialView = "inbox" | "threads" | "friends";
+export type SocialSection = "inbox" | "channels" | "contacts" | "directory" | "advanced";
 
-export type SocialPeerSummary = {
+export type SocialRoute = {
+  section: SocialSection;
+  channelId: string | null;
+  contactHandle: string | null;
+  workflowMessageId: string | null;
+  detail: boolean;
+};
+
+export type PendingAction =
+  | "load"
+  | "establish-contact"
+  | "save-contact-grants"
+  | "remove-contact"
+  | "send-message"
+  | "update-message-workflow"
+  | "republish-public-records";
+
+export type SocialContactSummary = {
   handle: string;
   note: string;
   displayName?: string;
-  agentDisplayName?: string;
-  acceptsMessages: boolean;
-  acceptedSocialMethods: SocialRemoteOperation[];
+  description?: string;
+  publicHandle?: string;
+  acceptsContact: boolean;
+  acceptedSocialMethods: string[];
   grants: SocialGrant[];
+  createdAt: string;
   updatedAt: string;
+  syncedAt?: string;
 };
 
-export type SocialThreadItem = {
-  threadId: string;
-  peerHandle: string;
+export type SocialChannelItem = {
+  channelId: string;
+  contactHandle: string;
   conversationId: string;
   status: SocialThreadStatus;
   updatedAt: string;
-  statusCount: number;
+  workflowCount: number;
 };
 
 export type SocialMessageItem = {
   messageId: string;
-  threadId: string;
+  channelId: string;
   direction: SocialMessageDirection;
   fromHandle: string;
   toHandle: string;
@@ -44,9 +69,9 @@ export type SocialMessageItem = {
   createdAt: string;
 };
 
-export type SocialMessageStatusItem = {
+export type SocialMessageWorkflowItem = {
   messageId: string;
-  threadId: string;
+  channelId: string;
   direction: SocialMessageDirection;
   fromHandle: string;
   toHandle: string;
@@ -58,70 +83,98 @@ export type SocialMessageStatusItem = {
   updatedAt: string;
 };
 
-export type SocialThreadDetail = {
-  thread: SocialThreadItem | null;
+export type SocialChannelDetail = {
+  channel: SocialChannelItem | null;
   messages: SocialMessageItem[];
-  statuses: SocialMessageStatusItem[];
+  workflows: SocialMessageWorkflowItem[];
 };
 
-export type SocialRemoteUserItem = {
+export type SocialPublishedUserRecord = {
   handle: string;
   uri?: string;
   record: SpaceGsvUserRecord;
 };
 
-export type SocialPackageLikeItem = {
+export type SocialPublishedContactRecord = {
   handle: string;
-  uri: string;
-  record: SpaceGsvPackageLikeRecord;
+  uri?: string;
+  record: SpaceGsvContactRecord;
 };
 
-export type SocialFriendDirectory = {
+export type SocialPublishedNewsRecord = {
   handle: string;
-  users: SocialRemoteUserItem[];
-  packageLikes: SocialPackageLikeItem[];
+  uri?: string;
+  record: SpaceGsvNewsRecord;
+};
+
+export type SocialPublishedPackageRecord = {
+  handle: string;
+  uri: string;
+  record: SpaceGsvPackageRecord;
+};
+
+export type SocialPublishedPackageReleaseRecord = {
+  handle: string;
+  uri: string;
+  record: SpaceGsvPackageReleaseRecord;
+};
+
+export type SocialPublishedVouchRecord = {
+  handle: string;
+  uri: string;
+  record: SpaceGsvVouchRecord;
+};
+
+export type SocialContactDirectory = {
+  contactHandle: string;
+  users: SocialPublishedUserRecord[];
+  contacts: SocialPublishedContactRecord[];
+  news: SocialPublishedNewsRecord[];
+  packages: SocialPublishedPackageRecord[];
+  packageReleases: SocialPublishedPackageReleaseRecord[];
+  vouches: SocialPublishedVouchRecord[];
 };
 
 export type SocialState = {
   identity: SocialLocalIdentity | null;
-  friends: SocialPeerSummary[];
-  threads: SocialThreadItem[];
-  statuses: SocialMessageStatusItem[];
-  selectedThread: SocialThreadDetail | null;
-  friendDirectory: SocialFriendDirectory | null;
+  contacts: SocialContactSummary[];
+  channels: SocialChannelItem[];
+  messageWorkflows: SocialMessageWorkflowItem[];
+  selectedChannel: SocialChannelDetail | null;
+  contactDirectory: SocialContactDirectory | null;
 };
 
 export type LoadSocialStateArgs = {
-  threadId?: string | null;
-  friendHandle?: string | null;
+  channelId?: string | null;
+  contactHandle?: string | null;
 };
 
-export type AddFriendArgs = {
+export type EstablishContactArgs = {
   handle: string;
   note: string;
   grants: SocialGrant[];
 };
 
-export type SetFriendGrantsArgs = {
+export type SetContactGrantsArgs = {
   handle: string;
   grants: SocialGrant[];
-  threadId?: string | null;
+  channelId?: string | null;
 };
 
-export type RemoveFriendArgs = {
+export type RemoveContactArgs = {
   handle: string;
-  threadId?: string | null;
+  channelId?: string | null;
 };
 
 export type SendMessageArgs = {
   toHandle: string;
-  threadId?: string;
+  channelId?: string;
   text: string;
 };
 
-export type UpdateMessageStatusArgs = {
+export type UpdateMessageWorkflowArgs = {
   messageId: string;
-  threadId?: string | null;
+  channelId?: string | null;
   state: SocialMessageStatusState;
   summary?: string;
   needsHumanReason?: string;
@@ -129,15 +182,24 @@ export type UpdateMessageStatusArgs = {
 
 export interface SocialBackend {
   loadState(args: LoadSocialStateArgs): Promise<SocialState>;
-  addFriend(args: AddFriendArgs): Promise<SocialState>;
-  setFriendGrants(args: SetFriendGrantsArgs): Promise<SocialState>;
-  removeFriend(args: RemoveFriendArgs): Promise<SocialState>;
+  establishContact(args: EstablishContactArgs): Promise<SocialState>;
+  setContactGrants(args: SetContactGrantsArgs): Promise<SocialState>;
+  removeContact(args: RemoveContactArgs): Promise<SocialState>;
   sendMessage(args: SendMessageArgs): Promise<SocialState>;
-  updateMessageStatus(args: UpdateMessageStatusArgs): Promise<SocialState>;
+  updateMessageWorkflow(args: UpdateMessageWorkflowArgs): Promise<SocialState>;
+  republishPublicRecords(): Promise<SocialState>;
 }
 
+export type RepublishIdentityResult = SocialIdentityRepublishResult;
+
 export const SOCIAL_GRANT_OPTIONS: Array<{ operation: SocialRemoteOperation; label: string }> = [
-  { operation: "social.thread.create", label: "Start threads" },
-  { operation: "social.message.send", label: "Send messages" },
-  { operation: "social.message.status.update", label: "Update message status" },
+  { operation: "social.thread.create", label: "Open channels" },
+  { operation: "social.message.send", label: "Send channel messages" },
+  { operation: "social.message.status.update", label: "Update internal message workflow" },
+  { operation: "social.user.read", label: "Read published users" },
+  { operation: "social.contact.read", label: "Read public Contacts" },
+  { operation: "social.package.read", label: "Read public packages" },
+  { operation: "social.package.release.read", label: "Read package releases" },
+  { operation: "social.vouch.read", label: "Read vouches" },
+  { operation: "social.news.read", label: "Read local news" },
 ];
