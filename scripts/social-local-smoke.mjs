@@ -302,10 +302,16 @@ function requiredEnv(name) {
 
 function normalizeOrigin(value) {
   const url = new URL(value);
-  if (url.protocol !== "https:") {
-    throw new Error(`${url.origin} must be an HTTPS origin. Use a tunnel for local wrangler dev.`);
+  if (url.protocol !== "https:" && !isLocalDevHttpOrigin(url)) {
+    throw new Error(`${url.origin} must be HTTPS or a local dev HTTP origin.`);
   }
   return url.origin;
+}
+
+function isLocalDevHttpOrigin(url) {
+  return url.protocol === "http:" &&
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+    /^\d+$/.test(url.port);
 }
 
 function wsUrlFromOrigin(origin) {

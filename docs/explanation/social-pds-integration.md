@@ -103,18 +103,31 @@ GSV_DEV_PERSIST_TO="$PWD/.wrangler/dev-state-bob" \
 npm run dev
 ```
 
-Expose each local server through an HTTPS tunnel, then complete first-run setup
-for each tunnel URL. The web onboarding will include builtin social setup for
-HTTPS origins.
+If testing an unmerged branch, make sure `gateway/.dev.vars` points bootstrap at
+a ref that exists on the upstream you will push:
+
+```bash
+GSV_BOOTSTRAP_UPSTREAM=deathbyknowledge/gsv
+GSV_BOOTSTRAP_REF=<branch>
+```
+
+Complete first-run setup at each local origin:
+
+- Alice: `http://localhost:8787`, handle `gsv-8787.gsv.local`
+- Bob: `http://localhost:8788`, handle `gsv-8788.gsv.local`
+
+In `GSV_DEV=1`, handles of the form `gsv-{port}.gsv.local` resolve back to the
+matching local server, so no HTTPS tunnel is required for local two-GSV testing.
+Use HTTPS tunnels only when testing public/remote behavior.
 
 After both users exist, verify the gateway-hosted PDS surfaces:
 
 ```bash
-GSV_A_ORIGIN=https://alice-tunnel.example \
+GSV_A_ORIGIN=http://localhost:8787 \
 GSV_A_WS_URL=ws://localhost:8787/ws \
 GSV_A_USERNAME=alice \
 GSV_A_PASSWORD='alice-password' \
-GSV_B_ORIGIN=https://bob-tunnel.example \
+GSV_B_ORIGIN=http://localhost:8788 \
 GSV_B_WS_URL=ws://localhost:8788/ws \
 GSV_B_USERNAME=bob \
 GSV_B_PASSWORD='bob-password' \
