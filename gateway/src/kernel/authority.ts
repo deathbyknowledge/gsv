@@ -38,7 +38,6 @@ const REMOTE_SOCIAL_ALLOWED_SYSCALLS = new Set<string>([
   "social.package.release.list",
   "social.vouch.list",
   "social.news.list",
-  "social.thread.create",
   "social.thread.list",
   "social.thread.get",
   "social.message.send",
@@ -214,9 +213,6 @@ function authorizeRemoteSocialSyscall(
   syscall: string,
   args: Record<string, unknown>,
 ): string | null {
-  if (syscall === "social.thread.create") {
-    return requirePeerHandle(authority, args.peerHandle, "peerHandle");
-  }
   if (syscall === "social.thread.list") {
     return requirePeerHandle(authority, args.peerHandle, "peerHandle");
   }

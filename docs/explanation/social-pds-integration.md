@@ -16,7 +16,7 @@ A complete first version should support this journey:
 1. Alice and Hank each have a GSV user linked to a handle-backed PDS repo.
 2. Each GSV publishes a public profile, instance record, user directory, local
    news, and package records for public packages.
-3. Alice grants Hank's handle permission to use a narrow set of social
+3. Alice establishes Hank as a Contact, which grants narrow messaging
    operations.
 4. Hank asks Alice's agent a question while Alice is offline.
 5. Hank's GSV signs and sends an asynchronous service-to-service social message.
@@ -155,7 +155,7 @@ then inspect these files:
 - `gateway/src/kernel/social.test.ts`: the highest-signal behavioral examples.
 - `gateway/src/pds/client.ts`: Gateway-to-PDS binding and XRPC proxy client.
 - `gateway/src/index.ts`: public PDS/XRPC proxy routes and `/social/inbound`.
-- `builtin-packages/social/`: builtin UI for Contacts, local grants, social
+- `builtin-packages/social/`: builtin UI for Contacts, fixed messaging grants, social
   threads, messages, message statuses, public packages, vouches, and news.
 - `pds/src/worker_entry.rs` and `pds/src/entrypoint.ts`: PDS Worker HTTP and
   Worker Entrypoint surface.
@@ -186,12 +186,12 @@ Completed milestones:
 - Gateway exposes public PDS routes and uses the PDS Worker over service
   binding RPC internally.
 - Local social identity/profile/instance/user records can be published.
-- Contacts can be added by handle and assigned narrow local grants.
+- Contacts can be added by handle and assigned narrow messaging grants.
 - Signed inbound social envelopes can be accepted or rejected with replay
   protection.
 - Social threads and messages are stored in Kernel tables.
-- `social.thread.create`, `social.thread.list`, `social.thread.get`,
-  `social.message.send`, `social.message.status.list`,
+- `social.thread.list`, `social.thread.get`, `social.message.send`,
+  `social.message.status.list`,
   `social.message.status.get`, and `social.message.status.update` are
   implemented.
 - Outbound messages are signed and posted to the remote GSV inbound endpoint,
@@ -206,7 +206,7 @@ Completed milestones:
 - Public packages, vouches, and news can be listed through the social
   command/syscall surface. Public package records are projected when package
   sources are made public.
-- The builtin Social app can manage Contacts, edit local grants, inspect
+- The builtin Social app can manage Contacts, explain Contact grants, inspect
   threads, send messages, update message statuses, inspect the inbox, and view
   public Contact records, packages, package releases, vouches, and news.
 
@@ -256,9 +256,9 @@ Next implementation contract:
 - [x] Add Kernel tables for known social identities.
 - [x] Add Kernel tables for social grants keyed by remote handle.
 - [x] Model grants as social operations, not broad trust:
-      `social.message.send`, `social.thread.create`,
-      `social.message.status.update`, `social.package.read`,
-      `social.vouch.read`, `social.news.read`, and similar.
+      `social.message.send` and `social.message.status.update`.
+      Public ATProto records are read through the public record surface, not
+      Contact grants.
 - [x] Add `social.contact.list`, `social.contact.add`,
       `social.contact.remove`,
       and grant update syscalls.
@@ -288,8 +288,8 @@ Next implementation contract:
       delivery attempts, and remote event ids.
 - [x] Define shared protocol types for social threads, messages, delivery
       status, and message status.
-- [x] Add `social.thread.create`, `social.thread.list`, `social.thread.get`,
-      `social.message.send`, `social.message.status.list`,
+- [x] Add `social.thread.list`, `social.thread.get`, `social.message.send`,
+      `social.message.status.list`,
       `social.message.status.get`, and `social.message.status.update`.
 - [x] Make outbound sends asynchronous with local status:
       `queued`, `sent`, `accepted`, `failed`, `retrying`, `delivered`.

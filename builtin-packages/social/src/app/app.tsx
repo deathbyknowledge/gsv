@@ -84,10 +84,6 @@ export function App({ backend }: AppProps) {
           pendingAction={social.pendingAction}
           onSelectContact={(handle) => navigation.selectContact(handle, "contacts")}
           onEstablishContact={establishContact}
-          onSaveContactGrants={(args) => social.setContactGrants({
-            ...args,
-            channelId: navigation.route.channelId,
-          })}
           onRemoveContact={removeContact}
           onSendMessage={sendMessage}
         />

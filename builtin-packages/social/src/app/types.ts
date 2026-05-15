@@ -5,7 +5,6 @@ import type {
   SocialLocalIdentity,
   SocialMessageDirection,
   SocialMessageStatusState,
-  SocialRemoteOperation,
   SocialThreadStatus,
   SpaceGsvContactRecord,
   SpaceGsvNewsRecord,
@@ -28,7 +27,6 @@ export type SocialRoute = {
 export type PendingAction =
   | "load"
   | "establish-contact"
-  | "save-contact-grants"
   | "remove-contact"
   | "send-message"
   | "update-message-workflow"
@@ -152,13 +150,6 @@ export type LoadSocialStateArgs = {
 export type EstablishContactArgs = {
   handle: string;
   note: string;
-  grants: SocialGrant[];
-};
-
-export type SetContactGrantsArgs = {
-  handle: string;
-  grants: SocialGrant[];
-  channelId?: string | null;
 };
 
 export type RemoveContactArgs = {
@@ -183,7 +174,6 @@ export type UpdateMessageWorkflowArgs = {
 export interface SocialBackend {
   loadState(args: LoadSocialStateArgs): Promise<SocialState>;
   establishContact(args: EstablishContactArgs): Promise<SocialState>;
-  setContactGrants(args: SetContactGrantsArgs): Promise<SocialState>;
   removeContact(args: RemoveContactArgs): Promise<SocialState>;
   sendMessage(args: SendMessageArgs): Promise<SocialState>;
   updateMessageWorkflow(args: UpdateMessageWorkflowArgs): Promise<SocialState>;
@@ -191,15 +181,3 @@ export interface SocialBackend {
 }
 
 export type RepublishIdentityResult = SocialIdentityRepublishResult;
-
-export const SOCIAL_GRANT_OPTIONS: Array<{ operation: SocialRemoteOperation; label: string }> = [
-  { operation: "social.thread.create", label: "Open channels" },
-  { operation: "social.message.send", label: "Send channel messages" },
-  { operation: "social.message.status.update", label: "Update internal message workflow" },
-  { operation: "social.user.read", label: "Read published users" },
-  { operation: "social.contact.read", label: "Read public Contacts" },
-  { operation: "social.package.read", label: "Read public packages" },
-  { operation: "social.package.release.read", label: "Read package releases" },
-  { operation: "social.vouch.read", label: "Read vouches" },
-  { operation: "social.news.read", label: "Read local news" },
-];

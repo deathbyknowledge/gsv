@@ -128,7 +128,6 @@ import {
   handleSocialInstanceUpdate,
   handleSocialProfileGet,
   handleSocialProfileUpdate,
-  handleSocialThreadCreate,
   handleSocialThreadGet,
   handleSocialThreadList,
   handleSocialUserList,
@@ -584,9 +583,6 @@ async function dispatchNative(
         break;
       case "social.news.list":
         data = await handleSocialNewsList(frame.args, ctx);
-        break;
-      case "social.thread.create":
-        data = await handleSocialThreadCreate(frame.args, ctx);
         break;
       case "social.thread.list":
         data = handleSocialThreadList(frame.args, ctx);

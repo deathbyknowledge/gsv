@@ -4,7 +4,6 @@ import type {
   PendingAction,
   RemoveContactArgs,
   SendMessageArgs,
-  SetContactGrantsArgs,
   SocialBackend,
   SocialRoute,
   SocialState,
@@ -19,7 +18,6 @@ export type SocialDataController = {
   refresh: () => Promise<void>;
   clearError: () => void;
   establishContact: (args: EstablishContactArgs) => Promise<SocialState | null>;
-  setContactGrants: (args: SetContactGrantsArgs) => Promise<SocialState | null>;
   removeContact: (args: RemoveContactArgs) => Promise<SocialState | null>;
   sendMessage: (args: SendMessageArgs) => Promise<SocialState | null>;
   updateMessageWorkflow: (args: UpdateMessageWorkflowArgs) => Promise<SocialState | null>;
@@ -83,7 +81,6 @@ export function useSocialData(backend: SocialBackend, route: SocialRoute): Socia
     refresh,
     clearError: () => setError(null),
     establishContact: (args) => runStateAction("establish-contact", () => backend.establishContact(args)),
-    setContactGrants: (args) => runStateAction("save-contact-grants", () => backend.setContactGrants(args)),
     removeContact: (args) => runStateAction("remove-contact", () => backend.removeContact(args)),
     sendMessage: (args) => runStateAction("send-message", () => backend.sendMessage(args)),
     updateMessageWorkflow: (args) => runStateAction("update-message-workflow", () => backend.updateMessageWorkflow(args)),

@@ -61,8 +61,6 @@ import type {
   SocialSetupArgs,
   SocialSetupResult,
   SocialSignedRequestEnvelope,
-  SocialThreadCreateArgs,
-  SocialThreadCreateResult,
   SocialThreadGetArgs,
   SocialThreadGetResult,
   SocialThreadListArgs,
@@ -129,7 +127,10 @@ const SOCIAL_DELIVERY_RETRY_DELAYS_MS = [
 ] as const;
 const SOCIAL_MAX_DELIVERY_ATTEMPTS = 1 + SOCIAL_DELIVERY_RETRY_DELAYS_MS.length;
 const SOCIAL_INBOUND_METHODS = new Set<SocialRemoteOperation>([
-  "social.thread.create",
+  "social.message.send",
+  "social.message.status.update",
+]);
+const SOCIAL_CONTACT_GRANT_OPERATIONS = new Set<SocialRemoteOperation>([
   "social.message.send",
   "social.message.status.update",
 ]);
@@ -1541,7 +1542,7 @@ export async function handleSocialContactAdd(
     throw new Error("Cannot add the local GSV identity as a contact");
   }
   const note = normalizeFriendNote(args.note);
-  const grants = args.grants === undefined ? undefined : validateGrants(args.grants);
+  const grants = args.grants === undefined ? defaultContactGrants() : validateGrants(args.grants);
   const publicIdentity = await resolveFriendPublicIdentity(handle, ctx.env);
   const displayName = nonEmpty(args.displayName)
     ?? nonEmpty(publicIdentity.profile?.displayName)
@@ -1557,9 +1558,7 @@ export async function handleSocialContactAdd(
     profile: publicIdentity.profile,
     instance: publicIdentity.instance,
   });
-  if (grants !== undefined) {
-    store.replaceFriendGrants(uid, handle, grants);
-  }
+  store.replaceFriendGrants(uid, handle, grants);
   return {
     contact: store.toFriendSummary(friend),
     created,
@@ -1634,7 +1633,6 @@ export async function handleSocialUserList(
 
   const handle = normalizeHandle(args.handle, "handle");
   const friend = requireFriend(store, uid, handle);
-  requireRemoteMethod(friend, "social.user.read");
   const records = await syncFriendPublicRecords<SpaceGsvUserRecord>({
     ctx,
     store,
@@ -1661,7 +1659,6 @@ export async function handleSocialContactPublicList(
     args,
     ctx,
     collection: SPACE_GSV_CONTACT,
-    method: "social.contact.read",
     validate: validateContactRecord,
   });
   return { contacts };
@@ -1698,7 +1695,6 @@ export async function handleSocialPackageList(
     args,
     ctx,
     collection: SPACE_GSV_PACKAGE,
-    method: "social.package.read",
     validate: validatePackageRecord,
   });
   return { packages };
@@ -1712,7 +1708,6 @@ export async function handleSocialPackageReleaseList(
     args,
     ctx,
     collection: SPACE_GSV_PACKAGE_RELEASE,
-    method: "social.package.release.read",
     validate: validatePackageReleaseRecord,
   });
   return {
@@ -1753,7 +1748,6 @@ export async function handleSocialVouchList(
     args,
     ctx,
     collection: SPACE_GSV_VOUCH,
-    method: "social.vouch.read",
     validate: validateVouchRecord,
   });
   return { vouches };
@@ -1790,7 +1784,6 @@ export async function handleSocialNewsList(
     args,
     ctx,
     collection: SPACE_GSV_NEWS,
-    method: "social.news.read",
     validate: validateNewsRecord,
   });
   return { news };
@@ -1823,61 +1816,6 @@ export async function syncPublicPackageSocialRecordsForRepo(
     }
   }
   return uris;
-}
-
-export async function handleSocialThreadCreate(
-  args: SocialThreadCreateArgs,
-  ctx: KernelContext,
-): Promise<SocialThreadCreateResult> {
-  const uid = requireSocialOwnerUid(ctx);
-  const localIdentity = requireWritableSocialIdentity(ctx);
-  const localHandle = requireLocalHandle(localIdentity);
-  const sender = socialSenderForCaller(ctx);
-  const peerHandle = normalizeHandle(args.peerHandle, "peerHandle");
-  const store = requireSocialStore(ctx);
-  const friend = requireFriend(store, uid, peerHandle);
-  requireRemoteMethod(friend, "social.thread.create");
-  if (args.expiresAt !== undefined) {
-    requireIsoString(args.expiresAt, "expiresAt");
-  }
-
-  const thread = store.upsertThread({
-    uid,
-    threadId: newSocialId("thread"),
-    peerHandle,
-    expiresAt: args.expiresAt,
-  });
-
-  let initialMessage: SocialMessageRecord | undefined;
-  if (args.initialMessage !== undefined) {
-    const text = normalizeMessageText(args.initialMessage, "initialMessage");
-    initialMessage = store.upsertMessage({
-      uid,
-      messageId: newSocialId("msg"),
-      threadId: thread.threadId,
-      direction: "outbound",
-      fromHandle: localHandle,
-      toHandle: peerHandle,
-      sender,
-      text,
-      deliveryMethod: "social.thread.create",
-      deliveryStatus: "queued",
-    });
-    initialMessage = await attemptOutboundDelivery({
-      ctx,
-      store,
-      localIdentity,
-      friend,
-      thread,
-      message: initialMessage,
-      method: "social.thread.create",
-    });
-  }
-
-  return {
-    thread: toThreadSummary(thread),
-    initialMessage: initialMessage ? toMessageSummary(initialMessage) : undefined,
-  };
 }
 
 export function handleSocialThreadList(
@@ -2421,10 +2359,7 @@ async function acceptInboundSocialEnvelope(input: {
   if (input.envelope.method === "social.message.status.update") {
     return acceptInboundMessageStatusUpdate(input);
   }
-  if (
-    input.envelope.method !== "social.thread.create" &&
-    input.envelope.method !== "social.message.send"
-  ) {
+  if (input.envelope.method !== "social.message.send") {
     throw new Error(`Inbound method is not implemented: ${input.envelope.method}`);
   }
 
@@ -2520,10 +2455,16 @@ async function acceptInboundMessageStatusUpdate(input: {
   if (!message) {
     throw new Error(`Message is not known: ${body.messageId}`);
   }
+  if (body.threadId !== undefined && body.threadId !== message.threadId) {
+    throw new Error(`Message ${body.messageId} belongs to thread ${message.threadId}, not ${body.threadId}`);
+  }
+  if (message.fromHandle !== input.friend.handle && message.toHandle !== input.friend.handle) {
+    throw new Error(`Message ${body.messageId} does not belong to contact ${input.friend.handle}`);
+  }
   const status = input.store.upsertMessageStatus({
     uid: MAIN_SOCIAL_UID,
     messageId: message.messageId,
-    threadId: body.threadId ?? message.threadId,
+    threadId: message.threadId,
     state: body.state,
     summary: body.summary,
     needsHumanReason: body.needsHumanReason,
@@ -3025,7 +2966,6 @@ async function listSocialPublicRecords<TRecord extends SpaceGsvRecord>(input: {
   args: { handle?: string; limit?: number };
   ctx: KernelContext;
   collection: SpaceGsvCollection;
-  method: SocialRemoteOperation;
   validate: (record: unknown) => TRecord;
 }): Promise<Array<SocialPublicRecordEntry<TRecord>>> {
   const uid = requireSocialOwnerUid(input.ctx);
@@ -3041,7 +2981,6 @@ async function listSocialPublicRecords<TRecord extends SpaceGsvRecord>(input: {
 
   const handle = normalizeHandle(input.args.handle, "handle");
   const friend = requireFriend(store, uid, handle);
-  requireRemoteMethod(friend, input.method);
   const records = await syncFriendPublicRecords<TRecord>({
     ctx: input.ctx,
     store,
@@ -3554,6 +3493,9 @@ function validateGrants(value: unknown): SocialGrant[] {
     if (!isSocialRemoteOperation(operation)) {
       throw new Error(`unsupported grant operation: ${operation}`);
     }
+    if (!SOCIAL_CONTACT_GRANT_OPERATIONS.has(operation)) {
+      throw new Error(`unsupported grant operation: ${operation}`);
+    }
     if (seen.has(operation)) {
       throw new Error(`duplicate grant operation: ${operation}`);
     }
@@ -3573,6 +3515,13 @@ function validateGrants(value: unknown): SocialGrant[] {
       expiresAt: item.expiresAt as string | undefined,
     };
   });
+}
+
+function defaultContactGrants(): SocialGrant[] {
+  return [
+    { operation: "social.message.send" },
+    { operation: "social.message.status.update" },
+  ];
 }
 
 function normalizePdsEndpoint(value: unknown, env: Env): string {

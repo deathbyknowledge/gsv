@@ -55,7 +55,6 @@
                 "social.package.release.read",
                 "social.vouch.read",
                 "social.news.read",
-                "social.thread.create",
                 "social.message.send",
                 "social.message.status.update"
               ]

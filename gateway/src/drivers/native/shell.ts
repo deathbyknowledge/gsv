@@ -78,7 +78,6 @@ import {
   handleSocialPackageList,
   handleSocialPackageReleaseList,
   handleSocialProfileGet,
-  handleSocialThreadCreate,
   handleSocialThreadGet,
   handleSocialThreadList,
   handleSocialUserList,
@@ -3478,20 +3477,6 @@ async function runRemoteSocialThreadCommand(args: string[], ctx: KernelContext):
     const result = await requestKernelForRemoteSocial(ctx, "social.thread.get", { threadId });
     return `${JSON.stringify(result, null, 2)}\n`;
   }
-  if (subcommand === "create") {
-    const peerHandle = findShellFlagValue(rest, "--peer")
-      ?? firstShellPositional(rest)
-      ?? (ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined);
-    const initialMessage = findShellFlagValue(rest, "--message") ?? findShellFlagValue(rest, "--text");
-    if (!peerHandle) {
-      throw new Error("Usage: social thread create <handle> [--message TEXT]");
-    }
-    const result = await requestKernelForRemoteSocial(ctx, "social.thread.create", {
-      peerHandle,
-      ...(initialMessage ? { initialMessage } : {}),
-    });
-    return `${JSON.stringify(result, null, 2)}\n`;
-  }
   throw new Error(`Unknown social thread subcommand: ${subcommand}`);
 }
 
@@ -3568,8 +3553,6 @@ async function requestKernelForRemoteSocial(
       return handleSocialVouchList(args as never, ctx);
     case "social.news.list":
       return handleSocialNewsList(args as never, ctx);
-    case "social.thread.create":
-      return handleSocialThreadCreate(args as never, ctx);
     case "social.thread.list":
       return handleSocialThreadList(args as never, ctx);
     case "social.thread.get":

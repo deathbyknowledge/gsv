@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import type {
   EstablishContactArgs,
   PendingAction,
@@ -7,8 +7,6 @@ import type {
   SocialContactSummary,
   SocialState,
 } from "../../types";
-import { SOCIAL_GRANT_OPTIONS } from "../../types";
-import { defaultGrantSelection, grantsFromSelection } from "../../domain/grants";
 import {
   formatContactSubject,
   formatPackageRelease,
@@ -35,7 +33,6 @@ export function ContactsSection(props: {
   pendingAction: PendingAction | null;
   onSelectContact: (handle: string) => void;
   onEstablishContact: (args: EstablishContactArgs) => void;
-  onSaveContactGrants: (args: { handle: string; grants: EstablishContactArgs["grants"] }) => void;
   onRemoveContact: (handle: string) => void;
   onSendMessage: (args: SendMessageArgs) => void;
 }) {
@@ -67,9 +64,9 @@ export function ContactsSection(props: {
                 <strong>{contact.displayName || contact.handle}</strong>
                 <small>{contact.note || contact.handle}</small>
               </span>
-              <span class="social-row-count">{contact.grants.length}</span>
+              <span class="social-row-count">Contact</span>
             </button>
-          )) : <EmptyState title="No known contacts" body="Establish contact with a GSV handle and grant only the operations they need." />}
+          )) : <EmptyState title="No known contacts" body="Establish contact with a GSV handle to enable messages and status updates for shared conversations." />}
         </div>
       </aside>
 
@@ -77,7 +74,6 @@ export function ContactsSection(props: {
         contact={props.selectedContact}
         directory={props.contactDirectory}
         pendingAction={props.pendingAction}
-        onSaveContactGrants={props.onSaveContactGrants}
         onRemoveContact={props.onRemoveContact}
         onSendMessage={props.onSendMessage}
       />
@@ -89,20 +85,13 @@ function ContactDetail(props: {
   contact: SocialContactSummary | null;
   directory: SocialContactDirectory | null;
   pendingAction: PendingAction | null;
-  onSaveContactGrants: (args: { handle: string; grants: EstablishContactArgs["grants"] }) => void;
   onRemoveContact: (handle: string) => void;
   onSendMessage: (args: SendMessageArgs) => void;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    setSelected(new Set(props.contact?.grants.map((grant) => grant.operation) ?? []));
-  }, [props.contact?.handle, props.contact?.grants]);
-
   if (!props.contact) {
     return (
       <div class="social-detail-pane">
-        <EmptyState title="No contact selected" body="Select a trusted contact to inspect grants, directory signals, and messaging." />
+        <EmptyState title="No contact selected" body="Select a trusted contact to inspect directory signals and messaging." />
       </div>
     );
   }
@@ -136,21 +125,12 @@ function ContactDetail(props: {
 
       <div class="social-detail-scroll">
         <section class="social-work-section">
-          <div class="social-section-head">
-            <h3>Contact Grants</h3>
-            <button
-              type="button"
-              class="social-button social-button--primary"
-              disabled={props.pendingAction === "save-contact-grants"}
-              onClick={() => props.onSaveContactGrants({
-                handle: props.contact!.handle,
-                grants: grantsFromSelection(selected),
-              })}
-            >
-              Save Contact Grants
-            </button>
-          </div>
-          <GrantChecklist selected={selected} onChange={setSelected} />
+          <h3>Contact Permissions</h3>
+          <FieldList>
+            <FieldRow label="Messages" value="Can send messages to this GSV" />
+            <FieldRow label="Status updates" value="Can update statuses for shared messages" />
+            <FieldRow label="Public records" value="Read directly from ATProto without grants" />
+          </FieldList>
         </section>
 
         <section class="social-work-section">
@@ -192,7 +172,6 @@ function EstablishContactForm(props: {
 }) {
   const [handle, setHandle] = useState("");
   const [note, setNote] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(() => defaultGrantSelection());
   return (
     <form
       class="social-establish-contact"
@@ -201,7 +180,6 @@ function EstablishContactForm(props: {
         props.onEstablishContact({
           handle,
           note,
-          grants: grantsFromSelection(selected),
         });
         setHandle("");
         setNote("");
@@ -215,40 +193,14 @@ function EstablishContactForm(props: {
         <span>Contact note</span>
         <input value={note} onInput={(event) => setNote(event.currentTarget.value)} placeholder="Alice's GSV" />
       </label>
-      <GrantChecklist selected={selected} onChange={setSelected} compact />
+      <div class="social-contact-permission-note">
+        <strong>Grants</strong>
+        <span>Contact grants allow messages and status updates for shared conversations. Public records stay public ATProto records.</span>
+      </div>
       <button class="social-button social-button--primary" type="submit" disabled={props.pending || !handle.trim() || !note.trim()}>
         Establish Contact
       </button>
     </form>
-  );
-}
-
-function GrantChecklist(props: {
-  selected: Set<string>;
-  onChange: (selected: Set<string>) => void;
-  compact?: boolean;
-}) {
-  return (
-    <div class={`social-grant-list${props.compact ? " is-compact" : ""}`}>
-      {SOCIAL_GRANT_OPTIONS.map((option) => (
-        <label key={option.operation}>
-          <input
-            type="checkbox"
-            checked={props.selected.has(option.operation)}
-            onChange={(event) => {
-              const next = new Set(props.selected);
-              if (event.currentTarget.checked) {
-                next.add(option.operation);
-              } else {
-                next.delete(option.operation);
-              }
-              props.onChange(next);
-            }}
-          />
-          <span>{option.label}</span>
-        </label>
-      ))}
-    </div>
   );
 }
 

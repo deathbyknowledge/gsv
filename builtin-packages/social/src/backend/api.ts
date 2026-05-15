@@ -14,7 +14,6 @@ import type {
   SocialNewsListResult,
   SocialPackageReleaseListResult,
   SocialPackageListResult,
-  SocialRemoteOperation,
   SocialThreadGetResult,
   SocialThreadListResult,
   SocialThreadSummary,
@@ -26,7 +25,6 @@ import type {
   LoadSocialStateArgs,
   RemoveContactArgs,
   SendMessageArgs,
-  SetContactGrantsArgs,
   SocialChannelDetail,
   SocialChannelItem,
   SocialContactSummary,
@@ -35,13 +33,19 @@ import type {
   SocialState,
   UpdateMessageWorkflowArgs,
 } from "../app/types";
-import { SOCIAL_GRANT_OPTIONS } from "../app/types";
 
 type LegacyLoadSocialStateArgs = LoadSocialStateArgs & {
   threadId?: string | null;
 };
 
 type ContactDirectory = NonNullable<SocialState["contactDirectory"]>;
+
+function defaultContactGrants(): SocialGrant[] {
+  return [
+    { operation: "social.message.send" },
+    { operation: "social.message.status.update" },
+  ];
+}
 
 export async function loadState(
   args: LoadSocialStateArgs | undefined,
@@ -71,9 +75,7 @@ export async function loadState(
     : null;
   const [usersResult, publicContactRecords, packageRecords, packageReleaseRecords, vouchRecords, newsRecords] = selectedContact
     ? await Promise.all([
-        hasAcceptedMethod(selectedContact, "social.user.read")
-          ? kernel.request("social.user.list", { handle: selectedContact.handle }) as Promise<SocialUserListResult>
-          : Promise.resolve({ users: [] }),
+        loadContactUsers(kernel, selectedContact),
         loadPublicContactRecords(kernel, selectedContact),
         loadContactPackages(kernel, selectedContact),
         loadPackageReleases(kernel, selectedContact),
@@ -112,20 +114,9 @@ export async function establishContact(
   await kernel.request("social.contact.add", {
     handle: normalizeRequired(args.handle, "handle"),
     note: normalizeRequired(args.note, "note"),
-    grants: normalizeGrants(args.grants),
+    grants: defaultContactGrants(),
   });
   return loadState({}, kernel);
-}
-
-export async function setContactGrants(
-  args: SetContactGrantsArgs,
-  kernel: KernelClientLike,
-): Promise<SocialState> {
-  await kernel.request("social.contact.grants.set", {
-    handle: normalizeRequired(args.handle, "handle"),
-    grants: normalizeGrants(args.grants),
-  });
-  return loadState({ channelId: normalizeOptional(args.channelId) }, kernel);
 }
 
 export async function removeContact(
@@ -182,9 +173,6 @@ async function loadContactPackages(
   kernel: KernelClientLike,
   contact: SocialContactSummary,
 ): Promise<ContactDirectory["packages"]> {
-  if (!hasAcceptedMethod(contact, "social.package.read")) {
-    return [];
-  }
   try {
     const result = await kernel.request("social.package.list", {
       handle: contact.handle,
@@ -196,13 +184,24 @@ async function loadContactPackages(
   }
 }
 
+async function loadContactUsers(
+  kernel: KernelClientLike,
+  contact: SocialContactSummary,
+): Promise<SocialUserListResult> {
+  try {
+    return await kernel.request("social.user.list", {
+      handle: contact.handle,
+      limit: 100,
+    }) as SocialUserListResult;
+  } catch {
+    return { users: [] };
+  }
+}
+
 async function loadPublicContactRecords(
   kernel: KernelClientLike,
   contact: SocialContactSummary,
 ): Promise<ContactDirectory["contacts"]> {
-  if (!hasAcceptedMethod(contact, "social.contact.read")) {
-    return [];
-  }
   try {
     const result = await kernel.request("social.contact.public.list", {
       handle: contact.handle,
@@ -218,9 +217,6 @@ async function loadPackageReleases(
   kernel: KernelClientLike,
   contact: SocialContactSummary,
 ): Promise<ContactDirectory["packageReleases"]> {
-  if (!hasAcceptedMethod(contact, "social.package.release.read")) {
-    return [];
-  }
   try {
     const result = await kernel.request("social.package.release.list", {
       handle: contact.handle,
@@ -236,9 +232,6 @@ async function loadVouches(
   kernel: KernelClientLike,
   contact: SocialContactSummary,
 ): Promise<ContactDirectory["vouches"]> {
-  if (!hasAcceptedMethod(contact, "social.vouch.read")) {
-    return [];
-  }
   try {
     const result = await kernel.request("social.vouch.list", {
       handle: contact.handle,
@@ -254,9 +247,6 @@ async function loadContactNews(
   kernel: KernelClientLike,
   contact: SocialContactSummary,
 ): Promise<ContactDirectory["news"]> {
-  if (!hasAcceptedMethod(contact, "social.news.read")) {
-    return [];
-  }
   try {
     const result = await kernel.request("social.news.list", {
       handle: contact.handle,
@@ -331,25 +321,6 @@ function normalizeChannelDetail(detail: SocialThreadGetResult): SocialChannelDet
     messages: detail.messages.map(normalizeMessage),
     workflows: detail.statuses.map(normalizeWorkflow),
   };
-}
-
-function normalizeGrants(grants: SocialGrant[] | undefined): SocialGrant[] {
-  const raw = grants?.map((grant) => grant.operation) ?? [];
-  const allowed = new Set(SOCIAL_GRANT_OPTIONS.map((option) => option.operation));
-  const seen = new Set<string>();
-  const normalized: SocialGrant[] = [];
-  for (const operation of raw) {
-    if (seen.has(operation) || !allowed.has(operation as SocialRemoteOperation)) {
-      continue;
-    }
-    seen.add(operation);
-    normalized.push({ operation });
-  }
-  return normalized;
-}
-
-function hasAcceptedMethod(contact: SocialContactSummary, method: string): boolean {
-  return contact.acceptedSocialMethods.includes(method);
 }
 
 function normalizeRequired(value: string | undefined, field: string): string {

@@ -17,7 +17,6 @@ export default definePackage({
         "social.contact.list",
         "social.contact.add",
         "social.contact.remove",
-        "social.contact.grants.set",
         "social.contact.public.list",
         "social.contact.publish",
         "social.contact.unpublish",

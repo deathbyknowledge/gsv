@@ -56,14 +56,7 @@ export function getAttentionCounts(state: SocialState | null): {
     needsHuman: inbound.filter((workflow) => workflow.state === "needs_human").length,
     channels: state?.channels.length ?? 0,
     contacts: state?.contacts.length ?? 0,
-    publishedRecords: state?.contacts.filter((contact) =>
-      contact.acceptedSocialMethods.includes("social.user.read") ||
-      contact.acceptedSocialMethods.includes("social.contact.read") ||
-      contact.acceptedSocialMethods.includes("social.news.read") ||
-      contact.acceptedSocialMethods.includes("social.package.read") ||
-      contact.acceptedSocialMethods.includes("social.package.release.read") ||
-      contact.acceptedSocialMethods.includes("social.vouch.read")
-    ).length ?? 0,
+    publishedRecords: state?.contacts.length ?? 0,
   };
 }
 

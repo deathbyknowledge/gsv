@@ -38,7 +38,6 @@ import {
   handleSocialSetup,
   handleSocialProfileGet,
   handleSocialProfileUpdate,
-  handleSocialThreadCreate,
   handleSocialThreadGet,
   handleSocialThreadList,
   handleSocialUserList,
@@ -1049,7 +1048,6 @@ function stubAlicePublicIdentity(
             acceptedSocialMethods: options.acceptedSocialMethods ?? [
               "social.user.read",
               "social.package.read",
-              "social.thread.create",
               "social.message.send",
               "social.message.status.update",
             ],
@@ -1499,7 +1497,6 @@ describe("social identity and records", () => {
     await handleSocialContactAdd({
       handle: "alice.example",
       note: "Alice's household GSV",
-      grants: [{ operation: "social.user.read" }],
     }, ctx);
 
     await expect(handleSocialUserList({}, ctx)).resolves.toMatchObject({
@@ -1596,7 +1593,6 @@ describe("social identity and records", () => {
     await handleSocialContactAdd({
       handle: "alice.example",
       note: "Alice's household GSV",
-      grants: [{ operation: "social.package.read" }],
     }, ctx);
     await expect(handleSocialPackageList({ handle: "alice.example" }, ctx)).resolves.toMatchObject({
       packages: [
@@ -1652,12 +1648,8 @@ describe("social identity and records", () => {
       [SPACE_GSV_PACKAGE, "planner", { $type: SPACE_GSV_PACKAGE, name: "planner", displayName: "Planner" }],
       [SPACE_GSV_PACKAGE, "wiki", { $type: SPACE_GSV_PACKAGE, name: "wiki", displayName: "Wiki" }],
     ]);
-    await expect(handleSocialPackageList({}, ctx)).resolves.toMatchObject({
-      packages: [
-        { record: { name: "planner" } },
-        { record: { name: "wiki" } },
-      ],
-    });
+    const localPackages = await handleSocialPackageList({}, ctx);
+    expect(localPackages.packages.map((entry) => entry.record.name).sort()).toEqual(["planner", "wiki"]);
 
     await expect(syncPublicPackageSocialRecordsForRepo(ctx, "root/gsv", false)).resolves.toEqual([]);
     expect(deleteCalls.map((call) => [call.collection, call.rkey])).toEqual([
@@ -1679,6 +1671,10 @@ describe("social identity and records", () => {
     expect(() => handleSocialContactGrantsSet({
       handle: "alice.example",
       grants: [{ operation: "fs.read" as never }],
+    }, ctx)).toThrow("unsupported grant operation");
+    expect(() => handleSocialContactGrantsSet({
+      handle: "alice.example",
+      grants: [{ operation: "social.user.read" }],
     }, ctx)).toThrow("unsupported grant operation");
   });
 
@@ -1715,9 +1711,9 @@ describe("social identity and records", () => {
       grants: [{ operation: "social.message.send" }],
     }, ctx);
 
-    const created = await handleSocialThreadCreate({
-      peerHandle: "alice.example",
-      initialMessage: "Can your agent look at this plan?",
+    const created = await handleSocialMessageSend({
+      toHandle: "alice.example",
+      text: "Can your agent look at this plan?",
     }, ctx);
 
     expect(created.thread).toMatchObject({
@@ -1725,7 +1721,7 @@ describe("social identity and records", () => {
       status: "active",
     });
     expect(created.thread.conversationId).toBe(`social:alice.example:${created.thread.threadId}`);
-    expect(created.initialMessage).toMatchObject({
+    expect(created.message).toMatchObject({
       threadId: created.thread.threadId,
       direction: "outbound",
       fromHandle: "gsv.example",
@@ -1740,7 +1736,7 @@ describe("social identity and records", () => {
     });
     expect(inboundBodies).toHaveLength(1);
     expect((inboundBodies[0] as { envelope: { method: string; body: { threadId: string } } }).envelope).toMatchObject({
-      method: "social.thread.create",
+      method: "social.message.send",
       body: {
         threadId: created.thread.threadId,
         sender: {
@@ -2229,6 +2225,83 @@ describe("social identity and records", () => {
       ok: false,
       status: "rejected",
       error: "Missing grant for social.message.send",
+    });
+  });
+
+  it("rejects inbound status updates outside the sender's conversations", async () => {
+    const prepared = await setupSignedInboundFriend([
+      { operation: "social.message.send" },
+      { operation: "social.message.status.update" },
+    ]);
+
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(prepared.aliceKeys.privateJwk, {
+        id: "env-status-base",
+        nonce: "nonce-status-base",
+        body: {
+          threadId: "thread-alice",
+          messageId: "msg-alice",
+          text: "Please review this.",
+        },
+      }),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, prepared.ctx)).resolves.toMatchObject({
+      ok: true,
+      status: "accepted",
+      threadId: "thread-alice",
+      messageId: "msg-alice",
+    });
+
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(prepared.aliceKeys.privateJwk, {
+        id: "env-status-wrong-thread",
+        nonce: "nonce-status-wrong-thread",
+        method: "social.message.status.update",
+        body: {
+          threadId: "thread-other",
+          messageId: "msg-alice",
+          state: "completed",
+        },
+      }),
+      receivedAt: "2026-05-12T12:02:00Z",
+    }, prepared.ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Message msg-alice belongs to thread thread-alice, not thread-other",
+    });
+
+    prepared.ctx.social!.upsertThread({
+      uid: 1000,
+      threadId: "thread-bob",
+      peerHandle: "bob.example",
+    });
+    prepared.ctx.social!.upsertMessage({
+      uid: 1000,
+      threadId: "thread-bob",
+      messageId: "msg-bob",
+      direction: "inbound",
+      fromHandle: "bob.example",
+      toHandle: "gsv.example",
+      text: "Bob's message.",
+      deliveryStatus: "delivered",
+    });
+
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(prepared.aliceKeys.privateJwk, {
+        id: "env-status-other-contact",
+        nonce: "nonce-status-other-contact",
+        method: "social.message.status.update",
+        body: {
+          threadId: "thread-bob",
+          messageId: "msg-bob",
+          state: "completed",
+        },
+      }),
+      receivedAt: "2026-05-12T12:03:00Z",
+    }, prepared.ctx)).resolves.toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: "Message msg-bob does not belong to contact alice.example",
     });
   });
 

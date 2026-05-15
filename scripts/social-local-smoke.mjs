@@ -6,11 +6,8 @@ const BASE_PUBLIC_COLLECTIONS = [
 ];
 
 const CURRENT_GRANTS = [
-  { operation: "social.thread.create" },
   { operation: "social.message.send" },
   { operation: "social.message.status.update" },
-  { operation: "social.vouch.read" },
-  { operation: "social.news.read" },
 ];
 
 const DENIED_SENDER_GRANTS = CURRENT_GRANTS.filter((grant) => grant.operation !== "social.message.send");

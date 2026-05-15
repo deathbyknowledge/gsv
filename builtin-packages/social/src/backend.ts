@@ -5,7 +5,6 @@ import {
   republishPublicRecords,
   removeContact,
   sendMessage,
-  setContactGrants,
   updateMessageWorkflow,
 } from "./backend/api";
 
@@ -16,10 +15,6 @@ export default class SocialBackend extends PackageBackendEntrypoint {
 
   async establishContact(args: unknown): Promise<unknown> {
     return establishContact(args as never, this.kernel);
-  }
-
-  async setContactGrants(args: unknown): Promise<unknown> {
-    return setContactGrants(args as never, this.kernel);
   }
 
   async removeContact(args: unknown): Promise<unknown> {

@@ -137,10 +137,6 @@
     flex-wrap: wrap;
   }
 
-  .social-grant-list {
-    grid-template-columns: 1fr;
-  }
-
   .social-row-button {
     grid-template-columns: 12px minmax(0, 1fr);
   }

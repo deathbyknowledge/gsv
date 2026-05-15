@@ -156,7 +156,6 @@ export const SOCIAL_REMOTE_OPERATIONS = [
   "social.package.release.read",
   "social.vouch.read",
   "social.news.read",
-  "social.thread.create",
   "social.message.send",
   "social.message.status.update",
 ] as const;
@@ -194,7 +193,6 @@ export const SOCIAL_SYSCALLS = [
   "social.news.create",
   "social.news.delete",
   "social.news.list",
-  "social.thread.create",
   "social.thread.list",
   "social.thread.get",
   "social.message.send",
@@ -443,16 +441,6 @@ export type SocialContactGrantsSetArgs = {
 };
 export type SocialContactGrantsSetResult = {
   contact: SocialContactSummary;
-};
-
-export type SocialThreadCreateArgs = {
-  peerHandle: string;
-  initialMessage?: string;
-  expiresAt?: SocialIsoDateString;
-};
-export type SocialThreadCreateResult = {
-  thread: SocialThreadSummary;
-  initialMessage?: SocialMessageSummary;
 };
 
 export type SocialThreadListArgs = {
@@ -725,10 +713,6 @@ export type SocialSyscalls = {
   "social.news.list": {
     args: SocialNewsListArgs;
     result: SocialNewsListResult;
-  };
-  "social.thread.create": {
-    args: SocialThreadCreateArgs;
-    result: SocialThreadCreateResult;
   };
   "social.thread.list": {
     args: SocialThreadListArgs;

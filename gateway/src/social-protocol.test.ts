@@ -61,11 +61,13 @@ describe("social protocol contract", () => {
     expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.agent.card.read" as never);
     expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.package.like.read" as never);
     expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.status.read" as never);
+    expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.thread.create" as never);
     expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.message.reply" as never);
     expect(SOCIAL_REMOTE_OPERATIONS).not.toContain("social.request.create" as never);
 
     expect(isSocialRemoteOperation("social.message.send")).toBe(true);
     expect(isSocialRemoteOperation("social.news.read")).toBe(true);
+    expect(isSocialRemoteOperation("social.thread.create")).toBe(false);
     expect(isSocialRemoteOperation("social.message.reply")).toBe(false);
     expect(isSocialRemoteOperation("social.agent.card.read")).toBe(false);
     expect(isSocialRemoteOperation("social.package.like.read")).toBe(false);

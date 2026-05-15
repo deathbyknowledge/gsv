@@ -75,7 +75,7 @@ export function DirectorySection(props: {
               class={`social-row-button${props.selectedContact?.handle === contact.handle ? " is-active" : ""}`}
               onClick={() => props.onSelectContact(contact.handle)}
             >
-              <StatusDot status={contact.acceptedSocialMethods.includes("social.user.read") ? "active" : "inactive"} />
+              <StatusDot status={contact.acceptsContact ? "active" : "inactive"} />
               <span class="social-row-main">
                 <strong>{contact.displayName || contact.handle}</strong>
                 <small>{contact.acceptedSocialMethods.length} advertised methods</small>
@@ -153,9 +153,8 @@ function DirectoryDetail(props: {
         <section class="social-work-section">
           <h3>Messaging</h3>
           <FieldList>
-            <FieldRow label="Channel create" value={identity.instance?.acceptedSocialMethods?.includes("social.thread.create") ? "Accepted" : "Not advertised"} />
             <FieldRow label="Message send" value={identity.instance?.acceptedSocialMethods?.includes("social.message.send") ? "Accepted" : "Not advertised"} />
-            <FieldRow label="News read" value={identity.instance?.acceptedSocialMethods?.includes("social.news.read") ? "Accepted" : "Not advertised"} />
+            <FieldRow label="Status updates" value={identity.instance?.acceptedSocialMethods?.includes("social.message.status.update") ? "Accepted" : "Not advertised"} />
           </FieldList>
         </section>
       </div>

@@ -60,34 +60,24 @@ textarea {
   text-transform: uppercase;
 }
 
-.social-grant-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
-  gap: 8px;
-}
-
-.social-grant-list.is-compact {
-  grid-template-columns: 1fr;
-}
-
-.social-grant-list label {
+.social-contact-permission-note {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  gap: 4px;
   border: 1px solid var(--social-line);
   border-radius: 7px;
   background: var(--social-surface-strong);
-  padding: 7px 8px;
+  padding: 8px 10px;
 }
 
-.social-grant-list input {
-  width: auto;
+.social-contact-permission-note strong {
+  color: var(--social-text);
+  font-size: 12px;
 }
 
-.social-grant-list span {
+.social-contact-permission-note span {
+  color: var(--social-muted);
+  font-size: 12px;
+  line-height: 1.35;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
