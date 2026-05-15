@@ -129,7 +129,11 @@ where
     ) -> Result<Vec<MstEntry>, MstError> {
         let mut tree = self.open_atrium_tree();
         let prefix = format!("{}/", collection.as_str());
-        collect_entries(tree.entries_prefixed(&prefix)).await
+        let entries = collect_entries(tree.entries_prefixed(&prefix)).await?;
+        Ok(entries
+            .into_iter()
+            .filter(|entry| entry.path.collection == *collection)
+            .collect())
     }
 
     pub async fn export_cids(&mut self) -> Result<Vec<Cid>, MstError> {
@@ -420,6 +424,27 @@ mod tests {
                         cid: value_cid("charlie"),
                     },
                 ]
+            );
+        });
+    }
+
+    #[test]
+    fn entries_for_collection_does_not_leak_later_collections() {
+        block_on(async {
+            let collection = Nsid::new("space.gsv.package.like").unwrap();
+            let mut tree = MerkleSearchTree::from_entries(
+                MemoryRepoStore::new(),
+                vec![
+                    (path("space.gsv.profile/self"), value_cid("profile")),
+                    (path("space.gsv.user/alice"), value_cid("user")),
+                ],
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                tree.entries_for_collection(&collection).await.unwrap(),
+                vec![]
             );
         });
     }
