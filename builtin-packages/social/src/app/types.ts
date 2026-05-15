@@ -64,6 +64,7 @@ export type SocialMessageItem = {
   text?: string;
   body?: unknown;
   deliveryStatus: SocialDeliveryStatus;
+  lastDeliveryError?: string;
   createdAt: string;
 };
 

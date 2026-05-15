@@ -110,6 +110,11 @@ function MessageBubble(props: {
       </header>
       {props.message.text ? <p>{props.message.text}</p> : null}
       <StructuredDetails value={props.message.body} />
+      {props.message.lastDeliveryError ? (
+        <footer class="social-message-delivery">
+          {formatDeliveryError(props.message.lastDeliveryError)}
+        </footer>
+      ) : null}
       {props.workflow ? (
         <footer class="social-message-workflow">
           <StatusPill status={props.workflow.state} />
@@ -118,6 +123,16 @@ function MessageBubble(props: {
       ) : null}
     </article>
   );
+}
+
+function formatDeliveryError(error: string): string {
+  if (error.includes("Missing grant for social.message.send")) {
+    return "Remote has not granted this GSV permission to send messages.";
+  }
+  if (error.includes("Unknown sender")) {
+    return "Remote does not know this GSV as a Contact.";
+  }
+  return error;
 }
 
 function WorkflowCard(props: {

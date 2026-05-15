@@ -295,6 +295,7 @@ function normalizeMessage(message: SocialMessageSummary): SocialMessageItem {
     text: message.text,
     body: message.body,
     deliveryStatus: message.deliveryStatus,
+    lastDeliveryError: message.lastDeliveryError,
     createdAt: message.createdAt,
   };
 }

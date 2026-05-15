@@ -1,5 +1,12 @@
 import { useMemo } from "preact/hooks";
-import type { EstablishContactArgs, SendMessageArgs, SocialBackend, SocialContactSummary } from "./types";
+import type {
+  EstablishContactArgs,
+  SendMessageArgs,
+  SocialBackend,
+  SocialContactSummary,
+  SocialMessageItem,
+  SocialState,
+} from "./types";
 import { AdvancedSection } from "./components/advanced/AdvancedSection";
 import { AttentionSection } from "./components/attention/AttentionSection";
 import { ChannelsSection } from "./components/channels/ChannelsSection";
@@ -28,6 +35,16 @@ export function App({ backend }: AppProps) {
   const sendMessage = async (args: SendMessageArgs): Promise<void> => {
     const nextState = await social.sendMessage(args);
     const channelId = nextState?.selectedChannel?.channel?.channelId;
+    const sentMessage = latestSentMessage(nextState, args);
+    console.log("[social] message send result", {
+      toHandle: args.toHandle,
+      requestedChannelId: args.channelId ?? null,
+      selectedChannelId: channelId ?? null,
+      messageId: sentMessage?.messageId ?? null,
+      deliveryStatus: sentMessage?.deliveryStatus ?? null,
+      lastDeliveryError: sentMessage?.lastDeliveryError ?? null,
+      message: sentMessage,
+    });
     if (channelId) {
       navigation.selectChannel(channelId, "channels");
     }
@@ -137,4 +154,14 @@ function useSelectedContact(contacts: SocialContactSummary[], handle: string | n
     }
     return contacts.find((contact) => contact.handle === handle) ?? null;
   }, [contacts, handle]);
+}
+
+function latestSentMessage(state: SocialState | null, args: SendMessageArgs): SocialMessageItem | null {
+  const messages = state?.selectedChannel?.messages ?? [];
+  const matches = messages.filter((message) =>
+    message.direction === "outbound" &&
+    message.toHandle === args.toHandle &&
+    (args.channelId === undefined || message.channelId === args.channelId)
+  );
+  return matches.length ? matches[matches.length - 1] : null;
 }

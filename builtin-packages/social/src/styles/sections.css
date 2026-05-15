@@ -165,6 +165,15 @@
   font-size: 12px;
 }
 
+.social-message-delivery {
+  margin-top: 10px;
+  border-left: 2px solid var(--social-danger);
+  color: var(--social-danger);
+  font-size: 12px;
+  line-height: 1.35;
+  padding-left: 8px;
+}
+
 .social-workflow-card h3 {
   margin: 0;
   font-size: 15px;

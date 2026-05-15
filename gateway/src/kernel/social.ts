@@ -2240,7 +2240,7 @@ async function attemptOutboundDelivery(input: {
     } else {
       retryable = response.status >= 500 || response.status === 429;
       status = retryable ? "retrying" : "failed";
-      error = `remote status=${response.status}: ${formatFetchBody(responseBody)}`;
+      error = formatOutboundDeliveryError(response.status, responseBody);
     }
   } catch (caught) {
     status = "retrying";
@@ -4062,6 +4062,24 @@ function formatFetchBody(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
+function formatOutboundDeliveryError(status: number, body: unknown): string {
+  const rejection = socialInboundRejectionError(body);
+  return rejection ? `remote rejected: ${rejection}` : `remote status=${status}: ${formatFetchBody(body)}`;
+}
+
+function socialInboundRejectionError(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as { ok?: unknown; status?: unknown; error?: unknown };
+  return record.ok === false &&
+    record.status === "rejected" &&
+    typeof record.error === "string" &&
+    record.error.trim()
+    ? record.error
+    : null;
+}
+
 function toIdentityRecord(row: IdentityRow): SocialIdentityRecord {
   return {
     uid: row.uid,
@@ -4197,6 +4215,7 @@ function toMessageSummary(message: SocialMessageRecord): SocialMessageSummary {
     text: message.text,
     body: message.body,
     deliveryStatus: message.deliveryStatus,
+    lastDeliveryError: message.lastDeliveryError,
     createdAt: new Date(message.createdAt).toISOString(),
     updatedAt: new Date(message.updatedAt).toISOString(),
   };

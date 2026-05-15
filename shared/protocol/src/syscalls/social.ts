@@ -315,6 +315,7 @@ export type SocialMessageSummary = {
   text?: string;
   body?: unknown;
   deliveryStatus: SocialDeliveryStatus;
+  lastDeliveryError?: string;
   createdAt: SocialIsoDateString;
   updatedAt: SocialIsoDateString;
 };
