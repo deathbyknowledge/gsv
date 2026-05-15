@@ -20,7 +20,8 @@ export function App({ backend }: AppProps) {
     ? navigation.route
     : { ...navigation.route, section: "directory" as const, detail: false };
   const selectedContact = useSelectedContact(social.state?.contacts ?? [], navigation.route.contactHandle);
-  const selectedDirectory = social.state?.contactDirectory?.contactHandle === selectedContact?.handle
+  const selectedDirectory = social.state && selectedContact &&
+    social.state.contactDirectory?.contactHandle === selectedContact.handle
     ? social.state.contactDirectory
     : null;
 
