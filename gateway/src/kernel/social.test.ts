@@ -64,6 +64,7 @@ import {
 } from "@gsv/protocol/syscalls/social";
 import type { PdsEnsureAccountInput, PdsPutRecordInput, PdsServiceBinding } from "../pds/client";
 import { sendFrameToProcess } from "../shared/utils";
+import { remoteSocialProcessAuthority } from "./authority";
 
 type Row = Record<string, unknown>;
 
@@ -1935,13 +1936,13 @@ describe("social identity and records", () => {
       },
     });
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
-      .toContain("A private transcript reply is not delivered to the peer");
+      .toContain("Use the social command surface");
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
-      .toContain("social message send alice.example");
+      .not.toContain("Expected actions:");
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
-      .toContain("social status update msg-alice --state needs_human");
+      .not.toContain("social message send alice.example");
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
-      .toContain("mark complete");
+      .not.toContain("social status update msg-alice --state needs_human");
     expect((mindDeliver?.[1] as { args?: { message?: string } }).args?.message)
       .not.toContain("Structured event data");
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
@@ -1954,7 +1955,6 @@ describe("social identity and records", () => {
           peerDid: "did:web:alice.example",
           sandboxRoot: "/var/social/alice.example",
           threadId: "thread-alice",
-          messageId: "msg-alice",
         }),
       }),
     );
@@ -1995,6 +1995,192 @@ describe("social identity and records", () => {
       threadId: "thread-alice",
       messageId: "msg-alice",
     });
+  });
+
+  it("delivers replies on user-owned social threads to init instead of Mind", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: () => Response.json({ ok: true, status: "accepted" }),
+    });
+
+    setContextRole(ctx, "user");
+    const sent = await handleSocialMessageSend({
+      toHandle: "alice.example",
+      text: "want to play tomorrow?",
+    }, ctx);
+    vi.mocked(sendFrameToProcess).mockClear();
+
+    setContextRole(ctx, "service");
+    await expect(handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        id: "env-user-thread-reply",
+        nonce: "nonce-user-thread-reply",
+        body: {
+          threadId: sent.thread.threadId,
+          messageId: "msg-alice-reply",
+          sender: { kind: "user", username: "alice" },
+          text: "yes, 5pm works",
+        },
+      }),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx)).resolves.toMatchObject({
+      ok: true,
+      status: "accepted",
+      threadId: sent.thread.threadId,
+      messageId: "msg-alice-reply",
+    });
+
+    expect(vi.mocked(sendFrameToProcess).mock.calls.some(([, frame]) =>
+      frame.type === "req" && frame.call === "proc.mind.deliver"
+    )).toBe(false);
+    const initDelivery = vi.mocked(sendFrameToProcess).mock.calls.find(([pid, frame]) =>
+      pid === "init:1000" && frame.type === "req" && frame.call === "proc.mind.message"
+    );
+    expect(initDelivery).toBeTruthy();
+    expect((initDelivery?.[1] as { args?: { message?: string } }).args?.message)
+      .toContain("New Contact message in a thread owned by the local user.");
+    expect((initDelivery?.[1] as { args?: { message?: string } }).args?.message)
+      .toContain("yes, 5pm works");
+  });
+
+  it("delivers follow-up messages in active human-escalated threads to init", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: () => Response.json({ ok: true, status: "accepted" }),
+    });
+    await handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        id: "env-human-thread",
+        nonce: "nonce-human-thread",
+        body: {
+          threadId: "thread-needs-human",
+          messageId: "msg-needs-human",
+          text: "Can Hank decide this?",
+        },
+      }),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx);
+
+    setContextRole(ctx, "user");
+    await handleSocialMessageStatusUpdate({
+      messageId: "msg-needs-human",
+      state: "needs_human",
+      needsHumanReason: "Hank needs to decide.",
+    }, ctx);
+    vi.mocked(sendFrameToProcess).mockClear();
+
+    setContextRole(ctx, "service");
+    await handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        id: "env-human-thread-followup",
+        nonce: "nonce-human-thread-followup",
+        body: {
+          threadId: "thread-needs-human",
+          messageId: "msg-followup",
+          text: "Any update?",
+        },
+      }),
+      receivedAt: "2026-05-12T12:02:00Z",
+    }, ctx);
+
+    expect(vi.mocked(sendFrameToProcess).mock.calls.some(([, frame]) =>
+      frame.type === "req" && frame.call === "proc.mind.deliver"
+    )).toBe(false);
+    const initDelivery = vi.mocked(sendFrameToProcess).mock.calls.find(([pid, frame]) =>
+      pid === "init:1000" && frame.type === "req" && frame.call === "proc.mind.message"
+    );
+    expect(initDelivery).toBeTruthy();
+    expect((initDelivery?.[1] as { args?: { message?: string } }).args?.message)
+      .toContain("Any update?");
+  });
+
+  it("lets thread-scoped social Mind authority update inbound statuses in its thread only", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: () => Response.json({ ok: true, status: "accepted" }),
+    });
+    await handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        id: "env-thread-scope-1",
+        nonce: "nonce-thread-scope-1",
+        body: {
+          threadId: "thread-scope",
+          messageId: "msg-thread-1",
+          text: "first",
+        },
+      }),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx);
+    await handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        id: "env-thread-scope-2",
+        nonce: "nonce-thread-scope-2",
+        body: {
+          threadId: "thread-scope",
+          messageId: "msg-thread-2",
+          text: "second",
+        },
+      }),
+      receivedAt: "2026-05-12T12:02:00Z",
+    }, ctx);
+
+    setContextRole(ctx, "user");
+    (ctx as KernelContext & { authority?: unknown }).authority = remoteSocialProcessAuthority({
+      peerHandle: "alice.example",
+      peerDid: "did:web:alice.example",
+      threadId: "thread-scope",
+    });
+
+    await expect(handleSocialMessageStatusUpdate({
+      messageId: "msg-thread-2",
+      state: "completed",
+      summary: "handled",
+    }, ctx)).resolves.toMatchObject({
+      status: {
+        messageId: "msg-thread-2",
+        state: "completed",
+      },
+    });
+
+    (ctx as KernelContext & { authority?: unknown }).authority = undefined;
+    setContextRole(ctx, "service");
+    await handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        id: "env-thread-scope-other",
+        nonce: "nonce-thread-scope-other",
+        body: {
+          threadId: "thread-other",
+          messageId: "msg-other-thread",
+          text: "other",
+        },
+      }),
+      receivedAt: "2026-05-12T12:03:00Z",
+    }, ctx);
+    setContextRole(ctx, "user");
+    (ctx as KernelContext & { authority?: unknown }).authority = remoteSocialProcessAuthority({
+      peerHandle: "alice.example",
+      peerDid: "did:web:alice.example",
+      threadId: "thread-scope",
+    });
+    await expect(handleSocialMessageStatusUpdate({
+      messageId: "msg-other-thread",
+      state: "completed",
+    }, ctx)).rejects.toThrow("Remote social authority is limited to thread thread-scope");
+
+    (ctx as KernelContext & { authority?: unknown }).authority = undefined;
+    const outbound = await handleSocialMessageSend({
+      toHandle: "alice.example",
+      threadId: "thread-scope",
+      text: "local outbound",
+    }, ctx);
+    (ctx as KernelContext & { authority?: unknown }).authority = remoteSocialProcessAuthority({
+      peerHandle: "alice.example",
+      threadId: "thread-scope",
+    });
+    await expect(handleSocialMessageStatusUpdate({
+      messageId: outbound.message.messageId,
+      state: "completed",
+    }, ctx)).rejects.toThrow("Remote social authority can only update inbound messages from its Contact");
   });
 
   it("accepts locally granted inbound methods regardless of sender advertisement", async () => {
@@ -2091,19 +2277,12 @@ describe("social identity and records", () => {
         sourcePid: "mind:1000:thread-alice",
         conversationId: "social:alice.example:thread-alice",
         message: expect.stringContaining("I need the local user's input before answering this social message."),
-        metadata: expect.objectContaining({
-          source: "social.needs_human",
-          peerHandle: "alice.example",
-          threadId: "thread-alice",
-          messageId: "msg-alice",
-        }),
       },
     });
     const initMessage = (initDelivery?.[1] as { args?: { message?: string } }).args?.message ?? "";
     expect(initMessage).toContain("Needs Hank to approve sharing this.");
-    expect(initMessage).toContain("social message send alice.example");
-    expect(initMessage).toContain("social status update msg-alice --state completed");
-    expect(initMessage).toContain("proc send mind:1000:thread-alice --conversation mind:social.message:thread-alice");
+    expect(initMessage).toContain("Do not hand the same decision back to the Mind process");
+    expect(initMessage).not.toContain("proc send mind:1000:thread-alice --conversation mind:social.message:thread-alice");
     expect((remoteInboundBodies[0] as { envelope: { method: string; body: { messageId: string; state: string } } }).envelope)
       .toMatchObject({
         method: "social.message.status.update",
@@ -2123,9 +2302,52 @@ describe("social identity and records", () => {
     const storage = (ctx as unknown as { __storage: ReturnType<typeof createMockStorage> }).__storage;
     const inbox = await storage.get("home/hank/context.d/90-social-inbox.md");
     const inboxText = await inbox?.text();
-    expect(inboxText).toContain('social message send alice.example "<text>" --thread thread-alice');
-    expect(inboxText).toContain("Escalate human preference, permission, schedule, availability");
-    expect(inboxText).toContain("Needs Hank to approve sharing this.");
+    expect(inboxText).toContain("There are active Contact inbox messages.");
+    expect(inboxText).toContain("Active: 1");
+    expect(inboxText).toContain("Needs human: 1");
+    expect(inboxText).toContain("Run `social inbox`");
+    expect(inboxText).not.toContain("Needs Hank to approve sharing this.");
+    expect(inboxText).not.toContain("```json");
+    const policy = await storage.get("home/hank/context.d/80-social.md");
+    const policyText = await policy?.text();
+    expect(policyText).toContain("Replying on behalf of a user is transparent delegation");
+    expect(policyText).toContain("pretending to be Alice");
+  });
+
+  it("clears stale human escalation reasons after a message is handled", async () => {
+    const { ctx, aliceKeys } = await setupSignedInboundFriend();
+    stubAlicePublicIdentity(aliceKeys.publicKeyMultibase, {
+      inbound: () => Response.json({ ok: true, status: "accepted" }),
+    });
+    await handleSocialInbound({
+      envelope: await aliceEnvelope(aliceKeys.privateJwk, {
+        body: {
+          threadId: "thread-clear-reason",
+          messageId: "msg-clear-reason",
+          text: "Need a decision.",
+        },
+      }),
+      receivedAt: "2026-05-12T12:01:00Z",
+    }, ctx);
+
+    setContextRole(ctx, "user");
+    await handleSocialMessageStatusUpdate({
+      messageId: "msg-clear-reason",
+      state: "needs_human",
+      needsHumanReason: "Needs Hank.",
+    }, ctx);
+    const completed = await handleSocialMessageStatusUpdate({
+      messageId: "msg-clear-reason",
+      state: "completed",
+      summary: "Handled by Hank.",
+    }, ctx);
+
+    expect(completed.status).toMatchObject({
+      messageId: "msg-clear-reason",
+      state: "completed",
+      summary: "Handled by Hank.",
+    });
+    expect(completed.status.needsHumanReason).toBeUndefined();
   });
 
   it("rejects inbound envelopes outside the service-only path", async () => {

@@ -107,7 +107,7 @@ import { isGsvDevMode, socialOriginForHandle } from "../dev";
 import { GsvFs } from "../fs/gsv-fs";
 import { createHomeKnowledgeBackend } from "../fs/backends/home-knowledge";
 import { dispatchMindEvent } from "./mind";
-import { remoteSocialProcessAuthority } from "./authority";
+import { isRemoteSocialAuthority, remoteSocialProcessAuthority } from "./authority";
 import { sendFrameToProcess } from "../shared/utils";
 
 const SELF_RKEY = "self";
@@ -1272,7 +1272,7 @@ export class SocialStore {
     threadId: string;
     state: SocialMessageStatusState;
     summary?: string;
-    needsHumanReason?: string;
+    needsHumanReason?: string | null;
     body?: unknown;
     remoteEventId?: string;
     now?: number;
@@ -1280,6 +1280,10 @@ export class SocialStore {
     const existing = this.getMessageStatus(input.uid, input.messageId);
     const now = input.now ?? Date.now();
     const createdAt = existing?.createdAt ?? now;
+    const hasNeedsHumanReason = Object.prototype.hasOwnProperty.call(input, "needsHumanReason");
+    const nextNeedsHumanReason = hasNeedsHumanReason
+      ? input.needsHumanReason ?? null
+      : existing?.needsHumanReason ?? null;
     this.sql.exec(
       `INSERT OR REPLACE INTO social_message_statuses
         (uid, message_id, thread_id, state, summary, needs_human_reason, body_json,
@@ -1290,7 +1294,7 @@ export class SocialStore {
       input.threadId,
       input.state,
       input.summary ?? existing?.summary ?? null,
-      input.needsHumanReason ?? existing?.needsHumanReason ?? null,
+      nextNeedsHumanReason,
       input.body === undefined
         ? existing?.body === undefined ? null : JSON.stringify(existing.body)
         : JSON.stringify(input.body),
@@ -1304,7 +1308,7 @@ export class SocialStore {
       threadId: input.threadId,
       state: input.state,
       summary: input.summary ?? existing?.summary,
-      needsHumanReason: input.needsHumanReason ?? existing?.needsHumanReason,
+      needsHumanReason: nextNeedsHumanReason ?? undefined,
       body: input.body === undefined ? existing?.body : input.body,
       remoteEventId: input.remoteEventId ?? existing?.remoteEventId,
       createdAt,
@@ -1930,6 +1934,9 @@ export function handleSocialMessageStatusList(
       if (direction && message.direction !== direction) {
         return [];
       }
+      if (!canRemoteSocialAccessMessage(ctx, message)) {
+        return [];
+      }
       return [toMessageStatusSummary(status, message)];
     }),
   };
@@ -1944,6 +1951,9 @@ export function handleSocialMessageStatusGet(
   const store = requireSocialStore(ctx);
   const status = store.getMessageStatus(uid, messageId);
   const message = status ? store.getMessage(uid, status.messageId) : null;
+  if (message) {
+    ensureRemoteSocialMessageAccess(ctx, message);
+  }
   return {
     status: status && message ? toMessageStatusSummary(status, message) : null,
   };
@@ -1968,6 +1978,7 @@ export async function handleSocialMessageStatusUpdate(
   if (!message) {
     throw new Error(`Message is not known: ${messageId}`);
   }
+  ensureRemoteSocialMessageAccess(ctx, message);
   const previousStatus = store.getMessageStatus(uid, messageId);
   const status = store.upsertMessageStatus({
     uid,
@@ -1975,7 +1986,9 @@ export async function handleSocialMessageStatusUpdate(
     threadId: message.threadId,
     state,
     summary,
-    needsHumanReason,
+    ...(state === "needs_human"
+      ? needsHumanReason === undefined ? {} : { needsHumanReason }
+      : { needsHumanReason: null }),
     body,
   });
   notifyMessageStatusTransition(ctx, message, previousStatus, status);
@@ -2001,6 +2014,28 @@ export async function handleSocialMessageStatusUpdate(
   return {
     status: toMessageStatusSummary(status, message),
   };
+}
+
+function ensureRemoteSocialMessageAccess(ctx: KernelContext, message: SocialMessageRecord): void {
+  if (!canRemoteSocialAccessMessage(ctx, message)) {
+    const authority = ctx.authority;
+    if (isRemoteSocialAuthority(authority) && authority.threadId && message.threadId !== authority.threadId) {
+      throw new Error(`Remote social authority is limited to thread ${authority.threadId}`);
+    }
+    if (isRemoteSocialAuthority(authority)) {
+      throw new Error("Remote social authority can only update inbound messages from its Contact");
+    }
+  }
+}
+
+function canRemoteSocialAccessMessage(ctx: KernelContext, message: SocialMessageRecord): boolean {
+  const authority = ctx.authority;
+  if (!isRemoteSocialAuthority(authority)) {
+    return true;
+  }
+  return message.direction === "inbound" &&
+    message.fromHandle === authority.peerHandle &&
+    (!authority.threadId || message.threadId === authority.threadId);
 }
 
 export async function handleSocialInbound(
@@ -2418,10 +2453,12 @@ async function acceptInboundSocialEnvelope(input: {
     now: input.now,
   });
 
+  await refreshSocialInboxContextSafe(input.ctx, input.store);
+
   try {
-    await deliverInboundMessageToMind(input.ctx, input.friend, thread, message);
+    await deliverInboundMessage(input.ctx, input.store, input.friend, thread, message);
   } catch (error) {
-    console.error("[social.inbound] failed to deliver message to mind process", error);
+    console.error("[social.inbound] failed to deliver message to local owner", error);
   }
 
   return {
@@ -2483,6 +2520,48 @@ async function acceptInboundMessageStatusUpdate(input: {
   };
 }
 
+async function deliverInboundMessage(
+  ctx: KernelContext,
+  store: SocialStore,
+  friend: SocialFriendRecord,
+  thread: SocialThreadRecord,
+  message: SocialMessageRecord,
+): Promise<void> {
+  if (shouldDeliverInboundMessageToInit(store, thread, message)) {
+    await deliverInboundMessageToInit(ctx, thread, message);
+    return;
+  }
+  await deliverInboundMessageToMind(ctx, friend, thread, message);
+}
+
+function shouldDeliverInboundMessageToInit(
+  store: SocialStore,
+  thread: SocialThreadRecord,
+  message: SocialMessageRecord,
+): boolean {
+  const statuses = store.listMessageStatusesForThread(MAIN_SOCIAL_UID, thread.threadId);
+  if (statuses.some((status) => {
+    if (status.state !== "needs_human") {
+      return false;
+    }
+    const statusMessage = store.getMessage(MAIN_SOCIAL_UID, status.messageId);
+    return statusMessage?.direction === "inbound";
+  })) {
+    return true;
+  }
+
+  const previousOutbound = store.listMessages(MAIN_SOCIAL_UID, thread.threadId)
+    .filter((candidate) =>
+      candidate.messageId !== message.messageId &&
+      candidate.direction === "outbound"
+    )
+    .at(-1);
+  if (!previousOutbound) {
+    return false;
+  }
+  return previousOutbound.sender?.kind !== "mind";
+}
+
 async function deliverInboundMessageToMind(
   ctx: KernelContext,
   friend: SocialFriendRecord,
@@ -2510,8 +2589,25 @@ async function deliverInboundMessageToMind(
       peerHandle: friend.handle,
       peerDid: friend.did,
       threadId: thread.threadId,
-      messageId: message.messageId,
     }),
+  });
+}
+
+async function deliverInboundMessageToInit(
+  ctx: KernelContext,
+  thread: SocialThreadRecord,
+  message: SocialMessageRecord,
+): Promise<void> {
+  const identity = identityForUid(MAIN_SOCIAL_UID, ctx);
+  const init = ctx.procs.ensureInit(identity);
+  await sendFrameToProcess(init.pid, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.mind.message",
+    args: {
+      conversationId: initSocialEscalationConversationId(message),
+      message: renderInboundSocialInitMessage(thread, message),
+    },
   });
 }
 
@@ -2559,13 +2655,7 @@ async function deliverNeedsHumanToInitSafe(
       args: {
         sourcePid: ctx.processId,
         conversationId: initSocialEscalationConversationId(message),
-        message: renderNeedsHumanInitEvent(ctx, message, nextStatus),
-        metadata: {
-          source: "social.needs_human",
-          peerHandle: message.fromHandle,
-          threadId: message.threadId,
-          messageId: message.messageId,
-        },
+        message: renderNeedsHumanInitEvent(message, nextStatus),
       },
     });
   } catch (error) {
@@ -2617,6 +2707,7 @@ async function refreshSocialInboxContext(ctx: KernelContext, store: SocialStore)
       const message = store.getMessage(MAIN_SOCIAL_UID, status.messageId);
       return message?.direction === "inbound" ? [{ status, message }] : [];
     });
+  await fs.writeFile(`${identity.home}/context.d/80-social.md`, renderSocialPolicyContext());
   const path = `${identity.home}/context.d/90-social-inbox.md`;
   if (active.length === 0) {
     await fs.rm(path, { force: true });
@@ -2727,21 +2818,34 @@ function displayNameForUid(ctx: KernelContext, uid: number): string | undefined 
 function renderInboundSocialMessage(thread: SocialThreadRecord, message: SocialMessageRecord): string {
   const lines = [
     "Inbound social message from an approved Contact.",
-    "Handle this event by using the social command surface. A private transcript reply is not delivered to the peer.",
+    "Use the social command surface if this message needs a reply or a workflow status update.",
     `From: ${message.fromHandle}`,
     ...(message.sender ? [`Sender: ${formatSocialSender(message.sender)}`] : []),
     `Thread: ${thread.threadId}`,
     `Message: ${message.messageId}`,
-    "",
-    "Expected actions:",
-    `- If safe and useful to answer autonomously, reply with: social message send ${message.fromHandle} "<text>" --thread ${thread.threadId}`,
-    `- After handling, mark complete with: social status update ${message.messageId} --state completed --summary "..."`,
-    `- If the local human must decide, escalate with: social status update ${message.messageId} --state needs_human --reason "..."`,
-    "- Do not just describe these actions; run the command that matches your decision.",
   ];
   if (message.text) {
     lines.push("", "Message text:", message.text);
   }
+  return lines.join("\n");
+}
+
+function renderInboundSocialInitMessage(thread: SocialThreadRecord, message: SocialMessageRecord): string {
+  const lines = [
+    "New Contact message in a thread owned by the local user.",
+    "",
+    `From: ${message.fromHandle}`,
+    ...(message.sender ? [`Sender: ${formatSocialSender(message.sender)}`] : []),
+    `Thread: ${thread.threadId}`,
+    `Message: ${message.messageId}`,
+  ];
+  if (message.text) {
+    lines.push("", "Message text:", message.text);
+  }
+  lines.push(
+    "",
+    "Ask the local user before making any preference, schedule, permission, or commitment decision for them.",
+  );
   return lines.join("\n");
 }
 
@@ -2775,14 +2879,8 @@ function initSocialEscalationConversationId(message: SocialMessageRecord): strin
   return `social:${message.fromHandle}:${message.threadId}`;
 }
 
-function renderNeedsHumanInitEvent(
-  ctx: KernelContext,
-  message: SocialMessageRecord,
-  status: SocialMessageStatusRecord,
-): string {
+function renderNeedsHumanInitEvent(message: SocialMessageRecord, status: SocialMessageStatusRecord): string {
   const reason = status.needsHumanReason ?? status.summary ?? "The GSV Mind needs local human input.";
-  const sourcePid = ctx.processId?.trim();
-  const mindConversationId = `mind:social.message:${message.threadId}`;
   const lines = [
     "I need the local user's input before answering this social message.",
     "",
@@ -2796,63 +2894,58 @@ function renderNeedsHumanInitEvent(
     message.text ?? "(no text body)",
     "",
     "Use the normal init conversation to ask the local user what to do. Do not guess their preference, permission, schedule, availability, or commitment.",
-    "",
-    "Useful commands:",
-    `- Inspect the thread: social thread read ${message.threadId}`,
-    `- If the user gives an answer to send: social message send ${message.fromHandle} "<reply>" --thread ${message.threadId}`,
-    `- Then mark handled: social status update ${message.messageId} --state completed --summary "Answered via init"`,
-    `- If the user declines or no response should be sent: social status update ${message.messageId} --state declined --summary "..."`,
+    "If the user gives a reply, send it in this thread and mark this message handled. Do not hand the same decision back to the Mind process for another reply.",
   ];
-  if (sourcePid) {
-    lines.push(
-      "",
-      `Escalating process: ${sourcePid}`,
-      `Mind conversation: ${mindConversationId}`,
-      `Optional handoff back to Mind: proc send ${sourcePid} --conversation ${mindConversationId} "<what the user decided>"`,
-    );
-  }
   return lines.join("\n");
+}
+
+function renderSocialPolicyContext(): string {
+  return [
+    "# Social Contact Handling",
+    "",
+    "Social messages are Contact-to-Contact traffic between sovereign GSVs.",
+    "",
+    "Use `social thread read <thread-id>` to inspect a conversation, `social message send <handle> \"<text>\" --thread <thread-id>` to reply, and `social status update <message-id> --state <state> --summary \"...\"` to update local handling state.",
+    "",
+    "Inbound status is your local handling state. Outbound status is the Contact's handling state if the Contact sends one back.",
+    "",
+    "Remote-initiated threads are delivered to GSV Mind. Replies to locally user-owned threads are delivered to init so the local user can decide what to do.",
+    "",
+    "Autonomous replies are allowed only when they are safe, useful, and do not make a personal decision for the local user. Escalate with `--state needs_human --reason \"...\"` for preference, permission, schedule, availability, commitment, or unclear intent.",
+    "",
+    "Replying on behalf of a user is transparent delegation. If the user gave exact wording, send that wording. Otherwise make the delegation clear, for example `Alice says 5pm works`, instead of pretending to be Alice or inventing her preferences.",
+    "",
+    "A normal assistant transcript reply is private. It is not delivered to the Contact. Use `social message send` for peer-visible messages.",
+    "",
+  ].join("\n");
 }
 
 function renderSocialInboxContext(entries: Array<{
   status: SocialMessageStatusRecord;
   message: SocialMessageRecord;
 }>): string {
+  const needsHumanCount = entries.filter(({ status }) => status.state === "needs_human").length;
+  const latest = entries
+    .sort((left, right) => right.status.updatedAt - left.status.updatedAt)[0];
   const lines = [
     "# Social Inbox",
     "",
-    "Active Contact messages visible to GSV Mind.",
-    "Use the social command to inspect messages, reply, and update message status.",
-    "Escalate human preference, permission, schedule, availability, or commitment requests with needs_human.",
+    "There are active Contact inbox messages.",
+    "",
+    `Active: ${entries.length}`,
+    `Needs human: ${needsHumanCount}`,
+    "",
+    "Run `social inbox` to review them, or `social thread read <thread-id>` if you already know the thread.",
     "",
   ];
-  for (const { status, message } of entries.sort((left, right) => right.status.updatedAt - left.status.updatedAt)) {
+  if (latest) {
     lines.push(
-      `## ${status.summary ?? message.text ?? message.messageId}`,
-      "",
-      `- Message: ${message.messageId}`,
-      `- From: ${message.fromHandle}`,
-      ...(message.sender ? [`- Sender: ${formatSocialSender(message.sender)}`] : []),
-      `- To: ${message.toHandle}`,
-      `- State: ${status.state}`,
-      `- Updated: ${new Date(status.updatedAt).toISOString()}`,
-      `- Inspect: social thread get ${message.threadId}`,
-      `- Reply: social message send ${message.fromHandle} "<text>" --thread ${message.threadId}`,
-      `- Update: social status update ${message.messageId} --state completed --summary "..."`,
-      `- Escalate: social status update ${message.messageId} --state needs_human --reason "..."`,
+      "Latest:",
+      `- From: ${latest.message.fromHandle}`,
+      `- Your handling: ${latest.status.state}`,
+      `- Thread: ${latest.message.threadId}`,
+      `- Updated: ${new Date(latest.status.updatedAt).toISOString()}`,
     );
-    if (status.needsHumanReason) {
-      lines.push(`- Needs human: ${status.needsHumanReason}`);
-    }
-    lines.push(`- Thread: ${message.threadId}`);
-    if (message.text) {
-      lines.push("", message.text);
-    }
-    const structured = status.body ?? message.body;
-    if (structured !== undefined) {
-      lines.push("", "```json", JSON.stringify(structured, null, 2), "```");
-    }
-    lines.push("");
   }
   return lines.join("\n");
 }

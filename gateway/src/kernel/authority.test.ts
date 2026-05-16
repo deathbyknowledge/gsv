@@ -64,7 +64,6 @@ describe("process authority", () => {
     const authority = remoteSocialProcessAuthority({
       peerHandle: "alice.example",
       threadId: "thread-1",
-      messageId: "msg-1",
     });
 
     expect(authorizeProcessSyscall(authority, "social.message.send", {
@@ -90,11 +89,6 @@ describe("process authority", () => {
 
     expect(authorizeProcessSyscall(authority, "social.thread.list", {}, IDENTITY))
       .toBe("Remote social authority requires peerHandle=alice.example");
-
-    expect(authorizeProcessSyscall(authority, "social.message.status.update", {
-      messageId: "msg-2",
-      state: "completed",
-    }, IDENTITY)).toBe("Remote social authority is limited to message msg-1");
 
     expect(authorizeProcessSyscall(authority, "social.message.status.update", {
       messageId: "msg-1",

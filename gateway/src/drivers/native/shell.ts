@@ -3392,6 +3392,17 @@ async function runRemoteSocialCommand(args: string[], ctx: KernelContext): Promi
       peerHandle: ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined,
       limit: parseShellLimit(rest, 25),
     });
+    if (rest.includes("--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return formatRemoteSocialStatuses(result, "No active social inbox messages.");
+  }
+  if (command === "inbox-json") {
+    const result = await requestKernelForRemoteSocial(ctx, "social.message.status.list", {
+      direction: "inbound",
+      peerHandle: ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined,
+      limit: parseShellLimit(rest, 25),
+    });
     return `${JSON.stringify(result, null, 2)}\n`;
   }
   if (command === "status" || command === "statuses") {
@@ -3421,6 +3432,18 @@ async function runRemoteSocialStatusCommand(args: string[], ctx: KernelContext):
       ...(findShellFlagValue(rest, "--direction") ? { direction: findShellFlagValue(rest, "--direction") } : {}),
       limit: parseShellLimit(rest, 50),
     });
+    if (rest.includes("--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return formatRemoteSocialStatuses(result, "No social message statuses.");
+  }
+  if (subcommand === "list-json") {
+    const result = await requestKernelForRemoteSocial(ctx, "social.message.status.list", {
+      peerHandle: ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined,
+      ...(findShellFlagValue(rest, "--state") ? { state: findShellFlagValue(rest, "--state") } : {}),
+      ...(findShellFlagValue(rest, "--direction") ? { direction: findShellFlagValue(rest, "--direction") } : {}),
+      limit: parseShellLimit(rest, 50),
+    });
     return `${JSON.stringify(result, null, 2)}\n`;
   }
   if (subcommand === "update") {
@@ -3428,6 +3451,23 @@ async function runRemoteSocialStatusCommand(args: string[], ctx: KernelContext):
     const state = requireShellFlagValue(rest, "--state", "social status update requires --state");
     if (!messageId) {
       throw new Error("Usage: social status update <message-id> --state STATE [--summary TEXT] [--reason TEXT]");
+    }
+    const result = await requestKernelForRemoteSocial(ctx, "social.message.status.update", {
+      messageId,
+      state,
+      ...(findShellFlagValue(rest, "--summary") ? { summary: findShellFlagValue(rest, "--summary") } : {}),
+      ...(findShellFlagValue(rest, "--reason") ? { needsHumanReason: findShellFlagValue(rest, "--reason") } : {}),
+    });
+    if (rest.includes("--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return `updated ${messageId}: ${state}\n`;
+  }
+  if (subcommand === "update-json") {
+    const messageId = firstShellPositional(rest);
+    const state = requireShellFlagValue(rest, "--state", "social status update-json requires --state");
+    if (!messageId) {
+      throw new Error("Usage: social status update-json <message-id> --state STATE [--summary TEXT] [--reason TEXT]");
     }
     const result = await requestKernelForRemoteSocial(ctx, "social.message.status.update", {
       messageId,
@@ -3457,12 +3497,65 @@ async function runRemoteSocialMessageCommand(args: string[], ctx: KernelContext)
     text: text.trim(),
     ...(findShellFlagValue(rest, "--thread") ? { threadId: findShellFlagValue(rest, "--thread") } : {}),
   });
-  return `${JSON.stringify(result, null, 2)}\n`;
+  if (rest.includes("--json")) {
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+  return formatRemoteSocialSendResult(result);
+}
+
+function formatRemoteSocialSendResult(result: unknown): string {
+  const record = result && typeof result === "object" ? result as {
+    thread?: { threadId?: string };
+    message?: { messageId?: string; deliveryStatus?: string };
+  } : {};
+  return `sent ${record.message?.messageId ?? "message"} in ${record.thread?.threadId ?? "thread"} (${record.message?.deliveryStatus ?? "queued"})\n`;
+}
+
+function formatRemoteSocialStatuses(result: unknown, emptyMessage: string): string {
+  const record = result && typeof result === "object" ? result as {
+    statuses?: Array<{
+      messageId?: string;
+      threadId?: string;
+      direction?: string;
+      fromHandle?: string;
+      toHandle?: string;
+      state?: string;
+      summary?: string;
+      needsHumanReason?: string;
+      updatedAt?: string;
+    }>;
+  } : {};
+  const statuses = record.statuses ?? [];
+  if (statuses.length === 0) {
+    return `${emptyMessage}\n`;
+  }
+  return `${statuses.map((status) => {
+    const peer = status.direction === "inbound" ? status.fromHandle : status.toHandle;
+    const owner = status.direction === "inbound" ? "Your handling" : "Contact handling";
+    const details = [
+      `${status.messageId ?? "message"} ${peer ? `(${peer})` : ""}`,
+      `${owner}: ${status.state ?? "unknown"}`,
+      status.threadId ? `Thread: ${status.threadId}` : undefined,
+      status.summary ? `Summary: ${status.summary}` : undefined,
+      status.needsHumanReason ? `Needs human: ${status.needsHumanReason}` : undefined,
+    ].filter((value): value is string => Boolean(value));
+    return details.join("\n");
+  }).join("\n\n")}\n`;
 }
 
 async function runRemoteSocialThreadCommand(args: string[], ctx: KernelContext): Promise<string> {
   const [subcommand = "list", ...rest] = args;
   if (subcommand === "list") {
+    const result = await requestKernelForRemoteSocial(ctx, "social.thread.list", {
+      peerHandle: ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined,
+      limit: parseShellLimit(rest, 50),
+    });
+    if (rest.includes("--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return formatRemoteSocialThreads(result);
+  }
+  if (subcommand === "list-json") {
     const result = await requestKernelForRemoteSocial(ctx, "social.thread.list", {
       peerHandle: ctx.authority?.kind === "remote-social" ? ctx.authority.peerHandle : undefined,
       limit: parseShellLimit(rest, 50),
@@ -3475,9 +3568,115 @@ async function runRemoteSocialThreadCommand(args: string[], ctx: KernelContext):
       throw new Error("Usage: social thread read <thread-id>");
     }
     const result = await requestKernelForRemoteSocial(ctx, "social.thread.get", { threadId });
+    if (rest.includes("--json")) {
+      return `${JSON.stringify(result, null, 2)}\n`;
+    }
+    return formatRemoteSocialThread(result);
+  }
+  if (subcommand === "get-json") {
+    const threadId = firstShellPositional(rest);
+    if (!threadId) {
+      throw new Error("Usage: social thread get-json <thread-id>");
+    }
+    const result = await requestKernelForRemoteSocial(ctx, "social.thread.get", { threadId });
     return `${JSON.stringify(result, null, 2)}\n`;
   }
   throw new Error(`Unknown social thread subcommand: ${subcommand}`);
+}
+
+function formatRemoteSocialThreads(result: unknown): string {
+  const record = result && typeof result === "object" ? result as {
+    threads?: Array<{ threadId?: string; peerHandle?: string; status?: string; updatedAt?: string }>;
+  } : {};
+  const threads = record.threads ?? [];
+  if (threads.length === 0) {
+    return "No social threads.\n";
+  }
+  return `${threads.map((thread) =>
+    `- ${thread.threadId ?? "thread"}: ${thread.peerHandle ?? "unknown"} (${thread.status ?? "unknown"})`
+  ).join("\n")}\n`;
+}
+
+function formatRemoteSocialThread(result: unknown): string {
+  const record = result && typeof result === "object" ? result as {
+    thread?: { threadId?: string; peerHandle?: string; status?: string; updatedAt?: string };
+    messages?: Array<{
+      messageId?: string;
+      direction?: string;
+      fromHandle?: string;
+      toHandle?: string;
+      sender?: unknown;
+      text?: string;
+      createdAt?: string;
+    }>;
+    statuses?: Array<{
+      messageId?: string;
+      direction?: string;
+      state?: string;
+      summary?: string;
+      needsHumanReason?: string;
+      updatedAt?: string;
+    }>;
+  } : {};
+  const statusByMessage = new Map((record.statuses ?? []).map((status) => [status.messageId, status]));
+  const lines = [
+    `Thread: ${record.thread?.threadId ?? "unknown"}`,
+    `Contact: ${record.thread?.peerHandle ?? "unknown"}`,
+    `State: ${record.thread?.status ?? "unknown"}`,
+  ];
+  if (record.thread?.updatedAt) {
+    lines.push(`Updated: ${record.thread.updatedAt}`);
+  }
+  lines.push("");
+  for (const message of record.messages ?? []) {
+    const status = statusByMessage.get(message.messageId);
+    const sender = formatRemoteSocialSender(message.sender);
+    lines.push(
+      `[${message.direction ?? "message"}] ${message.createdAt ?? ""}`,
+      `From: ${message.fromHandle ?? "unknown"}${sender ? ` (${sender})` : ""}`,
+      `Message: ${message.messageId ?? "unknown"}`,
+    );
+    if (status?.state) {
+      lines.push(`${message.direction === "inbound" ? "Your handling" : "Contact handling"}: ${status.state}`);
+    }
+    if (status?.summary) {
+      lines.push(`Summary: ${status.summary}`);
+    }
+    if (status?.needsHumanReason) {
+      lines.push(`Needs human: ${status.needsHumanReason}`);
+    }
+    if (message.text) {
+      lines.push("", message.text);
+    }
+    lines.push("");
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function formatRemoteSocialSender(sender: unknown): string | null {
+  const record = sender && typeof sender === "object" ? sender as {
+    kind?: string;
+    username?: string;
+    displayName?: string;
+    processLabel?: string;
+  } : null;
+  if (!record?.kind) {
+    return null;
+  }
+  if (record.kind === "mind") {
+    return record.username
+      ? `${record.displayName ?? "GSV Mind"} acting for ${record.username}`
+      : record.displayName ?? "GSV Mind";
+  }
+  if (record.kind === "user") {
+    return record.displayName && record.username && record.displayName !== record.username
+      ? `${record.displayName} (${record.username})`
+      : record.username ?? record.displayName ?? "user";
+  }
+  if (record.kind === "process") {
+    return record.processLabel ?? record.displayName ?? record.username ?? "process";
+  }
+  return record.displayName ?? record.kind;
 }
 
 async function runRemoteSocialContactCommand(args: string[], ctx: KernelContext): Promise<string> {
@@ -3575,10 +3774,10 @@ function remoteSocialHelp(topic?: string): string {
     return "Usage:\n  social message send <handle> <text> [--thread THREAD]\n\n";
   }
   if (topic === "status") {
-    return "Usage:\n  social status list [--state STATE] [--limit N]\n  social status update <message-id> --state STATE [--summary TEXT] [--reason TEXT]\n\n";
+    return "Usage:\n  social status list [--state STATE] [--limit N] [--json]\n  social status update <message-id> --state STATE [--summary TEXT] [--reason TEXT] [--json]\n\n";
   }
   if (topic === "thread") {
-    return "Usage:\n  social thread list [--limit N]\n  social thread read <thread-id>\n  social thread create <handle> [--message TEXT]\n\n";
+    return "Usage:\n  social thread list [--limit N]\n  social thread read <thread-id> [--json]\n\n";
   }
   return [
     "Usage:",
@@ -3590,7 +3789,7 @@ function remoteSocialHelp(topic?: string): string {
     "  social message send <handle> <text>",
     "  social package list [handle]",
     "  social package releases [handle]",
-    "  social thread list|read|create ...",
+    "  social thread list|read ...",
     "",
   ].join("\n");
 }

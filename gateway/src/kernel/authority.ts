@@ -12,7 +12,6 @@ export type RemoteSocialAuthority = {
   peerHandle: string;
   peerDid?: string;
   threadId?: string;
-  messageId?: string;
   sandboxRoot: string;
 };
 
@@ -64,7 +63,6 @@ export function remoteSocialProcessAuthority(input: {
   peerHandle: string;
   peerDid?: string;
   threadId?: string;
-  messageId?: string;
 }): RemoteSocialAuthority {
   const peerHandle = normalizeAuthorityHandle(input.peerHandle);
   return compactAuthority({
@@ -72,7 +70,6 @@ export function remoteSocialProcessAuthority(input: {
     peerHandle,
     peerDid: input.peerDid,
     threadId: input.threadId,
-    messageId: input.messageId,
     sandboxRoot: remoteSocialSandboxRoot(peerHandle),
   });
 }
@@ -89,7 +86,6 @@ export function parseProcessAuthority(value: unknown): ProcessAuthority {
       peerHandle,
       peerDid: typeof record.peerDid === "string" ? record.peerDid : undefined,
       threadId: typeof record.threadId === "string" ? record.threadId : undefined,
-      messageId: typeof record.messageId === "string" ? record.messageId : undefined,
       sandboxRoot: typeof record.sandboxRoot === "string"
         ? normalizePath(record.sandboxRoot)
         : remoteSocialSandboxRoot(peerHandle),
@@ -231,13 +227,6 @@ function authorizeRemoteSocialSyscall(
   }
   if (syscall === "social.message.status.list") {
     return requirePeerHandle(authority, args.peerHandle, "peerHandle");
-  }
-  if (
-    (syscall === "social.message.status.get" || syscall === "social.message.status.update") &&
-    authority.messageId &&
-    args.messageId !== authority.messageId
-  ) {
-    return `Remote social authority is limited to message ${authority.messageId}`;
   }
   if (
     syscall === "social.profile.get" ||
