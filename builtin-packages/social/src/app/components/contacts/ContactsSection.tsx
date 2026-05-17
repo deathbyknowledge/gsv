@@ -32,6 +32,7 @@ export function ContactsSection(props: {
   detailOpen: boolean;
   pendingAction: PendingAction | null;
   onSelectContact: (handle: string) => void;
+  onBack: () => void;
   onEstablishContact: (args: EstablishContactArgs) => void;
   onRemoveContact: (handle: string) => void;
   onSendMessage: (args: SendMessageArgs) => void;
@@ -74,6 +75,7 @@ export function ContactsSection(props: {
         contact={props.selectedContact}
         directory={props.contactDirectory}
         pendingAction={props.pendingAction}
+        onBack={props.onBack}
         onRemoveContact={props.onRemoveContact}
         onSendMessage={props.onSendMessage}
       />
@@ -85,6 +87,7 @@ function ContactDetail(props: {
   contact: SocialContactSummary | null;
   directory: SocialContactDirectory | null;
   pendingAction: PendingAction | null;
+  onBack: () => void;
   onRemoveContact: (handle: string) => void;
   onSendMessage: (args: SendMessageArgs) => void;
 }) {
@@ -109,6 +112,7 @@ function ContactDetail(props: {
         )}
         actions={(
           <>
+            <IconButton label="Back to contacts" glyph="<" onClick={props.onBack} />
             <StatusPill status={props.contact.acceptsContact ? "active" : "inactive"}>
               {props.contact.acceptsContact ? "Mutual Contact Established" : "Contact not accepting"}
             </StatusPill>

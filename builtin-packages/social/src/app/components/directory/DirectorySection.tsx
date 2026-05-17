@@ -15,6 +15,7 @@ import {
   EmptyState,
   FieldList,
   FieldRow,
+  IconButton,
   PaneHeader,
   StatusDot,
   StatusPill,
@@ -28,6 +29,7 @@ export function DirectorySection(props: {
   detailOpen: boolean;
   pendingAction: PendingAction | null;
   onSelectContact: (handle: string) => void;
+  onBack: () => void;
   onRepublishPublicRecords: () => void;
 }) {
   const identity = props.state?.identity ?? null;
@@ -90,6 +92,7 @@ export function DirectorySection(props: {
         state={props.state}
         selectedContact={props.selectedContact}
         directory={props.contactDirectory}
+        onBack={props.onBack}
       />
     </section>
   );
@@ -99,6 +102,7 @@ function DirectoryDetail(props: {
   state: SocialState | null;
   selectedContact: SocialContactSummary | null;
   directory: SocialContactDirectory | null;
+  onBack: () => void;
 }) {
   if (props.selectedContact) {
     return (
@@ -107,6 +111,7 @@ function DirectoryDetail(props: {
           eyebrow="Contact Directory"
           title={props.selectedContact.displayName || props.selectedContact.handle}
           meta={<span>{props.selectedContact.handle}</span>}
+          actions={<IconButton label="Back to directory" glyph="<" onClick={props.onBack} />}
         />
         <div class="social-detail-scroll">
           <PublishedDirectory directory={props.directory} />

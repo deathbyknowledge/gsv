@@ -76,6 +76,7 @@ export function App({ backend }: AppProps) {
           detailOpen={navigation.route.detail}
           pendingAction={social.pendingAction}
           onSelectWorkflow={navigation.selectWorkflow}
+          onBack={navigation.showList}
           onSendMessage={sendMessage}
           onUpdateWorkflow={social.updateMessageWorkflow}
         />
@@ -88,6 +89,7 @@ export function App({ backend }: AppProps) {
           detailOpen={navigation.route.detail}
           pendingAction={social.pendingAction}
           onSelectChannel={navigation.selectChannel}
+          onBack={navigation.showList}
           onSendMessage={sendMessage}
           onUpdateWorkflow={social.updateMessageWorkflow}
         />
@@ -100,6 +102,7 @@ export function App({ backend }: AppProps) {
           detailOpen={navigation.route.detail}
           pendingAction={social.pendingAction}
           onSelectContact={(handle) => navigation.selectContact(handle, "contacts")}
+          onBack={navigation.showList}
           onEstablishContact={establishContact}
           onRemoveContact={removeContact}
           onSendMessage={sendMessage}
@@ -113,6 +116,7 @@ export function App({ backend }: AppProps) {
           detailOpen={navigation.route.detail}
           pendingAction={social.pendingAction}
           onSelectContact={(handle) => navigation.selectContact(handle, "directory")}
+          onBack={navigation.showList}
           onRepublishPublicRecords={social.republishPublicRecords}
         />
       ) : null}
@@ -128,6 +132,7 @@ export function App({ backend }: AppProps) {
       detailOpen={navigation.route.detail}
       pendingAction={social.pendingAction}
       onSelectContact={(handle) => navigation.selectContact(handle, "directory")}
+      onBack={navigation.showList}
       onRepublishPublicRecords={social.republishPublicRecords}
     />
   );

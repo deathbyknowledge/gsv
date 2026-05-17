@@ -8,7 +8,7 @@ const SECTIONS: Array<{
   countKey?: "active" | "channels" | "contacts" | "publishedRecords";
 }> = [
   { id: "inbox", label: "Inbox", group: "Work", countKey: "active" },
-  { id: "channels", label: "Channels", group: "Work", countKey: "channels" },
+  { id: "channels", label: "Conversations", group: "Work", countKey: "channels" },
   { id: "contacts", label: "Contacts", group: "Trust", countKey: "contacts" },
   { id: "directory", label: "Directory", group: "Records", countKey: "publishedRecords" },
   { id: "advanced", label: "Advanced", group: "System" },

@@ -5,7 +5,7 @@ import { IconButton } from "../ui/primitives";
 
 const SECTION_LABELS: Record<SocialSection, string> = {
   inbox: "Inbox",
-  channels: "Channels",
+  channels: "Conversations",
   contacts: "Contacts",
   directory: "Directory",
   advanced: "Advanced",

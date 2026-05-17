@@ -19,6 +19,7 @@ export function AttentionSection(props: {
   detailOpen: boolean;
   pendingAction: PendingAction | null;
   onSelectWorkflow: (workflow: SocialMessageWorkflowItem) => void;
+  onBack: () => void;
   onSendMessage: (args: SendMessageArgs) => void;
   onUpdateWorkflow: (args: UpdateMessageWorkflowArgs) => void;
 }) {
@@ -78,6 +79,7 @@ export function AttentionSection(props: {
         emptyTitle="No attention item selected"
         emptyBody="Choose an incoming contact item to inspect its channel and update workflow."
         highlightWorkflowId={props.selectedWorkflowId}
+        onBack={props.onBack}
         onSendMessage={props.onSendMessage}
         onUpdateWorkflow={props.onUpdateWorkflow}
       />

@@ -17,6 +17,7 @@ export function ChannelsSection(props: {
   detailOpen: boolean;
   pendingAction: PendingAction | null;
   onSelectChannel: (channelId: string) => void;
+  onBack: () => void;
   onSendMessage: (args: SendMessageArgs) => void;
   onUpdateWorkflow: (args: UpdateMessageWorkflowArgs) => void;
 }) {
@@ -46,7 +47,7 @@ export function ChannelsSection(props: {
                 <StatusDot status={attentionCount ? "attention" : channel.status} />
                 <span class="social-row-main">
                   <strong>{channel.contactHandle}</strong>
-                  <small>{channel.workflowCount} workflow items - {formatShortDate(channel.updatedAt)}</small>
+                  <small>{channel.workflowCount} handling items - {formatShortDate(channel.updatedAt)}</small>
                 </span>
                 <StatusPill status={channel.status} />
               </button>
@@ -61,6 +62,7 @@ export function ChannelsSection(props: {
         pendingAction={props.pendingAction}
         emptyTitle="No channel selected"
         emptyBody="Choose a channel from the list, or start one from Contacts."
+        onBack={props.onBack}
         onSendMessage={props.onSendMessage}
         onUpdateWorkflow={props.onUpdateWorkflow}
       />

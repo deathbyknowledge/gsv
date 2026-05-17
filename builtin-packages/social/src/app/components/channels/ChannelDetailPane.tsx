@@ -9,7 +9,7 @@ import type {
 } from "../../types";
 import { MESSAGE_WORKFLOW_OPTIONS, workflowContactHandle } from "../../domain/messageWorkflow";
 import { formatShortDate } from "../../utils/format";
-import { EmptyState, PaneHeader, StatusPill, StructuredDetails } from "../ui/primitives";
+import { EmptyState, IconButton, PaneHeader, StatusPill, StructuredDetails } from "../ui/primitives";
 
 export function ChannelDetailPane(props: {
   identityHandle: string | null;
@@ -18,6 +18,7 @@ export function ChannelDetailPane(props: {
   emptyTitle: string;
   emptyBody: string;
   highlightWorkflowId?: string | null;
+  onBack: () => void;
   onSendMessage: (args: SendMessageArgs) => void;
   onUpdateWorkflow: (args: UpdateMessageWorkflowArgs) => void;
 }) {
@@ -44,12 +45,13 @@ export function ChannelDetailPane(props: {
         title={channel.contactHandle}
         meta={(
           <>
-            <span>{channel.workflowCount} workflow items</span>
+            <span>{channel.workflowCount} handling items</span>
             <span>Updated {formatShortDate(channel.updatedAt)}</span>
           </>
         )}
         actions={(
           <>
+            <IconButton label="Back to list" glyph="<" onClick={props.onBack} />
             <StatusPill status={channel.status} />
             {activeWorkflows.length ? <StatusPill status="attention">{activeWorkflows.length} active</StatusPill> : null}
           </>
@@ -68,9 +70,9 @@ export function ChannelDetailPane(props: {
           )) : <EmptyState title="No messages" body="This conversation has not received or sent messages yet." />}
         </section>
 
-        <aside class="social-workflow-rail" aria-label="Message workflow">
+        <aside class="social-workflow-rail" aria-label="Message handling">
           <header class="social-rail-head">
-            <h3>Workflow</h3>
+            <h3>Handling</h3>
             <span>{workflows.length}</span>
           </header>
           {workflows.length ? workflows.map((workflow) => (
@@ -82,7 +84,7 @@ export function ChannelDetailPane(props: {
               pending={props.pendingAction === "update-message-workflow"}
               onUpdateWorkflow={props.onUpdateWorkflow}
             />
-          )) : <p class="social-list-note">No internal message workflow items.</p>}
+          )) : <p class="social-list-note">No message handling items.</p>}
         </aside>
       </div>
 
@@ -118,11 +120,16 @@ function MessageBubble(props: {
       {props.workflow ? (
         <footer class="social-message-workflow">
           <StatusPill status={props.workflow.state} />
+          <span>{handlingOwnerLabel(props.workflow)}</span>
           {props.workflow.summary ? <span>{props.workflow.summary}</span> : null}
         </footer>
       ) : null}
     </article>
   );
+}
+
+function handlingOwnerLabel(workflow: SocialMessageWorkflowItem): string {
+  return workflow.direction === "inbound" ? "Your handling" : "Contact handling";
 }
 
 function formatDeliveryError(error: string): string {
@@ -147,7 +154,7 @@ function WorkflowCard(props: {
     <article class={`social-workflow-card is-${props.workflow.direction}${props.highlighted ? " is-highlighted" : ""}`}>
       <header>
         <div>
-          <p class="social-eyebrow">{props.workflow.direction === "inbound" ? "Incoming Contact" : "Remote Workflow"}</p>
+          <p class="social-eyebrow">{handlingOwnerLabel(props.workflow)}</p>
           <h3>{props.workflow.summary || "Tracked message"}</h3>
         </div>
         <StatusPill status={props.workflow.state} />

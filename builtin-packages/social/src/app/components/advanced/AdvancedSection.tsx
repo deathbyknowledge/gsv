@@ -25,7 +25,7 @@ export function AdvancedSection(props: { state: SocialState | null }) {
             <FieldRow label="Identity" value={props.state.identity.handle} />
             <FieldRow label="Selected channel" value={compactId(props.state.selectedChannel?.channel?.channelId)} />
             <FieldRow label="Directory contact" value={props.state.contactDirectory?.contactHandle ?? "None"} />
-            <FieldRow label="Message workflow items" value={props.state.messageWorkflows.length} />
+            <FieldRow label="Message handling items" value={props.state.messageWorkflows.length} />
           </FieldList>
         </section>
 
@@ -45,7 +45,7 @@ export function AdvancedSection(props: { state: SocialState | null }) {
         </section>
 
         <section class="social-work-section">
-          <h3>Internal message workflow</h3>
+          <h3>Message handling</h3>
           {props.state.messageWorkflows.length ? (
             <div class="social-record-table">
               {props.state.messageWorkflows.map((workflow) => (
@@ -56,7 +56,7 @@ export function AdvancedSection(props: { state: SocialState | null }) {
                 </div>
               ))}
             </div>
-          ) : <p class="social-list-note">No internal message workflow items.</p>}
+          ) : <p class="social-list-note">No message handling items.</p>}
         </section>
 
         <details class="social-work-section social-raw-details">

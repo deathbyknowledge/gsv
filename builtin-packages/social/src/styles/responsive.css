@@ -77,18 +77,6 @@
     font-size: 10px;
   }
 
-  .social-section {
-    grid-template-columns: 1fr;
-  }
-
-  .social-section.is-detail-open .social-list-pane {
-    display: none;
-  }
-
-  .social-section:not(.is-detail-open) .social-detail-pane {
-    display: none;
-  }
-
   .social-list-pane,
   .social-detail-pane {
     border-right: 0;
@@ -103,17 +91,6 @@
   .social-pane-title h2,
   .social-empty-state h2 {
     font-size: 18px;
-  }
-
-  .social-channel-body {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) auto;
-  }
-
-  .social-workflow-rail {
-    max-height: 38vh;
-    border-left: 0;
-    border-top: 1px solid var(--social-line);
   }
 
   .social-directory-grid,
