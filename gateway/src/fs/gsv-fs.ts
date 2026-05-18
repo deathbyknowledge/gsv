@@ -173,10 +173,14 @@ export class GsvFs implements IFileSystem {
   }
 
   async readdirWithFileTypes(path: string): Promise<{ name: string; isFile: boolean; isDirectory: boolean; isSymbolicLink: boolean }[]> {
-    const names = await this.readdir(path);
+    const normalized = normalizePath(path);
+    const names = await this.readdir(normalized);
+    const statParent = normalized === "/" || (normalized === "/etc" && this.kernel)
+      ? normalized
+      : await this.resolveFinalPath(normalized);
     const results: { name: string; isFile: boolean; isDirectory: boolean; isSymbolicLink: boolean }[] = [];
     for (const name of names) {
-      const childPath = path.endsWith("/") ? path + name : path + "/" + name;
+      const childPath = statParent.endsWith("/") ? statParent + name : statParent + "/" + name;
       try {
         const s = await this.lstat(childPath);
         results.push({ name, isFile: s.isFile, isDirectory: s.isDirectory, isSymbolicLink: s.isSymbolicLink });

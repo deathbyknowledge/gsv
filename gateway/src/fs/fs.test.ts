@@ -233,6 +233,21 @@ describe("GsvFs permissions", () => {
     expect((await fs.stat(`/${TEST_PREFIX}link.txt`)).isFile).toBe(true);
   });
 
+  it("stats children through symlinked directories", async () => {
+    const fs = makeFs(SAM);
+    await fs.mkdir(`/${TEST_PREFIX}target-dir`, { recursive: true });
+    await fs.mkdir(`/${TEST_PREFIX}target-dir/nested`, { recursive: true });
+    await fs.writeFile(`/${TEST_PREFIX}target-dir/file.txt`, "linked data");
+    await fs.symlink(`/${TEST_PREFIX}target-dir`, `/${TEST_PREFIX}dir-link`);
+
+    const entries = await fs.readdirWithFileTypes(`/${TEST_PREFIX}dir-link`);
+    const file = entries.find((entry) => entry.name === "file.txt");
+    const nested = entries.find((entry) => entry.name === "nested");
+
+    expect(file).toMatchObject({ isFile: true, isDirectory: false, isSymbolicLink: false });
+    expect(nested).toMatchObject({ isFile: false, isDirectory: true, isSymbolicLink: false });
+  });
+
   it("root can write any file", async () => {
     await putFile(`${TEST_PREFIX}root-edit.txt`, "original", {
       uid: "1000", gid: "1000", mode: "600",
