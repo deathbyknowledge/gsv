@@ -149,7 +149,7 @@ Tool approval is profile-configured with JSON at
 defaults to:
 
 - Auto-allow most tools.
-- Ask before `shell.exec`.
+- Ask before risky `shell.exec` commands tagged as destructive or privileged.
 - Ask before `fs.delete`.
 - Ask before `sys.mcp.call`.
 

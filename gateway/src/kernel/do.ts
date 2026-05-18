@@ -450,6 +450,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (frame.type === "sig") {
+      await this.completeIpcCallsForProcessSignal(processId, frame);
       this.enqueueProcessSignal(processId, frame);
       return null;
     }
@@ -796,6 +797,15 @@ export class Kernel extends Host<Env> {
         }
       });
     this.pendingProcessSignals.set(processId, queued);
+  }
+
+  private async completeIpcCallsForProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
+    const identity = this.procs.getIdentity(processId);
+    if (!identity) {
+      return;
+    }
+    const runId = this.extractRunId(frame.payload);
+    await this.completeIpcCallsFromSignal(identity.uid, processId, frame, runId);
   }
 
   private async completeIpcCallsFromSignal(

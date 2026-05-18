@@ -133,9 +133,33 @@ describe("ConfigStore", () => {
     const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-gsv.md"];
     expect(context).toContain("You are running inside GSV, a Linux-shaped cloud computer");
     expect(context).toContain("[Process Event]:");
+    const orchestration = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/30-process-orchestration.md"];
+    expect(orchestration).toContain("target: \"gsv\"");
+    expect(orchestration).toContain("proc profiles");
+    expect(orchestration).toContain("proc spawn");
+    expect(orchestration).toContain("sched add");
+    expect(orchestration).toContain("~/profiles.d/{name}");
+    expect(orchestration).toContain("~/profiles.d/{name}/context.d/*.md");
+    expect(orchestration).toContain("root-level files");
+    expect(orchestration).not.toContain("SpawnProcess");
 
     for (const profile of ["init", "task", "review", "cron", "mcp", "app"]) {
       expect(SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/00-role.md`]).toBeTruthy();
     }
+  });
+
+  it("keeps init approval conservative while workers can run ordinary shell commands", () => {
+    const initPolicy = JSON.parse(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/init/tools/approval"]);
+    const taskPolicy = JSON.parse(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/task/tools/approval"]);
+    const cronPolicy = JSON.parse(SYSTEM_CONFIG_DEFAULTS["config/ai/profile/cron/tools/approval"]);
+
+    expect(initPolicy.rules).toContainEqual({ match: "shell.exec", action: "ask" });
+    expect(taskPolicy.rules).not.toContainEqual({ match: "shell.exec", action: "ask" });
+    expect(taskPolicy.rules).toContainEqual({
+      match: "shell.exec",
+      when: { anyTag: ["destructive", "privileged"] },
+      action: "ask",
+    });
+    expect(cronPolicy.rules).toContainEqual({ match: "shell.exec", action: "auto" });
   });
 });

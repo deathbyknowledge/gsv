@@ -71,6 +71,7 @@ const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
 const CODEMODE_MCP_TYPE_HINT_MAX_CHARS = 12_000;
 
 const PERSONAL_PROFILE_ALIAS = "personal";
+const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 
 export async function handleAiTools(
   ctx: KernelContext,
@@ -227,6 +228,11 @@ export async function handleAiConfig(
     "32768",
     10,
   );
+  const generationTimeoutMs = parsePositiveInt(
+    config.get(`users/${uid}/ai/generation/timeout_ms`),
+  ) ?? parsePositiveInt(
+    config.get("config/ai/generation/timeout_ms"),
+  ) ?? DEFAULT_GENERATION_TIMEOUT_MS;
   const skillIndex = await collectPromptSkillIndex(ctx, requestedProfile).catch((error) => {
     console.warn(
       `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
@@ -248,6 +254,7 @@ export async function handleAiConfig(
     skillIndex,
     profileApprovalPolicy,
     maxContextBytes,
+    generationTimeoutMs,
   };
 }
 

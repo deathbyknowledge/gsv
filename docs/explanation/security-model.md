@@ -105,8 +105,8 @@ smallest useful directory.
 
 Tool approval is a policy layer, not an isolation layer. Profiles can auto,
 deny, or ask for matching syscalls. The default interactive policy asks for
-`shell.exec`, `fs.delete`, and `sys.mcp.call`; non-interactive profiles cannot
-pause for human approval.
+risky destructive or privileged `shell.exec`, `fs.delete`, and `sys.mcp.call`.
+Non-interactive profiles cannot pause for human approval.
 
 ## Devices
 

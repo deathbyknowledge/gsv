@@ -202,6 +202,47 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("keeps process events after matching tool results in provider context", async () => {
+      const pid = "mech-system-context-tool-order";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("assistant", "Let me check that.", {
+          toolCalls: JSON.stringify({
+            toolCalls: [
+              {
+                type: "toolCall",
+                id: "call_shell",
+                name: "Shell",
+                arguments: { input: "sleep 10 && date", target: "gsv" },
+              },
+            ],
+          }),
+        });
+        process.store.appendMessage(
+          "system",
+          "IPC call `abc` completed from process `worker`.",
+        );
+        process.store.appendToolResult(
+          "call_shell",
+          "shell.exec",
+          JSON.stringify({ ok: true, stdout: "done" }),
+          false,
+        );
+
+        const messages = await process.buildContextMessages("default");
+        expect(messages.map((message: any) => message.role)).toEqual([
+          "assistant",
+          "toolResult",
+          "user",
+        ]);
+        expect((messages[1] as any).toolCallId).toBe("call_shell");
+        expect((messages[2] as any).content).toContain("[Process Event]:");
+        expect((messages[2] as any).content).toContain("IPC call `abc` completed");
+      });
+    });
+
     it("does not drop tool results after 200 stored messages", async () => {
       const pid = "mech-context-tool-result-after-200";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -774,6 +815,64 @@ describe("Process DO — mechanical", () => {
           conversationId: "default",
         });
         process.currentRun = null;
+      });
+    });
+
+    it("awaits IPC reply delivery before returning from process signal recvFrame", async () => {
+      const sourcePid = "mech-ipc-await-source";
+      const targetPid = "mech-ipc-await-target";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+      await initProcess(targetPid, ROOT_IDENTITY);
+      await runInDurableObject(source, (instance: Process) => {
+        (instance as any).scheduleTick = () => {};
+      });
+
+      const kernel = await getKernelPtr();
+      const response = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(
+          sourcePid,
+          makeReq("proc.ipc.call", {
+            pid: targetPid,
+            message: "Return the status.",
+            timeoutMs: 30_000,
+          }),
+        ),
+      ) as ResponseOkFrame;
+
+      const data = response.data as any;
+      expect(data.ok).toBe(true);
+
+      await runInDurableObject(kernel, async (instance: Kernel) => {
+        const k = instance as any;
+        const original = k.deliverIpcCallSignal;
+        k.deliverIpcCallSignal = async (...args: unknown[]) => {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          return original.apply(k, args);
+        };
+        try {
+          await instance.recvFrame(targetPid, {
+            type: "sig",
+            signal: "chat.complete",
+            payload: {
+              pid: targetPid,
+              runId: data.runId,
+              text: "worker completed",
+            },
+          });
+        } finally {
+          k.deliverIpcCallSignal = original;
+        }
+      });
+
+      await runInDurableObject(source, (instance: Process) => {
+        const messages = (instance as any).store.getMessages();
+        const reply = messages.find((message: any) =>
+          message.role === "system"
+          && message.content.includes(`IPC call \`${data.callId}\` completed`)
+        );
+        expect(reply).toBeTruthy();
+        expect(reply.content).toContain("worker completed");
+        (instance as any).currentRun = null;
       });
     });
 

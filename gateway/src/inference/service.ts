@@ -7,6 +7,7 @@ import type {
 import { completeSimple, getModels, getProviders } from "@earendil-works/pi-ai";
 import type { AiConfigResult } from "../syscalls/ai";
 import { completeWithWorkersAi, isWorkersAiProvider } from "./workers-ai";
+import { withTimeout } from "./timeout";
 
 export type GenerationPurpose =
   | "chat.reply"
@@ -46,15 +47,30 @@ export function createGenerationService(): GenerationService {
         reasoning: options.reasoning,
         maxTokens: options.maxTokens,
         sessionAffinityKey: request.sessionAffinityKey,
+        timeoutMs: request.config.generationTimeoutMs,
       });
     }
 
     const model = resolveModel(options.modelProvider, options.modelName);
-    return completeSimple(model, request.context, {
-      apiKey: options.apiKey,
-      reasoning: options.reasoning,
-      maxTokens: options.maxTokens,
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort(new Error(generationTimeoutMessage(request.config.generationTimeoutMs)));
+    }, request.config.generationTimeoutMs);
+    try {
+      return await withTimeout(
+        completeSimple(model, request.context, {
+          apiKey: options.apiKey,
+          reasoning: options.reasoning,
+          maxTokens: options.maxTokens,
+          signal: controller.signal,
+          timeoutMs: request.config.generationTimeoutMs,
+        }),
+        request.config.generationTimeoutMs,
+        generationTimeoutMessage(request.config.generationTimeoutMs),
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
   };
 
   return {
@@ -138,6 +154,10 @@ function resolveModel(provider: string, modelName: string) {
     throw new Error(`Model not found: ${provider}/${modelName}`);
   }
   return model;
+}
+
+function generationTimeoutMessage(timeoutMs: number): string {
+  return `Model generation timed out after ${timeoutMs}ms`;
 }
 
 function isKnownProvider(provider: string): provider is KnownProvider {

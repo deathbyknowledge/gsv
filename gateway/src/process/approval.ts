@@ -41,7 +41,7 @@ export type ToolApprovalResolution = {
 export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
   default: "auto",
   rules: [
-    { match: "shell.exec", action: "ask" },
+    { match: "shell.exec", when: { anyTag: ["destructive", "privileged"] }, action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
   ],

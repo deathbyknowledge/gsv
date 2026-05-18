@@ -67,6 +67,8 @@ describe("handleAiTools", () => {
 
     expect(result.tools.some((tool) => tool.name.startsWith("MCP_"))).toBe(false);
     expect(result.mcpServers).toEqual(["Search"]);
+    expect(result.tools.some((tool) => tool.name === "SpawnProcess")).toBe(false);
+    expect(result.tools.some((tool) => tool.name === "AddSchedule")).toBe(false);
     const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
     expect(codeModeTool?.description).toContain("declare function lookup");
     expect(codeModeTool?.description).toContain("type LookupOutput");

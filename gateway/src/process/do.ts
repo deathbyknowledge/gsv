@@ -79,6 +79,7 @@ import type {
   ThinkingContent,
   ToolCall,
   Context,
+  Message,
   Tool,
   UserMessage,
   ImageContent,
@@ -2759,7 +2760,7 @@ export class Process extends Host<Env> {
       } satisfies UserMessage;
     }
 
-    return messages;
+    return orderMessagesForProvider(messages);
   }
 
   private async hydrateUserContent(
@@ -3498,6 +3499,68 @@ export class Process extends Host<Env> {
     this.scheduleTick(next.runId);
     return next.runId;
   }
+}
+
+function orderMessagesForProvider(messages: Message[]): Message[] {
+  const ordered: Message[] = [];
+  type PendingToolBlock = {
+    expected: Set<string>;
+    deferred: Message[];
+  };
+  const state: { pendingToolBlock: PendingToolBlock | null } = {
+    pendingToolBlock: null,
+  };
+
+  const append = (message: Message): void => {
+    const pendingToolBlock = state.pendingToolBlock;
+    if (pendingToolBlock) {
+      // Providers require tool results to immediately follow the assistant tool-call message.
+      if (message.role === "toolResult" && pendingToolBlock.expected.has(message.toolCallId)) {
+        pendingToolBlock.expected.delete(message.toolCallId);
+        ordered.push(message);
+
+        if (pendingToolBlock.expected.size === 0) {
+          const deferred = pendingToolBlock.deferred;
+          state.pendingToolBlock = null;
+          for (const deferredMessage of deferred) {
+            append(deferredMessage);
+          }
+        }
+        return;
+      }
+
+      pendingToolBlock.deferred.push(message);
+      return;
+    }
+
+    ordered.push(message);
+    const toolCallIds = assistantToolCallIds(message);
+    if (toolCallIds.length > 0) {
+      state.pendingToolBlock = {
+        expected: new Set(toolCallIds),
+        deferred: [],
+      };
+    }
+  };
+
+  for (const message of messages) {
+    append(message);
+  }
+
+  if (state.pendingToolBlock) {
+    ordered.push(...state.pendingToolBlock.deferred);
+  }
+
+  return ordered;
+}
+
+function assistantToolCallIds(message: Message): string[] {
+  if (message.role !== "assistant") {
+    return [];
+  }
+  return message.content.flatMap((block) =>
+    block.type === "toolCall" ? [block.id] : [],
+  );
 }
 
 function serializeArchivedMessage(message: MessageRecord): Record<string, unknown> {

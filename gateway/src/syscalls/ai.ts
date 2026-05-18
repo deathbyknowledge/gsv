@@ -118,4 +118,5 @@ export type AiConfigResult = {
   skillIndex?: AiSkillIndexEntry[];
   profileApprovalPolicy?: string | null;
   maxContextBytes: number;
+  generationTimeoutMs: number;
 };

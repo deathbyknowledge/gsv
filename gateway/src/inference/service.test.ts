@@ -12,6 +12,7 @@ const CONFIG: AiConfigResult = {
   contextWindowTokens: 200000,
   contextWindowSource: "model",
   maxContextBytes: 32768,
+  generationTimeoutMs: 180000,
 };
 
 const CONTEXT: Context = {

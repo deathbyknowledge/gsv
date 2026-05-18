@@ -30,6 +30,26 @@ describe("tool approval policy", () => {
     });
   });
 
+  it("defaults ordinary worker shell commands to auto while guarding risky commands", () => {
+    const ordinary = resolveToolApproval(
+      DEFAULT_TOOL_APPROVAL_POLICY,
+      "shell.exec",
+      { target: "gsv", input: "pwd" },
+      IDENTITY,
+      "task",
+    );
+    expect(ordinary.action).toBe("auto");
+
+    const destructive = resolveToolApproval(
+      DEFAULT_TOOL_APPROVAL_POLICY,
+      "shell.exec",
+      { target: "gsv", input: "rm -rf build" },
+      IDENTITY,
+      "task",
+    );
+    expect(destructive.action).toBe("ask");
+  });
+
   it("prefers exact syscall rules over domain wildcards", () => {
     const policy = parseToolApprovalPolicy(JSON.stringify({
       default: "auto",

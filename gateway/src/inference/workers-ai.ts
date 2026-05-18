@@ -12,6 +12,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
+import { withTimeout } from "./timeout";
 
 export const WORKERS_AI_PROVIDER = "workers-ai";
 export const WORKERS_AI_PROVIDER_ALIAS = "workersai";
@@ -106,6 +107,7 @@ export type WorkersAiRequest = {
   reasoning?: ThinkingLevel;
   maxTokens: number;
   sessionAffinityKey?: string;
+  timeoutMs?: number;
 };
 
 type WorkersAiRunOptions = AiOptions & {
@@ -153,13 +155,25 @@ export async function completeWithWorkersAi(
   const runOptions = buildWorkersAiRunOptions(request);
 
   try {
-    const response = await ai.run(request.modelName, primaryInput, runOptions);
+    const response = await runWorkersAiWithTimeout(
+      ai,
+      request.modelName,
+      primaryInput,
+      runOptions,
+      request.timeoutMs,
+    );
     return normalizeWorkersAiResponse(response, request.modelName);
   } catch (error) {
     if (primaryInput.tools && primaryInput.tools.length > 0) {
       const fallbackInput = buildWorkersAiInput(request, { disableTools: true });
       try {
-        const fallbackResponse = await ai.run(request.modelName, fallbackInput, runOptions);
+        const fallbackResponse = await runWorkersAiWithTimeout(
+          ai,
+          request.modelName,
+          fallbackInput,
+          runOptions,
+          request.timeoutMs,
+        );
         return normalizeWorkersAiResponse(fallbackResponse, request.modelName);
       } catch {
       }
@@ -167,6 +181,21 @@ export async function completeWithWorkersAi(
 
     throw error;
   }
+}
+
+function runWorkersAiWithTimeout(
+  ai: DynamicWorkersAiBinding,
+  modelName: string,
+  input: WorkersAiRunInput,
+  options: WorkersAiRunOptions | undefined,
+  timeoutMs: number | undefined,
+): Promise<WorkersAiRunOutput> {
+  const run = ai.run(modelName, input, options);
+  return withTimeout(
+    run,
+    timeoutMs ?? 0,
+    `Workers AI generation timed out after ${timeoutMs}ms`,
+  );
 }
 
 async function lookupWorkersAiModelContextWindow(modelName: string): Promise<number | null> {

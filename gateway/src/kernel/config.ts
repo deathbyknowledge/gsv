@@ -33,6 +33,22 @@ const GSV_CONTEXT_DISCOVERY = [
   "After completing a complex workflow, create a skill if one didn't exist. If a skill's instructions were partially wrong, you should amend them."
 ].join("\n");
 
+const GSV_PROCESS_ORCHESTRATION = [
+  "GSV exposes process and scheduling control through the Linux-like `Shell` tool on `target: \"gsv\"`. Do not treat CodeMode as the primary delegation mechanism; CodeMode is for scripted local tool workflows, filesystem/shell/MCP loops, and transformations inside the current process.",
+  "",
+  "Use `Shell` with `target: \"gsv\"` and `input: \"proc profiles\"` before choosing a specialized worker. It returns system profiles (`init`/`personal`, `task`, `review`, `cron`, `mcp`, `app`) plus enabled package-backed profiles. User-authored worker profiles live under `~/profiles.d/{name}` and can be spawned by profile id. Each user profile is a directory. Prompt context files must live under `~/profiles.d/{name}/context.d/*.md`; root-level files are carried by the profile filesystem but are not loaded as profile prompt context. Optional files include `profile.json` for metadata, `description.md` for the profile list description, and `tools/approval` or `approval.json` for a profile-local approval policy.",
+  "",
+  "Use `Shell` with `target: \"gsv\"` and `input: \"proc spawn --profile task --label '...'\"` to create another agent process. Common choices: `--profile task` for bounded focused work, `--profile cron` for scheduled/non-interactive work, `--profile mcp` for operational control-plane diagnosis, and custom profiles from `proc profiles` for specialized workers. Include a clear label and use `--parent $GSV_PID` when preserving delegation lineage from a process shell.",
+  "",
+  "Use `proc call <pid> --timeout 60s <message>` for bounded delegation when you need a result; the reply arrives later as an `[Process Event]` IPC reply or timeout. To delegate to a new worker and get a result, first run `proc spawn --profile task --label '...'`, then `proc call <new-pid> --timeout 10m '...'`. Use `proc spawn --prompt ...` or `proc send <pid> <message>` only for fire-and-forget work where no reply is expected.",
+  "",
+  "Use the native `sched` command for cron/automation: `sched list`, `sched add`, `sched enable`, `sched disable`, `sched remove`, and `sched run`. Prefer `sched add ... --profile cron <prompt>` for recurring background worker processes. Use `sched add ... --pid init:<uid> <message>` only when the schedule should message an existing long-lived process.",
+  "",
+  "Schedule examples: `sched add --name daily-brief --cron '0 9 * * *' --timezone Europe/Amsterdam --profile cron 'Prepare the daily brief.'`, `sched add --name pulse --every 15m --profile cron 'Run the pulse check.'`, `sched add --name reminder --after 1h 'Follow up once.'`.",
+  "",
+  "Use `man proc`, `man sched`, `proc --help`, and `sched --help` for exact syntax. Keep arbitrary device work on the same tool surface by choosing the correct `target` rather than inventing a new model-specific tool.",
+].join("\n");
+
 const GSV_RUNTIME_FACTS = [
   "Current working directory: {{identity.cwd}}",
   "Current workspace: {{workspace}}",
@@ -44,6 +60,33 @@ const GSV_RUNTIME_FACTS = [
   "Ready MCP servers:",
   "{{mcpServers}}",
 ].join("\n");
+
+const INIT_TOOL_APPROVAL_POLICY = JSON.stringify({
+  default: "auto",
+  rules: [
+    { match: "shell.exec", action: "ask" },
+    { match: "fs.delete", action: "ask" },
+    { match: "sys.mcp.call", action: "ask" },
+  ],
+});
+
+const WORKER_TOOL_APPROVAL_POLICY = JSON.stringify({
+  default: "auto",
+  rules: [
+    { match: "shell.exec", when: { anyTag: ["destructive", "privileged"] }, action: "ask" },
+    { match: "fs.delete", action: "ask" },
+    { match: "sys.mcp.call", action: "ask" },
+  ],
+});
+
+const CRON_TOOL_APPROVAL_POLICY = JSON.stringify({
+  default: "auto",
+  rules: [
+    { match: "fs.delete", action: "deny" },
+    { match: "sys.mcp.call", action: "deny" },
+    { match: "shell.exec", action: "auto" },
+  ],
+});
 
 export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // -- AI / LLM ---------------------------------------------------------------
@@ -66,11 +109,12 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/context.d/00-gsv.md": GSV_RUNTIME_CONTEXT,
   "config/ai/context.d/10-runtime.md": GSV_RUNTIME_FACTS,
   "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
+  "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,
   "config/ai/profile/init/context.d/00-role.md":
     [
       "You are {{identity.username}}'s personal agent and persistent init process.",
       "Act as the user-facing router, context manager, and automation author: interpret intent, keep durable context coherent, delegate bounded execution to worker profiles, and integrate results back into the user's active conversation or standing context.",
-      "Handle simple conversation and context edits directly. Spawn or schedule workers for coding, filesystem work, research, long-running tasks, risky side effects, recurring work, and specialized profiles.",
+      "Handle simple conversation and context edits directly. Use the native `proc` and `sched` shell commands on `target: \"gsv\"` for coding, filesystem work, research, long-running tasks, risky side effects, recurring work, and specialized profiles.",
     ].join("\n"),
   "config/ai/profile/task/context.d/00-role.md":
     [
@@ -99,6 +143,14 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
     ].join("\n"),
   // Max total bytes for ~/context.d/ files included in the prompt.
   "config/ai/max_context_bytes": "32768",
+  // Maximum time to wait for a single model generation before releasing the run.
+  "config/ai/generation/timeout_ms": "180000",
+  // Default speech synthesis model and output settings.
+  "config/ai/speech/model": "@cf/deepgram/aura-2-en",
+  "config/ai/speech/speaker": "luna",
+  "config/ai/speech/encoding": "mp3",
+  "config/ai/speech/max_chars": "4000",
+  "config/ai/speech/timeout_ms": "30000",
 
   // -- Server -----------------------------------------------------------------
   // Human-readable name for this GSV instance.
@@ -124,12 +176,12 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
 
   // Tool approval policy for agent tool execution. JSON object with a default
   // action and ordered rules matching exact syscalls or domain wildcards.
-  "config/ai/profile/init/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
-  "config/ai/profile/task/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
-  "config/ai/profile/review/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
-  "config/ai/profile/app/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
-  "config/ai/profile/mcp/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"shell.exec\",\"action\":\"ask\"},{\"match\":\"fs.delete\",\"action\":\"ask\"},{\"match\":\"sys.mcp.call\",\"action\":\"ask\"}]}",
-  "config/ai/profile/cron/tools/approval": "{\"default\":\"auto\",\"rules\":[{\"match\":\"fs.delete\",\"action\":\"deny\"},{\"match\":\"sys.mcp.call\",\"action\":\"deny\"},{\"match\":\"shell.exec\",\"action\":\"auto\"}]}",
+  "config/ai/profile/init/tools/approval": INIT_TOOL_APPROVAL_POLICY,
+  "config/ai/profile/task/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
+  "config/ai/profile/review/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
+  "config/ai/profile/app/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
+  "config/ai/profile/mcp/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
+  "config/ai/profile/cron/tools/approval": CRON_TOOL_APPROVAL_POLICY,
 };
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".
