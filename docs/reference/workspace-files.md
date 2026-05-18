@@ -16,7 +16,7 @@ GSV also assembles a compact skill index from layered `skills.d` directories.
 The prompt lists skill ids and descriptions only. Use `skills list`,
 `skills search <query>`, and `skills show <skill>` to inspect full skill bodies.
 
-System context is operator-managed runtime guidance shared by every profile. Built-in profile files are operator-managed instructions for roles such as `init`/`personal`, `task`, `review`, `cron`, `mcp`, and `app`. User profile files under `~/profiles.d/{name}` add filesystem-backed worker specializations that can be spawned directly or used by automation. They may use template keys such as `identity.home`, `workspace`, `devices`, `mcpServers`, and `known_paths`.
+System context is operator-managed runtime guidance shared by every profile. Built-in profile files are operator-managed instructions for roles such as `init`/`personal`, `task`, `review`, `cron`, `mcp`, and `app`. User profile context files under `~/profiles.d/{name}/context.d/*.md` add filesystem-backed worker specializations that can be spawned directly or used by automation. Other files in `~/profiles.d/{name}` are available to the profile but are not loaded as prompt context. Context files may use template keys such as `identity.home`, `workspace`, `devices`, `mcpServers`, and `known_paths`.
 
 Home and workspace context files are loaded lexically, include only non-empty `.md` files, and are bounded by `config/ai/max_context_bytes`.
 

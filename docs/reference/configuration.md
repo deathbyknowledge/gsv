@@ -52,8 +52,14 @@ The AI runtime resolves per-user values first, then falls back to system default
 | `config/ai/reasoning` | `users/{uid}/ai/reasoning` | `off` | Reasoning mode hint. |
 | `config/ai/max_tokens` | `users/{uid}/ai/max_tokens` | `8192` | Maximum output tokens. |
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
+| `config/ai/generation/timeout_ms` | `users/{uid}/ai/generation/timeout_ms` | `180000` | Maximum time to wait for a single model generation before releasing the run with an error. |
 | `config/ai/transcription/model` | `users/{uid}/ai/transcription/model` | `@cf/openai/whisper-large-v3-turbo` | Model used by `ai.transcription.create` and process media transcription. |
 | `config/ai/transcription/max_bytes` | `users/{uid}/ai/transcription/max_bytes` | `26214400` | Maximum audio payload size accepted for transcription. |
+| `config/ai/speech/model` | `users/{uid}/ai/speech/model` | `@cf/deepgram/aura-2-en` | Model used by `ai.speech.create`. |
+| `config/ai/speech/speaker` | `users/{uid}/ai/speech/speaker` | `luna` | Default text-to-speech speaker or voice. |
+| `config/ai/speech/encoding` | `users/{uid}/ai/speech/encoding` | `mp3` | Default speech audio encoding. |
+| `config/ai/speech/max_chars` | `users/{uid}/ai/speech/max_chars` | `4000` | Maximum normalized text length accepted for speech synthesis. |
+| `config/ai/speech/timeout_ms` | `users/{uid}/ai/speech/timeout_ms` | `30000` | Per-utterance speech synthesis timeout. |
 
 ## System and Profile Context
 
@@ -93,7 +99,13 @@ User-defined worker profiles live under the user's home filesystem:
 User profile names use letters, numbers, `.`, `_`, `-`, or `:` and are spawned
 with `gsv proc spawn --profile <name>` or schedule targets. A user profile
 inherits the bounded `task` context and approval policy unless it provides
-additional context files or a profile-local approval policy.
+additional context files or a profile-local approval policy. The profile
+directory may contain ordinary files or symlinks for that worker to use, but
+only non-empty Markdown files under `context.d/*.md` are added to the prompt;
+root-level files such as `00-role` are not prompt context. `profile.json` is
+optional and may set `displayName`, `description`, `icon`, `interactive`,
+`startable`, and `background`; without it, the display name is derived from the
+profile id.
 
 ## Tool Approval Policy
 
@@ -109,7 +121,7 @@ Policy shape:
 {
   "default": "auto",
   "rules": [
-    { "match": "shell.exec", "action": "ask" },
+    { "match": "shell.exec", "when": { "anyTag": ["destructive", "privileged"] }, "action": "ask" },
     { "match": "sys.mcp.call", "action": "ask" },
     { "match": "fs.delete", "action": "deny" },
     { "match": "fs.*", "when": { "target": "device" }, "action": "ask" }
@@ -123,7 +135,8 @@ Default policies:
 
 | Profiles | Default | Rules |
 |---|---|---|
-| `init`, `task`, `review`, `app`, `mcp` | `auto` | Ask for `shell.exec`, `fs.delete`, and `sys.mcp.call`. |
+| `init` | `auto` | Ask for `shell.exec`, `fs.delete`, and `sys.mcp.call`. |
+| `task`, `review`, `app`, `mcp` | `auto` | Ask for destructive or privileged `shell.exec`, `fs.delete`, and `sys.mcp.call`. |
 | `cron` | `auto` | Deny `fs.delete` and `sys.mcp.call`; allow `shell.exec`. |
 
 ## Runtime Config Keys

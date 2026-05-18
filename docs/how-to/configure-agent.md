@@ -21,6 +21,7 @@ Non-root users can set only their own `users/{uid}/ai/*` keys:
 ```bash
 gsv config set users/1000/ai/model gpt-4.1-mini
 gsv config set users/1000/ai/max_context_bytes 65536
+gsv config set users/1000/ai/generation/timeout_ms 180000
 ```
 
 Sensitive keys such as `api_key`, `token`, `secret`, and `password` are hidden
@@ -32,6 +33,17 @@ it independently from the chat model when needed:
 ```bash
 gsv config set config/ai/transcription/model @cf/openai/whisper-large-v3-turbo
 gsv config set config/ai/transcription/max_bytes 26214400
+```
+
+Voice replies use the shared `ai.speech.create` path and default to Workers AI
+TTS. Speech text is treated as Markdown by default and normalized before synthesis;
+callers that need literal text can pass `textFormat: "plain"`:
+
+```bash
+gsv config set config/ai/speech/model @cf/deepgram/aura-2-en
+gsv config set config/ai/speech/speaker luna
+gsv config set config/ai/speech/encoding mp3
+gsv config set config/ai/speech/timeout_ms 30000
 ```
 
 ## Edit System and Profile Context
@@ -75,7 +87,10 @@ Users can add worker specializations under their home profile directory:
 ```
 
 These profiles are filesystem-backed and can carry ordinary files or symbolic
-links. Spawn them directly:
+links. Put prompt instructions in non-empty Markdown files under `context.d`;
+root-level files are available to the worker but are not loaded as prompt
+context. `profile.json` is optional; if omitted, GSV derives the display name
+from the directory name. Spawn profiles directly:
 
 ```bash
 gsv proc spawn --profile research --prompt "Audit the week of notes."
@@ -116,7 +131,7 @@ Example policy:
 
 ```bash
 gsv config set config/ai/profile/task/tools/approval \
-  '{"default":"auto","rules":[{"match":"shell.exec","action":"ask"},{"match":"fs.delete","action":"ask"},{"match":"sys.mcp.call","action":"ask"},{"match":"fs.*","when":{"target":"device"},"action":"ask"}]}'
+  '{"default":"auto","rules":[{"match":"shell.exec","when":{"anyTag":["destructive","privileged"]},"action":"ask"},{"match":"fs.delete","action":"ask"},{"match":"sys.mcp.call","action":"ask"},{"match":"fs.*","when":{"target":"device"},"action":"ask"}]}'
 ```
 
 Rules match exact syscalls or domain wildcards such as `fs.*`. Conditions can
