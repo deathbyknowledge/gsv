@@ -72,14 +72,14 @@ type TelegramMessage = {
     caption?: string;
     from?: TelegramUser;
   };
-  photo?: unknown[];
-  document?: unknown;
-  audio?: unknown;
-  voice?: unknown;
-  video?: unknown;
-  video_note?: unknown;
-  animation?: unknown;
-  sticker?: unknown;
+  photo?: TelegramPhotoSize[];
+  document?: TelegramFileAttachment;
+  audio?: TelegramFileAttachment;
+  voice?: TelegramFileAttachment;
+  video?: TelegramFileAttachment;
+  video_note?: TelegramFileAttachment;
+  animation?: TelegramFileAttachment;
+  sticker?: TelegramStickerAttachment;
 };
 
 type TelegramUpdate = {
@@ -93,6 +93,45 @@ type TelegramUpdate = {
 type TelegramWebhookInfo = {
   url: string;
   pending_update_count: number;
+};
+
+type TelegramPhotoSize = {
+  file_id: string;
+  file_unique_id?: string;
+  width?: number;
+  height?: number;
+  file_size?: number;
+};
+
+type TelegramFileAttachment = {
+  file_id?: string;
+  file_unique_id?: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+  duration?: number;
+};
+
+type TelegramStickerAttachment = TelegramFileAttachment & {
+  is_animated?: boolean;
+  is_video?: boolean;
+  emoji?: string;
+};
+
+type TelegramFile = {
+  file_id: string;
+  file_unique_id?: string;
+  file_size?: number;
+  file_path?: string;
+};
+
+type TelegramInboundMediaSource = {
+  type: AdapterMedia["type"];
+  fileId: string;
+  mimeType: string;
+  filename?: string;
+  size?: number;
+  duration?: number;
 };
 
 type TelegramInputMediaType = "photo" | "video" | "audio" | "document";
@@ -118,6 +157,9 @@ type TelegramAccountState = {
 };
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
+const TELEGRAM_FILE_BASE = "https://api.telegram.org/file";
+const MAX_INLINE_MEDIA_BYTES = 25 * 1024 * 1024;
+const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000;
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
@@ -669,7 +711,7 @@ export class TelegramAccount extends DurableObject<Env> {
       return { ok: true };
     }
 
-    const inbound = this.toInboundMessage(message);
+    const inbound = await this.toInboundMessage(message);
     if (!inbound) {
       return { ok: true };
     }
@@ -747,7 +789,7 @@ export class TelegramAccount extends DurableObject<Env> {
     return update.message || update.channel_post || null;
   }
 
-  private toInboundMessage(message: TelegramMessage): AdapterInboundMessage | null {
+  private async toInboundMessage(message: TelegramMessage): Promise<AdapterInboundMessage | null> {
     if (message.from?.is_bot && message.from.id === this.state.botUserId) {
       return null;
     }
@@ -762,6 +804,7 @@ export class TelegramAccount extends DurableObject<Env> {
     const surfaceName = this.getChatDisplayName(message.chat);
 
     const wasMentioned = this.computeWasMentioned(message, text);
+    const media = await this.extractMediaAttachments(message);
 
     return {
       messageId: String(message.message_id),
@@ -782,6 +825,7 @@ export class TelegramAccount extends DurableObject<Env> {
         undefined,
       timestamp: message.date * 1000,
       wasMentioned,
+      media: media.length > 0 ? media : undefined,
     };
   }
 
@@ -804,6 +848,272 @@ export class TelegramAccount extends DurableObject<Env> {
     if (message.sticker) return "[Sticker]";
 
     return null;
+  }
+
+  private async extractMediaAttachments(
+    message: TelegramMessage,
+  ): Promise<AdapterMedia[]> {
+    const sources = this.getTelegramMediaSources(message);
+    const media: AdapterMedia[] = [];
+
+    for (const source of sources) {
+      media.push(await this.sourceToAdapterMedia(source));
+    }
+
+    return media;
+  }
+
+  private getTelegramMediaSources(
+    message: TelegramMessage,
+  ): TelegramInboundMediaSource[] {
+    const sources: TelegramInboundMediaSource[] = [];
+    const messageId = String(message.message_id);
+
+    const photo = this.pickLargestPhoto(message.photo);
+    if (photo) {
+      sources.push({
+        type: "image",
+        fileId: photo.file_id,
+        mimeType: "image/jpeg",
+        filename: `telegram-photo-${messageId}.jpg`,
+        size: photo.file_size,
+      });
+    }
+
+    const video = this.sourceFromTelegramFile(
+      message.video,
+      "video",
+      "video/mp4",
+      `telegram-video-${messageId}.mp4`,
+    );
+    if (video) sources.push(video);
+
+    const videoNote = this.sourceFromTelegramFile(
+      message.video_note,
+      "video",
+      "video/mp4",
+      `telegram-video-note-${messageId}.mp4`,
+    );
+    if (videoNote) sources.push(videoNote);
+
+    const audio = this.sourceFromTelegramFile(
+      message.audio,
+      "audio",
+      "audio/mpeg",
+      `telegram-audio-${messageId}.mp3`,
+    );
+    if (audio) sources.push(audio);
+
+    const voice = this.sourceFromTelegramFile(
+      message.voice,
+      "audio",
+      "audio/ogg",
+      `telegram-voice-${messageId}.ogg`,
+    );
+    if (voice) sources.push(voice);
+
+    const document = this.sourceFromTelegramFile(
+      message.document,
+      "document",
+      "application/octet-stream",
+      `telegram-document-${messageId}.bin`,
+    );
+    if (document) sources.push(document);
+
+    const animationMime = message.animation?.mime_type || "video/mp4";
+    const animation = this.sourceFromTelegramFile(
+      message.animation,
+      this.inferMediaTypeFromMime(animationMime),
+      animationMime,
+      `telegram-animation-${messageId}.${this.getExtensionFromMime(
+        animationMime,
+        this.inferMediaTypeFromMime(animationMime),
+      )}`,
+    );
+    if (animation) sources.push(animation);
+
+    const sticker = this.sourceFromTelegramSticker(message.sticker, messageId);
+    if (sticker) sources.push(sticker);
+
+    return sources;
+  }
+
+  private pickLargestPhoto(
+    photos: TelegramPhotoSize[] | undefined,
+  ): TelegramPhotoSize | null {
+    if (!photos || photos.length === 0) {
+      return null;
+    }
+
+    return photos.reduce((largest, photo) => {
+      const largestSize = largest.file_size ?? 0;
+      const nextSize = photo.file_size ?? 0;
+      if (nextSize > largestSize) return photo;
+
+      const largestPixels = (largest.width ?? 0) * (largest.height ?? 0);
+      const nextPixels = (photo.width ?? 0) * (photo.height ?? 0);
+      return nextPixels > largestPixels ? photo : largest;
+    });
+  }
+
+  private sourceFromTelegramFile(
+    file: TelegramFileAttachment | undefined,
+    type: AdapterMedia["type"],
+    defaultMimeType: string,
+    defaultFilename: string,
+  ): TelegramInboundMediaSource | null {
+    if (!file?.file_id) {
+      return null;
+    }
+
+    const mimeType = file.mime_type || defaultMimeType;
+    return {
+      type,
+      fileId: file.file_id,
+      mimeType,
+      filename: file.file_name || defaultFilename,
+      size: file.file_size,
+      duration: file.duration,
+    };
+  }
+
+  private sourceFromTelegramSticker(
+    sticker: TelegramStickerAttachment | undefined,
+    messageId: string,
+  ): TelegramInboundMediaSource | null {
+    if (!sticker?.file_id) {
+      return null;
+    }
+
+    const mimeType =
+      sticker.mime_type ||
+      (sticker.is_video
+        ? "video/webm"
+        : sticker.is_animated
+          ? "application/x-tgsticker"
+          : "image/webp");
+    const type = sticker.is_video
+      ? "video"
+      : sticker.is_animated
+        ? "document"
+        : "image";
+
+    return {
+      type,
+      fileId: sticker.file_id,
+      mimeType,
+      filename:
+        sticker.file_name ||
+        `telegram-sticker-${messageId}.${this.getExtensionFromMime(mimeType, type)}`,
+      size: sticker.file_size,
+    };
+  }
+
+  private async sourceToAdapterMedia(
+    source: TelegramInboundMediaSource,
+  ): Promise<AdapterMedia> {
+    const base: AdapterMedia = {
+      type: source.type,
+      mimeType: source.mimeType,
+      filename: source.filename,
+      size: source.size,
+      duration: source.duration,
+    };
+
+    if (typeof source.size === "number" && source.size > MAX_INLINE_MEDIA_BYTES) {
+      console.log(
+        `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} too large for inline data (${source.size} bytes)`,
+      );
+      return base;
+    }
+
+    try {
+      const file = await this.callTelegramApi<TelegramFile>("getFile", {
+        file_id: source.fileId,
+      });
+      const size = file.file_size ?? source.size;
+      const withSize: AdapterMedia = { ...base, size };
+
+      if (!file.file_path) {
+        return withSize;
+      }
+      if (typeof size === "number" && size > MAX_INLINE_MEDIA_BYTES) {
+        console.log(
+          `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} too large for inline data (${size} bytes)`,
+        );
+        return withSize;
+      }
+
+      const bytes = await this.downloadTelegramFile(file.file_path);
+      if (!bytes) {
+        return withSize;
+      }
+      if (bytes.byteLength > MAX_INLINE_MEDIA_BYTES) {
+        console.log(
+          `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} body exceeds inline limit (${bytes.byteLength} bytes)`,
+        );
+        return { ...withSize, size: bytes.byteLength };
+      }
+
+      return {
+        ...withSize,
+        data: this.bytesToBase64(bytes),
+        size: bytes.byteLength,
+      };
+    } catch (error) {
+      console.warn(
+        `[TelegramAccount:${this.getAccountId()}] Failed to download media ${source.fileId}:`,
+        error,
+      );
+      return base;
+    }
+  }
+
+  private async downloadTelegramFile(filePath: string): Promise<Uint8Array | null> {
+    if (!this.state.botToken) {
+      return null;
+    }
+
+    const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
+    const response = await fetch(
+      `${TELEGRAM_FILE_BASE}/bot${this.state.botToken}/${encodedPath}`,
+    );
+    if (!response.ok) {
+      console.warn(
+        `[TelegramAccount:${this.getAccountId()}] Telegram file download failed: HTTP ${response.status}`,
+      );
+      return null;
+    }
+
+    const contentLength = Number.parseInt(
+      response.headers.get("content-length") || "0",
+      10,
+    );
+    if (contentLength > MAX_INLINE_MEDIA_BYTES) {
+      return null;
+    }
+
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  private inferMediaTypeFromMime(mimeType: string): AdapterMedia["type"] {
+    const normalized = mimeType.split(";")[0].trim().toLowerCase();
+    if (normalized.startsWith("image/")) return "image";
+    if (normalized.startsWith("audio/")) return "audio";
+    if (normalized.startsWith("video/")) return "video";
+    return "document";
+  }
+
+  private bytesToBase64(bytes: Uint8Array): string {
+    if (bytes.length === 0) return "";
+
+    const chunks: string[] = [];
+    for (let i = 0; i < bytes.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
+      chunks.push(
+        String.fromCharCode(...bytes.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE)),
+      );
+    }
+    return btoa(chunks.join(""));
   }
 
   private mapSurfaceKind(chatType: TelegramChatType): "dm" | "group" | "channel" {
