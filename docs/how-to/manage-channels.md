@@ -14,6 +14,13 @@ gsv infra deploy -c channel-discord --discord-bot-token "$DISCORD_BOT_TOKEN"
 gsv infra deploy -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
 ```
 
+When adding Telegram to an existing installation, deploy or upgrade the gateway
+at the same time so it has the `CHANNEL_TELEGRAM` service binding:
+
+```bash
+gsv infra deploy -c gateway -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
+```
+
 If you deploy all components, all adapter Workers are included:
 
 ```bash

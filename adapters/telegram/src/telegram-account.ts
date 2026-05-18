@@ -257,12 +257,7 @@ export class TelegramAccount extends DurableObject<Env> {
       {
         url: webhookUrl,
         secret_token: webhookSecret,
-        allowed_updates: [
-          "message",
-          "edited_message",
-          "channel_post",
-          "edited_channel_post",
-        ],
+        allowed_updates: ["message", "channel_post"],
       },
       normalizedToken,
     );
@@ -749,13 +744,7 @@ export class TelegramAccount extends DurableObject<Env> {
   }
 
   private extractMessage(update: TelegramUpdate): TelegramMessage | null {
-    return (
-      update.message ||
-      update.edited_message ||
-      update.channel_post ||
-      update.edited_channel_post ||
-      null
-    );
+    return update.message || update.channel_post || null;
   }
 
   private toInboundMessage(message: TelegramMessage): AdapterInboundMessage | null {
