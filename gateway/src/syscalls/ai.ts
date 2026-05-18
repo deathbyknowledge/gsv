@@ -8,11 +8,15 @@
 
 import type { ToolDefinition } from "./index";
 import type {
+  AiSpeechCreateArgs,
+  AiSpeechCreateResult,
   AiTranscriptionCreateArgs,
   AiTranscriptionCreateResult,
 } from "@gsv/protocol/syscalls/ai";
 
 export type {
+  AiSpeechCreateArgs,
+  AiSpeechCreateResult,
   AiTranscriptionCreateArgs,
   AiTranscriptionCreateResult,
 } from "@gsv/protocol/syscalls/ai";

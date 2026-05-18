@@ -44,6 +44,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "repo.search",
     "sched.*",
     "ai.transcription.create",
+    "ai.speech.create",
     "adapter.connect",
     "adapter.disconnect",
     "adapter.status",

@@ -17,6 +17,8 @@ import type {
   AiToolsDevice,
   AiConfigArgs,
   AiConfigResult,
+  AiSpeechCreateArgs,
+  AiSpeechCreateResult,
   AiTranscriptionCreateArgs,
   AiTranscriptionCreateResult,
   ContextFile,
@@ -56,6 +58,18 @@ import {
   normalizeBase64Data,
   transcribeAudioWithWorkersAi,
 } from "../inference/transcription";
+import {
+  DEFAULT_AUDIO_SPEECH_ENCODING,
+  DEFAULT_AUDIO_SPEECH_MODEL,
+  DEFAULT_AUDIO_SPEECH_SPEAKER,
+  DEFAULT_AUDIO_SPEECH_TIMEOUT_MS,
+  DEFAULT_MAX_AUDIO_SPEECH_CHARS,
+  synthesizeSpeechWithWorkersAi,
+} from "../inference/speech";
+import {
+  normalizeSpeechText,
+  normalizeSpeechTextFormat,
+} from "../inference/speech-text";
 import { collectPromptSkillIndex } from "./skills";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
@@ -309,6 +323,86 @@ export async function handleAiTranscriptionCreate(
   return result;
 }
 
+export async function handleAiSpeechCreate(
+  args: AiSpeechCreateArgs,
+  ctx: KernelContext,
+): Promise<AiSpeechCreateResult> {
+  const input = args && typeof args === "object" ? args : ({} as AiSpeechCreateArgs);
+  const uid = ctx.identity?.process.uid ?? 0;
+  const rawText = normalizeOptionalString(input.text);
+  if (!rawText) {
+    throw new Error("text is required");
+  }
+  const text = normalizeSpeechText(rawText, normalizeSpeechTextFormat(input.textFormat));
+  if (!text) {
+    return {
+      audio: {
+        data: "",
+        mimeType: "",
+        size: 0,
+      },
+      provider: "none",
+      model: "none",
+      skipped: true,
+    };
+  }
+
+  const maxChars = parsePositiveInt(
+    ctx.config.get(`users/${uid}/ai/speech/max_chars`),
+  ) ?? parsePositiveInt(
+    ctx.config.get("config/ai/speech/max_chars"),
+  ) ?? DEFAULT_MAX_AUDIO_SPEECH_CHARS;
+  if (text.length > maxChars) {
+    throw new Error(`text exceeds speech limit (${maxChars} chars)`);
+  }
+
+  const model = normalizeOptionalString(input.model)
+    ?? normalizeOptionalString(ctx.config.get(`users/${uid}/ai/speech/model`))
+    ?? normalizeOptionalString(ctx.config.get("config/ai/speech/model"))
+    ?? DEFAULT_AUDIO_SPEECH_MODEL;
+  const voice = normalizeOptionalString(input.voice)
+    ?? normalizeOptionalString(ctx.config.get(`users/${uid}/ai/speech/speaker`))
+    ?? normalizeOptionalString(ctx.config.get("config/ai/speech/speaker"))
+    ?? DEFAULT_AUDIO_SPEECH_SPEAKER;
+  const encoding = normalizeOptionalString(input.encoding)
+    ?? normalizeOptionalString(ctx.config.get(`users/${uid}/ai/speech/encoding`))
+    ?? normalizeOptionalString(ctx.config.get("config/ai/speech/encoding"))
+    ?? DEFAULT_AUDIO_SPEECH_ENCODING;
+  const timeoutMs = parsePositiveInt(
+    ctx.config.get(`users/${uid}/ai/speech/timeout_ms`),
+  ) ?? parsePositiveInt(
+    ctx.config.get("config/ai/speech/timeout_ms"),
+  ) ?? DEFAULT_AUDIO_SPEECH_TIMEOUT_MS;
+
+  const result = await synthesizeSpeechWithWorkersAi(ctx.env.AI, {
+    text,
+    model,
+    voice,
+    encoding,
+    timeoutMs,
+    language: normalizeOptionalString(input.language),
+    container: normalizeOptionalString(input.container),
+    sampleRate: normalizePositiveNumber(input.sampleRate),
+    bitRate: normalizePositiveNumber(input.bitRate),
+  });
+  if (!result) {
+    throw new Error("Speech synthesis unavailable");
+  }
+
+  return {
+    audio: {
+      data: result.data,
+      mimeType: result.mimeType,
+      size: result.size,
+    },
+    provider: result.provider,
+    model: result.model,
+    ...(result.voice ? { voice: result.voice } : {}),
+    ...(result.encoding ? { encoding: result.encoding } : {}),
+    ...(result.container ? { container: result.container } : {}),
+  };
+}
+
 function listConfigContextFiles(config: KernelContext["config"], prefix: string): ContextFile[] {
   return config
     .list(prefix)
@@ -333,6 +427,10 @@ function parsePositiveInt(value: string | null | undefined): number | null {
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizePositiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function base64DecodedLength(base64: string): number {

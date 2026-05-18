@@ -24,7 +24,7 @@ import {
   handleFsSearch,
 } from "../drivers/native/fs";
 import { handleShellExec } from "../drivers/native/shell";
-import { handleAiTools, handleAiConfig, handleAiTranscriptionCreate } from "./ai";
+import { handleAiTools, handleAiConfig, handleAiSpeechCreate, handleAiTranscriptionCreate } from "./ai";
 import {
   handleProcList,
   handleProcIpcCall,
@@ -351,6 +351,9 @@ async function dispatchNative(
         break;
       case "ai.transcription.create":
         data = await handleAiTranscriptionCreate(frame.args, ctx);
+        break;
+      case "ai.speech.create":
+        data = await handleAiSpeechCreate(frame.args, ctx);
         break;
 
       // --- sys.* ---

@@ -1072,7 +1072,7 @@ type SystemSyscalls = {
 ## AI: `ai.*`
 
 Most `ai.*` syscalls are used by Process Durable Objects to prepare agent runs.
-`ai.transcription.create` is user-callable when the caller has that capability.
+`ai.transcription.create` and `ai.speech.create` are user-callable when the caller has those capabilities.
 
 Runtime behavior:
 
@@ -1081,8 +1081,9 @@ Runtime behavior:
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
 | `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/nvidia/nemotron-3-120b-a12b`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
 | `ai.transcription.create` | `handleAiTranscriptionCreate` | User-callable. Accepts base64 audio data plus MIME type, transcribes or translates it through the configured transcription model, and returns normalized text plus optional language, duration, and segments. |
+| `ai.speech.create` | `handleAiSpeechCreate` | User-callable. Accepts text, normalizes Markdown to speech-friendly text by default, synthesizes speech through the configured Workers AI text-to-speech model, and returns a browser-playable audio data URL plus MIME type and size. |
 
-External callers cannot invoke `ai.tools` or `ai.config`; those syscalls are exposed to process-originated calls. User surfaces such as the web shell can invoke `ai.transcription.create`.
+External callers cannot invoke `ai.tools` or `ai.config`; those syscalls are exposed to process-originated calls. User surfaces such as the web shell can invoke `ai.transcription.create` and `ai.speech.create`.
 
 ```ts
 type AiSyscalls = {
@@ -1093,12 +1094,17 @@ type AiSyscalls = {
 
   "ai.config": {
     args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "workspace" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number };
+    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "workspace" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number };
   };
 
   "ai.transcription.create": {
     args: { audio: { data: string; mimeType: string; filename?: string; size?: number }; language?: string; prompt?: string; mode?: "transcribe" | "translate" };
     result: { text: string; language?: string; duration?: number; segments?: unknown[]; provider: string; model: string };
+  };
+
+  "ai.speech.create": {
+    args: { text: string; textFormat?: "markdown" | "plain"; model?: string; voice?: string; language?: string; encoding?: string; container?: string; sampleRate?: number; bitRate?: number };
+    result: { audio: { data: string; mimeType: string; size: number }; provider: string; model: string; voice?: string; encoding?: string; container?: string; skipped?: boolean };
   };
 };
 ```

@@ -221,7 +221,7 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `fs.*` | Native on `gsv`, or routed to a driver when `args.target` names a device |
 | `shell.exec` | Native on `gsv`, routed to a driver when `args.target` names a device, or routed by `args.sessionId` for an existing shell session |
 | `proc.*` | Kernel and Process DO control plane |
-| `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*`, `ai.transcription.create` | Kernel-handled |
+| `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*`, `ai.transcription.create`, `ai.speech.create` | Kernel-handled |
 | `adapter.*` | Service-binding / adapter control path |
 | `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
 

@@ -145,6 +145,7 @@ const REQUEST_TIMEOUTS_MS: Record<string, number> = {
   "sys.setup": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "sys.bootstrap": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "ai.transcription.create": LONG_RUNNING_REQUEST_TIMEOUT_MS,
+  "ai.speech.create": LONG_RUNNING_REQUEST_TIMEOUT_MS,
 };
 
 function makeId(): string {

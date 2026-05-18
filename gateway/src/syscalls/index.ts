@@ -184,6 +184,8 @@ import type {
   AiToolsResult,
   AiConfigArgs,
   AiConfigResult,
+  AiSpeechCreateArgs,
+  AiSpeechCreateResult,
   AiTranscriptionCreateArgs,
   AiTranscriptionCreateResult,
 } from "./ai";
@@ -330,6 +332,7 @@ export type SyscallDomains = {
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };
   "ai.transcription.create": { args: AiTranscriptionCreateArgs; result: AiTranscriptionCreateResult };
+  "ai.speech.create": { args: AiSpeechCreateArgs; result: AiSpeechCreateResult };
 
   // Adapter transport (external connectors)
   "adapter.connect": { args: AdapterConnectArgs; result: AdapterConnectResult };
