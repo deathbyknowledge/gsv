@@ -241,83 +241,30 @@ export default {
 
     if (request.method === "POST") {
       const accountId = accountFromPath(url.pathname);
-      if (accountId) {
-        const id = env.TELEGRAM_ACCOUNT.idFromName(accountId);
-        const account = env.TELEGRAM_ACCOUNT.get(id) as unknown as TelegramAccountStub;
-
-        let updatePayload: unknown;
-        try {
-          updatePayload = await request.json();
-        } catch {
-          return toJsonError("Invalid JSON payload", 400);
-        }
-
-        const secretToken = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-        const result = await account.handleWebhook(updatePayload, secretToken);
-        if (!result.ok) {
-          return toJsonError(
-            result.error || "Failed to handle Telegram webhook",
-            result.status || 500,
-          );
-        }
-
-        return Response.json({ ok: true });
+      if (!accountId) {
+        return new Response("Not Found", { status: 404 });
       }
 
-      if (url.pathname === "/start") {
-        const accountId = url.searchParams.get("accountId") || "default";
-        const botToken = env.TELEGRAM_BOT_TOKEN;
-        const webhookBaseUrl = env.TELEGRAM_WEBHOOK_BASE_URL;
-        if (!botToken || !webhookBaseUrl) {
-          return toJsonError(
-            "TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_BASE_URL are required",
-            400,
-          );
-        }
-        const id = env.TELEGRAM_ACCOUNT.idFromName(accountId);
-        const account = env.TELEGRAM_ACCOUNT.get(id) as unknown as TelegramAccountStub;
-        try {
-          await account.start(
-            botToken,
-            accountId,
-            webhookBaseUrl,
-            env.TELEGRAM_WEBHOOK_SECRET,
-          );
-          return Response.json({ ok: true });
-        } catch (error) {
-          return toJsonError(
-            error instanceof Error ? error.message : String(error),
-            500,
-          );
-        }
-      }
-
-      if (url.pathname === "/stop") {
-        const accountId = url.searchParams.get("accountId") || "default";
-        const id = env.TELEGRAM_ACCOUNT.idFromName(accountId);
-        const account = env.TELEGRAM_ACCOUNT.get(id) as unknown as TelegramAccountStub;
-        try {
-          await account.stop();
-          return Response.json({ ok: true });
-        } catch (error) {
-          return toJsonError(
-            error instanceof Error ? error.message : String(error),
-            500,
-          );
-        }
-      }
-    }
-
-    if (request.method === "GET" && url.pathname === "/status") {
-      const accountId = url.searchParams.get("accountId") || "default";
       const id = env.TELEGRAM_ACCOUNT.idFromName(accountId);
       const account = env.TELEGRAM_ACCOUNT.get(id) as unknown as TelegramAccountStub;
+
+      let updatePayload: unknown;
       try {
-        const status = await account.getStatus();
-        return Response.json(status);
-      } catch (error) {
-        return toJsonError(error instanceof Error ? error.message : String(error), 500);
+        updatePayload = await request.json();
+      } catch {
+        return toJsonError("Invalid JSON payload", 400);
       }
+
+      const secretToken = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
+      const result = await account.handleWebhook(updatePayload, secretToken);
+      if (!result.ok) {
+        return toJsonError(
+          result.error || "Failed to handle Telegram webhook",
+          result.status || 500,
+        );
+      }
+
+      return Response.json({ ok: true });
     }
 
     return new Response("Not Found", { status: 404 });
