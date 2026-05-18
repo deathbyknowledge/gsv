@@ -171,6 +171,31 @@ function packageScopeKey(scope: InstalledPackageRecord["scope"]): string {
   }
 }
 
+describe("proc native command", () => {
+  it("lists spawnable profiles", async () => {
+    const result = await handleShellExec(
+      { input: "proc profiles" },
+      makeContext({ capabilities: ["proc.profile.list"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("init\tsystem\tyes\tno\tPersonal Agent");
+    expect(result.stdout).toContain("task\tsystem\tyes\tno\tWorker");
+    expect(result.stdout).toContain("cron\tsystem\tno\tyes\tCron");
+  });
+
+  it("routes spawn through the native proc command surface", async () => {
+    const result = await handleShellExec(
+      { input: "proc spawn --workspace nowhere --prompt hello" },
+      makeContext({ capabilities: ["proc.spawn"] }),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("--workspace must be inherit");
+  });
+});
+
 describe("pkg shell command", () => {
   it("shows codemode command usage", async () => {
     const result = await handleShellExec(

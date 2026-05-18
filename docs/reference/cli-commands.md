@@ -78,6 +78,8 @@ when viewing another user.
 `spawn` defaults to the bounded `task` worker profile. Use `--profile personal`
 to target the persistent personal agent (`init`), `--profile cron` for
 non-interactive scheduled work, or a user profile from `~/profiles.d/<name>`.
+User profiles are directories; prompt instructions are loaded from
+`~/profiles.d/<name>/context.d/*.md`.
 
 ## Device Commands
 

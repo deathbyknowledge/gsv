@@ -53,6 +53,8 @@ import {
 import {
   handleProcIpcCall,
   handleProcIpcSend,
+  handleProcProfileList,
+  handleProcSpawn,
 } from "../../kernel/proc-handlers";
 import {
   handleSchedulerAdd,
@@ -107,6 +109,7 @@ import {
   SYS_MCP_REMOVE,
 } from "../../syscalls/constants";
 import type { CodeModeRunResult } from "../../syscalls/codemode";
+import type { ProcSpawnArgs, ProcWorkspaceSpec } from "../../syscalls/proc";
 import type { SchedulerAddArgs, ScheduleExpression, ScheduleTarget } from "../../syscalls/scheduler";
 import type { AiContextProfile } from "../../syscalls/ai";
 
@@ -2028,6 +2031,48 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       }
       return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
     }
+    case "profiles": {
+      requireCommandCapability(ctx, "proc.profile.list");
+      const json = rest.includes("--json");
+      const unexpected = rest.find((arg) => arg !== "--json");
+      if (unexpected) {
+        throw new Error(`unexpected argument: ${unexpected}`);
+      }
+      const result = await handleProcProfileList({}, ctx);
+      if (json) {
+        return { stdout: `${JSON.stringify(result, null, 2)}\n`, stderr: "", exitCode: 0 };
+      }
+      const lines = ["ID\tKIND\tINTERACTIVE\tBACKGROUND\tNAME"];
+      for (const profile of result.profiles) {
+        lines.push([
+          profile.id,
+          profile.kind,
+          profile.interactive ? "yes" : "no",
+          profile.background ? "yes" : "no",
+          profile.displayName,
+        ].join("\t"));
+      }
+      return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
+    }
+    case "spawn": {
+      requireCommandCapability(ctx, "proc.spawn");
+      const parsed = parseProcSpawnCommand(rest);
+      const result = await handleProcSpawn(parsed, ctx);
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc spawn: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: [
+          `pid=${result.pid}`,
+          `profile=${result.profile}`,
+          result.label ? `label=${quoteShellField(result.label)}` : "",
+          result.workspaceId ? `workspace=${result.workspaceId}` : "",
+          `cwd=${quoteShellField(result.cwd)}`,
+        ].filter(Boolean).join(" ") + "\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
     case "segments": {
       requireCommandCapability(ctx, "proc.conversation.segments");
       const parsed = parseProcSegmentsCommand(rest, ctx);
@@ -2187,6 +2232,92 @@ async function runProcConversationSyscall(
     throw new Error(response.error.message);
   }
   return response.data;
+}
+
+function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
+  let profile: string | undefined;
+  let label: string | undefined;
+  let prompt: string | undefined;
+  let parentPid: string | undefined;
+  let workspace: ProcWorkspaceSpec | undefined;
+  let assignment: ProcSpawnArgs["assignment"];
+  let mounts: ProcSpawnArgs["mounts"];
+  const positional: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--json") {
+      return JSON.parse(requireProcOptionValue(args[index + 1], current)) as ProcSpawnArgs;
+    }
+    if (current === "--profile") {
+      index += 1;
+      profile = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--label") {
+      index += 1;
+      label = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--prompt") {
+      index += 1;
+      prompt = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--parent" || current === "--parent-pid") {
+      index += 1;
+      parentPid = requireProcOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--workspace") {
+      index += 1;
+      workspace = parseProcSpawnWorkspace(requireProcOptionValue(args[index], current));
+      continue;
+    }
+    if (current === "--assignment-json") {
+      index += 1;
+      assignment = JSON.parse(requireProcOptionValue(args[index], current)) as ProcSpawnArgs["assignment"];
+      continue;
+    }
+    if (current === "--mounts-json") {
+      index += 1;
+      mounts = JSON.parse(requireProcOptionValue(args[index], current)) as ProcSpawnArgs["mounts"];
+      continue;
+    }
+    positional.push(current);
+  }
+
+  const positionalPrompt = positional.join(" ").trim();
+  const finalPrompt = prompt ?? (positionalPrompt || undefined);
+  return {
+    ...(profile ? { profile: profile as AiContextProfile } : {}),
+    ...(label ? { label } : {}),
+    ...(finalPrompt ? { prompt: finalPrompt } : {}),
+    ...(parentPid ? { parentPid } : {}),
+    ...(workspace ? { workspace } : {}),
+    ...(assignment ? { assignment } : {}),
+    ...(mounts ? { mounts } : {}),
+  };
+}
+
+function parseProcSpawnWorkspace(value: string): ProcWorkspaceSpec {
+  if (value === "inherit" || value === "none") {
+    return { mode: value };
+  }
+  if (value === "new") {
+    return { mode: "new" };
+  }
+  if (value.startsWith("new:")) {
+    return { mode: "new", label: value.slice("new:".length) };
+  }
+  if (value.startsWith("attach:")) {
+    return { mode: "attach", workspaceId: value.slice("attach:".length) };
+  }
+  throw new Error("--workspace must be inherit, none, new, new:<label>, or attach:<workspaceId>");
+}
+
+function quoteShellField(value: string): string {
+  return JSON.stringify(value);
 }
 
 function parseProcSegmentsCommand(args: string[], ctx: KernelContext): {
@@ -2637,6 +2768,9 @@ function procUsage(): string {
     "Usage:",
     "  proc self",
     "  proc list",
+    "  proc profiles [--json]",
+    "  proc spawn [--profile PROFILE] [--label LABEL] [--prompt TEXT] [--parent PID] [--workspace MODE] <prompt>",
+    "  proc spawn --json JSON",
     "  proc segments [--pid PID] [--conversation id]",
     "  proc policy [--pid PID] [--conversation id] [--overflow manual|auto-compact|fail] [--compact-at N] [--keep-last N]",
     "  proc segment <segment-id> [--pid PID] [--conversation id] [--limit N] [--offset N] [--json]",

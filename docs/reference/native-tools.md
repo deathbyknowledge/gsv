@@ -116,6 +116,24 @@ mcp codemode
 mcp call Linear list_issues --args-json '{"assignee":"me","limit":5}' --json
 ```
 
+Process and automation control also stay on the native shell surface:
+
+```bash
+proc profiles
+proc spawn --profile task --label "docs audit"
+proc call <pid> --timeout 60s "Summarize the current result."
+sched add --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --profile cron "Prepare the daily brief."
+```
+
+Use `proc profiles` to discover system, user, and package-backed worker
+profiles. User-defined profiles are directories under `~/profiles.d/{name}`;
+profile prompt files live in `~/profiles.d/{name}/context.d/*.md`. Root-level
+files can be carried by the profile, but are not loaded as prompt context.
+`proc call` is the bounded request/reply path; `proc spawn --prompt` and `proc
+send` are fire-and-forget unless the worker explicitly sends a later message.
+Use `sched add` without `--pid` for scheduled worker processes; with `--pid`, it
+delivers a process event to an existing process conversation.
+
 Scripts use the same CodeMode shape exposed to agents. A script is treated as
 the body of an async function: top-level `await` works, and the final value must
 be returned explicitly.
