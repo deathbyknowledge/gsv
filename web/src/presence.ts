@@ -131,6 +131,7 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
   const sendButton = rootNode.querySelector<HTMLButtonElement>("[data-presence-send]");
   const clearButton = rootNode.querySelector<HTMLButtonElement>("[data-presence-clear]");
   const statusNode = rootNode.querySelector<HTMLElement>("[data-presence-status]");
+  const compactStatusNodes = Array.from(rootNode.querySelectorAll<HTMLElement>("[data-presence-compact-status]"));
   const transcriptNode = rootNode.querySelector<HTMLTextAreaElement>("[data-presence-transcript]");
   const noteNode = rootNode.querySelector<HTMLElement>("[data-presence-interim]");
   const logNode = rootNode.querySelector<HTMLElement>("[data-presence-log]");
@@ -222,7 +223,15 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     const hasTranscript = transcriptInputNode.value.trim().length > 0;
     const recorderAvailable = canUseBrowserVoiceRecorder();
     const ambientAvailable = canUseAmbientMode();
-    statusTextNode.textContent = message ?? statusText(next, connected, activeRuns.size);
+    const fullStatus = message ?? statusText(next, connected, activeRuns.size);
+    const compactStatus = compactPresenceStatus(next, connected, activeRuns.size);
+    statusTextNode.textContent = fullStatus;
+    for (const compactStatusNode of compactStatusNodes) {
+      compactStatusNode.textContent = compactStatus;
+    }
+    panelNode.dataset.state = next;
+    panelNode.dataset.agent = activeRuns.size > 0 ? "active" : "idle";
+    panelNode.dataset.mode = mode;
     transcriptInputNode.placeholder = mode === "ambient"
       ? "Ambient is on. Type here when you want to send manually."
       : recorderAvailable ? "Type to Mind" : "Type a message to Mind";
@@ -238,7 +247,8 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     for (const toggle of toggles) {
       toggle.dataset.state = next;
       toggle.dataset.agent = activeRuns.size > 0 ? "active" : "idle";
-      toggle.title = statusText(next, connected, activeRuns.size);
+      toggle.title = fullStatus;
+      toggle.setAttribute("aria-label", `Mind: ${compactStatus}`);
     }
     for (const button of modeButtons) {
       const buttonMode = normalizePresenceMode(button.dataset.presenceMode);
@@ -1953,6 +1963,25 @@ function statusText(state: PresenceState, connected: boolean, activeRuns = 0): s
     case "sending": return "Sending";
     case "unsupported": return "Mind unavailable; type instead";
     case "error": return "Needs attention";
+    default: return "Paused";
+  }
+}
+
+function compactPresenceStatus(state: PresenceState, connected: boolean, activeRuns = 0): string {
+  if (!connected) {
+    return "Offline";
+  }
+  if (activeRuns > 0) {
+    return activeRuns === 1 ? "Working" : `${activeRuns} jobs`;
+  }
+  switch (state) {
+    case "listening": return "Listening";
+    case "capturing": return "Heard";
+    case "recording": return "Recording";
+    case "transcribing": return "Transcribing";
+    case "sending": return "Sending";
+    case "unsupported": return "Text only";
+    case "error": return "Attention";
     default: return "Paused";
   }
 }

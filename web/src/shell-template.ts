@@ -391,7 +391,11 @@ export function renderDesktopShell(): string {
                   <path d="M8 21h8"></path>
                 </svg>
               </span>
-              <span class="presence-toggle-label">Mind</span>
+              <span class="presence-toggle-light" aria-hidden="true"></span>
+              <span class="presence-toggle-copy">
+                <span class="presence-toggle-label">Mind</span>
+                <span class="presence-toggle-status" data-presence-compact-status>Paused</span>
+              </span>
             </button>
           </div>
           <div class="topbar-section topbar-notifications">
@@ -495,7 +499,7 @@ export function renderDesktopShell(): string {
           <header class="presence-panel-head">
             <div>
               <strong data-presence-title>Mind</strong>
-              <span data-presence-status>Paused</span>
+              <span>GSV</span>
             </div>
             <button type="button" class="presence-panel-close" data-presence-close aria-label="Close Mind">
               <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
@@ -504,26 +508,40 @@ export function renderDesktopShell(): string {
               </svg>
             </button>
           </header>
-          <div class="presence-mode" role="group" aria-label="Mind input mode">
-            <button type="button" data-presence-mode="ambient" aria-pressed="true">Ambient</button>
-            <button type="button" data-presence-mode="push" aria-pressed="false">Manual</button>
-          </div>
-          <div class="presence-speech-controls">
-            <label class="presence-speech-toggle">
-              <span>Read replies</span>
-              <input type="checkbox" data-presence-speak />
-            </label>
-            <button type="button" data-presence-speak-test>Preview voice</button>
-          </div>
-          <div class="presence-speech-status" data-presence-speech-status></div>
-          <textarea class="presence-transcript" data-presence-transcript rows="4" autocomplete="off" spellcheck="true" aria-label="Message to Mind" placeholder="Talk or type to Mind"></textarea>
-          <div class="presence-interim" data-presence-interim aria-live="polite"></div>
-          <div class="presence-log" data-presence-log hidden></div>
-          <div class="presence-actions">
+          <section class="presence-current" aria-live="polite">
+            <span class="presence-current-orb" aria-hidden="true"></span>
+            <div>
+              <strong data-presence-status>Paused</strong>
+              <span class="presence-interim" data-presence-interim></span>
+            </div>
+          </section>
+          <div class="presence-actions presence-actions-main">
             <button type="button" class="presence-primary" data-presence-listen>Start listening</button>
-            <button type="button" class="presence-secondary" data-presence-send disabled>Send</button>
-            <button type="button" class="presence-secondary" data-presence-clear disabled>Clear</button>
           </div>
+          <div class="presence-log" data-presence-log hidden></div>
+          <details class="presence-section presence-manual">
+            <summary>Manual input</summary>
+            <div class="presence-mode" role="group" aria-label="Mind input mode">
+              <button type="button" data-presence-mode="ambient" aria-pressed="true">Ambient</button>
+              <button type="button" data-presence-mode="push" aria-pressed="false">Manual</button>
+            </div>
+            <textarea class="presence-transcript" data-presence-transcript rows="4" autocomplete="off" spellcheck="true" aria-label="Message to Mind" placeholder="Talk or type to Mind"></textarea>
+            <div class="presence-actions">
+              <button type="button" class="presence-secondary" data-presence-send disabled>Send</button>
+              <button type="button" class="presence-secondary" data-presence-clear disabled>Clear</button>
+            </div>
+          </details>
+          <details class="presence-section presence-voice">
+            <summary>Voice output</summary>
+            <div class="presence-speech-controls">
+              <label class="presence-speech-toggle">
+                <span>Read replies</span>
+                <input type="checkbox" data-presence-speak />
+              </label>
+              <button type="button" data-presence-speak-test>Preview voice</button>
+            </div>
+            <div class="presence-speech-status" data-presence-speech-status></div>
+          </details>
         </section>
         <section class="command-palette" data-command-palette role="dialog" aria-label="Command palette" hidden>
           <div class="command-palette-panel">
