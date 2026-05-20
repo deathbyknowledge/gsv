@@ -7,7 +7,11 @@ type GitHubRelease = {
 };
 
 export const CLI_RELEASE_REPO = "deathbyknowledge/gsv";
-export const CLI_DEFAULT_CHANNEL_KEY = "downloads/cli/default-channel.txt";
+export const CLI_PUBLIC_DOWNLOAD_ROOT = "public/gsv/downloads/cli";
+export const CLI_PUBLIC_DOWNLOAD_URL_ROOT = "/public/gsv/downloads/cli";
+export const CLI_DEFAULT_CHANNEL_KEY = `${CLI_PUBLIC_DOWNLOAD_ROOT}/default-channel.txt`;
+export const CLI_INSTALL_SCRIPT_KEY = `${CLI_PUBLIC_DOWNLOAD_ROOT}/install.sh`;
+export const CLI_INSTALL_POWERSHELL_KEY = `${CLI_PUBLIC_DOWNLOAD_ROOT}/install.ps1`;
 export const CLI_RELEASE_CHANNELS: readonly CliReleaseChannel[] = ["stable", "dev"];
 export const CLI_BINARY_ASSETS = [
   "gsv-darwin-arm64",
@@ -81,10 +85,18 @@ export async function mirrorCliChannel(
     const bytes = await response.arrayBuffer();
     const checksum = await sha256Hex(bytes);
     await bucket.put(cliAssetKey(channel, asset), bytes, {
-      httpMetadata: { contentType: "application/octet-stream" },
+      httpMetadata: {
+        contentType: "application/octet-stream",
+        contentDisposition: `attachment; filename="${asset}"`,
+        cacheControl: "public, max-age=300",
+      },
     });
     await bucket.put(cliChecksumKey(channel, asset), `${checksum}  ${asset}\n`, {
-      httpMetadata: { contentType: "text/plain; charset=utf-8" },
+      httpMetadata: {
+        contentType: "text/plain; charset=utf-8",
+        contentDisposition: `inline; filename="${asset}.sha256"`,
+        cacheControl: "public, max-age=300",
+      },
     });
   }
   return { channel, assets: [...CLI_BINARY_ASSETS] };
@@ -95,26 +107,34 @@ export async function storeDefaultCliChannel(
   channel: CliReleaseChannel,
 ): Promise<void> {
   await bucket.put(CLI_DEFAULT_CHANNEL_KEY, channel, {
-    httpMetadata: { contentType: "text/plain; charset=utf-8" },
+    httpMetadata: {
+      contentType: "text/plain; charset=utf-8",
+      cacheControl: "no-store",
+    },
   });
 }
 
-export async function loadDefaultCliChannel(bucket: R2Bucket): Promise<CliReleaseChannel> {
-  const record = await bucket.get(CLI_DEFAULT_CHANNEL_KEY);
-  const value = (await record?.text())?.trim();
-  return value === "dev" ? "dev" : "stable";
+export async function storeCliInstallScripts(bucket: R2Bucket): Promise<void> {
+  await bucket.put(CLI_INSTALL_SCRIPT_KEY, buildCliInstallScript(), {
+    httpMetadata: {
+      contentType: "application/x-sh; charset=utf-8",
+      cacheControl: "no-store",
+    },
+  });
+  await bucket.put(CLI_INSTALL_POWERSHELL_KEY, buildCliInstallPowerShell(), {
+    httpMetadata: {
+      contentType: "text/plain; charset=utf-8",
+      cacheControl: "no-store",
+    },
+  });
 }
 
 export function cliAssetKey(channel: CliReleaseChannel, asset: string): string {
-  return `downloads/cli/${channel}/${asset}`;
+  return `${CLI_PUBLIC_DOWNLOAD_ROOT}/${channel}/${asset}`;
 }
 
 export function cliChecksumKey(channel: CliReleaseChannel, asset: string): string {
-  return `downloads/cli/${channel}/${asset}.sha256`;
-}
-
-export function isSupportedCliChannel(value: string): value is CliReleaseChannel {
-  return value === "stable" || value === "dev";
+  return `${CLI_PUBLIC_DOWNLOAD_ROOT}/${channel}/${asset}.sha256`;
 }
 
 export function cliGithubReleaseAssetUrl(channel: CliReleaseChannel, asset: string): string {
@@ -129,15 +149,25 @@ export function isSupportedCliAsset(value: string): value is CliBinaryAsset {
   return (CLI_BINARY_ASSETS as readonly string[]).includes(value);
 }
 
-export function buildCliInstallScript(origin: string): string {
-  const baseUrl = `${origin.replace(/\/+$/g, "")}/downloads/cli`;
+export function buildCliInstallScript(): string {
   return [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     "",
-    `BASE_URL=${shellQuote(baseUrl)}`,
+    "BASE_ORIGIN=\"${1:-${GSV_BASE_URL:-}}\"",
+    "if [ -z \"$BASE_ORIGIN\" ]; then",
+    "  echo \"Usage: curl -fsSL <gsv-origin>/public/gsv/downloads/cli/install.sh | bash -s -- <gsv-origin>\" >&2",
+    "  echo \"Or set GSV_BASE_URL=<gsv-origin>.\" >&2",
+    "  exit 1",
+    "fi",
+    `BASE_PATH=${shellQuote(CLI_PUBLIC_DOWNLOAD_URL_ROOT)}`,
+    "BASE_URL=\"${BASE_ORIGIN%/}${BASE_PATH}\"",
     "CHANNEL=\"${GSV_CHANNEL:-latest}\"",
     "INSTALL_DIR=\"${INSTALL_DIR:-/usr/local/bin}\"",
+    "",
+    "if [ \"$CHANNEL\" = \"latest\" ]; then",
+    "  CHANNEL=$(curl -fsSL \"$BASE_URL/default-channel.txt\" | tr -d '[:space:]')",
+    "fi",
     "",
     "if ! command -v curl >/dev/null 2>&1; then",
     "  echo \"curl is required to install gsv\" >&2",
@@ -208,12 +238,19 @@ export function buildCliInstallScript(origin: string): string {
   ].join("\n");
 }
 
-export function buildCliInstallPowerShell(origin: string): string {
-  const baseUrl = `${origin.replace(/\/+$/g, "")}/downloads/cli`;
+export function buildCliInstallPowerShell(): string {
   return [
     "$ErrorActionPreference = 'Stop'",
-    `$BaseUrl = ${psQuote(baseUrl)}`,
+    "$BaseOrigin = if ($args.Count -gt 0) { $args[0] } elseif ($env:GSV_BASE_URL) { $env:GSV_BASE_URL } else { $null }",
+    "if (-not $BaseOrigin) {",
+    "  throw 'Set GSV_BASE_URL or invoke the installer with the GSV origin as the first argument.'",
+    "}",
+    `$BasePath = ${psQuote(CLI_PUBLIC_DOWNLOAD_URL_ROOT)}`,
+    "$BaseUrl = $BaseOrigin.TrimEnd('/') + $BasePath",
     "$Channel = if ($env:GSV_CHANNEL) { $env:GSV_CHANNEL } else { 'latest' }",
+    "if ($Channel -eq 'latest') {",
+    "  $Channel = (Invoke-WebRequest -Uri \"$BaseUrl/default-channel.txt\").Content.Trim()",
+    "}",
     "$BinaryName = 'gsv-windows-x64.exe'",
     "$DownloadUrl = \"$BaseUrl/$Channel/$BinaryName\"",
     "$ChecksumUrl = \"$DownloadUrl.sha256\"",

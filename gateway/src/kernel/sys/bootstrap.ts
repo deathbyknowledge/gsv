@@ -6,8 +6,10 @@ import {
   CLI_RELEASE_CHANNELS,
   inferDefaultCliChannel,
   mirrorCliChannel,
+  storeCliInstallScripts,
   storeDefaultCliChannel,
 } from "../../downloads/cli";
+import { seedPiperPublicAssets } from "../../downloads/piper-assets";
 import {
   buildBuiltinPackageSeeds,
   type PackageEntrypoint,
@@ -107,8 +109,18 @@ export async function handleSysBootstrap(
     }
     await timeBootstrapStep(
       timings,
+      "seed-piper-assets",
+      () => seedPiperPublicAssets(ctx.env.STORAGE),
+    );
+    await timeBootstrapStep(
+      timings,
       "store-default-cli-channel",
       () => storeDefaultCliChannel(ctx.env.STORAGE, defaultCliChannel),
+    );
+    await timeBootstrapStep(
+      timings,
+      "store-cli-install-scripts",
+      () => storeCliInstallScripts(ctx.env.STORAGE),
     );
 
     console.info(

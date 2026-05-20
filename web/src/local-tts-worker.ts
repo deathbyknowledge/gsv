@@ -1,4 +1,10 @@
 import { TtsSession } from "@mintplex-labs/piper-tts-web";
+import {
+  GSV_ONNX_RUNTIME_BASE,
+  GSV_PIPER_VOICE_BASE,
+  GSV_PIPER_WASM_BASE,
+  HUGGINGFACE_PIPER_VOICE_BASE,
+} from "./local-tts-assets";
 
 type PiperProgress = {
   url: string;
@@ -22,9 +28,7 @@ type WorkerResponse =
   | { type: "result"; id: number; audio: Blob }
   | { type: "error"; id: number; error: string };
 
-const ONNX_RUNTIME_VERSION = "1.26.0";
-const ONNX_WASM_BASE = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ONNX_RUNTIME_VERSION}/dist/`;
-const PIPER_WASM_BASE = "https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize";
+let publicVoiceFetchInstalled = false;
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);
@@ -36,6 +40,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
 
 async function handleRequest(request: WorkerRequest): Promise<void> {
   try {
+    installPublicVoiceFetch();
     post({
       type: "progress",
       id: request.id,
@@ -49,9 +54,9 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         progress: formatPiperProgress(progress),
       }),
       wasmPaths: {
-        onnxWasm: ONNX_WASM_BASE,
-        piperData: `${PIPER_WASM_BASE}.data`,
-        piperWasm: `${PIPER_WASM_BASE}.wasm`,
+        onnxWasm: GSV_ONNX_RUNTIME_BASE,
+        piperData: `${GSV_PIPER_WASM_BASE}.data`,
+        piperWasm: `${GSV_PIPER_WASM_BASE}.wasm`,
       },
     });
 
@@ -69,6 +74,43 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function installPublicVoiceFetch(): void {
+  if (publicVoiceFetchInstalled) {
+    return;
+  }
+  publicVoiceFetchInstalled = true;
+
+  const originalFetch = self.fetch.bind(self);
+  self.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = requestUrl(input);
+    const publicUrl = url ? publicVoiceAssetUrl(url) : null;
+    if (!publicUrl) {
+      return originalFetch(input, init);
+    }
+
+    return originalFetch(publicUrl, init);
+  };
+}
+
+function requestUrl(input: RequestInfo | URL): string | null {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  return input.url;
+}
+
+function publicVoiceAssetUrl(url: string): string | null {
+  if (!url.startsWith(`${HUGGINGFACE_PIPER_VOICE_BASE}/`)) {
+    return null;
+  }
+
+  const voicePath = url.slice(HUGGINGFACE_PIPER_VOICE_BASE.length + 1);
+  return `${GSV_PIPER_VOICE_BASE}/${voicePath}`;
 }
 
 function formatPiperProgress(progress: PiperProgress): LocalSpeechProgress {

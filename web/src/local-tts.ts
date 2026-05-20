@@ -1,3 +1,5 @@
+import { DEFAULT_PIPER_VOICE } from "./local-tts-assets";
+
 export type LocalSpeechProgress = {
   phase: "loading" | "downloading" | "generating";
   message: string;
@@ -8,7 +10,6 @@ export type LocalSpeechOptions = {
   onProgress?: (progress: LocalSpeechProgress) => void;
 };
 
-const DEFAULT_PIPER_VOICE = "en_US-lessac-medium";
 const LOCAL_PIPER_VOICE_KEY = "gsv.presence.tts.voice";
 
 type WorkerRequest = {

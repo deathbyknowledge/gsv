@@ -10,14 +10,6 @@ import type { AppFrameContext } from "./protocol/app-frame";
 import { buildAppRunnerName } from "./protocol/app-session";
 import { deserializeAppHttpResponse, serializeAppHttpRequest } from "./app-runner";
 import type { PackageArtifactMetadata } from "./kernel/packages";
-import {
-  buildCliInstallPowerShell,
-  buildCliInstallScript,
-  cliAssetKey,
-  cliChecksumKey,
-  isSupportedCliChannel,
-  loadDefaultCliChannel,
-} from "./downloads/cli";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
   createPublicAssetFileSystem,
@@ -59,11 +51,6 @@ export default {
     if (url.pathname === "/oauth/callback" && request.method === "GET") {
       const kernel = await getAgentByName(env.KERNEL, "singleton");
       return kernel.fetch(request);
-    }
-
-    const cliDownload = matchCliDownloadPath(url.pathname);
-    if (cliDownload) {
-      return handleCliDownloadRequest(request, env, url, cliDownload);
     }
 
     if (url.pathname === "/ws" && isWebSocketRequest(request)) {
@@ -283,11 +270,6 @@ type GitPathMatch = {
   write: boolean;
 };
 
-type CliDownloadMatch =
-  | { kind: "install-sh" }
-  | { kind: "install-ps1" }
-  | { kind: "asset"; channel: "latest" | "stable" | "dev"; asset: string; checksum: boolean };
-
 type PackageAppSessionRefreshMatch = {
   packageName: string;
   sessionId: string;
@@ -408,33 +390,6 @@ function matchPackageAppSessionRefreshPath(pathname: string): PackageAppSessionR
   return { packageName, sessionId };
 }
 
-function matchCliDownloadPath(pathname: string): CliDownloadMatch | null {
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts.length < 3 || parts[0] !== "downloads" || parts[1] !== "cli") {
-    return null;
-  }
-  if (parts.length === 3 && parts[2] === "install.sh") {
-    return { kind: "install-sh" };
-  }
-  if (parts.length === 3 && parts[2] === "install.ps1") {
-    return { kind: "install-ps1" };
-  }
-  if (parts.length !== 4) {
-    return null;
-  }
-  const channel = parts[2];
-  if (channel !== "latest" && !isSupportedCliChannel(channel)) {
-    return null;
-  }
-  const rawAsset = parts[3]?.trim() ?? "";
-  if (!/^[A-Za-z0-9._-]+(?:\.exe)?(?:\.sha256)?$/.test(rawAsset)) {
-    return null;
-  }
-  const checksum = rawAsset.endsWith(".sha256");
-  const asset = checksum ? rawAsset.slice(0, -".sha256".length) : rawAsset;
-  return { kind: "asset", channel, asset, checksum };
-}
-
 function matchGitPath(url: URL): GitPathMatch | null {
   const parts = url.pathname.split("/").filter(Boolean);
   if (parts.length < 3 || parts[0] !== "git") {
@@ -460,54 +415,6 @@ function matchGitPath(url: URL): GitPathMatch | null {
     suffix,
     write: suffix === "git-receive-pack" || (suffix === "info/refs" && service === "git-receive-pack"),
   };
-}
-
-async function handleCliDownloadRequest(
-  request: Request,
-  env: Env,
-  url: URL,
-  match: CliDownloadMatch,
-): Promise<Response> {
-  if (request.method !== "GET") {
-    return new Response("Method Not Allowed", { status: 405 });
-  }
-
-  if (match.kind === "install-sh") {
-    return new Response(buildCliInstallScript(url.origin), {
-      headers: {
-        "content-type": "application/x-sh; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
-  }
-
-  if (match.kind === "install-ps1") {
-    return new Response(buildCliInstallPowerShell(url.origin), {
-      headers: {
-        "content-type": "text/plain; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
-  }
-
-  const channel = match.channel === "latest"
-    ? await loadDefaultCliChannel(env.STORAGE)
-    : match.channel;
-  const key = match.checksum ? cliChecksumKey(channel, match.asset) : cliAssetKey(channel, match.asset);
-  const object = await env.STORAGE.get(key);
-  if (!object) {
-    return new Response("Not Found", { status: 404 });
-  }
-
-  return new Response(object.body, {
-    headers: {
-      "content-type": match.checksum ? "text/plain; charset=utf-8" : "application/octet-stream",
-      "cache-control": match.channel === "latest" ? "no-store" : "public, max-age=300",
-      "content-disposition": match.checksum
-        ? `inline; filename="${match.asset}.sha256"`
-        : `attachment; filename="${match.asset}"`,
-    },
-  });
 }
 
 function getBasicAuth(request: Request): BasicAuth | null {

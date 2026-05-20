@@ -12,11 +12,15 @@ const { importFromUpstreamMock, readPathMock, applyMock, buildBuiltinPackageSeed
 const {
   inferDefaultCliChannelMock,
   mirrorCliChannelMock,
+  storeCliInstallScriptsMock,
   storeDefaultCliChannelMock,
+  seedPiperPublicAssetsMock,
 } = vi.hoisted(() => ({
   inferDefaultCliChannelMock: vi.fn(),
   mirrorCliChannelMock: vi.fn(),
+  storeCliInstallScriptsMock: vi.fn(),
   storeDefaultCliChannelMock: vi.fn(),
+  seedPiperPublicAssetsMock: vi.fn(),
 }));
 
 vi.mock("../../fs/ripgit/client", () => ({
@@ -36,7 +40,12 @@ vi.mock("../../downloads/cli", () => ({
   CLI_RELEASE_CHANNELS: ["stable", "dev"],
   inferDefaultCliChannel: inferDefaultCliChannelMock,
   mirrorCliChannel: mirrorCliChannelMock,
+  storeCliInstallScripts: storeCliInstallScriptsMock,
   storeDefaultCliChannel: storeDefaultCliChannelMock,
+}));
+
+vi.mock("../../downloads/piper-assets", () => ({
+  seedPiperPublicAssets: seedPiperPublicAssetsMock,
 }));
 
 function makeInstalledPackage() {
@@ -153,6 +162,8 @@ describe("handleSysBootstrap", () => {
     inferDefaultCliChannelMock.mockReturnValue("dev");
     mirrorCliChannelMock.mockResolvedValue(undefined);
     storeDefaultCliChannelMock.mockResolvedValue(undefined);
+    storeCliInstallScriptsMock.mockResolvedValue(undefined);
+    seedPiperPublicAssetsMock.mockResolvedValue({ assets: 12, seeded: 12, skipped: 0 });
   });
 
   it("bootstraps root/gsv from the default upstream and reseeds builtins", async () => {
@@ -190,7 +201,9 @@ describe("handleSysBootstrap", () => {
     expect(ctx.packages.seedBuiltinPackages).toHaveBeenCalledWith([{ name: "chat-seed" }]);
     expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("main");
     expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);
+    expect(seedPiperPublicAssetsMock).toHaveBeenCalledWith(ctx.env.STORAGE);
     expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "dev");
+    expect(storeCliInstallScriptsMock).toHaveBeenCalledWith(ctx.env.STORAGE);
     expect(result).toEqual({
       repo: "root/gsv",
       remoteUrl: "https://github.com/deathbyknowledge/gsv",

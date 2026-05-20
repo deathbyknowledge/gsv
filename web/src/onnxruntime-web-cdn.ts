@@ -9,17 +9,19 @@ type OnnxRuntimeModule = {
   Tensor: unknown;
 };
 
-const ONNX_RUNTIME_VERSION = "1.26.0";
-const ONNX_RUNTIME_URL = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ONNX_RUNTIME_VERSION}/dist/ort.min.mjs`;
-const ONNX_WASM_BASE = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ONNX_RUNTIME_VERSION}/dist/`;
+import {
+  GSV_ONNX_RUNTIME_BASE,
+  GSV_ONNX_RUNTIME_MODULE,
+} from "./local-tts-assets";
+
 const ort = await import(
   /* @vite-ignore */
-  ONNX_RUNTIME_URL
+  GSV_ONNX_RUNTIME_MODULE
 ) as OnnxRuntimeModule;
 
 export const env = ort.env;
 configureWasmThreads(env.wasm);
-env.wasm.wasmPaths = ONNX_WASM_BASE;
+env.wasm.wasmPaths = GSV_ONNX_RUNTIME_BASE;
 export const InferenceSession = ort.InferenceSession;
 export const Tensor = ort.Tensor;
 
