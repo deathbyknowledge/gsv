@@ -41,7 +41,6 @@ import { isWorkspaceMountPath } from "./backends/workspace";
 import { normalizePath } from "./utils";
 
 const MAX_SYMLINK_DEPTH = 16;
-const DEFAULT_WRITE_STREAM_FALLBACK_LIMIT = 16 * 1024 * 1024;
 
 export type ExtendedStat = ExtendedMountStat;
 
@@ -124,18 +123,16 @@ export class GsvFs implements IFileSystem {
   async writeFileStream(
     path: string,
     content: ReadableStream<Uint8Array>,
-    options: WriteFileStreamOptions = {},
+    options: WriteFileStreamOptions,
   ): Promise<WriteFileStreamResult> {
+    assertExpectedSize(options?.expectedSize);
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
     const backend = this.backendForPath(p);
     if (backend.writeFileStream) {
       return backend.writeFileStream(p, content, options);
     }
 
-    const bytes = await streamToBytes(
-      content,
-      options.maxFallbackBytes ?? DEFAULT_WRITE_STREAM_FALLBACK_LIMIT,
-    );
+    const bytes = await streamToBytes(content, options.expectedSize);
     await backend.writeFile(p, bytes);
     return {
       size: bytes.byteLength,
@@ -491,7 +488,13 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
-async function streamToBytes(stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<Uint8Array> {
+function assertExpectedSize(size: unknown): asserts size is number {
+  if (!Number.isSafeInteger(size) || (size as number) < 0) {
+    throw new Error("EINVAL: writeFileStream expectedSize must be a non-negative safe integer");
+  }
+}
+
+async function streamToBytes(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -503,13 +506,17 @@ async function streamToBytes(stream: ReadableStream<Uint8Array>, maxBytes: numbe
         break;
       }
       size += value.byteLength;
-      if (size > maxBytes) {
-        throw new Error(`EFBIG: stream fallback exceeds ${maxBytes} bytes`);
+      if (size > expectedSize) {
+        throw new Error(`EFBIG: stream exceeds expectedSize ${expectedSize}`);
       }
       chunks.push(value);
     }
   } finally {
     reader.releaseLock();
+  }
+
+  if (size !== expectedSize) {
+    throw new Error(`EINVAL: stream size ${size} did not match expectedSize ${expectedSize}`);
   }
 
   const bytes = new Uint8Array(size);

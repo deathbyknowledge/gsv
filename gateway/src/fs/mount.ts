@@ -52,11 +52,10 @@ export type OpenFileResult = {
 };
 
 export type WriteFileStreamOptions = {
+  expectedSize: number;
   contentType?: string;
   cacheControl?: string;
   contentDisposition?: string;
-  expectedSize?: number;
-  maxFallbackBytes?: number;
 };
 
 export type WriteFileStreamResult = {
@@ -73,7 +72,7 @@ export interface MountBackend {
   writeFileStream?(
     path: string,
     content: ReadableStream<Uint8Array>,
-    options?: WriteFileStreamOptions,
+    options: WriteFileStreamOptions,
   ): Promise<WriteFileStreamResult>;
   appendFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void>;
   exists(path: string): Promise<boolean>;

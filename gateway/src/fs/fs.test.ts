@@ -345,19 +345,17 @@ describe("GsvFs write metadata", () => {
     expect(await fs.readFile(`/${TEST_PREFIX}target.txt`)).toBe("updated");
   });
 
-  it("falls back to bounded buffering for unknown-length R2 streams", async () => {
+  it("rejects stream writes without a declared size", async () => {
     const fs = makeFs(SAM);
 
-    const result = await fs.writeFileStream(
+    await expect(fs.writeFileStream(
       `/${TEST_PREFIX}unknown-length.txt`,
       bytesToStream(new TextEncoder().encode("buffered")),
-    );
-
-    expect(result).toEqual({ size: 8, streamed: false });
-    expect(await fs.readFile(`/${TEST_PREFIX}unknown-length.txt`)).toBe("buffered");
+      {} as { expectedSize: number },
+    )).rejects.toThrow("expectedSize");
   });
 
-  it("falls back to bounded buffering for non-streaming backends", async () => {
+  it("falls back to exact-size buffering for non-streaming backends", async () => {
     const fs = new GsvFs(env.STORAGE, SAM, {
       procs: null as never,
       devices: null as never,
@@ -369,12 +367,13 @@ describe("GsvFs write metadata", () => {
     const result = await fs.writeFileStream(
       "/dev/null",
       bytesToStream(new TextEncoder().encode("discarded")),
+      { expectedSize: 9 },
     );
 
     expect(result).toEqual({ size: 9, streamed: false });
   });
 
-  it("rejects oversized fallback buffering for non-streaming backends", async () => {
+  it("rejects stream fallback content larger than the declared size", async () => {
     const fs = new GsvFs(env.STORAGE, SAM, {
       procs: null as never,
       devices: null as never,
@@ -386,8 +385,24 @@ describe("GsvFs write metadata", () => {
     await expect(fs.writeFileStream(
       "/dev/null",
       bytesToStream(new TextEncoder().encode("too large")),
-      { maxFallbackBytes: 3 },
+      { expectedSize: 3 },
     )).rejects.toThrow("EFBIG");
+  });
+
+  it("rejects stream fallback content smaller than the declared size", async () => {
+    const fs = new GsvFs(env.STORAGE, SAM, {
+      procs: null as never,
+      devices: null as never,
+      caps: null as never,
+      config: null as never,
+      workspaces: null as never,
+    });
+
+    await expect(fs.writeFileStream(
+      "/dev/null",
+      bytesToStream(new TextEncoder().encode("short")),
+      { expectedSize: 12 },
+    )).rejects.toThrow("did not match expectedSize");
   });
 });
 
