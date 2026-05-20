@@ -545,7 +545,7 @@ export default function App({ name }: Props) {
     assert!(!package_definition.contains(": string[]"));
 
     let main = modules.get("src/main.tsx").unwrap().content.as_str();
-    assert!(main.contains("from \"preact/jsx-runtime\""));
+    assert!(main.contains("from\"preact/jsx-runtime\""));
     assert!(!main.contains("type Props"));
     assert!(!main.contains(": Props"));
     assert!(!main.contains("<main>"));
@@ -724,7 +724,7 @@ export default wasmUrl;"#
         .expect("wasm lib js");
     assert!(wasm_lib_js
         .content
-        .contains("new URL(\"/public/lib/npm/wasm-lib/1.0.0/module.wasm\", import.meta.url)"));
+        .contains("new URL(\"/public/lib/npm/wasm-lib/1.0.0/module.wasm\",import.meta.url)"));
 }
 
 #[test]
@@ -770,7 +770,7 @@ fn runtime_artifact_emits_package_local_binary_public_files() {
         .find(|file| file.path == "gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/main.js")
         .expect("main js");
     assert!(main.content.contains(
-        "new URL(\"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/module.wasm\", import.meta.url)"
+        "new URL(\"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/module.wasm\",import.meta.url)"
     ));
 }
 
@@ -818,7 +818,7 @@ worker.postMessage({ type: "ping" });
 
     assert!(browser_assets
         .iter()
-        .any(|content| content.contains("new URL(\"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/worker.js\", import.meta.url)")));
+        .any(|content| content.contains("new URL(\"/public/gsv/packages/__GSV_ARTIFACT_HASH__/browser/src/worker.js\",import.meta.url)")));
     assert!(!browser_assets
         .iter()
         .any(|content| content.contains("new URL(\"./worker.ts\", import.meta.url)")));

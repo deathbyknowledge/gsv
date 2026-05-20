@@ -14,6 +14,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 oxc_allocator = "0.127.0"
 oxc_codegen = "0.127.0"
 oxc_parser = "0.127.0"
+oxc_minifier = "0.127.0"
 oxc_resolver = "11.19.1"
 oxc_semantic = "0.127.0"
 oxc_span = "0.127.0"

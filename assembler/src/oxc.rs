@@ -4,7 +4,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use oxc_allocator::Allocator;
-use oxc_codegen::Codegen;
+use oxc_codegen::{Codegen, CodegenOptions};
+use oxc_minifier::{Minifier, MinifierOptions};
 use oxc_parser::Parser;
 use oxc_resolver::{
     FileMetadata, FileSystem, ModuleType, PackageType, ResolveError, ResolveOptions,
@@ -62,6 +63,11 @@ pub struct TransformedModuleSource {
     pub content: String,
     pub requested_modules: Vec<String>,
     pub has_module_syntax: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TransformModuleOptions {
+    pub minify: bool,
 }
 
 impl OxcVirtualFileSystem {
@@ -383,6 +389,25 @@ pub fn transform_module_source_with_oxc(
     path: &str,
     source_text: &str,
 ) -> Result<TransformedModuleSource, PackageAssemblyDiagnostic> {
+    transform_module_source_with_oxc_options(path, source_text, TransformModuleOptions::default())
+}
+
+pub fn transform_browser_module_source_with_oxc(
+    path: &str,
+    source_text: &str,
+) -> Result<TransformedModuleSource, PackageAssemblyDiagnostic> {
+    transform_module_source_with_oxc_options(
+        path,
+        source_text,
+        TransformModuleOptions { minify: true },
+    )
+}
+
+fn transform_module_source_with_oxc_options(
+    path: &str,
+    source_text: &str,
+    options: TransformModuleOptions,
+) -> Result<TransformedModuleSource, PackageAssemblyDiagnostic> {
     let source_type = source_type_from_path(path)?;
     let normalized = normalize_repo_path(path);
     let allocator = Allocator::default();
@@ -446,10 +471,22 @@ pub fn transform_module_source_with_oxc(
         ));
     }
 
-    let content = Codegen::new()
-        .with_scoping(Some(transformed.scoping))
-        .build(&program)
-        .code;
+    let scoping = if options.minify {
+        let minified = Minifier::new(MinifierOptions {
+            mangle: None,
+            compress: None,
+        })
+        .minify(&allocator, &mut program);
+        minified.scoping.or(Some(transformed.scoping))
+    } else {
+        Some(transformed.scoping)
+    };
+
+    let mut codegen = Codegen::new().with_scoping(scoping);
+    if options.minify {
+        codegen = codegen.with_options(CodegenOptions::minify());
+    }
+    let content = codegen.build(&program).code;
     let transformed_dependencies = parse_module_dependencies_with_oxc(path, &content)?;
 
     Ok(TransformedModuleSource {
@@ -518,7 +555,7 @@ fn collect_import_meta_url_request_spans(source: &str) -> Vec<ModuleRequestSpan>
         let Some(quote) = source[index..].chars().next() else {
             break;
         };
-        if quote != '"' && quote != '\'' {
+        if quote != '"' && quote != '\'' && quote != '`' {
             search_from = index.saturating_add(1);
             continue;
         }
@@ -530,6 +567,10 @@ fn collect_import_meta_url_request_spans(source: &str) -> Vec<ModuleRequestSpan>
             continue;
         };
         let specifier = source[index..literal_end].to_string();
+        if quote == '`' && specifier.contains("${") {
+            search_from = literal_end + quote.len_utf8();
+            continue;
+        }
 
         let mut suffix_index = skip_ascii_whitespace(source, literal_end + quote.len_utf8());
         if !source[suffix_index..].starts_with(',') {

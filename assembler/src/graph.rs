@@ -6,7 +6,9 @@ use oxc_resolver::ModuleType;
 use crate::diagnostics::{has_errors, PackageAssemblyDiagnostic};
 use crate::model::{PackageAssemblyArtifactModule, PackageAssemblyArtifactModuleKind};
 use crate::npm::InstalledAssembly;
-use crate::oxc::{transform_module_source_with_oxc, OxcResolver};
+use crate::oxc::{
+    transform_browser_module_source_with_oxc, transform_module_source_with_oxc, OxcResolver,
+};
 use crate::pipeline::StageOutcome;
 use crate::virtual_fs::extension;
 
@@ -44,6 +46,7 @@ pub fn build_module_graph_for_entry(
         installed,
         entry_path,
         OxcResolver::new(installed.files.clone()),
+        false,
     )
 }
 
@@ -55,6 +58,7 @@ pub fn build_module_graph_for_browser_entry(
         installed,
         entry_path,
         OxcResolver::new_browser(installed.files.clone()),
+        true,
     )
 }
 
@@ -62,6 +66,7 @@ fn build_module_graph_for_entry_with_resolver(
     installed: &InstalledAssembly,
     entry_path: &str,
     resolver: OxcResolver,
+    minify_source_modules: bool,
 ) -> StageOutcome<ModuleGraph> {
     let mut diagnostics = Vec::new();
     let main_module = entry_path.to_string();
@@ -89,7 +94,12 @@ fn build_module_graph_for_entry_with_resolver(
                     ));
                     continue;
                 };
-                match transform_module_source_with_oxc(&path, content) {
+                let transformed_result = if minify_source_modules {
+                    transform_browser_module_source_with_oxc(&path, content)
+                } else {
+                    transform_module_source_with_oxc(&path, content)
+                };
+                match transformed_result {
                     Ok(transformed) => {
                         emitted.insert(
                             path.clone(),

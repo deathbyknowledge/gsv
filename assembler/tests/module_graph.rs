@@ -468,7 +468,7 @@ export default function App({ name }: Props) {
         .find(|module| module.path == "apps/demo/src/main.tsx")
         .expect("main module");
 
-    assert!(main.content.contains("from \"preact/jsx-runtime\""));
+    assert!(main.content.contains("from\"preact/jsx-runtime\""));
     assert!(!main.content.contains("type Props"));
     assert!(!main.content.contains(": Props"));
     assert!(!main.content.contains("<main>"));
