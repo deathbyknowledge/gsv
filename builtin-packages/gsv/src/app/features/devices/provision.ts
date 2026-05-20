@@ -2,8 +2,8 @@ export type ProvisionInstallPlatform = "unix" | "windows";
 
 export function buildInstallCommand(origin: string, platform: ProvisionInstallPlatform): string {
   return platform === "windows"
-    ? `irm ${origin}/downloads/cli/install.ps1 | iex`
-    : `curl -fsSL ${origin}/downloads/cli/install.sh | bash`;
+    ? `$env:GSV_BASE_URL='${origin}'; irm ${origin}/public/gsv/downloads/cli/install.ps1 | iex`
+    : `curl -fsSL ${origin}/public/gsv/downloads/cli/install.sh | bash -s -- ${origin}`;
 }
 
 export function buildBootstrapCommand(
