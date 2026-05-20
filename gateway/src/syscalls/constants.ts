@@ -4,6 +4,7 @@ export const FS_WRITE = "fs.write";
 export const FS_EDIT = "fs.edit";
 export const FS_DELETE = "fs.delete";
 export const FS_SEARCH = "fs.search";
+export const FS_COPY = "fs.copy";
 
 // Shell (device commands)
 export const SHELL_EXEC = "shell.exec";

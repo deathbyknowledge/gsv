@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
+import { handleFsCopy } from "./fs";
 import type { KernelContext } from "../../kernel/context";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { InstalledPackageRecord } from "../../kernel/packages";
@@ -193,6 +194,51 @@ describe("proc native command", () => {
     expect(result.status).toBe("failed");
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("--workspace must be inherit");
+  });
+});
+
+describe("fs copy", () => {
+  it("copies gsv files through the fs.copy syscall", async () => {
+    const sourceKey = "home/sam/copy-test/source.txt";
+    const destinationKey = "home/sam/copy-test/destination.txt";
+    await env.STORAGE.delete(sourceKey);
+    await env.STORAGE.delete(destinationKey);
+    await env.STORAGE.put(sourceKey, "copied data", {
+      httpMetadata: { contentType: "text/plain; charset=utf-8" },
+      customMetadata: { uid: "1000", gid: "1000", mode: "644" },
+    });
+
+    const result = await handleFsCopy({
+      source: { target: "gsv", path: "/home/sam/copy-test/source.txt" },
+      destination: { target: "gsv", path: "/home/sam/copy-test/destination.txt" },
+    }, makeContext());
+
+    expect(result).toMatchObject({
+      ok: true,
+      size: "copied data".length,
+      contentType: "text/plain",
+    });
+    expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("copied data");
+  });
+
+  it("copies gsv files through the native cp shell command", async () => {
+    const sourceKey = "home/sam/copy-test/shell-source.txt";
+    const destinationKey = "home/sam/copy-test/shell-destination.txt";
+    await env.STORAGE.delete(sourceKey);
+    await env.STORAGE.delete(destinationKey);
+    await env.STORAGE.put(sourceKey, "shell copied", {
+      customMetadata: { uid: "1000", gid: "1000", mode: "644" },
+    });
+
+    const result = await handleShellExec(
+      { input: "cp /home/sam/copy-test/shell-source.txt /home/sam/copy-test/shell-destination.txt" },
+      makeContext({ capabilities: ["fs.read", "fs.write"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("shell copied");
   });
 });
 

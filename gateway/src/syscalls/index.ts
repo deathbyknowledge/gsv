@@ -3,6 +3,7 @@ import type { FsWriteArgs, FsWriteResult } from "./write";
 import type { FsEditArgs, FsEditResult } from "./edit";
 import type { FsDeleteArgs, FsDeleteResult } from "./delete";
 import type { FsSearchArgs, FsSearchResult } from "./search";
+import type { FsCopyArgs, FsCopyResult } from "./copy";
 import type {
   ShellExecArgs,
   ShellExecResult,
@@ -232,6 +233,7 @@ export type SyscallDomains = {
   "fs.edit": { args: FsEditArgs; result: FsEditResult };
   "fs.delete": { args: FsDeleteArgs; result: FsDeleteResult };
   "fs.search": { args: FsSearchArgs; result: FsSearchResult };
+  "fs.copy": { args: FsCopyArgs; result: FsCopyResult };
 
   // Shell (device commands)
   "shell.exec": { args: ShellExecArgs; result: ShellExecResult };

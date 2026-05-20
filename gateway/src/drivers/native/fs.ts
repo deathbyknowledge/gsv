@@ -26,6 +26,7 @@ import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
 import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";
 import type { FsDeleteArgs, FsDeleteResult } from "../../syscalls/delete";
 import type { FsSearchArgs, FsSearchResult } from "../../syscalls/search";
+import type { FsCopyArgs, FsCopyEndpoint, FsCopyResult } from "../../syscalls/copy";
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
@@ -186,6 +187,42 @@ export async function handleFsWrite(args: FsWriteArgs, ctx: KernelContext): Prom
   }
 }
 
+export async function handleFsCopy(args: FsCopyArgs, ctx: KernelContext): Promise<FsCopyResult> {
+  try {
+    const source = normalizeCopyEndpoint(args.source, ctx);
+    const destination = normalizeCopyEndpoint(args.destination, ctx);
+
+    if (source.target !== "gsv" || destination.target !== "gsv") {
+      return {
+        ok: false,
+        error: "fs.copy currently supports gsv endpoints only; device streams are the next transport layer.",
+      };
+    }
+
+    const fs = makeFs(ctx);
+    const opened = await fs.openFile(source.path);
+    if (opened.status !== 200 || !opened.body) {
+      return { ok: false, error: `Unable to open source for copy: ${source.path}` };
+    }
+
+    const contentType = opened.contentType ?? inferContentType(source.path);
+    await fs.writeFileStream(destination.path, opened.body, {
+      expectedSize: opened.size,
+      contentType,
+    });
+
+    return {
+      ok: true,
+      source,
+      destination,
+      size: opened.size,
+      contentType,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function handleFsEdit(args: FsEditArgs, ctx: KernelContext): Promise<FsEditResult> {
   const fs = makeFs(ctx);
   const p = resolve(args.path, ctx);
@@ -216,6 +253,20 @@ export async function handleFsEdit(args: FsEditArgs, ctx: KernelContext): Promis
     if (msg.includes("ENOENT")) return { ok: false, error: `File not found: ${p}` };
     return { ok: false, error: msg };
   }
+}
+
+function normalizeCopyEndpoint(endpoint: FsCopyEndpoint, ctx: KernelContext): Required<FsCopyEndpoint> {
+  const target = typeof endpoint?.target === "string" && endpoint.target.trim()
+    ? endpoint.target.trim()
+    : "gsv";
+  const rawPath = typeof endpoint?.path === "string" ? endpoint.path.trim() : "";
+  if (!rawPath) {
+    throw new Error("fs.copy endpoint path is required");
+  }
+  return {
+    target,
+    path: target === "gsv" ? resolve(rawPath, ctx) : rawPath,
+  };
 }
 
 

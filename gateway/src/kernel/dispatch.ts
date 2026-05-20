@@ -22,6 +22,7 @@ import {
   handleFsEdit,
   handleFsDelete,
   handleFsSearch,
+  handleFsCopy,
 } from "../drivers/native/fs";
 import { handleShellExec } from "../drivers/native/shell";
 import { handleAiTools, handleAiConfig, handleAiSpeechCreate, handleAiTranscriptionCreate } from "./ai";
@@ -219,6 +220,9 @@ async function dispatchNative(
         break;
       case "fs.search":
         data = await handleFsSearch(frame.args, ctx);
+        break;
+      case "fs.copy":
+        data = await handleFsCopy(frame.args, ctx);
         break;
 
       case "shell.exec":
