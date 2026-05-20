@@ -99,6 +99,7 @@ import type {
 import type { Frame } from "../../protocol/frames";
 import { renderManualPage } from "./man-pages";
 import { buildNotifyCommands } from "./notify-shell";
+import { buildCpCommand } from "./shell/cp";
 import { sendFrameToProcess } from "../../shared/utils";
 import {
   CODEMODE_RUN,
@@ -649,98 +650,6 @@ function buildStatCommand(fs: GsvFs, identity: ProcessIdentity, kernelCtx: Kerne
 
     return { stdout, stderr, exitCode };
   });
-}
-
-type ShellCopyEndpoint = {
-  target: string;
-  path: string;
-};
-
-function buildCpCommand(fs: GsvFs, kernelCtx: KernelContext) {
-  return defineCommand("cp", async (args, ctx): Promise<ExecResult> => {
-    if (args.includes("--help")) {
-      return { stdout: "cp SOURCE DEST\n", stderr: "", exitCode: 0 };
-    }
-
-    const operands = args.filter((arg) => arg !== "--");
-    const unsupported = operands.find((arg) => arg.startsWith("-"));
-    if (unsupported) {
-      return { stdout: "", stderr: `cp: unsupported option '${unsupported}'\n`, exitCode: 1 };
-    }
-    if (operands.length < 2) {
-      return { stdout: "", stderr: "cp: missing destination file operand\n", exitCode: 1 };
-    }
-    if (operands.length > 2) {
-      return { stdout: "", stderr: "cp: multiple source files are not supported yet\n", exitCode: 1 };
-    }
-
-    requireCommandCapability(kernelCtx, "fs.read");
-    requireCommandCapability(kernelCtx, "fs.write");
-
-    const source = parseShellCopyEndpoint(operands[0], ctx.cwd, ctx.fs);
-    let destination = parseShellCopyEndpoint(operands[1], ctx.cwd, ctx.fs);
-
-    if (source.target !== "gsv" || destination.target !== "gsv") {
-      return {
-        stdout: "",
-        stderr: "cp: device endpoints are not wired yet; only gsv paths are supported\n",
-        exitCode: 1,
-      };
-    }
-
-    try {
-      const destinationStat = await fs.statExtended(destination.path);
-      if (destinationStat.isDirectory) {
-        destination = {
-          ...destination,
-          path: joinShellPath(destination.path, shellBasename(source.path)),
-        };
-      }
-    } catch {
-      // Destination does not exist; copy to the requested path.
-    }
-
-    try {
-      const opened = await fs.openFile(source.path);
-      if (opened.status !== 200 || !opened.body) {
-        return { stdout: "", stderr: `cp: cannot open '${operands[0]}'\n`, exitCode: 1 };
-      }
-      await fs.writeFileStream(destination.path, opened.body, {
-        expectedSize: opened.size,
-        ...(opened.contentType ? { contentType: opened.contentType } : {}),
-      });
-      return { stdout: "", stderr: "", exitCode: 0 };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { stdout: "", stderr: `cp: ${msg}\n`, exitCode: 1 };
-    }
-  });
-}
-
-function parseShellCopyEndpoint(spec: string, cwd: string, bashFs: { resolvePath(cwd: string, path: string): string }): ShellCopyEndpoint {
-  const match = spec.match(/^([A-Za-z0-9_.-]+):(.*)$/);
-  if (match) {
-    const target = match[1] || "gsv";
-    const path = match[2] || ".";
-    return {
-      target,
-      path: target === "gsv" ? bashFs.resolvePath(cwd, path) : path,
-    };
-  }
-  return {
-    target: "gsv",
-    path: bashFs.resolvePath(cwd, spec),
-  };
-}
-
-function shellBasename(path: string): string {
-  const trimmed = path.replace(/\/+$/, "");
-  const index = trimmed.lastIndexOf("/");
-  return index >= 0 ? trimmed.slice(index + 1) : trimmed;
-}
-
-function joinShellPath(parent: string, child: string): string {
-  return parent.endsWith("/") ? `${parent}${child}` : `${parent}/${child}`;
 }
 
 // =============================================================================

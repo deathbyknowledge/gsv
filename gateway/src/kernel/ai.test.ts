@@ -64,16 +64,31 @@ function makeContext(connectionState: string): KernelContext {
 }
 
 describe("handleAiTools", () => {
-  it("does not add MCP server tools to the direct LLM tool surface", async () => {
+  it("keeps the direct LLM tool surface to the fixed Linux-like toolset", async () => {
     const ctx = makeContext("ready");
 
     const result = await handleAiTools(ctx);
+    const toolNames = result.tools.map((tool) => tool.name);
 
-    expect(result.tools.some((tool) => tool.name.startsWith("MCP_"))).toBe(false);
+    expect(toolNames).toEqual([
+      "Read",
+      "Write",
+      "Edit",
+      "Delete",
+      "Search",
+      "Shell",
+      "CodeMode",
+    ]);
+    expect(
+      result.tools.every((tool) =>
+        !tool.name.startsWith("MCP_") &&
+        !tool.name.includes("Spawn") &&
+        !tool.name.includes("Schedule") &&
+        tool.name !== "Copy"
+      ),
+      "ai.tools should stay a fixed Linux-like surface: filesystem tools, Shell, and CodeMode only. Do not expose OS conveniences such as spawn, sched, MCP, or copy as direct LLM tools.",
+    ).toBe(true);
     expect(result.mcpServers).toEqual(["Search"]);
-    expect(result.tools.some((tool) => tool.name === "SpawnProcess")).toBe(false);
-    expect(result.tools.some((tool) => tool.name === "AddSchedule")).toBe(false);
-    expect(result.tools.some((tool) => tool.name === "Copy")).toBe(false);
     const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
     expect(codeModeTool?.description).toContain("declare function lookup");
     expect(codeModeTool?.description).toContain("type LookupOutput");
