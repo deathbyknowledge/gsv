@@ -1,3 +1,5 @@
+import { defineCommand } from "just-bash";
+import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
@@ -36,6 +38,11 @@ export function buildCustomCommands(
   const sched = buildSchedCommand(ctx);
   const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
+  const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
+    stdout: `General Systems Vehicle ${ctx.config.get("config/server/version") ?? "0.1.6"} - Steve James.\n\n"I kept dreaming of a world I thought I'd never see. And then, one day... I got in."`,
+    stderr: "",
+    exitCode: 0,
+  }));
 
   return [
     ...coreCommands,
@@ -48,6 +55,7 @@ export function buildCustomCommands(
     sched,
     pkg,
     skills,
+    flynn,
     ...notifyCommands,
     ...packageCommands,
   ];

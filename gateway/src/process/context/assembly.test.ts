@@ -26,7 +26,7 @@ const CONFIG: AiConfigResult = {
   profileContextFiles: [
     {
       name: "00-role.md",
-      text: "Task for {{identity.username}} in {{identity.cwd}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}\n\nPaths:\n{{known_paths}}",
+      text: "Task for {{identity.username}} in {{identity.cwd}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}",
     },
   ],
   skillIndex: [
@@ -90,6 +90,7 @@ describe("createProfileInstructionsProvider", () => {
         devices: [
           {
             id: "macbook",
+            label: "Work MacBook",
             platform: "darwin",
             description: "Personal laptop",
             implements: ["shell.exec", "fs.read"],
@@ -105,10 +106,9 @@ describe("createProfileInstructionsProvider", () => {
     ]);
     expect(sections[0]?.text).toContain("Task for root in /workspaces/ws_test");
     expect(sections[0]?.text).toContain("- gsv");
-    expect(sections[0]?.text).toContain("- macbook: Personal laptop (darwin)");
+    expect(sections[0]?.text).toContain("- macbook: Work MacBook - Personal laptop (darwin)");
     expect(sections[0]?.text).toContain("- Cloudflare");
     expect(sections[0]?.text).toContain("- Linear");
-    expect(sections[0]?.text).toContain("- /sys: live kernel configuration and runtime control surfaces");
   });
 });
 

@@ -21,10 +21,17 @@
 
 const GSV_RUNTIME_CONTEXT = [
   "You are running inside GSV, a Linux-shaped cloud computer for humans, machines, and agents.",
-  "The `gsv` target is the native cloud computer. Connected device targets are user-owned hardware that extends GSV with local files, shells, networks, credentials, or peripherals.",
   "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, optional workspace, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.",
   "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory or workspace, and system, package, and device surfaces use stable absolute paths.",
   "Messages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as authoritative updates about IPC, schedules, signals, compaction, resets, approval, or lifecycle state.",
+].join("\n");
+
+const GSV_TARGET_CONTEXT = [
+  "GSV tools are targetable. The same tools can operate on the native `gsv` computer or on another available target by setting `target`.",
+  "The `gsv` target is the native cloud computer. Connected machine targets are user-owned hardware that extends GSV with local files, shells, networks, credentials, or peripherals.",
+  "Browser targets represent active GSV web shell desktops. They expose browser-local files, open windows/apps, and browser automation through their shell commands such as `open`, `view`, `windows`, `app`, `dom`, and `js`.",
+  "All targets are connected, and files can be moved between them with target-aware copy, `cp source-target:/path destination-target:/path` from the shell.",
+  "Use `skills show browser-shell` before nontrivial browser target work.",
 ].join("\n");
 
 const GSV_CONTEXT_DISCOVERY = [
@@ -107,6 +114,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // order. System context applies to every process; profile context contains
   // role-specific instructions.
   "config/ai/context.d/00-gsv.md": GSV_RUNTIME_CONTEXT,
+  "config/ai/context.d/05-targets.md": GSV_TARGET_CONTEXT,
   "config/ai/context.d/10-runtime.md": GSV_RUNTIME_FACTS,
   "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
   "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,

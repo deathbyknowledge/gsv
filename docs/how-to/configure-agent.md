@@ -98,7 +98,7 @@ gsv proc spawn --profile research --prompt "Audit the week of notes."
 
 System and profile context can use runtime template variables such as
 `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`,
-`workspace`, `devices`, `mcpServers`, and `known_paths`.
+`workspace`, `devices` and `mcpServers`.
 
 ## Add Home and Workspace Context
 
