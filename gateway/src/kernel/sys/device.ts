@@ -20,9 +20,11 @@ function toSummary(record: DeviceRecord, ctx: KernelContext): SysDeviceSummary {
     deviceId: record.device_id,
     ownerUid: record.owner_uid,
     ownerUsername: ownerUsername(record, ctx),
+    label: record.label,
     description: record.description,
     platform: record.platform,
     version: record.version,
+    lifecycle: record.lifecycle,
     online: record.online,
     lastSeenAt: record.last_seen_at,
   };
@@ -96,7 +98,7 @@ export function handleSysDeviceUpdate(
     throw new Error("Authentication required");
   }
 
-  const raw = (args ?? {}) as { deviceId?: unknown; description?: unknown };
+  const raw = (args ?? {}) as { deviceId?: unknown; label?: unknown; description?: unknown };
   const deviceId = typeof raw.deviceId === "string" ? raw.deviceId.trim() : "";
   if (!deviceId) {
     throw new Error("sys.device.update requires deviceId");
@@ -109,11 +111,20 @@ export function handleSysDeviceUpdate(
   if (identity.uid !== 0 && record.owner_uid !== identity.uid) {
     throw new Error("Permission denied: device metadata is owner-managed");
   }
-  if (typeof raw.description !== "string") {
-    throw new Error("sys.device.update requires description");
+  if (raw.label !== undefined && typeof raw.label !== "string") {
+    throw new Error("sys.device.update label must be a string");
+  }
+  if (raw.description !== undefined && typeof raw.description !== "string") {
+    throw new Error("sys.device.update description must be a string");
+  }
+  if (raw.label === undefined && raw.description === undefined) {
+    throw new Error("sys.device.update requires label or description");
   }
 
-  ctx.devices.setDescription(deviceId, raw.description);
+  ctx.devices.setMetadata(deviceId, {
+    ...(raw.label !== undefined ? { label: raw.label } : {}),
+    ...(raw.description !== undefined ? { description: raw.description } : {}),
+  });
   const updated = ctx.devices.get(deviceId);
   return {
     device: updated ? toDetail(updated, ctx) : null,

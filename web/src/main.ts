@@ -1,5 +1,6 @@
 import "./styles.css";
 import { createAppRuntime } from "./apps-runtime";
+import { createBrowserTargetProvider } from "./browser-target";
 import { createGatewayClient } from "./gateway-client";
 import { createLauncher } from "./launcher";
 import { createNotificationsPanel } from "./notifications-panel";
@@ -47,6 +48,11 @@ const windowManager = createWindowManager({
   layerNode: windowsLayerEl,
   appRegistry: [],
   appRuntime,
+});
+
+createBrowserTargetProvider({
+  gatewayClient,
+  windowManager,
 });
 
 createNotificationsPanel({

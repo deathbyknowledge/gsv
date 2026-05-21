@@ -23,6 +23,69 @@ function makeContext(): KernelContext {
 }
 
 describe("dispatch", () => {
+  it("routes target syscalls to user-provided browser targets", async () => {
+    const send = vi.fn();
+    const scheduleExpiry = vi.fn(async () => "route_timer_1");
+    const routingTable = { register: vi.fn() };
+    const deps = {
+      routingTable,
+      connections: new Map([
+        ["conn_1", {
+          state: {
+            identity: {
+              role: "user",
+              process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
+              capabilities: ["*"],
+            },
+            providedTargets: [{ targetId: "browser:conn_1" }],
+          },
+          send,
+        }],
+      ]),
+      scheduleExpiry,
+      shellSessions: {
+        get: vi.fn(),
+      },
+    } as unknown as DispatchDeps;
+    const ctx = {
+      ...makeContext(),
+      devices: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => ({ online: true })),
+        canHandle: vi.fn(() => true),
+      },
+    } as unknown as KernelContext;
+    const frame = {
+      type: "req",
+      id: "req_1",
+      call: "fs.read",
+      args: { target: "browser:conn_1", path: "/desktop/windows.json" },
+    } as RequestFrame<"fs.read">;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({ handled: false });
+    expect(scheduleExpiry).toHaveBeenCalledWith("req_1", 60_000);
+    expect(routingTable.register).toHaveBeenCalledWith(
+      "req_1",
+      "fs.read",
+      { type: "process", id: "proc_1" },
+      "browser:conn_1",
+      { ttlMs: 60_000, scheduleId: "route_timer_1" },
+    );
+    expect(send).toHaveBeenCalledWith(JSON.stringify({
+      type: "req",
+      id: "req_1",
+      call: "fs.read",
+      args: { path: "/desktop/windows.json" },
+    }));
+  });
+
   it("returns cached failed shell sessions instead of rerouting to the device", async () => {
     const scheduleExpiry = vi.fn();
     const routingTable = { register: vi.fn() };

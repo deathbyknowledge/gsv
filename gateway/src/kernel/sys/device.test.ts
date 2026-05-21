@@ -9,10 +9,12 @@ import {
 type FakeDeviceRecord = {
   device_id: string;
   owner_uid: number;
+  label: string;
   description: string;
   implements: string[];
   platform: string;
   version: string;
+  lifecycle: "persistent" | "ephemeral";
   online: boolean;
   first_seen_at: number;
   last_seen_at: number;
@@ -37,12 +39,17 @@ function makeContext(uid: number, records: FakeDeviceRecord[], accessibleDeviceI
     get(deviceId: string) {
       return byId.get(deviceId) ?? null;
     },
-    setDescription(deviceId: string, description: string) {
+    setMetadata(deviceId: string, patch: { label?: string; description?: string }) {
       const record = byId.get(deviceId);
       if (!record) {
         return false;
       }
-      record.description = description.trim().slice(0, 500);
+      if (patch.label !== undefined) {
+        record.label = patch.label.trim().slice(0, 120) || record.device_id;
+      }
+      if (patch.description !== undefined) {
+        record.description = patch.description.trim().slice(0, 500);
+      }
       return true;
     },
   };
@@ -70,10 +77,12 @@ describe("sys.device handlers", () => {
     {
       device_id: "node-alpha",
       owner_uid: 1000,
+      label: "Alpha",
       description: "Linux home server",
       implements: ["fs.*", "shell.*"],
       platform: "linux",
       version: "1.0.0",
+      lifecycle: "persistent",
       online: true,
       first_seen_at: 1_700_000_000_000,
       last_seen_at: 1_700_000_010_000,
@@ -83,10 +92,12 @@ describe("sys.device handlers", () => {
     {
       device_id: "node-beta",
       owner_uid: 1000,
+      label: "Beta",
       description: "",
       implements: ["shell.*"],
       platform: "darwin",
       version: "1.1.0",
+      lifecycle: "persistent",
       online: false,
       first_seen_at: 1_700_000_000_500,
       last_seen_at: 1_700_000_020_000,
@@ -99,7 +110,9 @@ describe("sys.device handlers", () => {
     const ctx = makeContext(1000, records);
     const result = handleSysDeviceList({}, ctx);
     expect(result.devices.map((device) => device.deviceId)).toEqual(["node-alpha"]);
+    expect(result.devices[0].label).toBe("Alpha");
     expect(result.devices[0].description).toBe("Linux home server");
+    expect(result.devices[0].lifecycle).toBe("persistent");
   });
 
   it("accepts empty args payloads for list", () => {
@@ -135,6 +148,7 @@ describe("sys.device handlers", () => {
     expect(result.device?.implements).toEqual(["fs.*", "shell.*"]);
     expect(result.device?.online).toBe(true);
     expect(result.device?.ownerUid).toBe(1000);
+    expect(result.device?.label).toBe("Alpha");
     expect(result.device?.description).toBe("Linux home server");
   });
 
@@ -146,6 +160,16 @@ describe("sys.device handlers", () => {
     }, ctx);
 
     expect(result.device?.description).toBe("GPU and home automation box");
+  });
+
+  it("lets owners update device labels", () => {
+    const ctx = makeContext(1000, records.map((record) => ({ ...record })));
+    const result = handleSysDeviceUpdate({
+      deviceId: "node-alpha",
+      label: "New Alpha",
+    }, ctx);
+
+    expect(result.device?.label).toBe("New Alpha");
   });
 
   it("rejects metadata updates from group-only users", () => {

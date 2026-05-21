@@ -78,8 +78,10 @@ export type AiToolsArgs = Record<string, never>;
 export type AiToolsDevice = {
   id: string;
   implements: string[];
+  label?: string;
   description?: string;
   platform?: string;
+  lifecycle?: "persistent" | "ephemeral";
 };
 
 export type AiToolsResult = {

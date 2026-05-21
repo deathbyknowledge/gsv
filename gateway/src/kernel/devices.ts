@@ -11,13 +11,23 @@
 
 import { hasCapability, isValidCapability } from "./capabilities";
 
+export type DeviceLifecycle = "persistent" | "ephemeral";
+
+export type DeviceRegisterOptions = {
+  label?: string;
+  description?: string;
+  lifecycle?: DeviceLifecycle;
+};
+
 export type DeviceRecord = {
   device_id: string;
   owner_uid: number;
+  label: string;
   description: string;
   implements: string[];
   platform: string;
   version: string;
+  lifecycle: DeviceLifecycle;
   online: boolean;
   first_seen_at: number;
   last_seen_at: number;
@@ -25,9 +35,12 @@ export type DeviceRecord = {
   disconnected_at: number | null;
 };
 
-type RawDeviceRow = Omit<DeviceRecord, "implements" | "online"> & {
+type RawDeviceRow = Omit<DeviceRecord, "implements" | "online" | "label" | "description" | "lifecycle"> & {
   implements: string;
   online: number;
+  label?: string | null;
+  description?: string | null;
+  lifecycle?: string | null;
 };
 
 export class DeviceRegistry {
@@ -38,10 +51,12 @@ export class DeviceRegistry {
       CREATE TABLE IF NOT EXISTS devices (
         device_id        TEXT    PRIMARY KEY,
         owner_uid        INTEGER NOT NULL,
+        label            TEXT    NOT NULL DEFAULT '',
         description      TEXT    NOT NULL DEFAULT '',
         implements       TEXT    NOT NULL DEFAULT '[]',
         platform         TEXT    NOT NULL DEFAULT '',
         version          TEXT    NOT NULL DEFAULT '',
+        lifecycle        TEXT    NOT NULL DEFAULT 'persistent',
         online           INTEGER NOT NULL DEFAULT 0,
         first_seen_at    INTEGER NOT NULL,
         last_seen_at     INTEGER NOT NULL,
@@ -52,6 +67,12 @@ export class DeviceRegistry {
 
     try {
       this.sql.exec("ALTER TABLE devices ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+    } catch {}
+    try {
+      this.sql.exec("ALTER TABLE devices ADD COLUMN label TEXT NOT NULL DEFAULT ''");
+    } catch {}
+    try {
+      this.sql.exec("ALTER TABLE devices ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'persistent'");
     } catch {}
 
     this.sql.exec(`
@@ -70,6 +91,7 @@ export class DeviceRegistry {
     impl: string[],
     platform: string,
     version: string,
+    options: DeviceRegisterOptions = {},
   ): { ok: boolean; error?: string } {
     for (const pattern of impl) {
       if (!isValidCapability(pattern)) {
@@ -79,18 +101,31 @@ export class DeviceRegistry {
 
     const now = Date.now();
     const existing = this.get(deviceId);
+    const sameOwner = existing?.owner_uid === ownerUid;
+    const label = normalizeDeviceLabel(
+      options.label ?? (sameOwner ? existing?.label : undefined),
+      deviceId,
+    );
+    const description = normalizeDeviceDescription(
+      options.description ?? (sameOwner ? existing?.description : undefined) ?? "",
+    );
+    const lifecycle = normalizeDeviceLifecycle(
+      options.lifecycle ?? (sameOwner ? existing?.lifecycle : undefined),
+    );
 
     if (existing) {
       this.sql.exec(
         `UPDATE devices SET
-          owner_uid = ?, description = ?, implements = ?, platform = ?, version = ?,
+          owner_uid = ?, label = ?, description = ?, implements = ?, platform = ?, version = ?, lifecycle = ?,
           online = 1, last_seen_at = ?, connected_at = ?, disconnected_at = NULL
         WHERE device_id = ?`,
         ownerUid,
-        existing.owner_uid === ownerUid ? existing.description : "",
+        label,
+        description,
         JSON.stringify(impl),
         platform,
         version,
+        lifecycle,
         now,
         now,
         deviceId,
@@ -98,13 +133,16 @@ export class DeviceRegistry {
     } else {
       this.sql.exec(
         `INSERT INTO devices
-          (device_id, owner_uid, implements, platform, version, online, first_seen_at, last_seen_at, connected_at)
-        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+          (device_id, owner_uid, label, description, implements, platform, version, lifecycle, online, first_seen_at, last_seen_at, connected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
         deviceId,
         ownerUid,
+        label,
+        description,
         JSON.stringify(impl),
         platform,
         version,
+        lifecycle,
         now,
         now,
         now,
@@ -137,6 +175,17 @@ export class DeviceRegistry {
         deviceId,
       );
     }
+  }
+
+  remove(deviceId: string): boolean {
+    const existing = this.get(deviceId);
+    if (!existing) {
+      return false;
+    }
+
+    this.sql.exec(`DELETE FROM device_access WHERE device_id = ?`, deviceId);
+    this.sql.exec(`DELETE FROM devices WHERE device_id = ?`, deviceId);
+    return true;
   }
 
   get(deviceId: string): DeviceRecord | null {
@@ -190,13 +239,27 @@ export class DeviceRegistry {
   }
 
   setDescription(deviceId: string, description: string): boolean {
+    return this.setMetadata(deviceId, { description });
+  }
+
+  setMetadata(
+    deviceId: string,
+    patch: { label?: string; description?: string },
+  ): boolean {
     const existing = this.get(deviceId);
     if (!existing) {
       return false;
     }
+    const label = patch.label === undefined
+      ? existing.label
+      : normalizeDeviceLabel(patch.label, existing.device_id);
+    const description = patch.description === undefined
+      ? existing.description
+      : normalizeDeviceDescription(patch.description);
     this.sql.exec(
-      `UPDATE devices SET description = ?, last_seen_at = ? WHERE device_id = ?`,
-      normalizeDeviceDescription(description),
+      `UPDATE devices SET label = ?, description = ?, last_seen_at = ? WHERE device_id = ?`,
+      label,
+      description,
       Date.now(),
       deviceId,
     );
@@ -286,12 +349,23 @@ export class DeviceRegistry {
 function toDeviceRecord(row: RawDeviceRow): DeviceRecord {
   return {
     ...row,
+    label: normalizeDeviceLabel(row.label ?? "", row.device_id),
     description: row.description ?? "",
     implements: JSON.parse(row.implements),
+    lifecycle: normalizeDeviceLifecycle(row.lifecycle),
     online: row.online === 1,
   };
 }
 
+function normalizeDeviceLabel(value: string | undefined, fallback: string): string {
+  const trimmed = (value ?? "").trim();
+  return (trimmed || fallback).slice(0, 120);
+}
+
 function normalizeDeviceDescription(value: string): string {
   return value.trim().slice(0, 500);
+}
+
+function normalizeDeviceLifecycle(value: unknown): DeviceLifecycle {
+  return value === "ephemeral" ? "ephemeral" : "persistent";
 }

@@ -32,14 +32,28 @@ function createMockSql() {
 
     if (q.startsWith("INSERT INTO devices")) {
       const table = getTable("devices");
-      const [device_id, owner_uid, implements_, platform, version, , first_seen_at, last_seen_at, connected_at] =
-        bindings as [string, number, string, string, string, number, number, number, number];
+      const [
+        device_id,
+        owner_uid,
+        label,
+        description,
+        implements_,
+        platform,
+        version,
+        lifecycle,
+        first_seen_at,
+        last_seen_at,
+        connected_at,
+      ] = bindings as [string, number, string, string, string, string, string, string, number, number, number];
       table.push({
         device_id,
         owner_uid,
+        label,
+        description,
         implements: implements_,
         platform,
         version,
+        lifecycle,
         online: 1,
         first_seen_at,
         last_seen_at,
@@ -51,15 +65,17 @@ function createMockSql() {
 
     if (q.startsWith("UPDATE devices SET\n          owner_uid")) {
       const table = getTable("devices");
-      const [owner_uid, description, implements_, platform, version, last_seen_at, connected_at, device_id] =
-        bindings as [number, string, string, string, string, number, number, string];
+      const [owner_uid, label, description, implements_, platform, version, lifecycle, last_seen_at, connected_at, device_id] =
+        bindings as [number, string, string, string, string, string, string, number, number, string];
       const row = table.find((r) => r.device_id === device_id);
       if (row) {
         row.owner_uid = owner_uid;
+        row.label = label;
         row.description = description;
         row.implements = implements_;
         row.platform = platform;
         row.version = version;
+        row.lifecycle = lifecycle;
         row.online = 1;
         row.last_seen_at = last_seen_at;
         row.connected_at = connected_at;
@@ -81,11 +97,12 @@ function createMockSql() {
       return { toArray: () => [] as T[] };
     }
 
-    if (q.startsWith("UPDATE devices SET description")) {
+    if (q.startsWith("UPDATE devices SET label")) {
       const table = getTable("devices");
-      const [description, last_seen_at, device_id] = bindings as [string, number, string];
+      const [label, description, last_seen_at, device_id] = bindings as [string, string, number, string];
       const row = table.find((r) => r.device_id === device_id);
       if (row) {
+        row.label = label;
         row.description = description;
         row.last_seen_at = last_seen_at;
       }
@@ -186,10 +203,20 @@ function createMockSql() {
 
     if (q.startsWith("DELETE FROM device_access")) {
       const table = getTable("device_access");
-      const [deviceId, gid] = bindings as [string, number];
-      const idx = table.findIndex(
-        (r) => r.device_id === deviceId && r.gid === gid,
-      );
+      const [deviceId, gid] = bindings as [string, number | undefined];
+      for (let index = table.length - 1; index >= 0; index -= 1) {
+        const row = table[index];
+        if (row.device_id === deviceId && (gid === undefined || row.gid === gid)) {
+          table.splice(index, 1);
+        }
+      }
+      return { toArray: () => [] as T[] };
+    }
+
+    if (q.startsWith("DELETE FROM devices")) {
+      const table = getTable("devices");
+      const [deviceId] = bindings as [string];
+      const idx = table.findIndex((r) => r.device_id === deviceId);
       if (idx >= 0) table.splice(idx, 1);
       return { toArray: () => [] as T[] };
     }
@@ -217,6 +244,9 @@ describe("DeviceRegistry", () => {
     expect(device).not.toBeNull();
     expect(device!.device_id).toBe("macbook");
     expect(device!.owner_uid).toBe(1000);
+    expect(device!.label).toBe("macbook");
+    expect(device!.description).toBe("");
+    expect(device!.lifecycle).toBe("persistent");
     expect(device!.implements).toEqual(["fs.*", "proc.*"]);
     expect(device!.online).toBe(true);
   });
@@ -241,24 +271,53 @@ describe("DeviceRegistry", () => {
     expect(updated!.version).toBe("0.2.0");
     expect(updated!.implements).toEqual(["fs.*", "proc.*"]);
     expect(updated!.description).toBe("Linux home server");
+    expect(updated!.label).toBe("server");
+    expect(updated!.lifecycle).toBe("persistent");
   });
 
-  it("clears descriptions when a device id changes owner", () => {
+  it("resets owner-authored metadata when a device id changes owner", () => {
     registry.register("server", 1000, 1000, ["fs.*"], "linux", "0.1.0");
-    registry.setDescription("server", "Old owner note");
+    registry.setMetadata("server", { label: "Old Server", description: "Old owner note" });
 
     registry.register("server", 2000, 2000, ["fs.*"], "linux", "0.2.0");
     const updated = registry.get("server");
     expect(updated!.owner_uid).toBe(2000);
+    expect(updated!.label).toBe("server");
     expect(updated!.description).toBe("");
   });
 
-  it("stores owner-authored device descriptions", () => {
+  it("stores owner-authored device metadata", () => {
     registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
 
-    expect(registry.setDescription("macbook", "  Personal MacBook  ")).toBe(true);
+    expect(registry.setMetadata("macbook", {
+      label: "  Laptop  ",
+      description: "  Personal MacBook  ",
+    })).toBe(true);
+    expect(registry.get("macbook")!.label).toBe("Laptop");
     expect(registry.get("macbook")!.description).toBe("Personal MacBook");
     expect(registry.setDescription("missing", "nope")).toBe(false);
+  });
+
+  it("registers ephemeral browser-provided targets", () => {
+    const result = registry.register(
+      "browser:abc",
+      1000,
+      1000,
+      ["fs.read", "shell.exec"],
+      "browser-shell",
+      "0.1.0",
+      {
+        label: "Browser Shell",
+        description: "Active web shell",
+        lifecycle: "ephemeral",
+      },
+    );
+    expect(result.ok).toBe(true);
+
+    const device = registry.get("browser:abc");
+    expect(device?.label).toBe("Browser Shell");
+    expect(device?.description).toBe("Active web shell");
+    expect(device?.lifecycle).toBe("ephemeral");
   });
 
   it("marks a device disconnected", () => {
@@ -268,6 +327,16 @@ describe("DeviceRegistry", () => {
     const device = registry.get("macbook");
     expect(device!.online).toBe(false);
     expect(device!.disconnected_at).not.toBeNull();
+  });
+
+  it("removes device records and access entries", () => {
+    registry.register("browser:abc", 1000, 1000, ["fs.read"], "browser-shell", "0.1.0");
+    registry.grantAccess("browser:abc", 100);
+
+    expect(registry.remove("browser:abc")).toBe(true);
+    expect(registry.get("browser:abc")).toBeNull();
+    expect(registry.listAccess("browser:abc")).toEqual([]);
+    expect(registry.remove("browser:abc")).toBe(false);
   });
 
   it("listOnline returns only online devices", () => {

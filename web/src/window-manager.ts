@@ -96,6 +96,7 @@ export type WindowSummary = {
 
 export type WindowManager = {
   openApp: (app: AppManifest, route?: string, options?: { pendingAppOpenRequest?: OpenAppRequest | null; forceRestart?: boolean; forceNew?: boolean }) => string;
+  openAppById: (appId: string, route?: string, options?: { forceRestart?: boolean; forceNew?: boolean }) => string | null;
   focusWindow: (windowId: string) => void;
   restoreWindow: (windowId: string) => void;
   minimizeWindow: (windowId: string) => void;
@@ -105,6 +106,8 @@ export type WindowManager = {
   setWindowTitle: (windowId: string, title: string | null) => void;
   setWindowBadge: (windowId: string, badge: string | null) => void;
   setWindowDirty: (windowId: string, dirty: boolean) => void;
+  listApps: () => AppManifest[];
+  listWindows: () => WindowSummary[];
   subscribe: (listener: (summaries: WindowSummary[]) => void) => () => void;
   destroy: () => void;
 };
@@ -1205,6 +1208,18 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     return record.windowId;
   };
 
+  const openAppById = (
+    appId: string,
+    route?: string,
+    options?: { forceRestart?: boolean; forceNew?: boolean },
+  ): string | null => {
+    const app = appById.get(appId);
+    if (!app) {
+      return null;
+    }
+    return openApp(app, route, options);
+  };
+
   const onPointerMove = (event: PointerEvent): void => {
     if (resizeState) {
       if (resizeState.pointerId !== event.pointerId) {
@@ -1408,6 +1423,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
 
   return {
     openApp,
+    openAppById,
     focusWindow,
     restoreWindow,
     minimizeWindow,
@@ -1417,6 +1433,8 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     setWindowTitle,
     setWindowBadge,
     setWindowDirty,
+    listApps: () => [...appById.values()],
+    listWindows: buildSummaries,
     subscribe: (listener) => {
       listeners.add(listener);
       listener(buildSummaries());

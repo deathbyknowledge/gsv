@@ -261,13 +261,17 @@ export type SysDeviceListArgs = {
   includeOffline?: boolean;
 };
 
+export type SysDeviceLifecycle = "persistent" | "ephemeral";
+
 export type SysDeviceSummary = {
   deviceId: string;
   ownerUid: number;
   ownerUsername: string | null;
+  label: string;
   description: string;
   platform: string;
   version: string;
+  lifecycle: SysDeviceLifecycle;
   online: boolean;
   lastSeenAt: number;
 };
@@ -293,11 +297,25 @@ export type SysDeviceGetResult = {
 
 export type SysDeviceUpdateArgs = {
   deviceId: string;
-  description: string;
+  label?: string;
+  description?: string;
 };
 
 export type SysDeviceUpdateResult = {
   device: SysDeviceDetail | null;
+};
+
+export type SysTargetRegisterArgs = {
+  label?: string;
+  description?: string;
+  platform?: string;
+  version?: string;
+  implements: string[];
+};
+
+export type SysTargetRegisterResult = {
+  targetId: string;
+  device: SysDeviceDetail;
 };
 
 export type SysWorkspaceKind = "thread" | "app" | "shared";

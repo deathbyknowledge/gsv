@@ -14,7 +14,7 @@ type GatewayErrorShape = {
   details?: unknown;
 };
 
-type GatewayRequestFrame = {
+export type GatewayRequestFrame = {
   type: "req";
   id: string;
   call: string;
@@ -123,6 +123,7 @@ export type GatewayClientLike = {
   isConnected: () => boolean;
   onSignal: (listener: (signal: string, payload: unknown) => void) => () => void;
   onStatus: (listener: (status: GatewayClientStatus) => void) => () => void;
+  onRequest: (call: string, handler: GatewayRequestHandler) => () => void;
   call: <T = unknown>(call: string, args?: unknown) => Promise<T>;
   spawnProcess: (args: ProcSpawnArgs) => Promise<ProcSpawnResult>;
   sendMessage: (message: string, pid?: string, media?: ProcMediaInput[]) => Promise<ProcSendResult>;
@@ -131,6 +132,8 @@ export type GatewayClientLike = {
   setupSystem: (url: string, args: SysSetupArgs) => Promise<SysSetupResult>;
   bootstrapSystem: (args?: SysBootstrapArgs) => Promise<SysBootstrapResult>;
 };
+
+export type GatewayRequestHandler = (frame: GatewayRequestFrame) => Promise<unknown> | unknown;
 
 type PendingRequest = {
   resolve: (value: unknown) => void;
@@ -173,6 +176,7 @@ export class GatewayClient implements GatewayClientLike {
   private pending = new Map<string, PendingRequest>();
   private signalListeners = new Set<(signal: string, payload: unknown) => void>();
   private statusListeners = new Set<(status: GatewayClientStatus) => void>();
+  private requestHandlers = new Map<string, Set<GatewayRequestHandler>>();
   private status: GatewayClientStatus = {
     state: "disconnected",
     url: null,
@@ -201,6 +205,22 @@ export class GatewayClient implements GatewayClientLike {
     listener(this.status);
     return () => {
       this.statusListeners.delete(listener);
+    };
+  }
+
+  onRequest(call: string, handler: GatewayRequestHandler): () => void {
+    const key = call.trim();
+    if (!key) {
+      throw new Error("Request handler call is required");
+    }
+    const handlers = this.requestHandlers.get(key) ?? new Set<GatewayRequestHandler>();
+    handlers.add(handler);
+    this.requestHandlers.set(key, handlers);
+    return () => {
+      handlers.delete(handler);
+      if (handlers.size === 0) {
+        this.requestHandlers.delete(key);
+      }
     };
   }
 
@@ -620,6 +640,11 @@ export class GatewayClient implements GatewayClientLike {
       return;
     }
 
+    if (parsed.type === "req") {
+      void this.handleIncomingRequest(parsed);
+      return;
+    }
+
     if (parsed.type !== "res") {
       return;
     }
@@ -642,6 +667,53 @@ export class GatewayClient implements GatewayClientLike {
     (error as Error & { code?: number; details?: unknown }).code = parsed.error?.code;
     (error as Error & { code?: number; details?: unknown }).details = parsed.error?.details;
     pending.reject(error);
+  }
+
+  private async handleIncomingRequest(frame: GatewayRequestFrame): Promise<void> {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const handlers = this.requestHandlers.get(frame.call);
+    const handler = handlers?.values().next().value;
+    if (!handler) {
+      this.sendResponse(socket, {
+        type: "res",
+        id: frame.id,
+        ok: false,
+        error: { code: 404, message: `No browser handler for ${frame.call}` },
+      });
+      return;
+    }
+
+    try {
+      const data = await handler(frame);
+      this.sendResponse(socket, {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data,
+      });
+    } catch (error) {
+      this.sendResponse(socket, {
+        type: "res",
+        id: frame.id,
+        ok: false,
+        error: {
+          code: 500,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private sendResponse(socket: WebSocket, frame: GatewayResponseFrame): void {
+    try {
+      socket.send(JSON.stringify(frame));
+    } catch {
+      // The route will timeout on the gateway if the browser cannot respond.
+    }
   }
 
   private rejectAllPending(error: Error): void {

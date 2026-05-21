@@ -104,8 +104,10 @@ export async function handleAiTools(
     onlineDevices.push({
       id: device.device_id,
       implements: device.implements,
+      label: device.label,
       ...(device.description ? { description: device.description } : {}),
       platform: device.platform || undefined,
+      lifecycle: device.lifecycle,
     });
   }
 

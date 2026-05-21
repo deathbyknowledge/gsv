@@ -67,14 +67,28 @@ function createMockSql() {
 
     if (q.startsWith("INSERT INTO devices")) {
       const table = getTable("devices");
-      const [device_id, owner_uid, implements_, platform, version, , first_seen_at, last_seen_at, connected_at] =
-        bindings as [string, number, string, string, string, number, number, number, number];
+      const [
+        device_id,
+        owner_uid,
+        label,
+        description,
+        implements_,
+        platform,
+        version,
+        lifecycle,
+        first_seen_at,
+        last_seen_at,
+        connected_at,
+      ] = bindings as [string, number, string, string, string, string, string, string, number, number, number];
       table.push({
         device_id,
         owner_uid,
+        label,
+        description,
         implements: implements_,
         platform,
         version,
+        lifecycle,
         online: 1,
         first_seen_at,
         last_seen_at,

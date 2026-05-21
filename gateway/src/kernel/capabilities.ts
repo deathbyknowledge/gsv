@@ -54,6 +54,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.device.get",
     "sys.device.list",
     "sys.device.update",
+    "sys.target.register",
     "sys.workspace.list",
     "sys.oauth.forget",
     "sys.oauth.list",
