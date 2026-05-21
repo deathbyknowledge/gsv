@@ -1230,16 +1230,31 @@ export class Kernel extends Host<Env> {
       routingTable: this.routes,
       shellSessions: this.shellSessions,
       connections: this.connections,
-      scheduleExpiry: async (id: string, ttlMs: number) => {
-        const sched = await this.schedule(
-          ttlMs / 1000,
-          "onRouteExpired",
-          id,
-        );
-        return sched.id;
+      scheduleExpiry: (id: string, ttlMs: number) => {
+        this.scheduleRouteExpiry(id, ttlMs);
       },
       requestDevice: this.requestDevice.bind(this),
     };
+  }
+
+  private scheduleRouteExpiry(routeId: string, ttlMs: number): void {
+    this.schedule(
+      ttlMs / 1000,
+      "onRouteExpired",
+      routeId,
+    )
+      .then((sched) => {
+        const attached = this.routes.setScheduleId(routeId, sched.id);
+        if (!attached) {
+          this.cancelSchedule(sched.id).catch(() => {});
+        }
+      })
+      .catch((error) => {
+        console.warn(
+          `[Kernel] Failed to schedule route expiry for ${routeId}:`,
+          error,
+        );
+      });
   }
 
   private async requestDevice(
@@ -1263,27 +1278,28 @@ export class Kernel extends Host<Env> {
 
     const id = crypto.randomUUID();
     const pending = this.createPendingAppResponse(id);
-    const sched = await this.schedule(
-      ttlMs / 1000,
-      "onRouteExpired",
-      id,
-    );
 
     this.routes.register(
       id,
       call as SyscallName,
       { type: "app", id },
       deviceId,
-      { ttlMs, scheduleId: sched.id },
+      { ttlMs },
     );
 
     try {
-      deviceConn.send(JSON.stringify({
-        type: "req",
-        id,
-        call,
-        args,
-      }));
+      try {
+        deviceConn.send(JSON.stringify({
+          type: "req",
+          id,
+          call,
+          args,
+        }));
+      } catch (error) {
+        this.routes.expire(id);
+        throw error;
+      }
+      this.scheduleRouteExpiry(id, ttlMs);
       const frame = await pending.promise;
       if (!frame.ok) {
         throw new Error(frame.error.message);
@@ -1891,7 +1907,9 @@ export class Kernel extends Host<Env> {
 
   private handleRes(_connection: Connection, frame: ResponseFrame): void {
     const consumed = this.routes.consume(frame.id);
-    if (!consumed) return;
+    if (!consumed) {
+      return;
+    }
 
     if (consumed.scheduleId) {
       this.cancelSchedule(consumed.scheduleId).catch(() => {});

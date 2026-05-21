@@ -25,7 +25,7 @@ function makeContext(): KernelContext {
 describe("dispatch", () => {
   it("routes target syscalls to user-provided browser targets", async () => {
     const send = vi.fn();
-    const scheduleExpiry = vi.fn(async () => "route_timer_1");
+    const scheduleExpiry = vi.fn();
     const routingTable = { register: vi.fn() };
     const deps = {
       routingTable,
@@ -76,7 +76,7 @@ describe("dispatch", () => {
       "fs.read",
       { type: "process", id: "proc_1" },
       "browser:conn_1",
-      { ttlMs: 60_000, scheduleId: "route_timer_1" },
+      { ttlMs: 60_000 },
     );
     expect(send).toHaveBeenCalledWith(JSON.stringify({
       type: "req",
@@ -84,6 +84,7 @@ describe("dispatch", () => {
       call: "fs.read",
       args: { path: "/desktop/windows.json" },
     }));
+    expect(send.mock.invocationCallOrder[0]).toBeLessThan(scheduleExpiry.mock.invocationCallOrder[0]);
   });
 
   it("returns cached failed shell sessions instead of rerouting to the device", async () => {

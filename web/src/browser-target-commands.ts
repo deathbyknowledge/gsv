@@ -14,7 +14,6 @@ export function buildBrowserCommands(
   defineBrowserCommand: JustBashModule["defineCommand"],
   copyCommand?: BrowserCopyCommandRunner,
   openCommand?: BrowserOpenCommandRunner,
-  viewCommand?: BrowserOpenCommandRunner,
 ): CustomCommand[] {
   const commands: CustomCommand[] = [
     defineBrowserCommand("windows", async (args) => {
@@ -61,12 +60,6 @@ export function buildBrowserCommands(
   if (openCommand) {
     commands.push(defineBrowserCommand("open", async (args, ctx) => {
       return openCommand(args, ctx.cwd, ctx.stdin);
-    }));
-  }
-
-  if (viewCommand) {
-    commands.push(defineBrowserCommand("view", async (args, ctx) => {
-      return viewCommand(args, ctx.cwd, ctx.stdin);
     }));
   }
 

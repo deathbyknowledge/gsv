@@ -1,7 +1,9 @@
 import type {
   BashExecResult,
+  IFileSystem,
 } from "just-bash/browser";
-import { buildBrowserCommands, toAppSummary } from "./browser-target-commands";
+import { buildBrowserCommands } from "./browser-target-commands";
+import { BrowserRuntimeFileSystem } from "./browser-runtime-fs";
 import { BrowserTargetFileSystem } from "./browser-target-fs";
 import type { GatewayClientLike, GatewayRequestFrame } from "./gateway-client";
 import type { PreviewDirectoryEntry, PreviewWindowContent } from "./preview-window";
@@ -116,10 +118,11 @@ const MAX_TRANSFER_READ_BYTES = 1024 * 1024;
 const MAX_PREVIEW_BYTES = 64 * 1024 * 1024;
 
 export class BrowserTargetShell {
-  private fs: BrowserTargetFileSystem | null = null;
+  private fs: IFileSystem | null = null;
   private bash: BrowserBash | null = null;
   private ready: Promise<void> | null = null;
   private targetId: string | null = null;
+  private storageInfo: { backend: "indexeddb" | "memory" } = { backend: "memory" };
 
   constructor(
     private readonly windowManager: WindowManager,
@@ -131,9 +134,18 @@ export class BrowserTargetShell {
     this.targetId = targetId;
   }
 
+  dispose(): void {
+    // Reserved for future browser-target resources.
+  }
+
+  warmup(): void {
+    void this.ensureReady().catch((error) => {
+      console.warn("Browser shell warmup failed", error);
+    });
+  }
+
   async read(frame: GatewayRequestFrame): Promise<unknown> {
     await this.ensureReady();
-    await this.refreshDynamicFiles();
 
     const fs = this.getFs();
     const args = (frame.args ?? {}) as FsReadArgs;
@@ -262,7 +274,6 @@ export class BrowserTargetShell {
         return { ok: false, error: `File not found: ${path.path}` };
       }
       await fs.rm(path.path, { force: true, recursive: true });
-      await this.refreshDynamicFiles();
       return { ok: true, path: path.path };
     } catch (error) {
       return failedFs(error);
@@ -271,7 +282,6 @@ export class BrowserTargetShell {
 
   async search(frame: GatewayRequestFrame): Promise<unknown> {
     await this.ensureReady();
-    await this.refreshDynamicFiles();
 
     const args = (frame.args ?? {}) as FsSearchArgs;
     const query = typeof args.query === "string" ? args.query.trim() : "";
@@ -344,7 +354,6 @@ export class BrowserTargetShell {
 
   async transferStat(frame: GatewayRequestFrame): Promise<unknown> {
     await this.ensureReady();
-    await this.refreshDynamicFiles();
 
     const args = (frame.args ?? {}) as TransferStatArgs;
     const path = parsePathArg(args.path, "fs.transfer.stat");
@@ -369,7 +378,6 @@ export class BrowserTargetShell {
 
   async transferRead(frame: GatewayRequestFrame): Promise<unknown> {
     await this.ensureReady();
-    await this.refreshDynamicFiles();
 
     const args = (frame.args ?? {}) as TransferReadArgs;
     const path = parsePathArg(args.path, "fs.transfer.read");
@@ -441,16 +449,16 @@ export class BrowserTargetShell {
   }
 
   async exec(frame: GatewayRequestFrame): Promise<unknown> {
+    const args = (frame.args ?? {}) as ShellExecArgs;
+    const input = typeof args.input === "string" ? args.input : "";
+
     await this.ensureReady();
-    await this.refreshDynamicFiles();
 
     const bash = this.getBash();
-    const args = (frame.args ?? {}) as ShellExecArgs;
     if (typeof args.sessionId === "string" && args.sessionId.trim()) {
       return failedShell("Browser shell sessions are not supported yet");
     }
 
-    const input = typeof args.input === "string" ? args.input : "";
     if (input.trim().length === 0) {
       return failedShell("input must not be empty");
     }
@@ -466,11 +474,12 @@ export class BrowserTargetShell {
 
     try {
       await this.ensureDirectory(cwd);
+
       const result = await bash.exec(input, {
         cwd,
         signal: controller.signal,
       });
-      await this.refreshDynamicFiles();
+
       return shellResult(result);
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
@@ -491,7 +500,11 @@ export class BrowserTargetShell {
 
   private async initialize(): Promise<void> {
     const justBash = await import("just-bash/browser");
-    const fs = await BrowserTargetFileSystem.create();
+    const persistentFs = await BrowserTargetFileSystem.create();
+    this.storageInfo = persistentFs.info;
+    await cleanupLegacyRuntimePaths(persistentFs);
+    const fs = new justBash.MountableFs({ base: persistentFs });
+    fs.mount("/run/gsv", new BrowserRuntimeFileSystem(this.windowManager));
     this.fs = fs;
     await this.ensureBaseFiles();
     this.bash = new justBash.Bash({
@@ -519,7 +532,6 @@ export class BrowserTargetShell {
         justBash.defineCommand,
         (args, cwd) => this.runCopyCommand(args, cwd),
         (args, cwd, stdin) => this.runOpenCommand(args, cwd, stdin),
-        (args, cwd, stdin) => this.runViewCommand(args, cwd, stdin),
       ),
       executionLimits: {
         maxCommandCount: 10_000,
@@ -527,71 +539,33 @@ export class BrowserTargetShell {
         maxCallDepth: 50,
       },
     });
-    await this.ensureDirectory("/apps");
     await this.ensureDirectory("/home/browser");
     await this.ensureDirectory("/tmp");
-    await this.ensureDirectory("/windows");
-    await this.refreshDynamicFiles();
   }
 
   private async ensureBaseFiles(): Promise<void> {
-    const fs = this.getFs();
     await this.ensureDirectory("/home/browser");
     await this.ensureDirectory("/tmp");
-    await this.ensureDirectory("/desktop");
-    await this.ensureDirectory("/apps");
-    await this.ensureDirectory("/windows");
     await this.writeText("/README.txt", [
       "GSV browser target",
       "",
       "This target is the active GSV web shell desktop.",
-      `Local filesystem backend: ${fs.info.backend}`,
+      `Local filesystem backend: ${this.storageInfo.backend}`,
       "",
       "Writable paths:",
       "- /home/browser",
       "- /tmp",
       "",
-      "Live synthetic paths:",
-      "- /desktop/windows.json",
-      "- /desktop/active-window",
-      "- /apps.json",
-      "- /apps/<appId>/manifest.json",
-      "- /windows/<windowId>/meta.json",
+      "Generated read-only runtime mount:",
+      "- /run/gsv/desktop/windows.json",
+      "- /run/gsv/desktop/active-window",
+      "- /run/gsv/apps.json",
+      "- /run/gsv/apps/<appId>/manifest.json",
+      "- /run/gsv/windows/<windowId>/meta.json",
       "",
-      "Shell commands: windows, window, apps, app, open, view, cp, dom, js, plus standard just-bash commands.",
+      "Shell commands: windows, window, apps, app, open, cp, dom, js, plus standard just-bash commands.",
       "",
     ].join("\n"));
-  }
-
-  private async refreshDynamicFiles(): Promise<void> {
-    await this.ensureDirectory("/desktop");
-    await this.ensureDirectory("/apps");
-    await this.ensureDirectory("/windows");
-    const windows = this.windowManager.listWindows();
-    const apps = this.windowManager.listApps();
-    await this.writeText("/desktop/windows.json", JSON.stringify({
-      windows,
-      updatedAt: new Date().toISOString(),
-    }, null, 2));
-
-    const active = windows.find((window) => window.active) ?? null;
-    await this.writeText("/desktop/active-window", active ? JSON.stringify(active, null, 2) : "");
-    await this.writeText("/desktop/active-window.json", active ? JSON.stringify(active, null, 2) : "null\n");
-
-    await this.writeText("/apps.json", JSON.stringify({
-      apps: apps.map(toAppSummary),
-      updatedAt: new Date().toISOString(),
-    }, null, 2));
-    await this.syncChildJsonFiles("/apps", apps.map((app) => ({
-      name: app.id,
-      file: "manifest.json",
-      content: toAppSummary(app),
-    })));
-    await this.syncChildJsonFiles("/windows", windows.map((window) => ({
-      name: window.windowId,
-      file: "meta.json",
-      content: window,
-    })));
   }
 
   private async readDirectory(path: string): Promise<{ files: string[]; directories: string[] }> {
@@ -624,7 +598,7 @@ export class BrowserTargetShell {
 
   private async ensureDirectory(path: string): Promise<void> {
     const fs = this.getFs();
-    let stat: Awaited<ReturnType<BrowserTargetFileSystem["stat"]>> | null = null;
+    let stat: Awaited<ReturnType<IFileSystem["stat"]>> | null = null;
     try {
       stat = await fs.stat(path);
     } catch {
@@ -681,17 +655,19 @@ export class BrowserTargetShell {
     await fs.writeFile(path, next);
   }
 
-  private async runOpenCommand(args: string[], cwd: string, _stdin: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  private async runOpenCommand(args: string[], cwd: string, stdin: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     if (args.includes("--help")) {
       return {
         stdout: [
-          "open [--as TYPE] [--title TITLE] PATH",
+          "open [--as TYPE] [--title TITLE] [PATH]",
           "",
           "Open a file in a GSV desktop preview window.",
           "PATH may be local, gsv:/path, target:/path, or [target-with-colons]:/path.",
+          "PATH may be omitted when stdin is provided.",
           "",
           "Examples:",
           "  open /tmp/report.pdf",
+          "  echo '<h1>Hello</h1>' | open --as html --title Test",
           "  open rearden:/home/hank/image.png",
           "  open [browser:abc123]:/tmp/page.html",
           "",
@@ -701,13 +677,22 @@ export class BrowserTargetShell {
       };
     }
 
-    const parsed = parseOpenCommandArgs(args, { allowMissingPath: false });
+    const parsed = parseOpenCommandArgs(args, { allowMissingPath: true });
     if (!parsed.ok) {
       return { stdout: "", stderr: `open: ${parsed.error}\n`, exitCode: 1 };
     }
 
     try {
-      const endpoint = this.parseShellEndpoint(parsed.path, cwd);
+      let path = parsed.path;
+      if (!path) {
+        if (!stdin) {
+          return { stdout: "", stderr: "open: missing file operand\n", exitCode: 1 };
+        }
+        path = `/tmp/open-${Date.now()}${extensionForTypeHint(parsed.type)}`;
+        await this.writeText(path, stdin);
+      }
+
+      const endpoint = this.parseShellEndpoint(path, cwd);
       const windowId = await this.openPreview(endpoint, {
         type: parsed.type,
         title: parsed.title,
@@ -721,61 +706,6 @@ export class BrowserTargetShell {
       return {
         stdout: "",
         stderr: `open: ${error instanceof Error ? error.message : String(error)}\n`,
-        exitCode: 1,
-      };
-    }
-  }
-
-  private async runViewCommand(args: string[], cwd: string, stdin: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    if (args.includes("--help")) {
-      return {
-        stdout: [
-          "view PATH",
-          "view html [--title TITLE] [PATH]",
-          "",
-          "view PATH is an alias for open PATH.",
-          "view html opens an HTML file or stdin as a generated preview.",
-          "",
-        ].join("\n"),
-        stderr: "",
-        exitCode: 0,
-      };
-    }
-
-    const mode = args[0] ?? "";
-    if (mode !== "html") {
-      return this.runOpenCommand(args, cwd, stdin);
-    }
-
-    const parsed = parseOpenCommandArgs(args.slice(1), { allowMissingPath: true });
-    if (!parsed.ok) {
-      return { stdout: "", stderr: `view: ${parsed.error}\n`, exitCode: 1 };
-    }
-
-    let path = parsed.path;
-    try {
-      if (!path) {
-        if (!stdin.trim()) {
-          return { stdout: "", stderr: "view: html requires PATH or stdin\n", exitCode: 1 };
-        }
-        path = `/tmp/view-${Date.now()}.html`;
-        await this.writeText(path, stdin);
-      }
-
-      const endpoint = this.parseShellEndpoint(path, cwd);
-      const windowId = await this.openPreview(endpoint, {
-        type: "html",
-        title: parsed.title || "HTML preview",
-      });
-      return {
-        stdout: `opened ${formatEndpointLabel(endpoint.target, endpoint.path)} as ${windowId}\n`,
-        stderr: "",
-        exitCode: 0,
-      };
-    } catch (error) {
-      return {
-        stdout: "",
-        stderr: `view: ${error instanceof Error ? error.message : String(error)}\n`,
         exitCode: 1,
       };
     }
@@ -1063,27 +993,7 @@ export class BrowserTargetShell {
     return out.sort();
   }
 
-  private async syncChildJsonFiles(
-    root: string,
-    entries: Array<{ name: string; file: string; content: unknown }>,
-  ): Promise<void> {
-    const fs = this.getFs();
-    const expected = new Set(entries.map((entry) => entry.name));
-    for (const name of await fs.readdir(root)) {
-      const child = root === "/" ? `/${name}` : `${root}/${name}`;
-      const stat = await fs.stat(child);
-      if (stat.isDirectory && !expected.has(name)) {
-        await fs.rm(child, { recursive: true, force: true });
-      }
-    }
-    for (const entry of entries) {
-      const dir = `${root}/${entry.name}`;
-      await this.ensureDirectory(dir);
-      await this.writeText(`${dir}/${entry.file}`, `${JSON.stringify(entry.content, null, 2)}\n`);
-    }
-  }
-
-  private getFs(): BrowserTargetFileSystem {
+  private getFs(): IFileSystem {
     if (!this.fs) {
       throw new Error("Browser shell filesystem is not ready");
     }
@@ -1109,6 +1019,12 @@ function formatEndpointLabel(target: string, path: string): string {
   return target.includes(":") ? `[${target}]:${path}` : `${target}:${path}`;
 }
 
+async function cleanupLegacyRuntimePaths(fs: IFileSystem): Promise<void> {
+  for (const path of ["/apps", "/apps.json", "/desktop", "/windows"]) {
+    await fs.rm(path, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 function normalizePreviewTitle(title: string | undefined, path: string, sourceLabel: string): string {
   const normalized = title?.trim();
   if (normalized) {
@@ -1129,6 +1045,20 @@ function normalizePreviewContentType(typeHint: string | undefined, detected: str
     return hint;
   }
   return detected;
+}
+
+function extensionForTypeHint(typeHint: string | undefined): string {
+  const hint = typeHint?.trim().toLowerCase() ?? "";
+  if (hint === "html" || hint === "text/html") {
+    return ".html";
+  }
+  if (hint === "json" || hint === "application/json") {
+    return ".json";
+  }
+  if (hint === "markdown" || hint === "md" || hint === "text/markdown") {
+    return ".md";
+  }
+  return ".txt";
 }
 
 function previewFromBytes(input: {

@@ -50,6 +50,7 @@ export function createBrowserTargetProvider({
     }
     registeredConnectionId = status.connectionId;
     shell.setTargetId(`browser:${status.connectionId}`);
+    shell.warmup();
     void registerBrowserTarget(gatewayClient).catch((error) => {
       registeredConnectionId = null;
       console.warn("Failed to register browser target", error);
@@ -68,6 +69,7 @@ export function createBrowserTargetProvider({
     unregisterTransferWrite();
     unregisterShell();
     unregisterStatus();
+    shell.dispose();
   };
 }
 

@@ -118,7 +118,7 @@ export type DispatchDeps = {
   routingTable: RoutingTable;
   shellSessions: ShellSessionStore;
   connections: Map<string, Connection>;
-  scheduleExpiry: (id: string, ttlMs: number) => Promise<string>;
+  scheduleExpiry: (id: string, ttlMs: number) => void;
   requestDevice: (deviceId: string, call: string, args: unknown, ttlMs?: number) => Promise<unknown>;
 };
 
@@ -554,22 +554,27 @@ async function routeToDevice(
     };
   }
 
-  const scheduleId = await deps.scheduleExpiry(frame.id, DEFAULT_DEVICE_TTL_MS);
-
   deps.routingTable.register(
     frame.id,
     frame.call,
     origin,
     deviceId,
-    { ttlMs: DEFAULT_DEVICE_TTL_MS, scheduleId },
+    { ttlMs: DEFAULT_DEVICE_TTL_MS },
   );
 
-  deviceConn.send(JSON.stringify({
-    type: "req",
-    id: frame.id,
-    call: frame.call,
-    args: frame.args,
-  }));
+  try {
+    deviceConn.send(JSON.stringify({
+      type: "req",
+      id: frame.id,
+      call: frame.call,
+      args: frame.args,
+    }));
+  } catch (error) {
+    deps.routingTable.expire(frame.id);
+    throw error;
+  }
+
+  deps.scheduleExpiry(frame.id, DEFAULT_DEVICE_TTL_MS);
 
   return { handled: false };
 }

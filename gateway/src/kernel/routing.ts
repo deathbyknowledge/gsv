@@ -94,6 +94,15 @@ export class RoutingTable {
     };
   }
 
+  setScheduleId(id: string, scheduleId: string): boolean {
+    const existing = this.get(id);
+    if (!existing) {
+      return false;
+    }
+    this.sql.exec("UPDATE routing_table SET schedule_id = ? WHERE id = ?", scheduleId, id);
+    return true;
+  }
+
   get(id: string): RouteEntry | null {
     const rows = [...this.sql.exec<{
       id: string;
