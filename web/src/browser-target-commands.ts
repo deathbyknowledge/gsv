@@ -5,6 +5,7 @@ import type { AppManifest } from "./apps";
 import type { WindowManager, WindowSummary } from "./window-manager";
 
 type JustBashModule = typeof import("just-bash/browser");
+type CommandResult = { stdout: string; stderr: string; exitCode: number };
 
 export function buildBrowserCommands(
   windowManager: WindowManager,
@@ -44,6 +45,12 @@ export function buildBrowserCommands(
       }
       return commandOk(`opened ${appId} as ${windowId}\n`);
     }),
+    defineBrowserCommand("dom", async (args) => {
+      return handleDomCommand(args, windowManager);
+    }),
+    defineBrowserCommand("js", async (args) => {
+      return handleJsCommand(args, windowManager);
+    }),
   ];
 }
 
@@ -59,7 +66,7 @@ export function toAppSummary(app: AppManifest): Record<string, unknown> {
   };
 }
 
-function handleWindowCommand(args: string[], windowManager: WindowManager): { stdout: string; stderr: string; exitCode: number } {
+function handleWindowCommand(args: string[], windowManager: WindowManager): CommandResult {
   const subcommand = args[0] ?? "";
   const windowId = args[1] ?? "";
   if (!subcommand || !windowId) {
@@ -90,6 +97,95 @@ function handleWindowCommand(args: string[], windowManager: WindowManager): { st
       return commandOk(`closed ${windowId}\n`);
     default:
       return commandError(`Unknown window command: ${subcommand}`);
+  }
+}
+
+function handleDomCommand(args: string[], windowManager: WindowManager): CommandResult {
+  const subcommand = args[0] ?? "";
+  const windowId = args[1] ?? "";
+  if (!subcommand || !windowId) {
+    return commandError("Usage: dom <snapshot|query|click> <windowId> [selector] [index]");
+  }
+
+  try {
+    switch (subcommand) {
+      case "snapshot": {
+        const selector = args.slice(2).join(" ").trim();
+        const snapshot = windowManager.snapshotWindowDom(windowId, selector || null);
+        if (!snapshot) {
+          return commandError(`No DOM snapshot available for ${windowId}`);
+        }
+        return jsonOk(snapshot);
+      }
+      case "query": {
+        const selector = args.slice(2).join(" ").trim();
+        if (!selector) {
+          return commandError("Usage: dom query <windowId> <selector>");
+        }
+        const matches = windowManager.queryWindowDom(windowId, selector);
+        if (!matches) {
+          return commandError(`No DOM available for ${windowId}`);
+        }
+        return jsonOk({ matches, count: matches.length });
+      }
+      case "click": {
+        const selectorArgs = args.slice(2);
+        if (selectorArgs.length === 0) {
+          return commandError("Usage: dom click <windowId> <selector> [index]");
+        }
+        const maybeIndex = selectorArgs[selectorArgs.length - 1];
+        const parsedIndex = /^\d+$/.test(maybeIndex ?? "") ? Number.parseInt(maybeIndex ?? "", 10) : null;
+        const selector = (parsedIndex === null ? selectorArgs : selectorArgs.slice(0, -1)).join(" ").trim();
+        if (!selector) {
+          return commandError("Usage: dom click <windowId> <selector> [index]");
+        }
+        const match = windowManager.clickWindowDom(windowId, selector, parsedIndex ?? 0);
+        if (!match) {
+          return commandError(`No matching element in ${windowId}`);
+        }
+        return jsonOk({ clicked: match });
+      }
+      default:
+        return commandError(`Unknown dom command: ${subcommand}`);
+    }
+  } catch (error) {
+    return commandError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function handleJsCommand(args: string[], windowManager: WindowManager): Promise<CommandResult> {
+  const subcommand = args[0] ?? "";
+  if (subcommand !== "run") {
+    return commandError("Usage: js run [--window <windowId>] <windowId> <source>");
+  }
+
+  let cursor = 1;
+  let windowId = "";
+  const first = args[cursor] ?? "";
+  if (first === "--window") {
+    windowId = args[cursor + 1] ?? "";
+    cursor += 2;
+  } else if (first.startsWith("--window=")) {
+    windowId = first.slice("--window=".length);
+    cursor += 1;
+  } else {
+    windowId = first;
+    cursor += 1;
+  }
+
+  const source = args.slice(cursor).join(" ").trim();
+  if (!windowId || !source) {
+    return commandError("Usage: js run [--window <windowId>] <windowId> <source>");
+  }
+
+  try {
+    const result = await windowManager.runWindowJavaScript(windowId, source);
+    if (!result) {
+      return commandError(`No JavaScript context available for ${windowId}`);
+    }
+    return jsonOk(result);
+  } catch (error) {
+    return commandError(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -124,10 +220,14 @@ function formatApps(apps: AppManifest[]): string {
   ].join("\n") + "\n";
 }
 
-function commandOk(stdout: string): { stdout: string; stderr: string; exitCode: number } {
+function jsonOk(value: unknown): CommandResult {
+  return commandOk(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function commandOk(stdout: string): CommandResult {
   return { stdout, stderr: "", exitCode: 0 };
 }
 
-function commandError(message: string): { stdout: string; stderr: string; exitCode: number } {
+function commandError(message: string): CommandResult {
   return { stdout: "", stderr: `${message}\n`, exitCode: 1 };
 }

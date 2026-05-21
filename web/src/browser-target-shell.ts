@@ -327,7 +327,7 @@ export class BrowserTargetShell {
       "- /apps/<appId>/manifest.json",
       "- /windows/<windowId>/meta.json",
       "",
-      "Shell commands: windows, window, apps, app, plus standard just-bash commands.",
+      "Shell commands: windows, window, apps, app, dom, js, plus standard just-bash commands.",
       "",
     ].join("\n"));
   }
