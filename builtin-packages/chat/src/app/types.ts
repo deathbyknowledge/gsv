@@ -94,12 +94,57 @@ export type VoiceRecordingState = {
   error?: string;
 };
 
+export type InteractionOrigin =
+  | {
+      kind: "client";
+      connectionId: string;
+      clientId?: string;
+      platform?: string;
+    }
+  | {
+      kind: "app";
+      packageId: string;
+      packageName: string;
+      entrypointName: string;
+      routeBase: string;
+    }
+  | {
+      kind: "adapter";
+      adapter: string;
+      accountId: string;
+      surface: {
+        kind: "dm" | "group" | "channel" | "thread";
+        id: string;
+        name?: string;
+        handle?: string;
+        threadId?: string;
+      };
+      actorId: string;
+      actorLabel?: string;
+      messageId?: string;
+    }
+  | {
+      kind: "device";
+      deviceId: string;
+      cwd?: string;
+    }
+  | {
+      kind: "process";
+      sourcePid: string;
+      uid?: number;
+    }
+  | {
+      kind: "scheduler";
+      scheduleId: string;
+    };
+
 export type MessageRow = {
   kind: "message";
   role: "user" | "assistant" | "system";
   text: string;
   timestamp: number;
   messageId?: number | null;
+  origin?: InteractionOrigin;
   thinking?: string[];
   media?: unknown[];
   runId?: string | null;

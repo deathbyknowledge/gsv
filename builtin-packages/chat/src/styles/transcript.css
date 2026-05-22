@@ -118,6 +118,17 @@
   text-transform: none;
 }
 
+.message-origin-label {
+  min-width: 0;
+  max-width: min(42vw, 360px);
+  overflow: hidden;
+  color: var(--muted);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
 .message-spacer {
   flex: 1;
 }

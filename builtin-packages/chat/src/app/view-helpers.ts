@@ -6,6 +6,7 @@ import type {
   ConversationRecord,
   ConversationSegment,
   HilRequest,
+  InteractionOrigin,
   LogRow,
   MessageRow,
   PendingAssistantState,
@@ -23,10 +24,11 @@ function flattenHistory(messages: unknown[]): LogRow[] {
     const record = asRecord(entry);
     const timestamp = normalizeTimestampMs(record?.timestamp) || Date.now();
     const messageId = asNumber(record?.id);
+    const origin = normalizeInteractionOrigin(record?.origin);
     if (record?.role === "assistant") {
       const parsed = extractAssistantHistory(record.content);
       if ((parsed.text && parsed.text.trim()) || parsed.thinking.length > 0) {
-        rows.push({ kind: "message", role: "assistant", text: parsed.text, thinking: parsed.thinking, timestamp, messageId });
+        rows.push({ kind: "message", role: "assistant", text: parsed.text, thinking: parsed.thinking, timestamp, messageId, origin });
       }
       for (const toolCall of parsed.toolCalls) {
         rows.push({
@@ -72,7 +74,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
           });
         }
       } else {
-        rows.push({ kind: "message", role: "system", text: formatMessageContent(record.content), timestamp, messageId });
+        rows.push({ kind: "message", role: "system", text: formatMessageContent(record.content), timestamp, messageId, origin });
       }
       continue;
     }
@@ -82,7 +84,7 @@ function flattenHistory(messages: unknown[]): LogRow[] {
     const text = contentRecord && "text" in contentRecord
       ? asString(contentRecord.text) ?? ""
       : formatMessageContent(record?.content);
-    rows.push({ kind: "message", role, text, media, timestamp, messageId });
+    rows.push({ kind: "message", role, text, media, timestamp, messageId, origin });
   }
   return rows.length > 0 ? rows : systemRows("No messages yet. Send your first prompt.");
 }
@@ -109,6 +111,7 @@ function applyProcessMessageSignal(
       text: formatMessageContent(content),
       timestamp: asNumber(record?.timestamp) || Date.now(),
       messageId: messageId ?? null,
+      origin: normalizeInteractionOrigin(record?.origin),
     });
   });
   setPendingAssistant("thinking");
@@ -212,6 +215,126 @@ function normalizeContextSignal(payload: unknown, active: ThreadContext): Contex
   const next = normalizeContextState(record?.context ?? record);
   if (!next || next.conversationId !== active.conversationId) return null;
   return next;
+}
+
+function normalizeInteractionOrigin(value: unknown): InteractionOrigin | undefined {
+  const record = asRecord(value);
+  const kind = asString(record?.kind);
+  if (kind === "client") {
+    const connectionId = requiredText(record?.connectionId);
+    if (!connectionId) return undefined;
+    const clientId = optionalText(record?.clientId);
+    const platform = optionalText(record?.platform);
+    return {
+      kind,
+      connectionId,
+      ...(clientId ? { clientId } : {}),
+      ...(platform ? { platform } : {}),
+    };
+  }
+  if (kind === "app") {
+    const packageId = requiredText(record?.packageId);
+    const packageName = requiredText(record?.packageName);
+    const entrypointName = requiredText(record?.entrypointName);
+    const routeBase = requiredText(record?.routeBase);
+    if (!packageId || !packageName || !entrypointName || !routeBase) return undefined;
+    return { kind, packageId, packageName, entrypointName, routeBase };
+  }
+  if (kind === "adapter") {
+    const adapter = requiredText(record?.adapter);
+    const accountId = requiredText(record?.accountId);
+    const actorId = requiredText(record?.actorId);
+    const surface = normalizeAdapterSurface(record?.surface);
+    if (!adapter || !accountId || !actorId || !surface) return undefined;
+    const actorLabel = optionalText(record?.actorLabel);
+    const messageId = optionalText(record?.messageId);
+    return {
+      kind,
+      adapter,
+      accountId,
+      surface,
+      actorId,
+      ...(actorLabel ? { actorLabel } : {}),
+      ...(messageId ? { messageId } : {}),
+    };
+  }
+  if (kind === "device") {
+    const deviceId = requiredText(record?.deviceId);
+    if (!deviceId) return undefined;
+    const cwd = optionalText(record?.cwd);
+    return { kind, deviceId, ...(cwd ? { cwd } : {}) };
+  }
+  if (kind === "process") {
+    const sourcePid = requiredText(record?.sourcePid);
+    if (!sourcePid) return undefined;
+    const uid = asNumber(record?.uid);
+    return { kind, sourcePid, ...(uid !== null ? { uid } : {}) };
+  }
+  if (kind === "scheduler") {
+    const scheduleId = requiredText(record?.scheduleId);
+    if (!scheduleId) return undefined;
+    return { kind, scheduleId };
+  }
+  return undefined;
+}
+
+function normalizeAdapterSurface(value: unknown): Extract<InteractionOrigin, { kind: "adapter" }>["surface"] | null {
+  const record = asRecord(value);
+  const kind = asString(record?.kind);
+  const id = requiredText(record?.id);
+  if (!id || (kind !== "dm" && kind !== "group" && kind !== "channel" && kind !== "thread")) {
+    return null;
+  }
+  const name = optionalText(record?.name);
+  const handle = optionalText(record?.handle);
+  const threadId = optionalText(record?.threadId);
+  return {
+    kind,
+    id,
+    ...(name ? { name } : {}),
+    ...(handle ? { handle } : {}),
+    ...(threadId ? { threadId } : {}),
+  };
+}
+
+function formatInteractionOriginLabel(origin: InteractionOrigin | undefined): string | null {
+  if (!origin) return null;
+  if (origin.kind === "app") {
+    if (origin.packageId === "chat" || origin.routeBase === "/apps/chat") {
+      return null;
+    }
+    return `via ${origin.packageName}`;
+  }
+  if (origin.kind === "adapter") {
+    const adapter = titleCase(origin.adapter);
+    const surface = formatAdapterSurfaceLabel(origin.surface);
+    const actor = origin.actorLabel || origin.actorId;
+    return [`via ${adapter}`, surface, actor ? `from ${actor}` : ""].filter(Boolean).join(" ");
+  }
+  if (origin.kind === "client") {
+    return `via ${origin.platform || "client"}${origin.clientId ? ` ${origin.clientId}` : ""}`;
+  }
+  if (origin.kind === "device") {
+    return `via ${origin.deviceId}`;
+  }
+  if (origin.kind === "process") {
+    return `from ${origin.sourcePid}`;
+  }
+  if (origin.kind === "scheduler") {
+    return `from schedule ${origin.scheduleId}`;
+  }
+  return null;
+}
+
+function formatAdapterSurfaceLabel(surface: Extract<InteractionOrigin, { kind: "adapter" }>["surface"]): string {
+  const label = surface.name || surface.handle || "";
+  if (surface.kind === "dm") {
+    return "DM";
+  }
+  if (surface.kind === "thread") {
+    return [label || "thread", surface.threadId ? `#${surface.threadId}` : ""].filter(Boolean).join(" ");
+  }
+  return label || surface.kind;
 }
 
 function extractAssistantHistory(content: unknown): { text: string; thinking: string[]; toolCalls: Array<{ toolName: string; callId: string; args: unknown; syscall: string | null }> } {
@@ -851,10 +974,32 @@ function asBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function requiredText(value: unknown): string | null {
+  const text = asString(value)?.trim();
+  return text ? text : null;
+}
+
+function optionalText(value: unknown): string | undefined {
+  return requiredText(value) ?? undefined;
+}
+
 function safeText(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === null || value === undefined) return "";
   return String(value);
+}
+
+function titleCase(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  const known = new Map([
+    ["whatsapp", "WhatsApp"],
+    ["discord", "Discord"],
+    ["gsv", "GSV"],
+  ]);
+  const mapped = known.get(trimmed.toLowerCase());
+  if (mapped) return mapped;
+  return `${trimmed.slice(0, 1).toUpperCase()}${trimmed.slice(1)}`;
 }
 
 function prettyJson(value: unknown): string {
@@ -906,6 +1051,7 @@ export {
   formatAttachmentSize,
   formatContextPressure,
   formatError,
+  formatInteractionOriginLabel,
   formatMessageContent,
   formatRelativeTime,
   formatTimestamp,

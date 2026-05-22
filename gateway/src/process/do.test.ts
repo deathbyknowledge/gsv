@@ -426,6 +426,103 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("includes interaction origin in model context without rewriting stored content", async () => {
+      const pid = "mech-origin-context";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = async () => {};
+        process.generation = {
+          async generate(request: any) {
+            const first = request.context.messages[0];
+            const second = request.context.messages[1];
+            const third = request.context.messages[2];
+            expect(first.role).toBe("user");
+            expect(first.content).toContain("[From: WhatsApp group GSV Dev from @sam]");
+            expect(first.content).toContain("check this from the group");
+            expect(second.role).toBe("user");
+            expect(second.content).toBe("same source follow-up");
+            expect(third.role).toBe("user");
+            expect(third.content).toContain("[From: web browser-shell]");
+            expect(third.content).toContain("now from chat");
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "noted" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "noted";
+          },
+        };
+
+        process.store.appendMessage("user", "check this from the group", {
+          origin: JSON.stringify({
+            kind: "adapter",
+            adapter: "whatsapp",
+            accountId: "primary",
+            surface: { kind: "group", id: "group-1", name: "GSV Dev" },
+            actorId: "wa:+123",
+            actorLabel: "@sam",
+            messageId: "wa-msg-1",
+          }),
+        });
+        process.store.appendMessage("user", "same source follow-up", {
+          origin: JSON.stringify({
+            kind: "adapter",
+            adapter: "whatsapp",
+            accountId: "primary",
+            surface: { kind: "group", id: "group-1", name: "GSV Dev" },
+            actorId: "wa:+123",
+            actorLabel: "@sam",
+            messageId: "wa-msg-2",
+          }),
+        });
+        process.store.appendMessage("user", "now from chat", {
+          origin: JSON.stringify({
+            kind: "client",
+            connectionId: "conn-1",
+            clientId: "browser-shell",
+            platform: "web",
+          }),
+        });
+        process.currentRun = {
+          runId: "run-origin-context",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-origin-context");
+
+        const messages = process.store.getMessages();
+        expect(messages.map((message: any) => message.content)).toEqual([
+          "check this from the group",
+          "same source follow-up",
+          "now from chat",
+          "noted",
+        ]);
+      });
+    });
+
     it("includes assistant thinking blocks in live chat.text signals", async () => {
       const pid = "mech-chat-text-thinking";
       const stub = await initProcess(pid, ROOT_IDENTITY);

@@ -346,7 +346,7 @@ export async function handleAdapterInbound(
     };
   }
 
-  const incomingText = renderAdapterInboundText(adapter, message, actorId);
+  const incomingText = renderAdapterInboundText(message);
   const origin = adapterInteractionOrigin(adapter, accountId, message, actorId);
   const response = await sendFrameToProcess(pid, {
     type: "req",
@@ -550,28 +550,8 @@ function adapterInteractionOrigin(
   };
 }
 
-function renderAdapterInboundText(
-  adapter: string,
-  message: AdapterInboundMessage,
-  actorId: string,
-): string {
-  const base = message.text?.trim() || "";
-  if (message.surface.kind === "dm") {
-    return base;
-  }
-
-  const surface = describeSurface(message.surface);
-  const actorLabel = message.actor?.handle || message.actor?.name || actorId;
-  return [`[${adapter} ${surface} ${actorLabel}]`, base]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function describeSurface(surface: AdapterSurface): string {
-  if (surface.kind === "thread" && surface.threadId) {
-    return `${surface.kind}:${surface.id}:${surface.threadId}`;
-  }
-  return `${surface.kind}:${surface.id}`;
+function renderAdapterInboundText(message: AdapterInboundMessage): string {
+  return message.text?.trim() || "";
 }
 
 type PendingHilSummary = {

@@ -298,6 +298,7 @@ describe("adapter lifecycle handlers", () => {
       expect.objectContaining({
         call: "proc.send",
         args: expect.objectContaining({
+          message: "hello",
           origin: {
             kind: "adapter",
             adapter: "whatsapp",

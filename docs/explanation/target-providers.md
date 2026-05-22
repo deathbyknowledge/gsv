@@ -177,6 +177,8 @@ but it should not be required for adapter integration.
 
 ### Batch 1: Interaction Origin
 
+Status: implemented.
+
 - Add a persisted `InteractionOrigin` message metadata shape.
 - Have the Kernel derive trusted origins for client, app, device, process, and
   adapter sends instead of trusting caller-supplied metadata.
@@ -187,8 +189,11 @@ but it should not be required for adapter integration.
 
 ### Batch 2: Origin-Aware Context And UI
 
+Status: implemented.
+
 - Render origin metadata in process model context where it helps the agent
-  understand where a request came from.
+  understand where a request came from, using source-boundary `[From: ...]`
+  markers instead of repeating the same source on every message.
 - Stop encoding origin-like information in message role or ad hoc text prefixes
   when structured origin is available.
 - Show origin in Chat/process history UI in a compact native way.

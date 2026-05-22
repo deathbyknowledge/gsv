@@ -2780,6 +2780,27 @@ export class Process extends Host<Env> {
       } satisfies UserMessage;
     }
 
+    let previousSource: string | null | undefined;
+    for (let index = 0; index < records.length; index += 1) {
+      if (records[index].role !== "user") {
+        continue;
+      }
+
+      const source = formatInteractionOriginForContext(parseInteractionOrigin(records[index].origin));
+      const shouldRenderSource = source !== null && source !== previousSource;
+      previousSource = source;
+      if (!shouldRenderSource) {
+        continue;
+      }
+
+      const message = messages[index];
+      if (message?.role !== "user") {
+        continue;
+      }
+
+      messages[index] = prefixUserMessageContent(message, `[From: ${source}]`);
+    }
+
     return orderMessagesForProvider(messages);
   }
 
@@ -3743,6 +3764,98 @@ function parseInteractionOriginRecord(value: unknown): InteractionOrigin | undef
   }
 
   return undefined;
+}
+
+function prefixUserMessageContent(message: UserMessage, prefix: string): UserMessage {
+  if (typeof message.content === "string") {
+    return {
+      ...message,
+      content: `${prefix}\n${message.content}`,
+    };
+  }
+
+  const content = Array.isArray(message.content) ? [...message.content] : [];
+  const first = content[0];
+  if (first?.type === "text") {
+    content[0] = {
+      ...first,
+      text: `${prefix}\n${first.text}`,
+    };
+  } else {
+    content.unshift({ type: "text", text: prefix });
+  }
+
+  return {
+    ...message,
+    content,
+  };
+}
+
+function formatInteractionOriginForContext(origin: InteractionOrigin | undefined): string | null {
+  if (!origin) return null;
+
+  if (origin.kind === "app") {
+    if (origin.packageId === "chat" || origin.routeBase === "/apps/chat") {
+      return null;
+    }
+    return `${origin.packageName} app (${origin.entrypointName})`;
+  }
+
+  if (origin.kind === "adapter") {
+    const adapter = titleCase(origin.adapter);
+    const surface = formatAdapterSurfaceForContext(origin.surface);
+    const actor = origin.actorLabel || origin.actorId;
+    return [
+      adapter,
+      surface ? ` ${surface}` : "",
+      actor ? ` from ${actor}` : "",
+    ].join("");
+  }
+
+  if (origin.kind === "client") {
+    const platform = origin.platform || "client";
+    const client = origin.clientId ? ` ${origin.clientId}` : "";
+    return `${platform}${client}`;
+  }
+
+  if (origin.kind === "device") {
+    return `device ${origin.deviceId}${origin.cwd ? ` cwd ${origin.cwd}` : ""}`;
+  }
+
+  if (origin.kind === "process") {
+    return `process ${origin.sourcePid}${origin.uid !== undefined ? ` uid ${origin.uid}` : ""}`;
+  }
+
+  if (origin.kind === "scheduler") {
+    return `schedule ${origin.scheduleId}`;
+  }
+
+  return null;
+}
+
+function formatAdapterSurfaceForContext(surface: AdapterSurface): string {
+  const label = surface.name || surface.handle || surface.id;
+  if (surface.kind === "dm") {
+    return `direct message${label ? ` ${label}` : ""}`;
+  }
+  if (surface.kind === "thread") {
+    const thread = surface.threadId ? ` thread ${surface.threadId}` : "";
+    return `${surface.kind} ${label}${thread}`;
+  }
+  return `${surface.kind} ${label}`;
+}
+
+function titleCase(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  const known = new Map([
+    ["whatsapp", "WhatsApp"],
+    ["discord", "Discord"],
+    ["gsv", "GSV"],
+  ]);
+  const mapped = known.get(trimmed.toLowerCase());
+  if (mapped) return mapped;
+  return `${trimmed.slice(0, 1).toUpperCase()}${trimmed.slice(1)}`;
 }
 
 function parseAdapterSurface(value: unknown): AdapterSurface | undefined {

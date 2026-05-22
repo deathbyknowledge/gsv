@@ -1,6 +1,6 @@
 import type { MessageRow } from "../../types";
 import { BranchIcon, CopyIcon, MoreIcon } from "../../icons";
-import { closeChatMenus, closeContainingChatMenu, formatTimestamp, labelForRole, renderMarkdownHtml } from "../../view-helpers";
+import { closeChatMenus, closeContainingChatMenu, formatInteractionOriginLabel, formatTimestamp, labelForRole, renderMarkdownHtml } from "../../view-helpers";
 import { isAudioMedia, mediaFilename, mediaKind, mediaSourceErrorFor, mediaSourceFor, mediaSourceKey, mediaTranscription } from "../../domain/media";
 import { MediaAttachment } from "../media/MediaAttachment";
 import { VoiceMessage } from "../media/VoiceMessage";
@@ -33,6 +33,7 @@ export function MessageBubble({
   const voiceMedia = media.filter(isAudioMedia);
   const otherMedia = media.filter((item) => !isAudioMedia(item));
   const hasText = row.text.trim().length > 0;
+  const originLabel = formatInteractionOriginLabel(row.origin);
   const mediaTranscript = media.map(mediaTranscription).filter(Boolean).join("\n\n");
   const copyValue = row.text.trim()
     || mediaTranscript
@@ -41,6 +42,7 @@ export function MessageBubble({
     <article class={`message message-${row.role}`}>
       <div class="message-head">
         <span class="message-role-label">{labelForRole(row.role, userLabel)}</span>
+        {originLabel ? <span class="message-origin-label" title={originLabel}>{originLabel}</span> : null}
         <span class="message-spacer" />
         <span>{formatTimestamp(row.timestamp)}</span>
         <details class="message-menu">
