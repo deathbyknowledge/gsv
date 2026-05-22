@@ -86,6 +86,7 @@ export type RipgitCompareResponse = {
 export type RipgitRefsResponse = {
   heads: Record<string, string>;
   tags: Record<string, string>;
+  remotes?: Record<string, string>;
 };
 
 export type RipgitLogEntry = {
@@ -193,6 +194,11 @@ type RipgitImportResponse = {
   changed?: boolean;
   remote_url?: string;
   remote_ref?: string;
+  tracking_ref?: string;
+  upstream_head?: string;
+  upstream_changed?: boolean;
+  local_changed?: boolean;
+  diverged?: boolean;
 };
 
 export type RipgitImportResult = {
@@ -200,6 +206,11 @@ export type RipgitImportResult = {
   changed: boolean;
   remoteUrl: string;
   remoteRef: string;
+  trackingRef?: string;
+  upstreamHead?: string;
+  upstreamChanged?: boolean;
+  localChanged?: boolean;
+  diverged?: boolean;
 };
 
 type RipgitSearchResponse = {
@@ -322,6 +333,11 @@ export class RipgitClient {
       changed: payload.changed === true,
       remoteUrl: payload.remote_url,
       remoteRef: payload.remote_ref,
+      trackingRef: payload.tracking_ref,
+      upstreamHead: payload.upstream_head,
+      upstreamChanged: payload.upstream_changed,
+      localChanged: payload.local_changed,
+      diverged: payload.diverged,
     };
   }
 

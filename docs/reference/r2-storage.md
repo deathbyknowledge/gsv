@@ -95,6 +95,10 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 
 The `root/gsv` repository may contain a top-level `skills/` directory. Bootstrap
 copies those files into user home repos under `skills.d/` when they are missing.
+When a repository is imported from an upstream Git URL, ripgit records the
+upstream ref under `refs/remotes/upstream/<ref>` and uses that tracking ref for
+later pulls. The local branch is moved only when it can be updated without
+dropping local commits.
 
 Workspace repos contain platform metadata under `.gsv/`:
 
