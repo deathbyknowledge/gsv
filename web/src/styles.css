@@ -4482,54 +4482,9 @@ button:disabled {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   background: #f7f9fc;
   color: #191c1e;
-}
-
-.preview-toolbar {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(20, 48, 77, 0.1);
-  background: rgba(244, 247, 251, 0.96);
-}
-
-.preview-title-block {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-
-.preview-title-block strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #18314f;
-  font-size: 0.9rem;
-  line-height: 1.1;
-}
-
-.preview-title-block span,
-.preview-meta {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: rgba(24, 49, 79, 0.62);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-}
-
-.preview-meta {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .preview-stage {

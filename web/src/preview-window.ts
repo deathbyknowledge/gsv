@@ -27,36 +27,14 @@ export function mountPreviewWindow(container: HTMLElement, preview: PreviewWindo
   const root = document.createElement("main");
   root.className = "preview-window";
   root.dataset.previewKind = preview.kind;
-
-  const toolbar = document.createElement("header");
-  toolbar.className = "preview-toolbar";
-
-  const titleBlock = document.createElement("div");
-  titleBlock.className = "preview-title-block";
-
-  const title = document.createElement("strong");
-  title.textContent = preview.title || basename(preview.path) || "Preview";
-
-  const source = document.createElement("span");
-  source.textContent = preview.sourceLabel;
-
-  titleBlock.append(title, source);
-  toolbar.append(titleBlock);
-
-  const meta = document.createElement("div");
-  meta.className = "preview-meta";
+  root.dataset.source = preview.sourceLabel;
+  root.dataset.target = preview.target;
+  root.dataset.path = preview.path;
   if (preview.contentType) {
-    const type = document.createElement("span");
-    type.textContent = preview.contentType;
-    meta.append(type);
+    root.dataset.contentType = preview.contentType;
   }
   if (typeof preview.size === "number") {
-    const size = document.createElement("span");
-    size.textContent = formatSize(preview.size);
-    meta.append(size);
-  }
-  if (meta.childElementCount > 0) {
-    toolbar.append(meta);
+    root.dataset.size = String(preview.size);
   }
 
   const stage = document.createElement("section");
@@ -86,7 +64,7 @@ export function mountPreviewWindow(container: HTMLElement, preview: PreviewWindo
     stage.append(renderBinaryFallback(preview.contentType, preview.size));
   }
 
-  root.append(toolbar, stage);
+  root.append(stage);
   container.append(root);
 
   return () => {
