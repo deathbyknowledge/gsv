@@ -243,6 +243,8 @@ need richer message-key context than a bare shell message id.
 
 ### Batch 4: Unified Target Provider
 
+Status: implemented.
+
 - Use one target provider/descriptor path for native devices, browser targets,
   and adapter-provided targets.
 - Keep the current target descriptor shape until a concrete product need requires
@@ -250,6 +252,14 @@ need richer message-key context than a bare shell message id.
 - Preserve `target` as the single selector for routed filesystem and shell
   operations.
 - Do not add a separate adapter target registry.
+
+The gateway now builds internal `TargetDescriptor` objects through target
+providers before adapting them back to the existing public device shapes.
+Native CLI/browser targets are provided from the device registry, while adapter
+command targets are computed from adapter status and user identity links. The
+public `sys.device.*` and `ai.tools` responses still use the existing device
+descriptor shape, but listing, detail rendering, and routable dispatch all go
+through the same target-provider path.
 
 ### Batch 5: Browser Automation
 

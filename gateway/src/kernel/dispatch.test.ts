@@ -3,6 +3,24 @@ import { dispatch, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import type { RequestFrame } from "../protocol/frames";
 
+function deviceRecord(deviceId: string, online: boolean) {
+  return {
+    device_id: deviceId,
+    owner_uid: 1000,
+    label: deviceId,
+    description: "",
+    implements: ["fs.*", "shell.*"],
+    platform: "browser",
+    version: "test",
+    lifecycle: "persistent" as const,
+    online,
+    first_seen_at: 1,
+    last_seen_at: 2,
+    connected_at: online ? 2 : null,
+    disconnected_at: online ? null : 2,
+  };
+}
+
 function makeContext(): KernelContext {
   return {
     identity: {
@@ -16,8 +34,7 @@ function makeContext(): KernelContext {
     },
     devices: {
       canAccess: vi.fn(() => true),
-      get: vi.fn(() => ({ online: false })),
-      canHandle: vi.fn(() => true),
+      get: vi.fn(() => deviceRecord("macbook", false)),
     },
   } as unknown as KernelContext;
 }
@@ -51,8 +68,7 @@ describe("dispatch", () => {
       ...makeContext(),
       devices: {
         canAccess: vi.fn(() => true),
-        get: vi.fn(() => ({ online: true })),
-        canHandle: vi.fn(() => true),
+        get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
     } as unknown as KernelContext;
     const frame = {

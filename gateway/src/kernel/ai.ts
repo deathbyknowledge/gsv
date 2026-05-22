@@ -71,7 +71,7 @@ import {
   normalizeSpeechTextFormat,
 } from "../inference/speech-text";
 import { collectPromptSkillIndex } from "./skills";
-import { adapterTargetToAiDevice, listVisibleAdapterTargets } from "./adapter-targets";
+import { listVisibleTargets, targetToAiDevice } from "./targets";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -94,26 +94,13 @@ export async function handleAiTools(
   const identity = ctx.identity!;
   const capabilities = identity.capabilities;
   const uid = identity.process.uid;
-  const gids = identity.process.gids;
 
   const onlineDevices: AiToolsDevice[] = [];
   const deviceIds: string[] = [];
 
-  for (const device of ctx.devices.listForUser(uid, gids)) {
-    if (!device.online) continue;
-    deviceIds.push(device.device_id);
-    onlineDevices.push({
-      id: device.device_id,
-      implements: device.implements,
-      label: device.label,
-      ...(device.description ? { description: device.description } : {}),
-      platform: device.platform || undefined,
-      lifecycle: device.lifecycle,
-    });
-  }
-  for (const target of listVisibleAdapterTargets(ctx)) {
+  for (const target of listVisibleTargets(ctx)) {
     deviceIds.push(target.targetId);
-    onlineDevices.push(adapterTargetToAiDevice(target));
+    onlineDevices.push(targetToAiDevice(target));
   }
 
   const tools: ToolDefinition[] = [];

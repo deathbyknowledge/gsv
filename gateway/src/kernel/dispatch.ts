@@ -100,7 +100,6 @@ import {
   handleAdapterStateUpdate,
   handleAdapterStatus,
 } from "./adapter-handlers";
-import { parseAdapterTargetId } from "./adapter-targets";
 import {
   handleNotificationCreate,
   handleNotificationDismiss,
@@ -115,6 +114,11 @@ import {
   handleSchedulerRun,
   handleSchedulerUpdate,
 } from "./scheduler";
+import {
+  getVisibleTarget,
+  targetCanHandle,
+  type TargetDescriptor,
+} from "./targets";
 
 export type DispatchDeps = {
   routingTable: RoutingTable;
@@ -169,8 +173,8 @@ export async function dispatch(
       };
     }
     if (session.status === "failed" && session.error) {
-      const identity = ctx.identity!;
-      if (!ctx.devices.canAccess(session.deviceId, identity.process.uid, identity.process.gids)) {
+      const sessionTarget = getVisibleTarget(ctx, session.deviceId, { includeOffline: true });
+      if (!sessionTarget) {
         return {
           handled: true,
           response: errFrame(frame.id, 403, `Access denied to device: ${session.deviceId}`),
@@ -182,37 +186,26 @@ export async function dispatch(
       };
     }
     delete raw.target;
-    return routeToDevice(frame, session.deviceId, origin, ctx, deps);
-  }
-
-  if (target && frame.call === "shell.exec") {
-    const adapterTarget = parseAdapterTargetId(target);
-    if (adapterTarget) {
-      delete raw.target;
-      try {
-        const data = await handleAdapterShellExec(
-          adapterTarget.adapter,
-          adapterTarget.accountId,
-          frame.args,
-          ctx,
-        );
-        return {
-          handled: true,
-          response: { type: "res", id: frame.id, ok: true, data },
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          handled: true,
-          response: errFrame(frame.id, message.startsWith("Access denied") ? 403 : 500, message),
-        };
-      }
+    const sessionTarget = getVisibleTarget(ctx, session.deviceId, { includeOffline: true });
+    if (!sessionTarget) {
+      return {
+        handled: true,
+        response: errFrame(frame.id, 403, `Access denied to device: ${session.deviceId}`),
+      };
     }
+    return routeToTarget(frame, sessionTarget, origin, ctx, deps);
   }
 
   if (target && target !== "gsv" && isRoutable(frame.call)) {
     delete raw.target;
-    return routeToDevice(frame, target, origin, ctx, deps);
+    const routedTarget = getVisibleTarget(ctx, target, { includeOffline: true });
+    if (!routedTarget) {
+      return {
+        handled: true,
+        response: errFrame(frame.id, 403, `Access denied to device: ${target}`),
+      };
+    }
+    return routeToTarget(frame, routedTarget, origin, ctx, deps);
   }
 
   if (target) {
@@ -542,42 +535,36 @@ async function dispatchNative(
   }
 }
 
-async function routeToDevice(
+async function routeToTarget(
   frame: RequestFrame,
-  deviceId: string,
+  target: TargetDescriptor,
   origin: RouteOrigin,
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<DispatchResult> {
-  const identity = ctx.identity!;
-
-  if (!ctx.devices.canAccess(deviceId, identity.process.uid, identity.process.gids)) {
+  if (!target.online) {
     return {
       handled: true,
-      response: errFrame(frame.id, 403, `Access denied to device: ${deviceId}`),
+      response: errFrame(frame.id, 503, `Device offline: ${target.targetId}`),
     };
   }
 
-  const device = ctx.devices.get(deviceId);
-  if (!device || !device.online) {
+  if (!targetCanHandle(target, frame.call)) {
     return {
       handled: true,
-      response: errFrame(frame.id, 503, `Device offline: ${deviceId}`),
+      response: errFrame(frame.id, 400, `Device ${target.targetId} does not implement ${frame.call}`),
     };
   }
 
-  if (!ctx.devices.canHandle(deviceId, frame.call)) {
-    return {
-      handled: true,
-      response: errFrame(frame.id, 400, `Device ${deviceId} does not implement ${frame.call}`),
-    };
+  if (target.route.kind === "adapter-shell") {
+    return routeToAdapterShell(frame, target.route.adapter, target.route.accountId, ctx);
   }
 
-  const deviceConn = findDeviceConnection(deviceId, deps.connections);
+  const deviceConn = findDeviceConnection(target.targetId, deps.connections);
   if (!deviceConn) {
     return {
       handled: true,
-      response: errFrame(frame.id, 503, `No active connection for device: ${deviceId}`),
+      response: errFrame(frame.id, 503, `No active connection for device: ${target.targetId}`),
     };
   }
 
@@ -585,7 +572,7 @@ async function routeToDevice(
     frame.id,
     frame.call,
     origin,
-    deviceId,
+    target.targetId,
     { ttlMs: DEFAULT_DEVICE_TTL_MS },
   );
 
@@ -604,6 +591,27 @@ async function routeToDevice(
   deps.scheduleExpiry(frame.id, DEFAULT_DEVICE_TTL_MS);
 
   return { handled: false };
+}
+
+async function routeToAdapterShell(
+  frame: RequestFrame,
+  adapter: string,
+  accountId: string,
+  ctx: KernelContext,
+): Promise<DispatchResult> {
+  try {
+    const data = await handleAdapterShellExec(adapter, accountId, frame.args, ctx);
+    return {
+      handled: true,
+      response: { type: "res", id: frame.id, ok: true, data },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      handled: true,
+      response: errFrame(frame.id, message.startsWith("Access denied") ? 403 : 500, message),
+    };
+  }
 }
 
 function findDeviceConnection(

@@ -6,76 +6,28 @@ import type {
   SysDeviceGetResult,
   SysDeviceUpdateArgs,
   SysDeviceUpdateResult,
-  SysDeviceDetail,
-  SysDeviceSummary,
 } from "@gsv/protocol/syscalls/system";
-import type { DeviceRecord } from "../devices";
 import {
-  adapterTargetToDeviceDetail,
-  adapterTargetToDeviceSummary,
-  getVisibleAdapterTarget,
-  listVisibleAdapterTargets,
-  parseAdapterTargetId,
-} from "../adapter-targets";
-
-function ownerUsername(record: DeviceRecord, ctx: KernelContext): string | null {
-  return ctx.auth?.getPasswdByUid(record.owner_uid)?.username ?? null;
-}
-
-function currentUsername(ctx: KernelContext): string | null {
-  const username = ctx.identity?.process.username;
-  return username ?? null;
-}
-
-function toSummary(record: DeviceRecord, ctx: KernelContext): SysDeviceSummary {
-  return {
-    deviceId: record.device_id,
-    ownerUid: record.owner_uid,
-    ownerUsername: ownerUsername(record, ctx),
-    label: record.label,
-    description: record.description,
-    platform: record.platform,
-    version: record.version,
-    lifecycle: record.lifecycle,
-    online: record.online,
-    lastSeenAt: record.last_seen_at,
-  };
-}
-
-function toDetail(record: DeviceRecord, ctx: KernelContext): SysDeviceDetail {
-  const summary = toSummary(record, ctx);
-  return {
-    ...summary,
-    implements: record.implements,
-    firstSeenAt: record.first_seen_at,
-    connectedAt: record.connected_at,
-    disconnectedAt: record.disconnected_at,
-  };
-}
+  getVisibleTarget,
+  listVisibleTargets,
+  targetToDeviceDetail,
+  targetToDeviceSummary,
+  updateTargetMetadata,
+} from "../targets";
 
 export function handleSysDeviceList(
   args: SysDeviceListArgs,
   ctx: KernelContext,
 ): SysDeviceListResult {
-  const identity = ctx.identity?.process;
-  if (!identity) {
+  if (!ctx.identity?.process) {
     throw new Error("Authentication required");
   }
 
   const raw = (args ?? {}) as { includeOffline?: unknown };
   const includeOffline = raw.includeOffline === true;
-  const all = ctx.devices.listForUser(identity.uid, identity.gids);
-  const visible = includeOffline ? all : all.filter((device) => device.online);
-  const adapterTargets = listVisibleAdapterTargets(ctx)
-    .filter((target) => includeOffline || (target.status.connected && target.status.authenticated));
 
   return {
-    devices: [
-      ...visible.map((device) => toSummary(device, ctx)),
-      ...adapterTargets.map((target) =>
-        adapterTargetToDeviceSummary(target, identity.uid, currentUsername(ctx))
-      ),
-    ],
+    devices: listVisibleTargets(ctx, { includeOffline }).map(targetToDeviceSummary),
   };
 }
 
@@ -83,8 +35,7 @@ export function handleSysDeviceGet(
   args: SysDeviceGetArgs,
   ctx: KernelContext,
 ): SysDeviceGetResult {
-  const identity = ctx.identity?.process;
-  if (!identity) {
+  if (!ctx.identity?.process) {
     throw new Error("Authentication required");
   }
 
@@ -94,26 +45,10 @@ export function handleSysDeviceGet(
     throw new Error("sys.device.get requires deviceId");
   }
 
-  if (parseAdapterTargetId(deviceId)) {
-    const target = getVisibleAdapterTarget(ctx, deviceId);
-    return {
-      device: target
-        ? adapterTargetToDeviceDetail(target, identity.uid, currentUsername(ctx))
-        : null,
-    };
-  }
-
-  if (!ctx.devices.canAccess(deviceId, identity.uid, identity.gids)) {
-    return { device: null };
-  }
-
-  const record = ctx.devices.get(deviceId);
-  if (!record) {
-    return { device: null };
-  }
+  const target = getVisibleTarget(ctx, deviceId, { includeOffline: true });
 
   return {
-    device: toDetail(record, ctx),
+    device: target ? targetToDeviceDetail(target) : null,
   };
 }
 
@@ -121,8 +56,7 @@ export function handleSysDeviceUpdate(
   args: SysDeviceUpdateArgs,
   ctx: KernelContext,
 ): SysDeviceUpdateResult {
-  const identity = ctx.identity?.process;
-  if (!identity) {
+  if (!ctx.identity?.process) {
     throw new Error("Authentication required");
   }
 
@@ -132,12 +66,9 @@ export function handleSysDeviceUpdate(
     throw new Error("sys.device.update requires deviceId");
   }
 
-  const record = ctx.devices.get(deviceId);
-  if (!record || !ctx.devices.canAccess(deviceId, identity.uid, identity.gids)) {
+  const target = getVisibleTarget(ctx, deviceId, { includeOffline: true });
+  if (!target) {
     return { device: null };
-  }
-  if (identity.uid !== 0 && record.owner_uid !== identity.uid) {
-    throw new Error("Permission denied: device metadata is owner-managed");
   }
   if (raw.label !== undefined && typeof raw.label !== "string") {
     throw new Error("sys.device.update label must be a string");
@@ -149,12 +80,11 @@ export function handleSysDeviceUpdate(
     throw new Error("sys.device.update requires label or description");
   }
 
-  ctx.devices.setMetadata(deviceId, {
+  const updated = updateTargetMetadata(ctx, deviceId, {
     ...(raw.label !== undefined ? { label: raw.label } : {}),
     ...(raw.description !== undefined ? { description: raw.description } : {}),
   });
-  const updated = ctx.devices.get(deviceId);
   return {
-    device: updated ? toDetail(updated, ctx) : null,
+    device: updated ? targetToDeviceDetail(updated) : null,
   };
 }

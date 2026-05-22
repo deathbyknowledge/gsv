@@ -1,5 +1,3 @@
-import type { SysDeviceDetail, SysDeviceSummary } from "@gsv/protocol/syscalls/system";
-import type { AiToolsDevice } from "../syscalls/ai";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { KernelContext } from "./context";
 
@@ -13,7 +11,6 @@ export type AdapterTarget = {
 };
 
 const ADAPTER_TARGET_PREFIX = "adapter:";
-const SHELL_CAPABILITY = "shell.exec";
 
 export function adapterTargetId(adapter: string, accountId: string): string {
   return `${ADAPTER_TARGET_PREFIX}${encodeURIComponent(normalizeAdapter(adapter))}:${encodeURIComponent(accountId.trim())}`;
@@ -92,43 +89,6 @@ export function getVisibleAdapterTarget(ctx: KernelContext, targetId: string): A
 export function isVisibleAdapterTarget(ctx: KernelContext, adapter: string, accountId: string): boolean {
   const targetId = adapterTargetId(adapter, accountId);
   return getVisibleAdapterTarget(ctx, targetId) !== null;
-}
-
-export function adapterTargetToAiDevice(target: AdapterTarget): AiToolsDevice {
-  return {
-    id: target.targetId,
-    implements: [SHELL_CAPABILITY],
-    label: target.label,
-    description: target.description,
-    platform: "adapter",
-    lifecycle: "persistent",
-  };
-}
-
-export function adapterTargetToDeviceSummary(target: AdapterTarget, ownerUid: number, ownerUsername: string | null): SysDeviceSummary {
-  return {
-    deviceId: target.targetId,
-    ownerUid,
-    ownerUsername,
-    label: target.label,
-    description: target.description,
-    platform: "adapter",
-    version: "",
-    lifecycle: "persistent",
-    online: target.status.connected && target.status.authenticated,
-    lastSeenAt: target.status.lastActivity ?? target.status.updatedAt,
-  };
-}
-
-export function adapterTargetToDeviceDetail(target: AdapterTarget, ownerUid: number, ownerUsername: string | null): SysDeviceDetail {
-  const summary = adapterTargetToDeviceSummary(target, ownerUid, ownerUsername);
-  return {
-    ...summary,
-    implements: [SHELL_CAPABILITY],
-    firstSeenAt: target.status.updatedAt,
-    connectedAt: summary.online ? target.status.updatedAt : null,
-    disconnectedAt: summary.online ? null : target.status.updatedAt,
-  };
 }
 
 export function adapterShellExecServiceAvailable(ctx: KernelContext, adapter: string): boolean {
