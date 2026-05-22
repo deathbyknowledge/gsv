@@ -28,6 +28,8 @@ import type {
   MountBackend,
   ExtendedMountStat,
   FsSearchBackendResult,
+  OpenFileRange,
+  OpenFileRangeRequest,
   OpenFileOptions,
   OpenFileResult,
   WriteFileStreamOptions,
@@ -105,13 +107,21 @@ export class GsvFs implements IFileSystem {
         etag,
       };
     }
+    const range = options?.range
+      ? resolveOpenFileRange(options.range, stat.size)
+      : undefined;
+    const bytes = await backend.readFileBuffer(p);
+    const body = range
+      ? bytes.subarray(range.offset, range.offset + range.length)
+      : bytes;
     return {
-      body: bytesToStream(await backend.readFileBuffer(p)),
-      size: stat.size,
+      body: bytesToStream(body),
+      size: body.byteLength,
       totalSize: stat.size,
       mtime: stat.mtime,
-      status: 200,
+      status: range ? 206 : 200,
       etag,
+      ...(range ? { range } : {}),
     };
   }
 
@@ -486,6 +496,26 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+function resolveOpenFileRange(range: OpenFileRangeRequest, total: number): OpenFileRange {
+  if ("suffix" in range) {
+    const length = Math.min(Math.max(0, range.suffix), total);
+    return {
+      offset: Math.max(0, total - length),
+      length,
+      total,
+    };
+  }
+
+  const offset = Math.min(Math.max(0, range.offset), total);
+  const requestedLength = range.length ?? Math.max(0, total - offset);
+  const length = Math.min(Math.max(0, requestedLength), Math.max(0, total - offset));
+  return {
+    offset,
+    length,
+    total,
+  };
 }
 
 function assertExpectedSize(size: unknown): asserts size is number {

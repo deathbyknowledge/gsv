@@ -283,16 +283,36 @@ export async function handleFsTransferRead(
   const path = resolve(rawPath, ctx);
 
   try {
-    const bytes = await fs.readFileBuffer(path);
-    const end = Math.min(offset + length, bytes.byteLength);
-    const chunk = offset >= bytes.byteLength ? new Uint8Array() : bytes.subarray(offset, end);
+    const stat = await fs.stat(path);
+    if (!stat.isFile) {
+      throw new Error(`fs.transfer.read path is not a file: ${path}`);
+    }
+
+    if (length === 0 || offset >= stat.size) {
+      return {
+        ok: true,
+        path,
+        offset,
+        bytesRead: 0,
+        data: "",
+        eof: true,
+      };
+    }
+
+    const readLength = Math.min(length, stat.size - offset);
+    const opened = await fs.openFile(path, {
+      range: { offset, length: readLength },
+    });
+    const chunk = opened.body
+      ? await streamToBytes(opened.body, opened.size)
+      : new Uint8Array();
     return {
       ok: true,
       path,
       offset,
       bytesRead: chunk.byteLength,
       data: encodeBase64Bytes(chunk),
-      eof: end >= bytes.byteLength,
+      eof: offset + chunk.byteLength >= stat.size,
     };
   } catch (error) {
     return {
@@ -736,6 +756,36 @@ function splitCopyChunk(chunk: Uint8Array): Uint8Array[] {
     chunks.push(chunk.subarray(offset, offset + COPY_CHUNK_SIZE));
   }
   return chunks;
+}
+
+async function streamToBytes(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      size += value.byteLength;
+      if (size > expectedSize) {
+        throw new Error(`EFBIG: stream exceeds expectedSize ${expectedSize}`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export async function handleFsEdit(

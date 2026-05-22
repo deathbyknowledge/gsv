@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
-import { handleFsCopy } from "./fs";
+import { handleFsCopy, handleFsTransferRead } from "./fs";
+import { decodeBase64Bytes } from "../../shared/base64";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
@@ -291,6 +292,30 @@ describe("proc native command", () => {
 });
 
 describe("fs copy", () => {
+  it("reads only requested transfer ranges", async () => {
+    const sourceKey = "home/sam/copy-test/ranged-source.txt";
+    await env.STORAGE.delete(sourceKey);
+    await env.STORAGE.put(sourceKey, "0123456789", {
+      httpMetadata: { contentType: "text/plain; charset=utf-8" },
+      customMetadata: { uid: "1000", gid: "1000", mode: "644" },
+    });
+
+    const result = await handleFsTransferRead({
+      path: "/home/sam/copy-test/ranged-source.txt",
+      offset: 2,
+      length: 4,
+    }, makeContext());
+
+    expect(result).toMatchObject({
+      ok: true,
+      path: "/home/sam/copy-test/ranged-source.txt",
+      offset: 2,
+      bytesRead: 4,
+      eof: false,
+    });
+    expect(new TextDecoder().decode(decodeBase64Bytes(result.ok ? result.data : ""))).toBe("2345");
+  });
+
   it("copies gsv files through the fs.copy syscall", async () => {
     const sourceKey = "home/sam/copy-test/source.txt";
     const destinationKey = "home/sam/copy-test/destination.txt";
