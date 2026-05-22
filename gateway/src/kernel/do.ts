@@ -1541,6 +1541,16 @@ export class Kernel extends Host<Env> {
         }
         throw new Error(response.error.message);
       }
+      if (isTransferFailureResponse(response.data)) {
+        if (binaryPending) {
+          binaryPending.cleanup();
+          binaryPending.promise.catch(() => {});
+        }
+        return {
+          data: response.data,
+          streamId,
+        };
+      }
       const binaryFrame = binaryPending ? await binaryPending.promise : null;
       if (binaryFrame?.flags && (binaryFrame.flags & BINARY_FRAME_ERROR) !== 0) {
         throw new Error(new TextDecoder().decode(binaryFrame.payload) || "Binary transfer failed");
@@ -2890,6 +2900,12 @@ function withBinaryStreamId(args: unknown, streamId: number): Record<string, unk
     ...(args && typeof args === "object" ? args as Record<string, unknown> : {}),
     streamId,
   };
+}
+
+function isTransferFailureResponse(value: unknown): value is { ok: false; error?: unknown } {
+  return value !== null
+    && typeof value === "object"
+    && (value as { ok?: unknown }).ok === false;
 }
 
 function normalizeTargetText(value: unknown, fallback: string, maxLength: number): string {

@@ -1558,13 +1558,35 @@ describe("Process DO — mechanical", () => {
     it("forks a compacted segment into a new conversation", async () => {
       const pid = "mech-conversation-fork-segment";
       const stub = await initProcess(pid, ROOT_IDENTITY);
+      const archivedOrigin = {
+        kind: "adapter",
+        adapter: "whatsapp",
+        accountId: "primary",
+        surface: { kind: "group", id: "group-1", name: "GSV Dev" },
+        actorId: "wa:+123",
+        actorLabel: "@sam",
+      };
+      const liveOrigin = {
+        kind: "client",
+        connectionId: "conn-1",
+        clientId: "gsv-ui",
+        platform: "browser",
+      };
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         store.openConversation({ conversationId: "thread", title: "Thread" });
-        store.appendMessage("user", "old user", { conversationId: "thread", createdAt: 10 });
+        store.appendMessage("user", "old user", {
+          conversationId: "thread",
+          createdAt: 10,
+          origin: JSON.stringify(archivedOrigin),
+        });
         store.appendMessage("assistant", "old assistant", { conversationId: "thread", createdAt: 20 });
-        store.appendMessage("user", "keep this", { conversationId: "thread", createdAt: 30 });
+        store.appendMessage("user", "keep this", {
+          conversationId: "thread",
+          createdAt: 30,
+          origin: JSON.stringify(liveOrigin),
+        });
       });
 
       const compactRes = (await stub.recvFrame(
@@ -1619,6 +1641,8 @@ describe("Process DO — mechanical", () => {
           ["assistant", "old assistant"],
           ["user", "keep this"],
         ]);
+        expect(JSON.parse(restored[0].origin)).toEqual(archivedOrigin);
+        expect(JSON.parse(restored[2].origin)).toEqual(liveOrigin);
 
         const source = store.getMessages({ conversationId: "thread" });
         expect(source.map((message: any) => message.content)).toEqual([

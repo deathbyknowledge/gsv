@@ -48,9 +48,35 @@ export class BrowserTargetFileSystem implements IFileSystem {
     return toUint8Array(data);
   }
 
+  async readFileChunk(path: string, offset: number, length: number): Promise<Uint8Array> {
+    const handle = await this.zen.fs.promises.open(path, "r");
+    try {
+      const buffer = new Uint8Array(length);
+      const result = await handle.read(buffer, 0, length, offset);
+      return buffer.subarray(0, result.bytesRead);
+    } finally {
+      await handle.close();
+    }
+  }
+
   async writeFile(path: string, content: FileContent, options?: BrowserWriteFileOptions | BufferEncoding): Promise<void> {
     await this.ensureParentDirectory(path);
     await this.zen.fs.promises.writeFile(path, content, normalizeWriteOptions(options));
+  }
+
+  async writeFileChunk(path: string, offset: number, content: Uint8Array): Promise<void> {
+    await this.ensureParentDirectory(path);
+    if (offset === 0) {
+      await this.writeFile(path, content);
+      return;
+    }
+
+    const handle = await this.zen.fs.promises.open(path, "r+");
+    try {
+      await handle.write(content, 0, content.byteLength, offset);
+    } finally {
+      await handle.close();
+    }
   }
 
   async appendFile(path: string, content: FileContent, options?: BrowserWriteFileOptions | BufferEncoding): Promise<void> {

@@ -400,16 +400,20 @@ export class BrowserTargetShell {
     }
 
     try {
-      const bytes = await this.getFs().readFileBuffer(path.path);
-      const end = Math.min(offset + length, bytes.byteLength);
-      const chunk = offset >= bytes.byteLength ? new Uint8Array() : bytes.subarray(offset, end);
+      const stat = await this.getFs().stat(path.path);
+      if (!stat.isFile) {
+        return { ok: false, error: `Not a file: ${path.path}` };
+      }
+      const chunk = offset >= stat.size
+        ? new Uint8Array()
+        : await this.readLocalChunk(path.path, offset, Math.min(length, stat.size - offset));
       this.gatewayClient.sendBinaryFrame(streamId, BINARY_FRAME_DATA | BINARY_FRAME_END, chunk);
       return {
         ok: true,
         path: path.path,
         offset,
         bytesRead: chunk.byteLength,
-        eof: end >= bytes.byteLength,
+        eof: offset + chunk.byteLength >= stat.size,
       };
     } catch (error) {
       return failedFs(error);
@@ -417,8 +421,6 @@ export class BrowserTargetShell {
   }
 
   async transferWrite(frame: GatewayRequestFrame): Promise<unknown> {
-    await this.ensureReady();
-
     const args = (frame.args ?? {}) as TransferWriteArgs;
     const path = parsePathArg(args.path, "fs.transfer.write");
     if (!path.ok) {
@@ -434,8 +436,12 @@ export class BrowserTargetShell {
       return { ok: false, error: "fs.transfer.write requires streamId" };
     }
 
+    const binary = this.gatewayClient.waitForBinaryFrame(streamId);
+    let binaryConsumed = false;
     try {
-      const frame = await this.gatewayClient.waitForBinaryFrame(streamId);
+      await this.ensureReady();
+      const frame = await binary;
+      binaryConsumed = true;
       if ((frame.flags & BINARY_FRAME_DATA) === 0) {
         return { ok: false, error: "fs.transfer.write binary frame did not include data" };
       }
@@ -461,6 +467,13 @@ export class BrowserTargetShell {
         contentType: typeof args.contentType === "string" ? args.contentType : inferContentType(path.path),
       };
     } catch (error) {
+      if (!binaryConsumed) {
+        this.gatewayClient.cancelBinaryFrame(
+          streamId,
+          error instanceof Error ? error.message : "Binary transfer write failed",
+        );
+        binary.catch(() => undefined);
+      }
       return failedFs(error);
     }
   }
@@ -662,18 +675,41 @@ export class BrowserTargetShell {
   private async writeLocalChunk(path: string, offset: number, bytes: Uint8Array): Promise<void> {
     const fs = this.getFs();
     if (offset === 0) {
-      await fs.writeFile(path, bytes);
+      if (fs instanceof BrowserTargetFileSystem) {
+        await fs.writeFileChunk(path, offset, bytes);
+      } else {
+        await fs.writeFile(path, bytes);
+      }
+      return;
+    }
+
+    const stat = await fs.stat(path);
+    if (!stat.isFile) {
+      throw new Error(`Not a file: ${path}`);
+    }
+    if (stat.size !== offset) {
+      throw new Error(`Unexpected write offset for ${path}: expected ${stat.size}, got ${offset}`);
+    }
+    if (fs instanceof BrowserTargetFileSystem) {
+      await fs.writeFileChunk(path, offset, bytes);
       return;
     }
 
     const current = await fs.readFileBuffer(path);
-    if (current.byteLength !== offset) {
-      throw new Error(`Unexpected write offset for ${path}: expected ${current.byteLength}, got ${offset}`);
-    }
-    const next = new Uint8Array(current.byteLength + bytes.byteLength);
+    const next = new Uint8Array(stat.size + bytes.byteLength);
     next.set(current, 0);
-    next.set(bytes, current.byteLength);
+    next.set(bytes, stat.size);
     await fs.writeFile(path, next);
+  }
+
+  private async readLocalChunk(path: string, offset: number, length: number): Promise<Uint8Array> {
+    const fs = this.getFs();
+    if (fs instanceof BrowserTargetFileSystem) {
+      return fs.readFileChunk(path, offset, length);
+    }
+    const bytes = await fs.readFileBuffer(path);
+    const end = Math.min(offset + length, bytes.byteLength);
+    return offset >= bytes.byteLength ? new Uint8Array() : bytes.subarray(offset, end);
   }
 
   private async runOpenCommand(args: string[], cwd: string, stdin: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {

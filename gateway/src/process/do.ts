@@ -1691,6 +1691,7 @@ export class Process extends Host<Env> {
       toolCalls,
       toolCallId: message.toolCallId,
       media: message.media === undefined ? undefined : JSON.stringify(message.media),
+      origin: serializeInteractionOrigin(message.origin) ?? undefined,
       createdAt: message.createdAt,
     });
   }
@@ -1706,6 +1707,7 @@ export class Process extends Host<Env> {
       toolCalls: message.toolCalls ?? undefined,
       toolCallId: message.toolCallId ?? undefined,
       media: message.media ?? undefined,
+      origin: message.origin ?? undefined,
       createdAt: message.createdAt,
     });
   }

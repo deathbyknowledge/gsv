@@ -21,13 +21,47 @@ const TARGET_IMPLEMENTS = [
   "shell.exec",
 ];
 const TARGET_VERSION = "0.1.0";
+const REGISTER_RETRY_BASE_MS = 500;
+const REGISTER_RETRY_MAX_MS = 10_000;
 
 export function createBrowserTargetProvider({
   gatewayClient,
   windowManager,
 }: BrowserTargetOptions): () => void {
   let registeredConnectionId: string | null = null;
+  let registerRetryTimer: number | null = null;
+  let registerRetryAttempt = 0;
+  let disposed = false;
   const shell = new BrowserTargetShell(windowManager, gatewayClient);
+  const clearRegisterRetry = () => {
+    if (registerRetryTimer !== null) {
+      window.clearTimeout(registerRetryTimer);
+      registerRetryTimer = null;
+    }
+  };
+  const registerCurrentTarget = (connectionId: string) => {
+    void registerBrowserTarget(gatewayClient).then(() => {
+      if (disposed || registeredConnectionId !== connectionId) {
+        return;
+      }
+      registerRetryAttempt = 0;
+    }).catch((error) => {
+      if (disposed || registeredConnectionId !== connectionId) {
+        return;
+      }
+      registerRetryAttempt += 1;
+      const delayMs = Math.min(
+        REGISTER_RETRY_MAX_MS,
+        REGISTER_RETRY_BASE_MS * (2 ** Math.min(registerRetryAttempt - 1, 6)),
+      );
+      console.warn(`Failed to register browser target, retrying in ${delayMs}ms`, error);
+      clearRegisterRetry();
+      registerRetryTimer = window.setTimeout(() => {
+        registerRetryTimer = null;
+        registerCurrentTarget(connectionId);
+      }, delayMs);
+    });
+  };
 
   const unregisterRead = gatewayClient.onRequest("fs.read", (frame) => shell.read(frame));
   const unregisterWrite = gatewayClient.onRequest("fs.write", (frame) => shell.write(frame));
@@ -41,6 +75,8 @@ export function createBrowserTargetProvider({
   const unregisterShell = gatewayClient.onRequest("shell.exec", (frame) => shell.exec(frame));
   const unregisterStatus = gatewayClient.onStatus((status) => {
     if (status.state !== "connected" || !status.connectionId) {
+      clearRegisterRetry();
+      registerRetryAttempt = 0;
       registeredConnectionId = null;
       shell.setTargetId(null);
       return;
@@ -49,15 +85,16 @@ export function createBrowserTargetProvider({
       return;
     }
     registeredConnectionId = status.connectionId;
+    registerRetryAttempt = 0;
+    clearRegisterRetry();
     shell.setTargetId(`browser:${status.connectionId}`);
     shell.warmup();
-    void registerBrowserTarget(gatewayClient).catch((error) => {
-      registeredConnectionId = null;
-      console.warn("Failed to register browser target", error);
-    });
+    registerCurrentTarget(status.connectionId);
   });
 
   return () => {
+    disposed = true;
+    clearRegisterRetry();
     unregisterRead();
     unregisterWrite();
     unregisterEdit();

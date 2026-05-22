@@ -51,11 +51,15 @@ impl BinaryFrameInbox {
     async fn take(&self, stream_id: u32) -> Result<QueuedBinaryFrame, String> {
         let deadline = tokio::time::Instant::now() + BINARY_TRANSFER_TIMEOUT;
         loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
             if let Some(frame) = self.pop(stream_id) {
                 return Ok(frame);
             }
 
-            tokio::time::timeout_at(deadline, self.notify.notified())
+            tokio::time::timeout_at(deadline, notified.as_mut())
                 .await
                 .map_err(|_| {
                     format!("Timed out waiting for binary transfer stream {}", stream_id)
