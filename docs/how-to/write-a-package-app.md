@@ -181,3 +181,9 @@ gsv packages sync
 Treat package review like code review. Check requested Kernel syscalls,
 filesystem writes, shell usage, adapter behavior, and network assumptions before
 enabling non-builtin packages.
+
+## See also
+
+- [Package SDK](../reference/package-sdk.md)
+- [How-to Guides](./index.md)
+- [Architecture Overview](../architecture/)

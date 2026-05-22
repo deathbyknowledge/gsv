@@ -3,10 +3,12 @@
 This guide deploys GSV infrastructure to Cloudflare, initializes the first user,
 and shows the safe update and teardown paths.
 
+Cloudflare Pages is not required for the core GSV deployment.
+
 ## Prerequisites
 
 - A Cloudflare account with Workers, Durable Objects, and R2 access.
-- A Cloudflare API token with permission to edit Workers and R2 resources.
+- A Cloudflare API token based on the **Edit Cloudflare Workers** template, with the R2 access needed for deployment.
 - The `gsv` CLI installed.
 
 ```bash
@@ -53,7 +55,8 @@ locally:
 gsv config --local set gateway.url wss://gsv.<your-subdomain>.workers.dev/ws
 ```
 
-Initialize the Kernel while it is in setup mode:
+Initialize the Kernel while it is in setup mode. This step creates the first
+user and writes the initial runtime configuration:
 
 ```bash
 gsv auth setup \
@@ -67,7 +70,9 @@ gsv auth setup \
 
 `auth setup` creates the first non-root user, writes AI config, and can issue a
 device token bound to `--node-id`. It saves `gateway.username`, `node.id`, and
-`node.token` locally when those values are returned.
+`node.token` locally when those values are returned. The flag still says `node`
+for compatibility with the current CLI and config keys, even though the product
+term used elsewhere in the docs is **device**.
 
 Log in and test chat:
 
@@ -118,3 +123,10 @@ gsv infra destroy --all --delete-bucket --purge-bucket
 
 By default, destroy also tries to uninstall the local device daemon. Use
 `--keep-node` to leave it installed.
+
+## See also
+
+- [Get Started](../get-started/)
+- [Set Up Cloudflare](../get-started/cloudflare-setup.md)
+- [How to Run a Device](./run-a-device.md)
+- [CLI Command Reference](../reference/cli-commands.md)

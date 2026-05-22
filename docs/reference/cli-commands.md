@@ -237,6 +237,13 @@ Prints build metadata for the installed CLI.
 | `gsv client` | `gsv chat` |
 | `gsv node` | `gsv device` |
 | `gsv session` | `gsv proc` |
+
+## See also
+
+- [Get Started](../get-started/)
+- [How to Run a Device](../how-to/run-a-device.md)
+- [How to Manage Processes](../how-to/manage-processes.md)
+- [Routing Reference](./routing.md)
 | `gsv local-config` | `gsv config --local` |
 | `gsv deploy` | `gsv infra` |
 | `gsv tools`, `gsv skills`, `gsv init` | Removed from the current CLI. |
