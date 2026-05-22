@@ -34,9 +34,6 @@ export function RepoWorkspace({
   const refOptions = refs ? [
     ...Object.keys(refs.heads).sort((left, right) => left.localeCompare(right)),
     ...Object.keys(refs.tags).sort((left, right) => left.localeCompare(right)),
-    ...Object.keys(refs.remotes ?? {})
-      .sort((left, right) => left.localeCompare(right))
-      .map((remote) => `refs/remotes/${remote}`),
   ] : [runtime.ref || "main"];
   const pullAction = `source:pull:${repo.repo}`;
   const publicAction = `source:public:${repo.repo}`;

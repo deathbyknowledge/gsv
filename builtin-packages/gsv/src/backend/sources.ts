@@ -174,7 +174,7 @@ export async function diffSourceRepo(
 
 export async function pullSourceRepo(kernel: KernelClientLike, args: PullSourceRepoArgs): Promise<unknown> {
   const repo = asString(args?.repo);
-  const ref = asString(args?.ref) || "main";
+  const ref = normalizePullRef(asString(args?.ref) || "main");
   if (!repo) throw new Error("repo is required");
   return kernel.request("repo.import", {
     repo,
@@ -370,6 +370,13 @@ function chooseRef(
   if (firstHead) return firstHead;
   const [firstTag] = Object.keys(tags).sort((left, right) => left.localeCompare(right));
   return firstTag ?? "main";
+}
+
+function normalizePullRef(ref: string): string {
+  if (ref.startsWith("refs/remotes/")) {
+    throw new Error("Choose a local branch or tag before pulling upstream.");
+  }
+  return ref;
 }
 
 function normalizeRepoPath(path: string | undefined): string {
