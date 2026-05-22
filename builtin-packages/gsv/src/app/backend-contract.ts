@@ -93,7 +93,7 @@ export interface GsvBackend {
   approvePackageReview(args: PackageIdArgs): Promise<unknown>;
   refreshPackage(args: PackageIdArgs): Promise<unknown>;
   pullPackage(args: PackageIdArgs): Promise<unknown>;
-  pullPackageSource(args: PullPackageSourceArgs): Promise<{ ok: boolean }>;
+  pullPackageSource(args: PullPackageSourceArgs): Promise<{ ok: boolean; imports: unknown[] }>;
   setPackagePublic(args: SetPackagePublicArgs): Promise<unknown>;
   startPackageReview(args: PackageIdArgs): Promise<StartPackageReviewResult>;
   loadSourcesState(args: LoadSourcesStateArgs): Promise<SourcesState>;

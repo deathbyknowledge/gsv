@@ -218,11 +218,13 @@ async function loadSourceRefs(kernel: KernelClientLike, repo: string, requestedR
   const result = asRecord(await kernel.request("repo.refs", { repo }));
   const heads = asStringRecord(result?.heads);
   const tags = asStringRecord(result?.tags);
+  const remotes = asStringRecord(result?.remotes);
   return {
     repo: asString(result?.repo) || repo,
-    activeRef: chooseRef(requestedRef, heads, tags),
+    activeRef: chooseRef(requestedRef, heads, tags, remotes),
     heads,
     tags,
+    ...(Object.keys(remotes).length > 0 ? { remotes } : {}),
   };
 }
 
@@ -351,8 +353,16 @@ function normalizeDiffLineTag(value: unknown): "context" | "add" | "delete" | "b
   return value === "add" || value === "delete" || value === "binary" ? value : "context";
 }
 
-function chooseRef(requestedRef: string, heads: Record<string, string>, tags: Record<string, string>): string {
-  if (requestedRef && (heads[requestedRef] || tags[requestedRef])) {
+function chooseRef(
+  requestedRef: string,
+  heads: Record<string, string>,
+  tags: Record<string, string>,
+  remotes: Record<string, string>,
+): string {
+  const requestedRemote = requestedRef.startsWith("refs/remotes/")
+    ? requestedRef.slice("refs/remotes/".length)
+    : requestedRef;
+  if (requestedRef && (heads[requestedRef] || tags[requestedRef] || remotes[requestedRemote])) {
     return requestedRef;
   }
   if (heads.main) return "main";

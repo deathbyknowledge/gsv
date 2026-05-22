@@ -37,7 +37,7 @@ function RepoToolbar({ runtime, refOptions }: { runtime: SourcesRuntime; refOpti
     <header class="gsv-source-toolbar">
       <div class="gsv-source-ref-row">
         <label>
-          <span>Branch or tag</span>
+          <span>Branch, tag, or upstream</span>
           <select
             value={runtime.ref}
             disabled={runtime.loading}
@@ -230,7 +230,10 @@ function CodeBlock({ path, content }: { path: string; content: string }) {
 function currentRefHash(runtime: SourcesRuntime): string | null {
   const refs = runtime.state?.refs;
   if (!refs) return null;
-  return refs.heads[runtime.ref] ?? refs.tags[runtime.ref] ?? null;
+  const remoteRef = runtime.ref.startsWith("refs/remotes/")
+    ? runtime.ref.slice("refs/remotes/".length)
+    : runtime.ref;
+  return refs.heads[runtime.ref] ?? refs.tags[runtime.ref] ?? refs.remotes?.[remoteRef] ?? null;
 }
 
 function currentRefCommit(runtime: SourcesRuntime): SourceCommit | null {
