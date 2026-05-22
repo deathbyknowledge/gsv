@@ -137,13 +137,13 @@ open /tmp/report.pdf
 open rearden:/home/hank/image.png
 clipboard read
 clipboard write "text"
-dom snapshot <windowId>
-dom query <windowId> "button[data-action=save]"
-dom click <windowId> "button[data-action=save]"
-dom click <windowId> --xy 120 80
-dom focus <windowId> "input[name=email]"
-dom input <windowId> "input[name=email]" "hank@example.com"
-js run --window <windowId> "return document.title"
+dom snapshot
+dom query "button[data-action=save]"
+dom click "button[data-action=save]"
+dom click --window <windowId> --xy 120 80
+dom focus "input[name=email]"
+dom input "input[name=email]" "hank@example.com"
+js run "return document.title"
 notify --level success "Done" "The browser task finished."
 ```
 
@@ -263,19 +263,19 @@ through the same target-provider path.
 
 ### Batch 5: Browser Automation
 
-- Add live window snapshots:
-  - DOM snapshot
-  - accessibility-oriented DOM metadata
-  - screenshot if feasible
-- Add DOM interaction commands:
-  - query
-  - click
-  - focus
-  - input text
-- Add `js run` for explicit JavaScript execution in a selected window/app
-  context.
-- Wire actions through the web shell host bridge so package app windows can opt
-  into the right level of state/action exposure.
+Status: implemented, except screenshot capture is deferred until there is an
+explicit capture strategy.
+
+- Browser shell commands expose DOM snapshots with accessibility-oriented DOM
+  metadata.
+- DOM interaction commands support query, click, coordinate click, focus, and
+  input text.
+- `dom` and `js run` default to the active window and accept
+  `--window <windowId>` for explicit targeting.
+- `clipboard read/write` and `notify` are browser shell commands.
+- Browser automation routes through the browser target's existing `shell.exec`
+  command surface, not through a parallel host-bridge or package SDK side
+  channel.
 
 ### Batch 6: Browser Filesystem
 

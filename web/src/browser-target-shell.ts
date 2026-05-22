@@ -2,6 +2,10 @@ import type {
   BashExecResult,
   IFileSystem,
 } from "just-bash/browser";
+import type {
+  NotificationCreateResult,
+  NotificationLevel,
+} from "@gsv/protocol/syscalls/notification";
 import { buildBrowserCommands } from "./browser-target-commands";
 import { BrowserRuntimeFileSystem } from "./browser-runtime-fs";
 import { BrowserTargetFileSystem } from "./browser-target-fs";
@@ -532,6 +536,7 @@ export class BrowserTargetShell {
         justBash.defineCommand,
         (args, cwd) => this.runCopyCommand(args, cwd),
         (args, cwd, stdin) => this.runOpenCommand(args, cwd, stdin),
+        (args) => this.runNotifyCommand(args),
       ),
       executionLimits: {
         maxCommandCount: 10_000,
@@ -561,9 +566,11 @@ export class BrowserTargetShell {
       "- /run/gsv/desktop/active-window",
       "- /run/gsv/apps.json",
       "- /run/gsv/apps/<appId>/manifest.json",
+      "- /run/gsv/apps/<appId>/windows.json",
       "- /run/gsv/windows/<windowId>/meta.json",
+      "- /run/gsv/windows/<windowId>/{app,mode,route,title}.txt",
       "",
-      "Shell commands: windows, window, apps, app, open, cp, dom, js, plus standard just-bash commands.",
+      "Shell commands: windows, window, apps, app, open, cp, dom, js, clipboard, notify, plus standard just-bash commands.",
       "",
     ].join("\n"));
   }
@@ -656,7 +663,7 @@ export class BrowserTargetShell {
   }
 
   private async runOpenCommand(args: string[], cwd: string, stdin: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    if (args.includes("--help")) {
+    if (hasHelpFlag(args)) {
       return {
         stdout: [
           "open [--as TYPE] [--title TITLE] [PATH]",
@@ -714,6 +721,28 @@ export class BrowserTargetShell {
   private async openPreview(endpoint: { target: string; path: string }, options: { type?: string; title?: string }): Promise<string> {
     const preview = await this.loadPreview(endpoint, options);
     return this.windowManager.openPreview(preview);
+  }
+
+  private async runNotifyCommand(args: { title: string; body?: string; level?: NotificationLevel; ttlMs?: number }): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    try {
+      const result = await this.gatewayClient.call<NotificationCreateResult>("notification.create", {
+        title: args.title,
+        body: args.body,
+        level: args.level,
+        ttlMs: args.ttlMs,
+      });
+      return {
+        stdout: `notified ${result.notification.notificationId}\n`,
+        stderr: "",
+        exitCode: 0,
+      };
+    } catch (error) {
+      return {
+        stdout: "",
+        stderr: `notify: ${error instanceof Error ? error.message : String(error)}\n`,
+        exitCode: 1,
+      };
+    }
   }
 
   private async loadPreview(endpoint: { target: string; path: string }, options: { type?: string; title?: string }): Promise<PreviewWindowContent> {
@@ -860,7 +889,7 @@ export class BrowserTargetShell {
   }
 
   private async runCopyCommand(args: string[], cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    if (args.includes("--help")) {
+    if (hasHelpFlag(args)) {
       return {
         stdout: [
           "cp SOURCE DEST",
@@ -1211,6 +1240,10 @@ function parseOpenCommandArgs(args: string[], options: { allowMissingPath: boole
     type,
     title,
   };
+}
+
+function hasHelpFlag(args: readonly string[]): boolean {
+  return args.some((arg) => arg === "-h" || arg === "--help");
 }
 
 function readText(path: string, content: string, size: number, offset: number | null, limit: number | null): unknown {

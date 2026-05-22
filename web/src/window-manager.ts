@@ -141,6 +141,11 @@ export type WindowDomQueryMatch = {
   attributes: Record<string, string>;
 };
 
+export type WindowDomInputResult = WindowDomQueryMatch & {
+  previousValue: string | null;
+  value: string;
+};
+
 export type WindowJsRunResult = {
   result: unknown;
 };
@@ -163,6 +168,9 @@ export type WindowManager = {
   snapshotWindowDom: (windowId: string, selector?: string | null) => WindowDomSnapshot | null;
   queryWindowDom: (windowId: string, selector: string) => WindowDomQueryMatch[] | null;
   clickWindowDom: (windowId: string, selector: string, index?: number) => WindowDomQueryMatch | null;
+  clickWindowPoint: (windowId: string, x: number, y: number) => WindowDomQueryMatch | null;
+  focusWindowDom: (windowId: string, selector: string, index?: number) => WindowDomQueryMatch | null;
+  inputWindowDom: (windowId: string, selector: string, value: string, index?: number) => WindowDomInputResult | null;
   runWindowJavaScript: (windowId: string, source: string) => Promise<WindowJsRunResult | null>;
   subscribe: (listener: (summaries: WindowSummary[]) => void) => () => void;
   destroy: () => void;
@@ -475,6 +483,89 @@ function snapshotElement(element: Element, depth = 0): WindowDomNodeSnapshot {
     attributes: domAttributes(element),
     children,
   };
+}
+
+function focusDomElement(element: Element): void {
+  if ("scrollIntoView" in element && typeof element.scrollIntoView === "function") {
+    element.scrollIntoView({ block: "center", inline: "center", behavior: "auto" });
+  }
+  if ("focus" in element && typeof element.focus === "function") {
+    element.focus();
+  }
+}
+
+function setDomElementInputValue(element: Element, value: string): { previousValue: string | null; value: string } | null {
+  const view = element.ownerDocument.defaultView ?? window;
+  const elementWindow = view as Window & {
+    HTMLInputElement?: typeof HTMLInputElement;
+    HTMLTextAreaElement?: typeof HTMLTextAreaElement;
+    HTMLSelectElement?: typeof HTMLSelectElement;
+    HTMLElement?: typeof HTMLElement;
+    InputEvent?: typeof InputEvent;
+    Event?: typeof Event;
+  };
+  const InputCtor = elementWindow.HTMLInputElement ?? HTMLInputElement;
+  const TextareaCtor = elementWindow.HTMLTextAreaElement ?? HTMLTextAreaElement;
+  const SelectCtor = elementWindow.HTMLSelectElement ?? HTMLSelectElement;
+  const HTMLElementCtor = elementWindow.HTMLElement ?? HTMLElement;
+  const InputEventCtor = elementWindow.InputEvent ?? InputEvent;
+  const EventCtor = elementWindow.Event ?? Event;
+
+  if (element instanceof InputCtor || element instanceof TextareaCtor || element instanceof SelectCtor) {
+    const control = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+    const previousValue = control.value;
+    setNativeElementValue(control, value);
+    control.dispatchEvent(new InputEventCtor("input", { bubbles: true, inputType: "insertText", data: value }));
+    control.dispatchEvent(new EventCtor("change", { bubbles: true }));
+    return { previousValue, value: control.value };
+  }
+
+  if (element instanceof HTMLElementCtor && element.isContentEditable) {
+    const previousValue = element.textContent ?? "";
+    element.textContent = value;
+    element.dispatchEvent(new InputEventCtor("input", { bubbles: true, inputType: "insertText", data: value }));
+    return { previousValue, value: element.textContent ?? "" };
+  }
+
+  return null;
+}
+
+function setNativeElementValue(
+  element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+  value: string,
+): void {
+  const prototype = Object.getPrototypeOf(element) as object | null;
+  const descriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, "value") : null;
+  if (descriptor?.set) {
+    descriptor.set.call(element, value);
+    return;
+  }
+  element.value = value;
+}
+
+function dispatchDomClick(target: Element, point?: { x: number; y: number }): void {
+  focusDomElement(target);
+
+  const view = target.ownerDocument.defaultView ?? window;
+  const eventWindow = view as Window & { PointerEvent?: typeof PointerEvent; MouseEvent?: typeof MouseEvent };
+  const eventInit = {
+    bubbles: true,
+    cancelable: true,
+    view,
+    clientX: point?.x ?? 0,
+    clientY: point?.y ?? 0,
+  };
+  const PointerCtor = eventWindow.PointerEvent;
+  if (PointerCtor) {
+    target.dispatchEvent(new PointerCtor("pointerdown", eventInit));
+    target.dispatchEvent(new PointerCtor("pointerup", eventInit));
+  }
+  if ("click" in target && typeof target.click === "function") {
+    target.click();
+  } else {
+    const MouseCtor = eventWindow.MouseEvent ?? MouseEvent;
+    target.dispatchEvent(new MouseCtor("click", eventInit));
+  }
 }
 
 function serializeJsResult(value: unknown): unknown {
@@ -1633,25 +1724,62 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       return null;
     }
 
-    if ("focus" in target && typeof target.focus === "function") {
-      target.focus();
-    }
-
-    const view = target.ownerDocument.defaultView ?? context.window;
-    const eventWindow = view as Window & { PointerEvent?: typeof PointerEvent; MouseEvent?: typeof MouseEvent };
-    const PointerCtor = eventWindow.PointerEvent;
-    if (PointerCtor) {
-      target.dispatchEvent(new PointerCtor("pointerdown", { bubbles: true, cancelable: true, view }));
-      target.dispatchEvent(new PointerCtor("pointerup", { bubbles: true, cancelable: true, view }));
-    }
-    if ("click" in target && typeof target.click === "function") {
-      target.click();
-    } else {
-      const MouseCtor = eventWindow.MouseEvent ?? MouseEvent;
-      target.dispatchEvent(new MouseCtor("click", { bubbles: true, cancelable: true, view }));
-    }
-
+    dispatchDomClick(target);
     return toDomQueryMatch(target, elements.indexOf(target));
+  };
+
+  const clickWindowPoint = (windowId: string, x: number, y: number): WindowDomQueryMatch | null => {
+    const context = automationContext(windowId);
+    if (!context) {
+      return null;
+    }
+
+    const target = context.document.elementFromPoint(x, y);
+    if (!target) {
+      return null;
+    }
+    dispatchDomClick(target, { x, y });
+    return toDomQueryMatch(target, 0);
+  };
+
+  const focusWindowDom = (windowId: string, selector: string, index = 0): WindowDomQueryMatch | null => {
+    const context = automationContext(windowId);
+    if (!context) {
+      return null;
+    }
+
+    const elements = queryAutomationElements(context.root, selector);
+    const target = elements[Math.max(0, Math.floor(index))] ?? null;
+    if (!target) {
+      return null;
+    }
+
+    focusDomElement(target);
+    return toDomQueryMatch(target, elements.indexOf(target));
+  };
+
+  const inputWindowDom = (windowId: string, selector: string, value: string, index = 0): WindowDomInputResult | null => {
+    const context = automationContext(windowId);
+    if (!context) {
+      return null;
+    }
+
+    const elements = queryAutomationElements(context.root, selector);
+    const target = elements[Math.max(0, Math.floor(index))] ?? null;
+    if (!target) {
+      return null;
+    }
+
+    focusDomElement(target);
+    const input = setDomElementInputValue(target, value);
+    if (!input) {
+      return null;
+    }
+
+    return {
+      ...toDomQueryMatch(target, elements.indexOf(target)),
+      ...input,
+    };
   };
 
   const runWindowJavaScript = async (windowId: string, source: string): Promise<WindowJsRunResult | null> => {
@@ -1898,6 +2026,9 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     snapshotWindowDom,
     queryWindowDom,
     clickWindowDom,
+    clickWindowPoint,
+    focusWindowDom,
+    inputWindowDom,
     runWindowJavaScript,
     subscribe: (listener) => {
       listeners.add(listener);

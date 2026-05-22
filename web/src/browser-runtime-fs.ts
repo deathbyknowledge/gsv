@@ -198,6 +198,13 @@ export class BrowserRuntimeFileSystem implements IFileSystem {
         content: `${JSON.stringify(content, null, 2)}\n`,
       });
     };
+    const addTextFile = (path: string, content: string) => {
+      entries.set(normalizeRuntimePath(path), {
+        kind: "file",
+        path: normalizeRuntimePath(path),
+        content,
+      });
+    };
 
     addDirectory("/", ["apps.json", "apps", "desktop", "windows"]);
     addFile("/apps.json", {
@@ -219,14 +226,22 @@ export class BrowserRuntimeFileSystem implements IFileSystem {
 
     addDirectory("/apps", apps.map((app) => app.id));
     for (const app of apps) {
-      addDirectory(`/apps/${app.id}`, ["manifest.json"]);
+      addDirectory(`/apps/${app.id}`, ["manifest.json", "windows.json"]);
       addFile(`/apps/${app.id}/manifest.json`, toAppSummary(app));
+      addFile(`/apps/${app.id}/windows.json`, {
+        windows: windows.filter((window) => window.appId === app.id),
+        generatedAt: new Date().toISOString(),
+      });
     }
 
     addDirectory("/windows", windows.map((window) => window.windowId));
     for (const window of windows) {
-      addDirectory(`/windows/${window.windowId}`, ["meta.json"]);
+      addDirectory(`/windows/${window.windowId}`, ["app.txt", "meta.json", "mode.txt", "route.txt", "title.txt"]);
       addFile(`/windows/${window.windowId}/meta.json`, window);
+      addTextFile(`/windows/${window.windowId}/app.txt`, `${window.appId}\n`);
+      addTextFile(`/windows/${window.windowId}/mode.txt`, `${window.mode}\n`);
+      addTextFile(`/windows/${window.windowId}/route.txt`, `${window.route}\n`);
+      addTextFile(`/windows/${window.windowId}/title.txt`, `${window.title}\n`);
     }
 
     return entries;
