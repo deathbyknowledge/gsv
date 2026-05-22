@@ -362,9 +362,10 @@ function chooseRef(
   const requestedRemote = requestedRef.startsWith("refs/remotes/")
     ? requestedRef.slice("refs/remotes/".length)
     : requestedRef;
-  if (requestedRef && (heads[requestedRef] || tags[requestedRef] || remotes[requestedRemote])) {
+  if (requestedRef && (heads[requestedRef] || tags[requestedRef])) {
     return requestedRef;
   }
+  if (requestedRef && remotes[requestedRemote]) return `refs/remotes/${requestedRemote}`;
   if (heads.main) return "main";
   const [firstHead] = Object.keys(heads).sort((left, right) => left.localeCompare(right));
   if (firstHead) return firstHead;
