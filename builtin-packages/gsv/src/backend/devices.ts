@@ -142,9 +142,13 @@ function normalizeDeviceSummary(device: DeviceSummary): DeviceSummary {
     ownerUsername: typeof device.ownerUsername === "string" && device.ownerUsername.trim()
       ? device.ownerUsername.trim()
       : null,
+    label: typeof device.label === "string" && device.label.trim()
+      ? device.label.trim()
+      : device.deviceId,
     description: device.description ?? "",
-    platform: device.platform,
-    version: device.version,
+    platform: typeof device.platform === "string" ? device.platform : "",
+    version: typeof device.version === "string" ? device.version : "",
+    lifecycle: device.lifecycle === "ephemeral" ? "ephemeral" : "persistent",
     online: device.online,
     lastSeenAt: device.lastSeenAt,
   };

@@ -1,20 +1,79 @@
-import type { DeviceDetail, DeviceScope, DeviceSummary } from "./types";
+import type { DeviceDetail, DeviceScope, DeviceSummary, TargetKind, TargetKindFilter } from "./types";
 
-export function filterDevices(devices: DeviceSummary[], scope: DeviceScope, query: string): DeviceSummary[] {
+export type TargetFleetSummary = {
+  total: number;
+  online: number;
+  native: number;
+  browser: number;
+  adapter: number;
+};
+
+export function filterDevices(
+  devices: DeviceSummary[],
+  scope: DeviceScope,
+  kind: TargetKindFilter,
+  query: string,
+): DeviceSummary[] {
   const normalizedQuery = query.trim().toLowerCase();
   return devices.filter((device) => {
     if (scope === "online" && !device.online) return false;
     if (scope === "offline" && device.online) return false;
+    if (kind !== "all" && targetKind(device) !== kind) return false;
     if (!normalizedQuery) return true;
     return [
       device.deviceId,
+      device.label,
       device.description,
       device.platform,
       device.version,
+      targetKindLabel(targetKind(device)),
+      device.lifecycle,
       device.ownerUsername ?? "",
       String(device.ownerUid),
     ].some((part) => part.toLowerCase().includes(normalizedQuery));
   });
+}
+
+export function summarizeTargets(devices: DeviceSummary[]): TargetFleetSummary {
+  return devices.reduce<TargetFleetSummary>((summary, device) => {
+    const kind = targetKind(device);
+    summary.total += 1;
+    if (device.online) summary.online += 1;
+    if (kind === "native-device") summary.native += 1;
+    if (kind === "browser") summary.browser += 1;
+    if (kind === "adapter") summary.adapter += 1;
+    return summary;
+  }, { total: 0, online: 0, native: 0, browser: 0, adapter: 0 });
+}
+
+export function targetKind(device: Pick<DeviceSummary, "deviceId" | "platform">): TargetKind {
+  const platform = device.platform.toLowerCase();
+  if (device.deviceId.startsWith("browser:") || platform === "browser") return "browser";
+  if (device.deviceId.startsWith("adapter:") || platform === "adapter") return "adapter";
+  return "native-device";
+}
+
+export function targetKindLabel(kind: TargetKind): string {
+  if (kind === "browser") return "Browser";
+  if (kind === "adapter") return "Adapter";
+  return "Native";
+}
+
+export function targetDisplayName(device: Pick<DeviceSummary, "deviceId" | "label">): string {
+  const label = device.label.trim();
+  return label && label !== device.deviceId ? label : device.deviceId;
+}
+
+export function targetSubtitle(device: Pick<DeviceSummary, "deviceId" | "label">): string | null {
+  return targetDisplayName(device) === device.deviceId ? null : device.deviceId;
+}
+
+export function canManageNodeAccess(device: DeviceSummary): boolean {
+  return targetKind(device) === "native-device";
+}
+
+export function canEditTargetMetadata(device: DeviceSummary): boolean {
+  return targetKind(device) !== "adapter";
 }
 
 export function deviceHealthSummary(device: DeviceDetail): string {
@@ -25,7 +84,7 @@ export function deviceHealthSummary(device: DeviceDetail): string {
   if (lastSeenAge < 10 * 60_000) {
     return "Recently disconnected. Reconnect may still be in progress.";
   }
-  return "Offline. Token or agent intervention may be needed before routing work here.";
+  return "Offline. Reconnect or access intervention may be needed before routing work here.";
 }
 
 export function hasShell(device: DeviceDetail): boolean {

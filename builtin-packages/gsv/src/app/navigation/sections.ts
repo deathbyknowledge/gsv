@@ -46,12 +46,12 @@ export const SECTIONS: GsvSection[] = [
       },
       {
         label: "Recent operations",
-        description: "Last touched packages, devices, processes, and access changes.",
+        description: "Last touched packages, targets, processes, and access changes.",
         meta: "Activity",
       },
       {
         label: "System posture",
-        description: "A compact read on readiness across runtime, devices, extensions, and administration.",
+        description: "A compact read on readiness across runtime, targets, extensions, and administration.",
         meta: "Status",
         tone: "good",
       },
@@ -63,8 +63,8 @@ export const SECTIONS: GsvSection[] = [
         sectionId: "packages",
       },
       {
-        label: "Open Devices",
-        description: "Inspect fleet health, provisioning, and device access in GSV.",
+        label: "Open Targets",
+        description: "Inspect target health, provisioning, and access in GSV.",
         sectionId: "devices",
       },
     ],
@@ -107,16 +107,16 @@ export const SECTIONS: GsvSection[] = [
   {
     id: "devices",
     groupId: "operations",
-    label: "Devices",
-    shortLabel: "Devices",
-    title: "Devices",
-    summary: "Manage execution targets, node health, capabilities, and provisioning.",
+    label: "Targets",
+    shortLabel: "Targets",
+    title: "Targets",
+    summary: "Manage execution targets, health, capabilities, and native node provisioning.",
     statusLabel: "Operations",
     tone: "good",
     localItems: [
       {
-        label: "Fleet",
-        description: "Online/offline state, owner, platform, last seen, and routing readiness.",
+        label: "Target list",
+        description: "Native devices, browser sessions, adapters, status, owner, and routing readiness.",
         meta: "List/detail",
       },
       {
@@ -126,14 +126,14 @@ export const SECTIONS: GsvSection[] = [
       },
       {
         label: "Access and health",
-        description: "Review device tokens, capabilities, and health evidence.",
+        description: "Review native node tokens, capabilities, and health evidence.",
         meta: "Inspector",
       },
     ],
     handoffs: [
       {
-        label: "Open Devices",
-        description: "Stay in GSV to manage the device fleet.",
+        label: "Open Targets",
+        description: "Stay in GSV to manage execution targets.",
         sectionId: "devices",
       },
       {

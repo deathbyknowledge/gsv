@@ -19,6 +19,7 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
           selectedDeviceId={devices.selectedDeviceId}
           query={devices.query}
           scope={devices.scope}
+          kind={devices.kind}
           errorText={devices.errorText}
           onAdd={() => {
             devices.setIssuedToken(null);
@@ -26,6 +27,7 @@ export function DevicesSection({ backend }: { backend: GsvBackend }) {
           }}
           onQuery={devices.setQuery}
           onScope={devices.setScope}
+          onKind={devices.setKind}
           onSelect={(deviceId) => {
             devices.setIssuedToken(null);
             devices.writeRoute({ mode: "detail", deviceId });

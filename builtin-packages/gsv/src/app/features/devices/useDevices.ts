@@ -9,6 +9,7 @@ import type {
   DevicesState,
   DevicesTabId,
   IssuedNodeToken,
+  TargetKindFilter,
 } from "./types";
 
 export function useDevices(backend: GsvBackend) {
@@ -18,6 +19,7 @@ export function useDevices(backend: GsvBackend) {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(readDeviceFromLocation);
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<DeviceScope>("all");
+  const [kind, setKind] = useState<TargetKindFilter>("all");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [issuedToken, setIssuedToken] = useState<IssuedNodeToken | null>(null);
@@ -73,7 +75,7 @@ export function useDevices(backend: GsvBackend) {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
-  const visibleDevices = useMemo(() => filterDevices(state?.devices ?? [], scope, query), [query, scope, state?.devices]);
+  const visibleDevices = useMemo(() => filterDevices(state?.devices ?? [], scope, kind, query), [kind, query, scope, state?.devices]);
 
   async function createToken(form: { deviceId: string; label: string; expiresDays: string }): Promise<void> {
     setPendingAction("create-token");
@@ -135,6 +137,7 @@ export function useDevices(backend: GsvBackend) {
     activeTab,
     query,
     scope,
+    kind,
     pendingAction,
     errorText,
     issuedToken,
@@ -143,6 +146,7 @@ export function useDevices(backend: GsvBackend) {
     selectedDeviceId: state ? state.selectedDeviceId : selectedDeviceId,
     setQuery,
     setScope,
+    setKind,
     setIssuedToken,
     writeRoute,
     loadState,

@@ -1,6 +1,8 @@
 export type DevicesTabId = "overview" | "capabilities" | "access" | "health";
 export type DevicesMode = "detail" | "provision";
 export type DeviceScope = "all" | "online" | "offline";
+export type TargetKind = "native-device" | "browser" | "adapter";
+export type TargetKindFilter = "all" | TargetKind;
 
 export type DevicesViewer = {
   uid: number;
@@ -12,9 +14,11 @@ export type DeviceSummary = {
   deviceId: string;
   ownerUid: number;
   ownerUsername: string | null;
+  label: string;
   description: string;
   platform: string;
   version: string;
+  lifecycle: "persistent" | "ephemeral";
   online: boolean;
   lastSeenAt: number;
 };

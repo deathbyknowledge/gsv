@@ -54,10 +54,10 @@ export function ProvisionPanel({
       <header class="gsv-device-detail-head">
         <div>
           <span class="gsv-kicker">Provisioning</span>
-          <h3>Add device</h3>
-          <p>Issue a node token and bootstrap the next execution target.</p>
+          <h3>Add native node</h3>
+          <p>Issue a node token and bootstrap a persistent execution target.</p>
         </div>
-        <ActionButton icon="arrow-left" label="Fleet" onClick={onBack} />
+        <ActionButton icon="arrow-left" label="Targets" onClick={onBack} />
       </header>
 
       <form
@@ -73,7 +73,7 @@ export function ProvisionPanel({
           });
         }}
       >
-        <label><span>Device id</span><input name="deviceId" defaultValue={initialDeviceId} required /></label>
+        <label><span>Target id</span><input name="deviceId" defaultValue={initialDeviceId} required /></label>
         <label><span>Label</span><input name="label" placeholder="MacBook Pro" /></label>
         <label><span>Expires in days</span><input name="expiresDays" type="number" min="1" defaultValue="30" /></label>
         <ActionButton
@@ -95,7 +95,7 @@ export function ProvisionPanel({
             </select>
           </label>
           <CommandBlock title="Install CLI" value={install} copied={copied === "install"} onCopy={() => void copy(install, "install")} />
-          <CommandBlock title="Bootstrap device" value={bootstrap} copied={copied === "bootstrap"} onCopy={() => void copy(bootstrap, "bootstrap")} />
+          <CommandBlock title="Bootstrap target" value={bootstrap} copied={copied === "bootstrap"} onCopy={() => void copy(bootstrap, "bootstrap")} />
         </section>
       ) : null}
     </section>

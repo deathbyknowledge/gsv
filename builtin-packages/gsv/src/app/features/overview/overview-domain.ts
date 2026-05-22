@@ -134,9 +134,9 @@ function buildDeviceAttention(devices: DevicesState | null, now: number): Overvi
   if (devices.devices.length === 0) {
     items.push({
       id: "devices:none",
-      title: "No execution devices are registered",
-      description: "Provision a device before routing work to external targets.",
-      meta: "Fleet",
+      title: "No execution targets are registered",
+      description: "Provision a native node or connect a browser or adapter before routing work.",
+      meta: "Targets",
       tone: "warning",
       sectionId: "devices",
       priority: 58,
@@ -146,7 +146,7 @@ function buildDeviceAttention(devices: DevicesState | null, now: number): Overvi
     if (offline.length > 0) {
       items.push({
         id: "devices:offline",
-        title: plural(offline.length, "device is offline", "devices are offline"),
+        title: plural(offline.length, "target is offline", "targets are offline"),
         description: summarizeDevices(offline),
         meta: `${offline.length}/${devices.devices.length} offline`,
         tone: offline.length === devices.devices.length ? "danger" : "warning",
@@ -160,7 +160,7 @@ function buildDeviceAttention(devices: DevicesState | null, now: number): Overvi
   if (expiringTokens.length > 0) {
     items.push({
       id: "devices:tokens-expiring",
-      title: plural(expiringTokens.length, "device token expires soon", "device tokens expire soon"),
+      title: plural(expiringTokens.length, "node token expires soon", "node tokens expire soon"),
       description: "Rotate provisioning credentials before connected nodes lose access.",
       meta: `${expiringTokens.length} tokens`,
       tone: "warning",
@@ -314,7 +314,7 @@ function buildPosture(snapshot: OverviewSnapshot, attention: OverviewAttentionIt
     },
     {
       id: "devices",
-      label: "Fleet",
+      label: "Targets",
       value: snapshot.devices ? devicePostureValue(snapshot.devices.devices) : "unavailable",
       detail: postureDetail(deviceIssues),
       tone: postureTone(deviceIssues),
@@ -372,7 +372,7 @@ function summarizeProcesses(processes: ProcessEntry[]): string {
 }
 
 function summarizeDevices(devices: DeviceSummary[]): string {
-  return devices.slice(0, 3).map((device) => device.description || device.deviceId).join(", ");
+  return devices.slice(0, 3).map((device) => device.label || device.description || device.deviceId).join(", ");
 }
 
 function summarizePackages(packages: PackageRecord[]): string {

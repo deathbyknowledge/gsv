@@ -35,7 +35,7 @@
 
 .gsv-devices-filters {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8rem;
+  grid-template-columns: minmax(0, 1fr) 8rem 8rem;
   gap: 0.6rem;
   margin-top: 0.75rem;
   padding: 0.75rem;
@@ -94,6 +94,59 @@
 .gsv-device-row:hover,
 .gsv-device-row.is-selected {
   background: #f4f7fb;
+}
+
+.gsv-target-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.65rem 0;
+  color: #657083;
+  font-size: 0.78rem;
+}
+
+.gsv-target-summary span,
+.gsv-target-kind {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.55rem;
+  gap: 0.25rem;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid #dce2ea;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.gsv-target-summary strong {
+  color: #202733;
+}
+
+.gsv-target-row-meta {
+  display: grid;
+  justify-items: end;
+  gap: 0.3rem;
+}
+
+.gsv-target-kind {
+  width: max-content;
+  color: #435066;
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.gsv-target-kind.is-native-device {
+  border-color: #cfd8ea;
+  background: #f6f8fb;
+}
+
+.gsv-target-kind.is-browser {
+  border-color: #b8ddcf;
+  background: #f0fbf6;
+}
+
+.gsv-target-kind.is-adapter {
+  border-color: #cfc3e9;
+  background: #f7f3ff;
 }
 
 .gsv-device-detail {
@@ -272,6 +325,13 @@
   overflow-wrap: anywhere;
 }
 
+.gsv-info-box p {
+  margin: 0.35rem 0 0;
+  color: #566273;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
 .gsv-capability-groups {
   display: grid;
   gap: 0.65rem;
@@ -427,6 +487,11 @@
     grid-template-columns: auto minmax(0, 1fr);
   }
 
+  .gsv-target-row-meta {
+    grid-column: 2;
+    justify-items: start;
+  }
+
   .gsv-token-row {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -438,5 +503,9 @@
 
   .gsv-row-meta {
     grid-column: 2;
+  }
+
+  .gsv-target-row-meta .gsv-row-meta {
+    grid-column: auto;
   }
 }
