@@ -312,7 +312,7 @@ function formatInteractionOriginLabel(origin: InteractionOrigin | undefined): st
     return [`via ${adapter}`, surface, actor ? `from ${actor}` : ""].filter(Boolean).join(" ");
   }
   if (origin.kind === "client") {
-    return `via ${origin.platform || "client"}${origin.clientId ? ` ${origin.clientId}` : ""}`;
+    return `via ${formatClientOriginLabel(origin.platform, origin.clientId)}`;
   }
   if (origin.kind === "device") {
     return `via ${origin.deviceId}`;
@@ -324,6 +324,14 @@ function formatInteractionOriginLabel(origin: InteractionOrigin | undefined): st
     return `from schedule ${origin.scheduleId}`;
   }
   return null;
+}
+
+function formatClientOriginLabel(platform: string | undefined, clientId: string | undefined): string {
+  if (clientId === "gsv-ui" || platform === "browser" || platform === "web") {
+    return "GSV Web Desktop";
+  }
+  const label = platform || "client";
+  return clientId ? `${label} ${clientId}` : label;
 }
 
 function formatAdapterSurfaceLabel(surface: Extract<InteractionOrigin, { kind: "adapter" }>["surface"]): string {

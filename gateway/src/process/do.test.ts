@@ -444,7 +444,7 @@ describe("Process DO — mechanical", () => {
             expect(second.role).toBe("user");
             expect(second.content).toBe("same source follow-up");
             expect(third.role).toBe("user");
-            expect(third.content).toContain("[From: web browser-shell]");
+            expect(third.content).toContain("[From: GSV Web Desktop]");
             expect(third.content).toContain("now from chat");
             return {
               role: "assistant",
@@ -487,8 +487,8 @@ describe("Process DO — mechanical", () => {
           origin: JSON.stringify({
             kind: "client",
             connectionId: "conn-1",
-            clientId: "browser-shell",
-            platform: "web",
+            clientId: "gsv-ui",
+            platform: "browser",
           }),
         });
         process.currentRun = {

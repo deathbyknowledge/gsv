@@ -3813,9 +3813,7 @@ function formatInteractionOriginForContext(origin: InteractionOrigin | undefined
   }
 
   if (origin.kind === "client") {
-    const platform = origin.platform || "client";
-    const client = origin.clientId ? ` ${origin.clientId}` : "";
-    return `${platform}${client}`;
+    return formatClientOriginForContext(origin.platform, origin.clientId);
   }
 
   if (origin.kind === "device") {
@@ -3831,6 +3829,14 @@ function formatInteractionOriginForContext(origin: InteractionOrigin | undefined
   }
 
   return null;
+}
+
+function formatClientOriginForContext(platform: string | undefined, clientId: string | undefined): string {
+  if (clientId === "gsv-ui" || platform === "browser" || platform === "web") {
+    return "GSV Web Desktop";
+  }
+  const label = platform || "client";
+  return clientId ? `${label} ${clientId}` : label;
 }
 
 function formatAdapterSurfaceForContext(surface: AdapterSurface): string {
