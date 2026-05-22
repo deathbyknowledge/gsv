@@ -3,6 +3,7 @@ import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
 import { handleFsCopy } from "./fs";
 import type { KernelContext } from "../../kernel/context";
+import type { DeviceRecord } from "../../kernel/devices";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { InstalledPackageRecord } from "../../kernel/packages";
 
@@ -55,12 +56,33 @@ function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackag
   } as InstalledPackageRecord;
 }
 
+function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
+  const now = 1_800_000_000_000;
+  return {
+    device_id: partial.device_id,
+    owner_uid: partial.owner_uid ?? IDENTITY.uid,
+    label: partial.label ?? partial.device_id,
+    description: partial.description ?? "",
+    implements: partial.implements ?? ["shell.exec"],
+    platform: partial.platform ?? "linux",
+    version: partial.version ?? "1.0.0",
+    lifecycle: partial.lifecycle ?? "persistent",
+    online: partial.online ?? true,
+    first_seen_at: partial.first_seen_at ?? now,
+    last_seen_at: partial.last_seen_at ?? now,
+    connected_at: partial.connected_at ?? now,
+    disconnected_at: partial.disconnected_at ?? null,
+  };
+}
+
 function makeContext(options?: {
   capabilities?: string[];
   config?: Record<string, string>;
   pkg?: InstalledPackageRecord;
   packages?: InstalledPackageRecord[];
   procs?: Partial<KernelContext["procs"]>;
+  devices?: KernelContext["devices"];
+  auth?: KernelContext["auth"];
   schedules?: KernelContext["schedules"];
   getAppRunner?: KernelContext["getAppRunner"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
@@ -79,7 +101,7 @@ function makeContext(options?: {
       RIPGIT: {} as Fetcher,
       LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
     } as unknown as Env,
-    auth: null as never,
+    auth: options?.auth ?? null as never,
     caps: null as never,
     config: {
       get(key: string) {
@@ -95,7 +117,7 @@ function makeContext(options?: {
           .sort((left, right) => left.key.localeCompare(right.key));
       },
     } as never,
-    devices: null as never,
+    devices: options?.devices ?? null as never,
     procs: {
       getMounts() {
         return [];
@@ -171,6 +193,77 @@ function packageScopeKey(scope: InstalledPackageRecord["scope"]): string {
       return `workspace:${scope.workspaceId}`;
   }
 }
+
+describe("targets native command", () => {
+  it("lists targets with pagination and keeps devices as an alias", async () => {
+    const records = [
+      makeDevice({
+        device_id: "macbook",
+        label: "Work MacBook",
+        description: "Laptop",
+        platform: "darwin",
+        implements: ["shell.exec", "fs.read"],
+      }),
+      makeDevice({
+        device_id: "browser:abc",
+        label: "Browser",
+        platform: "browser",
+        lifecycle: "ephemeral",
+        implements: ["shell.exec", "fs.*"],
+      }),
+    ];
+    const devices = {
+      listForUser: vi.fn(() => records),
+    } as unknown as KernelContext["devices"];
+
+    const result = await handleShellExec(
+      { input: "targets list --limit 2" },
+      makeContext({ capabilities: ["sys.device.list"], devices }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("TARGET\tKIND\tSTATE\tLIFE\tPLATFORM\tCAPS\tLABEL");
+    expect(result.stdout).toContain("gsv\tgsv\tonline\tpersistent\tcloudflare-worker");
+    expect(result.stdout).toContain("browser:abc\tbrowser\tonline\tephemeral\tbrowser");
+    expect(result.stdout).toContain("Showing 1-2 of 3");
+
+    const alias = await handleShellExec(
+      { input: "devices search macbook" },
+      makeContext({ capabilities: ["sys.device.list"], devices }),
+    );
+    expect(alias.ok).toBe(true);
+    expect(alias.stdout).toContain("macbook\tnative-device\tonline\tpersistent\tdarwin");
+  });
+
+  it("shows target details", async () => {
+    const record = makeDevice({
+      device_id: "macbook",
+      label: "Work MacBook",
+      description: "Laptop",
+      platform: "darwin",
+      implements: ["shell.exec", "fs.read"],
+    });
+    const devices = {
+      canAccess: vi.fn(() => true),
+      get: vi.fn(() => record),
+    } as unknown as KernelContext["devices"];
+    const auth = {
+      getPasswdByUid: vi.fn(() => ({ username: "sam" })),
+    } as unknown as KernelContext["auth"];
+
+    const result = await handleShellExec(
+      { input: "targets show macbook" },
+      makeContext({ capabilities: ["sys.device.get"], devices, auth }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("target: macbook");
+    expect(result.stdout).toContain("kind: native-device");
+    expect(result.stdout).toContain("owner: sam (uid 1000)");
+    expect(result.stdout).toContain("- shell.exec");
+    expect(result.stdout).toContain("- fs.read");
+  });
+});
 
 describe("proc native command", () => {
   it("lists spawnable profiles", async () => {

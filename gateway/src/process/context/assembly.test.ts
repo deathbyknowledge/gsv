@@ -110,6 +110,26 @@ describe("createProfileInstructionsProvider", () => {
     expect(sections[0]?.text).toContain("- Cloudflare");
     expect(sections[0]?.text).toContain("- Linear");
   });
+
+  it("bounds rendered target context and points to target discovery", async () => {
+    const provider = createProfileInstructionsProvider();
+    const sections = await provider.collect(
+      makeInput({
+        devices: Array.from({ length: 7 }, (_value, index) => ({
+          id: `node-${index + 1}`,
+          label: `Node ${index + 1}`,
+          platform: "linux",
+          description: `Worker ${index + 1}`,
+          implements: ["shell.exec"],
+        })),
+      }),
+    );
+
+    expect(sections[0]?.text).toContain("- node-1: Node 1 - Worker 1 (linux)");
+    expect(sections[0]?.text).toContain("- node-5: Node 5 - Worker 5 (linux)");
+    expect(sections[0]?.text).not.toContain("node-6");
+    expect(sections[0]?.text).toContain("- ... 2 more targets. Run `targets list` in Shell to discover more.");
+  });
 });
 
 describe("selection", () => {

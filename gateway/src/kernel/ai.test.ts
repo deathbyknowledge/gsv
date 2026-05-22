@@ -1,11 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
+import type { DeviceRecord } from "./devices";
 import { handleAiSpeechCreate, handleAiTools, handleAiTranscriptionCreate } from "./ai";
 import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL } from "../inference/transcription";
 import {
   DEFAULT_AUDIO_SPEECH_MODEL,
   DEFAULT_AUDIO_SPEECH_SPEAKER,
 } from "../inference/speech";
+
+function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
+  const now = 1_800_000_000_000;
+  return {
+    device_id: partial.device_id,
+    owner_uid: partial.owner_uid ?? 1000,
+    label: partial.label ?? partial.device_id,
+    description: partial.description ?? "",
+    implements: partial.implements ?? ["shell.exec"],
+    platform: partial.platform ?? "linux",
+    version: partial.version ?? "1.0.0",
+    lifecycle: partial.lifecycle ?? "persistent",
+    online: partial.online ?? true,
+    first_seen_at: partial.first_seen_at ?? now,
+    last_seen_at: partial.last_seen_at ?? now,
+    connected_at: partial.connected_at ?? now,
+    disconnected_at: partial.disconnected_at ?? null,
+  };
+}
 
 function makeContext(connectionState: string): KernelContext {
   return {
@@ -146,6 +166,29 @@ describe("handleAiTools", () => {
     }));
     const shell = result.tools.find((tool) => tool.name === "Shell");
     expect(JSON.stringify(shell?.inputSchema)).toContain("adapter:whatsapp:primary");
+  });
+
+  it("caps routable tool target descriptions when many targets are online", async () => {
+    const records = Array.from({ length: 12 }, (_value, index) =>
+      makeDevice({ device_id: `node-${String(index + 1).padStart(2, "0")}` })
+    );
+    const ctx = {
+      ...makeContext("ready"),
+      devices: {
+        listForUser: vi.fn(() => records),
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleAiTools(ctx);
+    const shell = result.tools.find((tool) => tool.name === "Shell");
+    const description = JSON.stringify(shell?.inputSchema);
+
+    expect(description).toContain("node-01");
+    expect(description).toContain("node-10");
+    expect(description).toContain("and 2 more");
+    expect(description).toContain("targets list");
+    expect(description).not.toContain("node-11");
+    expect(description).not.toContain("node-12");
   });
 });
 

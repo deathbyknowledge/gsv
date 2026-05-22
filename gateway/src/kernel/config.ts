@@ -32,6 +32,7 @@ const GSV_TARGET_CONTEXT = [
   "Browser targets represent active GSV web shell desktops. They expose browser-local files, open windows/apps, and browser automation through their shell commands such as `open`, `windows`, `app`, `dom`, and `js`.",
   "Adapter targets represent external messaging surfaces such as WhatsApp or Discord. Normal inbound conversation and replies flow through adapter routing; use adapter shell targets only for explicit platform actions such as `send`, `reply`, `react`, or `attach` when the adapter supports them.",
   "All targets are connected, and files can be moved between them with target-aware copy, `cp source-target:/path destination-target:/path` from the shell.",
+  "Use `Shell` with `target: \"gsv\"` and `input: \"targets list\"` to discover target ids beyond the compact prompt list.",
   "Use `skills show browser-shell` before nontrivial browser target work.",
 ].join("\n");
 

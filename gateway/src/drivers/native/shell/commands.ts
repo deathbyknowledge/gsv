@@ -15,6 +15,7 @@ import { buildProcCommand } from "./proc";
 import { buildSchedCommand } from "./sched";
 import { buildSkillsCommand } from "./skills";
 import { buildStatCommand } from "./stat";
+import { buildTargetsCommands } from "./targets";
 
 export type NativeShellCommandOptions = {
   fsCopyTransport?: FsCopyDeviceTransport;
@@ -36,6 +37,7 @@ export function buildCustomCommands(
   const skills = buildSkillsCommand(fs, ctx, identity);
   const proc = buildProcCommand(ctx);
   const sched = buildSchedCommand(ctx);
+  const targets = buildTargetsCommands(ctx);
   const notifyCommands = buildNotifyCommands(ctx);
   const packageCommands = buildPackageCommands(identity, ctx);
   const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
@@ -53,6 +55,7 @@ export function buildCustomCommands(
     mcp,
     proc,
     sched,
+    ...targets,
     pkg,
     skills,
     flynn,

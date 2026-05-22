@@ -394,6 +394,7 @@ export function domainOf(syscall: SyscallName): SyscallDomain {
  * `proc` is kernel-internal (no device routing).
  */
 const ROUTABLE_DOMAINS: SyscallDomain[] = ["fs", "shell"];
+const TARGET_SCHEMA_INLINE_LIMIT = 10;
 
 /**
  * Inject a `target` property into a tool definition so the LLM can choose
@@ -417,8 +418,6 @@ export function intoSyscallTool(
     );
   }
 
-  const targetList = devices.length > 0 ? devices.join(", ") : "none";
-
   const targetRequired = tool.name !== "Shell";
 
   return {
@@ -430,12 +429,23 @@ export function intoSyscallTool(
         ...properties,
         target: {
           type: "string",
-          description: `Target to execute on. Use "gsv" to execute on the cloud or use one of the accessible online targets: ${targetList}`,
+          description: formatTargetSchemaDescription(devices),
         },
       },
       required: targetRequired ? [...required, "target"] : required,
     },
   };
+}
+
+function formatTargetSchemaDescription(devices: string[]): string {
+  if (devices.length === 0) {
+    return "Target to execute on. Use \"gsv\" for the native cloud target. Run `targets list` in Shell to discover connected targets.";
+  }
+  const listed = devices.slice(0, TARGET_SCHEMA_INLINE_LIMIT);
+  const suffix = devices.length > listed.length
+    ? `, and ${devices.length - listed.length} more`
+    : "";
+  return `Target to execute on. Use "gsv" for the native cloud target, or one of: ${listed.join(", ")}${suffix}. Run \`targets list\` in Shell for details.`;
 }
 
 export function isRoutableSyscall(call: SyscallName): boolean {
