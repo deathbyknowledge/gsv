@@ -880,12 +880,47 @@ button:disabled {
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
+    border-radius 140ms ease,
     box-shadow 140ms ease,
-    transform 140ms ease;
+    min-height 140ms ease,
+    padding 140ms ease,
+    transform 140ms ease,
+    width 180ms ease;
 }
 
 .presence-activity[hidden] {
   display: none;
+}
+
+.presence-activity.is-compact {
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  overflow: hidden;
+  place-items: center;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+  gap: 0;
+  border-radius: 999px;
+  text-align: center;
+}
+
+.presence-activity.is-compact .presence-activity-head {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  gap: 0;
+}
+
+.presence-activity.is-compact .presence-activity-head > span:last-child,
+.presence-activity.is-compact .presence-activity-body {
+  display: none;
+}
+
+.presence-activity.is-compact .presence-activity-pulse {
+  margin: 0;
 }
 
 .presence-activity-head {
@@ -6867,6 +6902,11 @@ button:disabled {
     right: 14px;
     left: 14px;
     width: auto;
+  }
+
+  .presence-activity.is-compact {
+    left: auto;
+    width: 42px;
   }
 
   .presence-panel {

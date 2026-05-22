@@ -205,6 +205,9 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       activityNode.setAttribute("aria-expanded", open ? "true" : "false");
       activityNode.classList.toggle("is-expanded", open);
     }
+    if (activeRuns.size === 0 && activityHideTimer === null) {
+      renderIdlePresenceActivity();
+    }
   }
 
   function setMode(nextMode: PresenceMode): void {
@@ -815,9 +818,12 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     }
     clearActivityHideTimer();
     activityNode.hidden = false;
+    activityNode.classList.remove("is-compact");
     activityNode.dataset.status = tone;
     activityStatusNode.textContent = status;
     activityBodyNode.textContent = truncateActivityText(body.trim() || status);
+    activityNode.title = `Mind: ${status}`;
+    activityNode.setAttribute("aria-label", `Mind: ${status}`);
   }
 
   function hidePresenceActivity(): void {
@@ -829,10 +835,15 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       return;
     }
     const connected = gatewayClient.isConnected();
+    const status = compactPresenceStatus(state, connected, activeRuns.size);
+    const body = presenceActivityBody(state, connected);
     activityNode.hidden = false;
     activityNode.dataset.status = presenceActivityTone(state, connected);
-    activityStatusNode.textContent = compactPresenceStatus(state, connected, activeRuns.size);
-    activityBodyNode.textContent = presenceActivityBody(state, connected);
+    activityNode.classList.toggle("is-compact", shouldCompactPresenceActivity(state, connected));
+    activityStatusNode.textContent = status;
+    activityBodyNode.textContent = body;
+    activityNode.title = `Mind: ${body}`;
+    activityNode.setAttribute("aria-label", `Mind: ${status}. ${body}`);
   }
 
   function newestActiveRunId(): string | null {
@@ -886,6 +897,13 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
       case "unsupported": return "stopped";
       default: return "idle";
     }
+  }
+
+  function shouldCompactPresenceActivity(current: PresenceState, connected: boolean): boolean {
+    return connected
+      && !panelOpen
+      && activeRuns.size === 0
+      && (current === "idle" || current === "listening" || current === "unsupported");
   }
 
   function presenceActivityBody(current: PresenceState, connected: boolean): string {
