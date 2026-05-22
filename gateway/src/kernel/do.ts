@@ -102,7 +102,7 @@ import type {
   SchedulerRunResult,
 } from "../syscalls/scheduler";
 
-const SERVER_VERSION = "0.1.6";
+const SERVER_VERSION = "0.2.0";
 const APP_CLIENT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 type ConnectionState = {
