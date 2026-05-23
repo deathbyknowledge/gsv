@@ -13,6 +13,7 @@
 import type { Connection } from "agents";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { SyscallName } from "../syscalls";
+import type { FsTransferWriteArgs } from "../syscalls/transfer";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
 import type { ShellSessionRecord, ShellSessionStore } from "./shell-sessions";
@@ -25,6 +26,7 @@ import {
   handleFsCopy,
   handleFsTransferStat,
   handleFsTransferRead,
+  handleFsTransferWrite,
 } from "../drivers/native/fs";
 import { handleShellExec } from "../drivers/native/shell";
 import { handleAiTools, handleAiConfig, handleAiSpeechCreate, handleAiTranscriptionCreate } from "./ai";
@@ -119,6 +121,11 @@ import {
   targetCanHandle,
   type TargetDescriptor,
 } from "./targets";
+import {
+  BINARY_FRAME_DATA,
+  BINARY_FRAME_ERROR,
+  type BinaryFrame,
+} from "@gsv/protocol/binary-frame";
 
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
@@ -145,6 +152,15 @@ export type DispatchDeps = {
     options?: { payload?: Uint8Array; receive?: boolean; streamId?: number },
     ttlMs?: number,
   ) => Promise<{ data: unknown; payload?: Uint8Array; flags?: number; streamId: number }>;
+  receiveBinaryFrame: (route: {
+    requestId: string;
+    streamId: number;
+    origin: RouteOrigin;
+    ttlMs: number;
+  }) => {
+    promise: Promise<BinaryFrame>;
+    cleanup: () => void;
+  };
 };
 
 export type DispatchResult =
@@ -231,7 +247,7 @@ export async function dispatch(
     delete raw.target;
   }
 
-  const result = await dispatchNative(frame, ctx, deps);
+  const result = await dispatchNative(frame, origin, ctx, deps);
   return {
     handled: true,
     response: result,
@@ -240,6 +256,7 @@ export async function dispatch(
 
 async function dispatchNative(
   frame: RequestFrame,
+  origin: RouteOrigin,
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<ResponseFrame> {
@@ -275,6 +292,9 @@ async function dispatchNative(
         break;
       case "fs.transfer.read":
         data = await handleFsTransferRead(frame.args, ctx);
+        break;
+      case "fs.transfer.write":
+        data = await handleNativeFsTransferWrite(frame, origin, ctx, deps);
         break;
 
       case "shell.exec":
@@ -559,6 +579,49 @@ async function dispatchNative(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return errFrame(frame.id, 500, message);
+  }
+}
+
+async function handleNativeFsTransferWrite(
+  frame: RequestFrame,
+  origin: RouteOrigin,
+  ctx: KernelContext,
+  deps: DispatchDeps,
+): Promise<unknown> {
+  const streamId = transferStreamId(frame.call, frame.args);
+  if (streamId === null) {
+    return { ok: false, error: "fs.transfer.write requires streamId" };
+  }
+
+  let pending: { promise: Promise<BinaryFrame>; cleanup: () => void };
+  try {
+    pending = deps.receiveBinaryFrame({
+      requestId: frame.id,
+      streamId,
+      origin,
+      ttlMs: DEFAULT_DEVICE_TTL_MS,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  try {
+    const binaryFrame = await pending.promise;
+    if ((binaryFrame.flags & BINARY_FRAME_ERROR) !== 0) {
+      return {
+        ok: false,
+        error: new TextDecoder().decode(binaryFrame.payload) || "Binary transfer failed",
+      };
+    }
+    if ((binaryFrame.flags & BINARY_FRAME_DATA) === 0) {
+      return { ok: false, error: "fs.transfer.write did not include data" };
+    }
+    return await handleFsTransferWrite(frame.args as FsTransferWriteArgs, ctx, binaryFrame.payload);
+  } finally {
+    pending.cleanup();
   }
 }
 

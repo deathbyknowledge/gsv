@@ -104,6 +104,7 @@ import type {
 
 const SERVER_VERSION = "0.2.0";
 const APP_CLIENT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
 
 type ConnectionState = {
   step: "pending" | "connected";
@@ -1259,6 +1260,7 @@ export class Kernel extends Host<Env> {
       registerBinaryRoute: this.registerBinaryRoute.bind(this),
       requestDevice: this.requestDevice.bind(this),
       requestDeviceBinary: this.requestDeviceBinary.bind(this),
+      receiveBinaryFrame: this.receiveBinaryFrame.bind(this),
     };
   }
 
@@ -1417,6 +1419,44 @@ export class Kernel extends Host<Env> {
     this.pendingBinaryFrames.delete(streamId);
     clearTimeout(pending.timeoutId);
     pending.reject(error);
+  }
+
+  private receiveBinaryFrame(route: {
+    requestId: string;
+    streamId: number;
+    origin: RouteOrigin;
+    ttlMs: number;
+  }): {
+    promise: Promise<BinaryFrame>;
+    cleanup: () => void;
+  } {
+    if (route.origin.type !== "connection") {
+      throw new Error("Native binary transfer requires an active WebSocket connection");
+    }
+
+    const pending = this.createPendingBinaryFrame(route.streamId, route.ttlMs);
+    let binaryRoute: { cancel: () => void };
+    try {
+      binaryRoute = this.registerBinaryRoute({
+        requestId: route.requestId,
+        streamId: route.streamId,
+        origin: route.origin,
+        deviceId: KERNEL_BINARY_DEVICE_ID,
+        ttlMs: route.ttlMs,
+      });
+    } catch (error) {
+      pending.cleanup();
+      pending.promise.catch(() => {});
+      throw error;
+    }
+
+    return {
+      promise: pending.promise,
+      cleanup: () => {
+        pending.cleanup();
+        binaryRoute.cancel();
+      },
+    };
   }
 
   private async requestDevice(
@@ -2214,6 +2254,11 @@ export class Kernel extends Host<Env> {
       return;
     }
 
+    if (route.deviceId === KERNEL_BINARY_DEVICE_ID) {
+      this.deliverBinaryToNativeHandler(connection, route, frame);
+      return;
+    }
+
     if (this.isConnectionForDevice(connection, route.deviceId)) {
       this.deliverBinaryFromDevice(route, frame);
       return;
@@ -2225,6 +2270,25 @@ export class Kernel extends Host<Env> {
         deviceConn.send(buildBinaryFrame(frame.streamId, frame.flags, frame.payload));
       }
     }
+  }
+
+  private deliverBinaryToNativeHandler(
+    connection: Connection<ConnectionState>,
+    route: BinaryRoute,
+    frame: BinaryFrame,
+  ): void {
+    if (route.origin.type !== "connection" || route.origin.id !== connection.id) {
+      return;
+    }
+
+    const pending = this.pendingBinaryFrames.get(frame.streamId);
+    if (!pending) {
+      return;
+    }
+
+    this.pendingBinaryFrames.delete(frame.streamId);
+    clearTimeout(pending.timeoutId);
+    pending.resolve(frame);
   }
 
   private deliverBinaryFromDevice(route: BinaryRoute, frame: BinaryFrame): void {

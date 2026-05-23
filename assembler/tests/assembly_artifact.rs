@@ -655,6 +655,30 @@ render(<App />, root);"#
 }
 
 #[test]
+fn runtime_artifact_rejects_browser_css_module_imports() {
+    let mut request = declarative_request();
+    request.files.insert(
+        "apps/demo/src/main.tsx".to_string(),
+        r#"import "./styles.css";
+
+export default function App() { return null; }"#
+            .to_string(),
+    );
+
+    let prepared = prepare_request(&request).value.expect("prepared");
+    let installed = install_registry_dependencies(&prepared, &EmptyRegistry)
+        .value
+        .expect("installed");
+    let outcome = build_runtime_assembly(&request.analysis, &installed);
+
+    assert!(outcome.value.is_none());
+    assert!(outcome.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "browser.unsupported-specifier"
+            && diagnostic.message.contains("apps/demo/src/styles.css")
+    }));
+}
+
+#[test]
 fn runtime_artifact_emits_browser_wasm_public_files() {
     let mut request = declarative_request();
     request

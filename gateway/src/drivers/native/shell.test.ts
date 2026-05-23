@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:test";
 import { handleShellExec } from "./shell";
-import { handleFsCopy, handleFsTransferRead } from "./fs";
+import { handleFsCopy, handleFsTransferRead, handleFsTransferWrite } from "./fs";
 import { parseBinaryFrame } from "@gsv/protocol/binary-frame";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
@@ -340,6 +340,41 @@ describe("fs copy", () => {
     const frame = parseBinaryFrame(sent[0] as ArrayBuffer);
     expect(frame).toMatchObject({ streamId: 123 });
     expect(new TextDecoder().decode(frame?.payload)).toBe("2345");
+  });
+
+  it("writes native transfer chunks", async () => {
+    const destinationKey = "home/sam/copy-test/native-transfer-write.txt";
+    await env.STORAGE.delete(destinationKey);
+
+    const first = await handleFsTransferWrite({
+      path: "/home/sam/copy-test/native-transfer-write.txt",
+      offset: 0,
+      expectedSize: 11,
+      streamId: 123,
+    }, makeContext(), new TextEncoder().encode("hello "));
+    const second = await handleFsTransferWrite({
+      path: "/home/sam/copy-test/native-transfer-write.txt",
+      offset: 6,
+      expectedSize: 11,
+      streamId: 123,
+      done: true,
+    }, makeContext(), new TextEncoder().encode("world"));
+
+    expect(first).toMatchObject({
+      ok: true,
+      path: "/home/sam/copy-test/native-transfer-write.txt",
+      offset: 0,
+      bytesWritten: 6,
+      done: false,
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      path: "/home/sam/copy-test/native-transfer-write.txt",
+      offset: 6,
+      bytesWritten: 5,
+      done: true,
+    });
+    expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("hello world");
   });
 
   it("copies gsv files through the fs.copy syscall", async () => {

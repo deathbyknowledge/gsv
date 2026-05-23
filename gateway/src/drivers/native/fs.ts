@@ -36,6 +36,8 @@ import type {
   FsTransferReadResult,
   FsTransferStatArgs,
   FsTransferStatResult,
+  FsTransferWriteArgs,
+  FsTransferWriteResult,
 } from "../../syscalls/transfer";
 import {
   BINARY_FRAME_DATA,
@@ -330,6 +332,74 @@ export async function handleFsTransferRead(
       offset,
       bytesRead: chunk.byteLength,
       eof: offset + chunk.byteLength >= stat.size,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function handleFsTransferWrite(
+  args: FsTransferWriteArgs,
+  ctx: KernelContext,
+  bytes: Uint8Array,
+): Promise<FsTransferWriteResult> {
+  const fs = makeFs(ctx);
+  const rawPath = typeof args.path === "string" ? args.path.trim() : "";
+  if (!rawPath) {
+    return { ok: false, error: "fs.transfer.write requires path" };
+  }
+  if (normalizeTransferStreamId(args.streamId) === null) {
+    return { ok: false, error: "fs.transfer.write requires streamId" };
+  }
+  if (
+    typeof args.expectedSize !== "number" ||
+    !Number.isSafeInteger(args.expectedSize) ||
+    args.expectedSize < 0
+  ) {
+    return { ok: false, error: "fs.transfer.write requires expectedSize" };
+  }
+
+  const offset = normalizeTransferNumber(args.offset, 0);
+  const endOffset = offset + bytes.byteLength;
+  const done = args.done === true;
+  if (endOffset > args.expectedSize) {
+    return { ok: false, error: `fs.transfer.write exceeds expectedSize ${args.expectedSize}` };
+  }
+  if (done && endOffset !== args.expectedSize) {
+    return {
+      ok: false,
+      error: `fs.transfer.write final size ${endOffset} did not match expectedSize ${args.expectedSize}`,
+    };
+  }
+
+  const path = resolve(rawPath, ctx);
+
+  try {
+    let next = bytes;
+    if (offset > 0) {
+      const existing = await fs.readFileBuffer(path);
+      if (existing.byteLength !== offset) {
+        throw new Error(
+          `fs.transfer.write offset ${offset} does not match existing size ${existing.byteLength}`,
+        );
+      }
+      next = concatBytes(existing, bytes);
+    }
+
+    await fs.writeFileStream(path, bytesToStream(next), {
+      expectedSize: next.byteLength,
+      contentType: args.contentType,
+    });
+    return {
+      ok: true,
+      path,
+      offset,
+      bytesWritten: bytes.byteLength,
+      done,
+      contentType: args.contentType,
     };
   } catch (error) {
     return {
@@ -896,6 +966,22 @@ function normalizeTransferStreamId(value: unknown): number | null {
     return null;
   }
   return value;
+}
+
+function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+  const combined = new Uint8Array(left.byteLength + right.byteLength);
+  combined.set(left, 0);
+  combined.set(right, left.byteLength);
+  return combined;
+}
+
+function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
 }
 
 function normalizeCopyEndpoint(

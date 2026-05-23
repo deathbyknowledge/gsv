@@ -733,7 +733,6 @@ fn generate_browser_runtime_assets(
         match module.kind {
             PackageAssemblyArtifactModuleKind::SourceModule
             | PackageAssemblyArtifactModuleKind::Json
-            | PackageAssemblyArtifactModuleKind::Text
             | PackageAssemblyArtifactModuleKind::Data => {
                 let public_path = browser_public_file_path(&module.path, analysis, installed);
                 if let Some(existing) =
@@ -762,6 +761,7 @@ fn generate_browser_runtime_assets(
                     module.path.clone(),
                 ));
             }
+            PackageAssemblyArtifactModuleKind::Text => {}
         }
     }
 
