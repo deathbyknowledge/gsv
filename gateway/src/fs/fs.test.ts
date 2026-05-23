@@ -257,6 +257,28 @@ describe("GsvFs permissions", () => {
     expect(nested).toMatchObject({ isFile: false, isDirectory: true, isSymbolicLink: false });
   });
 
+  it("preserves virtual root and etc directories in lstat", async () => {
+    const fs = makeConfigBackedFs(SAM, {});
+
+    await expect(fs.lstat("/")).resolves.toMatchObject({
+      isFile: false,
+      isDirectory: true,
+      isSymbolicLink: false,
+    });
+    await expect(fs.lstat("/etc")).resolves.toMatchObject({
+      isFile: false,
+      isDirectory: true,
+      isSymbolicLink: false,
+    });
+
+    const rootEntries = await fs.readdirWithFileTypes("/");
+    expect(rootEntries.find((entry) => entry.name === "etc")).toMatchObject({
+      isFile: false,
+      isDirectory: true,
+      isSymbolicLink: false,
+    });
+  });
+
   it("root can write any file", async () => {
     await putFile(`${TEST_PREFIX}root-edit.txt`, "original", {
       uid: "1000", gid: "1000", mode: "600",

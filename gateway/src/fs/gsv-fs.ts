@@ -209,8 +209,9 @@ export class GsvFs implements IFileSystem {
 
   async lstat(path: string): Promise<FsStat> {
     const p = normalizePath(path);
-    const backend = this.backendForPath(p);
-    const ext = backend.lstat ? await backend.lstat(p) : await this.statExtended(p);
+    const ext = p === "/" || (p === "/etc" && this.kernel)
+      ? await this.statExtended(p)
+      : await this.backendLstat(p);
     return {
       isFile: ext.isFile,
       isDirectory: ext.isDirectory,
@@ -406,6 +407,11 @@ export class GsvFs implements IFileSystem {
     }
     const parent = linkPath.split("/").slice(0, -1).join("/") || "/";
     return normalizePath(`${parent}/${target}`);
+  }
+
+  private async backendLstat(path: string): Promise<ExtendedMountStat> {
+    const backend = this.backendForPath(path);
+    return backend.lstat ? backend.lstat(path) : this.statExtended(path);
   }
 
   private backendForPath(path: string): MountBackend {
