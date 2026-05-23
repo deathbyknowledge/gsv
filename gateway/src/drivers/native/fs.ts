@@ -607,17 +607,18 @@ async function copyDeviceToGsv(
     sourceDeviceId: source.target,
     ttlMs: 120_000,
   });
-  const send = await transport.startDeviceRequest(
-    source.target,
-    "fs.transfer.send",
-    {
-      path: source.path,
-      streamId,
-    },
-    120_000,
-  );
   const fs = makeFs(ctx);
+  let send: Awaited<ReturnType<FsCopyDeviceTransport["startDeviceRequest"]>> | null = null;
   try {
+    send = await transport.startDeviceRequest(
+      source.target,
+      "fs.transfer.send",
+      {
+        path: source.path,
+        streamId,
+      },
+      120_000,
+    );
     const transferPromise = send.promise.then((sendResult) => {
       const transfer = sendResult as TransferSendResult;
       if (!transfer.ok) {
@@ -639,7 +640,7 @@ async function copyDeviceToGsv(
     }
   } finally {
     streamRoute.cancel();
-    send.cancel();
+    send?.cancel();
   }
 
   return {
@@ -670,23 +671,25 @@ async function copyDeviceToDevice(
     },
     120_000,
   );
-  const relay = transport.registerBinaryRelay({
-    requestId: `fs.copy:${streamId}`,
-    streamId,
-    sourceDeviceId: source.target,
-    destinationDeviceId: destination.target,
-    ttlMs: 120_000,
-  });
-  const send = await transport.startDeviceRequest(
-    source.target,
-    "fs.transfer.send",
-    {
-      path: source.path,
-      streamId,
-    },
-    120_000,
-  );
+  let relay: ReturnType<FsCopyDeviceTransport["registerBinaryRelay"]> | null = null;
+  let send: Awaited<ReturnType<FsCopyDeviceTransport["startDeviceRequest"]>> | null = null;
   try {
+    relay = transport.registerBinaryRelay({
+      requestId: `fs.copy:${streamId}`,
+      streamId,
+      sourceDeviceId: source.target,
+      destinationDeviceId: destination.target,
+      ttlMs: 120_000,
+    });
+    send = await transport.startDeviceRequest(
+      source.target,
+      "fs.transfer.send",
+      {
+        path: source.path,
+        streamId,
+      },
+      120_000,
+    );
     const sendPromise = send.promise.then((sendResult) => {
       const sent = sendResult as TransferSendResult;
       if (!sent.ok) {
@@ -703,16 +706,20 @@ async function copyDeviceToDevice(
     });
     await Promise.all([sendPromise, receivePromise]);
   } catch (error) {
-    transport.sendDeviceBinaryFrame(
-      destination.target,
-      streamId,
-      BINARY_FRAME_ERROR | BINARY_FRAME_END,
-      new TextEncoder().encode(error instanceof Error ? error.message : String(error)),
-    );
+    try {
+      transport.sendDeviceBinaryFrame(
+        destination.target,
+        streamId,
+        BINARY_FRAME_ERROR | BINARY_FRAME_END,
+        new TextEncoder().encode(error instanceof Error ? error.message : String(error)),
+      );
+    } catch {
+      // Preserve the original transfer error; the destination route is cancelled below.
+    }
     throw error;
   } finally {
-    relay.cancel();
-    send.cancel();
+    relay?.cancel();
+    send?.cancel();
     receive.cancel();
   }
 
