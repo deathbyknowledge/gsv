@@ -294,14 +294,14 @@ export class TestChannel extends WorkerEntrypoint<Env> {
   async adapterShellExec(accountId: string, args: ShellExecArgs): Promise<ShellExecResult> {
     const tokens = parseShellWords(args.input);
     const command = tokens[0] ?? "help";
-    if (command === "help") {
+    if (isHelpCommand(command)) {
       return shellOk([
         "test adapter commands:",
-        "  help",
+        "  help | -h | --help",
         "  send <surface-id> <text>",
         "  reply <surface-id> <message-id> <text>",
         "  react <surface-id> <message-id> <emoji>",
-        "  attach <surface-id> <url> [filename] [caption]",
+        "  attach <surface-id> <url> [--filename <name>] [caption]",
       ].join("\n"));
     }
 
@@ -341,13 +341,13 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     }
 
     if (command === "attach") {
-      const [surfaceId, url, filename, ...captionParts] = tokens.slice(1);
+      const { surfaceId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
       if (!surfaceId || !url) {
-        return shellFail("usage: attach <surface-id> <url> [filename] [caption]");
+        return shellFail("usage: attach <surface-id> <url> [--filename <name>] [caption]");
       }
       const result = await this.adapterSend(accountId, {
         surface: { kind: "dm", id: surfaceId },
-        text: captionParts.join(" ").trim(),
+        text: caption,
         media: [await mediaFromUrl(url, filename)],
       });
       return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
@@ -561,6 +561,54 @@ function parseShellWords(input: string): string[] {
     tokens.push(token.replace(/\\(["'\\])/g, "$1"));
   }
   return tokens;
+}
+
+function isHelpCommand(command: string): boolean {
+  return command === "help" || command === "-h" || command === "--help";
+}
+
+function parseAttachArgs(tokens: string[]): {
+  surfaceId?: string;
+  url?: string;
+  filename?: string;
+  caption: string;
+} {
+  const [surfaceId, url, ...rest] = tokens;
+  if (rest.length === 0) {
+    return { surfaceId, url, caption: "" };
+  }
+
+  if (rest[0] === "--filename" || rest[0] === "-f") {
+    const [, filename, ...captionParts] = rest;
+    return {
+      surfaceId,
+      url,
+      filename,
+      caption: captionParts.join(" ").trim(),
+    };
+  }
+
+  const [candidate, ...captionParts] = rest;
+  if (looksLikeFilename(candidate)) {
+    return {
+      surfaceId,
+      url,
+      filename: candidate,
+      caption: captionParts.join(" ").trim(),
+    };
+  }
+
+  return {
+    surfaceId,
+    url,
+    caption: rest.join(" ").trim(),
+  };
+}
+
+function looksLikeFilename(value: string | undefined): value is string {
+  if (!value) return false;
+  if (value.includes("/") || value.includes("\\")) return true;
+  return /^[^/?#\s]+\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
 }
 
 async function mediaFromUrl(url: string, filename?: string): Promise<ChannelMedia> {

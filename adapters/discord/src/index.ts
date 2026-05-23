@@ -280,14 +280,14 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
     const tokens = parseShellWords(args.input);
     const command = tokens[0] ?? "help";
 
-    if (command === "help") {
+    if (isHelpCommand(command)) {
       return shellOk([
         "discord adapter commands:",
-        "  help",
+        "  help | -h | --help",
         "  send <channel-id> <text>",
         "  reply <channel-id> <message-id> <text>",
         "  react <channel-id> <message-id> <emoji>",
-        "  attach <channel-id> <url> [filename] [caption]",
+        "  attach <channel-id> <url> [--filename <name>] [caption]",
       ].join("\n"));
     }
 
@@ -337,14 +337,14 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
     }
 
     if (command === "attach") {
-      const [channelId, url, filename, ...captionParts] = tokens.slice(1);
+      const { channelId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
       if (!channelId || !url) {
-        return shellFail("usage: attach <channel-id> <url> [filename] [caption]");
+        return shellFail("usage: attach <channel-id> <url> [--filename <name>] [caption]");
       }
       const media = await mediaFromUrl(url, filename);
       const result = await this.adapterSend(accountId, {
         surface: discordSurface(channelId),
-        text: captionParts.join(" ").trim(),
+        text: caption,
         media: [media],
       });
       return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
@@ -471,6 +471,54 @@ function parseShellWords(input: string): string[] {
     tokens.push(token.replace(/\\(["'\\])/g, "$1"));
   }
   return tokens;
+}
+
+function isHelpCommand(command: string): boolean {
+  return command === "help" || command === "-h" || command === "--help";
+}
+
+function parseAttachArgs(tokens: string[]): {
+  channelId?: string;
+  url?: string;
+  filename?: string;
+  caption: string;
+} {
+  const [channelId, url, ...rest] = tokens;
+  if (rest.length === 0) {
+    return { channelId, url, caption: "" };
+  }
+
+  if (rest[0] === "--filename" || rest[0] === "-f") {
+    const [, filename, ...captionParts] = rest;
+    return {
+      channelId,
+      url,
+      filename,
+      caption: captionParts.join(" ").trim(),
+    };
+  }
+
+  const [candidate, ...captionParts] = rest;
+  if (looksLikeFilename(candidate)) {
+    return {
+      channelId,
+      url,
+      filename: candidate,
+      caption: captionParts.join(" ").trim(),
+    };
+  }
+
+  return {
+    channelId,
+    url,
+    caption: rest.join(" ").trim(),
+  };
+}
+
+function looksLikeFilename(value: string | undefined): value is string {
+  if (!value) return false;
+  if (value.includes("/") || value.includes("\\")) return true;
+  return /^[^/?#\s]+\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
 }
 
 function discordSurface(id: string): ChannelPeer {

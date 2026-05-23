@@ -336,13 +336,13 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     const tokens = parseShellWords(args.input);
     const command = tokens[0] ?? "help";
 
-    if (command === "help") {
+    if (isHelpCommand(command)) {
       return shellOk([
         "whatsapp adapter commands:",
-        "  help",
+        "  help | -h | --help",
         "  send <jid-or-phone> <text>",
         "  react <jid-or-phone> <message-id> <emoji> [participant-jid]",
-        "  attach <jid-or-phone> <url> [filename] [caption]",
+        "  attach <jid-or-phone> <url> [--filename <name>] [caption]",
         "",
         "Normal back-and-forth replies should use the adapter conversation route.",
       ].join("\n"));
@@ -376,14 +376,14 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     }
 
     if (command === "attach") {
-      const [surfaceId, url, filename, ...captionParts] = tokens.slice(1);
+      const { surfaceId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
       if (!surfaceId || !url) {
-        return shellFail("usage: attach <jid-or-phone> <url> [filename] [caption]");
+        return shellFail("usage: attach <jid-or-phone> <url> [--filename <name>] [caption]");
       }
       const media = await mediaFromUrl(url, filename);
       const result = await this.adapterSend(accountId, {
         surface: whatsappSurface(surfaceId),
-        text: captionParts.join(" ").trim(),
+        text: caption,
         media: [media],
       });
       return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
@@ -517,6 +517,54 @@ function parseShellWords(input: string): string[] {
     tokens.push(token.replace(/\\(["'\\])/g, "$1"));
   }
   return tokens;
+}
+
+function isHelpCommand(command: string): boolean {
+  return command === "help" || command === "-h" || command === "--help";
+}
+
+function parseAttachArgs(tokens: string[]): {
+  surfaceId?: string;
+  url?: string;
+  filename?: string;
+  caption: string;
+} {
+  const [surfaceId, url, ...rest] = tokens;
+  if (rest.length === 0) {
+    return { surfaceId, url, caption: "" };
+  }
+
+  if (rest[0] === "--filename" || rest[0] === "-f") {
+    const [, filename, ...captionParts] = rest;
+    return {
+      surfaceId,
+      url,
+      filename,
+      caption: captionParts.join(" ").trim(),
+    };
+  }
+
+  const [candidate, ...captionParts] = rest;
+  if (looksLikeFilename(candidate)) {
+    return {
+      surfaceId,
+      url,
+      filename: candidate,
+      caption: captionParts.join(" ").trim(),
+    };
+  }
+
+  return {
+    surfaceId,
+    url,
+    caption: rest.join(" ").trim(),
+  };
+}
+
+function looksLikeFilename(value: string | undefined): value is string {
+  if (!value) return false;
+  if (value.includes("/") || value.includes("\\")) return true;
+  return /^[^/?#\s]+\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
 }
 
 function whatsappSurface(id: string): ChannelPeer {
