@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { env } from "cloudflare:workers";
 import { Type } from "@earendil-works/pi-ai";
 import type { Context } from "@earendil-works/pi-ai";
 import {
   DEFAULT_WORKERS_AI_MODEL,
   buildWorkersAiInput,
   buildWorkersAiRunOptions,
+  completeWithWorkersAi,
   contextToWorkersAiMessages,
   extractWorkersAiContextWindow,
   normalizeWorkersAiResponse,
@@ -155,6 +157,69 @@ describe("buildWorkersAiInput", () => {
     });
   });
 });
+
+describe("completeWithWorkersAi", () => {
+  it("falls back without tools for non-timeout tool request errors", async () => {
+    const run = vi.fn()
+      .mockRejectedValueOnce(new Error("tool schema unsupported"))
+      .mockResolvedValueOnce({ response: "fallback response" });
+    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+
+    const response = await completeWithWorkersAi({
+      modelName: DEFAULT_WORKERS_AI_MODEL,
+      maxTokens: 128,
+      timeoutMs: 1000,
+      context: toolContext(),
+    });
+
+    expect(response.content).toEqual([{ type: "text", text: "fallback response" }]);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[0]?.[1]).toMatchObject({
+      tools: expect.any(Array),
+    });
+    expect(run.mock.calls[1]?.[1]).not.toHaveProperty("tools");
+  });
+
+  it("does not retry timed-out tool requests without tools", async () => {
+    vi.useFakeTimers();
+    const run = vi.fn(() => new Promise(() => {}));
+    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+
+    try {
+      const promise = completeWithWorkersAi({
+        modelName: DEFAULT_WORKERS_AI_MODEL,
+        maxTokens: 128,
+        timeoutMs: 10,
+        context: toolContext(),
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+
+      await expect(promise).rejects.toMatchObject({
+        name: "TimeoutError",
+        message: "Workers AI generation timed out after 10ms",
+      });
+      expect(run).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+function toolContext(): Context {
+  return {
+    messages: [{ role: "user", content: "read a file", timestamp: 1 }],
+    tools: [
+      {
+        name: "fs.read",
+        description: "Read a file",
+        parameters: Type.Object({
+          path: Type.String(),
+        }),
+      },
+    ],
+  };
+}
 
 describe("extractWorkersAiContextWindow", () => {
   it("reads context window token metadata from model properties", () => {

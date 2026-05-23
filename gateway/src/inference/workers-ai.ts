@@ -12,7 +12,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
-import { withTimeout } from "./timeout";
+import { isTimeoutError, withTimeout } from "./timeout";
 
 export const WORKERS_AI_PROVIDER = "workers-ai";
 export const WORKERS_AI_PROVIDER_ALIAS = "workersai";
@@ -164,7 +164,7 @@ export async function completeWithWorkersAi(
     );
     return normalizeWorkersAiResponse(response, request.modelName);
   } catch (error) {
-    if (primaryInput.tools && primaryInput.tools.length > 0) {
+    if (primaryInput.tools && primaryInput.tools.length > 0 && !shouldSkipNoToolsFallback(error)) {
       const fallbackInput = buildWorkersAiInput(request, { disableTools: true });
       try {
         const fallbackResponse = await runWorkersAiWithTimeout(
@@ -181,6 +181,11 @@ export async function completeWithWorkersAi(
 
     throw error;
   }
+}
+
+function shouldSkipNoToolsFallback(error: unknown): boolean {
+  return isTimeoutError(error)
+    || (error instanceof Error && error.name === "AbortError");
 }
 
 function runWorkersAiWithTimeout(

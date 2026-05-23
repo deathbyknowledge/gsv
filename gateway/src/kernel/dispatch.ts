@@ -595,7 +595,7 @@ async function routeToTarget(
     };
   }
 
-  let route: { cancel: () => void };
+  let route: { cancel: () => void } | null = null;
   let binaryRoute: { cancel: () => void } | null = null;
   try {
     route = await deps.registerRoute({
@@ -616,6 +616,7 @@ async function routeToTarget(
       });
     }
   } catch (error) {
+    route?.cancel();
     const message = error instanceof Error ? error.message : String(error);
     return {
       handled: true,

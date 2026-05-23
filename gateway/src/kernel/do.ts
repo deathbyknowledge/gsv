@@ -1313,6 +1313,9 @@ export class Kernel extends Host<Env> {
     deviceId: string;
     ttlMs: number;
   }): { cancel: () => void } {
+    if (this.binaryRoutes.has(route.streamId)) {
+      throw new Error(`Binary stream id already active: ${route.streamId}`);
+    }
     const expiresAt = Date.now() + route.ttlMs;
     this.binaryRoutes.set(route.streamId, {
       requestId: route.requestId,
@@ -1373,6 +1376,9 @@ export class Kernel extends Host<Env> {
     promise: Promise<BinaryFrame>;
     cleanup: () => void;
   } {
+    if (this.pendingBinaryFrames.has(streamId)) {
+      throw new Error(`Binary stream id already waiting: ${streamId}`);
+    }
     let settled = false;
     const promise = new Promise<BinaryFrame>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
@@ -1491,23 +1497,29 @@ export class Kernel extends Host<Env> {
     const binaryPending = options.receive === true
       ? this.createPendingBinaryFrame(streamId, ttlMs)
       : null;
+    let route: { cancel: () => void } | null = null;
     let binaryRoute: { cancel: () => void } | null = null;
 
     try {
-      const route = await this.registerRouteWithExpiry({
+      route = await this.registerRouteWithExpiry({
         id,
         call: call as SyscallName,
         origin: { type: "app", id },
         deviceId,
         ttlMs,
       });
-      binaryRoute = this.registerBinaryRoute({
-        requestId: id,
-        streamId,
-        origin: { type: "app", id },
-        deviceId,
-        ttlMs,
-      });
+      try {
+        binaryRoute = this.registerBinaryRoute({
+          requestId: id,
+          streamId,
+          origin: { type: "app", id },
+          deviceId,
+          ttlMs,
+        });
+      } catch (error) {
+        route.cancel();
+        throw error;
+      }
 
       try {
         deviceConn.send(JSON.stringify({
