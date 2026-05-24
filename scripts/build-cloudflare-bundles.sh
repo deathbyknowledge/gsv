@@ -44,23 +44,23 @@ mkdir -p "${DIST_DIR}/channel-discord/worker"
 
 (
   cd "${ROOT_DIR}"
-  npm exec --workspace assembler -- wrangler deploy --dry-run --config "${ROOT_DIR}/assembler/wrangler.toml" --outdir "${DIST_DIR}/assembler/worker"
+  npm exec --workspace assembler -- wrangler deploy --minify --dry-run --config "${ROOT_DIR}/assembler/wrangler.toml" --outdir "${DIST_DIR}/assembler/worker"
 )
 (
   cd "${ROOT_DIR}/gateway"
-  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/gateway/worker"
+  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/gateway/worker"
 )
 (
   cd "${ROOT_DIR}/ripgit"
-  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/ripgit/worker"
+  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/ripgit/worker"
 )
 (
   cd "${ROOT_DIR}/adapters/whatsapp"
-  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-whatsapp/worker"
+  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/channel-whatsapp/worker"
 )
 (
   cd "${ROOT_DIR}/adapters/discord"
-  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-discord/worker"
+  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/channel-discord/worker"
 )
 
 echo "==> Assembling component metadata"
