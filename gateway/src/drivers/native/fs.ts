@@ -84,36 +84,6 @@ export type FsCopyDeviceTransport = {
   ): void;
 };
 
-type TransferStatResult =
-  | {
-      ok: true;
-      path: string;
-      size: number;
-      isFile: boolean;
-      isDirectory: boolean;
-      contentType?: string;
-    }
-  | { ok: false; error: string };
-
-type TransferSendResult =
-  | {
-      ok: true;
-      path: string;
-      size: number;
-      bytesSent: number;
-      contentType?: string;
-    }
-  | { ok: false; error: string };
-
-type TransferReceiveResult =
-  | {
-      ok: true;
-      path: string;
-      bytesWritten: number;
-      contentType?: string;
-    }
-  | { ok: false; error: string };
-
 function makeFs(ctx: KernelContext): GsvFs {
   const identity = ctx.identity!.process;
   const sourceBackend = createProcessSourceBackend({
@@ -568,7 +538,7 @@ async function copyGsvToDevice(
   );
   try {
     await sendStreamToDevice(transport, destination.target, streamId, opened.body);
-    const result = await receive.promise as TransferReceiveResult;
+    const result = await receive.promise as FsTransferReceiveResult;
     if (!result.ok) {
       throw new Error(result.error);
     }
@@ -625,7 +595,7 @@ async function copyDeviceToGsv(
       120_000,
     );
     const transferPromise = send.promise.then((sendResult) => {
-      const transfer = sendResult as TransferSendResult;
+      const transfer = sendResult as FsTransferSendResult;
       if (!transfer.ok) {
         throw new Error(transfer.error);
       }
@@ -696,14 +666,14 @@ async function copyDeviceToDevice(
       120_000,
     );
     const sendPromise = send.promise.then((sendResult) => {
-      const sent = sendResult as TransferSendResult;
+      const sent = sendResult as FsTransferSendResult;
       if (!sent.ok) {
         throw new Error(sent.error);
       }
       return sent;
     });
     const receivePromise = receive.promise.then((receiveResult) => {
-      const received = receiveResult as TransferReceiveResult;
+      const received = receiveResult as FsTransferReceiveResult;
       if (!received.ok) {
         throw new Error(received.error);
       }
@@ -762,7 +732,7 @@ async function resolveDeviceDestinationDirectory(
   destination: Required<FsCopyEndpoint>,
   transport: FsCopyDeviceTransport,
 ): Promise<Required<FsCopyEndpoint>> {
-  const stat = await requestDeviceResult<TransferStatResult>(
+  const stat = await requestDeviceResult<FsTransferStatResult>(
     transport,
     destination.target,
     "fs.transfer.stat",
@@ -782,8 +752,8 @@ async function resolveDeviceDestinationDirectory(
 async function statDeviceSource(
   transport: FsCopyDeviceTransport,
   source: Required<FsCopyEndpoint>,
-): Promise<Extract<TransferStatResult, { ok: true }>> {
-  const stat = await requestDeviceResult<TransferStatResult>(
+): Promise<Extract<FsTransferStatResult, { ok: true }>> {
+  const stat = await requestDeviceResult<FsTransferStatResult>(
     transport,
     source.target,
     "fs.transfer.stat",
@@ -879,36 +849,6 @@ async function sendStreamToDevice(
   } finally {
     reader.releaseLock();
   }
-}
-
-async function streamToBytes(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      size += value.byteLength;
-      if (size > expectedSize) {
-        throw new Error(`EFBIG: stream exceeds expectedSize ${expectedSize}`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
 }
 
 export async function handleFsEdit(

@@ -78,10 +78,6 @@ type KernelAppStub = {
   appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame>;
 };
 
-type KernelBridgeStub = Rpc.RpcTargetBranded & {
-  request(call: string, args?: unknown): Promise<unknown>;
-};
-
 type AppClientStub = Rpc.RpcTargetBranded & {
   onAppEvent(event: string, payload?: unknown): Promise<void>;
   dup?: () => AppClientStub;
@@ -124,30 +120,6 @@ type RegisteredAppClient = {
   session: AppSessionInfo;
   registeredAt: number;
 };
-
-class KernelBridge extends RpcTarget {
-  constructor(
-    private readonly kernelNamespace: Env["KERNEL"],
-    private readonly appFrame: AppFrameContext,
-  ) {
-    super();
-  }
-
-  async request(call: string, args?: unknown): Promise<unknown> {
-    const kernel = await getAgentByName(this.kernelNamespace, "singleton") as unknown as KernelAppStub;
-    const frame: RequestFrame = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args,
-    } as RequestFrame;
-    const response = await kernel.appRequest(this.appFrame, frame);
-    if (!response.ok) {
-      throw new Error(response.error.message);
-    }
-    return response.data;
-  }
-}
 
 /**
  * Browser-facing RPC shim for package backends.
@@ -429,10 +401,6 @@ export class AppRunner extends DurableObject<Env> {
       issuedAt: now,
       expiresAt: now + RUNTIME_TTL_MS,
     };
-  }
-
-  #createKernelBridge(appFrame: AppFrameContext): KernelBridge {
-    return new KernelBridge(this.env.KERNEL, appFrame);
   }
 
   registerAppClient(appSession: AppSessionInfo, client: AppClientStub): void {
