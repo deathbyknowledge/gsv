@@ -12,7 +12,7 @@
 
 import type { Connection } from "agents";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { SyscallName } from "../syscalls";
+import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
 import type { ShellSessionRecord, ShellSessionStore } from "./shell-sessions";
@@ -179,18 +179,6 @@ export type DispatchResult =
 
 const DEFAULT_DEVICE_TTL_MS = 60_000;
 
-/**
- * Domains that support device routing via the `target` field.
- * `shell` always requires a device. `fs` can be native (R2) or device.
- * Other domains (sys, proc, sched, adapter) are always kernel-internal.
- */
-const ROUTABLE_DOMAINS = new Set(["fs", "shell"]);
-
-function isRoutable(call: SyscallName): boolean {
-  const domain = call.split(".")[0];
-  return ROUTABLE_DOMAINS.has(domain);
-}
-
 export async function dispatch(
   frame: RequestFrame,
   origin: RouteOrigin,
@@ -241,7 +229,7 @@ export async function dispatch(
     return routeToTarget(frame, sessionTarget, origin, ctx, deps);
   }
 
-  if (target && target !== "gsv" && isRoutable(frame.call)) {
+  if (target && target !== "gsv" && isRoutableSyscall(frame.call)) {
     delete raw.target;
     const routedTarget = getVisibleTarget(ctx, target, { includeOffline: true });
     if (!routedTarget) {

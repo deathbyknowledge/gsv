@@ -373,7 +373,7 @@ export type SyscallName = keyof SyscallDomains;
 export type ArgsOf<S extends SyscallName> = SyscallDomains[S]["args"];
 export type ResultOf<S extends SyscallName> = SyscallDomains[S]["result"];
 
-export type SyscallDomain =
+type SyscallDomain =
   | "fs"
   | "shell"
   | "codemode"
@@ -387,7 +387,7 @@ export type SyscallDomain =
   | "adapter"
   | "signal";
 
-export function domainOf(syscall: SyscallName): SyscallDomain {
+function domainOf(syscall: SyscallName): SyscallDomain {
   return syscall.split(".")[0] as SyscallDomain;
 }
 

@@ -1,5 +1,5 @@
 import { getAgentByName } from "agents";
-import { env, WorkerEntrypoint } from "cloudflare:workers";
+import { WorkerEntrypoint } from "cloudflare:workers";
 import type {
   PackageAssemblerInterface,
   PackageAssemblyAnalysis,
@@ -381,18 +381,6 @@ export function packageScopeEquals(
   right: PackageInstallScope,
 ): boolean {
   return packageScopeKey(left) === packageScopeKey(right);
-}
-
-/**
- * Versioned worker/runtime key.
- *
- * Unlike Package DO identity, this is expected to change when code changes.
- */
-export function packageWorkerKey(record: {
-  manifest: { name: string };
-  artifact: { hash: string };
-}): string {
-  return `pkg:${record.manifest.name}@${record.artifact.hash}`;
 }
 
 const PACKAGE_ARTIFACT_PREFIX = "runtime/package-artifacts";

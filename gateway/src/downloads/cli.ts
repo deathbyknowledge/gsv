@@ -1,11 +1,5 @@
 export type CliReleaseChannel = "stable" | "dev";
 
-type GitHubRelease = {
-  tag_name?: string;
-  prerelease?: boolean;
-  draft?: boolean;
-};
-
 export const CLI_RELEASE_REPO = "deathbyknowledge/gsv";
 export const CLI_PUBLIC_DOWNLOAD_ROOT = "public/gsv/downloads/cli";
 export const CLI_PUBLIC_DOWNLOAD_URL_ROOT = "/public/gsv/downloads/cli";
@@ -33,44 +27,6 @@ export function inferDefaultCliChannel(ref: string): CliReleaseChannel {
     return "stable";
   }
   return "dev";
-}
-
-export function isSemverCliReleaseTag(tag: string): boolean {
-  const trimmed = tag.trim();
-  if (!trimmed.startsWith("v")) {
-    return false;
-  }
-
-  const body = trimmed.slice(1);
-  const hyphenIndex = body.indexOf("-");
-  const core = hyphenIndex === -1 ? body : body.slice(0, hyphenIndex);
-  const prerelease = hyphenIndex === -1 ? null : body.slice(hyphenIndex + 1);
-  const parts = core.split(".");
-
-  if (parts.length !== 3 || parts.some((part) => !/^\d+$/.test(part))) {
-    return false;
-  }
-  if (prerelease === null) {
-    return true;
-  }
-  return prerelease.length > 0 && prerelease.split(".").every((part) => /^[0-9A-Za-z-]+$/.test(part));
-}
-
-export function isSemverCliPrereleaseTag(tag: string): boolean {
-  return isSemverCliReleaseTag(tag) && tag.includes("-");
-}
-
-export function selectLatestCliPrereleaseTag(releases: readonly GitHubRelease[]): string | null {
-  for (const release of releases) {
-    const tag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
-    if (release.draft === true || release.prerelease !== true) {
-      continue;
-    }
-    if (isSemverCliPrereleaseTag(tag)) {
-      return tag;
-    }
-  }
-  return null;
 }
 
 export async function mirrorCliChannel(
@@ -143,10 +99,6 @@ export function cliGithubReleaseAssetUrl(channel: CliReleaseChannel, asset: stri
   }
 
   return `https://github.com/${CLI_RELEASE_REPO}/releases/download/dev/${asset}?ts=${Date.now()}`;
-}
-
-export function isSupportedCliAsset(value: string): value is CliBinaryAsset {
-  return (CLI_BINARY_ASSETS as readonly string[]).includes(value);
 }
 
 export function buildCliInstallScript(): string {

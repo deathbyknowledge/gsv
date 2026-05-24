@@ -28,12 +28,10 @@ import {
   type NativeShellCommandOptions,
 } from "./shell/commands";
 
-export type NativeShellOptions = NativeShellCommandOptions;
-
 export async function handleShellExec(
   args: ShellExecArgs,
   ctx: KernelContext,
-  options?: NativeShellOptions,
+  options?: NativeShellCommandOptions,
 ): Promise<ShellExecResult> {
   const identity = ctx.identity!.process;
   if (args.sessionId) {
@@ -118,7 +116,12 @@ export async function handleShellExec(
   }
 }
 
-function createBash(ctx: KernelContext, identity: ProcessIdentity, cwd: string, options?: NativeShellOptions): Bash {
+function createBash(
+  ctx: KernelContext,
+  identity: ProcessIdentity,
+  cwd: string,
+  options?: NativeShellCommandOptions,
+): Bash {
   const sourceBackend = createProcessSourceBackend({
     identity,
     storage: ctx.env.STORAGE,

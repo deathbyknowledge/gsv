@@ -9,7 +9,7 @@ import type { AiConfigResult } from "../syscalls/ai";
 import { completeWithWorkersAi, isWorkersAiProvider } from "./workers-ai";
 import { withTimeout } from "./timeout";
 
-export type GenerationPurpose =
+type GenerationPurpose =
   | "chat.reply"
   | "checkpoint.summary"
   | "checkpoint.commit_message"
@@ -17,14 +17,14 @@ export type GenerationPurpose =
   | "thread.title"
   | "mcp.analysis";
 
-export type GenerateRequest = {
+type GenerateRequest = {
   purpose: GenerationPurpose;
   config: AiConfigResult;
   context: Context;
   sessionAffinityKey?: string;
 };
 
-export type GenerationService = {
+type GenerationService = {
   generate(request: GenerateRequest): Promise<AssistantMessage>;
   generateText(request: GenerateRequest): Promise<string>;
 };

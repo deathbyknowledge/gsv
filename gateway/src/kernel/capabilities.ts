@@ -167,8 +167,6 @@ export function hasCapability(
   capabilities: string[],
   syscall: string,
 ): boolean {
-  const domain = syscall.split(".")[0];
-
   for (const cap of capabilities) {
     if (cap === "*") return true;
     if (cap.endsWith(".*") && syscall.startsWith(cap.slice(0, -1))) return true;

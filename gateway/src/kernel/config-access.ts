@@ -15,14 +15,9 @@ const SENSITIVE_CONFIG_SUFFIXES = [
   "_password",
 ];
 
-function lastKeySegment(key: string): string {
-  const parts = key.split("/").filter(Boolean);
-  if (parts.length === 0) return "";
-  return parts[parts.length - 1].toLowerCase();
-}
-
 export function isSensitiveConfigKey(key: string): boolean {
-  const field = lastKeySegment(key);
+  const parts = key.split("/").filter(Boolean);
+  const field = parts.length > 0 ? parts[parts.length - 1].toLowerCase() : "";
   if (!field) return false;
 
   if (SENSITIVE_CONFIG_FIELDS.has(field)) {

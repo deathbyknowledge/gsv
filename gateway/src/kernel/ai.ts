@@ -44,7 +44,7 @@ import { resolveUserAiProfile } from "./user-profiles";
 import { FS_READ_DEFINITION } from "../syscalls/read";
 import { FS_WRITE_DEFINITION } from "../syscalls/write";
 import { FS_EDIT_DEFINITION } from "../syscalls/edit";
-import { FS_WRITE_DEFINITION as FS_DELETE_DEFINITION } from "../syscalls/delete";
+import { FS_DELETE_DEFINITION } from "../syscalls/delete";
 import { FS_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
@@ -69,7 +69,7 @@ import {
 import {
   normalizeSpeechText,
   normalizeSpeechTextFormat,
-} from "../inference/speech-text";
+} from "@gsv/protocol/speech-text";
 import { collectPromptSkillIndex } from "./skills";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
 
