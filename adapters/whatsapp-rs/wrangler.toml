@@ -1,0 +1,26 @@
+name = "gsv-channel-whatsapp-rs"
+main = "build/index.js"
+compatibility_date = "2026-05-24"
+workers_dev = false
+
+[build]
+command = "CUSTOM_SHIM=src/worker-rpc-shim.js WORKER_BUILD_VERSION='^0.8' bash ../../scripts/worker-build.sh adapters/whatsapp-rs --release"
+
+[durable_objects]
+bindings = [
+  { name = "WHATSAPP_ACCOUNT", class_name = "WhatsAppAccount" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WhatsAppAccount"]
+
+[[services]]
+binding = "GATEWAY"
+service = "gsv"
+entrypoint = "GatewayEntrypoint"
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true
