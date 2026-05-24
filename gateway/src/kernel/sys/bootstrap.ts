@@ -21,6 +21,8 @@ const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = "main";
 const GSV_BOOTSTRAP_UPSTREAM_ENV = "GSV_BOOTSTRAP_UPSTREAM";
 const GSV_BOOTSTRAP_REF_ENV = "GSV_BOOTSTRAP_REF";
+const BOOTSTRAP_OUTBOUND_SLOTS = 5;
+const BOOTSTRAP_PACKAGE_SLOTS = 2;
 const ROOT_GSV_REPO: RipgitRepoRef = {
   owner: "root",
   repo: "gsv",
@@ -52,6 +54,65 @@ function formatBootstrapTimings(timings: BootstrapTiming[]): string {
   return timings.map((timing) => `${timing.label}=${timing.ms}ms`).join(", ");
 }
 
+async function allSettledOrThrow<T extends readonly unknown[]>(
+  promises: { [K in keyof T]: Promise<T[K]> },
+): Promise<T> {
+  const results = await Promise.allSettled(promises);
+  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (rejected) {
+    throw rejected.reason;
+  }
+  return results.map((result) => (result as PromiseFulfilledResult<unknown>).value) as unknown as T;
+}
+
+function createBootstrapLimiter(maxSlots: number) {
+  type QueuedTask<T> = {
+    slots: number;
+    run: () => T | Promise<T>;
+    resolve: (value: T) => void;
+    reject: (error: unknown) => void;
+  };
+
+  const queue: Array<QueuedTask<unknown>> = [];
+  let activeSlots = 0;
+  const capacity = Math.max(1, Math.floor(maxSlots));
+
+  function pump(): void {
+    for (;;) {
+      const index = queue.findIndex((task) => activeSlots + task.slots <= capacity);
+      if (index === -1) {
+        return;
+      }
+
+      const [task] = queue.splice(index, 1);
+      activeSlots += task.slots;
+      Promise.resolve()
+        .then(task.run)
+        .then(task.resolve, task.reject)
+        .finally(() => {
+          activeSlots -= task.slots;
+          pump();
+        });
+    }
+  }
+
+  return async function limitBootstrap<T>(
+    slots: number,
+    run: () => T | Promise<T>,
+  ): Promise<T> {
+    const taskSlots = Math.max(1, Math.min(capacity, Math.floor(slots)));
+    return new Promise<T>((resolve, reject) => {
+      queue.push({
+        slots: taskSlots,
+        run,
+        resolve: resolve as (value: unknown) => void,
+        reject,
+      });
+      pump();
+    });
+  };
+}
+
 export async function handleSysBootstrap(
   args: SysBootstrapArgs | undefined,
   ctx: KernelContext,
@@ -79,49 +140,82 @@ export async function handleSysBootstrap(
       remoteUrl,
       ref,
     ));
-    await timeBootstrapStep(timings, "seed-skills", () => seedRepoSkillsToHome(
-      ripgit,
-      {
-        ...ROOT_GSV_REPO,
-        branch: imported.head ?? imported.remoteRef,
-      },
-      ctx.identity!.process,
-    ));
-
-    const builtinSeeds = await timeBootstrapStep(
-      timings,
-      "resolve-builtin-seeds",
-      () => buildBuiltinPackageSeeds(ctx.env),
-    );
-    const installed = await timeBootstrapStep(
-      timings,
-      "seed-builtin-packages",
-      () => ctx.packages.seedBuiltinPackages(builtinSeeds),
-    );
     const defaultCliChannel = inferDefaultCliChannel(imported.remoteRef);
-    const mirroredChannels: Array<"stable" | "dev"> = [];
     if (!ctx.env.STORAGE) {
       throw new Error("STORAGE binding is required for CLI bootstrap");
     }
-    for (const channel of CLI_RELEASE_CHANNELS) {
-      await timeBootstrapStep(timings, `mirror-cli:${channel}`, () => mirrorCliChannel(ctx.env.STORAGE, channel));
-      mirroredChannels.push(channel);
-    }
-    await timeBootstrapStep(
-      timings,
-      "seed-piper-assets",
-      () => seedPiperPublicAssets(ctx.env.STORAGE),
+    const storage = ctx.env.STORAGE;
+    const importedRepo = {
+      ...ROOT_GSV_REPO,
+      branch: imported.head ?? imported.remoteRef,
+    };
+    const limitBootstrap = createBootstrapLimiter(BOOTSTRAP_OUTBOUND_SLOTS);
+
+    const seedSkillsPromise = limitBootstrap(1, () =>
+      timeBootstrapStep(timings, "seed-skills", () => seedRepoSkillsToHome(
+        ripgit,
+        importedRepo,
+        ctx.identity!.process,
+      ))
     );
-    await timeBootstrapStep(
-      timings,
-      "store-default-cli-channel",
-      () => storeDefaultCliChannel(ctx.env.STORAGE, defaultCliChannel),
+
+    const installPackagesPromise = limitBootstrap(BOOTSTRAP_PACKAGE_SLOTS, async () => {
+      const builtinSeeds = await timeBootstrapStep(
+        timings,
+        "resolve-builtin-seeds",
+        () => buildBuiltinPackageSeeds(ctx.env),
+      );
+      return await timeBootstrapStep(
+        timings,
+        "seed-builtin-packages",
+        () => ctx.packages.seedBuiltinPackages(builtinSeeds),
+      );
+    });
+
+    const mirrorCliPromise = (async () => {
+      const mirroredChannels = await allSettledOrThrow(CLI_RELEASE_CHANNELS.map(async (channel) => {
+        await limitBootstrap(
+          1,
+          () => timeBootstrapStep(timings, `mirror-cli:${channel}`, () => mirrorCliChannel(storage, channel)),
+        );
+        return channel;
+      }));
+      await allSettledOrThrow([
+        limitBootstrap(
+          1,
+          () => timeBootstrapStep(
+            timings,
+            "store-default-cli-channel",
+            () => storeDefaultCliChannel(storage, defaultCliChannel),
+          ),
+        ),
+        limitBootstrap(
+          1,
+          () => timeBootstrapStep(
+            timings,
+            "store-cli-install-scripts",
+            () => storeCliInstallScripts(storage),
+          ),
+        ),
+      ]);
+      return mirroredChannels;
+    })();
+
+    const seedPiperPromise = limitBootstrap(
+      1,
+      () => timeBootstrapStep(
+        timings,
+        "seed-piper-assets",
+        () => seedPiperPublicAssets(storage),
+      ),
     );
-    await timeBootstrapStep(
-      timings,
-      "store-cli-install-scripts",
-      () => storeCliInstallScripts(ctx.env.STORAGE),
-    );
+
+    const [, installed, mirroredChannels] = await allSettledOrThrow([
+      seedSkillsPromise,
+      installPackagesPromise,
+      mirrorCliPromise,
+      seedPiperPromise,
+    ]);
 
     console.info(
       `[sys.bootstrap] ${remoteUrl}#${ref} completed in ${Date.now() - startedAt}ms (${formatBootstrapTimings(timings)})`,

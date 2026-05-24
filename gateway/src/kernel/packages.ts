@@ -41,6 +41,7 @@ export type PackageRuntime = "dynamic-worker" | "node" | "web-ui";
 
 type PackageAssemblerBinding = Fetcher & Pick<PackageAssemblerInterface, "assemblePackage">;
 const BUILTIN_PACKAGE_ASSEMBLY_CONCURRENCY = 2;
+const PACKAGE_PUBLIC_FILE_WRITE_CONCURRENCY = 2;
 
 export type PackageModuleKind =
   | "esm"
@@ -448,7 +449,7 @@ async function storePackagePublicFiles(bucket: R2Bucket, artifact: PackageArtifa
     return;
   }
 
-  await Promise.all(publicFiles.map(async (file) => {
+  await mapWithConcurrency(publicFiles, PACKAGE_PUBLIC_FILE_WRITE_CONCURRENCY, async (file) => {
     const resolvedPath = resolvePackagePublicFilePath(artifact.hash, file.path);
     const key = `public/${resolvedPath}`;
     const content = resolvePackagePublicFileContent(artifact.hash, file);
@@ -463,7 +464,7 @@ async function storePackagePublicFiles(bucket: R2Bucket, artifact: PackageArtifa
         mode: "644",
       },
     });
-  }));
+  });
 }
 
 function resolvePackagePublicFilePath(hash: string, path: string): string {
