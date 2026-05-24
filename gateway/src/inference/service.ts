@@ -37,9 +37,12 @@ type ResolvedGenerationOptions = {
   maxTokens: number;
 };
 
+const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
+
 export function createGenerationService(): GenerationService {
   const generate = async (request: GenerateRequest): Promise<AssistantMessage> => {
     const options = resolveGenerationOptions(request);
+    const generationTimeoutMs = resolveGenerationTimeoutMs(request.config);
     if (isWorkersAiProvider(options.modelProvider)) {
       return completeWithWorkersAi({
         modelName: options.modelName,
@@ -47,15 +50,15 @@ export function createGenerationService(): GenerationService {
         reasoning: options.reasoning,
         maxTokens: options.maxTokens,
         sessionAffinityKey: request.sessionAffinityKey,
-        timeoutMs: request.config.generationTimeoutMs,
+        timeoutMs: generationTimeoutMs,
       });
     }
 
     const model = resolveModel(options.modelProvider, options.modelName);
     const controller = new AbortController();
     const timeout = setTimeout(() => {
-      controller.abort(new Error(generationTimeoutMessage(request.config.generationTimeoutMs)));
-    }, request.config.generationTimeoutMs);
+      controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
+    }, generationTimeoutMs);
     try {
       return await withTimeout(
         completeSimple(model, request.context, {
@@ -63,10 +66,10 @@ export function createGenerationService(): GenerationService {
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
           signal: controller.signal,
-          timeoutMs: request.config.generationTimeoutMs,
+          timeoutMs: generationTimeoutMs,
         }),
-        request.config.generationTimeoutMs,
-        generationTimeoutMessage(request.config.generationTimeoutMs),
+        generationTimeoutMs,
+        generationTimeoutMessage(generationTimeoutMs),
       );
     } finally {
       clearTimeout(timeout);
@@ -143,6 +146,13 @@ export function resolveGenerationOptions(
         maxTokens: config.maxTokens,
       };
   }
+}
+
+export function resolveGenerationTimeoutMs(config: AiConfigResult): number {
+  const timeoutMs = (config as Partial<AiConfigResult>).generationTimeoutMs;
+  return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : DEFAULT_GENERATION_TIMEOUT_MS;
 }
 
 function resolveModel(provider: string, modelName: string) {

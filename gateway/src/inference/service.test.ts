@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveGenerationOptions } from "./service";
+import { resolveGenerationOptions, resolveGenerationTimeoutMs } from "./service";
 import type { AiConfigResult } from "../syscalls/ai";
 import type { Context } from "@earendil-works/pi-ai";
 
@@ -52,5 +52,17 @@ describe("resolveGenerationOptions", () => {
 
     expect(result.reasoning).toBeUndefined();
     expect(result.maxTokens).toBe(768);
+  });
+});
+
+describe("resolveGenerationTimeoutMs", () => {
+  it("uses the configured generation timeout", () => {
+    expect(resolveGenerationTimeoutMs(CONFIG)).toBe(180000);
+  });
+
+  it("defaults legacy persisted configs without a generation timeout", () => {
+    const { generationTimeoutMs: _generationTimeoutMs, ...legacyConfig } = CONFIG;
+
+    expect(resolveGenerationTimeoutMs(legacyConfig as AiConfigResult)).toBe(180000);
   });
 });
