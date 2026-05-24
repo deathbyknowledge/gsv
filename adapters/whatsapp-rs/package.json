@@ -1,0 +1,14 @@
+{
+  "name": "gsv-channel-whatsapp-rs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "check": "cargo check --target wasm32-unknown-unknown",
+    "build:worker": "CUSTOM_SHIM=src/worker-rpc-shim.js WORKER_BUILD_VERSION='^0.8' bash ../../scripts/worker-build.sh adapters/whatsapp-rs --release",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify"
+  },
+  "devDependencies": {
+    "wrangler": "^4.83.0"
+  }
+}

@@ -16,10 +16,11 @@ if [ ! -d "$CRATE_DIR" ]; then
 fi
 
 LOCK_PATH="${TMPDIR:-/tmp}/gsv-worker-build.lock"
+WORKER_BUILD_VERSION="${WORKER_BUILD_VERSION:-^0.7}"
 
 (
   flock 9
   cd "$CRATE_DIR"
-  cargo install -q "worker-build@^0.7"
+  cargo install -q "worker-build@$WORKER_BUILD_VERSION"
   worker-build "$@" .
 ) 9>"$LOCK_PATH"
