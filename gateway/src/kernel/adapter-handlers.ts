@@ -3,11 +3,10 @@ import type {
   AdapterInboundMessage,
   AdapterAccountStatus,
   AdapterOutboundMessage,
-  AdapterShellExecArgs,
-  AdapterShellExecResult,
   AdapterSurface,
   AdapterWorkerInterface,
 } from "../adapter-interface";
+import type { ShellExecArgs, ShellExecResult } from "../syscalls/shell";
 import type {
   AdapterConnectArgs,
   AdapterConnectResult as AdapterConnectSyscallResult,
@@ -194,7 +193,7 @@ export async function handleAdapterShellExec(
   accountId: string,
   args: unknown,
   ctx: KernelContext,
-): Promise<AdapterShellExecResult> {
+): Promise<ShellExecResult> {
   const normalizedAdapter = adapter.trim().toLowerCase();
   const normalizedAccountId = accountId.trim();
   if (!normalizedAdapter) {
@@ -524,7 +523,7 @@ async function refreshAdapterStatus(
   }
 }
 
-function normalizeAdapterShellArgs(args: unknown): AdapterShellExecArgs {
+function normalizeAdapterShellArgs(args: unknown): ShellExecArgs {
   const raw = args && typeof args === "object" ? args as Record<string, unknown> : {};
   return {
     input: typeof raw.input === "string" ? raw.input : "",
@@ -536,7 +535,7 @@ function normalizeAdapterShellArgs(args: unknown): AdapterShellExecArgs {
   };
 }
 
-function completedShellResult(output: string): AdapterShellExecResult {
+function completedShellResult(output: string): ShellExecResult {
   return {
     status: "completed",
     output,
@@ -548,7 +547,7 @@ function completedShellResult(output: string): AdapterShellExecResult {
   };
 }
 
-function failedShellResult(error: string): AdapterShellExecResult {
+function failedShellResult(error: string): ShellExecResult {
   return {
     status: "failed",
     output: error,

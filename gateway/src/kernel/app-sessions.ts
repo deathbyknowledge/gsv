@@ -162,6 +162,6 @@ function toContext(row: AppSessionRow): AppClientSessionContext {
   };
 }
 
-export function buildAppRpcBase(packageName: string, sessionId: string): string {
+function buildAppRpcBase(packageName: string, sessionId: string): string {
   return `/app-rpc/${packageName}/sessions/${sessionId}`;
 }

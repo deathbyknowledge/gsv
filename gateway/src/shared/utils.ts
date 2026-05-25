@@ -1,20 +1,11 @@
-import { Connection, getAgentByName } from "agents";
+import { getAgentByName } from "agents";
 import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
-import type { RequestFrame, ResponseFrame, Frame } from "../protocol/frames";
+import type { Frame } from "../protocol/frames";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
-
-type ConnState = {
-  step: "connect" | "ready";
-};
-
-export const isConnectionInit = (connection: Connection<ConnState>) => {
-  if (connection.state === null) throw new Error("Connection state is null");
-  return connection.state.step === "ready";
-};
 
 // don't break the ✨illusion✨
 type ProcessPtr = DurableObjectStub<Process>;

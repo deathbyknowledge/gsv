@@ -103,7 +103,7 @@ export function isVisibleAdapterTarget(ctx: KernelContext, adapter: string, acco
   return getVisibleAdapterTarget(ctx, targetId) !== null;
 }
 
-export function adapterShellExecServiceAvailable(ctx: KernelContext, adapter: string): boolean {
+function adapterShellExecServiceAvailable(ctx: KernelContext, adapter: string): boolean {
   const service = adapterServiceBinding(ctx.env, adapter);
   return Boolean(service && typeof service.adapterShellExec === "function");
 }

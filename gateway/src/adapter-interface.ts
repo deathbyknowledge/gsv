@@ -1,4 +1,5 @@
 import type { Frame } from "./protocol/frames";
+import type { ShellExecArgs, ShellExecResult } from "./syscalls/shell";
 
 export type AdapterSurfaceKind = "dm" | "group" | "channel" | "thread";
 
@@ -60,46 +61,6 @@ export type AdapterAccountStatus = {
   error?: string;
   extra?: Record<string, unknown>;
 };
-
-export type AdapterShellExecArgs = {
-  input: string;
-  cwd?: string;
-  sessionId?: string;
-  timeout?: number;
-  background?: boolean;
-  yieldMs?: number;
-};
-
-export type AdapterShellExecResult =
-  | {
-      status: "completed";
-      output: string;
-      exitCode: number;
-      sessionId?: string;
-      truncated?: boolean;
-      ok?: true;
-      pid?: number;
-      stdout?: string;
-      stderr?: string;
-    }
-  | {
-      status: "running";
-      output: string;
-      sessionId: string;
-      truncated?: boolean;
-    }
-  | {
-      status: "failed";
-      output: string;
-      error: string;
-      exitCode?: number;
-      sessionId?: string;
-      truncated?: boolean;
-      ok?: boolean;
-      pid?: number;
-      stdout?: string;
-      stderr?: string;
-    };
 
 export type AdapterInboundResult = {
   ok: boolean;
@@ -170,8 +131,8 @@ export interface AdapterWorkerInterface {
   adapterSend(accountId: string, message: AdapterOutboundMessage): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }>;
   adapterShellExec?(
     accountId: string,
-    args: AdapterShellExecArgs,
-  ): Promise<AdapterShellExecResult>;
+    args: ShellExecArgs,
+  ): Promise<ShellExecResult>;
   adapterSetActivity(
     accountId: string,
     surface: AdapterSurface,

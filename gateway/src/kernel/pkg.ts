@@ -34,7 +34,6 @@ import type {
 import type {
   InstalledPackageRecord,
   PackageBindingGrant,
-  PackageEntrypoint,
   PackageGrantSet,
   PackageInstallScope,
   PackageManifest,
@@ -241,7 +240,7 @@ export async function handlePkgAdd(
   const enabled = isBuiltinSource
     ? (requestedEnable ?? existing?.enabled ?? true)
     : (existing?.enabled ?? false);
-  const grants = grantsForManifest(resolved.manifest, scope);
+  const grants = grantsForManifest(resolved.manifest);
   const updated = await ctx.packages.install({
     packageId,
     scope,
@@ -342,7 +341,7 @@ export async function handlePkgCreate(
     scope,
     manifest: resolved.manifest,
     artifact: resolved.artifact,
-    grants: grantsForManifest(resolved.manifest, scope),
+    grants: grantsForManifest(resolved.manifest),
     enabled,
     reviewRequired: false,
     reviewedAt,
@@ -929,7 +928,7 @@ function packageIdForSource(manifest: PackageManifest): string {
   return `import:${source.repo}:${normalizeRepoPath(source.subdir) || "."}`;
 }
 
-function grantsForManifest(manifest: PackageManifest, scope: PackageInstallScope): PackageGrantSet {
+function grantsForManifest(manifest: PackageManifest): PackageGrantSet {
   const bindings = manifest.capabilities?.bindings ?? [];
   return {
     bindings: bindings.flatMap<PackageBindingGrant>((binding): PackageBindingGrant[] => {

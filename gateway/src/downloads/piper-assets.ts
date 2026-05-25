@@ -1,10 +1,9 @@
 export const PIPER_PUBLIC_ASSET_ROOT = "public/gsv/assets/tts";
-export const PIPER_PUBLIC_URL_ROOT = "/public/gsv/assets/tts";
 export const PIPER_DEFAULT_VOICE = "en_US-joe-medium";
 
-export const ONNX_RUNTIME_VERSION = "1.26.0";
-export const PIPER_WASM_VERSION = "1.0.0";
-export const PIPER_VOICE_REF = "main";
+const ONNX_RUNTIME_VERSION = "1.26.0";
+const PIPER_WASM_VERSION = "1.0.0";
+const PIPER_VOICE_REF = "main";
 
 const ONNX_RUNTIME_CDN_BASE = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ONNX_RUNTIME_VERSION}/dist`;
 const PIPER_WASM_CDN_BASE = `https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@${PIPER_WASM_VERSION}/build`;
@@ -16,7 +15,7 @@ type PiperPublicAsset = {
   contentType: string;
 };
 
-export const PIPER_DEFAULT_VOICE_MODEL_PATHS: Record<string, string> = {
+const PIPER_DEFAULT_VOICE_MODEL_PATHS: Record<string, string> = {
   [PIPER_DEFAULT_VOICE]: "en/en_US/joe/medium/en_US-joe-medium.onnx",
 };
 

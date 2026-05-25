@@ -101,7 +101,7 @@ type WorkersAiCatalogBinding = {
 
 const workersAiContextWindowCache = new Map<string, Promise<number | null>>();
 
-export type WorkersAiRequest = {
+type WorkersAiRequest = {
   modelName: string;
   context: Context;
   reasoning?: ThinkingLevel;

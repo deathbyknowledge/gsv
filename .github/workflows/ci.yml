@@ -49,7 +49,7 @@ jobs:
 
       - name: Bundle worker
         working-directory: assembler
-        run: npm run deploy -- --dry-run --outdir dist/worker
+        run: npm exec -- wrangler deploy --minify --dry-run --outdir dist/worker
 
   gateway-test:
     name: Gateway Tests
@@ -111,7 +111,7 @@ jobs:
 
       - name: Bundle worker
         working-directory: ripgit
-        run: npm run deploy -- --dry-run --outdir dist/worker
+        run: npm exec -- wrangler deploy --minify --dry-run --outdir dist/worker
 
   cli-build:
     name: CLI Build (${{ matrix.os }})
