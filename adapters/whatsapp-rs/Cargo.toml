@@ -12,6 +12,7 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 anyhow = "1"
 async-channel = "2"
 async-trait = "0.1"
+base64 = "0.22"
 bytes = "1"
 futures = "0.3"
 js-sys = "0.3"

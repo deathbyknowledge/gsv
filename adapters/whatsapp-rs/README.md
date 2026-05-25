@@ -1,8 +1,8 @@
 # GSV WhatsApp Rust Adapter Spike
 
-This is a side-by-side `workers-rs` spike for replacing the current Baileys
-WhatsApp adapter. It is intentionally not wired as the production
-`gsv-channel-whatsapp` service yet.
+This is the `workers-rs` implementation of the WhatsApp adapter. The local
+multi-worker dev stack points `CHANNEL_WHATSAPP` at this worker so it can be
+tested end-to-end through the gateway.
 
 The first milestone is a Worker/Durable Object skeleton with the same account
 HTTP routes as `adapters/whatsapp`:
@@ -70,6 +70,5 @@ cd adapters/whatsapp-rs
 npx wrangler deploy --dry-run
 ```
 
-To test through the gateway, point the gateway's `CHANNEL_WHATSAPP` service
-binding at this worker. The existing `entrypoint = "WhatsAppChannelEntrypoint"`
-shape is supported by the Rust shim.
+To test through the gateway, run the root `npm run dev` script. The existing
+`entrypoint = "WhatsAppChannelEntrypoint"` shape is supported by the Rust shim.

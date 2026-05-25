@@ -593,6 +593,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-trait",
+ "base64",
  "bytes",
  "console_error_panic_hook",
  "futures",

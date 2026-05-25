@@ -58,7 +58,7 @@
 	"services": [
 		{
 			"binding": "CHANNEL_WHATSAPP",
-			"service": "gsv-channel-whatsapp",
+			"service": "gsv-channel-whatsapp-rs",
 			"entrypoint": "WhatsAppChannelEntrypoint"
 		},
 		{
