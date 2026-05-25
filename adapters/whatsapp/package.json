@@ -10,7 +10,7 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.17",
+    "@whiskeysockets/baileys": "7.0.0-rc13",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
