@@ -1,5 +1,5 @@
 /* ============================================
-   GSV Brand Theme
+   GSV Brand Theme — Sage + Beige
    ============================================ */
 
 /* ----- Fonts ----- */
@@ -9,10 +9,16 @@
    Root Variables — Light
    ============================================ */
 :root {
-  --vp-c-brand-1: #5b7ee5;
-  --vp-c-brand-2: #7b98f0;
-  --vp-c-brand-3: #3d5fc9;
-  --vp-c-brand-soft: rgba(91, 126, 229, 0.14);
+  /* Sage accent */
+  --vp-c-brand-1: #6b8f71;
+  --vp-c-brand-2: #8aab8f;
+  --vp-c-brand-3: #4d6b52;
+  --vp-c-brand-soft: rgba(107, 143, 113, 0.14);
+
+  /* Warm beige backgrounds */
+  --vp-c-bg: #fcfaf7;
+  --vp-c-bg-soft: #f5f1ea;
+  --vp-c-bg-alt: #ede6d9;
 
   --vp-font-family-base: "Inter", -apple-system, BlinkMacSystemFont,
     "Segoe UI", Roboto, sans-serif;
@@ -20,19 +26,19 @@
 
   --vp-border-radius: 8px;
 
-  /* Hero name gradient */
+  /* Hero name gradient: sage → warm sand */
   --vp-home-hero-name-color: transparent;
   --vp-home-hero-name-background: linear-gradient(
     120deg,
-    #5b7ee5 30%,
-    #a78bfa 100%
+    #6b8f71 30%,
+    #b8a088 100%
   );
 
-  /* Home hero image background (the logo area) */
+  /* Home hero image background */
   --vp-home-hero-image-background-image: linear-gradient(
     135deg,
-    #5b7ee5 0%,
-    #a78bfa 100%
+    #6b8f71 0%,
+    #b8a088 100%
   );
   --vp-home-hero-image-filter: blur(40px);
 }
@@ -41,20 +47,26 @@
    Root Variables — Dark
    ============================================ */
 .dark {
-  --vp-c-brand-1: #7b98f0;
-  --vp-c-brand-2: #5b7ee5;
-  --vp-c-brand-3: #a5b8f8;
-  --vp-c-brand-soft: rgba(123, 152, 240, 0.16);
+  /* Muted sage for dark mode */
+  --vp-c-brand-1: #8aab8f;
+  --vp-c-brand-2: #6b8f71;
+  --vp-c-brand-3: #a8c4ab;
+  --vp-c-brand-soft: rgba(138, 171, 143, 0.16);
+
+  /* Warm dark backgrounds */
+  --vp-c-bg: #1b1a17;
+  --vp-c-bg-soft: #23211d;
+  --vp-c-bg-alt: #2a2722;
 
   --vp-home-hero-name-background: linear-gradient(
     120deg,
-    #7b98f0 30%,
-    #c4b5fd 100%
+    #8aab8f 30%,
+    #c4a882 100%
   );
   --vp-home-hero-image-background-image: linear-gradient(
     135deg,
-    #5b7ee5 0%,
-    #c4b5fd 100%
+    #6b8f71 0%,
+    #c4a882 100%
   );
 }
 
@@ -108,7 +120,7 @@
 
 .VPFeature:hover {
   border-color: var(--vp-c-brand-1);
-  box-shadow: 0 4px 20px rgba(91, 126, 229, 0.1);
+  box-shadow: 0 4px 20px rgba(107, 143, 113, 0.1);
   transform: translateY(-2px);
 }
 
@@ -198,7 +210,7 @@
 
 .dark .VPFeature:hover {
   border-color: var(--vp-c-brand-1);
-  box-shadow: 0 4px 24px rgba(123, 152, 240, 0.15);
+  box-shadow: 0 4px 24px rgba(138, 171, 143, 0.15);
 }
 
 .dark .vp-doc div[class*="language-"] {
