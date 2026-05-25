@@ -13,6 +13,7 @@ use std::time::Duration;
 use wacore::download::MediaType as WhatsAppMediaType;
 use wacore::proto_helpers::MessageExt;
 use wacore::runtime::Runtime;
+use wacore_binary::Server;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -107,7 +108,9 @@ impl WorkerWhatsAppClient {
                                         &info,
                                         text,
                                         media,
-                                    );
+                                        &client,
+                                    )
+                                    .await;
                                     if let Err(error) = forward_inbound(env, message, client).await
                                     {
                                         worker::console_error!(
@@ -169,7 +172,7 @@ impl WorkerWhatsAppClient {
     }
 
     pub async fn send(&self, message: ChannelOutboundMessage) -> Result<String> {
-        let jid = normalize_outbound_jid(&message.peer.id)?;
+        let jid = resolve_outbound_jid(&self.inner.client, &message.peer.id).await?;
         let outgoing = self.build_outbound_message(&message).await?;
         let sent = self
             .inner
@@ -181,11 +184,13 @@ impl WorkerWhatsAppClient {
     }
 
     pub async fn react(&self, request: ReactRequest) -> Result<()> {
-        let jid = normalize_outbound_jid(&request.peer.id)?;
+        let jid = resolve_outbound_jid(&self.inner.client, &request.peer.id).await?;
         let participant = match request.participant.as_deref() {
-            Some(value) if !value.trim().is_empty() => {
-                Some(normalize_outbound_jid(value)?.to_string())
-            }
+            Some(value) if !value.trim().is_empty() => Some(
+                resolve_outbound_jid(&self.inner.client, value)
+                    .await?
+                    .to_string(),
+            ),
             _ => None,
         };
         let message = wa::Message {
@@ -211,7 +216,7 @@ impl WorkerWhatsAppClient {
     }
 
     pub async fn set_typing(&self, request: TypingRequest) -> Result<()> {
-        let jid = normalize_outbound_jid(&request.peer.id)?;
+        let jid = resolve_outbound_jid(&self.inner.client, &request.peer.id).await?;
         if request.typing {
             self.inner.client.chatstate().send_composing(&jid).await?;
         } else {
@@ -294,7 +299,9 @@ struct InboundMessage {
     account_id: String,
     message_id: String,
     chat_jid: String,
+    chat_handle: Option<String>,
     actor_jid: String,
+    actor_handle: Option<String>,
     is_group: bool,
     push_name: Option<String>,
     text: String,
@@ -303,18 +310,27 @@ struct InboundMessage {
 }
 
 impl InboundMessage {
-    fn from_whatsapp(
+    async fn from_whatsapp(
         account_id: &str,
         _message: &wa::Message,
         info: &MessageInfo,
         text: String,
         media: Vec<Value>,
+        client: &Client,
     ) -> Self {
+        let actor_identity = stable_actor_identity(client, info).await;
+        let chat_identity = if info.source.is_group {
+            WhatsAppIdentity::from_jid(info.source.chat.to_non_ad())
+        } else {
+            actor_identity.clone()
+        };
         Self {
             account_id: account_id.to_string(),
             message_id: info.id.clone(),
-            chat_jid: stable_chat_jid(info),
-            actor_jid: stable_actor_jid(info),
+            chat_jid: chat_identity.jid,
+            chat_handle: chat_identity.handle,
+            actor_jid: actor_identity.jid,
+            actor_handle: actor_identity.handle,
             is_group: info.source.is_group,
             push_name: if info.push_name.trim().is_empty() {
                 None
@@ -340,12 +356,13 @@ impl InboundMessage {
                     "surface": {
                         "kind": if self.is_group { "group" } else { "dm" },
                         "id": self.chat_jid,
-                        "name": self.push_name
+                        "name": if self.is_group { None } else { self.push_name.clone() },
+                        "handle": self.chat_handle
                     },
                     "actor": {
                         "id": format!("wa:jid:{}", self.actor_jid),
                         "name": self.push_name,
-                        "handle": format!("wa:jid:{}", self.actor_jid)
+                        "handle": self.actor_handle
                     },
                     "text": self.text,
                     "media": self.media,
@@ -399,7 +416,7 @@ async fn forward_inbound(env: Env, inbound: InboundMessage, client: Arc<Client>)
 }
 
 async fn send_plaintext(client: &Client, chat_jid: &str, text: &str) -> Result<()> {
-    let jid = normalize_outbound_jid(chat_jid)?;
+    let jid = resolve_outbound_jid(client, chat_jid).await?;
     client
         .send_message(
             jid,
@@ -780,7 +797,7 @@ fn js_error(value: JsValue) -> anyhow::Error {
     }
 }
 
-fn normalize_outbound_jid(input: &str) -> Result<Jid> {
+fn parse_outbound_jid(input: &str) -> Result<Jid> {
     let raw = input.trim().strip_prefix("wa:jid:").unwrap_or(input.trim());
     if raw.is_empty() {
         return Err(anyhow!("missing WhatsApp JID or phone number"));
@@ -799,27 +816,113 @@ fn normalize_outbound_jid(input: &str) -> Result<Jid> {
         .with_context(|| format!("invalid WhatsApp JID: {normalized}"))
 }
 
-fn stable_chat_jid(info: &MessageInfo) -> String {
-    if info.source.is_group {
-        normalize_whatsapp_jid(&info.source.chat.to_string())
-            .unwrap_or_else(|| info.source.chat.to_string())
-    } else {
-        stable_actor_jid(info)
+async fn resolve_outbound_jid(client: &Client, input: &str) -> Result<Jid> {
+    let jid = parse_outbound_jid(input)?;
+    Ok(resolve_lid_for_outbound(client, jid).await)
+}
+
+async fn resolve_lid_for_outbound(client: &Client, jid: Jid) -> Jid {
+    if !jid.server.is_pn_family() {
+        return jid;
+    }
+    if let Some(resolved) = resolve_cached_lid_jid(client, &jid).await {
+        return resolved;
+    }
+    if let Err(error) = client.contacts().is_on_whatsapp(&[jid.to_non_ad()]).await {
+        worker::console_warn!(
+            "[whatsapp-rs] failed to resolve PN to LID for {}: {}",
+            jid,
+            error
+        );
+    }
+    resolve_cached_lid_jid(client, &jid).await.unwrap_or(jid)
+}
+
+async fn resolve_cached_lid_jid(client: &Client, jid: &Jid) -> Option<Jid> {
+    let entry = client.get_lid_pn_entry(&jid.to_non_ad()).await.ok()??;
+    Some(Jid {
+        user: entry.lid.into(),
+        server: lid_server_for(jid.server),
+        device: jid.device,
+        agent: jid.agent,
+        integrator: jid.integrator,
+    })
+}
+
+#[derive(Clone)]
+struct WhatsAppIdentity {
+    jid: String,
+    handle: Option<String>,
+}
+
+impl WhatsAppIdentity {
+    fn from_jid(jid: Jid) -> Self {
+        let normalized =
+            normalize_whatsapp_jid(&jid.to_string()).unwrap_or_else(|| jid.to_string());
+        Self {
+            handle: phone_handle_from_jid(&jid),
+            jid: normalized,
+        }
     }
 }
 
-fn stable_actor_jid(info: &MessageInfo) -> String {
-    if let Some(sender_alt) = info.source.sender_alt.as_ref() {
-        let value = sender_alt.to_string();
-        if is_phone_jid(&value) {
-            if let Some(normalized) = normalize_whatsapp_jid(&value) {
-                return normalized;
-            }
-        }
-    }
+async fn stable_actor_identity(client: &Client, info: &MessageInfo) -> WhatsAppIdentity {
+    let sender = info.source.sender.to_non_ad();
+    let sender_alt = info.source.sender_alt.as_ref().map(|jid| jid.to_non_ad());
 
-    let sender = info.source.sender.to_string();
-    normalize_whatsapp_jid(&sender).unwrap_or(sender)
+    let canonical = if sender.server.is_lid_family() {
+        sender.clone()
+    } else if let Some(alt) = sender_alt.as_ref().filter(|jid| jid.server.is_lid_family()) {
+        alt.clone()
+    } else if sender.server.is_pn_family() {
+        match client.get_lid_pn_entry(&sender).await {
+            Ok(Some(entry)) => Jid {
+                user: entry.lid.into(),
+                server: lid_server_for(sender.server),
+                ..Default::default()
+            },
+            _ => sender.clone(),
+        }
+    } else {
+        sender.clone()
+    };
+
+    let phone = if sender.server.is_pn_family() {
+        Some(sender)
+    } else if let Some(alt) = sender_alt.filter(|jid| jid.server.is_pn_family()) {
+        Some(alt)
+    } else if canonical.server.is_lid_family() {
+        match client.get_lid_pn_entry(&canonical).await {
+            Ok(Some(entry)) => Some(Jid {
+                user: entry.phone_number.into(),
+                server: pn_server_for(canonical.server),
+                ..Default::default()
+            }),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    WhatsAppIdentity {
+        jid: normalize_whatsapp_jid(&canonical.to_string())
+            .unwrap_or_else(|| canonical.to_string()),
+        handle: phone.as_ref().and_then(phone_handle_from_jid),
+    }
+}
+
+fn lid_server_for(server: Server) -> Server {
+    match server {
+        Server::Hosted => Server::HostedLid,
+        _ => Server::Lid,
+    }
+}
+
+fn pn_server_for(server: Server) -> Server {
+    match server {
+        Server::HostedLid => Server::Hosted,
+        _ => Server::Pn,
+    }
 }
 
 fn normalize_whatsapp_jid(input: &str) -> Option<String> {
@@ -833,14 +936,20 @@ fn normalize_whatsapp_jid(input: &str) -> Option<String> {
     Some(format!("{user}@{server}"))
 }
 
-fn is_phone_jid(input: &str) -> bool {
-    let Some((user, server)) = input.trim().split_once('@') else {
-        return false;
-    };
-    let user = user.split(':').next().unwrap_or_default();
-    server.eq_ignore_ascii_case("s.whatsapp.net")
-        && !user.is_empty()
-        && user.chars().all(|ch| ch.is_ascii_digit())
+fn phone_handle_from_jid(jid: &Jid) -> Option<String> {
+    if !jid.server.is_pn_family() {
+        return None;
+    }
+    let digits = jid
+        .user_base()
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        None
+    } else {
+        Some(format!("+{digits}"))
+    }
 }
 
 fn e164_from_jid(jid: &str) -> Option<String> {

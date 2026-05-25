@@ -604,6 +604,7 @@ dependencies = [
  "serde_json",
  "uuid",
  "wacore",
+ "wacore-binary",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

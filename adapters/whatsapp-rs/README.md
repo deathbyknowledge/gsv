@@ -1,11 +1,11 @@
-# GSV WhatsApp Rust Adapter Spike
+# GSV WhatsApp Rust Adapter
 
 This is the `workers-rs` implementation of the WhatsApp adapter. The local
 multi-worker dev stack points `CHANNEL_WHATSAPP` at this worker so it can be
 tested end-to-end through the gateway.
 
-The first milestone is a Worker/Durable Object skeleton with the same account
-HTTP routes as `adapters/whatsapp`:
+The Worker/Durable Object exposes the same account HTTP routes as
+`adapters/whatsapp`:
 
 - `GET /health`
 - `GET /accounts`
@@ -19,13 +19,18 @@ HTTP routes as `adapters/whatsapp`:
 - `POST /account/:accountId/typing`
 
 The production gateway currently uses WorkerEntrypoint RPC methods such as
-`adapterConnect`, `adapterSend`, and `adapterShellExec`. This spike exports
+`adapterConnect`, `adapterSend`, and `adapterShellExec`. This adapter exports
 those methods from Rust with `#[wasm_bindgen]` and uses a small local
 `worker-build` shim so gateway RPC calls pass `this.env` into the Rust exports.
 The exports forward into the per-account Durable Object through the
 `WHATSAPP_ACCOUNT` binding. The shim exports both the default entrypoint and a
 `WhatsAppChannelEntrypoint` named entrypoint so the gateway's existing WhatsApp
 service-binding shape can be pointed at this worker for e2e testing.
+
+WhatsApp identities are LID-first. When a LID is known, inbound gateway actor
+and DM surface IDs use `wa:jid:<lid>@lid`; phone-number JIDs are kept as
+display handles and outbound phone-number targets are resolved through the
+stored PN-to-LID mapping before sending.
 
 ## Intended shape
 

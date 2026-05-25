@@ -27,3 +27,4 @@ worker = { version = "0.8.3" }
 worker-macros = { version = "0.8.3" }
 whatsapp-rust = { version = "0.6.0", default-features = false }
 wacore = { version = "0.6.0", default-features = false, features = ["js"] }
+wacore-binary = { version = "0.6.0", default-features = false }
