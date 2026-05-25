@@ -16,10 +16,14 @@ import {
   DisconnectReason,
   extractMessageContent,
   getContentType,
+  isLidUser,
+  isPnUser,
+  jidNormalizedUser,
   type WASocket,
   type BaileysEventMap,
   type WAMessage,
   type AnyMessageContent,
+  type LIDMapping,
   type WAMessageKey,
 } from "@whiskeysockets/baileys";
 import {
@@ -138,13 +142,42 @@ function uint8ArrayToBase64(data: Uint8Array): string {
 }
 
 function normalizeWhatsAppJid(jid: string | null | undefined): string | null {
-  const normalized = (jid ?? "").trim().toLowerCase();
+  let normalized = (jid ?? "").trim().toLowerCase();
   if (!normalized) return null;
-  const phoneJidMatch = normalized.match(/^(\d+)(?::\d+)?@s\.whatsapp\.net$/);
-  if (phoneJidMatch) {
-    return `${phoneJidMatch[1]}@s.whatsapp.net`;
+  if (normalized.startsWith("wa:jid:")) {
+    normalized = normalized.slice("wa:jid:".length);
   }
-  return normalized;
+  return jidNormalizedUser(normalized) || normalized;
+}
+
+function isPnWhatsAppJid(jid: string | null | undefined): jid is string {
+  return typeof jid === "string" && isPnUser(jid) === true;
+}
+
+function isLidWhatsAppJid(jid: string | null | undefined): jid is string {
+  return typeof jid === "string" && isLidUser(jid) === true;
+}
+
+function preferredLidJid(
+  primary: string | null | undefined,
+  alternate: string | null | undefined,
+): string | null {
+  const normalizedPrimary = normalizeWhatsAppJid(primary);
+  const normalizedAlternate = normalizeWhatsAppJid(alternate);
+  if (isLidWhatsAppJid(normalizedPrimary)) return normalizedPrimary;
+  if (isLidWhatsAppJid(normalizedAlternate)) return normalizedAlternate;
+  return normalizedPrimary ?? normalizedAlternate;
+}
+
+function preferredPnJid(
+  primary: string | null | undefined,
+  alternate: string | null | undefined,
+): string | undefined {
+  const normalizedPrimary = normalizeWhatsAppJid(primary);
+  const normalizedAlternate = normalizeWhatsAppJid(alternate);
+  if (isPnWhatsAppJid(normalizedPrimary)) return normalizedPrimary;
+  if (isPnWhatsAppJid(normalizedAlternate)) return normalizedAlternate;
+  return undefined;
 }
 
 function normalizeOutboundWhatsAppJid(jid: string | null | undefined): string {
@@ -162,17 +195,12 @@ function normalizeOutboundWhatsAppJid(jid: string | null | undefined): string {
   if (/^\d+$/.test(normalized)) {
     return `${normalized}@s.whatsapp.net`;
   }
-  return normalizeWhatsAppJid(normalized) ?? normalized;
+  return normalizeWhatsAppJid(normalized) ?? normalized.toLowerCase();
 }
 
 function base64Payload(data: string): string {
   const dataUrl = /^data:[^;,]+;base64,(.*)$/is.exec(data.trim());
   return dataUrl ? dataUrl[1] : data;
-}
-
-function phoneDigitsFromSenderPn(senderPn?: string): string | null {
-  const match = typeof senderPn === "string" ? senderPn.trim().match(/^(\d+)(?::\d+)?@/) : null;
-  return match?.[1] ?? null;
 }
 
 function phoneDigitsFromJid(jid: string | null | undefined): string | null {
@@ -408,7 +436,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
 
     const message = await request.json() as ChannelOutboundMessage;
-    const jid = normalizeOutboundWhatsAppJid(message.peer.id);
+    const jid = await this.resolveOutboundWhatsAppJid(message.peer.id);
 
     try {
       const content = this.buildOutboundContent(message);
@@ -443,14 +471,22 @@ export class WhatsAppAccount extends DurableObject<Env> {
       );
     }
 
-    const jid = normalizeOutboundWhatsAppJid(body.peer.id);
+    const remote = await this.resolveOutboundMessageKeyJid(body.peer.id);
+    const jid = remote.jid;
     const key: WAMessageKey = {
       remoteJid: jid,
       id: body.messageId,
       fromMe: false,
     };
+    if (remote.alt) {
+      key.remoteJidAlt = remote.alt;
+    }
     if (body.participant) {
-      key.participant = normalizeOutboundWhatsAppJid(body.participant);
+      const participant = await this.resolveOutboundMessageKeyJid(body.participant);
+      key.participant = participant.jid;
+      if (participant.alt) {
+        key.participantAlt = participant.alt;
+      }
     }
 
     try {
@@ -476,7 +512,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
 
     const { peer, typing } = await request.json() as { peer: ChannelPeer; typing: boolean };
-    const jid = normalizeOutboundWhatsAppJid(peer.id);
+    const jid = await this.resolveOutboundWhatsAppJid(peer.id);
 
     try {
       const presence = typing ? "composing" : "paused";
@@ -544,6 +580,26 @@ export class WhatsAppAccount extends DurableObject<Env> {
     throw new Error("Media attachment must include base64 data or url");
   }
 
+  private async resolveOutboundWhatsAppJid(jidOrPhone: string): Promise<string> {
+    const jid = normalizeOutboundWhatsAppJid(jidOrPhone);
+    if (!isPnWhatsAppJid(jid)) {
+      return jid;
+    }
+
+    const lid = await this.lookupLidForPN(jid);
+    return lid ?? jid;
+  }
+
+  private async resolveOutboundMessageKeyJid(jidOrPhone: string): Promise<{ jid: string; alt?: string }> {
+    const jid = normalizeOutboundWhatsAppJid(jidOrPhone);
+    if (!isPnWhatsAppJid(jid)) {
+      return { jid };
+    }
+
+    const lid = await this.lookupLidForPN(jid);
+    return lid ? { jid: lid, alt: jid } : { jid };
+  }
+
   private async startSocket(): Promise<void> {
     const { state: authState, saveCreds } = await useDOAuthState(this.ctx.storage);
     const { version } = await fetchLatestBaileysVersion();
@@ -563,6 +619,16 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     this.sock.ev.on("creds.update", saveCreds);
     this.sock.ev.on("connection.update", (update) => this.handleConnectionUpdate(update));
+    this.sock.ev.on("lid-mapping.update", (mapping) => {
+      this.rememberLidPnMapping(mapping).catch((e) => {
+        console.error(`[WA:${this.state.accountId}] LID mapping update failed:`, e);
+      });
+    });
+    this.sock.ev.on("messaging-history.set", ({ lidPnMappings }) => {
+      this.rememberLidPnMappings(lidPnMappings).catch((e) => {
+        console.error(`[WA:${this.state.accountId}] History LID mappings update failed:`, e);
+      });
+    });
     this.sock.ev.on("messages.upsert", (m) => {
       this.handleMessagesUpsert(m).catch((e) => {
         console.error(`[WA:${this.state.accountId}] Message handling error:`, e);
@@ -653,16 +719,23 @@ export class WhatsAppAccount extends DurableObject<Env> {
       
       if (text === undefined) continue;
 
-      const remoteJid = msg.key.remoteJid!;
+      const remoteJid = normalizeWhatsAppJid(msg.key.remoteJid);
+      if (!remoteJid) continue;
+      const remoteJidAlt = normalizeWhatsAppJid(msg.key.remoteJidAlt);
       const isGroup = remoteJid.endsWith("@g.us");
+      const dmPn = preferredPnJid(remoteJid, remoteJidAlt);
+      const deliveryJid = isGroup ? remoteJid : preferredLidJid(remoteJid, remoteJidAlt) ?? remoteJid;
+      const surfaceJid = isGroup ? remoteJid : dmPn ?? remoteJid;
+      const participantJid = preferredLidJid(msg.key.participant, msg.key.participantAlt);
+      const participantPn = preferredPnJid(msg.key.participant, msg.key.participantAlt);
       const actorId = isGroup
         ? await this.resolveStableWhatsAppActorId(
-            msg.key.participant,
-            typeof msg.key.senderPn === "string" ? msg.key.senderPn : undefined,
+            participantJid,
+            participantPn,
           )
         : await this.resolveStableWhatsAppActorId(
-            remoteJid,
-            typeof msg.key.senderPn === "string" ? msg.key.senderPn : undefined,
+            deliveryJid,
+            dmPn,
           );
       if (!actorId) continue;
 
@@ -684,7 +757,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         messageId: msg.key.id!,
         surface: {
           kind: isGroup ? "group" : "dm",
-          id: remoteJid,
+          id: surfaceJid,
           name: msg.pushName ?? undefined,
         },
         actor: {
@@ -698,7 +771,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         timestamp: msg.messageTimestamp as number,
       };
       console.log(
-        `[WA:${this.state.accountId}] inbound actorId=${actorId} remoteJid=${remoteJid} senderPn=${typeof msg.key.senderPn === "string" ? msg.key.senderPn : ""}`,
+        `[WA:${this.state.accountId}] inbound actorId=${actorId} surfaceJid=${surfaceJid} deliveryJid=${deliveryJid} remoteJid=${remoteJid} remoteJidAlt=${remoteJidAlt ?? ""} participant=${participantJid ?? ""} participantPn=${participantPn ?? ""}`,
       );
 
       try {
@@ -718,14 +791,14 @@ export class WhatsAppAccount extends DurableObject<Env> {
         }
         if (result.challenge?.prompt && !isGroup && this.sock) {
           try {
-            await this.sock.sendMessage(remoteJid, { text: result.challenge.prompt });
+            await this.sock.sendMessage(deliveryJid, { text: result.challenge.prompt });
           } catch (err) {
             console.error(`[WA:${this.state.accountId}] Failed to send challenge prompt:`, err);
           }
         }
         if (result.reply?.text && !isGroup && this.sock) {
           try {
-            await this.sock.sendMessage(remoteJid, { text: result.reply.text });
+            await this.sock.sendMessage(deliveryJid, { text: result.reply.text });
           } catch (err) {
             console.error(`[WA:${this.state.accountId}] Failed to send gateway reply:`, err);
           }
@@ -739,12 +812,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private async resolveStableWhatsAppActorId(
     jid: string | null | undefined,
-    senderPn?: string,
+    alternatePnJid?: string,
   ): Promise<string | null> {
     const normalizedJid = normalizeWhatsAppJid(jid);
     if (!normalizedJid) return null;
 
-    const phoneDigits = phoneDigitsFromSenderPn(senderPn) ?? phoneDigitsFromJid(normalizedJid);
+    const phoneDigits = phoneDigitsFromJid(alternatePnJid) ?? phoneDigitsFromJid(normalizedJid);
     if (phoneDigits) {
       const canonical = phoneActorId(phoneDigits);
       await this.rememberActorAlias(jidActorId(normalizedJid), canonical);
@@ -758,15 +831,42 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private async rememberLidAliasForPhone(phoneDigits: string, canonicalActorId: string): Promise<void> {
-    if (!this.sock) return;
+    const lid = await this.lookupLidForPN(`${phoneDigits}@s.whatsapp.net`);
+    if (!lid) return;
+    await this.rememberActorAlias(jidActorId(lid), canonicalActorId);
+  }
+
+  private async lookupLidForPN(pnJid: string): Promise<string | null> {
+    if (!this.sock) return null;
+
+    const normalizedPn = normalizeWhatsAppJid(pnJid);
+    if (!isPnWhatsAppJid(normalizedPn)) return null;
+
     try {
-      const results = await this.sock.onWhatsApp(`+${phoneDigits}`);
-      const lid = typeof results?.[0]?.lid === "string" ? results[0].lid.trim().toLowerCase() : "";
-      if (!lid) return;
-      await this.rememberActorAlias(jidActorId(lid), canonicalActorId);
+      const lid = await this.sock.signalRepository.lidMapping.getLIDForPN(normalizedPn);
+      const normalizedLid = normalizeWhatsAppJid(lid);
+      if (!isLidWhatsAppJid(normalizedLid)) return null;
+      await this.rememberLidPnMapping({ pn: normalizedPn, lid: normalizedLid });
+      return normalizedLid;
     } catch (error) {
-      console.warn(`[WA:${this.state.accountId}] Failed to resolve LID for +${phoneDigits}`, error);
+      console.warn(`[WA:${this.state.accountId}] Failed to resolve LID for ${normalizedPn}`, error);
+      return null;
     }
+  }
+
+  private async rememberLidPnMappings(mappings: LIDMapping[] | undefined): Promise<void> {
+    if (!mappings?.length) return;
+    await Promise.all(mappings.map((mapping) => this.rememberLidPnMapping(mapping)));
+  }
+
+  private async rememberLidPnMapping(mapping: LIDMapping): Promise<void> {
+    const pn = normalizeWhatsAppJid(mapping.pn);
+    const lid = normalizeWhatsAppJid(mapping.lid);
+    if (!isPnWhatsAppJid(pn) || !isLidWhatsAppJid(lid)) return;
+
+    const phoneDigits = phoneDigitsFromJid(pn);
+    const canonicalActorId = phoneDigits ? phoneActorId(phoneDigits) : jidActorId(pn);
+    await this.rememberActorAlias(jidActorId(lid), canonicalActorId);
   }
 
   private async rememberActorAlias(aliasActorId: string, canonicalActorId: string): Promise<void> {

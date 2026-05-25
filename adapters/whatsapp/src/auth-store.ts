@@ -6,48 +6,32 @@
 import type {
   AuthenticationCreds,
   AuthenticationState,
+  SignalDataSet,
   SignalKeyStore,
   SignalKeyStoreWithTransaction,
 } from "@whiskeysockets/baileys";
-import { proto } from "@whiskeysockets/baileys";
-import { initAuthCreds } from "@whiskeysockets/baileys";
+import { BufferJSON, initAuthCreds } from "@whiskeysockets/baileys";
 
 type StorageKV = DurableObjectStorage;
 
-/**
- * JSON replacer that converts Buffers to a serializable format
- */
-function bufferReplacer(_key: string, value: unknown): unknown {
-  if (Buffer.isBuffer(value)) {
-    return {
-      type: "Buffer",
-      data: Array.from(value),
-    };
-  }
-  // Handle Uint8Array as well
-  if (value instanceof Uint8Array) {
-    return {
-      type: "Buffer",
-      data: Array.from(value),
-    };
-  }
-  return value;
-}
+const serializeAuthValue = (value: unknown): string => JSON.stringify(value, BufferJSON.replacer);
+const deserializeAuthValue = (value: string): unknown => JSON.parse(value, authValueReviver);
 
-/**
- * JSON reviver that converts serialized Buffers back to Buffer objects
- */
-function bufferReviver(_key: string, value: unknown): unknown {
+function authValueReviver(key: string, value: unknown): unknown {
+  const revived = BufferJSON.reviver(key, value);
+  if (revived !== value) return revived;
+
   if (
     value &&
     typeof value === "object" &&
     "type" in value &&
-    (value as any).type === "Buffer" &&
+    (value as { type?: unknown }).type === "Buffer" &&
     "data" in value &&
-    Array.isArray((value as any).data)
+    Array.isArray((value as { data?: unknown }).data)
   ) {
-    return Buffer.from((value as any).data);
+    return Buffer.from((value as { data: number[] }).data);
   }
+
   return value;
 }
 
@@ -68,7 +52,7 @@ function createDOSignalKeyStore(storage: StorageKV): SignalKeyStoreWithTransacti
         const value = await storage.get<string>(key);
         if (value) {
           try {
-            result[id] = JSON.parse(value, bufferReviver);
+            result[id] = deserializeAuthValue(value);
           } catch {
             // Invalid JSON, skip
           }
@@ -77,15 +61,24 @@ function createDOSignalKeyStore(storage: StorageKV): SignalKeyStoreWithTransacti
       return result as any;
     },
 
-    async set(data: Record<string, Record<string, unknown>>): Promise<void> {
+    async set(data: SignalDataSet): Promise<void> {
       const puts: Record<string, string> = {};
+      const deletes: string[] = [];
       for (const [type, entries] of Object.entries(data)) {
+        if (!entries) continue;
         for (const [id, value] of Object.entries(entries)) {
           const key = `${PREFIX}${type}:${id}`;
-          puts[key] = JSON.stringify(value, bufferReplacer);
+          if (value) {
+            puts[key] = serializeAuthValue(value);
+          } else {
+            deletes.push(key);
+          }
         }
       }
-      await storage.put(puts);
+      await Promise.all([
+        Object.keys(puts).length > 0 ? storage.put(puts) : Promise.resolve(),
+        deletes.length > 0 ? storage.delete(deletes) : Promise.resolve(),
+      ]);
     },
 
     async clear(): Promise<void> {
@@ -132,7 +125,7 @@ export async function useDOAuthState(
   
   if (storedCreds) {
     try {
-      creds = JSON.parse(storedCreds, bufferReviver);
+      creds = deserializeAuthValue(storedCreds) as AuthenticationCreds;
       console.log("[AuthStore] Loaded stored creds");
     } catch (e) {
       console.log("[AuthStore] Invalid stored creds, initializing new:", e);
@@ -148,7 +141,7 @@ export async function useDOAuthState(
 
   // Save credentials function
   const saveCreds = async () => {
-    await storage.put(CREDS_KEY, JSON.stringify(creds, bufferReplacer));
+    await storage.put(CREDS_KEY, serializeAuthValue(creds));
     console.log("[AuthStore] Credentials saved");
   };
 
