@@ -165,6 +165,11 @@ type TelegramPendingUpdate = {
   lastError?: string;
 };
 
+type TelegramProcessedUpdate = {
+  updateId: number;
+  processedAt: number;
+};
+
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const TELEGRAM_FILE_BASE = "https://api.telegram.org/file";
 const MAX_INLINE_MEDIA_BYTES = 25 * 1024 * 1024;
@@ -173,6 +178,8 @@ const PENDING_UPDATE_PREFIX = "pending_update:";
 const PENDING_UPDATE_RETRY_BASE_MS = 1000;
 const PENDING_UPDATE_RETRY_MAX_MS = 60_000;
 const PENDING_UPDATE_MAX_ATTEMPTS = 24;
+const PROCESSED_UPDATE_PREFIX = "processed_update:";
+const PROCESSED_UPDATE_RETENTION = 900;
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
@@ -746,12 +753,12 @@ export class TelegramAccount extends DurableObject<Env> {
       return { ok: true };
     }
 
-    if (await this.hasPendingUpdate(updateId)) {
-      await this.schedulePendingUpdateRetry(0);
+    if (await this.hasProcessedUpdate(updateId)) {
       return { ok: true };
     }
 
-    if (this.isProcessedUpdate(updateId)) {
+    if (await this.hasPendingUpdate(updateId)) {
+      await this.schedulePendingUpdateRetry(0);
       return { ok: true };
     }
 
@@ -840,13 +847,45 @@ export class TelegramAccount extends DurableObject<Env> {
     );
   }
 
-  private isProcessedUpdate(updateId: number): boolean {
-    return this.state.lastUpdateId !== null && updateId <= this.state.lastUpdateId;
+  private processedUpdateKey(updateId: number): string {
+    return `${PROCESSED_UPDATE_PREFIX}${String(updateId).padStart(16, "0")}`;
+  }
+
+  private async hasProcessedUpdate(updateId: number): Promise<boolean> {
+    return Boolean(
+      await this.ctx.storage.get<TelegramProcessedUpdate>(
+        this.processedUpdateKey(updateId),
+      ),
+    );
   }
 
   private async markUpdateProcessed(updateId: number): Promise<void> {
+    await this.ctx.storage.put<TelegramProcessedUpdate>(
+      this.processedUpdateKey(updateId),
+      {
+        updateId,
+        processedAt: Date.now(),
+      },
+    );
     this.state.lastUpdateId = Math.max(this.state.lastUpdateId ?? -1, updateId);
     await this.saveState();
+    await this.pruneProcessedUpdates();
+  }
+
+  private async pruneProcessedUpdates(): Promise<void> {
+    const processed = await this.ctx.storage.list<TelegramProcessedUpdate>({
+      prefix: PROCESSED_UPDATE_PREFIX,
+      limit: PROCESSED_UPDATE_RETENTION + 1,
+    });
+    const overflow = processed.size - PROCESSED_UPDATE_RETENTION;
+    if (overflow <= 0) {
+      return;
+    }
+
+    const keys = Array.from(processed.keys()).slice(0, overflow);
+    if (keys.length > 0) {
+      await this.ctx.storage.delete(keys);
+    }
   }
 
   private pendingUpdateKey(updateId: number): string {
