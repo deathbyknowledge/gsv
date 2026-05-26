@@ -734,13 +734,20 @@ export class TelegramAccount extends DurableObject<Env> {
 
     if (updateId === null) {
       if (message) {
-        this.ctx.waitUntil(this.processWebhookMessage(message));
+        const delivered = await this.processWebhookMessage(message);
+        if (!delivered) {
+          return {
+            ok: false,
+            status: 502,
+            error: this.state.lastError ?? "Failed to process Telegram update",
+          };
+        }
       }
       return { ok: true };
     }
 
     if (await this.hasPendingUpdate(updateId)) {
-      this.ctx.waitUntil(this.processPendingUpdate(updateId));
+      await this.schedulePendingUpdateRetry(0);
       return { ok: true };
     }
 
@@ -754,7 +761,6 @@ export class TelegramAccount extends DurableObject<Env> {
     }
 
     await this.enqueuePendingUpdate(updateId, message);
-    this.ctx.waitUntil(this.processPendingUpdate(updateId));
     return { ok: true };
   }
 
