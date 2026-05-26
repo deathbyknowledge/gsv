@@ -706,17 +706,28 @@ export class TelegramAccount extends DurableObject<Env> {
       };
     }
 
+    const updateId = this.normalizeUpdateId(update.update_id);
+    const accepted = await this.acceptUpdateForProcessing(updateId);
+    if (!accepted) {
+      return { ok: true };
+    }
+
     const message = this.extractMessage(update);
     if (!message) {
       return { ok: true };
     }
 
-    const inbound = await this.toInboundMessage(message);
-    if (!inbound) {
-      return { ok: true };
-    }
+    this.ctx.waitUntil(this.processWebhookMessage(message));
+    return { ok: true };
+  }
 
+  private async processWebhookMessage(message: TelegramMessage): Promise<void> {
     try {
+      const inbound = await this.toInboundMessage(message);
+      if (!inbound) {
+        return;
+      }
+
       const result = await this.callGateway<AdapterInboundResult>(
         "adapter.inbound",
         {
@@ -730,7 +741,7 @@ export class TelegramAccount extends DurableObject<Env> {
         const error = result.error || "Gateway rejected inbound message";
         this.state.lastError = error;
         await this.saveState();
-        return { ok: false, status: 500, error };
+        return;
       }
 
       if (result.challenge?.prompt) {
@@ -750,17 +761,34 @@ export class TelegramAccount extends DurableObject<Env> {
       }
 
       this.state.lastActivity = Date.now();
-      this.state.lastUpdateId =
-        typeof update.update_id === "number" ? update.update_id : null;
       this.state.lastError = null;
       await this.saveState();
-      return { ok: true };
     } catch (error) {
       const messageText = toErrorMessage(error);
       this.state.lastError = messageText;
       await this.saveState();
-      return { ok: false, status: 500, error: messageText };
     }
+  }
+
+  private normalizeUpdateId(value: unknown): number | null {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+      return null;
+    }
+    return value;
+  }
+
+  private async acceptUpdateForProcessing(updateId: number | null): Promise<boolean> {
+    if (updateId === null) {
+      return true;
+    }
+
+    if (this.state.lastUpdateId !== null && updateId <= this.state.lastUpdateId) {
+      return false;
+    }
+
+    this.state.lastUpdateId = updateId;
+    await this.saveState();
+    return true;
   }
 
   private async sendTextReply(
