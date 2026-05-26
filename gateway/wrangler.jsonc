@@ -67,11 +67,6 @@
 			"entrypoint": "DiscordChannel"
 		},
 		{
-			"binding": "CHANNEL_TELEGRAM",
-			"service": "gsv-channel-telegram",
-			"entrypoint": "TelegramChannel"
-		},
-		{
 			"binding": "RIPGIT",
 			"service": "ripgit"
 		},

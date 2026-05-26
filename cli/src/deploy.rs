@@ -2025,6 +2025,21 @@ fn service_bindings_for_bundle(
         });
     }
 
+    if bundle.component == COMPONENT_GATEWAY
+        && !bindings
+            .iter()
+            .any(|binding| binding.binding == "CHANNEL_TELEGRAM")
+        && (selected_components.contains(COMPONENT_CHANNEL_TELEGRAM)
+            || available_scripts.contains(SCRIPT_CHANNEL_TELEGRAM))
+    {
+        bindings.push(WranglerServiceBinding {
+            binding: "CHANNEL_TELEGRAM".to_string(),
+            service: SCRIPT_CHANNEL_TELEGRAM.to_string(),
+            environment: None,
+            entrypoint: Some("TelegramChannel".to_string()),
+        });
+    }
+
     let mut filtered = Vec::new();
     for mut binding in bindings {
         if bundle.component == COMPONENT_GATEWAY
@@ -3460,6 +3475,75 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
         assert!(bindings
             .iter()
             .any(|binding| { binding["name"] == "LOADER" && binding["type"] == "worker_loader" }));
+    }
+
+    #[test]
+    fn service_bindings_inject_telegram_gateway_binding_when_worker_available() {
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_GATEWAY.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_GATEWAY.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_GATEWAY.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_GATEWAY.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let available_scripts = HashSet::from([SCRIPT_CHANNEL_TELEGRAM.to_string()]);
+        let bindings = service_bindings_for_bundle(&bundle, &HashSet::new(), &available_scripts);
+
+        assert!(bindings.iter().any(|binding| {
+            binding.binding == "CHANNEL_TELEGRAM"
+                && binding.service == SCRIPT_CHANNEL_TELEGRAM
+                && binding.entrypoint.as_deref() == Some("TelegramChannel")
+        }));
+    }
+
+    #[test]
+    fn service_bindings_skip_telegram_gateway_binding_when_worker_missing() {
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_GATEWAY.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_GATEWAY.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_GATEWAY.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_GATEWAY.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let bindings = service_bindings_for_bundle(&bundle, &HashSet::new(), &HashSet::new());
+
+        assert!(!bindings
+            .iter()
+            .any(|binding| binding.binding == "CHANNEL_TELEGRAM"));
     }
 
     #[test]
