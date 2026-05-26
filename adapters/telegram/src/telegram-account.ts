@@ -172,6 +172,7 @@ const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000;
 const PENDING_UPDATE_PREFIX = "pending_update:";
 const PENDING_UPDATE_RETRY_BASE_MS = 1000;
 const PENDING_UPDATE_RETRY_MAX_MS = 60_000;
+const PENDING_UPDATE_MAX_ATTEMPTS = 24;
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
@@ -348,7 +349,10 @@ export class TelegramAccount extends DurableObject<Env> {
     }
 
     this.state.connected = false;
+    this.state.authenticated = false;
     this.state.lastError = null;
+    await this.clearPendingUpdates();
+    await this.ctx.storage.deleteAlarm();
     await this.saveState();
     await this.notifyGatewayStatus();
   }
@@ -721,6 +725,13 @@ export class TelegramAccount extends DurableObject<Env> {
 
     const message = this.extractMessage(update);
     const updateId = this.normalizeUpdateId(update.update_id);
+    if (!this.canProcessInbound()) {
+      if (updateId !== null) {
+        await this.markUpdateProcessed(updateId);
+      }
+      return { ok: true };
+    }
+
     if (updateId === null) {
       if (message) {
         this.ctx.waitUntil(this.processWebhookMessage(message));
@@ -749,8 +760,16 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private async processWebhookMessage(message: TelegramMessage): Promise<boolean> {
     try {
+      if (!this.canProcessInbound()) {
+        return true;
+      }
+
       const inbound = await this.toInboundMessage(message);
       if (!inbound) {
+        return true;
+      }
+
+      if (!this.canProcessInbound()) {
         return true;
       }
 
@@ -768,6 +787,10 @@ export class TelegramAccount extends DurableObject<Env> {
         this.state.lastError = error;
         await this.saveState();
         return false;
+      }
+
+      if (!this.canProcessInbound()) {
+        return true;
       }
 
       if (result.challenge?.prompt) {
@@ -805,6 +828,12 @@ export class TelegramAccount extends DurableObject<Env> {
     return value;
   }
 
+  private canProcessInbound(): boolean {
+    return Boolean(
+      this.state.connected && this.state.authenticated && this.state.botToken,
+    );
+  }
+
   private isProcessedUpdate(updateId: number): boolean {
     return this.state.lastUpdateId !== null && updateId <= this.state.lastUpdateId;
   }
@@ -826,7 +855,10 @@ export class TelegramAccount extends DurableObject<Env> {
     );
   }
 
-  private async enqueuePendingUpdate(updateId: number, message: TelegramMessage): Promise<void> {
+  private async enqueuePendingUpdate(
+    updateId: number,
+    message: TelegramMessage,
+  ): Promise<void> {
     const key = this.pendingUpdateKey(updateId);
     const existing = await this.ctx.storage.get<TelegramPendingUpdate>(key);
     if (existing) {
@@ -844,6 +876,16 @@ export class TelegramAccount extends DurableObject<Env> {
     await this.schedulePendingUpdateRetry(0);
   }
 
+  private async clearPendingUpdates(): Promise<void> {
+    const pending = await this.ctx.storage.list<TelegramPendingUpdate>({
+      prefix: PENDING_UPDATE_PREFIX,
+    });
+    const keys = Array.from(pending.keys());
+    if (keys.length > 0) {
+      await this.ctx.storage.delete(keys);
+    }
+  }
+
   private async processPendingUpdate(updateId: number): Promise<void> {
     if (this.processingUpdates.has(updateId)) {
       return;
@@ -857,6 +899,12 @@ export class TelegramAccount extends DurableObject<Env> {
         return;
       }
 
+      if (!this.canProcessInbound()) {
+        await this.ctx.storage.delete(key);
+        await this.markUpdateProcessed(updateId);
+        return;
+      }
+
       const delivered = await this.processWebhookMessage(pending.message);
       if (delivered) {
         await this.ctx.storage.delete(key);
@@ -864,12 +912,27 @@ export class TelegramAccount extends DurableObject<Env> {
         return;
       }
 
+      if (!this.canProcessInbound()) {
+        await this.ctx.storage.delete(key);
+        await this.markUpdateProcessed(updateId);
+        return;
+      }
+
       const attempts = pending.attempts + 1;
+      const lastError = this.state.lastError ?? "Telegram update processing failed";
+      if (attempts >= PENDING_UPDATE_MAX_ATTEMPTS) {
+        await this.ctx.storage.delete(key);
+        this.state.lastError =
+          `Dropped Telegram update ${updateId} after ${attempts} failed attempts: ${lastError}`;
+        await this.markUpdateProcessed(updateId);
+        return;
+      }
+
       await this.ctx.storage.put<TelegramPendingUpdate>(key, {
         ...pending,
         attempts,
         updatedAt: Date.now(),
-        lastError: this.state.lastError ?? "Telegram update processing failed",
+        lastError,
       });
       await this.schedulePendingUpdateRetry(attempts);
     } finally {
