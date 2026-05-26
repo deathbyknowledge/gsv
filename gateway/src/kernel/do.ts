@@ -102,7 +102,7 @@ import type {
   SchedulerRunResult,
 } from "../syscalls/scheduler";
 
-const SERVER_VERSION = "0.2.0";
+const SERVER_VERSION = "0.2.1";
 const APP_CLIENT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
 
