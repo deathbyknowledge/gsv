@@ -66,7 +66,7 @@ mkdir -p "${DIST_DIR}/channel-telegram/worker"
 )
 (
   cd "${ROOT_DIR}/adapters/telegram"
-  npm exec --workspaces=false -- wrangler deploy --dry-run --outdir "${DIST_DIR}/channel-telegram/worker"
+  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/channel-telegram/worker"
 )
 
 echo "==> Assembling component metadata"

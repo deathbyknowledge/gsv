@@ -10,12 +10,15 @@ Telegram bot integration for GSV Gateway using the Telegram Bot API webhook flow
 - Attachment source can be `url` or base64 `data`.
 - If `text` is present, it is sent as caption (for groups, caption is applied to the first item).
 
-## Required Secrets
+## Configuration
 
-Set these on the adapter worker:
+The deploy flow configures `TELEGRAM_WEBHOOK_BASE_URL` automatically from the
+worker's workers.dev URL. Set the bot token on the adapter worker, or pass it in
+the `adapter.connect` config:
 
 - `TELEGRAM_BOT_TOKEN` -- bot token from BotFather
-- `TELEGRAM_WEBHOOK_BASE_URL` -- public base URL for this worker (for example `https://gsv-channel-telegram.<subdomain>.workers.dev`)
+
+For a custom domain, pass `webhookBaseUrl` in the connect config.
 
 ## Usage
 

@@ -110,6 +110,31 @@ export type AdapterSendResult =
   | { ok: true; messageId?: string }
   | { ok: false; error: string };
 
+export type ShellExecArgs = {
+  input: string;
+};
+
+export type ShellExecResult =
+  | {
+      status: "completed";
+      output: string;
+      exitCode: number;
+      ok: true;
+      pid: number;
+      stdout: string;
+      stderr: string;
+    }
+  | {
+      status: "failed";
+      output: string;
+      error: string;
+      exitCode: number;
+      ok: false;
+      pid: number;
+      stdout: string;
+      stderr: string;
+    };
+
 export type AdapterCapabilities = {
   chatTypes: AdapterSurfaceKind[];
   media: boolean;
@@ -152,6 +177,10 @@ export interface AdapterWorkerInterface {
     accountId: string,
     message: AdapterOutboundMessage,
   ): Promise<AdapterSendResult>;
+  adapterShellExec?(
+    accountId: string,
+    args: ShellExecArgs,
+  ): Promise<ShellExecResult>;
   adapterSetActivity(
     accountId: string,
     surface: AdapterSurface,

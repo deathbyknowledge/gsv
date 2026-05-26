@@ -5,10 +5,13 @@ import type {
   AdapterCapabilities,
   AdapterConnectResult,
   AdapterDisconnectResult,
+  AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
   AdapterSurface,
   AdapterWorkerInterface,
+  ShellExecArgs,
+  ShellExecResult,
 } from "./types";
 
 export { TelegramAccount } from "./telegram-account";
@@ -125,6 +128,71 @@ export class TelegramChannel
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  async adapterShellExec(
+    accountId: string,
+    args: ShellExecArgs,
+  ): Promise<ShellExecResult> {
+    const tokens = parseShellWords(args.input);
+    const command = tokens[0] ?? "help";
+
+    if (isHelpCommand(command)) {
+      return shellOk([
+        "telegram adapter commands:",
+        "  help | -h | --help",
+        "  send <chat-id-or-handle> <text>",
+        "  reply <chat-id-or-handle> <message-id> <text>",
+        "  attach <chat-id-or-handle> <url> [--filename <name>] [caption]",
+        "",
+        "Normal back-and-forth replies should use the adapter conversation route.",
+      ].join("\n"));
+    }
+
+    if (command === "send") {
+      const [chatId, ...textParts] = tokens.slice(1);
+      const text = textParts.join(" ").trim();
+      if (!chatId || !text) {
+        return shellFail("usage: send <chat-id-or-handle> <text>");
+      }
+      const result = await this.adapterSend(accountId, {
+        surface: telegramSurface(chatId),
+        text,
+      });
+      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
+    }
+
+    if (command === "reply") {
+      const [chatId, messageId, ...textParts] = tokens.slice(1);
+      const text = textParts.join(" ").trim();
+      if (!chatId || !messageId || !text) {
+        return shellFail("usage: reply <chat-id-or-handle> <message-id> <text>");
+      }
+      const result = await this.adapterSend(accountId, {
+        surface: telegramSurface(chatId),
+        text,
+        replyToId: messageId,
+      });
+      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
+    }
+
+    if (command === "attach") {
+      const { chatId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
+      if (!chatId || !url) {
+        return shellFail(
+          "usage: attach <chat-id-or-handle> <url> [--filename <name>] [caption]",
+        );
+      }
+      const media = await mediaFromUrl(url, filename);
+      const result = await this.adapterSend(accountId, {
+        surface: telegramSurface(chatId),
+        text: caption,
+        media: [media],
+      });
+      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
+    }
+
+    return shellFail(`unknown command: ${command}`);
   }
 
   async start(
@@ -270,3 +338,122 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
+
+function parseShellWords(input: string): string[] {
+  const tokens: string[] = [];
+  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(input.trim())) !== null) {
+    const token = match[1] ?? match[2] ?? match[3] ?? "";
+    tokens.push(token.replace(/\\(["'\\])/g, "$1"));
+  }
+  return tokens;
+}
+
+function isHelpCommand(command: string): boolean {
+  return command === "help" || command === "-h" || command === "--help";
+}
+
+function parseAttachArgs(tokens: string[]): {
+  chatId?: string;
+  url?: string;
+  filename?: string;
+  caption: string;
+} {
+  const [chatId, url, ...rest] = tokens;
+  if (rest.length === 0) {
+    return { chatId, url, caption: "" };
+  }
+
+  if (rest[0] === "--filename" || rest[0] === "-f") {
+    const [, filename, ...captionParts] = rest;
+    return {
+      chatId,
+      url,
+      filename,
+      caption: captionParts.join(" ").trim(),
+    };
+  }
+
+  const [candidate, ...captionParts] = rest;
+  if (looksLikeFilename(candidate)) {
+    return {
+      chatId,
+      url,
+      filename: candidate,
+      caption: captionParts.join(" ").trim(),
+    };
+  }
+
+  return {
+    chatId,
+    url,
+    caption: rest.join(" ").trim(),
+  };
+}
+
+function looksLikeFilename(value: string | undefined): value is string {
+  if (!value) return false;
+  if (value.includes("/") || value.includes("\\")) return true;
+  return /^[^/?#\s]+\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+}
+
+function telegramSurface(id: string): AdapterSurface {
+  const trimmed = id.trim();
+  if (trimmed.startsWith("@")) {
+    return { kind: "channel", id: trimmed, handle: trimmed };
+  }
+  if (/^\d+$/.test(trimmed)) {
+    return { kind: "dm", id: trimmed };
+  }
+  return { kind: "group", id: trimmed };
+}
+
+async function mediaFromUrl(url: string, filename?: string): Promise<AdapterMedia> {
+  let mimeType = "application/octet-stream";
+  try {
+    const response = await fetch(url, { method: "HEAD" });
+    mimeType = response.headers.get("Content-Type")?.split(";")[0].trim() || mimeType;
+  } catch {
+    // The send path can still fetch the URL later; content type falls back.
+  }
+
+  return {
+    type: mediaTypeFromMime(mimeType),
+    mimeType,
+    url,
+    ...(filename ? { filename } : {}),
+  };
+}
+
+function mediaTypeFromMime(mimeType: string): AdapterMedia["type"] {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  return "document";
+}
+
+function shellOk(output: string): ShellExecResult {
+  return {
+    status: "completed",
+    output,
+    exitCode: 0,
+    ok: true,
+    pid: 0,
+    stdout: output,
+    stderr: "",
+  };
+}
+
+function shellFail(error: string): ShellExecResult {
+  return {
+    status: "failed",
+    output: error,
+    error,
+    exitCode: 1,
+    ok: false,
+    pid: 0,
+    stdout: "",
+    stderr: error,
+  };
+}

@@ -399,6 +399,7 @@ struct WorkerScriptUpload<'a> {
 struct UploadMetadataOptions<'a> {
     selected_components: &'a HashSet<String>,
     available_scripts: &'a HashSet<String>,
+    account_subdomain: Option<&'a str>,
     existing_migration_tag: Option<&'a str>,
     include_migrations: bool,
     script_exists: bool,
@@ -1371,6 +1372,10 @@ fn workers_dev_domain(subdomain: &str) -> String {
     } else {
         format!("{}.workers.dev", trimmed)
     }
+}
+
+fn workers_dev_url(script_name: &str, subdomain: &str) -> String {
+    format!("https://{}.{}", script_name, workers_dev_domain(subdomain))
 }
 
 async fn enable_workers_dev_for_script(
@@ -2514,6 +2519,16 @@ fn build_upload_metadata(
         metadata_bindings.push(value);
     }
 
+    if bundle.component == COMPONENT_CHANNEL_TELEGRAM {
+        if let Some(subdomain) = options.account_subdomain {
+            metadata_bindings.push(json!({
+                "name": "TELEGRAM_WEBHOOK_BASE_URL",
+                "type": "plain_text",
+                "text": workers_dev_url(&bundle.script_name, subdomain)
+            }));
+        }
+    }
+
     if let Some(assets) = &bundle.wrangler.assets {
         if let Some(binding) = &assets.binding {
             metadata_bindings.push(json!({
@@ -2653,6 +2668,11 @@ pub async fn apply_deploy(
                 None
             }
         };
+    if selected_components.contains(COMPONENT_CHANNEL_TELEGRAM) && account_subdomain.is_none() {
+        println!(
+            "Warning: TELEGRAM_WEBHOOK_BASE_URL was not configured because the workers.dev subdomain is unavailable."
+        );
+    }
 
     let mut uploaded_assets_by_script: HashMap<String, UploadedAssets> = HashMap::new();
 
@@ -2673,6 +2693,7 @@ pub async fn apply_deploy(
             UploadMetadataOptions {
                 selected_components: &selected_components,
                 available_scripts: &available_scripts,
+                account_subdomain: account_subdomain.as_deref(),
                 existing_migration_tag: existing_scripts_with_migrations
                     .get(&bundle.script_name)
                     .and_then(|tag| tag.as_deref()),
@@ -2723,6 +2744,12 @@ pub async fn apply_deploy(
                         "workers.dev URL: https://{}.{}",
                         bundle.script_name, workers_domain
                     );
+                    if bundle.component == COMPONENT_CHANNEL_TELEGRAM {
+                        println!(
+                            "Configured TELEGRAM_WEBHOOK_BASE_URL: {}",
+                            workers_dev_url(&bundle.script_name, subdomain)
+                        );
+                    }
                 } else {
                     println!("workers.dev enabled for {}", bundle.script_name);
                 }
@@ -2744,6 +2771,7 @@ pub async fn apply_deploy(
             UploadMetadataOptions {
                 selected_components: &selected_components,
                 available_scripts: &available_scripts,
+                account_subdomain: account_subdomain.as_deref(),
                 existing_migration_tag: None,
                 include_migrations: false,
                 script_exists: true,
@@ -2783,10 +2811,7 @@ pub async fn apply_deploy(
 
     let gateway_url = if selected_components.contains(COMPONENT_GATEWAY) {
         match (gateway_script_name.as_deref(), account_subdomain.as_deref()) {
-            (Some(script_name), Some(subdomain)) => {
-                let workers_domain = workers_dev_domain(subdomain);
-                Some(format!("https://{}.{}", script_name, workers_domain))
-            }
+            (Some(script_name), Some(subdomain)) => Some(workers_dev_url(script_name, subdomain)),
             _ => None,
         }
     } else {
@@ -3179,28 +3204,6 @@ pub async fn set_telegram_bot_token_secret(
     .await
 }
 
-pub async fn set_telegram_webhook_base_url_secret(
-    account_id: &str,
-    api_token: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let subdomain = fetch_account_workers_subdomain(&client, account_id, api_token).await?;
-    let workers_domain = workers_dev_domain(&subdomain);
-    let base_url = format!("https://{}.{}", SCRIPT_CHANNEL_TELEGRAM, workers_domain);
-
-    set_worker_secret(
-        &client,
-        account_id,
-        api_token,
-        SCRIPT_CHANNEL_TELEGRAM,
-        "TELEGRAM_WEBHOOK_BASE_URL",
-        &base_url,
-    )
-    .await?;
-
-    Ok(base_url)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3443,6 +3446,7 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
             UploadMetadataOptions {
                 selected_components: &HashSet::new(),
                 available_scripts: &HashSet::new(),
+                account_subdomain: None,
                 existing_migration_tag: None,
                 include_migrations: false,
                 script_exists: false,
@@ -3456,6 +3460,55 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
         assert!(bindings
             .iter()
             .any(|binding| { binding["name"] == "LOADER" && binding["type"] == "worker_loader" }));
+    }
+
+    #[test]
+    fn build_upload_metadata_includes_telegram_webhook_url_binding() {
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_CHANNEL_TELEGRAM.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_CHANNEL_TELEGRAM.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_CHANNEL_TELEGRAM.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_CHANNEL_TELEGRAM.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let metadata = build_upload_metadata(
+            &bundle,
+            UploadMetadataOptions {
+                selected_components: &HashSet::new(),
+                available_scripts: &HashSet::new(),
+                account_subdomain: Some("example-subdomain"),
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+            },
+        )
+        .unwrap();
+
+        let bindings = metadata["bindings"].as_array().unwrap();
+        assert!(bindings.iter().any(|binding| {
+            binding["name"] == "TELEGRAM_WEBHOOK_BASE_URL"
+                && binding["type"] == "plain_text"
+                && binding["text"] == "https://gsv-channel-telegram.example-subdomain.workers.dev"
+        }));
     }
 
     #[test]

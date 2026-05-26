@@ -451,11 +451,6 @@ async fn apply_deploy(
     }
 
     if deploying_telegram {
-        println!("Setting TELEGRAM_WEBHOOK_BASE_URL secret on Telegram channel worker...");
-        let webhook_base_url =
-            deploy::set_telegram_webhook_base_url_secret(&resolved_account_id, &token).await?;
-        println!("Configured TELEGRAM_WEBHOOK_BASE_URL: {}", webhook_base_url);
-
         if let Some(bot_token) = telegram_bot_token.as_deref() {
             println!("Setting TELEGRAM_BOT_TOKEN secret on Telegram channel worker...");
             deploy::set_telegram_bot_token_secret(&resolved_account_id, &token, bot_token).await?;
