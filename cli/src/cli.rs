@@ -173,6 +173,10 @@ pub(crate) enum InfraAction {
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
         discord_bot_token: Option<String>,
+
+        /// Telegram bot token to upload as worker secret (`TELEGRAM_BOT_TOKEN`)
+        #[arg(long, env = "TELEGRAM_BOT_TOKEN")]
+        telegram_bot_token: Option<String>,
     },
 
     /// Upgrade deployed infrastructure components
@@ -208,6 +212,10 @@ pub(crate) enum InfraAction {
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
         discord_bot_token: Option<String>,
+
+        /// Telegram bot token to upload as worker secret (`TELEGRAM_BOT_TOKEN`)
+        #[arg(long, env = "TELEGRAM_BOT_TOKEN")]
+        telegram_bot_token: Option<String>,
     },
 
     /// Destroy deployed infrastructure and optionally keep local device daemon
@@ -576,7 +584,7 @@ pub(crate) enum ProcAction {
 pub(crate) enum AdapterAction {
     /// Connect/start an adapter account
     Connect {
-        /// Adapter id (e.g., whatsapp, discord)
+        /// Adapter id (e.g., whatsapp, discord, telegram)
         #[arg(long)]
         adapter: String,
 
@@ -591,7 +599,7 @@ pub(crate) enum AdapterAction {
 
     /// Disconnect/stop an adapter account
     Disconnect {
-        /// Adapter id (e.g., whatsapp, discord)
+        /// Adapter id (e.g., whatsapp, discord, telegram)
         #[arg(long)]
         adapter: String,
 
@@ -602,7 +610,7 @@ pub(crate) enum AdapterAction {
 
     /// Show adapter account status
     Status {
-        /// Adapter id (e.g., whatsapp, discord)
+        /// Adapter id (e.g., whatsapp, discord, telegram)
         #[arg(long)]
         adapter: String,
 

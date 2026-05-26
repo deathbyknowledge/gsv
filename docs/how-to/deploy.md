@@ -28,8 +28,8 @@ Deploy all current components:
 gsv infra deploy --all
 ```
 
-The components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`, and
-`channel-discord`. To deploy only a subset:
+The components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`,
+`channel-discord`, and `channel-telegram`. To deploy only a subset:
 
 ```bash
 gsv infra deploy -c ripgit -c assembler -c gateway
@@ -37,11 +37,19 @@ gsv infra deploy -c channel-whatsapp
 ```
 
 Deploying `gateway` expects `ripgit` and `assembler` to be deployed already or
-selected in the same command. If you deploy Discord, provide the bot token during
-deploy or later through the adapter UI/config:
+selected in the same command. If you deploy Discord or Telegram, provide the bot
+token during deploy or later through the adapter UI/config:
 
 ```bash
 gsv infra deploy -c channel-discord --discord-bot-token "$DISCORD_BOT_TOKEN"
+gsv infra deploy -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
+```
+
+When adding Telegram to an existing installation, include `gateway` in the same
+deploy or upgrade so the gateway gets the `CHANNEL_TELEGRAM` service binding:
+
+```bash
+gsv infra deploy -c gateway -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
 ```
 
 ## Configure the CLI and First User

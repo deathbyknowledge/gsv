@@ -18,6 +18,7 @@ struct DeployCommandOptions {
     api_token: Option<String>,
     account_id: Option<String>,
     discord_bot_token: Option<String>,
+    telegram_bot_token: Option<String>,
 }
 
 struct DestroyCommandOptions {
@@ -55,6 +56,7 @@ pub(crate) async fn run_infra(
             api_token,
             account_id,
             discord_bot_token,
+            telegram_bot_token,
         } => {
             run_deploy_command(
                 cfg,
@@ -67,6 +69,7 @@ pub(crate) async fn run_infra(
                     api_token,
                     account_id,
                     discord_bot_token,
+                    telegram_bot_token,
                 },
             )
             .await
@@ -80,6 +83,7 @@ pub(crate) async fn run_infra(
             api_token,
             account_id,
             discord_bot_token,
+            telegram_bot_token,
         } => {
             run_upgrade_command(
                 cfg,
@@ -92,6 +96,7 @@ pub(crate) async fn run_infra(
                     api_token,
                     account_id,
                     discord_bot_token,
+                    telegram_bot_token,
                 },
             )
             .await
@@ -201,6 +206,7 @@ fn teardown_component_description(component: &str) -> &'static str {
         "gateway" => "Core API + sessions worker",
         "channel-whatsapp" => "WhatsApp channel worker",
         "channel-discord" => "Discord channel worker",
+        "channel-telegram" => "Telegram channel worker",
         _ => "Worker component",
     }
 }
@@ -373,6 +379,7 @@ async fn apply_deploy(
         api_token,
         account_id,
         discord_bot_token,
+        telegram_bot_token,
     } = options;
     deploy::set_notification_output(false);
 
@@ -401,6 +408,7 @@ async fn apply_deploy(
 
     let deploying_gateway = components.iter().any(|c| c == "gateway");
     let deploying_discord = components.iter().any(|c| c == "channel-discord");
+    let deploying_telegram = components.iter().any(|c| c == "channel-telegram");
 
     let bundle_version = if bundle_dir.is_some() {
         deploy::local_bundle_version_label(&version)
@@ -438,6 +446,19 @@ async fn apply_deploy(
             println!("Note: Discord bot token not configured.");
             println!(
                 "Tip: rerun deploy with --discord-bot-token (or DISCORD_BOT_TOKEN env) before `gsv channel discord start`."
+            );
+        }
+    }
+
+    if deploying_telegram {
+        if let Some(bot_token) = telegram_bot_token.as_deref() {
+            println!("Setting TELEGRAM_BOT_TOKEN secret on Telegram channel worker...");
+            deploy::set_telegram_bot_token_secret(&resolved_account_id, &token, bot_token).await?;
+            println!("Configured TELEGRAM_BOT_TOKEN.");
+        } else {
+            println!("Note: Telegram bot token not configured.");
+            println!(
+                "Tip: rerun deploy with --telegram-bot-token (or TELEGRAM_BOT_TOKEN env) before `gsv adapter connect --adapter telegram`."
             );
         }
     }

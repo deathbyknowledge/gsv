@@ -105,7 +105,7 @@ export function IntegrationsSection({ backend }: { backend: GsvBackend }) {
           <IntegrationKindCard
             icon="plug"
             title="Message adapters"
-            detail="WhatsApp and Discord accounts for inbound and outbound channels."
+            detail="WhatsApp, Discord, and Telegram accounts for inbound and outbound channels."
             value={String(connectedAccounts)}
             valueLabel={connectedAccountsLabel}
             onOpen={() => selectKind("message-adapters")}
@@ -313,11 +313,19 @@ function ConnectAccountPanel({ runtime }: { runtime: ReturnType<typeof useMessag
                 placeholder={runtime.adapterMeta.accountPlaceholder}
                 required
               />
-            ) : (
+            ) : runtime.selectedAdapter === "discord" ? (
               <input
                 type="text"
                 value={runtime.discordName}
                 onInput={(event) => runtime.setDiscordName((event.currentTarget as HTMLInputElement).value)}
+                placeholder={runtime.adapterMeta.accountPlaceholder}
+                required
+              />
+            ) : (
+              <input
+                type="text"
+                value={runtime.telegramName}
+                onInput={(event) => runtime.setTelegramName((event.currentTarget as HTMLInputElement).value)}
                 placeholder={runtime.adapterMeta.accountPlaceholder}
                 required
               />
@@ -333,13 +341,23 @@ function ConnectAccountPanel({ runtime }: { runtime: ReturnType<typeof useMessag
               />
               <span>Force a fresh QR session</span>
             </label>
-          ) : (
+          ) : runtime.selectedAdapter === "discord" ? (
             <label>
               <span>Bot token</span>
               <input
                 type="password"
                 value={runtime.discordToken}
                 onInput={(event) => runtime.setDiscordToken((event.currentTarget as HTMLInputElement).value)}
+                placeholder="Leave blank to use the deployment default"
+              />
+            </label>
+          ) : (
+            <label>
+              <span>Bot token</span>
+              <input
+                type="password"
+                value={runtime.telegramToken}
+                onInput={(event) => runtime.setTelegramToken((event.currentTarget as HTMLInputElement).value)}
                 placeholder="Leave blank to use the deployment default"
               />
             </label>

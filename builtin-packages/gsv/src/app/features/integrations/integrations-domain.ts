@@ -29,12 +29,22 @@ export const ADAPTERS: AdapterMeta[] = [
     detail: "Attach a bot identity, monitor health, and control which account GSV uses for replies.",
     accountPlaceholder: "main",
   },
+  {
+    id: "telegram",
+    name: "Telegram",
+    shortName: "TG",
+    icon: "T",
+    summary: "Webhook-driven bot chats, groups, and channels.",
+    detail: "Attach a Telegram bot, keep its webhook registered, and route Telegram conversations into GSV.",
+    accountPlaceholder: "bot",
+  },
 ];
 
 export const EMPTY_ADAPTERS_STATE: AdaptersState = {
   statusByAdapter: {
     whatsapp: [],
     discord: [],
+    telegram: [],
   },
 };
 

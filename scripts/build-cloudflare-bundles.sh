@@ -30,6 +30,7 @@ install_dir "${ROOT_DIR}/web"
 install_dir "${ROOT_DIR}/ripgit"
 install_dir "${ROOT_DIR}/adapters/whatsapp"
 install_dir "${ROOT_DIR}/adapters/discord"
+install_dir "${ROOT_DIR}/adapters/telegram"
 
 echo "==> Building web UI"
 npm run build --prefix "${ROOT_DIR}/web"
@@ -41,6 +42,7 @@ mkdir -p "${DIST_DIR}/gateway/worker"
 mkdir -p "${DIST_DIR}/ripgit/worker"
 mkdir -p "${DIST_DIR}/channel-whatsapp/worker"
 mkdir -p "${DIST_DIR}/channel-discord/worker"
+mkdir -p "${DIST_DIR}/channel-telegram/worker"
 
 (
   cd "${ROOT_DIR}"
@@ -61,6 +63,10 @@ mkdir -p "${DIST_DIR}/channel-discord/worker"
 (
   cd "${ROOT_DIR}/adapters/discord"
   npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/channel-discord/worker"
+)
+(
+  cd "${ROOT_DIR}/adapters/telegram"
+  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/channel-telegram/worker"
 )
 
 echo "==> Assembling component metadata"
@@ -124,6 +130,18 @@ cat > "${DIST_DIR}/channel-discord/manifest.json" <<'EOF'
 }
 EOF
 
+cp "${ROOT_DIR}/adapters/telegram/wrangler.jsonc" "${DIST_DIR}/channel-telegram/wrangler.jsonc"
+cat > "${DIST_DIR}/channel-telegram/manifest.json" <<'EOF'
+{
+  "component": "channel-telegram",
+  "worker": {
+    "entrypoint": "worker/index.js",
+    "sourceMap": "worker/index.js.map",
+    "wranglerConfig": "wrangler.jsonc"
+  }
+}
+EOF
+
 # Remove host-specific metadata files from bundle contents.
 find "${DIST_DIR}" \
   \( -name '._*' -o -name '.DS_Store' -o -path '*/__MACOSX/*' \) \
@@ -138,6 +156,7 @@ tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-gateway.tar.gz" gateway
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-ripgit.tar.gz" ripgit
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-whatsapp.tar.gz" channel-whatsapp
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-discord.tar.gz" channel-discord
+tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-telegram.tar.gz" channel-telegram
 
 (
   cd "${OUT_DIR}"

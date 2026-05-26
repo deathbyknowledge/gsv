@@ -31,7 +31,7 @@ Once the deployment finishes open the URL to finish your onboarding through the 
 You can interact with any of the Agent processes in your GSV in multiple ways:
 
 - Through the built-in **Chat** app in the web UI
-- By messaging through any connected adapter, such as WhatsApp or Discord
+- By messaging through any connected adapter, such as WhatsApp, Discord, or Telegram
 - Or through the CLI directly:
 
 ```bash
@@ -78,14 +78,14 @@ GSV intentionally feels Linux-like so agents can reason about it with familiar o
 - **Init process**: each user has a default long-lived process, similar to an interactive login shell for that user.
 - **Devices**: connected machines act like execution nodes. They provide shell and filesystem tools scoped to the configured workspace.
 - **Packages and apps**: built-in and user packages behave like OS applications that call the Gateway through the app SDK.
-- **Adapters**: WhatsApp, Discord, and other channel workers act like device drivers for external message surfaces.
+- **Adapters**: WhatsApp, Discord, Telegram, and other channel workers act like device drivers for external message surfaces.
 
 ### Components
 
 - **Gateway** - Central brain running on Cloudflare, serves as the OS kernel. Manages auth, filesystem state, routing, and exposes system calls that processes and apps use to access GSV capabilities.
 - **Processes** - Each agent is a process in the GSV OS with persistent history and its own agent loop.
 - **Devices** - Your devices connected to GSV, providing remote tool access (Bash, Read, Write, Edit, Search).
-- **Adapters** - Bridges to WhatsApp, Discord, etc. Each runs as a separate Worker.
+- **Adapters** - Bridges to WhatsApp, Discord, Telegram, etc. Each runs as a separate Worker.
 
 ## Development
 

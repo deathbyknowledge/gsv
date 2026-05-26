@@ -31,12 +31,16 @@ export type MessageAdaptersRuntime = {
   whatsappForce: boolean;
   discordName: string;
   discordToken: string;
+  telegramName: string;
+  telegramToken: string;
   selectAdapter(adapter: AdapterKind): void;
   selectAccount(accountId: string): void;
   setWhatsappName(value: string): void;
   setWhatsappForce(value: boolean): void;
   setDiscordName(value: string): void;
   setDiscordToken(value: string): void;
+  setTelegramName(value: string): void;
+  setTelegramToken(value: string): void;
   refresh(): Promise<void>;
   submitConnect(event: Event): Promise<void>;
   disconnectCurrentAccount(): Promise<void>;
@@ -55,6 +59,8 @@ export function useMessageAdapters(backend: GsvBackend): MessageAdaptersRuntime 
   const [whatsappForce, setWhatsappForce] = useState(false);
   const [discordName, setDiscordName] = useState("main");
   const [discordToken, setDiscordToken] = useState("");
+  const [telegramName, setTelegramName] = useState("bot");
+  const [telegramToken, setTelegramToken] = useState("");
 
   const adapterMeta = useMemo(() => getAdapterMeta(selectedAdapter), [selectedAdapter]);
   const accounts = state.statusByAdapter[selectedAdapter] ?? [];
@@ -127,12 +133,17 @@ export function useMessageAdapters(backend: GsvBackend): MessageAdaptersRuntime 
   async function submitConnect(event: Event): Promise<void> {
     event.preventDefault();
     await runMutation(async () => {
-      const accountId = selectedAdapter === "whatsapp" ? whatsappName.trim() : discordName.trim();
-      const config = selectedAdapter === "whatsapp"
-        ? { force: whatsappForce }
-        : discordToken.trim()
-          ? { botToken: discordToken.trim() }
-          : undefined;
+      const accountId = selectedAdapter === "whatsapp"
+        ? whatsappName.trim()
+        : selectedAdapter === "discord"
+          ? discordName.trim()
+          : telegramName.trim();
+      const config = buildConnectConfig({
+        adapter: selectedAdapter,
+        whatsappForce,
+        discordToken,
+        telegramToken,
+      });
       const result = await backend.connectAdapter({
         adapter: selectedAdapter,
         accountId,
@@ -150,6 +161,9 @@ export function useMessageAdapters(backend: GsvBackend): MessageAdaptersRuntime 
       }
       if (selectedAdapter === "discord") {
         setDiscordToken("");
+      }
+      if (selectedAdapter === "telegram") {
+        setTelegramToken("");
       }
       await refresh();
       setSelectedAccount(accountId);
@@ -192,12 +206,16 @@ export function useMessageAdapters(backend: GsvBackend): MessageAdaptersRuntime 
     whatsappForce,
     discordName,
     discordToken,
+    telegramName,
+    telegramToken,
     selectAdapter,
     selectAccount,
     setWhatsappName,
     setWhatsappForce,
     setDiscordName,
     setDiscordToken,
+    setTelegramName,
+    setTelegramToken,
     refresh,
     submitConnect,
     disconnectCurrentAccount,
@@ -206,6 +224,7 @@ export function useMessageAdapters(backend: GsvBackend): MessageAdaptersRuntime 
 
 function readAdapterFromLocation(): AdapterKind {
   const value = new URL(window.location.href).searchParams.get("adapter");
+  if (value === "telegram") return "telegram";
   return value === "discord" ? "discord" : "whatsapp";
 }
 
@@ -221,4 +240,20 @@ function writeIntegrationRoute(args: { adapter: AdapterKind; account: string }):
   url.searchParams.set("adapter", args.adapter);
   url.searchParams.set("account", args.account || "new");
   window.history.replaceState({}, "", url);
+}
+
+function buildConnectConfig(args: {
+  adapter: AdapterKind;
+  whatsappForce: boolean;
+  discordToken: string;
+  telegramToken: string;
+}): Record<string, unknown> | undefined {
+  if (args.adapter === "whatsapp") {
+    return { force: args.whatsappForce };
+  }
+
+  const botToken = args.adapter === "discord"
+    ? args.discordToken.trim()
+    : args.telegramToken.trim();
+  return botToken ? { botToken } : undefined;
 }

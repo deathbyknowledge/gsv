@@ -23,12 +23,14 @@ const COMPONENT_RIPGIT: &str = "ripgit";
 const COMPONENT_ASSEMBLER: &str = "assembler";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
+const COMPONENT_CHANNEL_TELEGRAM: &str = "channel-telegram";
 
 const BUNDLE_ASSEMBLER: &str = "gsv-cloudflare-assembler.tar.gz";
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
 const BUNDLE_RIPGIT: &str = "gsv-cloudflare-ripgit.tar.gz";
 const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
 const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
+const BUNDLE_CHANNEL_TELEGRAM: &str = "gsv-cloudflare-channel-telegram.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
 const SCRIPT_ASSEMBLER: &str = "gsv-assembler";
@@ -36,6 +38,7 @@ const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
+const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
 const DEV_RELEASE_TAG: &str = "dev";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
@@ -396,6 +399,7 @@ struct WorkerScriptUpload<'a> {
 struct UploadMetadataOptions<'a> {
     selected_components: &'a HashSet<String>,
     available_scripts: &'a HashSet<String>,
+    account_subdomain: Option<&'a str>,
     existing_migration_tag: Option<&'a str>,
     include_migrations: bool,
     script_exists: bool,
@@ -478,6 +482,7 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
         COMPONENT_RIPGIT => Some(BUNDLE_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(BUNDLE_CHANNEL_DISCORD),
+        COMPONENT_CHANNEL_TELEGRAM => Some(BUNDLE_CHANNEL_TELEGRAM),
         _ => None,
     }
 }
@@ -489,6 +494,7 @@ fn component_to_script_name(component: &str) -> Option<&'static str> {
         COMPONENT_RIPGIT => Some(SCRIPT_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(SCRIPT_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(SCRIPT_CHANNEL_DISCORD),
+        COMPONENT_CHANNEL_TELEGRAM => Some(SCRIPT_CHANNEL_TELEGRAM),
         _ => None,
     }
 }
@@ -500,6 +506,7 @@ pub fn available_components() -> &'static [&'static str] {
         COMPONENT_GATEWAY,
         COMPONENT_CHANNEL_WHATSAPP,
         COMPONENT_CHANNEL_DISCORD,
+        COMPONENT_CHANNEL_TELEGRAM,
     ]
 }
 
@@ -1367,6 +1374,10 @@ fn workers_dev_domain(subdomain: &str) -> String {
     }
 }
 
+fn workers_dev_url(script_name: &str, subdomain: &str) -> String {
+    format!("https://{}.{}", script_name, workers_dev_domain(subdomain))
+}
+
 async fn enable_workers_dev_for_script(
     client: &reqwest::Client,
     account_id: &str,
@@ -1822,6 +1833,7 @@ fn deploy_order(component: &str) -> usize {
         COMPONENT_ASSEMBLER => 1,
         COMPONENT_CHANNEL_WHATSAPP => 2,
         COMPONENT_CHANNEL_DISCORD => 3,
+        COMPONENT_CHANNEL_TELEGRAM => 4,
         COMPONENT_GATEWAY => 10,
         _ => 100,
     }
@@ -2010,6 +2022,21 @@ fn service_bindings_for_bundle(
             service: SCRIPT_GATEWAY.to_string(),
             environment: None,
             entrypoint: Some("GatewayEntrypoint".to_string()),
+        });
+    }
+
+    if bundle.component == COMPONENT_GATEWAY
+        && !bindings
+            .iter()
+            .any(|binding| binding.binding == "CHANNEL_TELEGRAM")
+        && (selected_components.contains(COMPONENT_CHANNEL_TELEGRAM)
+            || available_scripts.contains(SCRIPT_CHANNEL_TELEGRAM))
+    {
+        bindings.push(WranglerServiceBinding {
+            binding: "CHANNEL_TELEGRAM".to_string(),
+            service: SCRIPT_CHANNEL_TELEGRAM.to_string(),
+            environment: None,
+            entrypoint: Some("TelegramChannel".to_string()),
         });
     }
 
@@ -2507,6 +2534,16 @@ fn build_upload_metadata(
         metadata_bindings.push(value);
     }
 
+    if bundle.component == COMPONENT_CHANNEL_TELEGRAM {
+        if let Some(subdomain) = options.account_subdomain {
+            metadata_bindings.push(json!({
+                "name": "TELEGRAM_WEBHOOK_BASE_URL",
+                "type": "plain_text",
+                "text": workers_dev_url(&bundle.script_name, subdomain)
+            }));
+        }
+    }
+
     if let Some(assets) = &bundle.wrangler.assets {
         if let Some(binding) = &assets.binding {
             metadata_bindings.push(json!({
@@ -2646,6 +2683,11 @@ pub async fn apply_deploy(
                 None
             }
         };
+    if selected_components.contains(COMPONENT_CHANNEL_TELEGRAM) && account_subdomain.is_none() {
+        println!(
+            "Warning: TELEGRAM_WEBHOOK_BASE_URL was not configured because the workers.dev subdomain is unavailable."
+        );
+    }
 
     let mut uploaded_assets_by_script: HashMap<String, UploadedAssets> = HashMap::new();
 
@@ -2666,6 +2708,7 @@ pub async fn apply_deploy(
             UploadMetadataOptions {
                 selected_components: &selected_components,
                 available_scripts: &available_scripts,
+                account_subdomain: account_subdomain.as_deref(),
                 existing_migration_tag: existing_scripts_with_migrations
                     .get(&bundle.script_name)
                     .and_then(|tag| tag.as_deref()),
@@ -2716,6 +2759,12 @@ pub async fn apply_deploy(
                         "workers.dev URL: https://{}.{}",
                         bundle.script_name, workers_domain
                     );
+                    if bundle.component == COMPONENT_CHANNEL_TELEGRAM {
+                        println!(
+                            "Configured TELEGRAM_WEBHOOK_BASE_URL: {}",
+                            workers_dev_url(&bundle.script_name, subdomain)
+                        );
+                    }
                 } else {
                     println!("workers.dev enabled for {}", bundle.script_name);
                 }
@@ -2737,6 +2786,7 @@ pub async fn apply_deploy(
             UploadMetadataOptions {
                 selected_components: &selected_components,
                 available_scripts: &available_scripts,
+                account_subdomain: account_subdomain.as_deref(),
                 existing_migration_tag: None,
                 include_migrations: false,
                 script_exists: true,
@@ -2776,10 +2826,7 @@ pub async fn apply_deploy(
 
     let gateway_url = if selected_components.contains(COMPONENT_GATEWAY) {
         match (gateway_script_name.as_deref(), account_subdomain.as_deref()) {
-            (Some(script_name), Some(subdomain)) => {
-                let workers_domain = workers_dev_domain(subdomain);
-                Some(format!("https://{}.{}", script_name, workers_domain))
-            }
+            (Some(script_name), Some(subdomain)) => Some(workers_dev_url(script_name, subdomain)),
             _ => None,
         }
     } else {
@@ -3155,6 +3202,23 @@ pub async fn set_discord_bot_token_secret(
     .await
 }
 
+pub async fn set_telegram_bot_token_secret(
+    account_id: &str,
+    api_token: &str,
+    bot_token: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    set_worker_secret(
+        &client,
+        account_id,
+        api_token,
+        SCRIPT_CHANNEL_TELEGRAM,
+        "TELEGRAM_BOT_TOKEN",
+        bot_token,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3397,6 +3461,7 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
             UploadMetadataOptions {
                 selected_components: &HashSet::new(),
                 available_scripts: &HashSet::new(),
+                account_subdomain: None,
                 existing_migration_tag: None,
                 include_migrations: false,
                 script_exists: false,
@@ -3410,6 +3475,124 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
         assert!(bindings
             .iter()
             .any(|binding| { binding["name"] == "LOADER" && binding["type"] == "worker_loader" }));
+    }
+
+    #[test]
+    fn service_bindings_inject_telegram_gateway_binding_when_worker_available() {
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_GATEWAY.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_GATEWAY.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_GATEWAY.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_GATEWAY.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let available_scripts = HashSet::from([SCRIPT_CHANNEL_TELEGRAM.to_string()]);
+        let bindings = service_bindings_for_bundle(&bundle, &HashSet::new(), &available_scripts);
+
+        assert!(bindings.iter().any(|binding| {
+            binding.binding == "CHANNEL_TELEGRAM"
+                && binding.service == SCRIPT_CHANNEL_TELEGRAM
+                && binding.entrypoint.as_deref() == Some("TelegramChannel")
+        }));
+    }
+
+    #[test]
+    fn service_bindings_skip_telegram_gateway_binding_when_worker_missing() {
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_GATEWAY.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_GATEWAY.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_GATEWAY.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_GATEWAY.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let bindings = service_bindings_for_bundle(&bundle, &HashSet::new(), &HashSet::new());
+
+        assert!(!bindings
+            .iter()
+            .any(|binding| binding.binding == "CHANNEL_TELEGRAM"));
+    }
+
+    #[test]
+    fn build_upload_metadata_includes_telegram_webhook_url_binding() {
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_CHANNEL_TELEGRAM.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_CHANNEL_TELEGRAM.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_CHANNEL_TELEGRAM.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_CHANNEL_TELEGRAM.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let metadata = build_upload_metadata(
+            &bundle,
+            UploadMetadataOptions {
+                selected_components: &HashSet::new(),
+                available_scripts: &HashSet::new(),
+                account_subdomain: Some("example-subdomain"),
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+            },
+        )
+        .unwrap();
+
+        let bindings = metadata["bindings"].as_array().unwrap();
+        assert!(bindings.iter().any(|binding| {
+            binding["name"] == "TELEGRAM_WEBHOOK_BASE_URL"
+                && binding["type"] == "plain_text"
+                && binding["text"] == "https://gsv-channel-telegram.example-subdomain.workers.dev"
+        }));
     }
 
     #[test]

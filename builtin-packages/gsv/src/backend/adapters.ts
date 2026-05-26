@@ -13,7 +13,9 @@ type KernelClientLike = {
 };
 
 function normalizeAdapter(value: unknown): AdapterKind {
-  return value === "discord" ? "discord" : "whatsapp";
+  if (value === "discord") return "discord";
+  if (value === "telegram") return "telegram";
+  return "whatsapp";
 }
 
 function normalizeAccount(value: unknown): AdapterAccount {
@@ -54,14 +56,16 @@ async function loadAdapterStatus(kernel: KernelClientLike, adapter: AdapterKind)
 }
 
 export async function loadAdaptersState(kernel: KernelClientLike): Promise<AdaptersState> {
-  const [whatsapp, discord] = await Promise.all([
+  const [whatsapp, discord, telegram] = await Promise.all([
     loadAdapterStatus(kernel, "whatsapp"),
     loadAdapterStatus(kernel, "discord"),
+    loadAdapterStatus(kernel, "telegram"),
   ]);
   return {
     statusByAdapter: {
       whatsapp,
       discord,
+      telegram,
     },
   };
 }

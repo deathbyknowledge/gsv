@@ -191,7 +191,8 @@ Adapters are long-lived external account bridges. `--account-id` defaults to
 passed to the adapter implementation, for example:
 
 ```bash
-gsv adapter connect --adapter whatsapp --config-json '{"pairing":true}'
+gsv adapter connect --adapter whatsapp --config-json '{"force":true}'
+gsv adapter connect --adapter telegram --config-json '{"botToken":"<telegram-bot-token>"}'
 ```
 
 ## Package Commands
@@ -211,16 +212,16 @@ gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
 gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
 ```
 
-Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`, and
-`channel-discord`. When no deploy/upgrade component is supplied, all components
-are selected. Deploying `gateway` requires `ripgit` and `assembler` to be
-selected or already deployed.
+Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`,
+`channel-discord`, and `channel-telegram`. When no deploy/upgrade component is
+supplied, all components are selected. Deploying `gateway` requires `ripgit` and
+`assembler` to be selected or already deployed.
 
 `deploy` fetches release bundles and applies Cloudflare Workers. `upgrade` does
 the same but auto-refreshes mutable refs such as `latest`, `stable`, and `dev`.
 Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
-`CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, and `--discord-bot-token` or
-`DISCORD_BOT_TOKEN`.
+`CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, `--discord-bot-token` or
+`DISCORD_BOT_TOKEN`, and `--telegram-bot-token` or `TELEGRAM_BOT_TOKEN`.
 
 `destroy` tears down Workers. If no component or `--all` is supplied, it targets
 all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`

@@ -1,7 +1,7 @@
 # How to Manage Adapters
 
-Adapters connect GSV processes to external messaging systems such as WhatsApp
-and Discord. The deployed channel Workers host protocol-specific code; the
+Adapters connect GSV processes to external messaging systems such as WhatsApp,
+Discord, and Telegram. The deployed channel Workers host protocol-specific code; the
 Kernel sees them through `adapter.*` syscalls and linked external actors.
 
 ## Deploy Adapter Workers
@@ -11,9 +11,17 @@ Deploy adapter components with infrastructure commands:
 ```bash
 gsv infra deploy -c channel-whatsapp
 gsv infra deploy -c channel-discord --discord-bot-token "$DISCORD_BOT_TOKEN"
+gsv infra deploy -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
 ```
 
-If you deploy all components, both adapter Workers are included:
+When adding Telegram to an existing installation, deploy or upgrade the gateway
+at the same time so it has the `CHANNEL_TELEGRAM` service binding:
+
+```bash
+gsv infra deploy -c gateway -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
+```
+
+If you deploy all components, all adapter Workers are included:
 
 ```bash
 gsv infra deploy --all
@@ -57,6 +65,27 @@ gsv adapter status --adapter discord
 Invite the bot with the permissions required by your deployment and enable the
 Discord Message Content Intent when the bot needs to read message text.
 
+## Connect Telegram
+
+Telegram needs a bot token from BotFather. You can provide it during deploy as a
+Worker secret, or pass it when connecting:
+
+```bash
+gsv adapter connect --adapter telegram --account-id default \
+  --config-json '{"botToken":"<telegram-bot-token>"}'
+```
+
+If the token is already configured as `TELEGRAM_BOT_TOKEN`, omit `--config-json`:
+
+```bash
+gsv adapter connect --adapter telegram --account-id default
+gsv adapter status --adapter telegram
+```
+
+The deploy command configures `TELEGRAM_WEBHOOK_BASE_URL` from the worker's
+workers.dev URL. If you use a custom domain, pass `webhookBaseUrl` in
+`--config-json` when connecting.
+
 ## Link External Actors
 
 Inbound messages are not delivered to processes until the external actor is
@@ -78,6 +107,7 @@ Root can link manually when the adapter, account, and actor id are known:
 
 ```bash
 gsv auth link --adapter discord --account-id default --actor-id discord:user:123456 --uid 1000
+gsv auth link --adapter telegram --account-id default --actor-id telegram:user:123456 --uid 1000
 gsv auth link --adapter whatsapp --account-id personal --actor-id wa:jid:31600000000@s.whatsapp.net --uid 1000
 ```
 
@@ -107,5 +137,7 @@ surface. Non-DM messages from unlinked actors are dropped.
 - If WhatsApp does not show a QR code, reconnect with `{"force":true}`.
 - If Discord does not respond, check the bot token, gateway status, invite
   permissions, and Message Content Intent.
+- If Telegram does not respond, check the bot token, webhook base URL secret,
+  and that Telegram can reach the worker's public `/webhook/:accountId` URL.
 - If a message is ignored, check `gsv auth link-list` and confirm the actor id is
   linked to the intended user.
