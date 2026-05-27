@@ -1420,12 +1420,14 @@ export class Process extends Host<Env> {
 
   private async handleConversationCompact(
     args: ProcConversationCompactArgs,
-    options: { allowActive?: boolean; reason?: string } = {},
+    options: { allowActive?: boolean; reason?: string; activeRunId?: string } = {},
   ): Promise<ProcConversationCompactResult> {
     const pid = this.pid;
     const conversationId = normalizeConversationId(args.conversationId);
     const explicitSummary = normalizeOptionalString(args.summary);
     const generateSummary = args.generateSummary === true;
+    const activeRunStopped = () =>
+      options.activeRunId !== undefined && this.currentRun?.runId !== options.activeRunId;
     if (!explicitSummary && !generateSummary) {
       return { ok: false, error: "proc.conversation.compact requires summary or generateSummary" };
     }
@@ -1458,6 +1460,9 @@ export class Process extends Host<Env> {
     if (selected.length === 0) {
       return { ok: false, error: "No conversation messages selected for compaction" };
     }
+    if (activeRunStopped()) {
+      return { ok: false, error: "Run stopped before compaction completed" };
+    }
     let summary = explicitSummary;
     if (!summary) {
       try {
@@ -1466,6 +1471,9 @@ export class Process extends Host<Env> {
         const message = error instanceof Error ? error.message : String(error);
         return { ok: false, error: `Failed to generate compaction summary: ${message}` };
       }
+    }
+    if (activeRunStopped()) {
+      return { ok: false, error: "Run stopped before compaction completed" };
     }
 
     const fromMessageId = selected[0].id;
@@ -1481,6 +1489,9 @@ export class Process extends Host<Env> {
       `${segmentId}.jsonl.gz`,
     ].join("/");
     await this.archiveMessageRecords(archiveKey, selected);
+    if (activeRunStopped()) {
+      return { ok: false, error: "Run stopped before compaction completed" };
+    }
 
     const archivedTo = `/${archiveKey}`;
     const summaryMessageId = this.store.compactConversationPrefix({
@@ -2382,8 +2393,12 @@ export class Process extends Host<Env> {
       {
         allowActive: true,
         reason: "auto-compact",
+        activeRunId: runId,
       },
     );
+    if (this.handleRunStopped(runId)) {
+      return "stopped";
+    }
     if (!result.ok) {
       const message = `Auto-compaction failed before model call: ${result.error}`;
       this.store.appendMessage("system", message, { conversationId });
@@ -2398,6 +2413,9 @@ export class Process extends Host<Env> {
       return "stopped";
     }
 
+    if (this.handleRunStopped(runId)) {
+      return "stopped";
+    }
     await this.emitProcessLifecycle({
       event: "conversation.auto_compacted",
       pid: this.pid,

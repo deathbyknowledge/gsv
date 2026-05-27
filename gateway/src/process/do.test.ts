@@ -1831,6 +1831,88 @@ describe("Process DO — mechanical", () => {
         "conversation.auto_compacted",
       ]);
     });
+
+    it("does not apply auto-compaction after the run is aborted during summary generation", async () => {
+      const pid = "mech-conversation-auto-compact-abort";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            throw new Error("chat generation should not run after abort");
+          },
+          async generateText(request: any) {
+            expect(request.purpose).toBe("compaction.summary");
+            await process.handleProcAbort();
+            return "Summary that should not be applied.";
+          },
+        };
+
+        process.store.appendMessage("user", "old context A");
+        process.store.appendMessage("assistant", "old context B");
+        process.store.appendMessage("user", "Context that must stay live.");
+        process.store.setValue("conversationPolicy:default", JSON.stringify({
+          conversationId: "default",
+          overflow: "auto-compact",
+          compactAtPressure: 0.01,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId: "run-auto-compact-abort",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 100,
+            contextWindowTokens: 1000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-auto-compact-abort");
+        return {
+          emitted,
+          currentRun: process.currentRun,
+          messages: process.store.getMessages(),
+          segments: process.store.listConversationSegments(),
+        };
+      });
+
+      expect(result.currentRun).toBeNull();
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "old context A"],
+        ["assistant", "old context B"],
+        ["user", "Context that must stay live."],
+      ]);
+      expect(result.segments).toHaveLength(0);
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "chat.complete",
+          payload: expect.objectContaining({
+            aborted: true,
+            runId: "run-auto-compact-abort",
+          }),
+        },
+      ]));
+      const lifecycleEvents = result.emitted
+        .filter((entry) => entry.signal === "process.lifecycle")
+        .map((entry) => (entry.payload as any).event);
+      expect(lifecycleEvents).toEqual([]);
+    });
   });
 
   describe("proc.abort", () => {
