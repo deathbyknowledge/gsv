@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 import { assembleSystemPrompt } from "./assembly";
 import { createHomeContextProvider } from "./providers/home";
 import { createProfileInstructionsProvider } from "./providers/profile";
-import { createWorkspaceContextProvider } from "./providers/workspace";
 import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
 import type { AiConfigResult } from "../../syscalls/ai";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
-import { homeKnowledgeRepoRef, workspaceRepoRef } from "../../fs";
+import { homeKnowledgeRepoRef } from "../../fs";
 
 const CONFIG: AiConfigResult = {
   provider: "anthropic",
@@ -50,8 +49,7 @@ const IDENTITY: ProcessIdentity = {
   gids: [0],
   username: "root",
   home: "/root",
-  cwd: "/workspaces/ws_test",
-  workspaceId: "ws_test",
+  cwd: "/root/projects/demo",
 };
 
 describe("assembleSystemPrompt", () => {
@@ -104,7 +102,7 @@ describe("createProfileInstructionsProvider", () => {
         name: "profile.context:00-role.md",
       }),
     ]);
-    expect(sections[0]?.text).toContain("Task for root in /workspaces/ws_test");
+    expect(sections[0]?.text).toContain("Task for root in /root/projects/demo");
     expect(sections[0]?.text).toContain("- gsv");
     expect(sections[0]?.text).toContain("- macbook: Work MacBook - Personal laptop (darwin)");
     expect(sections[0]?.text).toContain("- Cloudflare");
@@ -139,7 +137,6 @@ describe("selection", () => {
       "system.context",
       "profile.context",
       "home.context",
-      "workspace.context",
       "available.skills",
       "process.context",
     ]);
@@ -204,47 +201,6 @@ describe("createHomeContextProvider", () => {
     ]);
     expect(sections.map((section) => section.text)).toEqual([
       "alpha",
-    ]);
-  });
-});
-
-describe("createWorkspaceContextProvider", () => {
-  it("loads workspace context from ripgit when available", async () => {
-    const provider = createWorkspaceContextProvider();
-    const workspaceRepo = workspaceRepoRef("ws_test", IDENTITY.username);
-    const sections = await provider.collect(
-      makeInput({
-        ripgit: {
-          async readPath(repo, path) {
-            if (repo.owner !== workspaceRepo.owner || repo.repo !== workspaceRepo.repo) {
-              return { kind: "missing" };
-            }
-            if (path === ".gsv/context.d") {
-              return {
-                kind: "tree",
-                entries: [
-                  { name: "10-summary.md", mode: "100644", hash: "a", type: "blob" },
-                ],
-              };
-            }
-            if (path === ".gsv/context.d/10-summary.md") {
-              return {
-                kind: "file",
-                bytes: new TextEncoder().encode("Summary text"),
-                size: 12,
-              };
-            }
-            return { kind: "missing" };
-          },
-        },
-      }),
-    );
-
-    expect(sections).toEqual([
-      {
-        name: "workspace.context:10-summary.md",
-        text: "Summary text",
-      },
     ]);
   });
 });

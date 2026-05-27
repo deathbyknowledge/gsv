@@ -10,7 +10,7 @@ Process DO model.
 
 Each agent process is a Durable Object with a SQLite-backed `ProcessStore`.
 Kernel SQLite stores process registry data such as PID, uid/gid, profile, cwd,
-workspace id, parent, and state. Process SQLite stores the mutable run state:
+parent, and state. Process SQLite stores the mutable run state:
 
 - `messages`: active conversation history.
 - `pending_tool_calls`: syscalls waiting for Kernel or device responses.
@@ -21,7 +21,7 @@ workspace id, parent, and state. Process SQLite stores the mutable run state:
 
 The Kernel delivers frames to the Process DO through `recvFrame`. `proc.send`
 starts or queues a run, `proc.history` reads stored messages, `proc.reset`
-archives and clears history, and `proc.kill` checkpoints and clears process
+archives and clears history, and `proc.kill` can archive and clear process
 state.
 
 ## Message Lifecycle
@@ -59,20 +59,18 @@ this order:
    from a package profile when the profile is package-provided.
 3. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
    repository with R2 fallback.
-4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`,
-   or `.gsv/summary.md` when no context files exist.
-5. **Available skills** from layered `skills.d` directories. This is a compact
+4. **Available skills** from layered `skills.d` directories. This is a compact
    command-oriented index only; full `SKILL.md` bodies are read explicitly with
    `skills show <skill>`.
-6. **Process context** supplied with the assignment or runtime.
+5. **Process context** supplied with the assignment or runtime.
 
 Each section is rendered as `[section.name]` and separated with `---`. System
 and profile context can template values such as `identity.username`, `identity.cwd`,
-`workspace`, `devices` and `mcpServers`. Home and workspace context are loaded
-lexically and bounded by `config/ai/max_context_bytes`.
+`devices` and `mcpServers`. Home context is loaded lexically and bounded by
+`config/ai/max_context_bytes`.
 
 Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,
-workspace `.gsv/skills.d`, and visible package `/src/packages/<package>/skills.d`.
+and visible package `/src/packages/<package>/skills.d`.
 The prompt tells processes to use `skills list`, `skills search`, `skills show`,
 `skills files`, and `skills read` rather than embedding long source paths in the
 index.
@@ -207,17 +205,13 @@ loop without pretending to be user chat.
 Process conversation state is active runtime state, not the durable artifact of
 work. When a process is reset or killed, GSV can:
 
-- Generate/update `/workspaces/{workspaceId}/.gsv/summary.md`.
-- Write a process transcript to
-  `/workspaces/{workspaceId}/.gsv/processes/{pid}/chat.jsonl`.
-- Commit those files to the workspace ripgit repository.
 - Archive the old message history to
   `var/sessions/{username}/{pid}/{archiveId}.jsonl.gz` in R2.
 - Delete process media from R2.
 
-Workspaces therefore outlive processes. A process can be reset, killed, or
-replaced while the durable workspace and its summary continue carrying task
-state forward.
+Processes can be reset, killed, or replaced without inventing a second durable
+object. Continuity comes from explicit archives, ordinary files, and repositories
+that the user or process chooses to write.
 
 ## Failure Behavior
 

@@ -88,13 +88,6 @@ import type {
 } from "@earendil-works/pi-ai";
 import { createGenerationService } from "../inference/service";
 import {
-  buildCheckpointCommitMessageContext,
-  buildCheckpointSummaryContext,
-  buildCheckpointTranscript,
-  normalizeCheckpointCommitMessage,
-  normalizeCheckpointSummary,
-} from "./checkpoint";
-import {
   ProcessStore,
   parseAssistantMessageMeta,
   stringifyAssistantMessageMeta,
@@ -130,7 +123,6 @@ import {
   SYSCALL_TOOL_NAMES,
 } from "../syscalls/constants";
 import { RipgitClient } from "../fs/ripgit/client";
-import { workspaceRepoRef } from "../fs/ripgit/repos";
 import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
@@ -187,9 +179,7 @@ type ArchivedMessageRecord = {
   createdAt?: number;
 };
 
-const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
-const TEXT_ENCODER = new TextEncoder();
 const PROCESS_MEDIA_CACHE_LIMIT = 32;
 const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
@@ -228,8 +218,7 @@ function isProcessIdentity(value: unknown): value is ProcessIdentity {
     && Array.isArray(identity.gids)
     && typeof identity.username === "string"
     && typeof identity.home === "string"
-    && typeof identity.cwd === "string"
-    && (identity.workspaceId === null || typeof identity.workspaceId === "string");
+    && typeof identity.cwd === "string";
 }
 
 function isIpcCallEnvelope(value: unknown): value is NonNullable<ProcIpcDeliverArgs["call"]> {
@@ -1883,14 +1872,12 @@ export class Process extends Host<Env> {
   private async handleProcReset(): Promise<ProcResetResult> {
     const pid = this.pid;
     const totalMessages = this.store.totalMessageCount();
-    await this.checkpointWorkspace("proc.reset");
 
     const archive = totalMessages > 0
       ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
       : emptyProcessArchive();
 
     this.resetExecutionState();
-    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
     this.store.resetAllConversations();
 
     await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
@@ -1911,14 +1898,12 @@ export class Process extends Host<Env> {
     const pid = this.pid;
     const shouldArchive = args.archive !== false;
     const totalMessages = this.store.totalMessageCount();
-    await this.checkpointWorkspace("proc.kill");
 
     const archive = shouldArchive && totalMessages > 0
       ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
       : emptyProcessArchive();
 
     this.resetExecutionState();
-    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
 
     // A killed process should restart with a clean conversation and no queued work.
     this.store.resetAllConversations();
@@ -2497,77 +2482,6 @@ export class Process extends Host<Env> {
     } as SignalFrame);
   }
 
-  private async checkpointWorkspace(reason: string): Promise<void> {
-    const workspaceId = this.identity.workspaceId;
-    if (!workspaceId || !this.ripgit) {
-      return;
-    }
-
-    const messages = this.store.allMessagesForArchive();
-    if (messages.length === 0) {
-      return;
-    }
-
-    const checkpointedCount = Number.parseInt(
-      this.store.getValue(CHECKPOINTED_MESSAGE_COUNT_KEY) ?? "0",
-      10,
-    );
-    if (checkpointedCount === messages.length) {
-      return;
-    }
-
-    const repo = workspaceRepoRef(workspaceId, this.identity.username);
-    const existingSummary = await this.readWorkspaceSummary(repo);
-    const config = await this.resolveCheckpointConfig();
-    const transcript = buildCheckpointTranscript(messages);
-
-    const summary = await this.generateCheckpointSummary(
-      config,
-      existingSummary,
-      messages,
-    );
-    const commitMessage = await this.generateCheckpointCommitMessage(
-      config,
-      summary,
-      messages,
-      reason,
-    );
-
-    await this.ripgit.apply(
-      repo,
-      this.identity.username,
-      `${this.identity.username}@gsv.internal`,
-      commitMessage,
-      [
-        {
-          type: "put",
-          path: ".gsv/summary.md",
-          contentBytes: Array.from(TEXT_ENCODER.encode(summary)),
-        },
-        {
-          type: "put",
-          path: `.gsv/processes/${this.pid}/chat.jsonl`,
-          contentBytes: Array.from(TEXT_ENCODER.encode(transcript)),
-        },
-      ],
-    );
-
-    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, String(messages.length));
-  }
-
-  private async readWorkspaceSummary(
-    repo: ReturnType<typeof workspaceRepoRef>,
-  ): Promise<string> {
-    if (!this.ripgit) {
-      return "";
-    }
-    const result = await this.ripgit.readPath(repo, ".gsv/summary.md");
-    if (result.kind !== "file") {
-      return "";
-    }
-    return new TextDecoder().decode(result.bytes);
-  }
-
   private async resolveCheckpointConfig(): Promise<AiConfigResult | null> {
     if (this.currentRun?.config) {
       return this.currentRun.config;
@@ -2577,59 +2491,9 @@ export class Process extends Host<Env> {
         profile: this.profile,
       });
     } catch (error) {
-      console.warn("[Process] Failed to resolve AI config for checkpointing:", error);
+      console.warn("[Process] Failed to resolve AI config for compaction:", error);
       return null;
     }
-  }
-
-  private async generateCheckpointSummary(
-    config: AiConfigResult | null,
-    existingSummary: string,
-    messages: MessageRecord[],
-  ): Promise<string> {
-    if (!config) {
-      return normalizeCheckpointSummary(existingSummary);
-    }
-    try {
-      const generated = await this.generation.generateText({
-        purpose: "checkpoint.summary",
-        config,
-        context: buildCheckpointSummaryContext(existingSummary, messages),
-        sessionAffinityKey: this.pid,
-      });
-      return normalizeCheckpointSummary(generated);
-    } catch (error) {
-      console.warn("[Process] Failed to generate checkpoint summary:", error);
-      return normalizeCheckpointSummary(existingSummary);
-    }
-  }
-
-  private async generateCheckpointCommitMessage(
-    config: AiConfigResult | null,
-    summary: string,
-    messages: MessageRecord[],
-    reason: string,
-  ): Promise<string> {
-    if (!config) {
-      return this.defaultCheckpointCommitMessage(reason);
-    }
-    try {
-      const generated = await this.generation.generateText({
-        purpose: "checkpoint.commit_message",
-        config,
-        context: buildCheckpointCommitMessageContext(summary, messages, reason),
-        sessionAffinityKey: this.pid,
-      });
-      return normalizeCheckpointCommitMessage(generated);
-    } catch (error) {
-      console.warn("[Process] Failed to generate checkpoint commit message:", error);
-      return this.defaultCheckpointCommitMessage(reason);
-    }
-  }
-
-  private defaultCheckpointCommitMessage(reason: string): string {
-    const normalizedReason = reason.replace(/[^a-z0-9]+/gi, " ").trim().toLowerCase();
-    return normalizedReason ? `checkpoint ${normalizedReason}` : "checkpoint thread state";
   }
 
   private async archiveConversationMessages(

@@ -54,16 +54,15 @@ export function readRouteParams(windowId: string): ShellRoute {
   return { target, cwd };
 }
 
-export function readActiveThreadContext(): { cwd: string; workspaceId: string } | null {
+export function readActiveThreadContext(): { cwd: string } | null {
   try {
     const raw = localStorage.getItem("gsv.activeThreadContext.v1");
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { cwd?: unknown; workspaceId?: unknown } | null;
+    const parsed = JSON.parse(raw) as { cwd?: unknown } | null;
     if (!parsed || typeof parsed !== "object") return null;
     const cwd = typeof parsed.cwd === "string" ? parsed.cwd.trim() : "";
-    const workspaceId = typeof parsed.workspaceId === "string" ? parsed.workspaceId.trim() : "";
     if (!cwd) return null;
-    return { cwd, workspaceId };
+    return { cwd };
   } catch {
     return null;
   }

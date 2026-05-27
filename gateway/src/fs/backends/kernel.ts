@@ -208,7 +208,6 @@ export class KernelMountBackend implements MountBackend {
           profile: proc.profile,
           home: proc.home,
           cwd: proc.cwd,
-          workspaceId: proc.workspaceId,
         }, null, 2) + "\n";
       case "context.d":
         return undefined;

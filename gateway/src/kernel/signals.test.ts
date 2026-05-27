@@ -13,7 +13,6 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         username: "hank",
         home: "/home/hank",
         cwd: "/home/hank",
-        workspaceId: null,
       },
       capabilities: ["*"],
     },

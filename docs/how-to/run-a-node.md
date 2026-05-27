@@ -77,7 +77,7 @@ target:
 ```
 
 Use `target: "gsv"` for the cloud filesystem and Kernel-backed paths such as
-`/home`, `/workspaces`, `/sys`, `/proc`, and `/usr/local/bin`. Use a device id
+`/home`, `/sys`, `/proc`, `/var`, and `/usr/local/bin`. Use a device id
 only when the file, network, credential, OS package, or hardware exists on that
 machine.
 

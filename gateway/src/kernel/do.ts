@@ -38,7 +38,6 @@ import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry } from "./processes";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
-import { WorkspaceStore } from "./workspaces";
 import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
@@ -225,7 +224,6 @@ export class Kernel extends Host<Env> {
   private readonly routes: RoutingTable;
   private readonly shellSessions: ShellSessionStore;
   private readonly procs: ProcessRegistry;
-  private readonly workspaces: WorkspaceStore;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly signalWatches: SignalWatchStore;
@@ -269,9 +267,6 @@ export class Kernel extends Host<Env> {
 
     this.procs = new ProcessRegistry(sql);
     this.procs.init();
-
-    this.workspaces = new WorkspaceStore(sql);
-    this.workspaces.init();
 
     this.adapters = new AdapterStore(sql);
     this.adapters.init();
@@ -1104,7 +1099,6 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
-      workspaces: this.workspaces,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -1180,7 +1174,6 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
-      workspaces: this.workspaces,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -1218,7 +1211,6 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
-      workspaces: this.workspaces,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -1805,7 +1797,6 @@ export class Kernel extends Host<Env> {
           username: root.username,
           home: root.home,
           cwd: root.home,
-          workspaceId: null,
         }
       : {
           uid: 0,
@@ -1814,7 +1805,6 @@ export class Kernel extends Host<Env> {
           username: "root",
           home: "/root",
           cwd: "/root",
-          workspaceId: null,
         };
 
     return {
@@ -1850,7 +1840,6 @@ export class Kernel extends Host<Env> {
         username: user.username,
         home: user.home,
         cwd: user.home,
-        workspaceId: null,
       },
       capabilities,
     };
@@ -2571,7 +2560,7 @@ export class Kernel extends Host<Env> {
         label: target.label ?? record.name,
         prompt: target.prompt,
         parentPid: target.parentPid,
-        workspace: target.workspace,
+        cwd: target.cwd,
         mounts: target.mounts,
         assignment: target.assignment,
       }, ctx);
@@ -2632,7 +2621,6 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
-      workspaces: this.workspaces,
       packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
@@ -2679,7 +2667,6 @@ export class Kernel extends Host<Env> {
       username: user.username,
       home: user.home,
       cwd: user.home,
-      workspaceId: null,
     };
   }
 

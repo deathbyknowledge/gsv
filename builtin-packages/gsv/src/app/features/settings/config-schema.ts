@@ -46,7 +46,7 @@ export const PROFILE_OPTIONS: Array<{ id: ProfileId; label: string; description:
   { id: "cron", label: "Cron", description: "Scheduled background work." },
   { id: "mcp", label: "MCP", description: "Operational control and diagnosis." },
   { id: "app", label: "App", description: "App-owned runtime processes." },
-  { id: "archivist", label: "Archivist", description: "Workspace continuity compaction." },
+  { id: "archivist", label: "Archivist", description: "Conversation compaction." },
   { id: "curator", label: "Curator", description: "Inbox candidate review and promotion." },
 ];
 
@@ -92,7 +92,7 @@ export const AI_FIELDS: SettingField[] = [
   {
     key: "config/ai/max_context_bytes",
     label: "Max context bytes",
-    description: "Maximum bytes of workspace context injected into prompts.",
+    description: "Maximum bytes of home context injected into prompts.",
     kind: "number",
   },
 ];
@@ -186,7 +186,7 @@ export const PROFILE_CONTEXT_FIELDS: Array<{ file: string; label: string; descri
   {
     file: "10-runtime.md",
     label: "Runtime context",
-    description: "Runtime facts injected into the prompt, such as cwd, workspace, and devices.",
+    description: "Runtime facts injected into the prompt, such as cwd and devices.",
     rows: 8,
   },
   {

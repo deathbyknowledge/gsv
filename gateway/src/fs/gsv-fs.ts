@@ -5,7 +5,6 @@
  *   /proc/*, /dev/*, /sys/*, /etc/{passwd,shadow,group} → KernelMountBackend
  *   /src/packages/*                                     → Process package source backend
  *   /usr/local/bin/*                                      → Package backend
- *   /workspaces/*                                             → Workspace backend
  *   everything else                                           → R2 backend
  *
  * Two paths remain hybrid in GsvFs itself:
@@ -39,7 +38,6 @@ import { R2MountBackend } from "./backends/r2";
 import { KernelMountBackend } from "./backends/kernel";
 import { isPackageMountPath } from "./backends/packages";
 import { isProcessSourceMountPath } from "./backends/process-sources";
-import { isWorkspaceMountPath } from "./backends/workspace";
 import { normalizePath } from "./utils";
 
 const MAX_SYMLINK_DEPTH = 16;
@@ -53,7 +51,6 @@ export class GsvFs implements IFileSystem {
   private readonly kernelBackend: MountBackend;
   private readonly sourceMountBackend: MountBackend | null;
   private readonly homeKnowledgeBackend: MountBackend | null;
-  private readonly workspaceBackend: MountBackend | null;
   private readonly packageBackend: MountBackend | null;
 
   constructor(
@@ -63,7 +60,6 @@ export class GsvFs implements IFileSystem {
     selfPid?: string,
     sourceMountBackend?: MountBackend | null,
     homeKnowledgeBackend?: MountBackend | null,
-    workspaceBackend?: MountBackend | null,
     packageBackend?: MountBackend | null,
   ) {
     this.identity = identity;
@@ -72,7 +68,6 @@ export class GsvFs implements IFileSystem {
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
     this.sourceMountBackend = sourceMountBackend ?? null;
     this.homeKnowledgeBackend = homeKnowledgeBackend ?? null;
-    this.workspaceBackend = workspaceBackend ?? null;
     this.packageBackend = packageBackend ?? null;
   }
 
@@ -422,13 +417,6 @@ export class GsvFs implements IFileSystem {
       return this.sourceMountBackend;
     }
 
-    if (isWorkspaceMountPath(path)) {
-      if (!this.workspaceBackend) {
-        throw new Error(`ENOSYS: workspace backend is unavailable for '${path}'`);
-      }
-      return this.workspaceBackend;
-    }
-
     if (this.homeKnowledgeBackend?.handles(path)) {
       return this.homeKnowledgeBackend;
     }
@@ -459,10 +447,6 @@ export class GsvFs implements IFileSystem {
       entries.add("dev");
       entries.add("sys");
       entries.add("etc");
-    }
-
-    if (this.workspaceBackend) {
-      entries.add("workspaces");
     }
 
     if (this.homeKnowledgeBackend) {

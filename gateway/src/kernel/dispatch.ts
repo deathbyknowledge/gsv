@@ -39,7 +39,6 @@ import {
 } from "./proc-handlers";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
-import { handleSysWorkspaceList } from "./sys/workspaces";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
@@ -471,9 +470,6 @@ async function dispatchNative(
         break;
       case "sys.target.register":
         return errFrame(frame.id, 400, "sys.target.register is connection-only");
-      case "sys.workspace.list":
-        data = handleSysWorkspaceList(frame.args, ctx);
-        break;
       case "sys.oauth.start":
         data = await handleSysOAuthStart(frame.args, ctx);
         break;

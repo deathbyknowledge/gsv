@@ -655,7 +655,6 @@ export function createPresenceControl(options: PresenceOptions): { destroy(): vo
     const spawned = await gatewayClient.spawnProcess({
       profile: "init",
       label: "Mind",
-      workspace: { mode: "none" },
     });
     if (!spawned.ok) {
       throw new Error(spawned.error);

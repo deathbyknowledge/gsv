@@ -23,7 +23,6 @@ function makeContext(uid: number, auth: FakeAuth): KernelContext {
         username: uid === 0 ? "root" : `user${uid}`,
         home: uid === 0 ? "/root" : `/home/user${uid}`,
         cwd: uid === 0 ? "/root" : `/home/user${uid}`,
-        workspaceId: null,
       },
       capabilities: ["*"],
     },

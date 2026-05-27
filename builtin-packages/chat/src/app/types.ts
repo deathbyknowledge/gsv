@@ -1,7 +1,7 @@
 export type ChatBackend = {
   getViewer(args?: unknown): Promise<unknown>;
   listProfiles(args?: unknown): Promise<unknown>;
-  listWorkspaces(args?: unknown): Promise<unknown>;
+  listProcesses(args?: unknown): Promise<unknown>;
   spawnProcess(args: unknown): Promise<unknown>;
   sendMessage(args: unknown): Promise<unknown>;
   getHistory(args: unknown): Promise<unknown>;
@@ -20,7 +20,6 @@ export type ChatBackend = {
 export type ThreadContext = {
   pid: string;
   cwd: string;
-  workspaceId: string | null;
   conversationId: string;
   conversationTitle: string | null;
 };
@@ -37,15 +36,13 @@ export type Profile = {
   spawnMode: "singleton" | "new" | string;
 };
 
-export type WorkspaceEntry = {
-  workspaceId: string;
+export type ProcessEntry = {
+  pid: string;
   label?: string;
-  updatedAt: number;
-  processCount?: number;
-  activeProcess?: {
-    pid: string;
-    cwd: string;
-  } | null;
+  profile: string;
+  state: string;
+  cwd: string;
+  createdAt: number;
 };
 
 export type ConversationRecord = {
@@ -186,7 +183,7 @@ export type ConversationSegment = {
   createdAt: number;
 };
 
-export type WorkspaceView = "chat" | "archive";
+export type StageView = "chat" | "archive";
 
 export type PendingAssistantState = "thinking" | "tool" | null;
 

@@ -5,7 +5,6 @@ export type ProcessEntry = {
   profile?: string | null;
   uid?: number | string | null;
   parentPid?: string | number | null;
-  workspaceId?: string | null;
   cwd?: string | null;
   createdAt?: number | string | null;
 };

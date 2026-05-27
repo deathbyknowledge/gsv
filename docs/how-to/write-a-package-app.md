@@ -40,8 +40,8 @@ export default definePackage({
 `browser.entry` is a JS/TS module, not an HTML document. Backend and CLI paths
 point to modules with default exports.
 
-Declare repository access with `repo.*` syscalls when the app needs source or
-workspace repository content:
+Declare repository access with `repo.*` syscalls when the app needs source,
+package, or project repository content:
 
 ```ts
 capabilities: {

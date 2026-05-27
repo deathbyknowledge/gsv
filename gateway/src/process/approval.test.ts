@@ -14,7 +14,6 @@ const IDENTITY: ProcessIdentity = {
   username: "hank",
   home: "/home/hank",
   cwd: "/home/hank/project",
-  workspaceId: "ws-1",
 };
 
 describe("tool approval policy", () => {

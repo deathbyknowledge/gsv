@@ -15,7 +15,6 @@ const IDENTITY: ProcessIdentity = {
   username: "sam",
   home: "/home/sam",
   cwd: "/home/sam",
-  workspaceId: null,
 };
 
 function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackageRecord {
@@ -127,12 +126,10 @@ function makeContext(options?: {
         return {
           profile: "task",
           uid: IDENTITY.uid,
-          workspaceId: IDENTITY.workspaceId,
         };
       },
       ...(options?.procs ?? {}),
     } as never,
-    workspaces: null as never,
     packages: {
       list(opts?: { scopes?: readonly InstalledPackageRecord["scope"][] }) {
         if (!opts?.scopes) {
@@ -190,8 +187,6 @@ function packageScopeKey(scope: InstalledPackageRecord["scope"]): string {
       return "global";
     case "user":
       return `user:${scope.uid}`;
-    case "workspace":
-      return `workspace:${scope.workspaceId}`;
   }
 }
 
@@ -294,14 +289,45 @@ describe("proc native command", () => {
   });
 
   it("routes spawn through the native proc command surface", async () => {
+    const spawn = vi.fn();
     const result = await handleShellExec(
-      { input: "proc spawn --workspace nowhere --prompt hello" },
-      makeContext({ capabilities: ["proc.spawn"] }),
+      { input: "proc spawn --cwd ~/src --label build" },
+      makeContext({
+        capabilities: ["proc.spawn"],
+        procs: {
+          get() {
+            return {
+              processId: "init:1000",
+              uid: IDENTITY.uid,
+              gid: IDENTITY.gid,
+              gids: IDENTITY.gids,
+              username: IDENTITY.username,
+              home: IDENTITY.home,
+              cwd: IDENTITY.cwd,
+              profile: "init",
+              state: "running",
+              mounts: [],
+              contextFiles: [],
+              createdAt: 1,
+            };
+          },
+          spawn,
+        } as never,
+      }),
     );
 
-    expect(result.status).toBe("failed");
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("--workspace must be inherit");
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("profile=task");
+    expect(result.stdout).toContain("label=\"build\"");
+    expect(result.stdout).toContain("cwd=\"/home/sam/src\"");
+    expect(spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ cwd: "/home/sam/src" }),
+      expect.objectContaining({
+        label: "build",
+        cwd: "/home/sam/src",
+      }),
+    );
   });
 });
 
@@ -966,7 +992,6 @@ describe("pkg shell command", () => {
         procs: {
           get: vi.fn(() => ({
             uid: IDENTITY.uid,
-            workspaceId: null,
           })),
         } as Partial<KernelContext["procs"]>,
         schedules: {

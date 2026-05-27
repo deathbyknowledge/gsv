@@ -376,7 +376,7 @@ function normalizeRepoPath(path: string | undefined): string {
 }
 
 function isSourceRepoKind(value: string): value is KernelSourceRepoKind {
-  return value === "home" || value === "workspace" || value === "package" || value === "user";
+  return value === "home" || value === "package" || value === "user";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

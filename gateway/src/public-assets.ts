@@ -13,7 +13,6 @@ const PUBLIC_ASSET_IDENTITY: ProcessIdentity = {
   username: "root",
   home: "/root",
   cwd: "/root",
-  workspaceId: null,
 };
 
 const DOCUMENT_CONTENT_TYPES = new Set([

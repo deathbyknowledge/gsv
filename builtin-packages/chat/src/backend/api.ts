@@ -49,12 +49,8 @@ export async function listProfiles(kernel: KernelClient, input: unknown) {
   return kernel.request("proc.profile.list", normalizeArgs(input));
 }
 
-export async function listWorkspaces(kernel: KernelClient, input: unknown) {
-  const args = normalizeArgs(input);
-  return kernel.request("sys.workspace.list", {
-    kind: "thread",
-    ...args,
-  });
+export async function listProcesses(kernel: KernelClient, input: unknown) {
+  return kernel.request("proc.list", normalizeArgs(input));
 }
 
 export async function spawnProcess(kernel: KernelClient, input: unknown) {

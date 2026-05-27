@@ -986,7 +986,6 @@ function toPkgSummary(record: InstalledPackageRecord, ctx: KernelContext): PkgSu
     scope: {
       kind: record.scope.kind,
       uid: record.scope.kind === "user" ? record.scope.uid : undefined,
-      workspaceId: record.scope.kind === "workspace" ? record.scope.workspaceId : undefined,
     },
     name: record.manifest.name,
     description: record.manifest.description,

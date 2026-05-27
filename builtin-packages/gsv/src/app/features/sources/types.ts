@@ -1,4 +1,4 @@
-export type SourceRepoKind = "home" | "workspace" | "package" | "multi-package" | "user";
+export type SourceRepoKind = "home" | "package" | "multi-package" | "user";
 
 export type SourceLinkedPackage = {
   packageId: string;

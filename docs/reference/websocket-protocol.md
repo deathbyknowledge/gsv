@@ -191,8 +191,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
         "gids": [1000],
         "username": "alice",
         "home": "/home/alice",
-        "cwd": "/home/alice",
-        "workspaceId": null
+        "cwd": "/home/alice"
       },
       "capabilities": ["fs.*", "proc.*"]
     },

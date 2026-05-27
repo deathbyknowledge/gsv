@@ -8,7 +8,7 @@ import {
   handleProcSpawn,
 } from "../../../kernel/proc-handlers";
 import type { SyscallName } from "../../../syscalls";
-import type { ProcSpawnArgs, ProcWorkspaceSpec } from "../../../syscalls/proc";
+import type { ProcSpawnArgs } from "../../../syscalls/proc";
 import type { AiContextProfile } from "../../../syscalls/ai";
 import type { Frame } from "../../../protocol/frames";
 import { sendFrameToProcess } from "../../../shared/utils";
@@ -87,7 +87,6 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           `pid=${result.pid}`,
           `profile=${result.profile}`,
           result.label ? `label=${quoteShellField(result.label)}` : "",
-          result.workspaceId ? `workspace=${result.workspaceId}` : "",
           `cwd=${quoteShellField(result.cwd)}`,
         ].filter(Boolean).join(" ") + "\n",
         stderr: "",
@@ -260,7 +259,7 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   let label: string | undefined;
   let prompt: string | undefined;
   let parentPid: string | undefined;
-  let workspace: ProcWorkspaceSpec | undefined;
+  let cwd: string | undefined;
   let assignment: ProcSpawnArgs["assignment"];
   let mounts: ProcSpawnArgs["mounts"];
   const positional: string[] = [];
@@ -290,9 +289,9 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
       parentPid = requireShellOptionValue(args[index], current);
       continue;
     }
-    if (current === "--workspace") {
+    if (current === "--cwd") {
       index += 1;
-      workspace = parseProcSpawnWorkspace(requireShellOptionValue(args[index], current));
+      cwd = requireShellOptionValue(args[index], current);
       continue;
     }
     if (current === "--assignment-json") {
@@ -315,26 +314,10 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     ...(label ? { label } : {}),
     ...(finalPrompt ? { prompt: finalPrompt } : {}),
     ...(parentPid ? { parentPid } : {}),
-    ...(workspace ? { workspace } : {}),
+    ...(cwd ? { cwd } : {}),
     ...(assignment ? { assignment } : {}),
     ...(mounts ? { mounts } : {}),
   };
-}
-
-function parseProcSpawnWorkspace(value: string): ProcWorkspaceSpec {
-  if (value === "inherit" || value === "none") {
-    return { mode: value };
-  }
-  if (value === "new") {
-    return { mode: "new" };
-  }
-  if (value.startsWith("new:")) {
-    return { mode: "new", label: value.slice("new:".length) };
-  }
-  if (value.startsWith("attach:")) {
-    return { mode: "attach", workspaceId: value.slice("attach:".length) };
-  }
-  throw new Error("--workspace must be inherit, none, new, new:<label>, or attach:<workspaceId>");
 }
 
 function quoteShellField(value: string): string {
@@ -769,7 +752,7 @@ function procUsage(): string {
     "  proc self",
     "  proc list",
     "  proc profiles [--json]",
-    "  proc spawn [--profile PROFILE] [--label LABEL] [--prompt TEXT] [--parent PID] [--workspace MODE] <prompt>",
+    "  proc spawn [--profile PROFILE] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
     "  proc spawn --json JSON",
     "  proc segments [--pid PID] [--conversation id]",
     "  proc policy [--pid PID] [--conversation id] [--overflow manual|auto-compact|fail] [--compact-at N] [--keep-last N]",

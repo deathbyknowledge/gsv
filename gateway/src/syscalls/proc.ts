@@ -11,14 +11,6 @@ import type { AiContextProfile } from "./ai";
 import type { ProcMediaInput } from "@gsv/protocol/syscalls/proc";
 import type { InteractionOrigin } from "./interaction-origin";
 
-export type ProcWorkspaceKind = "thread" | "app" | "shared";
-
-export type ProcWorkspaceSpec =
-  | { mode: "none" }
-  | { mode: "new"; label?: string; kind?: ProcWorkspaceKind }
-  | { mode: "inherit" }
-  | { mode: "attach"; workspaceId: string };
-
 export type ProcSpawnMountSpec =
   | { kind: "package-source"; packageId: string; mountPath?: string }
   | { kind: "package-repo"; packageId: string; mountPath?: string };
@@ -39,13 +31,13 @@ export type ProcSpawnArgs = {
   prompt?: string;
   assignment?: ProcSpawnAssignment;
   parentPid?: string;
-  workspace?: ProcWorkspaceSpec;
+  cwd?: string;
   mounts?: ProcSpawnMountSpec[];
   // NOTE: consider allowing explicit identity override (root only or subset of current identity)
 };
 
 export type ProcSpawnResult =
-  | { ok: true; pid: string; label?: string; profile: AiContextProfile; workspaceId: string | null; cwd: string }
+  | { ok: true; pid: string; label?: string; profile: AiContextProfile; cwd: string }
   | { ok: false; error: string };
 
 export type ProcKillArgs = {
@@ -504,7 +496,6 @@ export type ProcListEntry = {
   state: string;
   label: string | null;
   createdAt: number;
-  workspaceId: string | null;
   cwd: string;
 };
 

@@ -25,7 +25,6 @@ function makeContext(options: {
         username: uid === 0 ? "root" : "sam",
         home: uid === 0 ? "/root" : "/home/sam",
         cwd: uid === 0 ? "/root" : "/home/sam",
-        workspaceId: null,
       },
       capabilities: ["*"],
     },

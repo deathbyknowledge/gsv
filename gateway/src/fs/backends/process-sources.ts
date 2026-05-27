@@ -1014,8 +1014,6 @@ function packageSourceRecordKey(record: Pick<InstalledPackageRecord, "packageId"
   switch (record.scope.kind) {
     case "user":
       return `user:${record.scope.uid}:${record.packageId}`;
-    case "workspace":
-      return `workspace:${record.scope.workspaceId}:${record.packageId}`;
     case "global":
       return `global:${record.packageId}`;
   }

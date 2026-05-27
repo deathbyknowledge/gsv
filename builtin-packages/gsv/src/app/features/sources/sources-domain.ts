@@ -2,15 +2,13 @@ import type { SourceDiffFile, SourceMode, SourceRepoKind, SourceRepoRecord, Sour
 
 export function repoKindLabel(kind: SourceRepoKind): string {
   if (kind === "home") return "Home";
-  if (kind === "workspace") return "Workspace";
   if (kind === "multi-package") return "Multi-package";
   if (kind === "package") return "Package";
   return "General";
 }
 
-export function repoKindTone(kind: SourceRepoKind): "is-home" | "is-workspace" | "is-package" | "is-user" {
+export function repoKindTone(kind: SourceRepoKind): "is-home" | "is-package" | "is-user" {
   if (kind === "home") return "is-home";
-  if (kind === "workspace") return "is-workspace";
   if (kind === "package" || kind === "multi-package") return "is-package";
   return "is-user";
 }

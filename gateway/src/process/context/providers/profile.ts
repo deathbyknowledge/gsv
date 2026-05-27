@@ -50,7 +50,6 @@ function renderContextTemplate(
       username: string;
       home: string;
       cwd: string;
-      workspaceId: string | null;
     };
     devices: Array<{ id: string; label?: string; implements: string[]; description?: string; platform?: string }>;
     mcpServers: string[];
@@ -63,8 +62,6 @@ function renderContextTemplate(
     ["identity.username", input.identity.username],
     ["identity.home", input.identity.home],
     ["identity.cwd", input.identity.cwd],
-    ["identity.workspaceId", input.identity.workspaceId ?? ""],
-    ["workspace", input.identity.workspaceId ? `/workspaces/${input.identity.workspaceId}` : "(none)"],
     ["devices", formatDevices(input.devices)],
     ["mcpServers", formatMcpServers(input.mcpServers)],
   ]);

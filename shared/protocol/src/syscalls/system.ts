@@ -5,7 +5,6 @@ export type ProcessIdentity = {
   username: string;
   home: string;
   cwd: string;
-  workspaceId: string | null;
 };
 
 export type ConnectionIdentity = UserIdentity | DeviceIdentity | ServiceIdentity;
@@ -316,41 +315,6 @@ export type SysTargetRegisterArgs = {
 export type SysTargetRegisterResult = {
   targetId: string;
   device: SysDeviceDetail;
-};
-
-export type SysWorkspaceKind = "thread" | "app" | "shared";
-export type SysWorkspaceState = "active" | "archived";
-
-export type SysWorkspaceListArgs = {
-  uid?: number;
-  kind?: SysWorkspaceKind;
-  state?: SysWorkspaceState;
-  limit?: number;
-};
-
-export type SysWorkspaceProcessSummary = {
-  pid: string;
-  label: string | null;
-  cwd: string;
-  createdAt: number;
-};
-
-export type SysWorkspaceSummary = {
-  workspaceId: string;
-  ownerUid: number;
-  label: string | null;
-  kind: SysWorkspaceKind;
-  state: SysWorkspaceState;
-  createdAt: number;
-  updatedAt: number;
-  defaultBranch: string;
-  headCommit: string | null;
-  activeProcess: SysWorkspaceProcessSummary | null;
-  processCount: number;
-};
-
-export type SysWorkspaceListResult = {
-  workspaces: SysWorkspaceSummary[];
 };
 
 export type SysOAuthConnectionKind = "ai-provider" | "mcp-server" | "generic";

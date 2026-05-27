@@ -47,7 +47,6 @@ export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void
     username: "root",
     home: "/root",
     cwd: "/root",
-    workspaceId: null,
   });
 }
 
@@ -182,7 +181,6 @@ function withDefaultProcessContext(identity: {
   return {
     ...identity,
     cwd: identity.home,
-    workspaceId: null,
   };
 }
 

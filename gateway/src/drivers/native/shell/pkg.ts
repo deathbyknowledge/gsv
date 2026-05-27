@@ -454,7 +454,7 @@ function processSourceOptions(ctx: KernelContext) {
 
 function formatPkgList(packages: Array<{
   name: string;
-  scope: { kind: "global" | "user" | "workspace"; uid?: number; workspaceId?: string };
+  scope: { kind: "global" | "user"; uid?: number };
   enabled: boolean;
   review: { required: boolean; approvedAt: number | null };
   source: { repo: string; ref: string; public: boolean };
@@ -851,12 +851,10 @@ function resolvePkgPublicTarget(
   return { packageId: resolveInstalledPackage(target, ctx).packageId };
 }
 
-function formatPkgScope(scope: { kind: "global" | "user" | "workspace"; uid?: number; workspaceId?: string }): string {
+function formatPkgScope(scope: { kind: "global" | "user"; uid?: number }): string {
   switch (scope.kind) {
     case "user":
       return `user:${scope.uid ?? "?"}`;
-    case "workspace":
-      return `workspace:${scope.workspaceId ?? "?"}`;
     default:
       return "global";
   }

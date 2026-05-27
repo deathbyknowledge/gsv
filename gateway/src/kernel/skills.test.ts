@@ -11,7 +11,6 @@ const IDENTITY: ProcessIdentity = {
   username: "sam",
   home: "/home/sam",
   cwd: "/home/sam",
-  workspaceId: null,
 };
 
 describe("collectFilesystemSkillDocuments", () => {

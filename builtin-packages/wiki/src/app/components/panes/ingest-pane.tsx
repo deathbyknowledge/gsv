@@ -54,7 +54,7 @@ export function IngestPane(props: Props) {
           ) : <div class="wiki-form-placeholder">Use a custom target only when the source corpus lives outside gsv.</div>}
           <label class="wiki-field-span-2">
             <span>Source path</span>
-            <input value={props.ingestSourcePath} onInput={(event) => props.onIngestSourcePathChange((event.currentTarget as HTMLInputElement).value)} placeholder="/workspaces/project/docs/plan.md" />
+            <input value={props.ingestSourcePath} onInput={(event) => props.onIngestSourcePathChange((event.currentTarget as HTMLInputElement).value)} placeholder="/home/alice/projects/docs/plan.md" />
           </label>
           <label>
             <span>Source title</span>

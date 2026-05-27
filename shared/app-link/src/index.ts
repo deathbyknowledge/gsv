@@ -2,7 +2,6 @@ export const OPEN_APP_EVENT = "gsv:open-app";
 
 export type ThreadContext = {
   pid: string;
-  workspaceId: string | null;
   cwd: string;
 };
 
@@ -26,7 +25,6 @@ export type ShellOpenPayload = {
 
 export type ChatOpenPayload = {
   pid: string;
-  workspaceId?: string | null;
   cwd: string;
 };
 
@@ -96,11 +94,10 @@ export function normalizeThreadContext(value: unknown): ThreadContext | null {
 
   const pid = asString(record.pid)?.trim() || "";
   const cwd = asString(record.cwd)?.trim() || "";
-  const workspaceId = asString(record.workspaceId)?.trim() || null;
   if (!pid || !cwd) {
     return null;
   }
-  return { pid, cwd, workspaceId };
+  return { pid, cwd };
 }
 
 export function buildOpenAppRoute(request: OpenAppRequest, locationHref: string): string {

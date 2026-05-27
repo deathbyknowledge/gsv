@@ -16,7 +16,6 @@ import type { ProcessRegistry } from "./processes";
 import type { AdapterStore } from "./adapter-store";
 import type { RunRouteStore } from "./run-routes";
 import type { ShellSessionStore } from "./shell-sessions";
-import type { WorkspaceStore } from "./workspaces";
 import type { PackageStore } from "./packages";
 import type { OAuthStore } from "./oauth-store";
 import type { McpServerStore } from "./mcp-store";
@@ -35,7 +34,6 @@ export type KernelContext = {
   config: ConfigStore;
   devices: DeviceRegistry;
   procs: ProcessRegistry;
-  workspaces: WorkspaceStore;
   packages: PackageStore;
   oauth: OAuthStore;
   mcp: MCPClientManager;

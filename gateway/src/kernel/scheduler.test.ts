@@ -26,7 +26,6 @@ const USER_IDENTITY: ProcessIdentity = {
   username: "sam",
   home: "/home/sam",
   cwd: "/home/sam",
-  workspaceId: null,
 };
 
 function makeReq(call: string, args: unknown): RequestFrame {

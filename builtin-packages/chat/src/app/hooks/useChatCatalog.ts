@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
-import type { ChatBackend, ConversationRecord, Profile, WorkspaceEntry } from "../types";
+import type { ChatBackend, ConversationRecord, ProcessEntry, Profile } from "../types";
 import {
   asRecord,
   asString,
   fallbackProfiles,
   formatError,
   normalizeConversation,
+  normalizeProcessEntry,
   normalizeProfile,
-  normalizeWorkspace,
   sortConversations,
 } from "../view-helpers";
 
@@ -15,7 +15,7 @@ export function useChatCatalog(backend: ChatBackend) {
   const [profiles, setProfiles] = useState<Profile[]>(() => fallbackProfiles());
   const [draftProfileId, setDraftProfileId] = useState("init");
   const [viewerUsername, setViewerUsername] = useState("You");
-  const [threads, setThreads] = useState<WorkspaceEntry[]>([]);
+  const [threads, setThreads] = useState<ProcessEntry[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
   const [threadsError, setThreadsError] = useState("");
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
@@ -63,9 +63,9 @@ export function useChatCatalog(backend: ChatBackend) {
     setThreadsLoading(true);
     setThreadsError("");
     try {
-      const result = await backend.listWorkspaces({ kind: "thread", limit: 64 });
-      const workspaceRows = Array.isArray(asRecord(result)?.workspaces) ? asRecord(result)?.workspaces as unknown[] : [];
-      setThreads(workspaceRows.map(normalizeWorkspace).filter(Boolean) as WorkspaceEntry[]);
+      const result = await backend.listProcesses({});
+      const processRows = Array.isArray(asRecord(result)?.processes) ? asRecord(result)?.processes as unknown[] : [];
+      setThreads(processRows.map(normalizeProcessEntry).filter(Boolean) as ProcessEntry[]);
     } catch (error) {
       setThreads([]);
       setThreadsError(formatError(error));

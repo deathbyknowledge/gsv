@@ -24,8 +24,6 @@ import type {
   ProcSpawnArgs,
   ProcSpawnResult,
   ProcSendArgs,
-  ProcWorkspaceKind,
-  ProcWorkspaceSpec,
 } from "../syscalls/proc";
 import type { InteractionOrigin } from "../syscalls/interaction-origin";
 import {
@@ -38,10 +36,9 @@ import { sendFrameToProcess } from "../shared/utils";
 import type { ProcessIdentity } from "@gsv/protocol/syscalls/system";
 import type { ProcessMount } from "./processes";
 import {
-  createWorkspaceBackend,
   normalizePath,
   packageSourcePathNameForRecord,
-  workspaceRootPath,
+  resolveUserPath,
 } from "../fs";
 import { resolveInstalledPackage } from "./pkg";
 import {
@@ -140,7 +137,6 @@ export function handleProcList(
     state: r.state,
     label: r.label,
     createdAt: r.createdAt,
-    workspaceId: r.workspaceId,
     cwd: r.cwd,
   }));
 
@@ -245,7 +241,6 @@ export async function handleProcSpawn(
       pid: initRecord.processId,
       label: initRecord.label ?? undefined,
       profile: "init",
-      workspaceId: initRecord.workspaceId,
       cwd: initRecord.cwd,
     };
   }
@@ -291,14 +286,8 @@ export async function handleProcSpawn(
         username: parent.username,
         home: parent.home,
         cwd: parent.cwd,
-        workspaceId: parent.workspaceId,
       }
     : identity.process;
-
-  const materialized = await materializeSpawnIdentity(args.workspace, baseIdentity, args.label, ctx);
-  if (!materialized.ok) {
-    return { ok: false, error: materialized.error };
-  }
 
   const hasRequestedMounts = args.mounts !== undefined;
   const materializedMounts = materializeSpawnMounts(args.mounts, ctx);
@@ -307,10 +296,8 @@ export async function handleProcSpawn(
   }
 
   const spawnIdentity: ProcessIdentity = {
-    ...materialized.identity,
-    cwd: materialized.workspaceId
-      ? materialized.identity.cwd
-      : (hasRequestedMounts ? defaultMountCwd(materializedMounts.mounts) : null) ?? materialized.identity.cwd,
+    ...baseIdentity,
+    cwd: resolveSpawnCwd(args.cwd, baseIdentity, hasRequestedMounts ? materializedMounts.mounts : []),
   };
 
   ctx.procs.spawn(pid, spawnIdentity, {
@@ -318,14 +305,9 @@ export async function handleProcSpawn(
     profile,
     label: args.label,
     cwd: spawnIdentity.cwd,
-    workspaceId: materialized.identity.workspaceId,
     mounts: materializedMounts.mounts,
     contextFiles: args.assignment?.contextFiles ?? [],
   });
-
-  if (materialized.workspaceId) {
-    await ensureWorkspaceProcessFiles(ctx, materialized.workspaceId, pid, spawnIdentity);
-  }
 
   await sendFrameToProcess(pid, {
     type: "req",
@@ -358,7 +340,6 @@ export async function handleProcSpawn(
     pid,
     label: args.label,
     profile,
-    workspaceId: materialized.identity.workspaceId,
     cwd: spawnIdentity.cwd,
   };
 }
@@ -444,10 +425,6 @@ export async function handleProcIpcSend(
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.send");
   if (!resolved.ok) return resolved;
 
-  if (resolved.target.workspaceId) {
-    ctx.workspaces.touch(resolved.target.workspaceId);
-  }
-
   const response = await sendFrameToProcess(resolved.args.pid, {
     type: "req",
     id: crypto.randomUUID(),
@@ -498,10 +475,6 @@ export async function handleProcIpcCall(
     targetPid: resolved.args.pid,
     deadlineAt,
   });
-
-  if (resolved.target.workspaceId) {
-    ctx.workspaces.touch(resolved.target.workspaceId);
-  }
 
   let response: ResponseFrame | null;
   try {
@@ -583,9 +556,6 @@ export async function forwardToProcess(
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
 
-  if (frame.call === "proc.send" && proc.workspaceId) {
-    ctx.workspaces.touch(proc.workspaceId);
-  }
   const processFrame = frame.call === "proc.send"
     ? withProcSendOrigin(frame, ctx)
     : frame;
@@ -618,7 +588,7 @@ type ResolvedSameOwnerIpc =
       ok: true;
       sourcePid: string;
       source: { uid: number };
-      target: { uid: number; workspaceId: string | null };
+      target: { uid: number };
       args: Extract<NormalizedIpcSendArgs, { ok: true }>;
     }
   | { ok: false; error: string };
@@ -726,17 +696,6 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-type SpawnIdentityOutcome =
-  | {
-      ok: true;
-      identity: ProcessIdentity;
-      workspaceId: string | null;
-    }
-  | {
-      ok: false;
-      error: string;
-    };
-
 type SpawnMountOutcome =
   | {
       ok: true;
@@ -751,78 +710,6 @@ type SpawnMountSpecWithRecord = {
   spec: ProcSpawnMountSpec;
   record: InstalledPackageRecord;
 };
-
-async function materializeSpawnIdentity(
-  workspace: ProcWorkspaceSpec | undefined,
-  baseIdentity: ProcessIdentity,
-  label: string | undefined,
-  ctx: KernelContext,
-): Promise<SpawnIdentityOutcome> {
-  const spec = workspace ?? defaultWorkspaceSpec(baseIdentity);
-
-  switch (spec.mode) {
-    case "none":
-      return {
-        ok: true,
-        identity: { ...baseIdentity, cwd: baseIdentity.home, workspaceId: null },
-        workspaceId: null,
-      };
-    case "inherit":
-      return {
-        ok: true,
-        identity: {
-          ...baseIdentity,
-          cwd: baseIdentity.workspaceId ? baseIdentity.cwd : baseIdentity.home,
-        },
-        workspaceId: baseIdentity.workspaceId,
-      };
-    case "attach": {
-      const workspaceRecord = ctx.workspaces.get(spec.workspaceId);
-      if (!workspaceRecord) {
-        return { ok: false, error: `Workspace not found: ${spec.workspaceId}` };
-      }
-      if (ctx.identity!.process.uid !== 0 && workspaceRecord.ownerUid !== baseIdentity.uid) {
-        return { ok: false, error: `Permission denied: workspace ${spec.workspaceId}` };
-      }
-
-      ctx.workspaces.touch(spec.workspaceId);
-      return {
-        ok: true,
-        identity: {
-          ...baseIdentity,
-          cwd: workspaceRootPath(spec.workspaceId),
-          workspaceId: spec.workspaceId,
-        },
-        workspaceId: spec.workspaceId,
-      };
-    }
-    case "new": {
-      const workspaceRecord = ctx.workspaces.create(baseIdentity, {
-        label: spec.label ?? label,
-        kind: spec.kind ?? "thread",
-      });
-
-      try {
-        await ensureWorkspaceRoot(ctx, workspaceRecord.workspaceId, baseIdentity, spec.kind ?? "thread");
-      } catch (error) {
-        ctx.workspaces.delete(workspaceRecord.workspaceId);
-        throw error;
-      }
-
-      return {
-        ok: true,
-        identity: {
-          ...baseIdentity,
-          cwd: workspaceRootPath(workspaceRecord.workspaceId),
-          workspaceId: workspaceRecord.workspaceId,
-        },
-        workspaceId: workspaceRecord.workspaceId,
-      };
-    }
-    default:
-      return { ok: false, error: "Invalid workspace mode" };
-  }
-}
 
 function materializeSpawnMounts(
   specs: ProcSpawnMountSpec[] | undefined,
@@ -891,57 +778,13 @@ function defaultMountCwd(mounts: ProcessMount[]): string | null {
     ?? null;
 }
 
-function defaultWorkspaceSpec(identity: ProcessIdentity): ProcWorkspaceSpec {
-  return identity.workspaceId ? { mode: "inherit" } : { mode: "none" };
-}
-
-async function ensureWorkspaceRoot(
-  ctx: KernelContext,
-  workspaceId: string,
-  identity: ProcessIdentity,
-  kind: ProcWorkspaceKind,
-): Promise<void> {
-  const backend = requireWorkspaceBackend(ctx, identity);
-  const root = workspaceRootPath(workspaceId);
-  const workspaceJsonPath = `${root}/.gsv/workspace.json`;
-  const summaryPath = `${root}/.gsv/summary.md`;
-
-  const workspaceJsonExists = await backend.exists(workspaceJsonPath);
-  if (!workspaceJsonExists) {
-    const payload = JSON.stringify({
-      workspaceId,
-      ownerUid: identity.uid,
-      ownerUsername: identity.username,
-      label: ctx.workspaces.get(workspaceId)?.label ?? null,
-      kind,
-      createdAt: Date.now(),
-    }, null, 2);
-    await backend.writeFile(workspaceJsonPath, payload);
+function resolveSpawnCwd(
+  cwd: string | undefined,
+  baseIdentity: ProcessIdentity,
+  mounts: ProcessMount[],
+): string {
+  if (typeof cwd === "string" && cwd.trim().length > 0) {
+    return resolveUserPath(cwd, baseIdentity.home, baseIdentity.cwd);
   }
-
-  const summaryExists = await backend.exists(summaryPath);
-  if (!summaryExists) {
-    await backend.writeFile(summaryPath, "");
-  }
-}
-
-async function ensureWorkspaceProcessFiles(
-  ctx: KernelContext,
-  workspaceId: string,
-  pid: string,
-  identity: ProcessIdentity,
-): Promise<void> {
-  const backend = requireWorkspaceBackend(ctx, identity);
-  const chatPath = `${workspaceRootPath(workspaceId)}/.gsv/processes/${pid}/chat.jsonl`;
-  const exists = await backend.exists(chatPath);
-  if (exists) return;
-  await backend.writeFile(chatPath, "");
-}
-
-function requireWorkspaceBackend(ctx: KernelContext, identity: ProcessIdentity) {
-  const backend = createWorkspaceBackend(ctx.env, identity, ctx.workspaces);
-  if (!backend) {
-    throw new Error("Workspace backend is not configured");
-  }
-  return backend;
+  return defaultMountCwd(mounts) ?? baseIdentity.cwd;
 }

@@ -1,7 +1,7 @@
 # How to Configure an Agent
 
 GSV agents run as processes. Their behavior comes from runtime config, profile
-context, home context, workspace context, process history, and available
+context, home context, process history, assignment context, and available
 syscall tools. Configure the durable inputs rather than editing a hidden prompt.
 
 ## Set AI Runtime Defaults
@@ -97,10 +97,10 @@ gsv proc spawn --profile research --prompt "Audit the week of notes."
 ```
 
 System and profile context can use runtime template variables such as
-`identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`,
-`workspace`, `devices` and `mcpServers`.
+`identity.username`, `identity.home`, `identity.cwd`, `devices` and
+`mcpServers`.
 
-## Add Home and Workspace Context
+## Add Home Context
 
 Home context applies across a user's processes:
 
@@ -108,15 +108,10 @@ Home context applies across a user's processes:
 ~/context.d/*.md
 ```
 
-Workspace context applies only when a process is attached to a workspace:
-
-```text
-/workspaces/{workspaceId}/.gsv/context.d/*.md
-```
-
-Use home context for durable preferences and recurring operating notes. Use
-workspace context for project-specific instructions, status, and handoff notes.
-Keep files short and focused; the runtime loads them lexically until
+Use home context for durable preferences and recurring operating notes. Put
+project-specific instructions, status, and handoff notes in explicit project
+files, package source, or process assignment context. Keep always-loaded context
+short and focused; the runtime loads home files lexically until
 `config/ai/max_context_bytes` is reached.
 
 ## Configure Tool Approval
@@ -149,7 +144,7 @@ Give devices short notes in **GSV > Devices** so agents see why a target exists,
 not just its id and platform. For example, describe `rearden` as a Linux home
 server for GPU work or home automation if that is the routing intent.
 
-Use profile or workspace context to tell agents when a device should be used:
+Use profile or home context to tell agents when a device should be used:
 
 ```markdown
 Use `target: "gsv"` for Kernel files and package state.

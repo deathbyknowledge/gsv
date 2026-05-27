@@ -147,7 +147,7 @@ export default class ReportsBackend extends PackageBackendEntrypoint {
 
   async runDailyReport(payload: { channel?: string }) {
     const files = await this.kernel.request("fs.search", {
-      path: "/workspaces",
+      path: "/home/root/projects",
       query: "TODO",
     });
     await this.storage?.sql.exec(

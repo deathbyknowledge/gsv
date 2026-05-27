@@ -1,10 +1,10 @@
-import type { Profile, ThreadContext, WorkspaceEntry } from "../../types";
+import type { ProcessEntry, Profile, ThreadContext } from "../../types";
 import { HomeIcon, MessageIcon, PlusIcon, RefreshIcon, ThreadsIcon } from "../../icons";
 import { displayThreadLabel, formatRelativeTime } from "../../view-helpers";
 
 export function ChatNavigator(props: {
   active: ThreadContext | null;
-  threads: WorkspaceEntry[];
+  threads: ProcessEntry[];
   threadsLoading: boolean;
   threadsError: string;
   profiles: Profile[];
@@ -13,7 +13,7 @@ export function ChatNavigator(props: {
   onHome(): void;
   onNew(): void;
   onRefreshThreads(): void;
-  onOpenThread(workspaceId: string): void;
+  onOpenThread(pid: string): void;
 }) {
   return (
     <aside class="chat-nav">
@@ -36,7 +36,7 @@ export function ChatNavigator(props: {
 
 export function MobileProcessNav(props: {
   active: ThreadContext | null;
-  threads: WorkspaceEntry[];
+  threads: ProcessEntry[];
   threadsLoading: boolean;
   threadsError: string;
   profiles: Profile[];
@@ -45,18 +45,15 @@ export function MobileProcessNav(props: {
   onHome(): void;
   onNew(): void;
   onRefreshThreads(): void;
-  onOpenThread(workspaceId: string): void;
+  onOpenThread(pid: string): void;
 }) {
-  const activeWorkspaceId = props.active?.workspaceId ?? null;
   const activePid = props.active?.pid ?? "";
   const selectedValue = activePid.startsWith("init:")
     ? "home"
-    : activeWorkspaceId
-      ? `workspace:${activeWorkspaceId}`
+    : activePid
+      ? `process:${activePid}`
       : "draft";
-  const hasActiveWorkspace = Boolean(
-    activeWorkspaceId && props.threads.some((thread) => thread.workspaceId === activeWorkspaceId),
-  );
+  const hasActiveProcess = Boolean(activePid && props.threads.some((thread) => thread.pid === activePid));
   const showDraftOption = !props.active || selectedValue === "draft";
   const status = props.threadsLoading
     ? "Refreshing..."
@@ -71,8 +68,8 @@ export function MobileProcessNav(props: {
       props.onHome();
       return;
     }
-    if (value.startsWith("workspace:")) {
-      props.onOpenThread(value.slice("workspace:".length));
+    if (value.startsWith("process:")) {
+      props.onOpenThread(value.slice("process:".length));
     }
   };
 
@@ -86,11 +83,11 @@ export function MobileProcessNav(props: {
               <option value="draft">{props.active ? "Current process" : "New draft"}</option>
             ) : null}
             <option value="home">Home</option>
-            {activeWorkspaceId && !hasActiveWorkspace ? (
-              <option value={`workspace:${activeWorkspaceId}`}>Current process</option>
+            {activePid && !hasActiveProcess ? (
+              <option value={`process:${activePid}`}>Current process</option>
             ) : null}
             {props.threads.map((thread) => (
-              <option key={thread.workspaceId} value={`workspace:${thread.workspaceId}`}>
+              <option key={thread.pid} value={`process:${thread.pid}`}>
                 {displayThreadLabel(thread)}
               </option>
             ))}
@@ -126,7 +123,7 @@ export function MobileProcessNav(props: {
 
 function ThreadsPane(props: {
   active: ThreadContext | null;
-  threads: WorkspaceEntry[];
+  threads: ProcessEntry[];
   loading: boolean;
   error: string;
   profiles: Profile[];
@@ -135,9 +132,8 @@ function ThreadsPane(props: {
   onHome(): void;
   onNew(): void;
   onRefresh(): void;
-  onOpenThread(workspaceId: string): void;
+  onOpenThread(pid: string): void;
 }) {
-  const activeWorkspaceId = props.active?.workspaceId ?? null;
   const activePid = props.active?.pid ?? "";
   const status = props.loading
     ? "Refreshing..."
@@ -179,18 +175,17 @@ function ThreadsPane(props: {
         </button>
         {props.threads.map((thread) => (
           <button
-            key={thread.workspaceId}
+            key={thread.pid}
             type="button"
-            class={"thread-row" + (activeWorkspaceId === thread.workspaceId ? " is-active" : "")}
-            onClick={() => props.onOpenThread(thread.workspaceId)}
+            class={"thread-row" + (activePid === thread.pid ? " is-active" : "")}
+            onClick={() => props.onOpenThread(thread.pid)}
           >
             <span class="row-icon"><MessageIcon /></span>
             <span class="thread-row-title">{displayThreadLabel(thread)}</span>
             <span class="thread-row-meta">
-              {thread.activeProcess ? "Live process" : "Stored thread"}
-              {thread.processCount && thread.processCount > 1 ? ` - ${thread.processCount} agents` : ""}
+              {thread.profile}
               {" - "}
-              {formatRelativeTime(thread.updatedAt)}
+              {formatRelativeTime(thread.createdAt)}
             </span>
           </button>
         ))}

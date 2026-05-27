@@ -13,7 +13,6 @@ const ROOT_IDENTITY: ProcessIdentity = {
   username: "root",
   home: "/root",
   cwd: "/root",
-  workspaceId: null,
 };
 const DEFAULT_PROFILE = "task" as const;
 
@@ -99,7 +98,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
 
       await registerInKernel(pid, identity);
@@ -122,7 +120,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
 
       await registerInKernel(pid, identity);
@@ -168,7 +165,6 @@ describe("Process DO — mechanical", () => {
         username: "alice",
         home: "/home/alice",
         cwd: "/home/alice",
-        workspaceId: null,
       };
       await stub.recvFrame(makeReq("proc.setidentity", { pid, identity: newIdentity, profile: "mcp" }));
 
@@ -731,7 +727,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
 
       await registerInKernel(sourcePid, identity);
@@ -794,7 +789,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
       const targetIdentity: ProcessIdentity = {
         uid: 1001,
@@ -803,7 +797,6 @@ describe("Process DO — mechanical", () => {
         username: "lee",
         home: "/home/lee",
         cwd: "/home/lee",
-        workspaceId: null,
       };
 
       await registerInKernel(sourcePid, sourceIdentity);
@@ -837,7 +830,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
 
       const source = await initProcess(sourcePid, identity);
@@ -2466,30 +2458,6 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.reset", () => {
-    it("checkpoints only on reset boundaries, not normal turn completion", async () => {
-      const pid = "mech-checkpoint-reset-only";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-      const checkpointReasons: string[] = [];
-
-      await runInDurableObject(stub, async (instance: Process) => {
-        const process = instance as any;
-        const store = process.store;
-        store.appendMessage("user", "hello");
-
-        process.checkpointWorkspace = async (reason: string) => {
-          checkpointReasons.push(reason);
-        };
-
-        await process.finishRun("turn.complete");
-        expect(store.messageCount()).toBe(1);
-
-        await process.handleProcReset();
-        expect(store.messageCount()).toBe(0);
-      });
-
-      expect(checkpointReasons).toEqual(["proc.reset"]);
-    });
-
     it("archives all conversations and clears process history", async () => {
       const pid = "mech-reset-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -2703,7 +2671,6 @@ describe("Process DO — mechanical", () => {
         username: "root",
         home: "/root",
         cwd: "/root",
-        workspaceId: null,
       };
 
       await stub.recvFrame({

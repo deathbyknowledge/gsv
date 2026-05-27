@@ -10,7 +10,7 @@ import type {
   LogRow,
   PendingAssistantState,
   ThreadContext,
-  WorkspaceView,
+  StageView,
 } from "./types";
 import {
   ArchiveWorkspace,
@@ -102,7 +102,7 @@ function historyMessageIds(messages: unknown[]): { first: number | null; last: n
 
 export function App({ backend }: { backend: ChatBackend }) {
   const [active, setActiveState] = useState<ThreadContext | null>(() => getStoredThreadContext());
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("chat");
+  const [stageView, setStageView] = useState<StageView>("chat");
   const [rows, setRows] = useState<LogRow[]>(() => systemRows("Connecting chat backend."));
   const [messageCount, setMessageCount] = useState(0);
   const [historyWindow, setHistoryWindow] = useState<HistoryWindow>(EMPTY_HISTORY_WINDOW);
@@ -250,7 +250,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         return cached ?? current;
       });
     }
-    setWorkspaceView("chat");
+    setStageView("chat");
     setNotice("");
   }, [clearNewMessages, contextStatesByConversation, resetArchive, updateHistoryWindow]);
 
@@ -454,7 +454,7 @@ export function App({ backend }: { backend: ChatBackend }) {
     setRows,
     setSuppressNextAbortedComplete,
     suppressNextAbortedComplete,
-    workspaceView,
+    stageView,
   });
 
   useEffect(() => {
@@ -467,7 +467,6 @@ export function App({ backend }: { backend: ChatBackend }) {
       const result = await backend.spawnProcess({
         profile: "init",
         label: "Personal Agent",
-        workspace: { mode: "none" },
       });
       const record = asRecord(result);
       if (!record?.ok) {
@@ -476,7 +475,6 @@ export function App({ backend }: { backend: ChatBackend }) {
       }
       setActive(normalizeThreadContext({
         pid: record.pid,
-        workspaceId: record.workspaceId,
         cwd: record.cwd,
         conversationId: "default",
       }));
@@ -485,42 +483,17 @@ export function App({ backend }: { backend: ChatBackend }) {
     }
   }
 
-  async function openThread(workspaceId: string): Promise<void> {
-    const entry = threads.find((candidate) => candidate.workspaceId === workspaceId);
+  async function openThread(pid: string): Promise<void> {
+    const entry = threads.find((candidate) => candidate.pid === pid);
     if (!entry) {
-      appendSystem("thread not found: " + workspaceId);
+      appendSystem("process not found: " + pid);
       return;
     }
-    if (entry.activeProcess) {
-      setActive(normalizeThreadContext({
-        pid: entry.activeProcess.pid,
-        workspaceId: entry.workspaceId,
-        cwd: entry.activeProcess.cwd,
-        conversationId: "default",
-      }));
-      return;
-    }
-    try {
-      const result = await backend.spawnProcess({
-        profile: "task",
-        label: entry.label || undefined,
-        workspace: { mode: "attach", workspaceId: entry.workspaceId },
-      });
-      const record = asRecord(result);
-      if (!record?.ok) {
-        appendSystem("thread reopen failed: " + safeText(record?.error || "unknown error"));
-        return;
-      }
-      setActive(normalizeThreadContext({
-        pid: record.pid,
-        workspaceId: record.workspaceId,
-        cwd: record.cwd,
-        conversationId: "default",
-      }));
-      void loadThreads();
-    } catch (error) {
-      appendSystem("thread reopen failed: " + formatError(error));
-    }
+    setActive(normalizeThreadContext({
+      pid: entry.pid,
+      cwd: entry.cwd,
+      conversationId: "default",
+    }));
   }
 
   function resetToNewThread(): void {
@@ -531,7 +504,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       current.forEach((attachment) => cleanupAttachmentPreview(attachment, previewUrlsRef.current));
       return [];
     });
-    setWorkspaceView("chat");
+    setStageView("chat");
   }
 
   async function switchConversation(conversation: ConversationRecord): Promise<void> {
@@ -543,7 +516,7 @@ export function App({ backend }: { backend: ChatBackend }) {
       conversationId: conversation.id,
       conversationTitle: conversation.title,
     });
-    setWorkspaceView("chat");
+    setStageView("chat");
   }
 
   async function sendMessage(): Promise<void> {
@@ -563,9 +536,6 @@ export function App({ backend }: { backend: ChatBackend }) {
         const spawnResult = await backend.spawnProcess({
           profile: draftProfile.id || "task",
           label: deriveThreadLabel(message) || draftProfile.displayName,
-          workspace: draftProfile.spawnMode === "new"
-            ? { mode: "new", kind: "thread" }
-            : { mode: "none" },
         });
         const record = asRecord(spawnResult);
         if (!record?.ok) {
@@ -574,7 +544,6 @@ export function App({ backend }: { backend: ChatBackend }) {
         }
         target = normalizeThreadContext({
           pid: record.pid,
-          workspaceId: record.workspaceId,
           cwd: record.cwd,
           conversationId: "default",
         });
@@ -760,7 +729,7 @@ export function App({ backend }: { backend: ChatBackend }) {
         conversationId: nextConversationId,
         conversationTitle: nextTitle,
       });
-      setWorkspaceView("chat");
+      setStageView("chat");
       setNotice("Created and opened " + nextTitle + " from message " + messageId + ".");
       await loadConversations(target.pid);
     } catch (error) {
@@ -815,10 +784,10 @@ export function App({ backend }: { backend: ChatBackend }) {
         onHome={() => void openHome()}
         onNew={resetToNewThread}
         onRefreshThreads={() => void loadThreads()}
-        onOpenThread={(workspaceId) => void openThread(workspaceId)}
+        onOpenThread={(pid) => void openThread(pid)}
       />
 
-      <section class={"chat-stage" + (workspaceView === "archive" ? " is-archive" : "")}>
+      <section class={"chat-stage" + (stageView === "archive" ? " is-archive" : "")}>
         <header class="chat-stage-head">
           <MobileProcessNav
             active={active}
@@ -831,7 +800,7 @@ export function App({ backend }: { backend: ChatBackend }) {
             onHome={() => void openHome()}
             onNew={resetToNewThread}
             onRefreshThreads={() => void loadThreads()}
-            onOpenThread={(workspaceId) => void openThread(workspaceId)}
+            onOpenThread={(pid) => void openThread(pid)}
           />
           <div class="chat-stage-title">
             <h1>{activeTitle}</h1>
@@ -848,15 +817,15 @@ export function App({ backend }: { backend: ChatBackend }) {
               loading={conversationsLoading}
               error={conversationError}
               archiveCount={archive.segments.length}
-              archiveActive={workspaceView === "archive"}
+              archiveActive={stageView === "archive"}
               onSelect={(conversation) => void switchConversation(conversation)}
               onRefresh={() => active?.pid ? void loadConversations(active.pid) : undefined}
               onArchiveToggle={() => {
-                if (workspaceView === "archive") {
-                  setWorkspaceView("chat");
+                if (stageView === "archive") {
+                  setStageView("chat");
                   return;
                 }
-                setWorkspaceView("archive");
+                setStageView("archive");
                 void loadArchiveSegments(true);
               }}
             />
@@ -890,10 +859,10 @@ export function App({ backend }: { backend: ChatBackend }) {
                 </button>
                 <button type="button" class="menu-action" disabled={!active} onClick={(event) => {
                   closeContainingChatMenu(event.currentTarget);
-                  if (active) void copyText("workspace", active.cwd);
+                  if (active) void copyText("current directory", active.cwd);
                 }}>
                   <FolderIcon />
-                  <span>Copy workspace</span>
+                  <span>Copy cwd</span>
                 </button>
                 <button type="button" class="menu-action" disabled={!canActOnConversation || compactBusy} onClick={(event) => { closeContainingChatMenu(event.currentTarget); openCompactDialog(); }}>
                   <CompactIcon />
@@ -908,7 +877,7 @@ export function App({ backend }: { backend: ChatBackend }) {
           {notice ? <span class="chat-notice">{notice}</span> : null}
         </div>
 
-        {workspaceView === "archive" ? (
+        {stageView === "archive" ? (
           <ArchiveWorkspace
             archive={archive}
             userLabel={viewerUsername}

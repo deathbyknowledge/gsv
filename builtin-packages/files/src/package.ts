@@ -3,7 +3,7 @@ import { definePackage } from "@gsv/package/manifest";
 export default definePackage({
   meta: {
     displayName: "Files",
-    description: "File browser and workspace management.",
+    description: "File browser for GSV and connected targets.",
     icon: "icon.svg",
     window: {
       width: 1080,

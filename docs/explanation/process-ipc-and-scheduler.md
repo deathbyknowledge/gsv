@@ -10,7 +10,7 @@ humans to reason about.
 ## Design Intent
 
 GSV processes should be durable agent instances, not single chat sessions. A
-process may have an owner, a workspace, mounted context, package source, tools,
+process may have an owner, cwd, mounted context, package source, tools,
 and process-local state. Multiple users, apps, adapters, schedules, or other
 processes may need to interact with that same process over time.
 
@@ -174,7 +174,7 @@ are explicit.
 Compaction and reset should be first-class conversation lifecycle operations,
 not hidden automation.
 
-The Linux-like model is log rotation plus checkpointing:
+The Linux-like model is log rotation plus explicit archives:
 
 - A conversation has an active working log.
 - Compaction rotates an old prefix of that log into an archive segment, writes a
@@ -182,8 +182,7 @@ The Linux-like model is log rotation plus checkpointing:
 - Reset rotates the active log into an archive segment and starts a new
   generation for the same conversation or a new conversation, depending on the
   requested mode.
-- Checkpointing writes durable continuity artifacts for workspace-backed
-  processes.
+- Archives are stored as ordinary inspectable records under `/var` in R2.
 
 This keeps all history movement inspectable. No transcript should disappear into
 an unmodeled background flow.
@@ -209,7 +208,7 @@ type ConversationSegment = {
   pid: string;
   conversationId: string;
   generation: number;
-  kind: "compaction" | "reset" | "checkpoint";
+  kind: "compaction" | "reset";
   fromMessageId: number;
   toMessageId: number;
   archiveUri: string;
@@ -308,23 +307,6 @@ file under one archive directory:
   build.gen-3.jsonl.gz
 ```
 
-### Checkpoint
-
-Checkpointing should be distinct from compaction and reset.
-
-Compaction manages the active model working set. Reset creates a conversation
-boundary. Checkpointing writes durable continuity artifacts, especially for
-workspace-backed processes.
-
-Workspace-backed checkpoints may update files such as:
-
-- `.gsv/summary.md`
-- `.gsv/processes/<pid>/conversations/<conversationId>/chat.jsonl`
-- `.gsv/processes/<pid>/conversations/<conversationId>/segments.jsonl`
-
-Those paths should be generated from explicit lifecycle operations, not from a
-separate automation system.
-
 ### History access
 
 The ordinary history API should remain convenient for active history:
@@ -416,7 +398,7 @@ type ScheduleTarget =
       kind: "process.spawn";
       profile: string;
       prompt: string;
-      workspace?: unknown;
+      cwd?: string;
     }
   | {
       kind: "process.event";
@@ -428,7 +410,7 @@ type ScheduleTarget =
       kind: "process.lifecycle";
       pid: string;
       conversationId?: string;
-      action: "compact" | "reset" | "checkpoint";
+      action: "compact" | "reset";
       options?: unknown;
     }
   | {
@@ -446,7 +428,7 @@ The first implementation should support:
 - `every`
 - `process.spawn`
 - `process.event`
-- `process.lifecycle` for compact, reset, and checkpoint
+- `process.lifecycle` for compact and reset
 
 Cron expressions, package events, advanced retry behavior, and cross-user run-as
 rules can follow after the basic lifecycle is working.
@@ -519,8 +501,8 @@ UI clients can refresh without polling. Process-wide
 directory with one generation file per conversation before clearing all
 conversation messages and runtime state.
 
-Still pending: checkpoint and richer segmented history read APIs. Preserve raw
-transcript archives, visible summary markers, and forkable segments.
+Still pending: richer segmented history read APIs. Preserve raw transcript
+archives, visible summary markers, and forkable segments.
 
 ### 6. Add same-owner IPC
 

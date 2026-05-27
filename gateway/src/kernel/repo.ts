@@ -23,7 +23,7 @@ import type {
 } from "@gsv/protocol/syscalls/repositories";
 import type { KernelContext } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
-import { homeKnowledgeRepoRef, workspaceRepoRef } from "../fs/ripgit/repos";
+import { homeKnowledgeRepoRef } from "../fs/ripgit/repos";
 import { visiblePackageScopesForActor } from "./packages";
 
 const TEXT_DECODER = new TextDecoder();
@@ -63,17 +63,6 @@ export function handleRepoList(
   };
 
   add(toSummary(homeKnowledgeRepoRef(identity.process.username), "home", ctx));
-
-  const workspaceRecords = identity.process.uid === 0
-    ? ctx.workspaces.list()
-    : ctx.workspaces.list(identity.process.uid);
-  for (const workspace of workspaceRecords) {
-    add({
-      ...toSummary(workspaceRepoRef(workspace.workspaceId, workspace.ownerUsername), "workspace", ctx),
-      description: workspace.label ?? undefined,
-      updatedAt: workspace.updatedAt,
-    });
-  }
 
   for (const record of ctx.packages.list({ scopes: visiblePackageScopesForActor(identity.process) })) {
     const repo = parseRepoSlug(record.manifest.source.repo);

@@ -571,7 +571,6 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null
     username: user.username,
     home: user.home,
     cwd: user.home,
-    workspaceId: null,
   };
 }
 

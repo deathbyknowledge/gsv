@@ -73,7 +73,6 @@ export function comparePackagesForView(view: PackagesView): (left: PackageRecord
 
 export function formatScope(pkg: PackageRecord): string {
   if (pkg.scope.kind === "user") return "Mine";
-  if (pkg.scope.kind === "workspace") return `Workspace ${pkg.scope.workspaceId ?? "unknown"}`;
   return "System";
 }
 

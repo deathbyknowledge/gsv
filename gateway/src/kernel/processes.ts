@@ -37,7 +37,6 @@ export type ProcessRecord = {
   username: string;
   home: string;
   cwd: string;
-  workspaceId: string | null;
   state: ProcessState;
   label: string | null;
   createdAt: number;
@@ -60,7 +59,6 @@ export class ProcessRegistry {
         username TEXT NOT NULL,
         home TEXT NOT NULL,
         cwd TEXT NOT NULL,
-        workspace_id TEXT,
         mounts TEXT NOT NULL DEFAULT '[]',
         context_files_json TEXT NOT NULL DEFAULT '[]',
         state TEXT NOT NULL DEFAULT 'running',
@@ -71,10 +69,6 @@ export class ProcessRegistry {
 
     try {
       this.sql.exec("ALTER TABLE processes ADD COLUMN cwd TEXT");
-    } catch {}
-
-    try {
-      this.sql.exec("ALTER TABLE processes ADD COLUMN workspace_id TEXT");
     } catch {}
 
     try {
@@ -109,15 +103,14 @@ export class ProcessRegistry {
       profile: AiContextProfile;
       label?: string;
       cwd?: string;
-      workspaceId?: string | null;
       mounts?: ProcessMount[];
       contextFiles?: ProcContextFile[];
     },
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, workspace_id, mounts, context_files_json, state, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
+        (process_id, parent_pid, uid, profile, gid, gids, username, home, cwd, mounts, context_files_json, state, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
@@ -127,7 +120,6 @@ export class ProcessRegistry {
       identity.username,
       identity.home,
       opts.cwd ?? identity.cwd,
-      opts.workspaceId ?? identity.workspaceId,
       JSON.stringify(opts.mounts ?? []),
       JSON.stringify(opts.contextFiles ?? []),
       opts.label ?? null,
@@ -164,9 +156,8 @@ export class ProcessRegistry {
       username: string;
       home: string;
       cwd: string | null;
-      workspace_id: string | null;
     }>(
-      "SELECT uid, gid, gids, username, home, cwd, workspace_id FROM processes WHERE process_id = ?",
+      "SELECT uid, gid, gids, username, home, cwd FROM processes WHERE process_id = ?",
       processId,
     )];
 
@@ -180,7 +171,6 @@ export class ProcessRegistry {
       username: row.username,
       home: row.home,
       cwd: row.cwd ?? row.home,
-      workspaceId: row.workspace_id ?? null,
     };
   }
 
@@ -220,7 +210,7 @@ export class ProcessRegistry {
   updateIdentity(processId: string, identity: ProcessIdentity): void {
     const existing = this.get(processId);
     const nextCwd = existing
-      ? remapCwd(existing.home, identity.home, existing.cwd, existing.workspaceId)
+      ? remapCwd(existing.home, identity.home, existing.cwd)
       : identity.cwd;
 
     this.sql.exec(
@@ -297,7 +287,6 @@ type RowShape = {
   username: string;
   home: string;
   cwd: string | null;
-  workspace_id: string | null;
   mounts: string | null;
   context_files_json: string | null;
   state: string;
@@ -316,7 +305,6 @@ function toRecord(row: RowShape): ProcessRecord {
     username: row.username,
     home: row.home,
     cwd: row.cwd ?? row.home,
-    workspaceId: row.workspace_id ?? null,
     state: row.state as ProcessState,
     label: row.label,
     createdAt: row.created_at,
@@ -365,9 +353,7 @@ function remapCwd(
   previousHome: string,
   nextHome: string,
   cwd: string,
-  workspaceId: string | null,
 ): string {
-  if (workspaceId) return cwd;
   if (cwd === previousHome) return nextHome;
   const prefix = previousHome.endsWith("/") ? previousHome : `${previousHome}/`;
   if (!cwd.startsWith(prefix)) return cwd;
