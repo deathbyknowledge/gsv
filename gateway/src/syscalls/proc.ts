@@ -339,7 +339,7 @@ export type ProcConversationResetResult =
     }
   | { ok: false; error: string };
 
-export type ProcConversationOverflowPolicy = "manual" | "auto-compact" | "fail";
+export type ProcConversationOverflowPolicy = "auto-compact" | "fail";
 
 export type ProcConversationContextPolicy = {
   conversationId: string;

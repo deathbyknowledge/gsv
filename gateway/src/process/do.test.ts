@@ -1688,7 +1688,7 @@ describe("Process DO — mechanical", () => {
         pid,
         policy: {
           conversationId: "thread",
-          overflow: "manual",
+          overflow: "auto-compact",
           compactAtPressure: 0.9,
           keepLast: 80,
           updatedAt: 0,

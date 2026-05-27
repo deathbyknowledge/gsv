@@ -263,16 +263,16 @@ Example policy:
 
 ```ts
 type ConversationContextPolicy = {
-  overflow: "manual" | "auto-compact" | "fail";
+  overflow: "auto-compact" | "fail";
   compactAtPressure: number;
   keepLast: number;
 };
 ```
 
 `proc.conversation.policy.get` and `proc.conversation.policy.set` expose this
-policy. The default is manual; automatic compaction only happens when the
-conversation policy explicitly opts into `auto-compact`, and it runs as part of
-the normal process run preflight before a model call.
+policy. The default is `auto-compact`, and it runs as part of the normal process
+run preflight before a model call. `fail` makes pressure overflow explicit
+instead of summarizing automatically.
 
 Automatic compaction is acceptable when it is policy-driven, recorded, and
 visible. It should not be a secret background subsystem.

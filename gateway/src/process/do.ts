@@ -243,7 +243,7 @@ function isPositiveInteger(value: unknown): value is number {
 }
 
 function isConversationOverflowPolicy(value: unknown): value is ProcConversationOverflowPolicy {
-  return value === "manual" || value === "auto-compact" || value === "fail";
+  return value === "auto-compact" || value === "fail";
 }
 
 function isWatchedSignalPayload(
@@ -447,7 +447,7 @@ function conversationPolicyKey(conversationId: string): string {
 function defaultConversationPolicy(conversationId: string): ProcConversationContextPolicy {
   return {
     conversationId: normalizeConversationId(conversationId),
-    overflow: "manual",
+    overflow: "auto-compact",
     compactAtPressure: 0.9,
     keepLast: 80,
     updatedAt: 0,
@@ -1349,7 +1349,7 @@ export class Process extends Host<Env> {
     const existing = this.getConversationContextPolicy(conversationId);
     const overflow = args.overflow ?? existing.overflow;
     if (!isConversationOverflowPolicy(overflow)) {
-      return { ok: false, error: "proc.conversation.policy.set overflow must be manual, auto-compact, or fail" };
+      return { ok: false, error: "proc.conversation.policy.set overflow must be auto-compact or fail" };
     }
     const compactAtPressure = args.compactAtPressure ?? existing.compactAtPressure;
     if (
@@ -2326,10 +2326,6 @@ export class Process extends Host<Env> {
 
     const policy = this.getConversationContextPolicy(conversationId);
     if (pressure < policy.compactAtPressure) {
-      return "ready";
-    }
-
-    if (policy.overflow === "manual") {
       return "ready";
     }
 

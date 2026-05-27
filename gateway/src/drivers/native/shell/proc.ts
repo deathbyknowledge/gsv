@@ -755,7 +755,7 @@ function procUsage(): string {
     "  proc spawn [--profile PROFILE] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
     "  proc spawn --json JSON",
     "  proc segments [--pid PID] [--conversation id]",
-    "  proc policy [--pid PID] [--conversation id] [--overflow manual|auto-compact|fail] [--compact-at N] [--keep-last N]",
+    "  proc policy [--pid PID] [--conversation id] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",
     "  proc segment <segment-id> [--pid PID] [--conversation id] [--limit N] [--offset N] [--json]",
     "  proc compact [--pid PID] [--conversation id] (--keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",
     "  proc fork (<segment-id> | --message-id ID) [--pid PID] [--conversation id] [--target id] [--title TITLE] [--segment-only]",
