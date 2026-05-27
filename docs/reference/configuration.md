@@ -85,7 +85,7 @@ config/ai/context.d/10-runtime.md
 config/ai/profile/task/context.d/00-role.md
 ```
 
-System and profile context support runtime template variables such as `profile`, `identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`, `workspace`, `devices`, and, `mcpServers`.
+System and profile context support runtime template variables such as `profile`, `identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `devices`, and `mcpServers`.
 
 User-defined worker profiles live under the user's home filesystem:
 

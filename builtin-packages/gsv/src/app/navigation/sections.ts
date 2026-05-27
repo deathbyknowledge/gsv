@@ -81,7 +81,7 @@ export const SECTIONS: GsvSection[] = [
     localItems: [
       {
         label: "Process list",
-        description: "Search by pid, label, profile, owner, or workspace.",
+        description: "Search by pid, label, profile, owner, or path.",
         meta: "Queue",
       },
       {
@@ -285,7 +285,7 @@ export const SECTIONS: GsvSection[] = [
       },
       {
         label: "Runtime behavior",
-        description: "Process limits, shell defaults, automation, server settings, and workspace policy.",
+        description: "Process limits, shell defaults, automation, and server settings.",
         meta: "Config",
       },
       {

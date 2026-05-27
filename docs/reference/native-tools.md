@@ -94,7 +94,6 @@ The `gsv` target runs inside the Gateway. Filesystem syscalls use `GsvFs`; shell
 Important native paths:
 
 - `/home` and the user's home directory contain durable user context.
-- `/workspaces` contains task workspaces and user artifacts.
 - `/etc` contains operator docs and system manuals.
 - `/sys` exposes live kernel configuration, devices, users, and capabilities.
 - `/proc` exposes process inspection surfaces.

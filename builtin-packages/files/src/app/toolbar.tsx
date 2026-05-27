@@ -78,11 +78,11 @@ function renderBreadcrumbButtons(currentPath: string, pathStyle: "absolute" | "r
   }
 
   if (normalized === ".") {
-    return <button type="button" class="files-crumb is-current" title="workspace">workspace</button>;
+    return <button type="button" class="files-crumb is-current" title="cwd">cwd</button>;
   }
 
   nodes.push(
-    <button type="button" class="files-crumb" title="workspace" onClick={() => onNavigate(".")}>workspace</button>,
+    <button type="button" class="files-crumb" title="cwd" onClick={() => onNavigate(".")}>cwd</button>,
   );
   let current = "";
   for (const segment of normalized.split("/").filter(Boolean)) {

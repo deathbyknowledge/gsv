@@ -17,7 +17,7 @@ Use:
 - cron processes for scheduled background work
 - app processes for app-owned runtime tasks
 
-Keep important outputs in files, workspace state, package source, or knowledge. Active process history is runtime state and can be reset or archived.
+Keep important outputs in explicit files, package source, repositories, or knowledge. Active process history is runtime state and can be reset or archived.
 
 ## Inspect and Target Processes
 
@@ -48,7 +48,7 @@ gsv proc spawn --profile personal --prompt "Help me decide what to automate next
 gsv proc spawn --profile research --prompt "Audit this week's notes."
 ```
 
-When spawning from inside GSV, include enough assignment context for the child to start without reconstructing the parent conversation. Put durable handoff state in workspace files when it must outlive the process.
+When spawning from inside GSV, include enough assignment context for the child to start without reconstructing the parent conversation. Put durable handoff state in explicit files, package source, or knowledge when it must outlive the process.
 
 New task processes get explicit package source mounts by default. If a caller supplies mounts, that explicit mount scope is the source boundary.
 
@@ -101,4 +101,4 @@ gsv proc reset --pid <pid>
 gsv proc kill <pid>
 ```
 
-Before reset or kill, make sure useful state has been written to workspace files, package source, home context, or knowledge. Workspaces outlive processes.
+Before reset or kill, make sure useful state has been written to explicit files, package source, home context, or knowledge. Processes can be archived, reset, or replaced; durable artifacts should live outside active conversation history.

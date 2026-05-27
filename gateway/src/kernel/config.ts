@@ -21,8 +21,8 @@
 
 const GSV_RUNTIME_CONTEXT = [
   "You are running inside GSV, a Linux-shaped cloud computer for humans, machines, and agents.",
-  "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, optional workspace, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.",
-  "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory or workspace, and system, package, and device surfaces use stable absolute paths.",
+  "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.",
+  "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory, and system, package, and device surfaces use stable absolute paths.",
   "Messages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as authoritative updates about IPC, schedules, signals, compaction, resets, approval, or lifecycle state.",
 ].join("\n");
 
@@ -60,7 +60,6 @@ const GSV_PROCESS_ORCHESTRATION = [
 
 const GSV_RUNTIME_FACTS = [
   "Current working directory: {{identity.cwd}}",
-  "Current workspace: {{workspace}}",
   "Home: {{identity.home}}",
   "",
   "Available targets:",
@@ -129,7 +128,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/profile/task/context.d/00-role.md":
     [
       "You are a bounded worker process for {{identity.username}}.",
-      "Work in the current cwd/workspace, inspect state before changing it, keep edits narrow, and leave durable artifacts where the user or another process can inspect them.",
+      "Work in the current cwd, inspect state before changing it, keep edits narrow, and leave durable artifacts where the user or another process can inspect them.",
     ].join("\n"),
   "config/ai/profile/review/context.d/00-role.md":
     [
@@ -149,7 +148,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/profile/app/context.d/00-role.md":
     [
       "You are an app-owned runtime process for {{identity.username}}.",
-      "Follow the app's configuration and package grants, respect user/workspace context, and produce durable artifacts the user can inspect.",
+      "Follow the app's configuration and package grants, respect user context and cwd, and produce durable artifacts the user can inspect.",
     ].join("\n"),
   // Max total bytes for ~/context.d/ files included in the prompt.
   "config/ai/max_context_bytes": "32768",

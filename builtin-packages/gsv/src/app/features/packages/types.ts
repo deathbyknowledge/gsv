@@ -21,9 +21,8 @@ export type PackageProfile = {
 export type PackageRecord = {
   packageId: string;
   scope: {
-    kind: "global" | "user" | "workspace";
+    kind: "global" | "user";
     uid?: number;
-    workspaceId?: string;
   };
   name: string;
   description: string;
@@ -133,7 +132,6 @@ export type SetPackagePublicArgs = {
 
 export type StartPackageReviewResult = {
   pid: string;
-  workspaceId: string | null;
   cwd: string | null;
 };
 

@@ -15,13 +15,11 @@ declare global {
 
 export type OpenChatProcessEventDetail = {
   pid: string;
-  workspaceId: string | null;
   cwd: string;
 };
 
 export type TargetChatProcessEventDetail = {
   pid: string;
-  workspaceId: string | null;
   cwd: string;
   windowId: string;
 };

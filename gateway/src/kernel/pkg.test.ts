@@ -93,7 +93,6 @@ function makeRootIdentity() {
       username: "root",
       home: "/root",
       cwd: "/root",
-      workspaceId: null,
     },
   };
 }
@@ -264,7 +263,6 @@ describe("pkg syscalls", () => {
           username: "alice",
           home: "/home/alice",
           cwd: "/home/alice",
-          workspaceId: null,
         },
       },
     } as unknown as KernelContext;
@@ -452,7 +450,6 @@ describe("pkg syscalls", () => {
           username: "alice",
           home: "/home/alice",
           cwd: "/home/alice",
-          workspaceId: null,
         },
       },
     } as unknown as KernelContext;
@@ -618,7 +615,6 @@ describe("pkg syscalls", () => {
           username: "alice",
           home: "/home/alice",
           cwd: "/home/alice",
-          workspaceId: null,
         },
       },
     } as unknown as KernelContext;
@@ -674,7 +670,6 @@ describe("pkg syscalls", () => {
           username: "alice",
           home: "/home/alice",
           cwd: "/home/alice",
-          workspaceId: null,
         },
       },
     } as unknown as KernelContext;

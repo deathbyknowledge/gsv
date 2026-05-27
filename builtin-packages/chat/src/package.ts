@@ -3,7 +3,7 @@ import { definePackage } from "@gsv/package/manifest";
 export default definePackage({
   meta: {
     displayName: "Chat",
-    description: "Conversational workspace with agents.",
+    description: "Conversational process interface for agents.",
     icon: "icon.svg",
     window: {
       width: 1080,
@@ -25,7 +25,7 @@ export default definePackage({
         "proc.conversation.segment.read",
         "proc.conversation.segments",
         "proc.profile.list",
-        "sys.workspace.list",
+        "proc.list",
         "signal.watch",
         "signal.unwatch",
       ],

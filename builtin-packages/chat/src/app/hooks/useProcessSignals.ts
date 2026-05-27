@@ -6,7 +6,7 @@ import type {
   LogRow,
   PendingAssistantState,
   ThreadContext,
-  WorkspaceView,
+  StageView,
 } from "../types";
 import {
   applyAssistantSignal,
@@ -39,7 +39,7 @@ export function useProcessSignals({
   setRows,
   setSuppressNextAbortedComplete,
   suppressNextAbortedComplete,
-  workspaceView,
+  stageView,
 }: {
   activeRef: { current: ThreadContext | null };
   appendSystem(text: string): void;
@@ -57,7 +57,7 @@ export function useProcessSignals({
   setRows: Setter<LogRow[]>;
   setSuppressNextAbortedComplete: Setter<boolean>;
   suppressNextAbortedComplete: boolean;
-  workspaceView: WorkspaceView;
+  stageView: StageView;
 }) {
   useEffect(() => {
     return onAppEvent((signal, payload) => {
@@ -104,7 +104,7 @@ export function useProcessSignals({
         if (event === "conversation.compacted" || event === "conversation.forked" || event === "conversation.auto_compacted") {
           void loadConversations(target.pid);
           void loadHistory(target);
-          if (event === "conversation.compacted" || event === "conversation.auto_compacted" || workspaceView === "archive") {
+          if (event === "conversation.compacted" || event === "conversation.auto_compacted" || stageView === "archive") {
             void loadArchiveSegments(true);
           }
         }
@@ -180,6 +180,6 @@ export function useProcessSignals({
     setRows,
     setSuppressNextAbortedComplete,
     suppressNextAbortedComplete,
-    workspaceView,
+    stageView,
   ]);
 }

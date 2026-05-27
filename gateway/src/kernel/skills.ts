@@ -5,7 +5,6 @@ import {
   packageSourcePathNameMap,
   packageSourcePathName,
   RipgitClient,
-  workspaceRepoRef,
   type RipgitRepoRef,
 } from "../fs";
 import type { KernelContext } from "./context";
@@ -20,7 +19,7 @@ const TEXT_DECODER = new TextDecoder();
 const MAX_SKILL_WALK_DEPTH = 4;
 const MAX_DESCRIPTION_LENGTH = 220;
 
-export type SkillSourceKind = "profile" | "home" | "workspace" | "package";
+export type SkillSourceKind = "profile" | "home" | "package";
 
 export type SkillSource = {
   kind: SkillSourceKind;
@@ -256,20 +255,6 @@ async function collectRipgitRuntimeSkillFiles(
     `${identity.home}/skills.d`,
   ));
 
-  if (identity.workspaceId) {
-    files.push(...await collectRipgitSkillFiles(
-      ripgit,
-      workspaceRepoRef(identity.workspaceId, identity.username),
-      ".gsv/skills.d",
-      {
-        kind: "workspace",
-        label: `workspace:${identity.workspaceId}`,
-        writable: true,
-      },
-      `/workspaces/${identity.workspaceId}/.gsv/skills.d`,
-    ));
-  }
-
   const packageRecords = ctx.packages.list({
     enabled: true,
     scopes: visiblePackageScopesForActor(identity),
@@ -339,17 +324,6 @@ function filesystemSkillRoots(
       writable: true,
     },
   });
-
-  if (identity.workspaceId) {
-    roots.push({
-      rootPath: `/workspaces/${identity.workspaceId}/.gsv/skills.d`,
-      source: {
-        kind: "workspace",
-        label: `workspace:${identity.workspaceId}`,
-        writable: true,
-      },
-    });
-  }
 
   const packageRecords = ctx.packages.list({
     enabled: true,
@@ -636,8 +610,7 @@ function sourceRank(kind: SkillSourceKind): number {
   switch (kind) {
     case "profile": return 0;
     case "home": return 1;
-    case "workspace": return 2;
-    case "package": return 3;
+    case "package": return 2;
   }
 }
 

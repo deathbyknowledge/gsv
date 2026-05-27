@@ -376,7 +376,6 @@ describe("dispatch", () => {
           username: "sam",
           home: "/home/sam",
           cwd: "/home/sam",
-          workspaceId: null,
         },
         capabilities: ["*"],
       },

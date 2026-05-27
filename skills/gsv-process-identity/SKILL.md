@@ -1,6 +1,6 @@
 ---
 name: gsv-process-identity
-description: Guide on what a GSV process is, how to orient around its identity, cwd, workspace, source mounts, and how to interpret runtime events.
+description: Guide on what a GSV process is, how to orient around its identity, cwd, source mounts, and how to interpret runtime events.
 ---
 
 # GSV Process Identity
@@ -15,7 +15,6 @@ A process has:
 - an owner uid/gid and username
 - a profile such as `init`, `task`, `review`, `cron`, `mcp`, `app`, or a package profile
 - a current working directory
-- an optional workspace
 - message history, queued input, pending tool calls, and approval state
 - visible syscall tools and connected device targets
 
@@ -38,14 +37,13 @@ Use `proc list` when you need sibling process state. Use `Read` on `/sys/devices
 ## Important Paths
 
 - `/home/<user>`: durable user home, including `context.d`, `skills.d`, and knowledge.
-- `/workspaces/<id>`: task/project workspace files and `.gsv` continuity state.
 - `/src/packages`: visible installed package source trees mounted for the process.
 - `/proc`: process inspection surfaces.
 - `/sys`: kernel state such as config, users, devices, packages, and capabilities.
 - `/etc`: system manuals and reference material.
 - `/dev`: virtual endpoints.
 
-Keep durable work in files, package source, repositories, or workspace context. Do not rely on active conversation history as the artifact of record.
+Keep durable work in files, package source, repositories, home context, or knowledge. Do not rely on active conversation history as the artifact of record.
 
 ## Runtime Events
 

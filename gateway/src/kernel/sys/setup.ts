@@ -172,7 +172,6 @@ export async function handleSysSetup(
     username,
     home,
     cwd: home,
-    workspaceId: null,
   };
   const rootProcessIdentity: ProcessIdentity = {
     uid: 0,
@@ -181,7 +180,6 @@ export async function handleSysSetup(
     username: "root",
     home: "/root",
     cwd: "/root",
-    workspaceId: null,
   };
   const bootstrapIdentity: UserIdentity = {
     role: "user",
@@ -306,7 +304,6 @@ export async function handleSysSetup(
       username,
       home,
       cwd: home,
-      workspaceId: null,
     };
 
     const rootShadow = auth.getShadowByUsername("root");

@@ -22,32 +22,21 @@ Consolidated plan for identity + auth work:
   - done: unknown DM identity challenge + `sys.link.consume`
   - done by design: no inbound replay after linking (first message is intentionally dropped)
 
-## Next slice (threads + workspaces)
+## Next slice (process cwd + archives)
 
-User-facing unit: `thread`. Durable object: `workspace`. Execution unit: `process`.
-Threads spawn processes. Processes attach to workspaces. Workspaces outlive processes.
+Execution unit: `process`. Durable artifacts are explicit filesystem paths,
+R2 archives, package source, home context, knowledge, or repositories. There is
+no separate workspace primitive.
 
-- [x] Add `WorkspaceStore` (kernel SQLite) with `workspace_id`, `owner_uid`, `label`, `kind`, `state`, timestamps, branch/head metadata
-- [x] Add `workspace_id` and `cwd` to kernel `processes` records
-- [x] Extend process identity/runtime context so relative paths resolve against `cwd`, not always `home`
-- [x] Extend `proc.spawn` with workspace attachment modes: `new`, `inherit`, `attach`, `none`
-- [x] Define internal workspace storage API (read/list/stat/apply/search), backed by ripgit through a dedicated internal route on the `RIPGIT` Service Binding
-- [x] Mount canonical workspace path `/workspaces/{workspaceId}` through `GsvFs`
-- [x] Update native `fs.*` handlers to delegate search by backend (workspace backend vs R2 backend)
-- [ ] Move prompt/path loading off direct raw storage assumptions where workspace-backed paths are involved
-- [x] Realize `.gsv/` as a checkpoint surface, not just scaffolding
-  - [x] flush transcript checkpoints at safe boundaries into `.gsv/processes/{pid}/chat.jsonl`
-  - [x] maintain `.gsv/summary.md`
-  - [x] generate AI-authored checkpoint commit messages for workspace history / semantic metasearch
-  - [x] hide `.gsv/` from normal Files/search unless explicitly requested
-- [x] Chat UI: `New Thread` spawns child process + workspace instead of talking directly to init
-- [x] Files UI: open the current thread's workspace directly
-- [x] Shell UI: open in the current thread's workspace (`cwd = /workspaces/{workspaceId}`)
-- [x] Add a minimal `.gsv/` workspace layout: `workspace.json`, `summary.md`, per-process `chat.jsonl`
-- [x] Add a basic "Recent Threads" / workspace list in the UI
-- [ ] Surface workspace history/search later
-  - add `/hyperspace/.../history`
-  - add diff/recent-changes UX in Files or Chat
+- [x] Keep `cwd` in process identity/runtime context so relative paths resolve
+  against the process current directory, not always `home`
+- [x] Let `proc.spawn` accept an explicit `cwd`
+- [x] Keep active conversation state in Process SQLite
+- [x] Archive reset/kill/compaction history under `/var/sessions/...` in R2
+- [x] Keep prompt context in system/profile/home/process providers
+- [x] Keep skills in profile, home, and visible package `skills.d` sources
+- [ ] Surface richer archive/segment history in Files, Chat, or a process
+  inspector
 
 ## MCP operator / deployment awareness
 
@@ -67,7 +56,7 @@ different prompt.
   - mirror the GSV repo into ripgit on first deploy
   - update the mirror on subsequent deploys
   - mount it read-only at `/src/gsv`
-  - keep mutable repair work in `/workspaces/{id}`
+  - keep mutable repair work in explicit project paths or package source
 - [ ] Add deployment pointer metadata in kernel
   - current source repo
   - deployed commit/ref
@@ -78,7 +67,7 @@ different prompt.
   - deployment pointer provider
 - [ ] Add an explicit `mcp` spawn surface in UI/CLI
   - open a trusted operator process directly
-  - attach it to a debugging workspace when needed
+  - set an explicit debugging cwd when needed
 
 ## Unix identity model (`/etc/passwd`, `/etc/shadow`, `/etc/group`)
 
@@ -265,10 +254,8 @@ types need different awareness, tools, and retrieval behavior.
   - base system prompt provider
   - profile instructions provider
   - home knowledge provider (`CONSTITUTION`, `context.d`)
-  - workspace summary provider
 - [ ] Add retrieval/live-state providers to the pipeline
   - live process history provider
-  - workspace retrieval provider
   - archived/session retrieval provider later
   - home memory retrieval provider
 - [ ] Add hierarchical AI generation config resolution
@@ -278,7 +265,7 @@ types need different awareness, tools, and retrieval behavior.
   - resolution order: explicit process override -> purpose -> profile -> default
 - [x] Promote prompt profile selection from inferred process-id prefix to explicit process metadata
   - `proc.spawn` now takes explicit `profile`
-  - process registry stores profile alongside cwd/workspace metadata
+  - process registry stores profile alongside cwd and mount metadata
   - Process DO receives/stores profile via `proc.setidentity`
 - [ ] Support per-process profile selection at spawn time
   - `task`: normal thread work

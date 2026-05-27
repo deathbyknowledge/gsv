@@ -58,8 +58,7 @@ export type PackageEntrypointKind =
 
 export type PackageInstallScope =
   | { kind: "global" }
-  | { kind: "user"; uid: number }
-  | { kind: "workspace"; workspaceId: string };
+  | { kind: "user"; uid: number };
 
 export type PackageIcon =
   | { kind: "builtin"; id: string }
@@ -75,7 +74,6 @@ export type PackageEgressMode = "none" | "inherit" | "allowlist";
 
 export type PackageBindingProviderKind =
   | "kernel-entrypoint"
-  | "workspace-fs"
   | "package-fs"
   | "service"
   | "custom";
@@ -351,8 +349,6 @@ export function packageScopeKey(scope: PackageInstallScope): string {
       return "global";
     case "user":
       return `user:${scope.uid}`;
-    case "workspace":
-      return `workspace:${scope.workspaceId}`;
   }
 }
 
@@ -645,6 +641,7 @@ export class PackageStore {
 
     this.#ensureColumn("packages", "artifact_hash", "TEXT");
     this.#ensureColumn("packages", "artifact_meta_json", "TEXT");
+    this.sql.exec("DELETE FROM packages WHERE scope_kind = 'workspace'");
 
     this.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_packages_name_runtime ON packages (name, runtime, updated_at DESC)",
@@ -745,7 +742,7 @@ export class PackageStore {
       packageScopeKey(record.scope),
       record.scope.kind,
       record.scope.kind === "user" ? record.scope.uid : null,
-      record.scope.kind === "workspace" ? record.scope.workspaceId : null,
+      null,
       record.manifest.name,
       record.manifest.version,
       record.manifest.runtime,
@@ -956,11 +953,6 @@ function scopeFromRow(row: Pick<RowShape, "scope_kind" | "scope_uid" | "scope_wo
         throw new Error("Invalid package row: user scope missing uid");
       }
       return { kind: "user", uid: row.scope_uid };
-    case "workspace":
-      if (!row.scope_workspace_id) {
-        throw new Error("Invalid package row: workspace scope missing workspace id");
-      }
-      return { kind: "workspace", workspaceId: row.scope_workspace_id };
     default:
       return { kind: "global" };
   }

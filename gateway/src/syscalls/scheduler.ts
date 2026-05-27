@@ -2,7 +2,6 @@ import type { AiContextProfile } from "./ai";
 import type {
   ProcSpawnAssignment,
   ProcSpawnMountSpec,
-  ProcWorkspaceSpec,
 } from "./proc";
 
 export type ScheduleExpression =
@@ -18,7 +17,7 @@ export type ScheduleTarget =
       label?: string;
       prompt: string;
       parentPid?: string;
-      workspace?: ProcWorkspaceSpec;
+      cwd?: string;
       mounts?: ProcSpawnMountSpec[];
       assignment?: ProcSpawnAssignment;
     }

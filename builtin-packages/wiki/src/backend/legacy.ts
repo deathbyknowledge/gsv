@@ -411,7 +411,6 @@ export async function startBuildFromDirectory(kernel: any, args: any): Promise<W
   const spawn = await kernel.request("proc.spawn", {
     profile: "wiki#builder",
     label: `wiki build (${buildDbId})`,
-    workspace: { mode: "none" },
   });
   if (!spawn?.ok) {
     throw new Error(spawn?.error || "Failed to start wiki builder");

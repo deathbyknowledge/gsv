@@ -10,7 +10,6 @@ const IDENTITY: ProcessIdentity = {
   username: "sam",
   home: "/home/sam",
   cwd: "/home/sam",
-  workspaceId: null,
 };
 
 function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackageRecord {

@@ -92,12 +92,7 @@ export type ProcSpawnArgs = {
   label?: string;
   prompt?: string;
   parentPid?: string;
-  workspace?: {
-    mode: "none" | "new" | "inherit" | "attach";
-    label?: string;
-    kind?: "thread" | "app" | "shared";
-    workspaceId?: string;
-  };
+  cwd?: string;
 };
 
 export type ProcSpawnResult =
@@ -106,7 +101,6 @@ export type ProcSpawnResult =
       pid: string;
       label?: string;
       profile: string;
-      workspaceId: string | null;
       cwd: string;
     }
   | { ok: false; error: string };

@@ -98,7 +98,6 @@ function makeContext(): KernelContext {
         username: "root",
         home: "/root",
         cwd: "/root",
-        workspaceId: null,
       },
       capabilities: ["*"],
     },

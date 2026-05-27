@@ -52,7 +52,7 @@ export function BuildPane(props: Props) {
             ) : <div class="wiki-form-placeholder">Build reads from the control plane by default.</div>}
             <label class="wiki-field-span-2">
               <span>Source directory</span>
-              <input value={props.buildSourcePath} onInput={(event) => props.onBuildSourcePathChange((event.currentTarget as HTMLInputElement).value)} placeholder="/workspaces/project/docs" />
+              <input value={props.buildSourcePath} onInput={(event) => props.onBuildSourcePathChange((event.currentTarget as HTMLInputElement).value)} placeholder="/home/alice/projects/docs" />
             </label>
           </div>
         </fieldset>

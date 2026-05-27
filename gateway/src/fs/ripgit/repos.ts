@@ -8,13 +8,3 @@ export function homeKnowledgeRepoRef(
     repo: "home",
   };
 }
-
-export function workspaceRepoRef(
-  workspaceId: string,
-  ownerUsername: string,
-): RipgitRepoRef {
-  return {
-    owner: ownerUsername,
-    repo: workspaceId,
-  };
-}

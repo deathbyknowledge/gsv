@@ -15,7 +15,6 @@ import {
   createHomeKnowledgeBackend,
   createPackageBackend,
   createProcessSourceBackend,
-  createWorkspaceBackend,
   RipgitClient,
   resolveUserPath,
 } from "../../fs";
@@ -140,12 +139,10 @@ function createBash(
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
-      workspaces: ctx.workspaces,
     },
     undefined,
     sourceBackend,
     createHomeKnowledgeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity),
-    createWorkspaceBackend(ctx.env, identity, ctx.workspaces),
     createPackageBackend(identity, ctx.packages),
   );
 

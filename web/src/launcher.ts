@@ -1118,7 +1118,7 @@ export function createLauncher(options: LauncherOptions): LauncherController {
     resetMobileHomeGesture();
   };
 
-  const openChatProcessContext = (normalized: { pid: string; workspaceId: string | null; cwd: string }): void => {
+  const openChatProcessContext = (normalized: { pid: string; cwd: string }): void => {
     const chatWindowId = openWindowForApp("chat");
     if (!chatWindowId) {
       return;
@@ -1131,11 +1131,10 @@ export function createLauncher(options: LauncherOptions): LauncherController {
   };
 
   const onOpenChatProcess = (event: Event): void => {
-    const rawDetail = (event as Event & { detail?: { pid?: unknown; workspaceId?: unknown; cwd?: unknown } | null }).detail ?? null;
+    const rawDetail = (event as Event & { detail?: { pid?: unknown; cwd?: unknown } | null }).detail ?? null;
     const pid = normalizeProcessId(rawDetail?.pid);
     const normalized = normalizeThreadContext({
       pid,
-      workspaceId: rawDetail?.workspaceId ?? null,
       cwd: rawDetail?.cwd,
     });
     if (!normalized) {
@@ -1198,8 +1197,8 @@ export function createLauncher(options: LauncherOptions): LauncherController {
 
     if (data.type === OPEN_CHAT_PROCESS_EVENT) {
       onOpenChatProcess({
-        detail: data.detail as { pid?: unknown; workspaceId?: unknown; cwd?: unknown } | null,
-      } as Event & { detail?: { pid?: unknown; workspaceId?: unknown; cwd?: unknown } | null });
+        detail: data.detail as { pid?: unknown; cwd?: unknown } | null,
+      } as Event & { detail?: { pid?: unknown; cwd?: unknown } | null });
     }
   };
 

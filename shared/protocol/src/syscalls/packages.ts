@@ -34,9 +34,8 @@ export type PkgProfileSummary = {
 export type PkgSummary = {
   packageId: string;
   scope: {
-    kind: "global" | "user" | "workspace";
+    kind: "global" | "user";
     uid?: number;
-    workspaceId?: string;
   };
   name: string;
   description: string;

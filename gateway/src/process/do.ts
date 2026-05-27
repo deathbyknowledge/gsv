@@ -88,13 +88,6 @@ import type {
 } from "@earendil-works/pi-ai";
 import { createGenerationService } from "../inference/service";
 import {
-  buildCheckpointCommitMessageContext,
-  buildCheckpointSummaryContext,
-  buildCheckpointTranscript,
-  normalizeCheckpointCommitMessage,
-  normalizeCheckpointSummary,
-} from "./checkpoint";
-import {
   ProcessStore,
   parseAssistantMessageMeta,
   stringifyAssistantMessageMeta,
@@ -130,7 +123,6 @@ import {
   SYSCALL_TOOL_NAMES,
 } from "../syscalls/constants";
 import { RipgitClient } from "../fs/ripgit/client";
-import { workspaceRepoRef } from "../fs/ripgit/repos";
 import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
@@ -187,9 +179,7 @@ type ArchivedMessageRecord = {
   createdAt?: number;
 };
 
-const CHECKPOINTED_MESSAGE_COUNT_KEY = "checkpointedMessageCount";
 const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
-const TEXT_ENCODER = new TextEncoder();
 const PROCESS_MEDIA_CACHE_LIMIT = 32;
 const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
@@ -228,8 +218,7 @@ function isProcessIdentity(value: unknown): value is ProcessIdentity {
     && Array.isArray(identity.gids)
     && typeof identity.username === "string"
     && typeof identity.home === "string"
-    && typeof identity.cwd === "string"
-    && (identity.workspaceId === null || typeof identity.workspaceId === "string");
+    && typeof identity.cwd === "string";
 }
 
 function isIpcCallEnvelope(value: unknown): value is NonNullable<ProcIpcDeliverArgs["call"]> {
@@ -254,7 +243,7 @@ function isPositiveInteger(value: unknown): value is number {
 }
 
 function isConversationOverflowPolicy(value: unknown): value is ProcConversationOverflowPolicy {
-  return value === "manual" || value === "auto-compact" || value === "fail";
+  return value === "auto-compact" || value === "fail";
 }
 
 function isWatchedSignalPayload(
@@ -458,7 +447,7 @@ function conversationPolicyKey(conversationId: string): string {
 function defaultConversationPolicy(conversationId: string): ProcConversationContextPolicy {
   return {
     conversationId: normalizeConversationId(conversationId),
-    overflow: "manual",
+    overflow: "auto-compact",
     compactAtPressure: 0.9,
     keepLast: 80,
     updatedAt: 0,
@@ -1360,7 +1349,7 @@ export class Process extends Host<Env> {
     const existing = this.getConversationContextPolicy(conversationId);
     const overflow = args.overflow ?? existing.overflow;
     if (!isConversationOverflowPolicy(overflow)) {
-      return { ok: false, error: "proc.conversation.policy.set overflow must be manual, auto-compact, or fail" };
+      return { ok: false, error: "proc.conversation.policy.set overflow must be auto-compact or fail" };
     }
     const compactAtPressure = args.compactAtPressure ?? existing.compactAtPressure;
     if (
@@ -1431,12 +1420,14 @@ export class Process extends Host<Env> {
 
   private async handleConversationCompact(
     args: ProcConversationCompactArgs,
-    options: { allowActive?: boolean; reason?: string } = {},
+    options: { allowActive?: boolean; reason?: string; activeRunId?: string } = {},
   ): Promise<ProcConversationCompactResult> {
     const pid = this.pid;
     const conversationId = normalizeConversationId(args.conversationId);
     const explicitSummary = normalizeOptionalString(args.summary);
     const generateSummary = args.generateSummary === true;
+    const activeRunStopped = () =>
+      options.activeRunId !== undefined && this.currentRun?.runId !== options.activeRunId;
     if (!explicitSummary && !generateSummary) {
       return { ok: false, error: "proc.conversation.compact requires summary or generateSummary" };
     }
@@ -1469,6 +1460,9 @@ export class Process extends Host<Env> {
     if (selected.length === 0) {
       return { ok: false, error: "No conversation messages selected for compaction" };
     }
+    if (activeRunStopped()) {
+      return { ok: false, error: "Run stopped before compaction completed" };
+    }
     let summary = explicitSummary;
     if (!summary) {
       try {
@@ -1477,6 +1471,9 @@ export class Process extends Host<Env> {
         const message = error instanceof Error ? error.message : String(error);
         return { ok: false, error: `Failed to generate compaction summary: ${message}` };
       }
+    }
+    if (activeRunStopped()) {
+      return { ok: false, error: "Run stopped before compaction completed" };
     }
 
     const fromMessageId = selected[0].id;
@@ -1492,6 +1489,9 @@ export class Process extends Host<Env> {
       `${segmentId}.jsonl.gz`,
     ].join("/");
     await this.archiveMessageRecords(archiveKey, selected);
+    if (activeRunStopped()) {
+      return { ok: false, error: "Run stopped before compaction completed" };
+    }
 
     const archivedTo = `/${archiveKey}`;
     const summaryMessageId = this.store.compactConversationPrefix({
@@ -1883,14 +1883,12 @@ export class Process extends Host<Env> {
   private async handleProcReset(): Promise<ProcResetResult> {
     const pid = this.pid;
     const totalMessages = this.store.totalMessageCount();
-    await this.checkpointWorkspace("proc.reset");
 
     const archive = totalMessages > 0
       ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
       : emptyProcessArchive();
 
     this.resetExecutionState();
-    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
     this.store.resetAllConversations();
 
     await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
@@ -1911,14 +1909,12 @@ export class Process extends Host<Env> {
     const pid = this.pid;
     const shouldArchive = args.archive !== false;
     const totalMessages = this.store.totalMessageCount();
-    await this.checkpointWorkspace("proc.kill");
 
     const archive = shouldArchive && totalMessages > 0
       ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
       : emptyProcessArchive();
 
     this.resetExecutionState();
-    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, "0");
 
     // A killed process should restart with a clean conversation and no queued work.
     this.store.resetAllConversations();
@@ -2344,10 +2340,6 @@ export class Process extends Host<Env> {
       return "ready";
     }
 
-    if (policy.overflow === "manual") {
-      return "ready";
-    }
-
     if (policy.overflow === "fail") {
       const message = [
         "Context limit policy stopped this run.",
@@ -2401,8 +2393,12 @@ export class Process extends Host<Env> {
       {
         allowActive: true,
         reason: "auto-compact",
+        activeRunId: runId,
       },
     );
+    if (this.handleRunStopped(runId)) {
+      return "stopped";
+    }
     if (!result.ok) {
       const message = `Auto-compaction failed before model call: ${result.error}`;
       this.store.appendMessage("system", message, { conversationId });
@@ -2417,6 +2413,9 @@ export class Process extends Host<Env> {
       return "stopped";
     }
 
+    if (this.handleRunStopped(runId)) {
+      return "stopped";
+    }
     await this.emitProcessLifecycle({
       event: "conversation.auto_compacted",
       pid: this.pid,
@@ -2497,77 +2496,6 @@ export class Process extends Host<Env> {
     } as SignalFrame);
   }
 
-  private async checkpointWorkspace(reason: string): Promise<void> {
-    const workspaceId = this.identity.workspaceId;
-    if (!workspaceId || !this.ripgit) {
-      return;
-    }
-
-    const messages = this.store.allMessagesForArchive();
-    if (messages.length === 0) {
-      return;
-    }
-
-    const checkpointedCount = Number.parseInt(
-      this.store.getValue(CHECKPOINTED_MESSAGE_COUNT_KEY) ?? "0",
-      10,
-    );
-    if (checkpointedCount === messages.length) {
-      return;
-    }
-
-    const repo = workspaceRepoRef(workspaceId, this.identity.username);
-    const existingSummary = await this.readWorkspaceSummary(repo);
-    const config = await this.resolveCheckpointConfig();
-    const transcript = buildCheckpointTranscript(messages);
-
-    const summary = await this.generateCheckpointSummary(
-      config,
-      existingSummary,
-      messages,
-    );
-    const commitMessage = await this.generateCheckpointCommitMessage(
-      config,
-      summary,
-      messages,
-      reason,
-    );
-
-    await this.ripgit.apply(
-      repo,
-      this.identity.username,
-      `${this.identity.username}@gsv.internal`,
-      commitMessage,
-      [
-        {
-          type: "put",
-          path: ".gsv/summary.md",
-          contentBytes: Array.from(TEXT_ENCODER.encode(summary)),
-        },
-        {
-          type: "put",
-          path: `.gsv/processes/${this.pid}/chat.jsonl`,
-          contentBytes: Array.from(TEXT_ENCODER.encode(transcript)),
-        },
-      ],
-    );
-
-    this.store.setValue(CHECKPOINTED_MESSAGE_COUNT_KEY, String(messages.length));
-  }
-
-  private async readWorkspaceSummary(
-    repo: ReturnType<typeof workspaceRepoRef>,
-  ): Promise<string> {
-    if (!this.ripgit) {
-      return "";
-    }
-    const result = await this.ripgit.readPath(repo, ".gsv/summary.md");
-    if (result.kind !== "file") {
-      return "";
-    }
-    return new TextDecoder().decode(result.bytes);
-  }
-
   private async resolveCheckpointConfig(): Promise<AiConfigResult | null> {
     if (this.currentRun?.config) {
       return this.currentRun.config;
@@ -2577,59 +2505,9 @@ export class Process extends Host<Env> {
         profile: this.profile,
       });
     } catch (error) {
-      console.warn("[Process] Failed to resolve AI config for checkpointing:", error);
+      console.warn("[Process] Failed to resolve AI config for compaction:", error);
       return null;
     }
-  }
-
-  private async generateCheckpointSummary(
-    config: AiConfigResult | null,
-    existingSummary: string,
-    messages: MessageRecord[],
-  ): Promise<string> {
-    if (!config) {
-      return normalizeCheckpointSummary(existingSummary);
-    }
-    try {
-      const generated = await this.generation.generateText({
-        purpose: "checkpoint.summary",
-        config,
-        context: buildCheckpointSummaryContext(existingSummary, messages),
-        sessionAffinityKey: this.pid,
-      });
-      return normalizeCheckpointSummary(generated);
-    } catch (error) {
-      console.warn("[Process] Failed to generate checkpoint summary:", error);
-      return normalizeCheckpointSummary(existingSummary);
-    }
-  }
-
-  private async generateCheckpointCommitMessage(
-    config: AiConfigResult | null,
-    summary: string,
-    messages: MessageRecord[],
-    reason: string,
-  ): Promise<string> {
-    if (!config) {
-      return this.defaultCheckpointCommitMessage(reason);
-    }
-    try {
-      const generated = await this.generation.generateText({
-        purpose: "checkpoint.commit_message",
-        config,
-        context: buildCheckpointCommitMessageContext(summary, messages, reason),
-        sessionAffinityKey: this.pid,
-      });
-      return normalizeCheckpointCommitMessage(generated);
-    } catch (error) {
-      console.warn("[Process] Failed to generate checkpoint commit message:", error);
-      return this.defaultCheckpointCommitMessage(reason);
-    }
-  }
-
-  private defaultCheckpointCommitMessage(reason: string): string {
-    const normalizedReason = reason.replace(/[^a-z0-9]+/gi, " ").trim().toLowerCase();
-    return normalizedReason ? `checkpoint ${normalizedReason}` : "checkpoint thread state";
   }
 
   private async archiveConversationMessages(

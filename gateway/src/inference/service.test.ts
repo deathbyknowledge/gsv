@@ -32,20 +32,9 @@ describe("resolveGenerationOptions", () => {
     expect(result.maxTokens).toBe(4096);
   });
 
-  it("disables reasoning and constrains tokens for checkpoint commit messages", () => {
+  it("disables reasoning and constrains tokens for compaction summaries", () => {
     const result = resolveGenerationOptions({
-      purpose: "checkpoint.commit_message",
-      config: CONFIG,
-      context: CONTEXT,
-    });
-
-    expect(result.reasoning).toBeUndefined();
-    expect(result.maxTokens).toBe(128);
-  });
-
-  it("disables reasoning and constrains tokens for checkpoint summaries", () => {
-    const result = resolveGenerationOptions({
-      purpose: "checkpoint.summary",
+      purpose: "compaction.summary",
       config: CONFIG,
       context: CONTEXT,
     });

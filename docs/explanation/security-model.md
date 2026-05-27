@@ -17,7 +17,7 @@ can change Worker code, Durable Object state, Worker secrets, R2 buckets, or
 bound services can effectively control the GSV instance.
 
 The Kernel Durable Object is the trusted control plane. It owns users, groups,
-tokens, capabilities, config, devices, process registry, workspaces, package
+tokens, capabilities, config, devices, process registry, package
 records, adapter links, routing tables, and public package state in Kernel
 SQLite.
 
@@ -78,13 +78,13 @@ Default groups are intentionally OS-like:
 - `root` (`gid 0`) receives `*`.
 - `users` (`gid 100`) receives broad user capabilities, including filesystem,
   shell, process, package, repository, adapter status/connect, OAuth, token,
-  workspace, and config syscalls.
+  and config syscalls.
 - `drivers` (`gid 101`) receives `fs.*` and `shell.*` for device execution.
 - `services` (`gid 102`) receives `adapter.*`.
 
 Capabilities are necessary but not always sufficient. Handlers also enforce
 object ownership. Non-root users can access only their own processes and
-workspaces. Non-root config reads include their own `users/{uid}/...` keys and
+owned filesystem paths. Non-root config reads include their own `users/{uid}/...` keys and
 non-sensitive `config/...` keys; sensitive key names such as `api_key`,
 `secret`, `token`, and `password` are hidden. Non-root config writes are limited
 to user-overridable `users/{uid}/ai/...` keys.
@@ -92,8 +92,8 @@ to user-overridable `users/{uid}/ai/...` keys.
 ## Files and Shell
 
 Native GSV file access uses a virtual filesystem. `/sys`, `/proc`, `/dev`, and
-`/etc` expose Kernel state; `/workspaces/{workspaceId}` is workspace-backed;
-ordinary paths are stored in R2 with Unix-like uid/gid/mode metadata. Root can
+`/etc` expose Kernel state; ordinary paths and process archives are stored in R2
+with Unix-like uid/gid/mode metadata. Root can
 read/write broadly. Non-root reads and writes are checked against owner, group,
 and other mode bits where the backend supports them.
 

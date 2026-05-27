@@ -18,7 +18,6 @@ const IDENTITY: ProcessIdentity = {
   username: "sam",
   home: "/home/sam",
   cwd: "/home/sam",
-  workspaceId: null,
 };
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
@@ -72,10 +71,7 @@ describe("proc handlers", () => {
         },
       },
       procs: {
-        get: vi.fn(() => ({ uid: IDENTITY.uid, workspaceId: null })),
-      },
-      workspaces: {
-        touch: vi.fn(),
+        get: vi.fn(() => ({ uid: IDENTITY.uid })),
       },
     } as unknown as KernelContext;
     const spoofedOrigin = {
@@ -148,10 +144,6 @@ describe("proc handlers", () => {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
-      workspaces: {
-        get: vi.fn(),
-        touch: vi.fn(),
-      },
       packages: {
         resolve: vi.fn((packageId: string) => {
           if (packageId === "pkg-a") return pkgA;
@@ -208,10 +200,6 @@ describe("proc handlers", () => {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
-      workspaces: {
-        get: vi.fn(),
-        touch: vi.fn(),
-      },
       packages: {
         resolve: vi.fn((packageId: string) => {
           if (packageId === "pkg-a") return pkgA;
@@ -259,10 +247,6 @@ describe("proc handlers", () => {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
-      workspaces: {
-        get: vi.fn(),
-        touch: vi.fn(),
-      },
       packages: {
         resolve: vi.fn(() => null),
         list: vi.fn(() => []),
@@ -290,10 +274,6 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
-      },
-      workspaces: {
-        get: vi.fn(),
-        touch: vi.fn(),
       },
       packages: {
         resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
@@ -343,10 +323,6 @@ describe("proc handlers", () => {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
-      workspaces: {
-        get: vi.fn(),
-        touch: vi.fn(),
-      },
       packages: {
         resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
         list: vi.fn(() => [pkg]),
@@ -395,10 +371,6 @@ describe("proc handlers", () => {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
-      workspaces: {
-        get: vi.fn(),
-        touch: vi.fn(),
-      },
       packages: {
         resolve: vi.fn((packageId: string) => packageId === "pkg-a" ? pkg : null),
         list: vi.fn(() => [pkg]),
@@ -442,13 +414,10 @@ function makeIpcCallContext() {
     identity: { process: IDENTITY },
     procs: {
       get: vi.fn((pid: string) => {
-        if (pid === "source-process") return { uid: IDENTITY.uid, workspaceId: null };
-        if (pid === "target-process") return { uid: IDENTITY.uid, workspaceId: null };
+        if (pid === "source-process") return { uid: IDENTITY.uid };
+        if (pid === "target-process") return { uid: IDENTITY.uid };
         return undefined;
       }),
-    },
-    workspaces: {
-      touch: vi.fn(),
     },
     ipcCalls,
     scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),

@@ -93,8 +93,8 @@ function createMockSql() {
         username,
         home,
         cwd,
-        workspace_id,
         mounts,
+        context_files_json,
         label,
         created_at,
       ] = bindings as [
@@ -107,7 +107,7 @@ function createMockSql() {
         string,
         string,
         string,
-        string | null,
+        string,
         string,
         string | null,
         number,
@@ -123,8 +123,8 @@ function createMockSql() {
         username,
         home,
         cwd,
-        workspace_id,
         mounts,
+        context_files_json,
         state: "running",
         label,
         created_at,
@@ -132,7 +132,7 @@ function createMockSql() {
       return rows([] as T[]);
     }
 
-    if (q.startsWith("SELECT uid, gid, gids, username, home, cwd, workspace_id FROM processes WHERE process_id = ?")) {
+    if (q.startsWith("SELECT uid, gid, gids, username, home, cwd FROM processes WHERE process_id = ?")) {
       const [processId] = bindings as [string];
       const row = table.get(processId);
       return rows((row ? [row] : []) as T[]);
@@ -206,19 +206,17 @@ describe("ProcessRegistry", () => {
       username: "sam",
       home,
       cwd: home,
-      workspaceId: null,
     };
   }
 
-  it("stores cwd and workspace metadata on spawn", () => {
+  it("stores cwd on spawn", () => {
     const sql = createMockSql();
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
     registry.init();
 
     registry.spawn("task:1", makeIdentity("/home/sam"), {
       profile: "task",
-      cwd: "/workspaces/ws_demo",
-      workspaceId: "ws_demo",
+      cwd: "/srv/work/demo",
       label: "demo",
     });
 
@@ -228,8 +226,7 @@ describe("ProcessRegistry", () => {
       gids: [1000, 100],
       username: "sam",
       home: "/home/sam",
-      cwd: "/workspaces/ws_demo",
-      workspaceId: "ws_demo",
+      cwd: "/srv/work/demo",
     });
   });
 
@@ -250,21 +247,19 @@ describe("ProcessRegistry", () => {
       username: "sam",
       home: "/srv/sam",
       cwd: "/srv/sam",
-      workspaceId: null,
     });
 
     expect(registry.get("task:2")?.cwd).toBe("/srv/sam/projects/demo");
   });
 
-  it("preserves workspace cwd when auth identity changes", () => {
+  it("preserves non-home cwd when auth identity changes", () => {
     const sql = createMockSql();
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
     registry.init();
 
     registry.spawn("task:3", makeIdentity("/home/sam"), {
       profile: "task",
-      cwd: "/workspaces/ws_shared",
-      workspaceId: "ws_shared",
+      cwd: "/srv/work/demo",
     });
 
     registry.updateIdentity("task:3", {
@@ -274,13 +269,11 @@ describe("ProcessRegistry", () => {
       username: "sam",
       home: "/srv/sam",
       cwd: "/srv/sam",
-      workspaceId: null,
     });
 
     const record = registry.get("task:3");
     expect(record?.profile).toBe("task");
-    expect(record?.workspaceId).toBe("ws_shared");
-    expect(record?.cwd).toBe("/workspaces/ws_shared");
+    expect(record?.cwd).toBe("/srv/work/demo");
   });
 
   it("stores and returns process mounts on spawn", () => {

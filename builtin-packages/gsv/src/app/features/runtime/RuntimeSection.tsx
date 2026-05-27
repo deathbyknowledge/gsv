@@ -50,7 +50,7 @@ export function RuntimeSection({ backend }: { backend: GsvBackend }) {
               name="runtime-search"
               type="search"
               value={runtime.query}
-              placeholder="pid, label, profile, workspace"
+              placeholder="pid, label, profile, path"
               onInput={(event) => runtime.setQuery(event.currentTarget.value)}
             />
           </label>
@@ -99,14 +99,14 @@ function ProcessRow({
   const title = processTitle(process);
   const state = processState(process);
   const tone = processStateTone(process);
-  const workspace = String(process.workspaceId ?? "").trim() || "No workspace";
+  const cwd = String(process.cwd ?? "").trim() || "No cwd";
 
   return (
     <button class={`gsv-runtime-row${selected ? " is-selected" : ""}`} type="button" onClick={onSelect}>
       <span class={`gsv-mark is-${tone}`} aria-hidden="true"></span>
       <span class="gsv-row-copy">
         <strong>{title}</strong>
-        <span>{state} / {workspace}</span>
+        <span>{state} / {cwd}</span>
       </span>
       <span class="gsv-row-meta">{String(process.profile ?? "profile")}</span>
     </button>
@@ -129,7 +129,7 @@ function ProcessDetail({
       <section class="gsv-runtime-detail">
         <div class="gsv-empty-state">
           <h3>No process selected</h3>
-          <p>Select a process to inspect its workspace, profile, and actions.</p>
+          <p>Select a process to inspect its profile, cwd, and actions.</p>
         </div>
       </section>
     );
@@ -138,7 +138,6 @@ function ProcessDetail({
   const pid = String(process.pid ?? "").trim();
   const title = processTitle(process);
   const cwd = String(process.cwd ?? "").trim();
-  const workspaceId = String(process.workspaceId ?? "").trim();
   const killPending = killingPid === pid;
 
   return (
@@ -170,11 +169,7 @@ function ProcessDetail({
           <dd>{process.parentPid == null ? "none" : String(process.parentPid)}</dd>
         </div>
         <div>
-          <dt>Workspace</dt>
-          <dd>{workspaceId || "none"}</dd>
-        </div>
-        <div>
-          <dt>Path</dt>
+          <dt>Cwd</dt>
           <dd><code>{cwd || "none"}</code></dd>
         </div>
         <div>
@@ -191,7 +186,7 @@ function ProcessDetail({
           disabled={!canOpenChat(process)}
           onClick={() => openApp({
             target: "chat",
-            payload: { pid, cwd, workspaceId: workspaceId || null },
+            payload: { pid, cwd },
           })}
         />
         <ActionButton

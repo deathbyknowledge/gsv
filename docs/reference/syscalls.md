@@ -43,7 +43,6 @@ type ProcessIdentity = {
   username: string;
   home: string;
   cwd: string;
-  workspaceId: string | null;
 };
 
 type MediaInput = {
@@ -71,7 +70,7 @@ type PkgEntrypointSummary = {
 
 type PkgSummary = {
   packageId: string;
-  scope: { kind: "global" | "user" | "workspace"; uid?: number; workspaceId?: string };
+  scope: { kind: "global" | "user"; uid?: number };
   name: string;
   description: string;
   version: string;
@@ -247,7 +246,7 @@ type NotificationRecord = {
 
 ## Filesystem: `fs.*`
 
-Native `gsv` filesystem paths are Linux-like virtual paths such as `/home`, `/workspaces`, `/etc`, `/sys`, `/proc`, and `/dev`. Device targets use the target device's filesystem semantics.
+Native `gsv` filesystem paths are Linux-like virtual paths such as `/home`, `/etc`, `/sys`, `/proc`, `/src`, `/usr`, and `/dev`. Device targets use the target device's filesystem semantics.
 
 Runtime behavior:
 
@@ -344,7 +343,7 @@ Write stdin to a running command:
 CodeMode wrappers expose the same result shape:
 
 ```ts
-let res = await shell("npm run test", { cwd: "/workspace/gsv/gateway" });
+let res = await shell("npm run test", { cwd: "/home/alice/gsv/gateway" });
 let output = res.output;
 
 while (res.status === "running") {
@@ -482,36 +481,30 @@ Runtime behavior:
 |---|---|---|
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
-| `proc.spawn` | `handleProcSpawn` | Validates the AI profile, resolves package profiles, materializes workspace and mounts, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. `init` is singleton; other profiles get UUID pids. |
-| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. Stores media and trusted `InteractionOrigin` metadata, appends a user message, starts a run if idle, or queues the message if a run is active. The process runtime renders `[From: ...]` origin markers into model context only at source boundaries, without rewriting stored message content. Touches workspace activity before forwarding. Public callers do not supply trusted origin; the Kernel derives it. |
+| `proc.spawn` | `handleProcSpawn` | Validates the AI profile, resolves package profiles, materializes package source mounts, registers the process with a cwd, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. `init` is singleton; other profiles get UUID pids. |
+| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. Stores media and trusted `InteractionOrigin` metadata, appends a user message, starts a run if idle, or queues the message if a run is active. The process runtime renders `[From: ...]` origin markers into model context only at source boundaries, without rewriting stored message content. Public callers do not supply trusted origin; the Kernel derives it. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Logical cancellation of the active run. Clears pending HIL and current run, emits `chat.complete` with `aborted: true`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
-| `proc.kill` | Process DO | Checkpoints workspace, optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. Does not remove the kernel process registry entry in normal syscall use. |
+| `proc.kill` | Process DO | Optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. Does not remove the kernel process registry entry in normal syscall use. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, origin metadata, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
 | `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
 | `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
 | `proc.conversation.get` | Process DO | Returns one conversation record for `conversationId` or `default`; unknown conversations return `conversation: null`. |
 | `proc.conversation.close` | Process DO | Marks a conversation closed without deleting history. Future `proc.send` calls to that conversation fail until it is reopened. |
 | `proc.conversation.reset` | Process DO | Archives the selected conversation by default, clears its active messages and queued/runtime state, increments its generation, and reopens it. Other conversations are left intact. |
-| `proc.conversation.policy.get` | Process DO | Returns the visible context-overflow policy for `conversationId` or `default`. Default policy is manual compaction at 90% pressure with 80 live messages retained if auto-compaction is later enabled. |
-| `proc.conversation.policy.set` | Process DO | Sets the visible context-overflow policy. Supported `overflow` values are `manual`, `auto-compact`, and `fail`; automatic execution happens only during the normal process run preflight. |
+| `proc.conversation.policy.get` | Process DO | Returns the visible context-overflow policy for `conversationId` or `default`. Default policy is auto-compaction at 90% pressure with 80 live messages retained. |
+| `proc.conversation.policy.set` | Process DO | Sets the visible context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; automatic execution happens only during the normal process run preflight. |
 | `proc.conversation.compact` | Process DO | Explicitly archives an old prefix of a conversation, inserts a visible system summary marker at the prefix boundary, and records a `compaction` segment. Requires either caller-provided `summary` or `generateSummary: true`, plus exactly one selector: `keepLast` or `throughMessageId`. |
 | `proc.conversation.fork` | Process DO | Branches a live conversation through `throughMessageId`, or restores a compacted `segmentId` into a new process-local conversation. Segment restore includes the live suffix that existed at the compaction boundary unless `includeLiveSuffix: false`. |
 | `proc.conversation.segment.read` | Process DO | Reads paged messages from a compacted segment archive without restoring those messages into the live conversation. |
 | `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
-| `proc.reset` | Process DO | Checkpoints workspace, archives every non-empty conversation under `/var/sessions/<username>/<pid>/<archiveId>/`, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
+| `proc.reset` | Process DO | Archives every non-empty conversation under `/var/sessions/<username>/<pid>/<archiveId>/`, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
 | `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, profile, and assignment context; `assignment.autoStart` can create a run immediately. |
 
 ```ts
-type ProcWorkspaceSpec =
-  | { mode: "none" }
-  | { mode: "new"; label?: string; kind?: "thread" | "app" | "shared" }
-  | { mode: "inherit" }
-  | { mode: "attach"; workspaceId: string };
-
 type ProcContextFile = { name: string; text: string };
 type ProcSpawnAssignment = { contextFiles: ProcContextFile[]; autoStart?: boolean };
 type ProcSpawnMountSpec =
@@ -603,7 +596,7 @@ type ProcIpcCallResult =
 type ProcessSyscalls = {
   "proc.list": {
     args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; profile: AiContextProfile; parentPid: string | null; state: string; label: string | null; createdAt: number; workspaceId: string | null; cwd: string }> };
+    result: { processes: Array<{ pid: string; uid: number; profile: AiContextProfile; parentPid: string | null; state: string; label: string | null; createdAt: number; cwd: string }> };
   };
 
   "proc.profile.list": {
@@ -612,8 +605,8 @@ type ProcessSyscalls = {
   };
 
   "proc.spawn": {
-    args: { profile: AiContextProfile; label?: string; prompt?: string; assignment?: ProcSpawnAssignment; parentPid?: string; workspace?: ProcWorkspaceSpec; mounts?: ProcSpawnMountSpec[] };
-    result: { ok: true; pid: string; label?: string; profile: AiContextProfile; workspaceId: string | null; cwd: string } | OperationError;
+    args: { profile: AiContextProfile; label?: string; prompt?: string; assignment?: ProcSpawnAssignment; parentPid?: string; cwd?: string; mounts?: ProcSpawnMountSpec[] };
+    result: { ok: true; pid: string; label?: string; profile: AiContextProfile; cwd: string } | OperationError;
   };
 
   "proc.send": {
@@ -687,7 +680,7 @@ type ProcessSyscalls = {
   };
 
   "proc.conversation.policy.set": {
-    args: { pid?: string; conversationId?: string; overflow?: "manual" | "auto-compact" | "fail"; compactAtPressure?: number; keepLast?: number };
+    args: { pid?: string; conversationId?: string; overflow?: "auto-compact" | "fail"; compactAtPressure?: number; keepLast?: number };
     result: { ok: true; pid: string; policy: ProcConversationContextPolicy } | OperationError;
   };
 
@@ -820,7 +813,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `repo.list` | `handleRepoList` | Lists repositories visible to the caller. Results include home, workspace, visible package source, and registered user repos. Optional `owner` filters by repo owner. |
+| `repo.list` | `handleRepoList` | Lists repositories visible to the caller. Results include home, visible package source, and registered user repos. Optional `owner` filters by repo owner. |
 | `repo.create` | `handleRepoCreate` | Creates a repository by writing an empty initial commit to `ref`, default `main`. Existing refs return `created: false`. Only root, wildcard, or the username owner can write. |
 | `repo.refs` | `handleRepoRefs` | Reads heads and tags. Allows owned repos, public repos, and visible package source repos. |
 | `repo.read` | `handleRepoRead` | Reads a tree or file at `repo`, `ref`, and `path`. Defaults `ref` to `main` and `path` to root. Binary files return `content: null`. |
@@ -851,7 +844,7 @@ type RepoDiffFile = {
 type RepoSyscalls = {
   "repo.list": {
     args: { owner?: string };
-    result: { repos: Array<{ repo: string; owner: string; name: string; kind: "home" | "workspace" | "package" | "user"; writable: boolean; public: boolean; description?: string; updatedAt?: number }> };
+    result: { repos: Array<{ repo: string; owner: string; name: string; kind: "home" | "package" | "user"; writable: boolean; public: boolean; description?: string; updatedAt?: number }> };
   };
 
   "repo.create": {
@@ -905,7 +898,7 @@ type RepoSyscalls = {
 
 ## System: `sys.*`
 
-`sys.*` covers setup, configuration, devices, workspaces, tokens, and account links.
+`sys.*` covers setup, configuration, devices, tokens, and account links.
 
 Runtime behavior:
 
@@ -920,7 +913,6 @@ Runtime behavior:
 | `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
 | `sys.device.get` | `handleSysDeviceGet` | Reads one device descriptor. Missing or inaccessible devices return `device: null` rather than a permission error. |
 | `sys.device.update` | `handleSysDeviceUpdate` | Updates owner-managed device metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible devices return `device: null`. |
-| `sys.workspace.list` | `handleSysWorkspaceList` | Lists workspaces for caller uid by default. Root may request any uid; non-root may only request self. Adds active process summary and process count. |
 | `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
 | `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
 | `sys.oauth.forget` | `handleSysOAuthForget` | Deletes a stored OAuth account. Non-root can delete only own accounts. Missing or inaccessible accounts return `forgotten: false`. |
@@ -994,11 +986,6 @@ type SystemSyscalls = {
   "sys.device.update": {
     args: { deviceId: string; description: string };
     result: { device: ({ deviceId: string; ownerUid: number; description: string; platform: string; version: string; online: boolean; lastSeenAt: number; implements: string[]; firstSeenAt: number; connectedAt: number | null; disconnectedAt: number | null }) | null };
-  };
-
-  "sys.workspace.list": {
-    args: { uid?: number; kind?: "thread" | "app" | "shared"; state?: "active" | "archived"; limit?: number };
-    result: { workspaces: Array<{ workspaceId: string; ownerUid: number; label: string | null; kind: "thread" | "app" | "shared"; state: "active" | "archived"; createdAt: number; updatedAt: number; defaultBranch: string; headCommit: string | null; activeProcess: { pid: string; label: string | null; cwd: string; createdAt: number } | null; processCount: number }> };
   };
 
   "sys.oauth.start": {
@@ -1103,7 +1090,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "workspace" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number };
+    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number; generationTimeoutMs: number };
   };
 
   "ai.transcription.create": {
@@ -1246,7 +1233,7 @@ type ScheduleExpression =
   | { kind: "cron"; expr: string; timezone: string };
 
 type ScheduleTarget =
-  | { kind: "process.spawn"; profile?: string; label?: string; prompt: string; parentPid?: string; workspace?: unknown; mounts?: unknown[]; assignment?: unknown }
+  | { kind: "process.spawn"; profile?: string; label?: string; prompt: string; parentPid?: string; cwd?: string; mounts?: unknown[]; assignment?: unknown }
   | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown> };
 
 type ScheduleRecord = {

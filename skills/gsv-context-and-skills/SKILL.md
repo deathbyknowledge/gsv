@@ -11,9 +11,8 @@ GSV assembles process context from explicit, inspectable sources:
 
 1. Profile context from `config/ai/profile/{profile}/context.d/*.md` or a user profile under `~/profiles.d/{profile}/context.d/*.md`.
 2. Home context from `~/context.d/*.md`.
-3. Workspace context from `/workspaces/{workspaceId}/.gsv/context.d/*.md`, when the process has a workspace.
-4. A compact index of available skills from layered `skills.d` directories.
-5. Process context supplied by the current assignment or runtime.
+3. A compact index of available skills from layered `skills.d` directories.
+4. Process context supplied by the current assignment or runtime.
 
 The skill index contains ids and descriptions only. It does not include full bodies or long source paths.
 
@@ -38,12 +37,10 @@ Read `skills show <skill>` before relying on a workflow. Use `skills files` and 
 - `config/ai/profile/{profile}/context.d/*.md`: short operator-managed role and runtime guidance.
 - `~/profiles.d/{profile}/context.d/*.md`: user-authored worker profile specialization, available through spawn and schedules.
 - `~/context.d/*.md`: concise user-global standing context useful to most processes.
-- `/workspaces/{id}/.gsv/context.d/*.md`: task-local continuity, decisions, open loops, and handoff state.
-- `/workspaces/{id}/.gsv/summary.md`: fallback workspace summary when no workspace context files exist.
 - `~/skills.d/`: reusable user-level process workflows.
-- `/workspaces/{id}/.gsv/skills.d/`: project-specific workflows.
 - `/src/packages/{package}/skills.d/`: workflows shipped by visible package source.
 - `~/knowledge/`: durable searchable reference material, not always-loaded prompt context.
+- Explicit project files or repositories: task-local continuity, decisions, open loops, and handoff state.
 - Process assignment context: current task instructions, temporary handoff notes, and files attached to a spawned process.
 
 Repo-root `skills/` in `root/gsv` is only a distribution source. Bootstrap copies those files into user `~/skills.d/` when missing. Runtime processes read layered `skills.d`, not repo-root `skills/` directly.

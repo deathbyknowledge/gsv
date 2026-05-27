@@ -2,7 +2,7 @@ export type RepoSummary = {
   repo: string;
   owner: string;
   name: string;
-  kind: "home" | "workspace" | "package" | "user";
+  kind: "home" | "package" | "user";
   writable: boolean;
   public: boolean;
   description?: string;

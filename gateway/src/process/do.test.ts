@@ -13,7 +13,6 @@ const ROOT_IDENTITY: ProcessIdentity = {
   username: "root",
   home: "/root",
   cwd: "/root",
-  workspaceId: null,
 };
 const DEFAULT_PROFILE = "task" as const;
 
@@ -99,7 +98,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
 
       await registerInKernel(pid, identity);
@@ -122,7 +120,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
 
       await registerInKernel(pid, identity);
@@ -168,7 +165,6 @@ describe("Process DO — mechanical", () => {
         username: "alice",
         home: "/home/alice",
         cwd: "/home/alice",
-        workspaceId: null,
       };
       await stub.recvFrame(makeReq("proc.setidentity", { pid, identity: newIdentity, profile: "mcp" }));
 
@@ -731,7 +727,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
 
       await registerInKernel(sourcePid, identity);
@@ -794,7 +789,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
       const targetIdentity: ProcessIdentity = {
         uid: 1001,
@@ -803,7 +797,6 @@ describe("Process DO — mechanical", () => {
         username: "lee",
         home: "/home/lee",
         cwd: "/home/lee",
-        workspaceId: null,
       };
 
       await registerInKernel(sourcePid, sourceIdentity);
@@ -837,7 +830,6 @@ describe("Process DO — mechanical", () => {
         username: "sam",
         home: "/home/sam",
         cwd: "/home/sam",
-        workspaceId: null,
       };
 
       const source = await initProcess(sourcePid, identity);
@@ -1696,7 +1688,7 @@ describe("Process DO — mechanical", () => {
         pid,
         policy: {
           conversationId: "thread",
-          overflow: "manual",
+          overflow: "auto-compact",
           compactAtPressure: 0.9,
           keepLast: 80,
           updatedAt: 0,
@@ -1838,6 +1830,88 @@ describe("Process DO — mechanical", () => {
         "conversation.compacted",
         "conversation.auto_compacted",
       ]);
+    });
+
+    it("does not apply auto-compaction after the run is aborted during summary generation", async () => {
+      const pid = "mech-conversation-auto-compact-abort";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            throw new Error("chat generation should not run after abort");
+          },
+          async generateText(request: any) {
+            expect(request.purpose).toBe("compaction.summary");
+            await process.handleProcAbort();
+            return "Summary that should not be applied.";
+          },
+        };
+
+        process.store.appendMessage("user", "old context A");
+        process.store.appendMessage("assistant", "old context B");
+        process.store.appendMessage("user", "Context that must stay live.");
+        process.store.setValue("conversationPolicy:default", JSON.stringify({
+          conversationId: "default",
+          overflow: "auto-compact",
+          compactAtPressure: 0.01,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId: "run-auto-compact-abort",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 100,
+            contextWindowTokens: 1000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-auto-compact-abort");
+        return {
+          emitted,
+          currentRun: process.currentRun,
+          messages: process.store.getMessages(),
+          segments: process.store.listConversationSegments(),
+        };
+      });
+
+      expect(result.currentRun).toBeNull();
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["user", "old context A"],
+        ["assistant", "old context B"],
+        ["user", "Context that must stay live."],
+      ]);
+      expect(result.segments).toHaveLength(0);
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "chat.complete",
+          payload: expect.objectContaining({
+            aborted: true,
+            runId: "run-auto-compact-abort",
+          }),
+        },
+      ]));
+      const lifecycleEvents = result.emitted
+        .filter((entry) => entry.signal === "process.lifecycle")
+        .map((entry) => (entry.payload as any).event);
+      expect(lifecycleEvents).toEqual([]);
     });
   });
 
@@ -2466,30 +2540,6 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.reset", () => {
-    it("checkpoints only on reset boundaries, not normal turn completion", async () => {
-      const pid = "mech-checkpoint-reset-only";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-      const checkpointReasons: string[] = [];
-
-      await runInDurableObject(stub, async (instance: Process) => {
-        const process = instance as any;
-        const store = process.store;
-        store.appendMessage("user", "hello");
-
-        process.checkpointWorkspace = async (reason: string) => {
-          checkpointReasons.push(reason);
-        };
-
-        await process.finishRun("turn.complete");
-        expect(store.messageCount()).toBe(1);
-
-        await process.handleProcReset();
-        expect(store.messageCount()).toBe(0);
-      });
-
-      expect(checkpointReasons).toEqual(["proc.reset"]);
-    });
-
     it("archives all conversations and clears process history", async () => {
       const pid = "mech-reset-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -2703,7 +2753,6 @@ describe("Process DO — mechanical", () => {
         username: "root",
         home: "/root",
         cwd: "/root",
-        workspaceId: null,
       };
 
       await stub.recvFrame({

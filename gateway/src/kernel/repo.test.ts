@@ -69,14 +69,10 @@ function makeContext(
         username: "alice",
         home: "/home/alice",
         cwd: "/home/alice",
-        workspaceId: null,
       },
     },
     packages: {
       list: () => packages,
-    },
-    workspaces: {
-      list: () => [],
     },
   } as unknown as KernelContext;
 }

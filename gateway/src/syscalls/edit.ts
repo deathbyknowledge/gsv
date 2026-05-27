@@ -4,7 +4,7 @@ import { FS_EDIT, SYSCALL_TOOL_NAMES } from "./constants";
 export const FS_EDIT_DEFINITION: ToolDefinition = {
   name: SYSCALL_TOOL_NAMES[FS_EDIT],
   description:
-    "Edit a file by replacing text. Paths are relative to the workspace unless absolute.",
+    "Edit a file by replacing text. Paths are relative to the current working directory unless absolute.",
   inputSchema: {
     type: "object",
     properties: {

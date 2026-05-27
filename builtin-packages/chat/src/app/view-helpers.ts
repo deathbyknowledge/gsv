@@ -10,10 +10,10 @@ import type {
   LogRow,
   MessageRow,
   PendingAssistantState,
+  ProcessEntry,
   Profile,
   ThreadContext,
   ToolRow,
-  WorkspaceEntry,
 } from "./types";
 
 const ACTIVE_THREAD_CONTEXT_KEY = "gsv.activeThreadContext.v1";
@@ -470,19 +470,17 @@ function normalizeProfile(value: unknown): Profile | null {
   };
 }
 
-function normalizeWorkspace(value: unknown): WorkspaceEntry | null {
+function normalizeProcessEntry(value: unknown): ProcessEntry | null {
   const record = asRecord(value);
-  const workspaceId = asString(record?.workspaceId);
-  if (!workspaceId) return null;
-  const activeProcessRecord = asRecord(record?.activeProcess);
+  const pid = asString(record?.pid);
+  if (!pid) return null;
   return {
-    workspaceId,
+    pid,
     label: asString(record?.label) || undefined,
-    updatedAt: normalizeTimestampMs(record?.updatedAt) || Date.now(),
-    processCount: asNumber(record?.processCount) ?? undefined,
-    activeProcess: activeProcessRecord && asString(activeProcessRecord.pid)
-      ? { pid: asString(activeProcessRecord.pid) as string, cwd: asString(activeProcessRecord.cwd) || "" }
-      : null,
+    profile: asString(record?.profile) || "task",
+    state: asString(record?.state) || "running",
+    cwd: asString(record?.cwd) || "",
+    createdAt: normalizeTimestampMs(record?.createdAt) || Date.now(),
   };
 }
 
@@ -564,7 +562,6 @@ function normalizeThreadContext(value: unknown): ThreadContext | null {
   return {
     pid,
     cwd,
-    workspaceId: asString(record?.workspaceId),
     conversationId,
     conversationTitle: asString(record?.conversationTitle),
   };
@@ -600,14 +597,14 @@ function fallbackProfiles(): Profile[] {
   ];
 }
 
-function titleForActive(active: ThreadContext, conversation: ConversationRecord | null, threads: WorkspaceEntry[]): string {
+function titleForActive(active: ThreadContext, conversation: ConversationRecord | null, threads: ProcessEntry[]): string {
   if (active.pid.startsWith("init:")) {
     return active.conversationId === "default" ? "Personal Agent" : active.conversationTitle || conversation?.title || "Personal Branch";
   }
   if (active.conversationId !== "default") {
     return active.conversationTitle || conversation?.title || "Conversation Branch";
   }
-  const entry = active.workspaceId ? threads.find((thread) => thread.workspaceId === active.workspaceId) : null;
+  const entry = threads.find((thread) => thread.pid === active.pid) ?? null;
   return entry ? displayThreadLabel(entry) : "Conversation";
 }
 
@@ -660,8 +657,8 @@ function sortConversations(conversations: ConversationRecord[]): ConversationRec
   });
 }
 
-function displayThreadLabel(entry: WorkspaceEntry): string {
-  const label = entry.label?.trim() || entry.workspaceId;
+function displayThreadLabel(entry: ProcessEntry): string {
+  const label = entry.label?.trim() || entry.pid;
   return label.length > 76 ? label.slice(0, 73) + "..." : label;
 }
 
@@ -774,7 +771,7 @@ function describeToolCard(toolName: string, args: unknown, syscall: string | nul
     return { title: record?.sessionId ? "Continue shell session" : command ? "Run " + truncateInline(command) : "Run command", subtitle: cwd ? "cwd " + truncateInline(cwd, 36) : "", target };
   }
   if (toolName === "Read" || syscall === "fs.read") return { title: path ? "Read " + basenamePath(path) : "Read file", subtitle: path ?? "", target };
-  if (toolName === "Search" || syscall === "fs.search") return { title: "Search workspace", subtitle: path ?? "", target };
+  if (toolName === "Search" || syscall === "fs.search") return { title: "Search files", subtitle: path ?? "", target };
   if (toolName === "Write" || syscall === "fs.write") return { title: path ? "Write " + basenamePath(path) : "Write file", subtitle: path ?? "", target };
   if (toolName === "Edit" || syscall === "fs.edit") return { title: path ? "Edit " + basenamePath(path) : "Edit file", subtitle: path ?? "", target };
   if (toolName === "Delete" || syscall === "fs.delete") return { title: path ? "Delete " + basenamePath(path) : "Delete file", subtitle: path ?? "", target };
@@ -1079,7 +1076,7 @@ export {
   normalizeThreadContext,
   normalizeTimestampMs,
   normalizeToolOutput,
-  normalizeWorkspace,
+  normalizeProcessEntry,
   prettyJson,
   readAttachmentBlob,
   readAttachmentFile,

@@ -244,8 +244,6 @@ function packageSourceRecordKey(pkg: PackageLike): string {
   switch (pkg.scope.kind) {
     case "user":
       return `user:${pkg.scope.uid ?? ""}:${pkg.packageId}`;
-    case "workspace":
-      return `workspace:${pkg.scope.workspaceId ?? ""}:${pkg.packageId}`;
     case "global":
       return `global:${pkg.packageId}`;
     default:
@@ -750,7 +748,6 @@ export async function startPackageReview(
     profile: "review",
     label: `Review ${target.name}`,
     prompt: buildReviewPrompt(target, packages),
-    workspace: { mode: "none" },
     mounts: [
       { kind: "package-source", packageId: target.packageId },
     ],
@@ -762,7 +759,6 @@ export async function startPackageReview(
 
   return {
     pid: asString(spawned?.pid),
-    workspaceId: asString(spawned?.workspaceId) || null,
     cwd: asString(spawned?.cwd) || null,
   };
 }

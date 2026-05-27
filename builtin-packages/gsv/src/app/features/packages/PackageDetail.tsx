@@ -245,15 +245,14 @@ function shortCommit(value: string | null | undefined): string {
   return value ? value.slice(0, 10) : "Unknown";
 }
 
-function openChatProcess(detail: { pid: string; workspaceId: string | null; cwd: string | null }): void {
+function openChatProcess(detail: { pid: string; cwd: string | null }): void {
   const pid = String(detail.pid ?? "").trim();
   const cwd = String(detail.cwd ?? "").trim();
   if (!pid || !cwd) {
     return;
   }
-  const workspaceId = detail.workspaceId == null ? null : String(detail.workspaceId);
   openApp({
     target: "chat",
-    payload: { pid, workspaceId, cwd },
+    payload: { pid, cwd },
   });
 }

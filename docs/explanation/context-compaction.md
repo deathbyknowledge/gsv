@@ -68,7 +68,7 @@ This creates a chronological record of what the agent learned each day. The dail
 
 ## Long-Term Memory: MEMORY.md
 
-Beyond daily memory files, the agent has a `MEMORY.md` file in its workspace — a more curated, manually-managed document of long-term knowledge. Unlike daily memory files, which are automatically appended by compaction, MEMORY.md is typically updated by the agent itself during conversations or commissioning.
+Beyond daily memory files, the agent can keep a `MEMORY.md` file in its home repository or another explicit path - a more curated, manually-managed document of long-term knowledge. Unlike daily memory files, which are automatically appended by compaction, MEMORY.md is typically updated by the agent itself during conversations or commissioning.
 
 MEMORY.md is only loaded into the system prompt for "main" sessions. This is a security consideration: if someone sends a WhatsApp message that routes to a per-peer session, they shouldn't see the agent's personal memory about its owner. The daily memory files, by contrast, are loaded for all sessions — they contain extracted facts that are generally safe to share.
 

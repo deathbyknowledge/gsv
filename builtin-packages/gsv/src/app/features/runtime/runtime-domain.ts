@@ -30,7 +30,6 @@ export function filterProcesses(processes: ProcessEntry[], query: string): Proce
     || String(entry.label ?? "").toLowerCase().includes(normalizedQuery)
     || String(entry.profile ?? "").toLowerCase().includes(normalizedQuery)
     || String(entry.parentPid ?? "").toLowerCase().includes(normalizedQuery)
-    || String(entry.workspaceId ?? "").toLowerCase().includes(normalizedQuery)
     || String(entry.cwd ?? "").toLowerCase().includes(normalizedQuery)
   ));
 }

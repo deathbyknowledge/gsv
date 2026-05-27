@@ -11,8 +11,6 @@ import { withTimeout } from "./timeout";
 
 type GenerationPurpose =
   | "chat.reply"
-  | "checkpoint.summary"
-  | "checkpoint.commit_message"
   | "compaction.summary"
   | "thread.title"
   | "mcp.analysis";
@@ -103,14 +101,6 @@ export function resolveGenerationOptions(
       : undefined;
 
   switch (purpose) {
-    case "checkpoint.commit_message":
-      return {
-        modelProvider: config.provider,
-        modelName: config.model,
-        apiKey: config.apiKey,
-        reasoning: undefined,
-        maxTokens: Math.min(config.maxTokens, 128),
-      };
     case "thread.title":
       return {
         modelProvider: config.provider,
@@ -119,7 +109,6 @@ export function resolveGenerationOptions(
         reasoning: undefined,
         maxTokens: Math.min(config.maxTokens, 64),
       };
-    case "checkpoint.summary":
     case "compaction.summary":
       return {
         modelProvider: config.provider,

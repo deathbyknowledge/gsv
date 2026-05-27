@@ -169,7 +169,7 @@ describe("WikiKnowledgeStore", () => {
         addSources: [
           {
             target: "gsv",
-            path: "/workspaces/onboarding/notes/alice.md",
+            path: "/home/alice/projects/onboarding/notes/alice.md",
             title: "Onboarding notes",
           },
         ],
@@ -203,7 +203,7 @@ describe("WikiKnowledgeStore", () => {
     expect(read.sources).toEqual([
       {
         target: "gsv",
-        path: "/workspaces/onboarding/notes/alice.md",
+        path: "/home/alice/projects/onboarding/notes/alice.md",
         title: "Onboarding notes",
       },
     ]);
@@ -238,7 +238,7 @@ describe("WikiKnowledgeStore", () => {
       sources: [
         {
           target: "gsv",
-          path: "/workspaces/onboarding/notes/alice.md",
+          path: "/home/alice/projects/onboarding/notes/alice.md",
           title: "Onboarding notes",
         },
         {
@@ -260,7 +260,7 @@ describe("WikiKnowledgeStore", () => {
     expect(staged.sources).toEqual([
       {
         target: "gsv",
-        path: "/workspaces/onboarding/notes/alice.md",
+        path: "/home/alice/projects/onboarding/notes/alice.md",
         title: "Onboarding notes",
       },
       {
@@ -269,7 +269,7 @@ describe("WikiKnowledgeStore", () => {
       },
     ]);
     expect(staged.markdown).toContain("## Sources");
-    expect(staged.markdown).toContain("[gsv] /workspaces/onboarding/notes/alice.md | Onboarding notes");
+    expect(staged.markdown).toContain("[gsv] /home/alice/projects/onboarding/notes/alice.md | Onboarding notes");
 
     const compiled = await store.compile({
       db: "personal",

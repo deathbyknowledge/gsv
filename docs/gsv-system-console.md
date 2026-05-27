@@ -17,7 +17,7 @@ The app is a system console for operating and configuring a GSV installation. It
 
 It should not absorb the main work surfaces:
 
-- `Chat` remains the conversation and agent workspace.
+- `Chat` remains the conversation and agent work surface.
 - `Files` remains the filesystem browser/editor.
 - `Shell` remains the terminal surface.
 - `Wiki` remains the knowledge product.

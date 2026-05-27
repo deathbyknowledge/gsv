@@ -17,7 +17,7 @@ gsv proc list --uid 1000
 ```
 
 The list shows process ids, labels, owners, profiles, state, current working
-directory, and workspace attachment when available.
+directory, and source mounts when available.
 
 ## Chat With a Process
 
@@ -25,7 +25,7 @@ Without `--pid`, `gsv chat` targets your init process and waits for streamed
 `chat.*` signals:
 
 ```bash
-gsv chat "Summarize my current workspace."
+gsv chat "Summarize the current project."
 ```
 
 Target a specific process:
@@ -68,8 +68,8 @@ gsv proc history --pid task:abc123 --limit 50 --offset 0
 ```
 
 History is active process state stored in the Process Durable Object. It is not
-the durable artifact of work; important outputs should live in workspace files,
-home context, package state, or repositories.
+the durable artifact of work; important outputs should live in explicit files,
+home context, package source, knowledge, or repositories.
 
 ## Reset a Process
 
@@ -80,9 +80,9 @@ gsv proc reset
 gsv proc reset --pid task:abc123
 ```
 
-Reset attempts to checkpoint workspace continuity files, archives old messages
-to R2 under `var/sessions/{username}/{pid}/...jsonl.gz`, deletes process media,
-and starts the next run with fresh message history.
+Reset archives old messages to R2 under
+`var/sessions/{username}/{pid}/...jsonl.gz`, deletes process media, and starts
+the next run with fresh message history.
 
 ## Kill a Process
 
@@ -93,8 +93,8 @@ gsv proc kill task:abc123
 gsv proc kill task:abc123 --no-archive
 ```
 
-Use `--no-archive` only when the process history is disposable. Workspaces and
-their ripgit-backed files outlive the process either way.
+Use `--no-archive` only when the process history is disposable. Files,
+package source, knowledge, and repositories outlive the process either way.
 
 ## Process Management Patterns
 

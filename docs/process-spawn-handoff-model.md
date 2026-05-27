@@ -27,7 +27,7 @@ This note is intentionally separate from prompt/context and knowledge-system des
 ### `task`
 
 - Focused worker process.
-- Usually workspace-scoped.
+- Usually scoped by cwd, source mounts, and assignment context.
 - Created to complete a bounded objective.
 - Produces artifacts, summaries, or an explicit handoff.
 

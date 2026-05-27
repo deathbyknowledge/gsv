@@ -38,13 +38,7 @@ export type {
   RipgitTreeEntry,
 } from "./ripgit/client";
 export {
-  createWorkspaceBackend,
-  isWorkspaceMountPath,
-  workspaceRootPath,
-} from "./backends/workspace";
-export {
   homeKnowledgeRepoRef,
-  workspaceRepoRef,
 } from "./ripgit/repos";
 export {
   resolveUserPath,

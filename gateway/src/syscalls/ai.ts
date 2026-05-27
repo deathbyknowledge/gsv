@@ -95,7 +95,7 @@ export type AiSkillIndexEntry = {
   name: string;
   description: string;
   source: {
-    kind: "profile" | "home" | "workspace" | "package";
+    kind: "profile" | "home" | "package";
     label: string;
     writable: boolean;
   };

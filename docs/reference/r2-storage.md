@@ -6,11 +6,11 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 
 | Plane | Backing Store | Used For |
 |---|---|---|
-| Kernel SQLite | Kernel Durable Object SQL | Users, groups, tokens, OAuth accounts, config, devices, routing tables, process registry, workspaces, packages, adapter links, automation, notifications. |
+| Kernel SQLite | Kernel Durable Object SQL | Users, groups, tokens, OAuth accounts, config, devices, routing tables, process registry, packages, adapter links, automation, notifications. |
 | Process SQLite | Process Durable Object SQL | Active messages, pending tool calls, message queue, HIL state, process-local metadata. |
 | AppRunner SQLite/KV | AppRunner Durable Object storage | Package runtime SQL, daemon schedules, loaded package runtime props. |
 | R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, process archives, package artifacts, CLI download mirrors. |
-| ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, package source repositories, mounted source trees. |
+| ripgit | `RIPGIT` binding | Versioned home knowledge, package source repositories, mounted source trees. |
 
 ## Virtual Filesystem Mapping
 
@@ -24,7 +24,6 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `~/skills.d/*` | ripgit home repo, with R2 fallback | User-global reusable process skills. |
 | `~/knowledge/*` | ripgit home repo | Durable knowledge databases. |
 | Other home files | R2 | Stored as ordinary objects with uid/gid/mode metadata. |
-| `/workspaces/{workspaceId}` | ripgit workspace repo | Mutable, versioned task workspace. |
 | `/src/packages/{packageName}` | ripgit package source plus R2 overlay | Visible installed package source. Writable owned sources stage process-local edits in R2 until explicit commit. |
 | `/usr/local/bin/*` | package mount | Read-only package command shims. |
 | Everything else | R2 | Default object-backed filesystem. |
@@ -44,8 +43,7 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `group_capabilities` | Capability grants by group id. |
 | `devices`, `device_access` | Registered devices and group access. |
 | `routing_table` | In-flight device-routed syscalls. |
-| `processes` | Process registry, identity, cwd, workspace, mounts, state. |
-| `workspaces` | Workspace metadata. Actual workspace files live in ripgit. |
+| `processes` | Process registry, identity, cwd, mounts, state. |
 | `packages` | Installed package manifests, scopes, grants, and artifact hashes. |
 | `identity_links`, `surface_routes`, `link_challenges` | Adapter actor links and inbound surface routing. |
 | `run_routes` | Routes process chat signals back to clients or adapter surfaces. |
@@ -63,7 +61,7 @@ Each Process DO owns its own SQLite database. This keeps active agent-loop state
 | `pending_hil` | Human-in-the-loop approval state. |
 | `process_kv` | Process metadata such as identity, profile, current run, and archive id. |
 
-On `proc.reset` or `proc.kill`, process messages can be checkpointed into a workspace repo and archived to R2.
+On `proc.reset` or `proc.kill`, process messages can be archived to R2.
 
 ## R2 Object Layout
 
@@ -92,23 +90,12 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 | Repository | Ref Helper | Mounted At | Purpose |
 |---|---|---|---|
 | `{username}/home` | `homeKnowledgeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, skills, and knowledge databases. |
-| `{username}/{workspaceId}` | `workspaceRepoRef(workspaceId, username)` | `/workspaces/{workspaceId}` | Task workspace files and checkpoints. |
 | Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/packages/{packageName}`, `repo.*` | Installed package source, review context, and generic repo operations. |
 
 The `root/gsv` repository may contain a top-level `skills/` directory. Bootstrap
 copies those files into user home repos under `skills.d/` when they are missing.
 
-Workspace repos contain platform metadata under `.gsv/`:
-
-```text
-.gsv/workspace.json
-.gsv/summary.md
-.gsv/context.d/*.md
-.gsv/skills.d/*
-.gsv/processes/{pid}/chat.jsonl
-```
-
-Package source mounts are always visible for installed packages the process identity can see. Sources owned by the current user are writable through a process-local R2 overlay; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make commit/discard explicit. Other package sources are read-only. Workspace and home knowledge repos are writable through the filesystem; generic repository operations use `repo.*`, and Wiki-specific behavior uses the higher-level knowledge interface.
+Package source mounts are always visible for installed packages the process identity can see. Sources owned by the current user are writable through a process-local R2 overlay; `pkg source status`, `pkg source diff`, `pkg source commit`, and `pkg source discard` make commit/discard explicit. Other package sources are read-only. Home knowledge repos are writable through the filesystem; generic repository operations use `repo.*`, and Wiki-specific behavior uses the higher-level knowledge interface.
 
 ## Package Runtime Storage
 
@@ -121,5 +108,5 @@ AppRunner also stores runtime props in Durable Object KV and daemon schedules in
 - Use Kernel SQLite for authoritative control-plane state.
 - Use Process SQLite for active conversation and run state.
 - Use R2 for opaque bytes, archives, media, and default filesystem files.
-- Use ripgit for user-editable/versioned documents, knowledge, workspace files, and package source.
+- Use ripgit for user-editable/versioned documents, knowledge, and package source.
 - Prefer filesystem paths in agent prompts; the mount layer hides the backing store.

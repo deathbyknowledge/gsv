@@ -22,7 +22,7 @@ The Kernel is responsible for:
 
 - Authenticating users, service identities, and device drivers.
 - Maintaining users, groups, tokens, OAuth accounts, capabilities, devices,
-  packages, adapter links, workspaces, routes, notifications, and runtime config
+  packages, adapter links, routes, notifications, and runtime config
   in Kernel SQLite.
 - Dispatching syscalls such as `fs.read`, `shell.exec`, `proc.spawn`,
   `pkg.sync`, `sys.config.get`, `sys.oauth.start`, `sys.mcp.add`, and
@@ -39,8 +39,8 @@ should go.
 
 Agents are durable processes, not sessions. Each user has a long-lived init
 process, `init:{uid}`, and can spawn child processes with `proc.spawn`. A process
-has a PID, uid/gid identity, parent, profile, current working directory, optional
-workspace, state, and persistent message history.
+has a PID, uid/gid identity, parent, profile, current working directory, state,
+and persistent message history.
 
 Process state lives in a Process Durable Object with its own SQLite database.
 That database stores active messages, pending tool calls, queued messages,
@@ -55,8 +55,8 @@ process; browser apps and adapters can target the same process model.
 ### Filesystem and Storage
 
 GSV exposes a virtual filesystem through `GsvFs`. Agents and apps interact with
-paths such as `/home/alice`, `/workspaces/{workspaceId}`, `/sys`, `/proc`,
-`/dev`, `/etc`, `/src/packages`, and `/usr/local/bin` instead of storage APIs.
+paths such as `/home/alice`, `/sys`, `/proc`, `/var`, `/dev`, `/etc`,
+`/src/packages`, and `/usr/local/bin` instead of storage APIs.
 
 Different path families are backed by different stores:
 
@@ -65,14 +65,13 @@ Different path families are backed by different stores:
 - Process SQLite backs active conversation and run state.
 - R2 stores ordinary bytes, process media, archives, package artifacts, and CLI
   download mirrors.
-- ripgit stores versioned home knowledge, workspace trees, package source, and
-  repository content.
+- ripgit stores versioned home knowledge, package source, and repository
+  content.
 
 This split matters operationally, but it should be hidden from agents whenever
 possible. The filesystem is the stable interface. Prompt context follows the
-same rule: profile context, `~/context.d/*.md`, workspace `.gsv/context.d/*.md`,
-and current process context are ordinary inspectable files or explicit runtime
-providers.
+same rule: profile context, `~/context.d/*.md`, available skills, and current
+process context are ordinary inspectable files or explicit runtime providers.
 
 ### Devices
 
@@ -124,7 +123,6 @@ imports.
 GSV uses repositories for more than source control:
 
 - `{username}/home` stores user-global knowledge and context.
-- `{username}/{workspaceId}` stores workspace files and checkpoints.
 - `root/gsv` can mirror the deployed GSV source.
 - Package source repositories provide installable apps and CLI commands.
 
@@ -181,7 +179,7 @@ The system uses multiple Durable Object roles instead of one monolith:
 
 The tradeoff is that the architecture must be explicit about routing, timeouts,
 and state boundaries. Long-running local work should happen on devices. Durable
-agent state belongs in Process SQLite and workspace files. Control-plane truth
+agent state belongs in Process SQLite and R2 archives. Control-plane truth
 belongs in Kernel SQLite. Opaque bytes belong in R2. Versioned work belongs in
 ripgit.
 
@@ -190,8 +188,8 @@ ripgit.
 GSV favors stable OS-like interfaces over implementation leakage.
 
 - Agents should use paths and syscalls, not database names or storage buckets.
-- Workspaces outlive processes; processes are execution, workspaces are durable
-  artifacts.
+- Processes are execution; durable artifacts live in ordinary filesystem paths,
+  R2 archives, and explicit repositories.
 - Devices are optional hardware. The cloud `gsv` target should remain useful
   even when no device is connected.
 - Package capabilities are explicit grants, not ambient access.

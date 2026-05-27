@@ -14,7 +14,7 @@ export const FS_SEARCH_DEFINITION: ToolDefinition = {
       },
       path: {
         type: "string",
-        description: "Directory or file to search in (optional, defaults to workspace root)",
+        description: "Directory or file to search in (optional, defaults to current working directory)",
       },
       include: {
         type: "string",
