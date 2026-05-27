@@ -30,6 +30,13 @@ export function useChatCatalog(backend: ChatBackend) {
     () => conversationProfiles.filter((profile) => profile.spawnMode === "new"),
     [conversationProfiles],
   );
+  const visibleThreadProfileKey = useMemo(
+    () => newConversationProfiles
+      .flatMap((profile) => [profile.id, profile.alias].filter(Boolean) as string[])
+      .sort()
+      .join("\0"),
+    [newConversationProfiles],
+  );
   const draftProfile = useMemo(() => {
     return conversationProfiles.find((profile) => profile.id === draftProfileId || profile.alias === draftProfileId)
       ?? conversationProfiles.find((profile) => profile.id === "init")
@@ -65,14 +72,19 @@ export function useChatCatalog(backend: ChatBackend) {
     try {
       const result = await backend.listProcesses({});
       const processRows = Array.isArray(asRecord(result)?.processes) ? asRecord(result)?.processes as unknown[] : [];
-      setThreads(processRows.map(normalizeProcessEntry).filter(Boolean) as ProcessEntry[]);
+      const visibleThreadProfiles = new Set(visibleThreadProfileKey.split("\0").filter(Boolean));
+      const normalized = processRows.map(normalizeProcessEntry).filter(Boolean) as ProcessEntry[];
+      setThreads(normalized.filter((entry) => {
+        if (entry.pid.startsWith("init:")) return false;
+        return visibleThreadProfiles.has(entry.profile);
+      }));
     } catch (error) {
       setThreads([]);
       setThreadsError(formatError(error));
     } finally {
       setThreadsLoading(false);
     }
-  }, [backend]);
+  }, [backend, visibleThreadProfileKey]);
 
   const loadConversations = useCallback(async (pid = "") => {
     if (!pid) {
@@ -98,8 +110,11 @@ export function useChatCatalog(backend: ChatBackend) {
   useEffect(() => {
     void loadViewer();
     void loadProfiles();
+  }, [loadProfiles, loadViewer]);
+
+  useEffect(() => {
     void loadThreads();
-  }, [loadProfiles, loadThreads, loadViewer]);
+  }, [loadThreads]);
 
   useEffect(() => {
     if (conversationProfiles.length > 0 && !conversationProfiles.some((profile) => profile.id === draftProfileId || profile.alias === draftProfileId)) {
