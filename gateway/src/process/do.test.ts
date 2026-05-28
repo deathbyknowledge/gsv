@@ -1176,6 +1176,49 @@ describe("Process DO — mechanical", () => {
       const obj = await env.STORAGE.get(archiveKey);
       expect(obj).not.toBeNull();
 
+      const generationsRes = (await stub.recvFrame(
+        makeReq("proc.conversation.generations", { conversationId: "side" }),
+      )) as ResponseOkFrame;
+      expect((generationsRes.data as any).generations).toEqual([1, 2]);
+
+      const manifestRes = (await stub.recvFrame(
+        makeReq("proc.conversation.generation.manifest", {
+          conversationId: "side",
+          generation: 1,
+        }),
+      )) as ResponseOkFrame;
+      expect((manifestRes.data as any).manifest).toMatchObject({
+        conversationId: "side",
+        generation: 1,
+        current: false,
+        archives: [
+          expect.objectContaining({
+            kind: "reset",
+            messages: 1,
+            archivePath: resetData.archivedTo,
+          }),
+        ],
+        segments: [],
+        live: null,
+      });
+
+      const timelineRes = (await stub.recvFrame(
+        makeReq("proc.conversation.timeline", { conversationId: "side" }),
+      )) as ResponseOkFrame;
+      expect((timelineRes.data as any).timeline).toEqual([
+        expect.objectContaining({
+          type: "archive",
+          archiveKind: "reset",
+          generation: 1,
+          archivePath: resetData.archivedTo,
+        }),
+        expect.objectContaining({
+          type: "live",
+          generation: 2,
+          messageCount: 0,
+        }),
+      ]);
+
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         expect(store.messageCount()).toBe(1);
@@ -1337,6 +1380,24 @@ describe("Process DO — mechanical", () => {
           id: data.segment.id,
           archivePath: data.archivedTo,
           summaryMessageId: messageIds[0],
+        }),
+      ]);
+
+      const timelineRes = (await stub.recvFrame(
+        makeReq("proc.conversation.timeline", { conversationId: "thread" }),
+      )) as ResponseOkFrame;
+      expect((timelineRes.data as any).timeline).toEqual([
+        expect.objectContaining({
+          type: "segment",
+          id: data.segment.id,
+          generation: 1,
+        }),
+        expect.objectContaining({
+          type: "live",
+          generation: 1,
+          messageCount: 2,
+          firstMessageId: messageIds[0],
+          lastMessageId: messageIds[2],
         }),
       ]);
     });
@@ -2622,6 +2683,26 @@ describe("Process DO — mechanical", () => {
         const obj = await env.STORAGE.get(archiveKey);
         expect(obj).not.toBeNull();
       }
+
+      const manifestRes = (await stub.recvFrame(
+        makeReq("proc.conversation.generation.manifest", {
+          conversationId: "default",
+          generation: 1,
+        }),
+      )) as ResponseOkFrame;
+      expect((manifestRes.data as any).manifest).toMatchObject({
+        conversationId: "default",
+        generation: 1,
+        current: false,
+        archives: [
+          expect.objectContaining({
+            kind: "process-reset",
+            messages: 2,
+            archivePath: expect.stringMatching(/\/default\.gen-1\.jsonl\.gz$/),
+          }),
+        ],
+        live: null,
+      });
     });
 
     it("returns zero when no messages to archive", async () => {
@@ -2750,6 +2831,23 @@ describe("Process DO — mechanical", () => {
         expect(store.totalMessageCount()).toBe(0);
         expect(store.getConversation("default").generation).toBe(2);
         expect(store.getConversation("build").generation).toBe(2);
+      });
+
+      const manifestRes = (await stub.recvFrame(
+        makeReq("proc.conversation.generation.manifest", {
+          conversationId: "build",
+          generation: 1,
+        }),
+      )) as ResponseOkFrame;
+      expect((manifestRes.data as any).manifest).toMatchObject({
+        conversationId: "build",
+        generation: 1,
+        archives: [
+          expect.objectContaining({
+            kind: "kill",
+            messages: 1,
+          }),
+        ],
       });
     });
   });

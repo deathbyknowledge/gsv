@@ -29,7 +29,9 @@ import {
   DEFAULT_CONVERSATION_GENERATION,
   DEFAULT_CONVERSATION_ID,
   normalizeConversationId,
+  type ConversationArchiveKind,
   type ConversationSegmentKind,
+  type ProcessConversationArchiveRecord,
   type ProcessConversationRecord,
   type ProcessConversationSegmentRecord,
 } from "./conversations";
@@ -191,6 +193,23 @@ export class ProcessStore {
         summary_message_id INTEGER,
         created_at INTEGER NOT NULL
       )
+    `);
+
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS conversation_archives (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        messages INTEGER NOT NULL,
+        archive_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
+    this.sql.exec(`
+      CREATE INDEX IF NOT EXISTS conversation_archives_conversation_generation_idx
+      ON conversation_archives (conversation_id, generation)
     `);
 
     // TODO: get a proper migration strat
@@ -641,6 +660,85 @@ export class ProcessStore {
     };
   }
 
+  recordConversationArchive(input: {
+    id: string;
+    conversationId?: string;
+    generation: number;
+    kind: ConversationArchiveKind;
+    messages: number;
+    archivePath: string;
+  }): ProcessConversationArchiveRecord {
+    const conversationId = normalizeConversationId(input.conversationId);
+    const createdAt = Date.now();
+    this.sql.exec(
+      `INSERT INTO conversation_archives (
+        id, conversation_id, generation, kind, messages, archive_path, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      input.id,
+      conversationId,
+      input.generation,
+      input.kind,
+      input.messages,
+      input.archivePath,
+      createdAt,
+    );
+    return {
+      id: input.id,
+      conversationId,
+      generation: input.generation,
+      kind: input.kind,
+      messages: input.messages,
+      archivePath: input.archivePath,
+      createdAt,
+    };
+  }
+
+  listConversationArchives(conversationId: string = DEFAULT_CONVERSATION_ID): ProcessConversationArchiveRecord[] {
+    const normalizedConversationId = normalizeConversationId(conversationId);
+    return [...this.sql.exec<{
+      id: string;
+      conversation_id: string;
+      generation: number;
+      kind: string;
+      messages: number;
+      archive_path: string;
+      created_at: number;
+    }>(
+      `SELECT id, conversation_id, generation, kind, messages, archive_path, created_at
+         FROM conversation_archives
+        WHERE conversation_id = ?
+        ORDER BY generation ASC, created_at ASC, id ASC`,
+      normalizedConversationId,
+    )].map((row) => ({
+      id: row.id,
+      conversationId: row.conversation_id,
+      generation: row.generation,
+      kind: parseConversationArchiveKind(row.kind),
+      messages: row.messages,
+      archivePath: row.archive_path,
+      createdAt: row.created_at,
+    }));
+  }
+
+  listConversationGenerations(conversationId: string = DEFAULT_CONVERSATION_ID): number[] {
+    const normalizedConversationId = normalizeConversationId(conversationId);
+    const generations = new Set<number>();
+    const conversation = this.ensureConversation(normalizedConversationId);
+    generations.add(conversation.generation);
+
+    for (const row of this.sql.exec<{ generation: number }>(
+      `SELECT generation FROM conversation_segments WHERE conversation_id = ?
+       UNION
+       SELECT generation FROM conversation_archives WHERE conversation_id = ?`,
+      normalizedConversationId,
+      normalizedConversationId,
+    )) {
+      generations.add(row.generation);
+    }
+
+    return [...generations].sort((a, b) => a - b);
+  }
+
   // --- Tool calls ---
 
   register(
@@ -1034,14 +1132,16 @@ export class ProcessStore {
 
   messageStats(conversationId: string = DEFAULT_CONVERSATION_ID): {
     count: number;
+    firstMessageId: number | null;
     lastMessageId: number | null;
   } {
-    const rows = [...this.sql.exec<{ cnt: number; last_id: number | null }>(
-      "SELECT COUNT(*) as cnt, MAX(id) as last_id FROM messages WHERE conversation_id = ?",
+    const rows = [...this.sql.exec<{ cnt: number; first_id: number | null; last_id: number | null }>(
+      "SELECT COUNT(*) as cnt, MIN(id) as first_id, MAX(id) as last_id FROM messages WHERE conversation_id = ?",
       normalizeConversationId(conversationId),
     )];
     return {
       count: rows[0]?.cnt ?? 0,
+      firstMessageId: rows[0]?.first_id ?? null,
       lastMessageId: rows[0]?.last_id ?? null,
     };
   }
@@ -1456,6 +1556,13 @@ function normalizeNullableString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function parseConversationArchiveKind(value: string): ConversationArchiveKind {
+  if (value === "process-reset" || value === "kill") {
+    return value;
+  }
+  return "reset";
 }
 
 function contextStateKey(conversationId: string): string {

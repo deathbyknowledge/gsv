@@ -36,6 +36,9 @@ export const PROC_CONVERSATION_COMPACT = "proc.conversation.compact";
 export const PROC_CONVERSATION_FORK = "proc.conversation.fork";
 export const PROC_CONVERSATION_SEGMENT_READ = "proc.conversation.segment.read";
 export const PROC_CONVERSATION_SEGMENTS = "proc.conversation.segments";
+export const PROC_CONVERSATION_TIMELINE = "proc.conversation.timeline";
+export const PROC_CONVERSATION_GENERATIONS = "proc.conversation.generations";
+export const PROC_CONVERSATION_GENERATION_MANIFEST = "proc.conversation.generation.manifest";
 export const PROC_RESET = "proc.reset";
 export const PROC_SETIDENTITY = "proc.setidentity";
 

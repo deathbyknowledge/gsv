@@ -155,6 +155,23 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
   const segmentMessages = [
     { id: 1, role: "user", content: "archived hello", timestamp: 1000 },
   ];
+  const archive = {
+    id: "reset-1",
+    conversationId: "default",
+    generation: 1,
+    kind: "reset",
+    messages: 2,
+    archivePath: "/var/sessions/sam/task-alpha/conversations/default/reset-1.jsonl.gz",
+    createdAt: 1600,
+  };
+  const liveGeneration = {
+    conversationId: "default",
+    generation: 1,
+    messageCount: 2,
+    firstMessageId: 1,
+    lastMessageId: 2,
+    updatedAt: 2000,
+  };
   const schedules = [
     {
       id: "sched-1",
@@ -275,6 +292,69 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           segment,
           messages: segmentMessages,
           messageCount: segmentMessages.length,
+        };
+      }
+      if (call === "proc.conversation.timeline") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          timeline: conversationId === "default"
+            ? [
+                {
+                  type: "segment",
+                  id: segment.id,
+                  conversationId: segment.conversationId,
+                  generation: segment.generation,
+                  segmentKind: segment.kind,
+                  fromMessageId: segment.fromMessageId,
+                  toMessageId: segment.toMessageId,
+                  archivePath: segment.archivePath,
+                  summaryMessageId: segment.summaryMessageId,
+                  createdAt: segment.createdAt,
+                },
+                {
+                  type: "archive",
+                  id: archive.id,
+                  conversationId: archive.conversationId,
+                  generation: archive.generation,
+                  archiveKind: archive.kind,
+                  messages: archive.messages,
+                  archivePath: archive.archivePath,
+                  createdAt: archive.createdAt,
+                },
+                { type: "live", ...liveGeneration },
+              ]
+            : [{ type: "live", conversationId, generation: 2, messageCount: 1, firstMessageId: 3, lastMessageId: 3, updatedAt: 2100 }],
+        };
+      }
+      if (call === "proc.conversation.generations") {
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          generations: conversationId === "default" ? [1] : [2],
+        };
+      }
+      if (call === "proc.conversation.generation.manifest") {
+        const generation = Number(args?.generation);
+        const isDefaultGeneration = conversationId === "default" && generation === 1;
+        return {
+          ok: true,
+          pid: "task-alpha",
+          conversationId,
+          manifest: isDefaultGeneration
+            ? {
+                conversationId,
+                generation,
+                current: true,
+                status: "open",
+                title: null,
+                archives: [archive],
+                segments: [segment],
+                live: liveGeneration,
+              }
+            : null,
         };
       }
       return { ok: false, error: "unknown call" };
@@ -898,9 +978,11 @@ describe("GsvFs Linux-like runtime views", () => {
     await expect(fs.readdir("/proc/self/conversations")).resolves.toEqual(["build", "default"]);
     await expect(fs.readdir("/proc/task-alpha/conversations")).resolves.toEqual(["build", "default"]);
     await expect(fs.readdir("/proc/task-alpha/conversations/default")).resolves.toEqual([
+      "generations",
       "history",
       "segments",
       "status",
+      "timeline",
     ]);
 
     const status = JSON.parse(await fs.readFile("/proc/task-alpha/conversations/default/status"));
@@ -923,6 +1005,30 @@ describe("GsvFs Linux-like runtime views", () => {
     expect(segmentLines).toEqual([
       expect.objectContaining({ id: 1, content: "archived hello" }),
     ]);
+
+    const timelineLines = (await fs.readFile("/proc/task-alpha/conversations/default/timeline"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(timelineLines).toEqual([
+      expect.objectContaining({ type: "segment", id: "seg-1" }),
+      expect.objectContaining({ type: "archive", id: "reset-1", archiveKind: "reset" }),
+      expect.objectContaining({ type: "live", generation: 1, messageCount: 2 }),
+    ]);
+
+    await expect(fs.readdir("/proc/task-alpha/conversations/default/generations")).resolves.toEqual(["1"]);
+    await expect(fs.readdir("/proc/task-alpha/conversations/default/generations/1")).resolves.toEqual(["manifest"]);
+    const manifest = JSON.parse(
+      await fs.readFile("/proc/task-alpha/conversations/default/generations/1/manifest"),
+    );
+    expect(manifest).toMatchObject({
+      conversationId: "default",
+      generation: 1,
+      current: true,
+      archives: [expect.objectContaining({ id: "reset-1" })],
+      segments: [expect.objectContaining({ id: "seg-1" })],
+      live: expect.objectContaining({ messageCount: 2 }),
+    });
   });
 
   it("hides another user's process conversation view from non-root users", async () => {
@@ -934,7 +1040,7 @@ describe("GsvFs Linux-like runtime views", () => {
   it("exposes scheduler definitions and run history under /var", async () => {
     const fs = makeRuntimeViewFs(SAM);
 
-    await expect(fs.readdir("/var")).resolves.toEqual(["log", "spool"]);
+    await expect(fs.readdir("/var")).resolves.toEqual(expect.arrayContaining(["log", "spool"]));
     await expect(fs.readdir("/var/spool/cron")).resolves.toEqual(["sched-1"]);
     await expect(fs.writeFile("/var/log/custom", "hidden")).rejects.toThrow("EPERM");
 

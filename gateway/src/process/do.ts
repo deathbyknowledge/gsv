@@ -67,6 +67,17 @@ import type {
   ProcConversationSegmentReadResult,
   ProcConversationSegmentsArgs,
   ProcConversationSegmentsResult,
+  ProcConversationArchive,
+  ProcConversationArchiveKind,
+  ProcConversationTimelineEntry,
+  ProcConversationTimelineArgs,
+  ProcConversationTimelineResult,
+  ProcConversationGenerationsArgs,
+  ProcConversationGenerationsResult,
+  ProcConversationGenerationManifest,
+  ProcConversationGenerationManifestArgs,
+  ProcConversationGenerationManifestResult,
+  ProcConversationLiveGeneration,
   ProcArchiveEntry,
   ProcContextState,
   ProcResetResult,
@@ -130,6 +141,7 @@ import {
 import {
   DEFAULT_CONVERSATION_ID,
   normalizeConversationId,
+  type ProcessConversationArchiveRecord,
   type ProcessConversationRecord,
   type ProcessConversationSegmentRecord,
 } from "./conversations";
@@ -422,6 +434,32 @@ function emptyProcessArchive(): ProcessArchiveResult {
 
 function conversationArchiveFilename(conversationId: string, generation: number): string {
   return `${encodeURIComponent(conversationId)}.gen-${generation}.jsonl.gz`;
+}
+
+function compareConversationTimelineEntries(
+  a: ProcConversationTimelineEntry,
+  b: ProcConversationTimelineEntry,
+): number {
+  const generationDelta = a.generation - b.generation;
+  if (generationDelta !== 0) return generationDelta;
+  if (a.type === "live" || b.type === "live") {
+    return timelineEntryTypeRank(a.type) - timelineEntryTypeRank(b.type);
+  }
+  const timeDelta = timelineEntryTimestamp(a) - timelineEntryTimestamp(b);
+  if (timeDelta !== 0) return timeDelta;
+  return timelineEntryTypeRank(a.type) - timelineEntryTypeRank(b.type);
+}
+
+function timelineEntryTimestamp(entry: ProcConversationTimelineEntry): number {
+  return entry.type === "live" ? entry.updatedAt : entry.createdAt;
+}
+
+function timelineEntryTypeRank(type: ProcConversationTimelineEntry["type"]): number {
+  switch (type) {
+    case "archive": return 0;
+    case "segment": return 1;
+    case "live": return 2;
+  }
 }
 
 function formatCompactionSummaryMessage(input: {
@@ -738,6 +776,21 @@ export class Process extends Host<Env> {
         case "proc.conversation.segments":
           data = this.handleConversationSegments(
             (frame.args ?? {}) as ProcConversationSegmentsArgs,
+          );
+          break;
+        case "proc.conversation.timeline":
+          data = this.handleConversationTimeline(
+            (frame.args ?? {}) as ProcConversationTimelineArgs,
+          );
+          break;
+        case "proc.conversation.generations":
+          data = this.handleConversationGenerations(
+            (frame.args ?? {}) as ProcConversationGenerationsArgs,
+          );
+          break;
+        case "proc.conversation.generation.manifest":
+          data = this.handleConversationGenerationManifest(
+            (frame.args ?? {}) as ProcConversationGenerationManifestArgs,
           );
           break;
         case "proc.reset":
@@ -1302,7 +1355,7 @@ export class Process extends Host<Env> {
   ): Promise<ProcConversationResetResult> {
     const pid = this.pid;
     const conversationId = normalizeConversationId(args.conversationId);
-    this.store.ensureConversation(conversationId);
+    const existingConversation = this.store.ensureConversation(conversationId);
     const archivedMessages = this.store.messageCount(conversationId);
     let archivedTo: string | undefined;
 
@@ -1314,6 +1367,16 @@ export class Process extends Host<Env> {
         archiveId,
       );
       archivedTo = key ? `/${key}` : undefined;
+      if (archivedTo) {
+        this.store.recordConversationArchive({
+          id: archiveId,
+          conversationId,
+          generation: existingConversation.generation,
+          kind: "reset",
+          messages: archivedMessages,
+          archivePath: archivedTo,
+        });
+      }
     }
 
     this.resetConversationExecutionState(conversationId);
@@ -1823,6 +1886,117 @@ export class Process extends Host<Env> {
     };
   }
 
+  private handleConversationTimeline(
+    args: ProcConversationTimelineArgs,
+  ): ProcConversationTimelineResult {
+    const conversationId = normalizeConversationId(args.conversationId);
+    const conversation = this.store.ensureConversation(conversationId);
+    const archives = this.store
+      .listConversationArchives(conversationId)
+      .map((archive): ProcConversationTimelineEntry => ({
+        type: "archive",
+        id: archive.id,
+        conversationId: archive.conversationId,
+        generation: archive.generation,
+        archiveKind: archive.kind,
+        messages: archive.messages,
+        archivePath: archive.archivePath,
+        createdAt: archive.createdAt,
+      }));
+    const segments = this.store
+      .listConversationSegments(conversationId)
+      .map((segment): ProcConversationTimelineEntry => ({
+        type: "segment",
+        id: segment.id,
+        conversationId: segment.conversationId,
+        generation: segment.generation,
+        segmentKind: segment.kind,
+        fromMessageId: segment.fromMessageId,
+        toMessageId: segment.toMessageId,
+        archivePath: segment.archivePath,
+        summaryMessageId: segment.summaryMessageId,
+        createdAt: segment.createdAt,
+      }));
+
+    const live: ProcConversationTimelineEntry = {
+      type: "live",
+      ...this.toProcConversationLiveGeneration(conversation),
+    };
+    const timeline: ProcConversationTimelineEntry[] = [
+      ...archives,
+      ...segments,
+      live,
+    ].sort(compareConversationTimelineEntries);
+
+    return {
+      ok: true,
+      pid: this.pid,
+      conversationId,
+      timeline,
+    };
+  }
+
+  private handleConversationGenerations(
+    args: ProcConversationGenerationsArgs,
+  ): ProcConversationGenerationsResult {
+    const conversationId = normalizeConversationId(args.conversationId);
+    this.store.ensureConversation(conversationId);
+    return {
+      ok: true,
+      pid: this.pid,
+      conversationId,
+      generations: this.store.listConversationGenerations(conversationId),
+    };
+  }
+
+  private handleConversationGenerationManifest(
+    args: ProcConversationGenerationManifestArgs,
+  ): ProcConversationGenerationManifestResult {
+    const conversationId = normalizeConversationId(args.conversationId);
+    if (!isPositiveInteger(args.generation)) {
+      return { ok: false, error: "proc.conversation.generation.manifest generation must be a positive integer" };
+    }
+
+    const manifest = this.buildConversationGenerationManifest(conversationId, args.generation);
+    return {
+      ok: true,
+      pid: this.pid,
+      conversationId,
+      manifest,
+    };
+  }
+
+  private buildConversationGenerationManifest(
+    conversationId: string,
+    generation: number,
+  ): ProcConversationGenerationManifest | null {
+    const conversation = this.store.ensureConversation(conversationId);
+    const archives = this.store
+      .listConversationArchives(conversationId)
+      .filter((archive) => archive.generation === generation)
+      .map((archive) => this.toProcConversationArchive(archive));
+    const segments = this.store
+      .listConversationSegments(conversationId)
+      .filter((segment) => segment.generation === generation)
+      .map((segment) => this.toProcConversationSegment(segment));
+    const current = conversation.generation === generation;
+
+    if (!current && archives.length === 0 && segments.length === 0) {
+      return null;
+    }
+
+    return {
+      conversationId,
+      generation,
+      current,
+      status: conversation.status,
+      title: conversation.title,
+      archives,
+      segments,
+      live: current ? this.toProcConversationLiveGeneration(conversation) : null,
+    };
+  }
+
   private toProcConversation(record: ProcessConversationRecord): ProcConversation {
     return {
       id: record.id,
@@ -1831,6 +2005,34 @@ export class Process extends Host<Env> {
       title: record.title,
       messageCount: this.store.messageCount(record.id),
       createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
+  }
+
+  private toProcConversationArchive(
+    record: ProcessConversationArchiveRecord,
+  ): ProcConversationArchive {
+    return {
+      id: record.id,
+      conversationId: record.conversationId,
+      generation: record.generation,
+      kind: record.kind,
+      messages: record.messages,
+      archivePath: record.archivePath,
+      createdAt: record.createdAt,
+    };
+  }
+
+  private toProcConversationLiveGeneration(
+    record: ProcessConversationRecord,
+  ): ProcConversationLiveGeneration {
+    const stats = this.store.messageStats(record.id);
+    return {
+      conversationId: record.id,
+      generation: record.generation,
+      messageCount: stats.count,
+      firstMessageId: stats.firstMessageId,
+      lastMessageId: stats.lastMessageId,
       updatedAt: record.updatedAt,
     };
   }
@@ -1885,7 +2087,7 @@ export class Process extends Host<Env> {
     const totalMessages = this.store.totalMessageCount();
 
     const archive = totalMessages > 0
-      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
+      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID(), "process-reset")
       : emptyProcessArchive();
 
     this.resetExecutionState();
@@ -1911,7 +2113,7 @@ export class Process extends Host<Env> {
     const totalMessages = this.store.totalMessageCount();
 
     const archive = shouldArchive && totalMessages > 0
-      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID())
+      ? await this.archiveAllConversationMessages(pid, crypto.randomUUID(), "kill")
       : emptyProcessArchive();
 
     this.resetExecutionState();
@@ -2536,6 +2738,7 @@ export class Process extends Host<Env> {
   private async archiveAllConversationMessages(
     pid: string,
     archiveId: string,
+    kind: ProcConversationArchiveKind,
   ): Promise<ProcessArchiveResult> {
     const archiveDir = `var/sessions/${this.identity.username}/${pid}/${archiveId}/`;
     const archives: ProcArchiveEntry[] = [];
@@ -2557,12 +2760,21 @@ export class Process extends Host<Env> {
       )}`;
 
       await this.archiveMessageRecords(key, messages);
+      const archivePath = `/${key}`;
+      this.store.recordConversationArchive({
+        id: `${archiveId}:${encodeURIComponent(conversation.id)}:gen-${conversation.generation}`,
+        conversationId: conversation.id,
+        generation: conversation.generation,
+        kind,
+        messages: messages.length,
+        archivePath,
+      });
       archivedMessages += messages.length;
       archives.push({
         conversationId: conversation.id,
         generation: conversation.generation,
         messages: messages.length,
-        path: `/${key}`,
+        path: archivePath,
       });
     }
 

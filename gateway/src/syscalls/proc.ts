@@ -470,6 +470,108 @@ export type ProcConversationSegmentsResult =
     }
   | { ok: false; error: string };
 
+export type ProcConversationArchiveKind = "reset" | "process-reset" | "kill";
+
+export type ProcConversationArchive = {
+  id: string;
+  conversationId: string;
+  generation: number;
+  kind: ProcConversationArchiveKind;
+  messages: number;
+  archivePath: string;
+  createdAt: number;
+};
+
+export type ProcConversationLiveGeneration = {
+  conversationId: string;
+  generation: number;
+  messageCount: number;
+  firstMessageId: number | null;
+  lastMessageId: number | null;
+  updatedAt: number;
+};
+
+export type ProcConversationTimelineEntry =
+  | {
+      type: "archive";
+      id: string;
+      conversationId: string;
+      generation: number;
+      archiveKind: ProcConversationArchiveKind;
+      messages: number;
+      archivePath: string;
+      createdAt: number;
+    }
+  | {
+      type: "segment";
+      id: string;
+      conversationId: string;
+      generation: number;
+      segmentKind: ProcConversationSegmentKind;
+      fromMessageId: number;
+      toMessageId: number;
+      archivePath: string;
+      summaryMessageId: number | null;
+      createdAt: number;
+    }
+  | ({
+      type: "live";
+    } & ProcConversationLiveGeneration);
+
+export type ProcConversationTimelineArgs = {
+  pid?: string;
+  conversationId?: string;
+};
+
+export type ProcConversationTimelineResult =
+  | {
+      ok: true;
+      pid: string;
+      conversationId: string;
+      timeline: ProcConversationTimelineEntry[];
+    }
+  | { ok: false; error: string };
+
+export type ProcConversationGenerationsArgs = {
+  pid?: string;
+  conversationId?: string;
+};
+
+export type ProcConversationGenerationsResult =
+  | {
+      ok: true;
+      pid: string;
+      conversationId: string;
+      generations: number[];
+    }
+  | { ok: false; error: string };
+
+export type ProcConversationGenerationManifest = {
+  conversationId: string;
+  generation: number;
+  current: boolean;
+  status: ProcConversationStatus;
+  title: string | null;
+  archives: ProcConversationArchive[];
+  segments: ProcConversationSegment[];
+  live: ProcConversationLiveGeneration | null;
+};
+
+export type ProcConversationGenerationManifestArgs = {
+  pid?: string;
+  conversationId?: string;
+  generation: number;
+};
+
+export type ProcConversationGenerationManifestResult =
+  | {
+      ok: true;
+      pid: string;
+      conversationId: string;
+      manifest: ProcConversationGenerationManifest | null;
+    }
+  | { ok: false; error: string };
+
 export type ProcResetArgs = {
   pid?: string;
 };

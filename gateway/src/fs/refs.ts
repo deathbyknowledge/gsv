@@ -8,9 +8,12 @@ import type { ScheduleRecord, ScheduleRunHistoryEntry } from "../syscalls/schedu
 
 export type ProcessViewCall =
   | "proc.conversation.get"
+  | "proc.conversation.generation.manifest"
+  | "proc.conversation.generations"
   | "proc.conversation.list"
   | "proc.conversation.segment.read"
   | "proc.conversation.segments"
+  | "proc.conversation.timeline"
   | "proc.history";
 
 export type ProcessViewRequest = <S extends ProcessViewCall>(

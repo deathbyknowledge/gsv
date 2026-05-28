@@ -159,6 +159,34 @@ describe("ProcessStore", () => {
         ]);
       });
     });
+
+    it("records conversation archives and lists generation ids", async () => {
+      const stub = await getProcessByPid("conversation-archive-store");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.openConversation({ conversationId: "thread" });
+        store.recordConversationArchive({
+          id: "archive-1",
+          conversationId: "thread",
+          generation: 1,
+          kind: "reset",
+          messages: 2,
+          archivePath: "/var/sessions/root/pid/conversations/thread/archive-1.jsonl.gz",
+        });
+        store.resetConversation("thread");
+
+        expect(store.listConversationArchives("thread")).toEqual([
+          expect.objectContaining({
+            id: "archive-1",
+            conversationId: "thread",
+            generation: 1,
+            kind: "reset",
+            messages: 2,
+          }),
+        ]);
+        expect(store.listConversationGenerations("thread")).toEqual([1, 2]);
+      });
+    });
   });
 
   // ---------- Message CRUD ----------
@@ -260,11 +288,11 @@ describe("ProcessStore", () => {
       const stub = await getProcessByPid("msg-stats");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        expect(store.messageStats()).toEqual({ count: 0, lastMessageId: null });
+        expect(store.messageStats()).toEqual({ count: 0, firstMessageId: null, lastMessageId: null });
 
         const firstId = store.appendMessage("user", "one");
         const secondId = store.appendMessage("assistant", "two");
-        expect(store.messageStats()).toEqual({ count: 2, lastMessageId: secondId });
+        expect(store.messageStats()).toEqual({ count: 2, firstMessageId: firstId, lastMessageId: secondId });
         expect(firstId).toBeLessThan(secondId);
       });
     });

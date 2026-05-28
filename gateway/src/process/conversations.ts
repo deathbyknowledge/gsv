@@ -26,6 +26,18 @@ export type ProcessConversationSegmentRecord = {
   createdAt: number;
 };
 
+export type ConversationArchiveKind = "reset" | "process-reset" | "kill";
+
+export type ProcessConversationArchiveRecord = {
+  id: string;
+  conversationId: string;
+  generation: number;
+  kind: ConversationArchiveKind;
+  messages: number;
+  archivePath: string;
+  createdAt: number;
+};
+
 export function normalizeConversationId(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
