@@ -154,6 +154,10 @@ pub(crate) enum InfraAction {
         #[arg(long)]
         all: bool,
 
+        /// Deployment instance prefix for Worker and bucket names
+        #[arg(long, env = "GSV_INSTANCE", default_value = "gsv")]
+        instance: String,
+
         /// Overwrite existing extracted bundle directories
         #[arg(long)]
         force_fetch: bool,
@@ -193,6 +197,10 @@ pub(crate) enum InfraAction {
         #[arg(long)]
         all: bool,
 
+        /// Deployment instance prefix for Worker and bucket names
+        #[arg(long, env = "GSV_INSTANCE", default_value = "gsv")]
+        instance: String,
+
         /// Overwrite existing extracted bundle directories (auto-enabled for mutable refs like dev/stable/latest)
         #[arg(long)]
         force_fetch: bool,
@@ -227,6 +235,10 @@ pub(crate) enum InfraAction {
         /// Remove all components
         #[arg(long)]
         all: bool,
+
+        /// Deployment instance prefix for Worker and bucket names
+        #[arg(long, env = "GSV_INSTANCE", default_value = "gsv")]
+        instance: String,
 
         /// Also delete the shared R2 storage bucket
         #[arg(long)]

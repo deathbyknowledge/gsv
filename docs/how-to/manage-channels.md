@@ -14,6 +14,13 @@ gsv infra deploy -c channel-discord --discord-bot-token "$DISCORD_BOT_TOKEN"
 gsv infra deploy -c channel-telegram --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
 ```
 
+If your GSV was deployed with a named instance, pass the same instance name or
+set `GSV_INSTANCE`:
+
+```bash
+gsv infra deploy --instance gsv-work -c channel-whatsapp
+```
+
 When adding Telegram to an existing installation, deploy or upgrade the gateway
 at the same time so it has the `CHANNEL_TELEGRAM` service binding:
 

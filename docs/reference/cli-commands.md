@@ -207,9 +207,9 @@ the `pkg.sync` syscall and prints the resolved package commits.
 ## Infrastructure Commands
 
 ```bash
-gsv infra deploy [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
-gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
-gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
+gsv infra deploy [--instance NAME] [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
+gsv infra upgrade [--instance NAME] [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
+gsv infra destroy [--instance NAME] [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
 ```
 
 Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`,
@@ -223,10 +223,18 @@ Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
 `CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, `--discord-bot-token` or
 `DISCORD_BOT_TOKEN`, and `--telegram-bot-token` or `TELEGRAM_BOT_TOKEN`.
 
-`destroy` tears down Workers. If no component or `--all` is supplied, it targets
-all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
-must be combined with it. Unless `--keep-node` is passed, `destroy` also attempts
-to uninstall the local device service.
+`--instance NAME` or `GSV_INSTANCE` scopes Worker script names and the R2 bucket
+so multiple GSVs can coexist in one Cloudflare account. The default instance is
+`gsv`, which preserves the historical names: `gsv`, `ripgit`, `gsv-assembler`,
+`gsv-channel-*`, and `gsv-storage`. A named instance such as `gsv-personal`
+deploys `gsv-personal`, `gsv-personal-ripgit`,
+`gsv-personal-channel-whatsapp`, and `gsv-personal-storage`.
+
+`destroy` tears down Workers for the selected instance. If no component or
+`--all` is supplied, it targets all components. `--delete-bucket` removes that
+instance's R2 bucket; `--purge-bucket` must be combined with it. Unless
+`--keep-node` is passed, `destroy` also attempts to uninstall the local device
+service.
 
 ## Version
 

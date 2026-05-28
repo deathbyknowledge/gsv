@@ -32,6 +32,7 @@ const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
 const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
 const BUNDLE_CHANNEL_TELEGRAM: &str = "gsv-cloudflare-channel-telegram.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
+pub const DEFAULT_DEPLOY_INSTANCE: &str = "gsv";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
 const SCRIPT_ASSEMBLER: &str = "gsv-assembler";
 const SCRIPT_GATEWAY: &str = "gsv";
@@ -45,6 +46,94 @@ const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
 const MAX_SOURCE_MAP_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
 static DEPLOY_NOTIFICATION_MODE: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DeployInstance {
+    name: String,
+}
+
+impl DeployInstance {
+    pub fn parse(raw: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let name = normalize_instance_name(raw)?;
+        Ok(Self { name })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.name == DEFAULT_DEPLOY_INSTANCE
+    }
+
+    pub fn storage_bucket_name(&self) -> String {
+        format!("{}-storage", self.name)
+    }
+
+    pub fn script_name(&self, component: &str) -> Option<String> {
+        match component {
+            COMPONENT_GATEWAY => Some(self.name.clone()),
+            COMPONENT_ASSEMBLER => Some(format!("{}-assembler", self.name)),
+            COMPONENT_RIPGIT if self.is_default() => Some(SCRIPT_RIPGIT.to_string()),
+            COMPONENT_RIPGIT => Some(format!("{}-ripgit", self.name)),
+            COMPONENT_CHANNEL_WHATSAPP => Some(format!("{}-channel-whatsapp", self.name)),
+            COMPONENT_CHANNEL_DISCORD => Some(format!("{}-channel-discord", self.name)),
+            COMPONENT_CHANNEL_TELEGRAM => Some(format!("{}-channel-telegram", self.name)),
+            _ => None,
+        }
+    }
+
+    fn script_name_for_config_service(&self, service: &str) -> String {
+        match service {
+            SCRIPT_GATEWAY => self
+                .script_name(COMPONENT_GATEWAY)
+                .unwrap_or_else(|| service.to_string()),
+            SCRIPT_ASSEMBLER => self
+                .script_name(COMPONENT_ASSEMBLER)
+                .unwrap_or_else(|| service.to_string()),
+            SCRIPT_RIPGIT => self
+                .script_name(COMPONENT_RIPGIT)
+                .unwrap_or_else(|| service.to_string()),
+            SCRIPT_CHANNEL_WHATSAPP => self
+                .script_name(COMPONENT_CHANNEL_WHATSAPP)
+                .unwrap_or_else(|| service.to_string()),
+            SCRIPT_CHANNEL_DISCORD => self
+                .script_name(COMPONENT_CHANNEL_DISCORD)
+                .unwrap_or_else(|| service.to_string()),
+            SCRIPT_CHANNEL_TELEGRAM => self
+                .script_name(COMPONENT_CHANNEL_TELEGRAM)
+                .unwrap_or_else(|| service.to_string()),
+            _ => service.to_string(),
+        }
+    }
+}
+
+impl Default for DeployInstance {
+    fn default() -> Self {
+        Self {
+            name: DEFAULT_DEPLOY_INSTANCE.to_string(),
+        }
+    }
+}
+
+fn normalize_instance_name(raw: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err("GSV instance name cannot be empty".into());
+    }
+    if normalized.starts_with('-') || normalized.ends_with('-') {
+        return Err("GSV instance name cannot start or end with '-'".into());
+    }
+    if !normalized
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+    {
+        return Err(
+            "GSV instance name must contain only lowercase letters, numbers, and '-'".into(),
+        );
+    }
+    Ok(normalized)
+}
 
 pub fn set_notification_output(enabled: bool) {
     DEPLOY_NOTIFICATION_MODE.store(enabled, Ordering::Relaxed);
@@ -397,6 +486,7 @@ struct WorkerScriptUpload<'a> {
 }
 
 struct UploadMetadataOptions<'a> {
+    instance: &'a DeployInstance,
     selected_components: &'a HashSet<String>,
     available_scripts: &'a HashSet<String>,
     account_subdomain: Option<&'a str>,
@@ -483,18 +573,6 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
         COMPONENT_CHANNEL_DISCORD => Some(BUNDLE_CHANNEL_DISCORD),
         COMPONENT_CHANNEL_TELEGRAM => Some(BUNDLE_CHANNEL_TELEGRAM),
-        _ => None,
-    }
-}
-
-fn component_to_script_name(component: &str) -> Option<&'static str> {
-    match component {
-        COMPONENT_ASSEMBLER => Some(SCRIPT_ASSEMBLER),
-        COMPONENT_GATEWAY => Some(SCRIPT_GATEWAY),
-        COMPONENT_RIPGIT => Some(SCRIPT_RIPGIT),
-        COMPONENT_CHANNEL_WHATSAPP => Some(SCRIPT_CHANNEL_WHATSAPP),
-        COMPONENT_CHANNEL_DISCORD => Some(SCRIPT_CHANNEL_DISCORD),
-        COMPONENT_CHANNEL_TELEGRAM => Some(SCRIPT_CHANNEL_TELEGRAM),
         _ => None,
     }
 }
@@ -2005,21 +2083,48 @@ fn load_prepared_bundle(
     })
 }
 
+fn apply_instance_names_to_bundle(
+    bundle: &mut PreparedBundle,
+    instance: &DeployInstance,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let script_name = instance
+        .script_name(&bundle.component)
+        .ok_or_else(|| format!("Unsupported component '{}'", bundle.component))?;
+    bundle.wrangler.name = script_name.clone();
+    bundle.script_name = script_name;
+
+    let storage_bucket_name = instance.storage_bucket_name();
+    for bucket in &mut bundle.wrangler.r2_buckets {
+        if bucket.bucket_name.as_deref() == Some(DEFAULT_STORAGE_BUCKET_NAME) {
+            bucket.bucket_name = Some(storage_bucket_name.clone());
+        }
+    }
+
+    Ok(())
+}
+
 fn service_bindings_for_bundle(
     bundle: &PreparedBundle,
+    instance: &DeployInstance,
     selected_components: &HashSet<String>,
     available_scripts: &HashSet<String>,
 ) -> Vec<WranglerServiceBinding> {
     let mut bindings = bundle.wrangler.services.clone();
+    let gateway_script_name = instance
+        .script_name(COMPONENT_GATEWAY)
+        .unwrap_or_else(|| SCRIPT_GATEWAY.to_string());
+    let telegram_script_name = instance
+        .script_name(COMPONENT_CHANNEL_TELEGRAM)
+        .unwrap_or_else(|| SCRIPT_CHANNEL_TELEGRAM.to_string());
 
     if bundle.component == COMPONENT_CHANNEL_WHATSAPP
         && !bindings.iter().any(|binding| binding.binding == "GATEWAY")
         && (selected_components.contains(COMPONENT_GATEWAY)
-            || available_scripts.contains(SCRIPT_GATEWAY))
+            || available_scripts.contains(&gateway_script_name))
     {
         bindings.push(WranglerServiceBinding {
             binding: "GATEWAY".to_string(),
-            service: SCRIPT_GATEWAY.to_string(),
+            service: gateway_script_name.clone(),
             environment: None,
             entrypoint: Some("GatewayEntrypoint".to_string()),
         });
@@ -2030,11 +2135,11 @@ fn service_bindings_for_bundle(
             .iter()
             .any(|binding| binding.binding == "CHANNEL_TELEGRAM")
         && (selected_components.contains(COMPONENT_CHANNEL_TELEGRAM)
-            || available_scripts.contains(SCRIPT_CHANNEL_TELEGRAM))
+            || available_scripts.contains(&telegram_script_name))
     {
         bindings.push(WranglerServiceBinding {
             binding: "CHANNEL_TELEGRAM".to_string(),
-            service: SCRIPT_CHANNEL_TELEGRAM.to_string(),
+            service: telegram_script_name.clone(),
             environment: None,
             entrypoint: Some("TelegramChannel".to_string()),
         });
@@ -2049,6 +2154,7 @@ fn service_bindings_for_bundle(
             binding.entrypoint = Some("WhatsAppChannelEntrypoint".to_string());
         }
 
+        binding.service = instance.script_name_for_config_service(&binding.service);
         let keep = available_scripts.contains(&binding.service);
         if keep {
             filtered.push(binding);
@@ -2499,6 +2605,7 @@ fn build_upload_metadata(
 
     for service in service_bindings_for_bundle(
         bundle,
+        options.instance,
         options.selected_components,
         options.available_scripts,
     ) {
@@ -2603,6 +2710,7 @@ pub async fn apply_deploy(
     api_token: &str,
     version: &str,
     components: &[String],
+    instance: &DeployInstance,
 ) -> Result<DeployApplyResult, Box<dyn std::error::Error>> {
     if components.is_empty() {
         return Err("No components requested for deployment".into());
@@ -2612,20 +2720,32 @@ pub async fn apply_deploy(
         .iter()
         .map(|component| load_prepared_bundle(cfg, version, component))
         .collect::<Result<Vec<_>, _>>()?;
+    for bundle in &mut prepared {
+        apply_instance_names_to_bundle(bundle, instance)?;
+    }
     prepared.sort_by_key(|bundle| deploy_order(&bundle.component));
 
     let selected_components: HashSet<String> = components.iter().cloned().collect();
+    let gateway_script_name = instance
+        .script_name(COMPONENT_GATEWAY)
+        .ok_or("Unsupported gateway component")?;
+    let ripgit_script_name = instance
+        .script_name(COMPONENT_RIPGIT)
+        .ok_or("Unsupported ripgit component")?;
+    let assembler_script_name = instance
+        .script_name(COMPONENT_ASSEMBLER)
+        .ok_or("Unsupported assembler component")?;
 
     let client = reqwest::Client::new();
     let existing_scripts_with_migrations =
         list_worker_scripts(&client, account_id, api_token).await?;
     let existing_scripts: HashSet<String> =
         existing_scripts_with_migrations.keys().cloned().collect();
-    let gateway_existed_before_deploy = existing_scripts.contains(SCRIPT_GATEWAY);
-    let ripgit_available =
-        selected_components.contains(COMPONENT_RIPGIT) || existing_scripts.contains(SCRIPT_RIPGIT);
+    let gateway_existed_before_deploy = existing_scripts.contains(&gateway_script_name);
+    let ripgit_available = selected_components.contains(COMPONENT_RIPGIT)
+        || existing_scripts.contains(&ripgit_script_name);
     let assembler_available = selected_components.contains(COMPONENT_ASSEMBLER)
-        || existing_scripts.contains(SCRIPT_ASSEMBLER);
+        || existing_scripts.contains(&assembler_script_name);
     if selected_components.contains(COMPONENT_GATEWAY) && !ripgit_available {
         return Err(
             "Deploying `gateway` requires the `ripgit` worker. Include `--component ripgit` or deploy ripgit first."
@@ -2706,6 +2826,7 @@ pub async fn apply_deploy(
         let metadata = build_upload_metadata(
             bundle,
             UploadMetadataOptions {
+                instance,
                 selected_components: &selected_components,
                 available_scripts: &available_scripts,
                 account_subdomain: account_subdomain.as_deref(),
@@ -2784,6 +2905,7 @@ pub async fn apply_deploy(
         let metadata = build_upload_metadata(
             bundle,
             UploadMetadataOptions {
+                instance,
                 selected_components: &selected_components,
                 available_scripts: &available_scripts,
                 account_subdomain: account_subdomain.as_deref(),
@@ -2846,6 +2968,7 @@ pub async fn destroy_deploy(
     components: &[String],
     delete_bucket_resource: bool,
     purge_bucket_resource: bool,
+    instance: &DeployInstance,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if components.is_empty() {
         return Err("No components requested for teardown".into());
@@ -2856,13 +2979,15 @@ pub async fn destroy_deploy(
 
     let mut scripts_to_delete = Vec::new();
     for component in &component_order {
-        let script_name = component_to_script_name(component)
+        let script_name = instance
+            .script_name(component)
             .ok_or_else(|| format!("Unsupported component '{}'", component))?;
-        scripts_to_delete.push((component.clone(), script_name.to_string()));
+        scripts_to_delete.push((component.clone(), script_name));
     }
 
     let selected_components: HashSet<String> = components.iter().cloned().collect();
     let client = reqwest::Client::new();
+    let storage_bucket_name = instance.storage_bucket_name();
 
     println!("\nDeleting workers:");
     for (component, script_name) in scripts_to_delete {
@@ -2879,48 +3004,34 @@ pub async fn destroy_deploy(
         if purge_bucket_resource {
             println!(
                 "Purging objects from R2 bucket {} before deletion...",
-                DEFAULT_STORAGE_BUCKET_NAME
+                storage_bucket_name
             );
-            let deleted_objects = purge_r2_bucket_objects(
-                &client,
-                account_id,
-                api_token,
-                DEFAULT_STORAGE_BUCKET_NAME,
-                None,
-            )
-            .await?;
+            let deleted_objects =
+                purge_r2_bucket_objects(&client, account_id, api_token, &storage_bucket_name, None)
+                    .await?;
             if deleted_objects > 0 {
                 println!(
                     "Purged {} object(s) from R2 bucket {}",
-                    deleted_objects, DEFAULT_STORAGE_BUCKET_NAME
+                    deleted_objects, storage_bucket_name
                 );
             } else {
-                println!("R2 bucket {} is already empty", DEFAULT_STORAGE_BUCKET_NAME);
+                println!("R2 bucket {} is already empty", storage_bucket_name);
             }
         }
 
-        let delete_result = delete_r2_bucket(
-            &client,
-            account_id,
-            api_token,
-            DEFAULT_STORAGE_BUCKET_NAME,
-            None,
-        )
-        .await?;
+        let delete_result =
+            delete_r2_bucket(&client, account_id, api_token, &storage_bucket_name, None).await?;
         match delete_result {
             DeleteBucketResult::Deleted => {
-                println!("Deleted R2 bucket {}", DEFAULT_STORAGE_BUCKET_NAME);
+                println!("Deleted R2 bucket {}", storage_bucket_name);
             }
             DeleteBucketResult::NotFound => {
-                println!(
-                    "R2 bucket {} was already absent",
-                    DEFAULT_STORAGE_BUCKET_NAME
-                );
+                println!("R2 bucket {} was already absent", storage_bucket_name);
             }
             DeleteBucketResult::NotEmpty => {
                 println!(
                     "R2 bucket {} was not deleted because it is not empty.",
-                    DEFAULT_STORAGE_BUCKET_NAME
+                    storage_bucket_name
                 );
                 if purge_bucket_resource {
                     println!(
@@ -2936,7 +3047,7 @@ pub async fn destroy_deploy(
     } else if selected_components.contains(COMPONENT_GATEWAY) {
         println!(
             "R2 bucket {} retained (use --delete-bucket to remove)",
-            DEFAULT_STORAGE_BUCKET_NAME
+            storage_bucket_name
         );
     }
 
@@ -2948,6 +3059,7 @@ pub async fn print_deploy_status(
     account_id: &str,
     api_token: &str,
     components: &[String],
+    instance: &DeployInstance,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if components.is_empty() {
         return Err("No components requested for status".into());
@@ -2958,24 +3070,29 @@ pub async fn print_deploy_status(
 
     let client = reqwest::Client::new();
     let scripts = list_worker_scripts(&client, account_id, api_token).await?;
-    let gateway_script_name = if scripts.contains_key(SCRIPT_GATEWAY) {
-        Some(SCRIPT_GATEWAY.to_string())
-    } else if scripts.contains_key("gateway") {
-        Some("gateway".to_string())
+    let configured_gateway_script_name = instance
+        .script_name(COMPONENT_GATEWAY)
+        .ok_or("Unsupported gateway component")?;
+    let gateway_script_name = if instance.is_default()
+        && !scripts.contains_key(&configured_gateway_script_name)
+        && scripts.contains_key("gateway")
+    {
+        "gateway".to_string()
     } else {
-        None
+        configured_gateway_script_name
     };
 
     println!("\nWorkers:");
     for component in &component_order {
         let script_name = if component == COMPONENT_GATEWAY {
-            gateway_script_name.as_deref().unwrap_or(SCRIPT_GATEWAY)
+            gateway_script_name.clone()
         } else {
-            component_to_script_name(component)
+            instance
+                .script_name(component)
                 .ok_or_else(|| format!("Unsupported component '{}'", component))?
         };
 
-        if let Some(migration_tag) = scripts.get(script_name) {
+        if let Some(migration_tag) = scripts.get(&script_name) {
             if let Some(tag) = migration_tag.as_deref() {
                 println!(
                     "  {:<18} {:<24} deployed (migration: {})",
@@ -2991,17 +3108,12 @@ pub async fn print_deploy_status(
 
     if component_order.iter().any(|c| c == COMPONENT_GATEWAY) {
         println!("\nShared infrastructure:");
-        let bucket_exists = r2_bucket_exists(
-            &client,
-            account_id,
-            api_token,
-            DEFAULT_STORAGE_BUCKET_NAME,
-            None,
-        )
-        .await?;
+        let storage_bucket_name = instance.storage_bucket_name();
+        let bucket_exists =
+            r2_bucket_exists(&client, account_id, api_token, &storage_bucket_name, None).await?;
         println!(
             "  r2 bucket {:<26} {}",
-            DEFAULT_STORAGE_BUCKET_NAME,
+            storage_bucket_name,
             if bucket_exists { "exists" } else { "missing" }
         );
     }
@@ -3189,13 +3301,17 @@ pub async fn set_discord_bot_token_secret(
     account_id: &str,
     api_token: &str,
     bot_token: &str,
+    instance: &DeployInstance,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
+    let script_name = instance
+        .script_name(COMPONENT_CHANNEL_DISCORD)
+        .ok_or("Unsupported Discord channel component")?;
     set_worker_secret(
         &client,
         account_id,
         api_token,
-        SCRIPT_CHANNEL_DISCORD,
+        &script_name,
         "DISCORD_BOT_TOKEN",
         bot_token,
     )
@@ -3206,13 +3322,17 @@ pub async fn set_telegram_bot_token_secret(
     account_id: &str,
     api_token: &str,
     bot_token: &str,
+    instance: &DeployInstance,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
+    let script_name = instance
+        .script_name(COMPONENT_CHANNEL_TELEGRAM)
+        .ok_or("Unsupported Telegram channel component")?;
     set_worker_secret(
         &client,
         account_id,
         api_token,
-        SCRIPT_CHANNEL_TELEGRAM,
+        &script_name,
         "TELEGRAM_BOT_TOKEN",
         bot_token,
     )
@@ -3383,6 +3503,55 @@ mod tests {
     }
 
     #[test]
+    fn deploy_instance_default_preserves_legacy_names() {
+        let instance = DeployInstance::parse("gsv").unwrap();
+
+        assert_eq!(instance.name(), "gsv");
+        assert_eq!(
+            instance.script_name(COMPONENT_GATEWAY).as_deref(),
+            Some("gsv")
+        );
+        assert_eq!(
+            instance.script_name(COMPONENT_RIPGIT).as_deref(),
+            Some("ripgit")
+        );
+        assert_eq!(
+            instance.script_name(COMPONENT_CHANNEL_WHATSAPP).as_deref(),
+            Some("gsv-channel-whatsapp")
+        );
+        assert_eq!(instance.storage_bucket_name(), "gsv-storage");
+    }
+
+    #[test]
+    fn deploy_instance_named_scopes_worker_and_bucket_names() {
+        let instance = DeployInstance::parse("gsv-personal").unwrap();
+
+        assert_eq!(
+            instance.script_name(COMPONENT_GATEWAY).as_deref(),
+            Some("gsv-personal")
+        );
+        assert_eq!(
+            instance.script_name(COMPONENT_RIPGIT).as_deref(),
+            Some("gsv-personal-ripgit")
+        );
+        assert_eq!(
+            instance.script_name(COMPONENT_CHANNEL_TELEGRAM).as_deref(),
+            Some("gsv-personal-channel-telegram")
+        );
+        assert_eq!(instance.storage_bucket_name(), "gsv-personal-storage");
+    }
+
+    #[test]
+    fn deploy_instance_rejects_invalid_names() {
+        for value in ["", "-gsv", "gsv-", "gsv_test", "GSV!"] {
+            assert!(
+                DeployInstance::parse(value).is_err(),
+                "expected invalid instance name: {value}"
+            );
+        }
+    }
+
+    #[test]
     fn parse_wrangler_config_supports_toml() {
         let config = parse_wrangler_config(
             Path::new("wrangler.toml"),
@@ -3429,6 +3598,7 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
 
     #[test]
     fn build_upload_metadata_includes_worker_loader_bindings() {
+        let instance = DeployInstance::default();
         let bundle = PreparedBundle {
             bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
             component: COMPONENT_GATEWAY.to_string(),
@@ -3459,6 +3629,7 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
         let metadata = build_upload_metadata(
             &bundle,
             UploadMetadataOptions {
+                instance: &instance,
                 selected_components: &HashSet::new(),
                 available_scripts: &HashSet::new(),
                 account_subdomain: None,
@@ -3479,6 +3650,7 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
 
     #[test]
     fn service_bindings_inject_telegram_gateway_binding_when_worker_available() {
+        let instance = DeployInstance::default();
         let bundle = PreparedBundle {
             bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
             component: COMPONENT_GATEWAY.to_string(),
@@ -3504,7 +3676,8 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
         };
 
         let available_scripts = HashSet::from([SCRIPT_CHANNEL_TELEGRAM.to_string()]);
-        let bindings = service_bindings_for_bundle(&bundle, &HashSet::new(), &available_scripts);
+        let bindings =
+            service_bindings_for_bundle(&bundle, &instance, &HashSet::new(), &available_scripts);
 
         assert!(bindings.iter().any(|binding| {
             binding.binding == "CHANNEL_TELEGRAM"
@@ -3514,7 +3687,108 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
     }
 
     #[test]
+    fn service_bindings_use_instance_scoped_targets() {
+        let instance = DeployInstance::parse("gsv-personal").unwrap();
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_GATEWAY.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_GATEWAY.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_GATEWAY.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                services: vec![
+                    WranglerServiceBinding {
+                        binding: "RIPGIT".to_string(),
+                        service: SCRIPT_RIPGIT.to_string(),
+                        environment: None,
+                        entrypoint: None,
+                    },
+                    WranglerServiceBinding {
+                        binding: "ASSEMBLER".to_string(),
+                        service: SCRIPT_ASSEMBLER.to_string(),
+                        environment: None,
+                        entrypoint: None,
+                    },
+                ],
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_GATEWAY.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let available_scripts = HashSet::from([
+            "gsv-personal-ripgit".to_string(),
+            "gsv-personal-assembler".to_string(),
+        ]);
+        let bindings =
+            service_bindings_for_bundle(&bundle, &instance, &HashSet::new(), &available_scripts);
+
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.binding == "RIPGIT"
+                    && binding.service == "gsv-personal-ripgit")
+        );
+        assert!(bindings.iter().any(|binding| {
+            binding.binding == "ASSEMBLER" && binding.service == "gsv-personal-assembler"
+        }));
+    }
+
+    #[test]
+    fn apply_instance_names_scopes_bundle_script_and_r2_bucket() {
+        let instance = DeployInstance::parse("gsv-work").unwrap();
+        let mut bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_GATEWAY.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_GATEWAY.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_GATEWAY.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                r2_buckets: vec![WranglerR2BucketBinding {
+                    binding: "STORAGE".to_string(),
+                    bucket_name: Some(DEFAULT_STORAGE_BUCKET_NAME.to_string()),
+                    jurisdiction: None,
+                }],
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_GATEWAY.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        apply_instance_names_to_bundle(&mut bundle, &instance).unwrap();
+
+        assert_eq!(bundle.script_name, "gsv-work");
+        assert_eq!(
+            bundle.wrangler.r2_buckets[0].bucket_name.as_deref(),
+            Some("gsv-work-storage")
+        );
+    }
+
+    #[test]
     fn service_bindings_skip_telegram_gateway_binding_when_worker_missing() {
+        let instance = DeployInstance::default();
         let bundle = PreparedBundle {
             bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
             component: COMPONENT_GATEWAY.to_string(),
@@ -3539,7 +3813,8 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
             source_map: None,
         };
 
-        let bindings = service_bindings_for_bundle(&bundle, &HashSet::new(), &HashSet::new());
+        let bindings =
+            service_bindings_for_bundle(&bundle, &instance, &HashSet::new(), &HashSet::new());
 
         assert!(!bindings
             .iter()
@@ -3548,6 +3823,7 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
 
     #[test]
     fn build_upload_metadata_includes_telegram_webhook_url_binding() {
+        let instance = DeployInstance::default();
         let bundle = PreparedBundle {
             bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
             component: COMPONENT_CHANNEL_TELEGRAM.to_string(),
@@ -3575,6 +3851,7 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
         let metadata = build_upload_metadata(
             &bundle,
             UploadMetadataOptions {
+                instance: &instance,
                 selected_components: &HashSet::new(),
                 available_scripts: &HashSet::new(),
                 account_subdomain: Some("example-subdomain"),
