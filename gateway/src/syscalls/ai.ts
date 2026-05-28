@@ -125,4 +125,5 @@ export type AiConfigResult = {
   profileApprovalPolicy?: string | null;
   maxContextBytes: number;
   generationTimeoutMs: number;
+  generationStreaming?: "auto" | "off";
 };

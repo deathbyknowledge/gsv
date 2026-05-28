@@ -122,6 +122,7 @@ describe("ConfigStore", () => {
     expect(values.get("config/ai/api_key")).toBe("");
     expect(values.get("config/ai/provider")).toBe("anthropic");
     expect(values.get("config/ai/model")).toBe("claude-sonnet-4-20250514");
+    expect(values.get("config/ai/generation/streaming")).toBe("auto");
     expect(values.get("config/ai/context.d/00-gsv.md")).toContain("[Process Event]:");
   });
 

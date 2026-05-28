@@ -87,6 +87,7 @@ const CODEMODE_MCP_TYPE_HINT_MAX_CHARS = 12_000;
 
 const PERSONAL_PROFILE_ALIAS = "personal";
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
+const DEFAULT_GENERATION_STREAMING = "auto";
 
 export async function handleAiTools(
   ctx: KernelContext,
@@ -241,6 +242,9 @@ export async function handleAiConfig(
   ) ?? parsePositiveInt(
     config.get("config/ai/generation/timeout_ms"),
   ) ?? DEFAULT_GENERATION_TIMEOUT_MS;
+  const generationStreaming = normalizeGenerationStreaming(
+    config.get("config/ai/generation/streaming"),
+  );
   const skillIndex = await collectPromptSkillIndex(ctx, profile).catch((error) => {
     console.warn(
       `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
@@ -263,6 +267,7 @@ export async function handleAiConfig(
     profileApprovalPolicy,
     maxContextBytes,
     generationTimeoutMs,
+    generationStreaming,
   };
 }
 
@@ -417,6 +422,11 @@ function parsePositiveInt(value: string | null | undefined): number | null {
     return null;
   }
   return parsed;
+}
+
+function normalizeGenerationStreaming(value: string | null | undefined): "auto" | "off" {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "off" ? "off" : DEFAULT_GENERATION_STREAMING;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

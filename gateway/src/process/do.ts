@@ -2568,7 +2568,8 @@ export class Process extends Host<Env> {
     context: Context;
     sessionAffinityKey?: string;
   }): Promise<AssistantMessage | null> {
-    const stream = typeof this.generation.stream === "function"
+    const stream = options.config.generationStreaming !== "off" &&
+      typeof this.generation.stream === "function"
       ? this.generation.stream({
         purpose: options.purpose,
         config: options.config,

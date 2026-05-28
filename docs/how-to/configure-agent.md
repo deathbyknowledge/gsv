@@ -24,6 +24,12 @@ gsv config set users/1000/ai/max_context_bytes 65536
 gsv config set users/1000/ai/generation/timeout_ms 180000
 ```
 
+Generation streaming is a system operational switch. It defaults to `auto`; root can disable stream deltas while preserving final responses:
+
+```bash
+gsv config set config/ai/generation/streaming off
+```
+
 Sensitive keys such as `api_key`, `token`, `secret`, and `password` are hidden
 from non-root system config reads.
 

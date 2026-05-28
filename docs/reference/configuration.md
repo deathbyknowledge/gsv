@@ -42,7 +42,7 @@ Reading a prefix returns every readable key below that prefix. Reading an exact 
 
 ## AI Model Config
 
-The AI runtime resolves per-user values first, then falls back to system defaults.
+Most AI runtime keys resolve per-user values first, then fall back to system defaults. System-only operational keys are marked with `none` in the user override column.
 
 | System Key | User Override | Default | Description |
 |---|---|---|---|
@@ -53,6 +53,7 @@ The AI runtime resolves per-user values first, then falls back to system default
 | `config/ai/max_tokens` | `users/{uid}/ai/max_tokens` | `8192` | Maximum output tokens. |
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
 | `config/ai/generation/timeout_ms` | `users/{uid}/ai/generation/timeout_ms` | `180000` | Maximum time to wait for a single model generation before releasing the run with an error. |
+| `config/ai/generation/streaming` | none | `auto` | Generation transport mode. `auto` streams when supported; `off` forces final-output only. |
 | `config/ai/transcription/model` | `users/{uid}/ai/transcription/model` | `@cf/openai/whisper-large-v3-turbo` | Model used by `ai.transcription.create` and process media transcription. |
 | `config/ai/transcription/max_bytes` | `users/{uid}/ai/transcription/max_bytes` | `26214400` | Maximum audio payload size accepted for transcription. |
 | `config/ai/speech/model` | `users/{uid}/ai/speech/model` | `@cf/deepgram/aura-2-en` | Model used by `ai.speech.create`. |

@@ -837,6 +837,76 @@ describe("Process DO — mechanical", () => {
         .find((entry) => entry.signal === "proc.run.output");
       expect(outputSignal?.payload.text).toBe("hello");
     });
+
+    it("uses non-streaming generation when generation streaming is disabled", async () => {
+      const pid = "mech-chat-stream-off";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          stream() {
+            throw new Error("stream generation should not be used");
+          },
+          async generate() {
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "hello" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 0,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "hello";
+          },
+        };
+
+        process.store.appendMessage("user", "do not stream");
+        process.currentRun = {
+          runId: "run-chat-stream-off",
+          queued: false,
+          conversationId: "default",
+          config: {
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationStreaming: "off",
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.continueAgentLoop("run-chat-stream-off");
+        return emitted;
+      });
+
+      expect((emitted as Array<{ signal: string }>).some((entry) => entry.signal === "proc.run.stream")).toBe(false);
+      const outputSignal = (emitted as Array<{ signal: string; payload: any }>)
+        .find((entry) => entry.signal === "proc.run.output");
+      expect(outputSignal?.payload.text).toBe("hello");
+    });
   });
 
   describe("proc.send", () => {

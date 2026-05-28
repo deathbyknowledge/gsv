@@ -154,6 +154,8 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/max_context_bytes": "32768",
   // Maximum time to wait for a single model generation before releasing the run.
   "config/ai/generation/timeout_ms": "180000",
+  // Generation streaming transport: auto streams when supported, off forces final-output only.
+  "config/ai/generation/streaming": "auto",
   // Default speech synthesis model and output settings.
   "config/ai/speech/model": "@cf/deepgram/aura-2-en",
   "config/ai/speech/speaker": "luna",

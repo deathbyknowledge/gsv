@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
-import { handleAiSpeechCreate, handleAiTools, handleAiTranscriptionCreate } from "./ai";
+import { handleAiConfig, handleAiSpeechCreate, handleAiTools, handleAiTranscriptionCreate } from "./ai";
 import { DEFAULT_AUDIO_TRANSCRIPTION_MODEL } from "../inference/transcription";
 import {
   DEFAULT_AUDIO_SPEECH_MODEL,
@@ -188,6 +188,43 @@ describe("handleAiTools", () => {
     expect(description).toContain("targets list");
     expect(description).not.toContain("node-11");
     expect(description).not.toContain("node-12");
+  });
+});
+
+describe("handleAiConfig", () => {
+  function makeAiConfigContext(config: Record<string, string> = {}): KernelContext {
+    return {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["*"],
+      },
+      config: {
+        get: vi.fn((key: string) => config[key] ?? null),
+        list: vi.fn((prefix: string) => Object.entries(config)
+          .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+          .map(([key, value]) => ({ key, value }))),
+      },
+      env: {},
+    } as unknown as KernelContext;
+  }
+
+  it("resolves the generation streaming switch", async () => {
+    await expect(handleAiConfig({}, makeAiConfigContext()))
+      .resolves.toMatchObject({ generationStreaming: "auto" });
+    await expect(handleAiConfig({}, makeAiConfigContext({
+      "config/ai/generation/streaming": "off",
+    }))).resolves.toMatchObject({ generationStreaming: "off" });
+    await expect(handleAiConfig({}, makeAiConfigContext({
+      "config/ai/generation/streaming": "invalid",
+    }))).resolves.toMatchObject({ generationStreaming: "auto" });
   });
 });
 
